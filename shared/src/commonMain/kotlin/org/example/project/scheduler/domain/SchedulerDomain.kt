@@ -1256,6 +1256,26 @@ object SchedulerDomain {
     const val MIN_MANUAL_ENTRY_MILLIS: Long = 60_000L
 
     /**
+     * PRD §7 **the switch entry**: how long the block both switch chords lay at the now-line is —
+     * **epsilon**, and deliberately not a length anybody chose.
+     *
+     * The entry's whole job is to say *this task, from here*; **how long** is the scheduler's answer and must
+     * not be pre-empted by the press. A second is the smallest span that is unambiguously a period and not a
+     * rounding artefact — three orders of magnitude above the planner's own
+     * [SchedulerPlanner.CHUNK_EPSILON_MILLIS], and far below anything the calendar can draw or the walk can
+     * be distorted by (it is charged to the task's clock like any service, so a span this size costs it
+     * nothing measurable).
+     *
+     * What then makes the panel a *usable* length is the fill, not this: the request the same press records
+     * ([org.example.project.scheduler.model.ForcedTaskStart]) takes the first slot after the seed, and
+     * `PlanWalk.chunkMillis` floors that slot at the task's minimum — the README's soft *Minimum Execution
+     * Time* goal. Note that the seed itself is **not** extended by that rule: a pre-placed block is committed
+     * service the walk steps over (`fillSchedule`'s `futureBlocks`), never a chunk in progress, and the
+     * resume rule that continues an unfinished chunk reads the recorded PAST.
+     */
+    const val SWITCH_ENTRY_MILLIS: Long = 1_000L
+
+    /**
      * PRD §8 "∞" period bound: the instant a hand-added no-screen / inactivity period **open into the past**
      * begins at (1900-01-01T00:00Z), and [OPEN_FUTURE_MILLIS] the one an open-ended period runs to
      * (2200-01-01T00:00Z).
@@ -3617,9 +3637,72 @@ object SchedulerDomain {
      */
     fun taskAtNowLine(state: SchedulerState, nowMillis: Long): TaskId? =
         state.panels.firstOrNull {
-            it.taskId != null && !it.chore && !it.screenBreak && !it.sleep && !it.noScreen && !it.inactivity &&
-                it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis
+            isWorkPanel(it) && it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis
         }?.taskId
+
+    /**
+     * PRD §7 / `side-dev/README.md` § *Restrictive Period*: **the kinds of every restrictive period that
+     * actually restricts [nowMillis]** — what the timeline is inside right now, read off the panels the
+     * calendar draws.
+     *
+     * The display's own reading of the question `fillSchedule` asks per window: a period is a start, an end
+     * and a KIND ([TaskPanel.restrictiveKind] — never the four legacy flags, so a kind with no flag of its
+     * own counts too), and everything a task may or may not do there follows from its resilience to those
+     * kinds. Bounded by the panel list and asked at ONE instant, so it is cheap enough for a surface that
+     * re-asks it whenever the now-line crosses a boundary.
+     *
+     * **A period the line is DRAGGING is not one of them** ([isDraggedScreenBreak],
+     * `docs/invariants/screen-breaks.md`) — the same drop `fillSchedule` makes when it builds its
+     * `restrictions`, and for the same reason: mode 1 pushes an owed pose ahead of the line at every position
+     * of the line, so no instant of the timeline is ever inside it and it obstructs nothing. It is drawn, it
+     * is cued and it still says a break is owed; what it is not is a restriction on the task running now.
+     * Asking this without the drop is how the §7 picker came to paint every task red while the line was
+     * dragging a 15-minute pose: the panel is materialized as `[t_p + 1, t_p + d + 1)` at the instant of the
+     * fill, and the line then sweeps into it long before the next re-plan pushes it forward again.
+     *
+     * One thing it deliberately does NOT see: mode 2's `no on-screen task` cover
+     * ([DynamicPeriods.awayCover]), which is an environment period the fill builds for itself and never a
+     * panel. That is a restriction this answer misses while the user is AWAY — which is a state the chord
+     * that asks this question is not struck in.
+     */
+    fun restrictiveKindsAt(state: SchedulerState, nowMillis: Long): Set<String> =
+        state.panels.asSequence()
+            .filter { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }
+            .filterNot { isDraggedScreenBreak(it) }
+            .map { it.restrictiveKind }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
+    /**
+     * A task's **resilience multiplier** inside [kinds] — `1` where nothing restricts it, `0` where it is
+     * forbidden, and a fraction where its share is merely scaled. [PeriodKinds.multiplier] is the whole of
+     * it; this overload exists only so a caller asking it of many tasks reads the kinds once.
+     */
+    fun taskResilienceIn(state: SchedulerState, taskId: TaskId, kinds: Set<String>): Double =
+        PeriodKinds.multiplier(state.tasks[taskId]?.resilience.orEmpty(), kinds)
+
+    /**
+     * A task's resilience multiplier **at the now-line** — [taskResilienceIn] over [restrictiveKindsAt].
+     *
+     * This is exactly the number the walk races on there ([PlanWalk] reads it through `weightsAt`), which is
+     * why the §7 task picker can colour its rows with it: a `0` row is a task the plan cannot place at this
+     * instant however it is asked, and a fractional one is a task whose share is being scaled down while the
+     * period lasts.
+     */
+    fun taskResilienceAt(state: SchedulerState, taskId: TaskId, nowMillis: Long): Double =
+        taskResilienceIn(state, taskId, restrictiveKindsAt(state, nowMillis))
+
+    /**
+     * Whether [panel] stands for **real work on a task** — the one reading of that question.
+     *
+     * Everything else the calendar draws is not a task: a screen break, a sleep band, a grey inactivity or
+     * no-screen period (none of which carry a [TaskPanel.taskId] anyway) and a §14 reminder tag. Both
+     * questions the now-line asks about tasks go through it — what it is on right now ([taskAtNowLine]) and
+     * what it was on before ([taskPickerEntries]) — so the two can never disagree about what counts.
+     */
+    private fun isWorkPanel(panel: TaskPanel): Boolean =
+        panel.taskId != null && !panel.chore && !panel.screenBreak && !panel.sleep && !panel.noScreen &&
+            !panel.inactivity
 
     /**
      * PRD §7 **"Switch task"**: [switch] if the refusal it records is still **outstanding** at [nowMillis],
@@ -3665,6 +3748,129 @@ object SchedulerDomain {
         val answered = past.any { it.taskId != null && it.taskId != start.taskId && it.endMillis > start.atMillis }
         return if (answered) null else start.taskId
     }
+
+    // ----- PRD §7 the task picker -------------------------------------------------------------
+
+    /**
+     * One row of the PRD §7 **task picker** — the menu the "Choose the task to do now" chord opens at the
+     * pointer ([org.example.project.scheduler.platform.GlobalShortcut.PickTask]).
+     *
+     * [label] is the row's own [changeTaskMenuLabel] — the task's shortest path in the tree, as every other
+     * identity menu in the app labels a task, because two tasks may share a title and the user is choosing
+     * between them by sight. [lastTouchedMillis] is the instant the now-line was last **on** this task, or
+     * null for a task it has never been on; the list is sorted by it and the UI prints it.
+     */
+    data class TaskPickEntry(
+        val taskId: TaskId,
+        val label: String,
+        val lastTouchedMillis: Long?,
+    )
+
+    /**
+     * PRD §7 the task picker's list: every task the plan can be made to start
+     * ([org.example.project.scheduler.state.SchedulerIntent.ForceTaskStart]), **most recently touched by the now-line first**.
+     *
+     * "Touched by the now-line" is read off the recorded past and nothing else — the task panels that stand
+     * for real work ([isWorkPanel]) and the records banked from them — so a row's rank is a fact about what
+     * the user has actually been doing, never about the plan's intentions ahead of the line. A panel
+     * straddling the line counts at the line, not at its end: the future half has not happened.
+     *
+     * **The task the now-line is on right now is left out.** The list is what to switch *to*; leaving it in
+     * would put it first (it is being touched at this very instant) and make Enter straight after the chord
+     * re-ask for the task the user is trying to leave. With it gone the first row is the task worked before
+     * this one, so chord-then-Enter means "back to what I was doing".
+     *
+     * Tasks the now-line has never been on are kept, after the touched ones, in the identity menus' own
+     * order ([taskIdMenuSort]: shortest path first) — a task that has never run is exactly the one a user
+     * may want to start, and the search field below the list is a *second* way to find one, not the only
+     * one.
+     *
+     * O(records + panels + tasks), and asked **on a press** rather than on a tick — nothing here is on the
+     * display hot path (`docs/invariants/display-hot-path.md`); the result is remembered for as long as the
+     * menu stands.
+     */
+    fun taskPickerEntries(state: SchedulerState, nowMillis: Long): List<TaskPickEntry> {
+        val current = taskAtNowLine(state, nowMillis)
+        val eligible = schedulableLeaves(state).filterTo(HashSet()) { it != current }
+        if (eligible.isEmpty()) return emptyList()
+
+        val lastTouched = HashMap<TaskId, Long>(eligible.size)
+        fun touch(taskId: TaskId, startMillis: Long, endMillis: Long) {
+            if (taskId !in eligible || startMillis >= nowMillis) return
+            val at = minOf(endMillis, nowMillis)
+            val best = lastTouched[taskId]
+            if (best == null || at > best) lastTouched[taskId] = at
+        }
+        // The two halves [pastPeriodsForTask] reads, in one pass over each: a task's banked records, and the
+        // panels the schedule laid down (which is where a period the user is in the MIDDLE of comes from).
+        for ((taskId, task) in state.tasks) {
+            if (taskId !in eligible) continue
+            for (record in task.record) touch(taskId, record.startEpochMillis, record.endEpochMillis)
+        }
+        for (panel in state.panels) {
+            val taskId = panel.taskId ?: continue
+            if (isWorkPanel(panel)) touch(taskId, panel.startEpochMillis, panel.endEpochMillis)
+        }
+
+        val paths = shortestTaskTreePaths(state)
+        val neverTouchedOrder = eligible.sortedWith(taskIdMenuSort(state, paths))
+        val rank = neverTouchedOrder.withIndex().associate { (index, taskId) -> taskId to index }
+        return neverTouchedOrder
+            .sortedWith(
+                // Touched before untouched; then the later instant first; then the identity menus' order,
+                // which is what keeps the untouched tail (and any two tasks last touched in the same
+                // millisecond) in a stable, explicable order rather than the hash map's.
+                compareBy<TaskId> { if (lastTouched.containsKey(it)) 0 else 1 }
+                    .thenByDescending { lastTouched[it] ?: Long.MIN_VALUE }
+                    .thenBy { rank[it] ?: 0 },
+            )
+            .map { taskId ->
+                TaskPickEntry(
+                    taskId = taskId,
+                    label = changeTaskMenuLabel(state, taskId, paths),
+                    lastTouchedMillis = lastTouched[taskId],
+                )
+            }
+    }
+
+    /**
+     * PRD §7 the task picker's **id menu** — the "Tasks" rows under its search field: the placeable tasks
+     * whose title IS what is typed, exactly as a cell's Change Task menu reads an exact title match
+     * ([matchingUserTaskIds]), labelled and ordered the same way.
+     *
+     * There is deliberately **no "New task" row**, for the reason a weight table's optional row has none: a
+     * brand-new task has no cell and no place in the tree, so nothing could be started — the picker names a
+     * task that exists, or it names nothing.
+     */
+    fun taskPickerIdentityRows(state: SchedulerState, draftText: String): List<ChangeTaskMenuEntry> {
+        val paths = shortestTaskTreePaths(state)
+        return matchingUserTaskIds(state, draftText.trim(), paths)
+            .filter { isPlaceableTask(state, it) }
+            .map { ChangeTaskMenuEntry(taskId = it, label = changeTaskMenuLabel(state, it, paths)) }
+    }
+
+    /**
+     * PRD §7 the task picker: **what Enter takes**, and the one place that rule is written.
+     *
+     * Two states, because the menu has two ways of naming a task and only one Enter:
+     *  - the search field **empty** — the highlighted row of the list, which starts on the first row, so the
+     *    chord followed by Enter is "back to the task I was on before this one";
+     *  - the field **holding text** — the task that text NAMES, which is the first row of the field's own id
+     *    menu ([taskPickerIdentityRows]): the same row the user can see, so Enter and a click agree. Text
+     *    naming no task commits nothing (a title *suggestion* only fills the field, here as everywhere
+     *    else — picking one is not choosing a task).
+     */
+    fun taskPickerCommit(
+        state: SchedulerState,
+        entries: List<TaskPickEntry>,
+        draftText: String,
+        highlighted: Int,
+    ): TaskId? =
+        if (draftText.isBlank()) {
+            entries.getOrNull(highlighted)?.taskId
+        } else {
+            taskPickerIdentityRows(state, draftText).firstOrNull()?.taskId
+        }
 
     // ----- §13 Schedule Unit ------------------------------------------------------------------
 
@@ -5429,14 +5635,19 @@ object SchedulerDomain {
      * create a task (taskId left null) or reuse an existing one, exactly like Edit Mode in the tree.
      */
     /**
-     * PRD §8 calendar edit window: a task is a valid panel target only when it is a **leaf** (the calendar
-     * schedules leaves, never a parent) **and still lives in the tree** (some cell points at it). The
-     * latter excludes a *tombstone* — a task with no cell, kept alive only to keep its calendar panels /
-     * records labelled (see [purgeOrphanTasks] and the reducer's tombstone handling). A tombstone can't be
-     * scheduled (it has no cell, so [schedulableLeaves] skips it) and the user has removed it from the tree,
-     * so it must not be offered back as a reusable task in the title / id menus.
+     * A task the app may **place at an instant**: a **leaf** (the scheduler places leaves, never a parent —
+     * a parent is a grouping) that **still lives in the tree** (some cell points at it). That second half
+     * excludes a *tombstone* — a task with no cell, kept alive only to keep its calendar panels / records
+     * labelled (see [purgeOrphanTasks] and the reducer's tombstone handling). A tombstone can't be scheduled
+     * (it has no cell, so [schedulableLeaves] skips it) and the user has removed it from the tree, so it
+     * must not be offered back as a reusable task in the title / id menus.
+     *
+     * Asked by the two surfaces that name a task to put somewhere — PRD §8's calendar block editor and PRD
+     * §7's task picker ([taskPickerEntries]) — and it is deliberately the same predicate
+     * `SchedulerReducer.reduceForceTaskStart` enforces, so neither menu can offer a task the intent behind
+     * it would then refuse.
      */
-    private fun isCalendarPanelTarget(state: SchedulerState, taskId: TaskId): Boolean =
+    fun isPlaceableTask(state: SchedulerState, taskId: TaskId): Boolean =
         isLeafTask(state, taskId) && taskHasCells(state, taskId)
 
     fun calendarTaskMenuEntries(
@@ -5445,7 +5656,7 @@ object SchedulerDomain {
         excludeTaskId: TaskId? = null,
     ): List<ChangeTaskMenuEntry> {
         val paths = shortestTaskTreePaths(state)
-        val matching = matchingUserTaskIds(state, draftText, paths, excludeTaskId).filter { isCalendarPanelTarget(state, it) }
+        val matching = matchingUserTaskIds(state, draftText, paths, excludeTaskId).filter { isPlaceableTask(state, it) }
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
             for (taskId in matching) {
@@ -5500,17 +5711,19 @@ object SchedulerDomain {
         entries.firstOrNull { it.taskId != null }?.taskId
 
     /**
-     * PRD §8 calendar edit window: title suggestions restricted to titles that have at least one leaf
-     * task (a parent task is never a valid panel target). Same ordering as [titleSuggestions].
+     * Title suggestions restricted to titles that name at least one **placeable** task ([isPlaceableTask]) —
+     * a parent task is never somewhere the app can put the now-line. Same ordering as [titleSuggestions].
+     * The PRD §8 calendar block editor and the PRD §7 task picker both ask it.
      */
-    fun calendarTitleSuggestions(state: SchedulerState, input: String): List<String> =
+    fun placeableTaskTitleSuggestions(state: SchedulerState, input: String): List<String> =
         titleSuggestions(state, input).filter { title ->
-            state.titleToTaskIds[title].orEmpty().any { isCalendarPanelTarget(state, it) }
+            state.titleToTaskIds[title].orEmpty().any { isPlaceableTask(state, it) }
         }
 
-    /** PRD §8 calendar edit window: the leaf task to assign when a title suggestion is chosen, if any. */
-    fun calendarTaskIdForTitle(state: SchedulerState, title: String): TaskId? =
-        state.titleToTaskIds[title].orEmpty().firstOrNull { isCalendarPanelTarget(state, it) }
+    /** The placeable task a chosen title suggestion designates, if any — the calendar editor's and the
+     * picker's one answer to "which task is this title". */
+    fun placeableTaskIdForTitle(state: SchedulerState, title: String): TaskId? =
+        state.titleToTaskIds[title].orEmpty().firstOrNull { isPlaceableTask(state, it) }
 
     /** PRD §14: a reminder choice for the "add a checked reminder" id menu — its stable id and title. */
     data class ReminderMenuEntry(val id: String, val title: String)

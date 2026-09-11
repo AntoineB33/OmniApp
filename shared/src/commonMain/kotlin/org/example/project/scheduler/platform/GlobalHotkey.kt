@@ -102,6 +102,22 @@ enum class GlobalShortcut(
     SwitchTask(ShortcutBinding(ShortcutKey.Z), "Switch task"),
 
     /**
+     * PRD §7 **"Choose the task to do now"**: opens the task picker at the pointer — the tasks the now-line
+     * has been on, most recent first, and a search field under them — and the row the user takes becomes the
+     * task the plan places here.
+     *
+     * The mirror image of [SwitchTask], and struck in the same moment for the same reason: the user has just
+     * decided, inside whatever application they are working in, that they should be doing something else.
+     * [SwitchTask] says only "not this"; this one says which. Both are kept because they are different
+     * questions — one is answered without looking, the other by looking at a list.
+     *
+     * Unlike every other chord here it puts a **surface** on screen rather than driving a seam, and that
+     * surface takes the keyboard away from the application in front (see `docs/invariants/shortcuts.md`):
+     * it has to, or the user could not type in it or press Enter. Desktop-only, like the claim itself.
+     */
+    PickTask(ShortcutBinding(ShortcutKey.T), "Choose the task to do now"),
+
+    /**
      * PRD §11 Notifications: silences every notification the app posts, and clears the ones already sitting in
      * the OS's own list ([cancelSystemNotifications]) — pressed at the moment a notification has just
      * interrupted something, which is by definition a moment OmniApp is not the focused window. Nothing is

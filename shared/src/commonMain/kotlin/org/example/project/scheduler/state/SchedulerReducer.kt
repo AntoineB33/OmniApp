@@ -2211,7 +2211,8 @@ object SchedulerReducer {
 
     /**
      * PRD §7 **"Switch task"** ([SchedulerIntent.ForceTaskSwitch]): record the user's refusal of the task the
-     * now-line is on, then re-plan so something else starts here.
+     * now-line is on, **lay the epsilon switch entry** on the task the plan hands the line to
+     * ([placeSwitchEntry]), then re-plan around it.
      *
      * The refusal is [org.example.project.scheduler.model.ForcedTaskSwitch] — a fact about the past, read by
      * the fill as the walk's `last` — not an edit to any rule, which is why it re-plans from inside this
@@ -2223,7 +2224,93 @@ object SchedulerReducer {
      */
     private fun reduceForceTaskSwitch(state: SchedulerState, nowMillis: Long): SchedulerState {
         val taskId = SchedulerDomain.taskAtNowLine(state, nowMillis) ?: return state
-        return reduceRefreshSchedule(state.copy(forcedSwitch = ForcedTaskSwitch(taskId, nowMillis)), nowMillis)
+        val refused = state.copy(forcedSwitch = ForcedTaskSwitch(taskId, nowMillis))
+        // Who the plan hands the now-line to now — the task the switch entry below states the user has
+        // started. The rules the last fill returned already name them ([TaskPanel.alternativeTaskId], whose
+        // README use IS this press), which costs no fill at all. Where they do not — the panels of a payload
+        // just loaded carry no derived rules yet — the same answer is arrived at the slow way, by re-planning
+        // with the refusal standing and reading what the fill put at the line.
+        val named = SchedulerDomain.alternativeTaskAt(state.panels, nowMillis)
+        val replanned = if (named == null) reduceRefreshSchedule(refused, nowMillis) else null
+        val replacement =
+            (named ?: replanned?.let { SchedulerDomain.taskAtNowLine(it, nowMillis) })
+                ?.takeIf { it != taskId && SchedulerDomain.isPlaceableTask(state, it) }
+        // Nobody to hand it to (the sole candidate in the period still runs — the walk's own escape): there
+        // is no task the user has switched TO, so there is nothing to state and the press is the refusal
+        // alone, exactly as before.
+        val replacementTask = replacement ?: return replanned ?: reduceRefreshSchedule(refused, nowMillis)
+        return reduceRefreshSchedule(startTaskNow(refused, replacementTask, nowMillis), nowMillis)
+    }
+
+    /**
+     * PRD §7: **the user has selected [taskId] to do now** — the one thing both switch chords do, and the one
+     * place it is written. `Ctrl+Shift+Alt+T` names the task from the picker; `Ctrl+Shift+Alt+Z` names it by
+     * refusing the one on the line and asking the plan who runs instead. From here on the two are the same
+     * press.
+     *
+     * Two halves, and both are needed:
+     *  - the **switch entry** ([placeSwitchEntry]) — an epsilon-long block on the task, authored by the user,
+     *    which is what the calendar draws with the blue outline and the check box. It says *this task, from
+     *    here* and nothing about how long;
+     *  - the **request** ([ForcedTaskStart]) — which is what carries the task past the seed, and the only
+     *    thing that can. A pre-placed block is committed service the walk steps OVER (`fillSchedule`'s
+     *    `futureBlocks`), and stepping over it sets the walk's `last`, so the never-twice-in-a-row rule
+     *    would refuse the very task just started and the starved one would take the slot an instant later.
+     *    Nor can the seed GROW: the rule that continues a chunk short of its minimum reads the recorded
+     *    PAST, and a block at the line is not in it. What makes the run a usable length is the first slot
+     *    after the seed, floored at the task's minimum by `PlanWalk.chunkMillis` — the README's soft
+     *    *Minimum Execution Time* goal, yielding as ever to whatever the timeline restricts.
+     *
+     * An outstanding refusal **of this same task** is cleared, as ever: the user has now said explicitly what
+     * that press said only negatively.
+     */
+    private fun startTaskNow(
+        state: SchedulerState,
+        taskId: TaskId,
+        nowMillis: Long,
+    ): SchedulerState =
+        placeSwitchEntry(state, taskId, nowMillis).copy(
+            forcedStart = ForcedTaskStart(taskId, nowMillis),
+            forcedSwitch = state.forcedSwitch?.takeIf { it.taskId != taskId },
+        )
+
+    /**
+     * PRD §7 **the switch entry**: the block both switch chords lay at the now-line —
+     * `[now, now + `[SchedulerDomain.SWITCH_ENTRY_MILLIS]`)` on [taskId] — before the fill is re-run around
+     * it. Epsilon long, deliberately: the press says WHICH task and WHEN, never for how long.
+     *
+     * It is an ordinary **user-authored panel**, built exactly as the calendar's own "add" builds one
+     * ([reduceAddTaskPanel]) and through the same two helpers, because it is the same thing: a period the
+     * user put on the timeline by hand. That is the whole of why it draws with the blue outline and the check
+     * box in its top-right corner — [SchedulerDomain.isUserPlaced] is the one question those answer, and an
+     * `auto = false` panel carrying the existence pin is what it says yes to. Nothing about the picker or the
+     * chord reaches the calendar; the panel does.
+     *
+     * Pinned, so the fill treats it as a fixed obstacle ([SchedulerDomain.isSchedulerFixed]) and plans
+     * *around* it rather than over it — the press would otherwise be undone by the very re-plan it asks for.
+     * Committed as a Calendar history unit like every other hand-placed block, so a chord struck by accident
+     * is one Ctrl+Z away.
+     */
+    private fun placeSwitchEntry(
+        state: SchedulerState,
+        taskId: TaskId,
+        nowMillis: Long,
+    ): SchedulerState {
+        val pins = PanelPins(existence = true)
+        val (panelId, allocated) = state.allocatePanelId()
+        val panel =
+            TaskPanel(
+                id = panelId,
+                taskId = taskId,
+                title = state.tasks[taskId]?.title.orEmpty(),
+                startEpochMillis = nowMillis,
+                endEpochMillis = nowMillis + SchedulerDomain.SWITCH_ENTRY_MILLIS,
+                pinned = derivePinned(pins),
+                pins = pins,
+                auto = false,
+            )
+        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        return commitPanels(resolved, resolvedPanels, label = "Switch task")
     }
 
     /**
@@ -2233,22 +2320,24 @@ object SchedulerReducer {
      * The mirror image of [reduceForceTaskSwitch], for the same reasons and with the same shape: the request
      * is a [org.example.project.scheduler.model.ForcedTaskStart] — a fact about the past, read by the fill as
      * the task of its first slot — not an edit to any rule, which is why it re-plans from inside this reducer
-     * instead of riding [SchedulerDomain.schedulingSignature]. Only a **schedulable leaf** can be asked for: a
-     * parent task is a grouping the scheduler never places, so the request would be unanswerable. Asking for a
+     * instead of riding [SchedulerDomain.schedulingSignature]. Only a **placeable** task can be asked for
+     * ([SchedulerDomain.isPlaceableTask]): a parent task is a grouping the scheduler never places, and a
+     * tombstone is no longer in the tree, so either request would be unanswerable — and it is that same
+     * predicate the menus offering this intent are built from (PRD §13's cell menu, PRD §8's block editor and
+     * PRD §7's task picker), so none of them can offer a row this line then drops. Asking for a
      * task also clears an outstanding refusal **of that same task** — the user has just said explicitly what
      * the earlier press said only negatively, and leaving both standing would have the fill place the task and
      * go on refusing it. The marker is stored even while §7 auto-scheduling is off: the plan is not being
      * computed at all then, and the request is honoured by the fill that resumes it.
+     *
+     * The **switch entry** ([placeSwitchEntry]) is laid first, so the fill runs around a block that already
+     * says what the user is doing; the marker then carries that task on past it, rather than the plan handing
+     * them somebody else an instant later.
      */
     private fun reduceForceTaskStart(state: SchedulerState, taskId: TaskId): SchedulerState {
-        if (!SchedulerDomain.taskHasCells(state, taskId) || !SchedulerDomain.isLeafTask(state, taskId)) return state
+        if (!SchedulerDomain.isPlaceableTask(state, taskId)) return state
         val now = clock.nowMillis()
-        val requested =
-            state.copy(
-                forcedStart = ForcedTaskStart(taskId, now),
-                forcedSwitch = state.forcedSwitch?.takeIf { it.taskId != taskId },
-            )
-        return reduceRefreshSchedule(requested, now)
+        return reduceRefreshSchedule(startTaskNow(state, taskId, now), now)
     }
 
     /**

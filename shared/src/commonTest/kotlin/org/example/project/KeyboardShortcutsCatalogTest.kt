@@ -51,6 +51,7 @@ class KeyboardShortcutsCatalogTest {
         assertEquals("Ctrl+Shift+Alt+A", GlobalShortcut.ToggleAway.defaultChord)
         assertEquals("Ctrl+Shift+Alt+E", GlobalShortcut.LookAwayNow.defaultChord)
         assertEquals("Ctrl+Shift+Alt+Z", GlobalShortcut.SwitchTask.defaultChord)
+        assertEquals("Ctrl+Shift+Alt+T", GlobalShortcut.PickTask.defaultChord)
         assertEquals("Ctrl+Shift+Alt+N", GlobalShortcut.ToggleNotifications.defaultChord)
     }
 

@@ -721,11 +721,15 @@ sealed interface SchedulerIntent {
      * task the now-line sits on at [nowMillis] is refused there, so the plan starts a *different* one from
      * [nowMillis] on.
      *
-     * Records the refusal ([org.example.project.scheduler.model.ForcedTaskSwitch]) and re-plans on the spot,
+     * Records the refusal ([org.example.project.scheduler.model.ForcedTaskSwitch]), lays the **switch entry**
+     * — an epsilon-long block on the task the plan hands the line to, placed by the user and drawn with the
+     * blue outline and the check box — and re-plans on the spot,
      * rather than leaving it to [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]:
      * the press IS the calculation event (the same reason `RemoveRecordPeriod` refills inside its own
      * reducer), and a marker in the signature would fire a second, *un*-refused re-plan the moment the marker
-     * was spent. A no-op when the now-line is on no task at all. Persisted + synced; not undoable.
+     * was spent. A no-op when the now-line is on no task at all, and no entry is laid when the refusal
+     * changes nothing (the sole candidate in the period still runs — there is no task switched TO). The
+     * markers are persisted + synced; the entry is an ordinary Calendar history unit.
      */
     data class ForceTaskSwitch(
         val nowMillis: Long,
@@ -742,7 +746,13 @@ sealed interface SchedulerIntent {
      * *un*-asked re-plan the moment it was spent. Unlike the menu's "copy" this names ONE task however many
      * cells are selected — "start *this* task" has no meaning for a block. A task that is not a schedulable
      * leaf is a no-op (a parent task is a grouping and is never placed). The instant is the reducer's clock,
-     * like the other user-authored edits that re-plan on the spot. Persisted + synced; not undoable.
+     * like the other user-authored edits that re-plan on the spot.
+     *
+     * It also lays the **switch entry** — an epsilon-long block on [taskId], placed by the user, pinned so
+     * the re-plan that follows works around it rather than over it. How LONG the task then runs is the
+     * scheduler's answer, not this intent's: the marker takes the first slot after the seed and the walk
+     * floors that slot at the task's minimum. The markers are persisted + synced; the
+     * entry is an ordinary Calendar history unit.
      */
     data class ForceTaskStart(
         val taskId: TaskId,

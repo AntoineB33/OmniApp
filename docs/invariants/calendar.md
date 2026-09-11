@@ -197,6 +197,12 @@ Global rules that always apply: `CLAUDE.md`.
   the TOP RIGHT, opposite the title at the top left — the "no two texts share a point" rule again — and it
   gives way the same way (`PIN_BOX_MIN_HEIGHT` / `PIN_BOX_MIN_WIDTH`: a block is never stretched to hold what
   is drawn on it, and the zoom is what brings the box back).
+- **The two switch chords place a block here like any other hand** (`shortcuts.md`, `scheduler.md`): PRD §7's
+  `Ctrl+Shift+Alt+Z` / `+T` lay an **epsilon-long panel at the now-line** on the task the user has just
+  decided to do (`SchedulerReducer.placeSwitchEntry`), `auto = false` with the existence pin — so it wears the outline
+  and the box by the rule above, and the calendar is told **nothing** about chords or pickers. That is the
+  test of the rule: a new way of putting a block on the timeline must reach the drawing through
+  `isUserPlaced`, never through a flag of its own.
 - **The pin box IS the edit window's Existence switch, reached from the panel** (`SetPanelPinned` writes the
   same `pins.existence`, through the same `derivePinned`). One rule, one field, three ways in — the window,
   the box, and the gesture below. Unpinning is a **rule change**: `pinned` is in `schedulingSignature`, so the

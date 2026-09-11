@@ -19,6 +19,24 @@ Global rules that always apply: `CLAUDE.md`.
 - **A chunk's scale is one ROUND**, `c = p·m_rival/(1 − p)`, floored at the task's minimum. The lift (boost)
   and the cap (round) are asked **separately**.
 - **`last` is never picked twice in a row** unless it is the only candidate.
+- **BOTH switch chords lay an EPSILON ENTRY at the now-line and re-plan around it**
+  (`SchedulerReducer.placeSwitchEntry`, `SchedulerDomain.SWITCH_ENTRY_MILLIS` = 1 s). It is an ordinary
+  user-authored panel — `auto = false`, existence pin, built through the same two helpers the calendar's own
+  "add" uses — so it is a fixed obstacle the fill plans around (`isSchedulerFixed`), it is a Calendar history
+  unit, and it draws with the blue outline and the check box without the calendar knowing a chord exists
+  (`calendar.md`). It states *which task and when*, and **nothing about how long**: the length is the
+  scheduler's answer. `Ctrl+Shift+Alt+T` names the task; `Ctrl+Shift+Alt+Z` names it as the **alternative**
+  the last fill's rules already give (`alternativeTaskAt`, whose README use IS this press), falling back to
+  re-planning with the refusal standing and reading the line when the panels carry no derived rules yet.
+- **The seed does NOT grow; the request that rides with it is what makes the panel a usable length.** Two
+  model facts, and both bite: a pre-placed block is committed service the walk steps OVER (`futureBlocks`),
+  and stepping over it sets the walk's `last` — so without a `ForcedTaskStart` the never-twice-in-a-row rule
+  refuses the very task just started and the starved one takes the slot an instant later
+  (`SwitchTaskEntryTest.the_seed_alone_would_hand_the_line_straight_back`). And the resume rule that
+  continues a chunk short of its minimum reads the recorded PAST (`headRun` over `pastBlocks`), which a
+  block at the line is not in. What makes the run long is the FIRST SLOT AFTER the seed, floored at the
+  task's minimum by `PlanWalk.chunkMillis` — the soft *Minimum Execution Time* goal, yielding as ever to
+  whatever the timeline restricts.
 - **PRD §7 "Switch task" IS that same `last`, not a ban.** The button (and `Ctrl+Shift+Alt+Z`) records a
   `ForcedTaskSwitch(task, at)` and the fill hands it to `walk.setLast`, so the refused task keeps its clock and
   its share and is an ordinary candidate again from the second slot — and a task nothing can replace still
@@ -26,13 +44,16 @@ Global rules that always apply: `CLAUDE.md`.
   its own reducer, or dropping the spent marker would fire a second, un-refused re-plan. It stays live until
   **another task has actually been served past `at`** (`liveForcedSwitchTask`, read off the recorded past, so
   the resume contract holds); the advance tick drops it then.
-- **PRD §13 "start this task now" is the SAME lever from the other end.** The task cell's menu records a
-  `ForcedTaskStart(task, at)` and the fill puts that task in the **first slot it places** — charged like any
-  other pick, so only that slot is the user's answer. Same liveness predicate as the refusal
+- **PRD §13 "start this task now" is the SAME lever from the other end.** The task cell's menu — and PRD §7's
+  task picker (`Ctrl+Shift+Alt+T`, `shortcuts.md`), which is a second way of naming the task and not a second
+  lever — records a `ForcedTaskStart(task, at)` and the fill puts that task in the **first slot it places** —
+  charged like any other pick, so only that slot is the user's answer. Same liveness predicate as the refusal
   (`liveForcedStartTask`: outstanding until another task has been served past `at`), same reason it is not in
-  `schedulingSignature`, same drop by the advance tick. Offered on a schedulable **leaf** only; asking for a
-  task clears an outstanding refusal *of that same task*. It is answered in phase 1 **and** in phase 2 — a
-  timeline nothing disturbs freezes before phase 1 places anything, and the request must not vanish there.
+  `schedulingSignature`, same drop by the advance tick. Offered on a **placeable** task only — a leaf still in
+  the tree, `SchedulerDomain.isPlaceableTask`, which is the one predicate the reducer and every menu raising
+  this intent ask; asking for a task clears an outstanding refusal *of that same task*. It is answered in
+  phase 1 **and** in phase 2 — a timeline nothing disturbs freezes before phase 1 places anything, and the
+  request must not vanish there.
 - **EVERY rule the fill makes also names WHO RUNS INSTEAD** (`TaskPanel.alternativeTaskId`,
   `SchedulerDomain.alternativeTaskAt`). `side-dev/README.md` § *Alternative Schedules*: *"The returned set of
   rules must also give for every $now line$ the task that must be scheduled if the task scheduled by the

@@ -131,9 +131,15 @@ identifiers, persisted keys.
   ahead of the line at *every* position of the line, so **no instant of the timeline is ever inside it** and
   planning around it is planning around something that cannot happen. The requirements say what happens
   instead in as many words — the line *"would continuously delay that period (while creating task panels in
-  its passing)"* — so the fill DRAWS it and does not plan around it: only `restrictions` loses it, while the
-  calendar, the cue sweep and the recurrence bars go on treating it exactly like any other placement (it is
-  still what says a break is OWED, and it still re-anchors the bars off itself). Until 2026-09-05 it was an
+  its passing)"* — so the fill DRAWS it and does not plan around it: only the answers about **what restricts
+  the timeline** lose it, while the calendar, the cue sweep and the recurrence bars go on treating it exactly
+  like any other placement (it is still what says a break is OWED, and it still re-anchors the bars off
+  itself). There are **two** such answers and both must ask the predicate: `fillSchedule`'s `restrictions`,
+  and `SchedulerDomain.restrictiveKindsAt` — the display's reading, which PRD §7's task picker colours its
+  rows from. A reader that only asks "does this panel cover the line" finds a dragged pose (it is
+  materialized as `[t_p + 1, t_p + d + 1)` when the fill runs, and the line sweeps into it before the next
+  re-plan pushes it forward), which is exactly how the picker came to paint every task red under a dragged
+  15-minute pose. **A third such answer must ask it too.** Until 2026-09-05 it was an
   obstacle, and that broke *No idling* on a live account: the half-open form leaves exactly `[t_p, t_p + 1)`
   free, so a fill placed **one millisecond** of work and idled for the pose's whole length, and every later
   re-plan regenerated the pose at the NEW line and left the entire stretch the line had swept with no panel at

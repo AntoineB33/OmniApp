@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.CompositionLocalProvider
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -115,6 +116,10 @@ import org.example.project.ui.ShortcutsWindow
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskListWindow
+import org.example.project.ui.ScreenPoint
+import org.example.project.ui.TaskPickerMenu
+import org.example.project.ui.TaskPickerOverlay
+import org.example.project.ui.globalPointerLocation
 import org.example.project.ui.TaskPalette
 import org.example.project.ui.rememberTaskHues
 import org.example.project.ui.TaskTreesWindow
@@ -324,8 +329,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // re-samples presence the moment it flips, instead of at the next minute beat. No-op on Android (the
         // service wires it directly) and iOS/web (no such signal).
         LaunchedEffect(engine) { installPlatformActivityListener { engine.onPlatformActivityChanged() } }
+        // PRD §7 the task picker: the standing request to have the menu on screen, or null while it is not.
+        // A flow rather than plain Compose state because the only thing that ever writes it is the hot-key
+        // callback below, which runs on the claim's own dispatch thread and not on the frame loop.
+        val taskPickerRequest = remember { MutableStateFlow<TaskPickerRequest?>(null) }
+        val taskPicker by taskPickerRequest.collectAsState()
         // PRD §7/§15: the system-wide chords (Ctrl+Shift+Alt+A "I'm away", Ctrl+Shift+Alt+E "Look away now",
-        // Ctrl+Shift+Alt+Z "Switch task"), driving exactly the same engine seams the left-menu buttons do.
+        // Ctrl+Shift+Alt+Z "Switch task", Ctrl+Shift+Alt+T "Choose the task to do now"), driving exactly the
+        // same engine seams the left-menu buttons do.
         // Claimed from the OS rather than handled in Compose because they are pressed precisely when OmniApp
         // is NOT the focused window — the user is walking away from, resting their eyes in the middle of, or
         // deciding they want off the current task inside whatever they were working in — and a focus-scoped
@@ -346,6 +357,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     GlobalShortcut.ToggleAway -> engine.setUserAway(!engine.userAway.value)
                     GlobalShortcut.LookAwayNow -> engine.restartLookAway()
                     GlobalShortcut.SwitchTask -> engine.forceTaskSwitch()
+                    // PRD §7: the picker. The pointer is read HERE, at the press, and not when the menu
+                    // composes — the two are a frame or more apart and the hand does not stop moving in
+                    // between. Re-striking the chord while the menu stands re-anchors it at the new
+                    // pointer, which is why the request carries the instant as well: it is what makes the
+                    // second press a different value.
+                    GlobalShortcut.PickTask ->
+                        taskPickerRequest.value =
+                            TaskPickerRequest(globalPointerLocation(), clock.nowMillis())
                     // PRD §11: the same lever as the lateral menu's Notifications switch. Struck from
                     // whatever window the notification just interrupted, which is why it is system-wide.
                     GlobalShortcut.ToggleNotifications ->
@@ -1952,8 +1971,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 taskMenuEntries = { draft, exclude ->
                                     SchedulerDomain.calendarTaskMenuEntries(schedulerState, draft, exclude)
                                 },
-                                titleSuggestions = { SchedulerDomain.calendarTitleSuggestions(schedulerState, it) },
-                                taskIdForTitle = { SchedulerDomain.calendarTaskIdForTitle(schedulerState, it) },
+                                titleSuggestions = { SchedulerDomain.placeableTaskTitleSuggestions(schedulerState, it) },
+                                taskIdForTitle = { SchedulerDomain.placeableTaskIdForTitle(schedulerState, it) },
                                 titleForTaskId = { schedulerState.tasks[it]?.title },
                                 initialPins = block.pins,
                                 noScreenResilienceForTaskId = { id ->
@@ -2503,10 +2522,47 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onFetch = { vm.syncNow() },
                 )
             }
+
+            // PRD §7 the task picker (`Ctrl+Shift+Alt+T`). It is drawn at the app root like every other
+            // overlay, but it is not IN the app: the actual puts it in an OS window of its own at the
+            // pointer, over whatever application the chord was struck from (`ui/TaskPickerOverlay.kt`).
+            taskPicker?.let { request ->
+                TaskPickerOverlay(
+                    anchor = request.anchor,
+                    onDismiss = { taskPickerRequest.value = null },
+                ) {
+                    TaskPickerMenu(
+                        state = schedulerState,
+                        nowMillis = request.openedAtMillis,
+                        // The display's own instant, not the press's: what the timeline forbids is a fact
+                        // about NOW, and the menu stands open across period boundaries. It is resampled at
+                        // exactly those boundaries (see the sampler above), so the rows recolour when the
+                        // line enters a new period and never on a timer of their own.
+                        restrictionNowMillis = nowMillis,
+                        // The picker's one effect, and the very intent PRD §13's "start this task now"
+                        // dispatches: the plan places this task at the now-line. The menu then leaves —
+                        // it is a question, and it has been answered.
+                        onPick = { taskId ->
+                            vm.dispatch(SchedulerIntent.ForceTaskStart(taskId))
+                            taskPickerRequest.value = null
+                        },
+                        onDismiss = { taskPickerRequest.value = null },
+                    )
+                }
+            }
         }
         }
     }
 }
+
+/**
+ * PRD §7: one press of the task-picker chord — where the pointer was, and when it was struck.
+ *
+ * The instant is part of the request and not read off the clock by the menu, so that the list the user is
+ * looking at is the one that was true when they asked for it (and so that a second press re-opens the menu
+ * even with the pointer in the same pixel).
+ */
+private data class TaskPickerRequest(val anchor: ScreenPoint?, val openedAtMillis: Long)
 
 /**
  * PRD §8 (uniform blocks): the intent that commits new bounds/title/pinned for any calendar [block].

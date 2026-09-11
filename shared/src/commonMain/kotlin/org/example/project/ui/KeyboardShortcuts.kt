@@ -188,6 +188,21 @@ object KeyboardShortcutCatalog {
                 ),
             ),
             KeyboardShortcutGroup(
+                title = "Task picker",
+                note = "While the menu the \"Choose the task to do now\" chord opens at the pointer is on " +
+                    "screen. It holds the keyboard for as long as it stands, and giving the keyboard back " +
+                    "to another application closes it.",
+                shortcuts = listOf(
+                    KeyboardShortcut("↑ / ↓", "Move the highlight through the list of tasks"),
+                    KeyboardShortcut(
+                        ControlChords.ENTER,
+                        "Start the highlighted task — or, once the field holds text, the task it names",
+                    ),
+                    KeyboardShortcut("Any character", "Type into the field to find a task by name"),
+                    KeyboardShortcut(ControlChords.ESCAPE, "Close without changing the plan"),
+                ),
+            ),
+            KeyboardShortcutGroup(
                 title = "History",
                 note = "Undo and redo are routed to whichever surface has the focus.",
                 shortcuts = listOf(

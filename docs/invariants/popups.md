@@ -25,6 +25,20 @@ window, a period's, a category's, a notice — is the same thing with the same m
   first. This is held by the state that opens them (`App`'s `editTaskId`, `weightWindowListId`, …), which is
   a single slot apiece — not by an outside-press rule.
 
+## The one surface that is NOT drawn inside the app
+
+**The task picker** (`ui/TaskPickerOverlay.kt`, `shortcuts.md`) is an OS window of its own — undecorated,
+always on top, at the pointer, holding the keyboard. It is the single exception to everything above, and it
+is one because the chord that opens it (`Ctrl+Shift+Alt+T`) is struck while OmniApp is **not** the focused
+window: a surface drawn in our window would appear behind whatever the user is looking at, far from their
+pointer, and could not be typed into.
+
+It is a **menu** by the rule below, not a window: no frame, no head, nothing reduces or maximizes it, no
+place in `WindowFrameHost.stackOrder` (it is over every window of every application, ours included), and it
+leaves on the first press outside it — which, for a window of its own, is the moment it loses the focus.
+Nothing else may follow it out of the app: every other surface, per-object window included, is drawn inside
+`App` where the stacking order can see it.
+
 ## The frame every window wears
 
 `AppWindowFrame` (`ui/WindowFrame.kt`) is the whole of it, and it is one composable rather than a shared

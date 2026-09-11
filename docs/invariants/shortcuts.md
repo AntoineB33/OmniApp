@@ -7,9 +7,10 @@ Global rules that always apply: `CLAUDE.md`.
 
 ## System-wide keyboard shortcuts
 
-→ ADR 0011. Four chords — "I'm away" / "I'm back", "Look away now", "Switch task", "Notifications on / off" —
-shipping as `Ctrl+Shift+Alt+A` / `+E` / `+Z` / `+N` and claimed from the OS because each is pressed precisely
-when OmniApp is **not** the focused window. Never a Compose key handler.
+→ ADR 0011. Five chords — "I'm away" / "I'm back", "Look away now", "Switch task", "Choose the task to do
+now", "Notifications on / off" — shipping as `Ctrl+Shift+Alt+A` / `+E` / `+Z` / `+T` / `+N` and claimed from
+the OS because each is pressed precisely when OmniApp is **not** the focused window. Never a Compose key
+handler.
 
 - **The chord must be SWALLOWED, not merely observed.** `RegisterHotKey` is not first-come, first-served: an
   application with its own low-level hook is called before the hot-key table, so one press fired two actions
@@ -85,6 +86,63 @@ a plain `Box`. Today: the lateral menu's "Look away now" / "Switch task" / "I'm 
   focus would eat the click the hover is leading up to. Hover is read with `onPointerEventCompat`, the same
   non-consuming helper the calendar's bubble uses — on a touch-only device Enter/Exit never fire and nothing
   is ever drawn, which is right: those platforms report `Unsupported` anyway.
+
+---
+
+## The task picker — the one chord that puts a surface on screen
+
+→ `ui/TaskPickerOverlay.kt`, `ui/TaskPickerMenu.kt`, `SchedulerDomain.taskPickerEntries`.
+
+`Ctrl+Shift+Alt+T` opens a menu **at the pointer**: the tasks the now-line has been on, most recent first,
+and a search field under them. The row the user takes is dispatched as `SchedulerIntent.ForceTaskStart` —
+PRD §13's "start this task now", the intent the task cell's own menu raises. The picker adds no lever of its
+own; it is a second way of naming the task that one already places.
+
+**Both switch chords then lay the epsilon switch entry** at the now-line on the task selected — an ordinary
+hand-placed block, so it draws with the blue outline and the check box and the calendar is told nothing
+about chords (`scheduler.md`, `calendar.md`). `+Z` selects its task by asking the plan who runs instead;
+`+T` by the row the user took. From there the two presses are the same press. The seed says which task and
+when, never for how long — see `scheduler.md` for why it does not grow on its own.
+
+- **What the now-line forbids is written in the rows.** A task whose resilience to the periods covering the
+  line is `0` is **red** — the plan cannot place it there however it is asked — and one between `0` and `1`
+  is **orange**, its share merely scaled while the period lasts (`SchedulerDomain.taskResilienceAt`, over
+  `restrictiveKindsAt`; `ui/TaskPickerMenu.restrictionColor`). **Which periods count is the fill's own
+  answer, not "whatever panel covers the line"**: a period the line is DRAGGING restricts nothing
+  (`screen-breaks.md`), and forgetting that painted every row red under a dragged 15-minute pose. A `1` wears no colour: a menu where most rows
+  are coloured says nothing. The id rows under the search field carry it too — they name one task — while a
+  title *suggestion* does not, because it names a string several tasks may share.
+- **The colours follow the LIVE instant, the order does not.** The list is ordered at the press (it must not
+  re-order under the pointer) but what the timeline forbids is a fact about *now*, and the menu stands open
+  across boundaries — so the rows are coloured at `App`'s display instant, which is resampled at exactly the
+  boundaries the panels name (`display-hot-path.md`). No timer of the menu's own, and none is needed.
+
+- **It is a MENU, in an OS window of its own.** Every other surface of the app is drawn inside the app
+  (`popups.md`), and this one cannot be: the chord is struck while OmniApp is *not* in front, so a menu in
+  our window would open behind what the user is looking at and nowhere near their pointer. So it is an
+  undecorated, always-on-top, focusable window — and it **takes the keyboard from the application in
+  front**. That is the feature, not a side effect: the menu exists to be typed into and answered with Enter.
+  It leaves on Escape, on a pick, and on losing the focus — which is what "closes on the first press outside
+  it" means for a window nothing else of ours can observe.
+- **The pointer is read at the PRESS, not at the composition** — they are a frame or more apart and the hand
+  does not stop moving in between. The instant is captured with it, so the list cannot re-order itself under
+  the pointer while it is being read, and a second press re-anchors the menu where the pointer is now.
+- **The task the now-line is on is not in the list.** The list is what to switch *to*; left in, it would lead
+  the list (it is being touched at this instant) and chord-then-Enter would re-ask for the task being left.
+  With it gone the first row is the task worked before this one — chord, Enter, back to it.
+- **"Touched" is read off the recorded past only**: the records, and the panels that stand for real work
+  (`SchedulerDomain.isWorkPanel`, the same predicate `taskAtNowLine` uses — a break, a sleep band or a grey
+  period is not a task). A panel straddling the line counts **at the line**; one wholly ahead of it is the
+  plan's intention, not history, and counts not at all.
+- **Every row it offers is a row the intent honours.** The list, the id rows, the calendar's block editor and
+  `reduceForceTaskStart` all ask `SchedulerDomain.isPlaceableTask` — a leaf still in the tree. A menu that can
+  offer a task the reducer then drops is a press the user cannot tell from a lost keystroke.
+- **The search field is a task cell in Edit Mode and nothing else**: the same `EditModeMenuBlock`, its
+  **Tasks** id rows (exact title match — those *act*) over its **Title suggestions** (which only fill the
+  field). No Mode selector and **no "New task" row** — a task that does not exist is nothing to start.
+- **One Enter, one rule** (`SchedulerDomain.taskPickerCommit`): the highlighted row while the field is empty;
+  the task the field *names* once it holds text; nothing at all when that text names no task. It lives in the
+  domain so it can be pinned without a screen — the UI only clamps the highlight and draws it.
 
 ---
 

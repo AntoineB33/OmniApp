@@ -2,13 +2,14 @@
 
 **Status:** active. **Invariant summary:** see `CLAUDE.md` → *System-wide keyboard shortcuts*.
 
-Four of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
+Five of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
 
 | Default chord | Action | Why the app is not in front |
 | --- | --- | --- |
 | `Ctrl+Shift+Alt+A` | "I'm away" / "I'm back" (`SchedulerEngine.setUserAway`) | the user is walking away from whatever they were working in |
 | `Ctrl+Shift+Alt+E` | "Look away now" (`SchedulerEngine.restartLookAway`) | the user decides mid-task to rest their eyes |
 | `Ctrl+Shift+Alt+Z` | "Switch task" (`SchedulerEngine.forceTaskSwitch`) | the user is inside the work they have decided to get off |
+| `Ctrl+Shift+Alt+T` | "Choose the task to do now" (the task picker, below) | same moment as the row above — this one asks *which* |
 | `Ctrl+Shift+Alt+N` | "Notifications on / off" (`SchedulerEngine.setNotificationsEnabled`) | the notification being cancelled has just interrupted some other window |
 
 Those are the chords the app *ships* with; since 1.6.0 each of them is **rebindable** - see *Rebinding*, below.
@@ -202,9 +203,126 @@ through a lookup for no failure it fixes.
   decode heals a stored table the rules would refuse today the same way — an account whose claim silently holds
   a chord the window would not let the user set is undiagnosable from the window.
 
+## The task picker (`Ctrl+Shift+Alt+T`, 1.6.0)
+
+`Ctrl+Shift+Alt+Z` answers "not this" without looking. The picker answers "this one": a menu at the pointer
+listing the tasks the now-line has been on, most recent first, with a search field under it; the row taken is
+dispatched as `SchedulerIntent.ForceTaskStart`, PRD §13's existing "start this task now".
+
+**Why a fifth chord rather than a new meaning for `+Z`.** They are different questions and both are wanted:
+the refusal is one press with no surface and no decision, the pick is a list to read. Rebinding one onto the
+other is the user's to do, not ours to decide for them, and `+Z` already had a lateral-menu button whose
+hover bubble names it — silently changing what the chord does would have left that button advertising a chord
+that no longer did what the button does.
+
+**Why it is an OS window of its own** — the one surface of the app not drawn inside the app (`popups.md`).
+The chord is struck precisely when OmniApp is not in front. A Compose surface inside our window would open
+behind whatever the user is looking at, nowhere near their pointer, and could not be typed into. So the
+actual (`ui/TaskPickerOverlay.jvm.kt`) opens an undecorated, always-on-top, focusable window at the AWT
+pointer location, clamped onto the screen that pointer is on.
+
+**It takes the keyboard from the application in front, deliberately.** The menu exists to be typed into and
+answered with Enter, and neither is possible without the focus. The cost is real and accepted: it can knock a
+full-screen application out of full screen, and the window it took the focus from is the one Windows returns
+it to when the menu closes. The claim that opens it has just swallowed a keystroke, so the process has the
+recent input Windows requires to take the foreground at all.
+
+**What it reads.** "Touched by the now-line" comes off the recorded past only — a task's records and the
+panels that stand for real work (`isWorkPanel`, the predicate `taskAtNowLine` already used; a break or a grey
+band is not a task). A panel straddling the line counts at the line, one wholly ahead of it not at all: the
+plan's intentions are not history. The task the line is **on** is left out, so the first row is the task
+worked before it and chord-then-Enter means "back to what I was doing".
+
+**One predicate for what may be offered.** The list, the picker's id rows, PRD §8's block editor and
+`reduceForceTaskStart` all ask `SchedulerDomain.isPlaceableTask` (a leaf still in the tree) — the menus cannot
+offer a row the reducer then silently drops. `calendarTitleSuggestions` / `calendarTaskIdForTitle` were
+renamed `placeableTask*` in the same change: the question was never the calendar's, and a name that says
+otherwise is how a second copy gets written.
+
+**A new default can collide with an old override.** `Ctrl+Shift+Alt+T` was a chord any account could already
+have rebound something onto. Decode's existing healing covers it — `GlobalShortcutBindings.rejection` resolves
+against the *whole* live table, defaults included, so the stored override is refused and drops back to its own
+default rather than double-firing with the newcomer. Pinned by
+`GlobalShortcutRebindTest.an_override_on_a_chord_a_later_build_ships_as_a_DEFAULT_heals`.
+
+### Both chords leave a block behind, epsilon long (1.6.0)
+
+A press that only moved an invisible marker left the user nothing to look at, and nothing to correct: the
+plan simply changed under them. So each of the two switch chords now **lays a panel at the now-line** on the
+task selected (`SchedulerReducer.placeSwitchEntry`) before the fill is re-run around it.
+
+It is **epsilon long** (`SWITCH_ENTRY_MILLIS`, one second), and that is the point: the press says *which
+task* and *when*, and how long the user then stays on it is the scheduler's answer. A length chosen here —
+the first cut picked two minutes — is a scheduling decision made by a keystroke, which is exactly what the
+model exists to take out of the user's hands. A second is three orders of magnitude above the planner's own
+`CHUNK_EPSILON_MILLIS` and far below anything the calendar can draw.
+
+It is deliberately not a new kind of panel. It is built through the same two helpers the calendar's own "add"
+goes through, `auto = false` with the existence pin — which is the whole of why it draws with the blue
+outline and the check box in its top-right corner. `SchedulerDomain.isUserPlaced` is the one question those
+answer, and nothing in `CalendarUi` knows a chord exists. Being pinned, it is a fixed obstacle the immediate
+re-plan works *around* rather than over — a press undone by the re-plan it asks for would be no press — and
+being a Calendar history unit, a mis-struck chord is one Ctrl+Z away.
+
+Two things the first cut got wrong, both caught by the existing tests:
+
+- **`Ctrl+Shift+Alt+Z` has no task to put in the block.** It says only "not this one". The answer was already
+  in the model: `TaskPanel.alternativeTaskId`, the README's *Alternative Schedules* rule, whose documented use
+  is this very press. It is derived and never persisted, so a payload just loaded names nobody — there the
+  same answer is reached the slow way, by re-planning with the refusal standing and reading the line.
+- **The entry defeated the switch.** Two minutes of B is a turn taken, so the fill handed the line straight
+  back to the starved A at `now + 2min`. The entry therefore always rides with a `ForcedTaskStart` on the same
+  task: the block says what was started, the marker carries it past the block. `Ctrl+Shift+Alt+Z` and
+  `Ctrl+Shift+Alt+T` converge on one private `startTaskNow` for exactly that reason.
+
+#### Why the seed does not grow by itself
+
+Shrinking the entry to epsilon raised the obvious question: does the soft *Minimum Execution Time* goal not
+simply stretch it into a proper panel? **No**, and two independent parts of the walk say so:
+
+- a pinned panel is a **pre-placed block** (`fillSchedule`'s `futureBlocks`) and the cursor *walks over* it —
+  `walk.serveWeighted(...)` charges the task and sets `last`, and the loop clears `pending`. So the seed is
+  service already rendered, not a chunk in progress, and the never-twice-in-a-row rule would then refuse the
+  task just started;
+- the rule that *does* continue an unfinished chunk (`headRun`/`resumedHead`, the reference's
+  `head[1] < minimum[head[0]] → pending`) reads the recorded **past** — `pastBlocks`, built from what starts
+  strictly before the line. A block at the line is not in it, at any length.
+
+So the minimum-execution-time goal does its work on the **first slot after** the seed, which the request puts
+on the same task and `PlanWalk.chunkMillis` floors at that task's minimum — yielding, as ever, to whatever
+the timeline restricts (a grey period five minutes out ends the run there, and the panel is simply short).
+`SwitchTaskEntryTest.the_seed_alone_would_hand_the_line_straight_back` pins the first half so the claim
+cannot rot.
+
+### The picker colours what the now-line forbids (1.6.0)
+
+A task the periods covering the line refuse is a task the plan cannot place there however it is asked —
+picking it would change nothing the user can see. So the picker writes it in **red**, and one whose share is
+merely scaled (`0 < resilience < 1`) in **orange**; a task at `1` wears no colour, because a menu where most
+rows are coloured says nothing.
+
+The number is the one the walk itself races on — `PeriodKinds.multiplier` over the kinds covering the
+instant, reached through `SchedulerDomain.restrictiveKindsAt` / `taskResilienceAt` — so the menu cannot
+disagree with the scheduler about who may run. The rows under the search field carry the same colour
+(they name one task); title suggestions do not, because a title may name several.
+
+**The colours are live, the order is not.** Which tasks the list holds, and in what order, is a fact about
+the moment the user asked and must not shift under the pointer; what the timeline forbids is a fact about
+*now*, and the menu stands open across boundaries. So the rows are coloured at `App`'s display instant,
+which is resampled at exactly the boundaries the panels name (ADR 0009) — no timer of the menu's own, and
+CLAUDE.md's "never a poll" holds.
+
 ## Tests
 
-`KeyboardShortcutsCatalogTest` — every `GlobalShortcut` is listed, in order, in the window's first block, at the
+`SwitchTaskEntryTest` — the block both chords lay (its epsilon span, its task, that it is user-placed and
+wears a checked, enabled box, that the fill plans around it, that the run past it reaches the task's minimum
+and that a restrictive period is what shortens it), the seed-alone case that proves why the request rides
+with it, the alternative read for `+Z` with and without the fill's rules on the panels, the sole-candidate
+case that lays none, and the Calendar history unit. `TaskPickerTest` — also the three colour answers, that
+they follow the instant into and out of a period, and that overlapping periods multiply. `TaskPickerTest` — the order of the list (recency, then the identity menus' own order for tasks never run),
+the exclusion of the task at the line, a straddling panel counted at the line and a future panel not counted,
+only placeable tasks offered, every offered row honoured by `ForceTaskStart`, the id rows' exact-title rule
+with no "New task" row, and what Enter takes in each of its two states. `KeyboardShortcutsCatalogTest` — every `GlobalShortcut` is listed, in order, in the window's first block, at the
 chord the *account* is bound to; the shipped chords are the documented ones; no group lists a chord twice or
 carries a blank entry; a button's bubble and the window print one chord (both resolved through
 `GlobalShortcutBindings.chordOf`), and every `ControlChords` constant a button hints is still listed in the

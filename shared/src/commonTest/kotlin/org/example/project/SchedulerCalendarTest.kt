@@ -111,7 +111,7 @@ class SchedulerCalendarTest {
         assertNull(emptied.tasks[a1Id])
         assertFalse(emptied.titleToTaskIds.containsKey("A1"))
         assertTrue(SchedulerDomain.calendarTaskMenuEntries(emptied, "A1").none { it.taskId == a1Id })
-        assertTrue(SchedulerDomain.calendarTitleSuggestions(emptied, "A1").isEmpty())
+        assertTrue(SchedulerDomain.placeableTaskTitleSuggestions(emptied, "A1").isEmpty())
         // Its detached cell/sublist are collected too (no dangling cell keeps it alive).
         assertTrue(emptied.cells.values.none { it.taskId == a1Id })
     }
@@ -158,8 +158,8 @@ class SchedulerCalendarTest {
         assertFalse(SchedulerDomain.taskHasCells(emptied, aId))
         // ...and is absent from every calendar add-panel menu.
         assertTrue(SchedulerDomain.calendarTaskMenuEntries(emptied, "A").none { it.taskId == aId })
-        assertTrue(SchedulerDomain.calendarTitleSuggestions(emptied, "A").isEmpty())
-        assertNull(SchedulerDomain.calendarTaskIdForTitle(emptied, "A"))
+        assertTrue(SchedulerDomain.placeableTaskTitleSuggestions(emptied, "A").isEmpty())
+        assertNull(SchedulerDomain.placeableTaskIdForTitle(emptied, "A"))
     }
 
     // ----- §8 manual add (default task) -------------------------------------------------------
@@ -718,11 +718,11 @@ class SchedulerCalendarTest {
     fun calendar_title_suggestions_and_lookup_are_leaf_only() {
         val (s0, a, b) = stateWithTwoTasks()
         val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(childTaskIds = listOf(b))))
-        val suggestions = SchedulerDomain.calendarTitleSuggestions(s, "")
+        val suggestions = SchedulerDomain.placeableTaskTitleSuggestions(s, "")
         assertTrue("B" in suggestions, "leaf B should be suggested")
         assertFalse("A" in suggestions, "parent A should not be suggested")
-        assertEquals(b, SchedulerDomain.calendarTaskIdForTitle(s, "B"))
-        assertEquals(null, SchedulerDomain.calendarTaskIdForTitle(s, "A"))
+        assertEquals(b, SchedulerDomain.placeableTaskIdForTitle(s, "B"))
+        assertEquals(null, SchedulerDomain.placeableTaskIdForTitle(s, "A"))
     }
 
     @Test

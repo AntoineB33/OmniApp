@@ -11,6 +11,121 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Anomaly: every picker row red under a dragged pose — 2026-09-11
+
+→ `docs/invariants/screen-breaks.md`, `docs/invariants/shortcuts.md`. `shared`
+(`scheduler/domain/SchedulerDomain.kt`); `TaskPickerTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"the $now line$ is currently dragging a 15min break, which means the $now line$ is not on a
+no screen period … However, when doing ctrl+shift+alt+T, all the tasks are in red."*
+
+`restrictiveKindsAt` (new the same day, for the picker's colours) asked "which panels cover the line" —
+a **second reading** of what restricts the timeline, and it did not ask the predicate that is documented as
+the ONE reading of the drag, `SchedulerDomain.isDraggedScreenBreak`. A dragged pose is materialized as
+`[t_p + 1, t_p + d + 1)` at the instant of the fill, so the line sweeps into it long before the next
+re-plan pushes it forward; the kind it carries is `no task allowed`, to which every task's default
+resilience is `0` — hence every row red, while the fill itself was placing tasks straight through it
+(`obstructingSidePanels`, 2026-09-05). The display read now makes the same drop, and
+`screen-breaks.md` names both readers so a third cannot be written without it.
+
+Known limit, deliberately not closed: the read does not see mode 2's `no on-screen task` cover
+(`DynamicPeriods.awayCover`), which the fill builds for itself and never draws — a restriction the colours
+miss while the user is AWAY, which is not a state this chord is struck in.
+
+### The switch entry becomes an epsilon seed, and the picker colours what the line forbids — 2026-09-11
+
+→ `docs/invariants/scheduler.md`, `docs/invariants/shortcuts.md`, `docs/invariants/calendar.md`,
+`docs/adr/0011-global-keyboard-shortcuts.md`. `shared` (`scheduler/domain/SchedulerDomain.kt`,
+`ui/TaskPickerMenu.kt`, `ui/CalendarUi.kt` — one optional row colour, `App.kt`); `SwitchTaskEntryTest`,
+`TaskPickerTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"it must simply add in the timeline an epsilon large period with the selected task right
+under $now line$, and run the scheduler … all task that have a zero resilience value for the periods the
+$now line$ is currently in are red, and orange if the resilience is between 0 and 1."*
+
+- **The entry is epsilon** (`SWITCH_ENTRY_MILLIS`, 2 min → 1 s). The press says which task and when; how
+  long is the scheduler's answer. **It does not grow on its own** — a pre-placed block is committed service
+  the walk steps over (which also sets its `last`), and the resume rule that continues an unfinished chunk
+  reads the recorded past, which a block at the line is not in. The run reaches the task's minimum because
+  the `ForcedTaskStart` riding with the seed takes the first slot after it and `PlanWalk.chunkMillis` floors
+  that slot — the soft *Minimum Execution Time* goal, yielding to whatever the timeline restricts. Pinned by
+  `the_seed_alone_would_hand_the_line_straight_back` and `a_restrictive_period_is_what_keeps_the_run_short`.
+- **The picker colours its rows by resilience at the line**: `0` red, `0 < r < 1` orange, `1` uncoloured —
+  `PeriodKinds.multiplier` over `SchedulerDomain.restrictiveKindsAt`, the same number the walk races on. The
+  id rows under the search field carry it too; title suggestions do not (a title may name several tasks).
+  The colours are read at `App`'s **display instant**, which is resampled at the boundaries the panels name,
+  so they change as the line enters a new period with no timer of their own — while the list's ORDER stays
+  frozen at the press, so it cannot re-order under the pointer.
+
+### Both switch chords leave a two-minute block on the calendar — 2026-09-11
+
+→ `docs/invariants/scheduler.md`, `docs/invariants/calendar.md`, `docs/invariants/shortcuts.md`,
+`docs/adr/0011-global-keyboard-shortcuts.md`. `shared` (`scheduler/state/SchedulerReducer.kt`,
+`scheduler/domain/SchedulerDomain.kt`, `scheduler/model/TaskModels.kt`, `scheduler/state/SchedulerIntent.kt`);
+`SwitchTaskEntryTest` (new).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"When selecting another task to do now with ctrl+shift+alt+Z/T, it must add the period
+[now; now+2min] with this selected task, then run the scheduler. This task panel must be blue outlined with a
+check box at the top right corner since it is manually added by the user."*
+
+Both presses now lay `[now, now + 2min]` on the task selected (`SchedulerReducer.placeSwitchEntry`,
+`SchedulerDomain.SWITCH_ENTRY_MILLIS`) and re-plan around it. The block is an **ordinary hand-placed panel** —
+`auto = false` + the existence pin, built through the same two helpers the calendar's own "add" uses — so the
+blue outline and the check box come from `SchedulerDomain.isUserPlaced` / `panelPinBoxSpec` unchanged, and
+nothing in `CalendarUi` was touched. Pinned, so the immediate re-plan works around it; a Calendar history
+unit, so a mis-struck chord is one Ctrl+Z away.
+
+Two corrections the existing tests forced:
+
+- **`+Z` names no task**, so the block had nobody to be about. It reads the one the model already gives —
+  `TaskPanel.alternativeTaskId` (`side-dev/README.md` § *Alternative Schedules*, whose documented use is this
+  press) — and falls back to re-planning with the refusal standing and reading the line, since that field is
+  derived and never persisted.
+- **The block defeated the switch**: two minutes counts as a turn taken, so the fill handed the line back to
+  the starved task at `now + 2min` (`ForcedTaskSwitchTest` caught it). The entry now always rides with a
+  `ForcedTaskStart` on the same task — the block says what was started, the marker carries it past the block —
+  and both chords converge on one `startTaskNow`.
+
+### A fifth system-wide chord: the task picker at the pointer — 2026-09-11
+
+→ `docs/invariants/shortcuts.md` (*The task picker*), `docs/invariants/popups.md` (*The one surface that is
+NOT drawn inside the app*), `docs/adr/0011-global-keyboard-shortcuts.md`. `shared`
+(`scheduler/platform/GlobalHotkey.kt`, `scheduler/domain/SchedulerDomain.kt`, `ui/TaskPickerMenu.kt` and
+`ui/TaskPickerOverlay.kt` + its five actuals, `ui/KeyboardShortcuts.kt`, `App.kt`); `TaskPickerTest` (new),
+`GlobalShortcutRebindTest`, `KeyboardShortcutsCatalogTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"Global shortcut must open a menu at my mouse with a list of tasks, sorted from most recently
+touched by now line to less recently … below it is a search bar (a task cell, with the id and title
+suggestion lists in edit mode). The task selected here replaces the currently scheduled task. If the user
+does the shortcut and presses enter, it selects the first one in the list."*
+
+`GlobalShortcut.PickTask` ships on `Ctrl+Shift+Alt+T` and is rebindable like the other four.
+`Ctrl+Shift+Alt+Z` ("Switch task", the blind refusal) is untouched — the two are different questions, and the
+lateral-menu button that hints `+Z` still does what `+Z` does.
+
+- The menu is an **OS window of its own** at the pointer (undecorated, always on top, focusable), and it
+  **takes the keyboard** from the application in front. It has to: the chord only exists because OmniApp is
+  not the focused window when it is struck, and the menu is meant to be typed into and answered with Enter.
+  The first surface of the app not drawn inside the app; it is a *menu* by `popups.md`'s rule and leaves on
+  Escape, on a pick, or on losing the focus.
+- The list is `SchedulerDomain.taskPickerEntries`: every task the plan can be started on, ordered by when the
+  now-line was last **on** it (records + real-work panels, a straddling panel counted at the line, a future
+  panel not at all), tasks never run last in the identity menus' own order. **The task the line is on is left
+  out** — it would otherwise lead the list and make chord-then-Enter re-ask for the task being left; with it
+  gone the first row is the task worked before this one.
+- The search field is a cell in Edit Mode: the same `EditModeMenuBlock`, its **Tasks** id rows over its
+  **Title suggestions**, no Mode selector and no "New task" row. Enter takes the highlighted row while the
+  field is empty and the task the field *names* once it holds text (`SchedulerDomain.taskPickerCommit`, the
+  one place that rule lives).
+- The pick dispatches the **existing** `SchedulerIntent.ForceTaskStart` — PRD §13's "start this task now" —
+  so the picker adds no scheduling lever. `isPlaceableTask` (a leaf still in the tree) is now the one
+  predicate the reducer and all three menus offering that intent ask, and `calendarTitleSuggestions` /
+  `calendarTaskIdForTitle` were renamed `placeableTask*` to say so.
+
 ### The pause a screen break was taken in IS the break — 2026-09-10
 
 → `docs/invariants/screen-breaks.md`, `docs/adr/0003-screen-breaks.md` (post-mortem at the end), PRD §15.

@@ -602,8 +602,10 @@ data class TaskPanel(
  * read off the recorded past, so a chain of re-plans reaches the same schedule as one long plan (CLAUDE.md's
  * resume contract). The reducer's advance tick drops the spent marker so it cannot linger in the payload.
  *
- * Authoritative user intent — nothing re-derives it — so it is persisted **and** synced, like the alarms;
- * it is not an Undo/Redo unit (pressing the button changes no rule, exactly like the §7 switches).
+ * Authoritative user intent — nothing re-derives it — so it is persisted **and** synced, like the alarms.
+ * The marker itself is no Undo/Redo unit (it changes no rule) — but the press that records it also lays the
+ * **switch entry**, the epsilon-long hand-placed block on the task the plan hands the line to, and *that*
+ * is a Calendar unit like every other block the user places.
  */
 data class ForcedTaskSwitch(
     /** The task the now-line was on when the user pressed the button — the one refused at [atMillis]. */
@@ -633,7 +635,14 @@ data class ForcedTaskSwitch(
  * marker so it cannot linger in the payload.
  *
  * Authoritative user intent — nothing re-derives it — so it is persisted **and** synced, like the refusal and
- * the alarms; it is not an Undo/Redo unit (asking for a task changes no rule).
+ * the alarms. The marker changes no rule and is no Undo/Redo unit of its own; the **switch entry** the same
+ * press lays — an epsilon-long block on [taskId], placed by the user — is a Calendar unit like any other,
+ * which is what makes a mis-struck chord one Ctrl+Z away.
+ *
+ * The two halves answer different halves of the press: the entry says *what the user started, and when*,
+ * saying nothing about how long, and the marker is what carries that task past it. The entry cannot do that
+ * itself at any length — a pre-placed block is committed service the walk steps OVER, which sets its `last`,
+ * so the very next pick would refuse the task just started.
  */
 data class ForcedTaskStart(
     /** The task the user asked to be doing — the one the plan must place at [atMillis]. */

@@ -254,6 +254,33 @@ class GlobalShortcutRebindTest {
     }
 
     @Test
+    fun an_override_on_a_chord_a_later_build_ships_as_a_DEFAULT_heals() {
+        // The healing path from the other side: until the fifth chord existed, `Ctrl+Shift+Alt+T` was a
+        // chord an account could rebind anything onto — and adding "Choose the task to do now" on it makes
+        // such a payload one the rules refuse today. It must heal the way every other refused row does: the
+        // stored override drops back to ITS OWN default, and the live table keeps one chord per shortcut.
+        // Adding a new default is therefore never a silent double-fire on somebody's machine.
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[{"id":"t0","title":"X"}],
+             "shortcutBindings":[
+               {"shortcut":"ToggleAway","key":"T","ctrl":true,"shift":true,"alt":true}]}
+            """.trimIndent()
+
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        assertTrue(decoded.shortcutBindings.isEmpty())
+        assertEquals(
+            GlobalShortcut.ToggleAway.defaultBinding,
+            GlobalShortcutBindings.bindingOf(decoded.shortcutBindings, GlobalShortcut.ToggleAway),
+        )
+        val live = GlobalShortcutBindings.resolve(decoded.shortcutBindings)
+        assertEquals(live.size, live.values.toSet().size, "two shortcuts reached the same chord")
+    }
+
+    @Test
     fun a_rebinding_moves_the_sync_fingerprint() {
         // The chords are the ACCOUNT's, so a rebinding is authoritative data that has to reach the peers —
         // a fingerprint that did not move would leave the push un-enqueued.

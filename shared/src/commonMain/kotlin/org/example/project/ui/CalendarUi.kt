@@ -7350,6 +7350,7 @@ private fun EditMenuRow(
     selected: Boolean = false,
     focusPreserving: Boolean = false,
     actions: EditMenuRowActions? = null,
+    color: Color? = null,
     onClick: () -> Unit,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
@@ -7376,7 +7377,7 @@ private fun EditMenuRow(
             style =
                 if (selected) MaterialTheme.typography.bodyMedium
                 else MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = color ?: MaterialTheme.colorScheme.onSurface,
         )
         if (actions != null) {
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -7413,6 +7414,13 @@ data class EditMenuItem(
     val selected: Boolean = false,
     /** The row's right-click contextual menu, or null where it has none (every title suggestion). */
     val actions: EditMenuRowActions? = null,
+    /**
+     * The colour to write the row in, or null for the ordinary one. Set only where the row's own SUBJECT
+     * says something about it — PRD §7's task picker writes a task the now-line's periods forbid in red and
+     * one they merely scale in orange ([org.example.project.scheduler.domain.SchedulerDomain.taskResilienceAt]).
+     * Never a decoration: a coloured row here is a row that behaves differently if it is taken.
+     */
+    val color: Color? = null,
     val onClick: () -> Unit,
 )
 
@@ -7522,6 +7530,7 @@ private fun EditMenuSectionRow(row: EditMenuItem, focusPreserving: Boolean) {
         selected = row.selected,
         focusPreserving = focusPreserving,
         actions = row.actions,
+        color = row.color,
         onClick = row.onClick,
     )
 }
