@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.PeriodKinds
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -70,7 +71,7 @@ class NoScreenEvidenceTest {
     fun advance_banks_no_record_over_observed_evidence_with_no_panel_drawn() {
         val (s0, solo) = oneTask()
         val s = elapsedPanel(s0, solo)
-        // No AddNoScreenPeriod anywhere: the ONLY signal is what the devices observed. This is the account-3
+        // No hand-drawn no-screen period anywhere: the ONLY signal is what the devices observed. This is the account-3
         // shape, where the old panel-only rule banked all three hours as completed work.
         assertTrue(s.panels.none { it.noScreen }, "the fixture must carry no hand-drawn no-screen panel")
         withEvidence(TaskTimeRange(NOW - 2 * HOUR, NOW - HOUR))
@@ -92,7 +93,7 @@ class NoScreenEvidenceTest {
     fun observed_evidence_and_a_drawn_panel_are_unioned_not_replaced() {
         val (s0, solo) = oneTask()
         // The drawn panel covers 3h→2h back; the evidence covers 2h→1h back. Both must bite.
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW - 3 * HOUR, NOW - 2 * HOUR))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 3 * HOUR, NOW - 2 * HOUR))
         s = elapsedPanel(s, solo)
         withEvidence(TaskTimeRange(NOW - 2 * HOUR, NOW - HOUR))
         val advanced = SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW))

@@ -253,9 +253,16 @@ Global rules that always apply: `CLAUDE.md`.
   works through a break) and a wash repaints it — which is why the marking is drawn **over** the panels, like
   the layers, and why `CalendarBlock` has no grey tint of its own. **Delimited** = an edge line top and bottom,
   so an inactivity period abutting a sleep window still reads as two periods and not one stretch.
-- **Grey refuses everybody on the calendar too, not only in the fill.** A hand-added inactivity period
-  overrides **every** task panel it covers (a no-screen period only the on-screen ones — §9 lets an
-  off-screen task run inside one), and any task panel overrides it in turn.
+- **A PERIOD AND A TASK PANEL COMPETE EXACTLY WHEN THE PERIOD REFUSES THE TASK** — one question
+  (`SchedulerReducer.periodRefuses`: resilience to the kind is `0`), asked in both directions at the one
+  `resolveScreenOverrides`. Whichever the user just laid, dragged or resized takes the other. The familiar
+  cases fall out of it and are no longer written down separately: a grey period overrides **every** task
+  panel it covers, a no-screen period only the on-screen ones (§9 lets an off-screen task run inside one),
+  and a task panel overrides both in turn. **A period a task is resilient to leaves that task's panel
+  alone** — a period scales a share for as long as it lasts, it does not evict whoever it admits — which is
+  the answer the old flag-spelling could not give. The periods it may take are the **user's**
+  (`isUserPlaced`): a screen break, a sleep window and a wind-down hour are `no task allowed` too, but a
+  hand-placed panel is placed *through* them (§15/§17), never over their corpses.
 - **Two overlapping "No screen" periods are ONE period — their union — and never two blocks sharing the
   column's width.** A period is not an object owning a slice of the timeline the way a task panel is; it is
   the statement *no screen was in use here*, and two overlapping statements of it say one thing. Splitting
@@ -269,10 +276,13 @@ Global rules that always apply: `CLAUDE.md`.
   still an object the menu can remove), and a no-screen period never fuses with an **inactivity** one:
   different kinds are different statements. Within a fused run the survivor is the panel the user is
   holding — it keeps its id, its pins and its weight, and only its bounds grow.
-- **A period LAID or DRAGGED over the past clears the work banked under it** — the on-screen tasks' records
-  for a no-screen period, everybody's for a grey one. Same rule as `StripNoScreenRecords` (`stripRecords`,
-  `onScreenOnly`), applied at once rather than at the next engine start; outside Undo/Redo like every write
-  to the record.
+- **A period LAID or DRAGGED over the past clears the work banked under it**, for exactly the tasks it
+  **refuses** — the same question the override rule asks, so the on-screen tasks' records go under a
+  no-screen period and everybody's under a grey one, as two resiliences rather than as two rules. Same
+  funnel as `StripNoScreenRecords` (`stripRecords`, now taking the predicate rather than an `onScreenOnly`
+  flag), applied at once rather than at the next engine start; outside Undo/Redo like every write to the
+  record. A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
+  sleep band moving is not the user saying they were not working.
 - **A task panel's menu reaches the TASK as well as the panel.** "Edit" is the panel (this occurrence's
   bounds and pins); **"edit task"** opens the §13 window and **"go to task tree"** selects the task's first
   cell. Both are offered on a task panel only — a period, a reminder, an alarm, a sleep band, a screen break
@@ -287,12 +297,40 @@ Global rules that always apply: `CLAUDE.md`.
   — depth-first, **each LIST visited once** (a mirrored sub-tree is one list under many parents) — and it
   skips a blank-titled cell entirely: that cell is the deleted one, and the reveal could not expand it
   anyway. The one place that says "not in the task tree" is the handler, once, for every one of those cases.
-- **Both "add a … period" entries open the PERIOD EDITOR** (`PeriodEditWindow`, one window for both kinds) —
-  they never lay a panel directly. Each bound is a date+time, **"now"** (resolved at Save), or **"∞"**
-  (`SchedulerDomain.OPEN_PAST_MILLIS` / `OPEN_FUTURE_MILLIS` — real 1900/2200 instants, never
-  `Long.MIN_VALUE`: every consumer does plain arithmetic on a panel's bounds). It is also a period's "Edit";
-  a *derived* grey band has none. The case it exists for: **an inactivity period from ∞ to now** empties the
-  recorded past.
+- **THE MENU HAS ONE "add…" ENTRY, AND IT OPENS A CHOOSER** (`CalendarAddWindow`) — task panel, restrictive
+  period, or reminder. It replaced four entries, two of which ("add a no-screen period", "add an inactivity
+  period") named a KIND of period by hand: that is a funnel with an exception list, and the exception was
+  visible — `before bed` and every kind the account defines had no way onto the calendar at all, because a
+  menu can only list the kinds somebody typed into it. Three rules hold it:
+  - **the kind is CHOSEN, off `state.allPeriodKinds`** (`PeriodKindField` — the task cell's categories
+    drop-down read for a single value: same rows, same naming field, same "a name the account already holds
+    picks THAT one". Defining a kind from here goes through `AddPeriodKind`, the task edit window's own `+`
+    intent, never a second one);
+  - **the chooser lays nothing.** Each choice opens the editor that already owns that object — the calendar
+    edit window, `PeriodEditWindow`, `ReminderEditWindow` — so "nothing is placed until Save" stays one rule
+    for all three, and the chooser can never acquire a placement path of its own;
+  - **a REMINDER is the third choice because it was the fourth entry.** It is not a panel of any sort (PRD §14:
+    a zero-duration tag with an id), so it is a peer of the two panel families here, not a kind of period.
+    Reducing four entries to one that could not reach it would simply have lost it.
+- **THE PERIOD EDITOR IS ONE WINDOW FOR EVERY KIND** (`PeriodEditWindow`), reached from the chooser and from a
+  period's own "Edit" — it never lays a panel directly. It takes the kind as a **name**, not as an enum of the
+  two the menu used to offer, which is what made the window itself a place a third kind could not be edited;
+  what it *says* about the kind is `periodKindBlurb`, written out of the model (`PeriodKinds.defaultResilience`)
+  rather than out of a list of cases. The kind is **shown, not changed**: re-kinding a period is a different
+  edit from moving its bounds, and "Remove" plus a fresh add is the one way to say it. Each bound is a
+  date+time, **"now"** (resolved at Save), or **"∞"** (`SchedulerDomain.OPEN_PAST_MILLIS` /
+  `OPEN_FUTURE_MILLIS` — real 1900/2200 instants, never `Long.MIN_VALUE`: every consumer does plain arithmetic
+  on a panel's bounds). A *derived* grey band has no "Edit". The case it exists for: **an inactivity period
+  from ∞ to now** empties the recorded past.
+- **A PERIOD'S PAINT IS DERIVED FROM ITS KIND, IN ONE PLACE** (`App.kt`'s `calendarRecords`). The calendar has
+  two paints for a period — `CalendarRecord.noScreen` (no fill, both hatches) and `.inactivity` (grey) — and
+  they are a DRAWING, not a classification: the kind is `no on-screen task` or it is grey. Read off the
+  panel's two legacy flags instead, a period of any other kind carried neither and was drawn as a **task
+  panel**. `CalendarRecord.restrictiveKind` / `PlacedRecord.restrictiveKind` carry the identity beside the
+  paint, and that is what "Edit" hands the editor — a kind with no flag has nothing else to be recognised by.
+  The same rule on the other side: the derived §17 wind-down bands are split off **by panel id**
+  (`BEFORE_BED_PANEL_ID_PREFIX`), never by kind, or a `before bed` period the user drew would lose its Edit
+  and its Remove along with the fill's own.
 - Derived grey bands are `[displayFloor, now]` minus everything already drawn, except no-screen periods and
   screen breaks. Display-only, sub-minute remnants dropped.
 - **A stretch carrying both layers OVERRIDES the on-screen task panels it covers**

@@ -11,6 +11,64 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One "add…" entry on the calendar, and the kind of period is CHOSEN — 2026-09-11
+
+→ `shared` (`ui/CalendarUi.kt`, `App.kt`, `scheduler/state/SchedulerIntent.kt`, `SchedulerReducer.kt`,
+`scheduler/domain/PeriodKinds.kt`, `SchedulerDomain.kt`, `scheduler/persistence/SchedulerStateCodec.kt`);
+`docs/PRD_TaskScheduler.md` §8, `docs/invariants/calendar.md`, `docs/invariants/scheduler.md`,
+`docs/MANUAL_TESTING.md`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration**
+(the new `periodKind` field rides the existing `app_state` payload and defaults to blank on an older one).
+
+Asked for as: *"In the right-click menu on the calendar, all the options to add something are now reduced in
+one option. It opens a window that lets the user choose between a task panel and a restrictive period. If
+choosing a restrictive period, the user can choose which period (with the same kind of field with a drop-down
+menu that is in a task cell to select a category)."*
+
+**The menu's four "add" entries became one `add…`, opening `CalendarAddWindow`.** Three choices — task
+panel, **restrictive period**, reminder — each of which opens the editor that already owns that object, so
+the chooser itself lays nothing and "nothing is placed until Save" stays one rule. The reminder is the third
+choice because it was the fourth entry: it is not a panel of any sort (§14), so it is a peer of the two
+panel families rather than a kind of period, and one entry that could not reach it would simply have lost it.
+
+**The point of the change is the kind.** Two of the four entries named a KIND of restrictive period by hand,
+which is a funnel with an exception list — and `side-dev/README.md`'s model says a period is a start, an end
+and a kind, so `before bed` and every kind the account defines are periods exactly as those two are and had
+**no way onto the calendar at all**. The kind is now picked in a `PeriodKindField`: the task cell's categories
+drop-down read for a single value, down to creating a new kind through the task edit window's own
+`AddPeriodKind`.
+
+Four things had to follow it, and each one deleted an enumeration rather than adding a case:
+
+- **One intent, `AddRestrictivePeriod(kind, start, end)`**, replacing `AddNoScreenPeriod` /
+  `AddInactivityPeriod`. The reducer branches on nothing: the title is `PeriodKinds.periodTitle`, and the two
+  legacy flags are written only for the two kinds that HAVE one (`legacyNoScreenFlag` /
+  `legacyInactivityFlag`) — setting a flag standing for another kind would be a second, disagreeing statement
+  of what the period is.
+- **"May these two share a stretch" is ONE question:** does the period refuse the task, i.e. is its resilience
+  to the kind `0` (`SchedulerReducer.periodRefuses`). `resolveScreenOverrides` trims by it in both directions
+  and `stripRecordsUnderPeriod` clears the record by it, so the four cases the code enumerated ("an on-screen
+  task panel overrides no-screen periods", "grey overrides every task panel", …) collapse into a sentence
+  that also answers for a kind with no flag. It brought an answer the flags could not give: **a period a task
+  is resilient to leaves that task's panel alone** — a period scales a share, it does not evict whoever it
+  admits. The periods a hand-placed panel may take are now the **user's** (`isUserPlaced`): a break or a sleep
+  band is `no task allowed` too, and a panel is placed *through* those (§15/§17).
+- **`TaskPanel.periodKind` is persisted and synced** (`PersistedPanel.periodKind`, blank on an older payload,
+  `restrictiveKind` still healing the flagged kinds out of the flags). Without it a hand-drawn `before bed` or
+  account-defined period decoded as **a block of work** on the next load — it is the only statement of what it
+  is that a kind with no flag carries. It is in `schedulingSignature` too, in place of the two flags.
+- **A period's paint is derived from its kind, once**, in `calendarRecords`: `noScreen` (no fill + both
+  hatches) and `inactivity` (grey) are a DRAWING, and read off the panel's flags a period of any other kind
+  carried neither and was drawn as a task panel. `restrictiveKind` rides `CalendarRecord`/`PlacedRecord`
+  beside them, and is what "Edit" hands `PeriodEditWindow` — which now takes the kind as a **name** rather
+  than an enum of two, shows it, and describes it out of `PeriodKinds.defaultResilience`. The derived
+  §17 wind-down bands are split off by panel **id**, never by kind, or a hand-drawn `before bed` period
+  would lose its Edit and Remove with them.
+
+`RestrictivePeriodKindTest` (16 tests) pins all of it; the existing 1512 pass unchanged, now speaking through
+the one intent. Not done: **the period editor shows the kind but cannot change it** — re-kinding a period is
+"Remove" plus a fresh add.
+
 ### Anomaly: the task-picker menu would not close — 2026-09-11
 
 → `shared` (`ui/TaskPickerOverlay.jvm.kt`, `ui/TaskPickerMenu.kt`); `docs/invariants/shortcuts.md`.

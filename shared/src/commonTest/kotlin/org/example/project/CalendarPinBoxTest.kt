@@ -102,8 +102,8 @@ class CalendarPinBoxTest {
     @Test
     fun a_hand_drawn_period_and_a_hand_added_task_panel_are_user_placed() {
         val (s0, solo) = oneTask()
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + 3 * HOUR, NOW + 4 * HOUR))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + 3 * HOUR, NOW + 4 * HOUR))
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW + 5 * HOUR, NOW + 6 * HOUR, PanelPins(existence = true)),
@@ -164,8 +164,8 @@ class CalendarPinBoxTest {
 
     @Test
     fun a_hand_drawn_period_is_pinned_in_the_box_but_never_in_the_scheduler() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + 2 * HOUR, NOW + 3 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + 2 * HOUR, NOW + 3 * HOUR))
         val periods = s.panels.filter { it.isRestrictivePeriod }
         assertEquals(2, periods.size)
         periods.forEach { period ->
@@ -178,7 +178,7 @@ class CalendarPinBoxTest {
 
     @Test
     fun the_box_cannot_make_a_period_a_pre_placed_block() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
         val id = s.panels.first { it.noScreen }.id
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), true))
         assertFalse(s.panels.first { it.id == id }.pinned)

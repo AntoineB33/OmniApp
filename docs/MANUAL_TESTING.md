@@ -107,12 +107,30 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **Uncheck the box on the panel the now-line is standing in** → its elapsed half stays exactly
         where it is (the past never moves); only the future tail is re-planned.
   - [ ] Undo (Ctrl+Z with the calendar focused) puts the pin back.
-  - [ ] **Add a no-screen period** → a blue-outlined panel with NO grey fill and NO check box, hatched
-        with the oblique lines of both layers.
-  - [ ] **Add an inactivity period** → blue outline, its grey kept, and a box that is checked and does
-        nothing when clicked (a period is removed, never unpinned).
+  - [ ] **"add…" → restrictive period → "no on-screen task"** → a blue-outlined panel with NO grey fill
+        and NO check box, hatched with the oblique lines of both layers.
+  - [ ] **"add…" → restrictive period → "no task allowed"** → blue outline, its grey kept, and a box that
+        is checked and does nothing when clicked (a period is removed, never unpinned).
   - [ ] Zoom out until a block is a few pixels tall: the box disappears rather than being clipped, and
         zooming back in brings it back. Hovering the box shows the same bubble as hovering beside it.
+- [ ] **The menu's one "add…" entry (PRD §8).** Right-click empty grid, and again on a panel — both menus
+      offer exactly one entry to add something.
+  - [ ] It opens a window headed with the clicked time offering **task panel / restrictive period /
+        reminder**. Cancel places nothing.
+  - [ ] **task panel** → the calendar edit window pre-filled with the highest-priority task and its minimum
+        time; **reminder** → the reminder editor at the clicked time. (Both used to be their own entry.)
+  - [ ] **restrictive period** reveals a **kind** field with a drop-down — the same control as a task cell's
+        categories field. It lists "no on-screen task", "no task allowed", "before bed" and every kind the
+        account has defined; typing narrows the list; a name it does not hold offers **"Create and use"**,
+        and the kind then appears in the task edit window's resilience section too (it is one list).
+  - [ ] Pick a kind → the **period editor**, headed with that kind's name and describing what it does.
+        Its bounds (date+time / now / ∞) behave exactly as before, whichever kind was picked.
+  - [ ] **Define a kind, give ONE task a resilience above 0 to it (task edit window ✎), then draw a period
+        of it over both tasks' panels.** The task left at 0 has its panel trimmed away; the resilient one
+        keeps its panel where it is, inside the period. Draw it over the elapsed past instead: the same
+        split happens to the two tasks' green record blocks.
+  - [ ] Right-click that period → **"Edit"** opens the period editor naming its kind; **"Remove"** takes it.
+        Close and reopen the app: the period is still there and still of that kind (not a block of work).
 - [ ] **A task panel's menu reaches its task (PRD §8).** Right-click a task panel:
   - [ ] **"edit task"** opens the §13 edition window on that task — the same window the tree cell's own
         **"edit task"** opens (that entry is no longer called "edit").

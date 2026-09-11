@@ -76,8 +76,8 @@ class NoScreenPeriodUnifyTest {
 
     @Test
     fun a_no_screen_period_added_over_another_unifies_into_the_union() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 3 * HOUR))
         val period = noScreenPeriods(s).single()
         assertEquals(NOW to NOW + 3 * HOUR, span(period))
         // Still a period in every other respect — the fuse only moves the bounds.
@@ -88,17 +88,17 @@ class NoScreenPeriodUnifyTest {
 
     @Test
     fun a_period_added_inside_another_leaves_the_wider_one_alone() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 4 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 4 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         assertEquals(NOW to NOW + 4 * HOUR, span(noScreenPeriods(s).single()))
     }
 
     @Test
     fun a_period_laid_across_two_others_swallows_both() {
         // Transitive: the newcomer overlaps A and B, which do not overlap each other.
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + 4 * HOUR, NOW + 5 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + 30 * 60_000, NOW + 4 * HOUR + 30 * 60_000))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 4 * HOUR, NOW + 5 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 30 * 60_000, NOW + 4 * HOUR + 30 * 60_000))
         assertEquals(NOW to NOW + 5 * HOUR, span(noScreenPeriods(s).single()))
     }
 
@@ -106,8 +106,8 @@ class NoScreenPeriodUnifyTest {
     fun two_periods_that_only_abut_stay_two_periods() {
         // They already draw full-width (no time slice holds both), and each is still an object the user can
         // remove on its own — so nothing is fused away.
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         assertEquals(
             listOf(NOW to NOW + HOUR, NOW + HOUR to NOW + 2 * HOUR),
             noScreenPeriods(s).map(::span),
@@ -116,8 +116,8 @@ class NoScreenPeriodUnifyTest {
 
     @Test
     fun a_disjoint_period_is_untouched() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + 3 * HOUR, NOW + 4 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 3 * HOUR, NOW + 4 * HOUR))
         assertEquals(
             listOf(NOW to NOW + HOUR, NOW + 3 * HOUR to NOW + 4 * HOUR),
             noScreenPeriods(s).map(::span),
@@ -128,16 +128,16 @@ class NoScreenPeriodUnifyTest {
     fun an_inactivity_period_overlapping_a_no_screen_one_is_not_fused() {
         // Different kinds say different things (grey refuses everybody; no-screen only the on-screen tasks),
         // so there is no union to take — they are two periods and the calendar shows them as two.
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, NOW + 3 * HOUR))
         assertEquals(NOW to NOW + 2 * HOUR, span(noScreenPeriods(s).single()))
         assertEquals(NOW + HOUR to NOW + 3 * HOUR, span(s.panels.single { it.inactivity }))
     }
 
     @Test
     fun the_fuse_is_one_undo_step() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 3 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCalendarFocus(true))
         val undone = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
         assertEquals(NOW to NOW + 2 * HOUR, span(noScreenPeriods(undone).single()))
@@ -147,8 +147,8 @@ class NoScreenPeriodUnifyTest {
 
     @Test
     fun a_period_dragged_onto_another_unifies_with_it() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + 6 * HOUR, NOW + 7 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 6 * HOUR, NOW + 7 * HOUR))
         val dragged = noScreenPeriods(s).last()
         s = SchedulerReducer.reduce(
             s,
@@ -179,8 +179,8 @@ class NoScreenPeriodUnifyTest {
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW - 3 * HOUR, NOW - 2 * HOUR, PanelPins(existence = true)),
         )
         // An existing period over the earlier hours, then one laid so that the two fuse across the work.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 6 * HOUR, NOW - 4 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 5 * HOUR, NOW - 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 6 * HOUR, NOW - 4 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 5 * HOUR, NOW - 2 * HOUR))
 
         assertEquals(NOW - 6 * HOUR to NOW - 2 * HOUR, span(noScreenPeriods(s).single()))
         assertTrue(
@@ -197,8 +197,8 @@ class NoScreenPeriodUnifyTest {
 
     @Test
     fun the_unified_period_takes_the_whole_day_column_width() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 3 * HOUR))
         // The blocks the calendar would slice: one per no-screen panel, laid out over the same hours.
         val blocks =
             noScreenPeriods(s).map { p ->
@@ -242,8 +242,8 @@ class NoScreenPeriodUnifyTest {
 
     @Test
     fun decode_leaves_a_state_that_already_holds_the_rule_untouched() {
-        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + 3 * HOUR, NOW + 4 * HOUR))
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 3 * HOUR, NOW + 4 * HOUR))
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
         assertNotNull(decoded)
         assertEquals(

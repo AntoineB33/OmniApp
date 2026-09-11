@@ -125,6 +125,40 @@ object PeriodKinds {
      */
     fun coversNoScreen(kind: String): Boolean = kind == NO_TASK || kind == NO_SCREEN
 
+    /**
+     * **The title a period of [kind] the user lays carries** — the one place a kind becomes a name on the
+     * calendar, read by the reducer that lays the period and by the window that offers the kind.
+     *
+     * The three built-ins keep the names the app has always drawn them under ("No screen", "Inactivity",
+     * "Before bed") because a period's title is what the panel label, the hover bubble and the "(untitled)"
+     * tombstone rule all read; **a kind the account defined is its own title**, since the user already named
+     * it when they defined it and a second name for one object is the drift this funnel exists to prevent.
+     */
+    fun periodTitle(kind: String): String =
+        when (kind) {
+            NO_SCREEN -> "No screen"
+            NO_TASK -> "Inactivity"
+            BEFORE_BED -> "Before bed"
+            else -> kind
+        }
+
+    /**
+     * Whether a panel of [kind] carries the legacy [org.example.project.scheduler.model.TaskPanel.noScreen]
+     * flag — **true for [NO_SCREEN] and nothing else**.
+     *
+     * [org.example.project.scheduler.model.TaskPanel.restrictiveKind] is the single reading of a panel's
+     * kind and the two flags beside it are legacy; they are still written for the two kinds that HAVE one so
+     * that the codec, the three-way merge and
+     * [org.example.project.scheduler.domain.SchedulerDomain.unifyNoScreenPeriods] go on answering as they
+     * did. A kind with no flag of its own — `before bed`, or one of the account's — writes neither, and
+     * everything that matters asks the kind instead. Setting a flag that stands for another kind would be a
+     * second, disagreeing statement of what the period is.
+     */
+    fun legacyNoScreenFlag(kind: String): Boolean = kind == NO_SCREEN
+
+    /** The other half of [legacyNoScreenFlag]: the legacy `inactivity` flag is [NO_TASK]'s and no other's. */
+    fun legacyInactivityFlag(kind: String): Boolean = kind == NO_TASK
+
     /** A user-defined kind is any that is not one of the two the README names. Blank names are refused. */
     fun isUserDefined(kind: String): Boolean = kind.isNotBlank() && kind !in BUILT_IN
 

@@ -418,8 +418,7 @@ object SchedulerReducer {
                     ),
                 )
             is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)
-            is SchedulerIntent.AddNoScreenPeriod -> reduceAddNoScreenPeriod(state, intent)
-            is SchedulerIntent.AddInactivityPeriod -> reduceAddInactivityPeriod(state, intent)
+            is SchedulerIntent.AddRestrictivePeriod -> reduceAddRestrictivePeriod(state, intent)
             is SchedulerIntent.UpdateTaskPanel -> reduceUpdateTaskPanel(state, intent)
             is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
             is SchedulerIntent.RemoveTaskPanel -> reduceRemoveTaskPanel(state, intent.id)
@@ -1836,76 +1835,69 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §8 "add a no-screen period": lay a "No screen" panel; on-screen task panels it covers are trimmed,
-     * and the on-screen RECORDS under its elapsed part are stripped ([stripRecordsUnderPeriod]).
+     * PRD §8 contextual menu **"add"** → *restrictive period*: lay a period of the chosen KIND.
+     *
+     * `side-dev/README.md` § *Restrictive Period*: a period is a start, an end and a kind, so this is the ONE
+     * place a period is laid, whichever kind it is — `no on-screen task`, `no task allowed`, PRD §17's
+     * `before bed`, or one the account defined. Nothing here branches on the kind: the title comes from
+     * [PeriodKinds.periodTitle], the two legacy flags from [PeriodKinds.legacyNoScreenFlag] /
+     * [PeriodKinds.legacyInactivityFlag] (kept only because the codec and the merge still read them), and what
+     * the period DOES to the panels and the records around it is read from each task's resilience to the kind
+     * ([resolveScreenOverrides], [stripRecordsUnderPeriod]).
+     *
+     * The record strip is applied to the span the user ENDS UP with, not the span they typed: a `no on-screen
+     * task` period laid across others has swallowed them ([SchedulerDomain.unifyNoScreenPeriods]), and the
+     * work under the whole union is what the period says did not happen.
      */
-    private fun reduceAddNoScreenPeriod(
+    private fun reduceAddRestrictivePeriod(
         state: SchedulerState,
-        intent: SchedulerIntent.AddNoScreenPeriod,
+        intent: SchedulerIntent.AddRestrictivePeriod,
     ): SchedulerState {
+        val kind = PeriodKinds.normalize(intent.kind)
+        if (kind.isBlank()) return state
         val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
         val (panelId, allocated) = state.allocatePanelId()
         val panel =
             TaskPanel(
                 id = panelId,
                 taskId = null,
-                title = "No screen",
+                title = PeriodKinds.periodTitle(kind),
                 startEpochMillis = intent.startEpochMillis,
                 endEpochMillis = end,
-                noScreen = true,
-                periodKind = PeriodKinds.NO_SCREEN,
+                noScreen = PeriodKinds.legacyNoScreenFlag(kind),
+                inactivity = PeriodKinds.legacyInactivityFlag(kind),
+                periodKind = kind,
                 // PRD §8: a period the user drew is a pre-placed thing, so the calendar's pin box reads
                 // CHECKED on it. `pinned` stays false all the same — see [derivePinned]'s overload.
                 pins = PanelPins(existence = true),
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
-        // PRD §8: the period this add really produced — the union, when it overlapped periods that have now
-        // been fused into it ([SchedulerDomain.unifyNoScreenPeriods]). The record strip is about the span the
-        // user ends up with, not the span they typed.
         val laid = resolvedPanels.firstOrNull { it.id == panelId } ?: panel
-        return stripRecordsUnderPeriod(commitPanels(resolved, resolvedPanels, label = "Add no-screen period"), laid)
-    }
-
-    /**
-     * PRD §8/§12 "add an inactivity period": a real GREY panel recording the user was away. Grey means the
-     * scheduler places nothing here — not even a task that needs no screen — so unlike a no-screen period it
-     * overrides EVERY task panel it covers (see [resolveScreenOverrides]) and strips every task record under
-     * its elapsed part, on-screen or not. That is what "an inactivity period from ∞ to now" does: it wipes
-     * the past clean of scheduled work.
-     */
-    private fun reduceAddInactivityPeriod(
-        state: SchedulerState,
-        intent: SchedulerIntent.AddInactivityPeriod,
-    ): SchedulerState {
-        val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
-        val (panelId, allocated) = state.allocatePanelId()
-        val panel =
-            TaskPanel(
-                id = panelId,
-                taskId = null,
-                title = "Inactivity",
-                startEpochMillis = intent.startEpochMillis,
-                endEpochMillis = end,
-                inactivity = true,
-                periodKind = PeriodKinds.NO_TASK,
-                // PRD §8: as for a no-screen period — the box is checked, `pinned` is not set.
-                pins = PanelPins(existence = true),
-            )
-        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
         return stripRecordsUnderPeriod(
-            commitPanels(resolved, resolvedPanels, label = "Add inactivity period"),
-            panel,
+            commitPanels(resolved, resolvedPanels, label = "Add period"),
+            laid,
         )
     }
 
     /**
-     * PRD §8/§9: true for a panel the screen-override rule treats as an **on-screen task panel** — a real
-     * (auto or user-authored) task block whose task is on-screen ([Task.onScreen]; a calendar-only panel
-     * with no backing task defaults to on-screen). Reminder tags, screen-break/sleep bands and the
-     * no-screen/inactivity periods themselves are never one.
+     * `side-dev/README.md` § *Restrictive Period*: **whether a period of [kind] REFUSES the task [panel]
+     * stands for** — its resilience to that kind is `0`, so the multiplier on its priority there is zero and
+     * it may not run inside.
+     *
+     * This one question replaced the pair the override rule used to ask ("is this an on-screen task panel?",
+     * "is this a task panel at all?"), and it answers for every kind rather than for the two that have a
+     * flag: against `no on-screen task` a `0` is exactly [Task.onScreen], against `no task allowed` every
+     * task is `0` by its own name, and against `before bed` or one of the account's own it is whatever the
+     * period's own window has handed out. Adding a kind therefore adds nothing here.
+     *
+     * A panel with **no backing task** is refused by every kind: a calendar-only panel is a brand-new task's
+     * worth of defaults ([Task.DEFAULT_RESILIENCE] — on screen), and there is nobody to have given it a
+     * value above zero for anything else.
      */
-    private fun isOnScreenTaskPanel(state: SchedulerState, panel: TaskPanel): Boolean =
-        isTaskPanel(panel) && (panel.taskId?.let { state.tasks[it]?.onScreen } ?: true)
+    private fun periodRefuses(state: SchedulerState, panel: TaskPanel, kind: String): Boolean {
+        val task = panel.taskId?.let { state.tasks[it] } ?: return true
+        return task.resilienceFor(kind) <= 0.0
+    }
 
     /**
      * PRD §8: true for a real (auto or user-authored) TASK panel of either screen kind — what an inactivity
@@ -1919,14 +1911,23 @@ object SchedulerReducer {
     private fun isTaskPanel(panel: TaskPanel): Boolean = !panel.isRestrictivePeriod && !panel.chore
 
     /**
-     * PRD §8 screen-override resolution: after the user lays / moves / resizes panel [changedId], trim or
-     * delete the panels it now overlaps that cannot coexist with it — an on-screen task panel overrides
-     * no-screen periods to fit itself, and a no-screen period overrides on-screen task panels. An
-     * **inactivity period is grey**, and grey means the scheduler places nothing there (PRD §8/§9): it
-     * overrides every task panel it covers, off-screen ones included, and every task panel overrides it in
-     * turn. A covered panel is
-     * deleted; one covered at an edge is trimmed; one covered in the middle is split (the far piece gets a
-     * fresh id). Pieces shorter than [SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS] are dropped as slivers.
+     * PRD §8 override resolution: after the user lays / moves / resizes panel [changedId], trim or delete the
+     * panels it now overlaps that cannot coexist with it. A covered panel is deleted; one covered at an edge
+     * is trimmed; one covered in the middle is split (the far piece gets a fresh id). Pieces shorter than
+     * [SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS] are dropped as slivers.
+     *
+     * **Who overrides whom is ONE question asked in both directions, and it is the README's:** a period and a
+     * task panel cannot coexist exactly when the period REFUSES that task ([periodRefuses]). Laying the
+     * period trims the task panels it refuses; laying the task panel trims the periods that refuse it. That
+     * is a statement about resilience and nothing else, so it holds for the two kinds the menu used to name
+     * and for `before bed` and the account's own alike — where the old spelling ("an on-screen task panel
+     * overrides no-screen periods, an inactivity period overrides every task panel") was the same rule
+     * enumerated for the two kinds that had a flag, and silently did nothing for a third.
+     *
+     * The periods it looks at on the task-panel side are the ones the **user drew**
+     * ([SchedulerDomain.isUserPlaced]): a §15 screen break, a §17 sleep window and a wind-down hour are
+     * `no task allowed` too, but they are re-laid wholesale by every fill and a hand-placed panel does not
+     * delete them — it is placed *through* them (§15/§17 suspend a chunk rather than cutting it).
      *
      * The step BEFORE the trim is the one thing that is not an override: **two overlapping "No screen"
      * periods do not compete, they unify** ([SchedulerDomain.unifyNoScreenPeriods]) — the union is what the
@@ -1943,13 +1944,16 @@ object SchedulerReducer {
         val changed = panels.firstOrNull { it.id == changedId } ?: return state to panels
         val trimTarget: (TaskPanel) -> Boolean =
             when {
-                // Grey refuses everybody (PRD §8/§9), so an inactivity period overrides every task panel.
-                changed.inactivity -> { p -> isTaskPanel(p) }
-                changed.noScreen -> { p -> isOnScreenTaskPanel(state, p) }
+                // A period the user just laid or dragged: it takes the task panels it refuses.
+                changed.isRestrictivePeriod -> { p ->
+                    isTaskPanel(p) && periodRefuses(state, p, changed.restrictiveKind)
+                }
                 !isTaskPanel(changed) -> return state to panels
-                isOnScreenTaskPanel(state, changed) -> { p -> p.noScreen || p.inactivity }
-                // An off-screen task may run inside a no-screen period, but never inside a grey one.
-                else -> { p -> p.inactivity }
+                // A task panel the user just laid or dragged: it takes the hand-drawn periods that refuse it.
+                else -> { p ->
+                    p.isRestrictivePeriod && SchedulerDomain.isUserPlaced(p) &&
+                        periodRefuses(state, changed, p.restrictiveKind)
+                }
             }
         var working = state
         val out = ArrayList<TaskPanel>(panels.size)
@@ -2014,12 +2018,15 @@ object SchedulerReducer {
         val (resolved, resolvedPanels) =
             resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
         val committed = commitPanels(resolved, resolvedPanels, label = "Edit panel")
-        // PRD §8/§9: moving/resizing a no-screen or inactivity period re-applies its rule over its NEW span,
-        // exactly as laying it did — a period dragged over a past task must strip that work too. The NEW span
-        // is the resolved one: a no-screen period dragged onto another has swallowed it (PRD §8 unify), and
-        // the work under the whole union is what the drag says did not happen.
+        // PRD §8/§9: moving/resizing a period the user drew re-applies its rule over its NEW span, exactly as
+        // laying it did — a period dragged over a past task must strip that work too. Asked through the kind
+        // ([TaskPanel.isRestrictivePeriod]) so a kind with no legacy flag is one here as well, and through
+        // [SchedulerDomain.isUserPlaced] because a fill-laid break or sleep band is not the user saying they
+        // were not working. The NEW span is the resolved one: a no-screen period dragged onto another has
+        // swallowed it (PRD §8 unify), and the work under the whole union is what the drag says did not
+        // happen.
         val moved = resolvedPanels.firstOrNull { it.id == panelId } ?: updated
-        return if (moved.noScreen || moved.inactivity) {
+        return if (moved.isRestrictivePeriod && SchedulerDomain.isUserPlaced(moved)) {
             stripRecordsUnderPeriod(committed, moved)
         } else {
             committed
@@ -2459,25 +2466,31 @@ object SchedulerReducer {
     private fun reduceStripNoScreenRecords(
         state: SchedulerState,
         ranges: List<TaskTimeRange>,
-    ): SchedulerState = stripRecords(state, ranges, onScreenOnly = true)
+    ): SchedulerState = stripRecords(state, ranges, affects = { it.onScreen })
 
     /**
      * PRD §8/§9/§12: the same rule the moment a period is **laid by hand** rather than at the next engine
      * start — the span the user just declared they were not at a screen (or not working at all) cannot hold
-     * banked work, so the records under its elapsed part go. [TaskPanel.inactivity] decides who is affected:
-     * a no-screen period exempts off-screen tasks (§9 lets them run inside one), a grey inactivity period
-     * exempts nobody.
+     * banked work, so the records under its elapsed part go.
+     *
+     * **Who is affected is the period's own refusal** ([periodRefuses]), the same question the override rule
+     * above asks: a record is a claim that the task ran there, and the period is the statement that it could
+     * not have. A `no on-screen task` period therefore exempts the off-screen tasks (§9 lets them run inside
+     * one) and a grey `no task allowed` one exempts nobody — not as two cases, but because those are the two
+     * resiliences. A kind the account defined strips exactly the tasks it left at `0`.
      *
      * A record is not an Undo/Redo unit (it lives outside the history, like every other banking side effect),
      * so undoing the period restores the panels it trimmed but not the records it stripped — the same
      * contract [reducePinRecord] and the advance tick already work under.
      */
-    private fun stripRecordsUnderPeriod(state: SchedulerState, panel: TaskPanel): SchedulerState =
-        stripRecords(
+    private fun stripRecordsUnderPeriod(state: SchedulerState, panel: TaskPanel): SchedulerState {
+        val kind = panel.restrictiveKind
+        return stripRecords(
             state,
             listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)),
-            onScreenOnly = !panel.inactivity,
+            affects = { task -> task.resilienceFor(kind) <= 0.0 },
         )
+    }
 
     /**
      * Subtracts [ranges] from the record of every affected task (see [reduceStripNoScreenRecords] /
@@ -2489,14 +2502,14 @@ object SchedulerReducer {
     private fun stripRecords(
         state: SchedulerState,
         ranges: List<TaskTimeRange>,
-        onScreenOnly: Boolean,
+        affects: (Task) -> Boolean,
     ): SchedulerState {
         if (ranges.isEmpty()) return state
         val merged = SchedulerDomain.mergeOccupied(ranges)
         val removed = ArrayList<TaskTimeRange>()
         var tasks = state.tasks
         for ((id, task) in state.tasks) {
-            if ((onScreenOnly && !task.onScreen) || task.record.isEmpty()) continue
+            if (!affects(task) || task.record.isEmpty()) continue
             val kept = SchedulerDomain.subtractRegions(task.record, merged)
             if (kept == task.record) continue
             removed += SchedulerDomain.intersectRegions(task.record, merged)

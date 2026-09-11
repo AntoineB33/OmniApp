@@ -52,7 +52,7 @@ class NoScreenInactivityPanelTest {
     @Test
     fun add_no_screen_period_creates_an_undoable_titled_panel() {
         val s0 = SchedulerState.empty()
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
         val panel = noScreenPanel(s)
         assertNotNull(panel)
         assertEquals("No screen", panel.title)
@@ -68,7 +68,7 @@ class NoScreenInactivityPanelTest {
     @Test
     fun add_inactivity_period_creates_an_undoable_titled_panel() {
         val s0 = SchedulerState.empty()
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddInactivityPeriod(NOW, NOW + HOUR))
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW, NOW + HOUR))
         val panel = s.panels.firstOrNull { it.inactivity }
         assertNotNull(panel)
         assertEquals("Inactivity", panel.title)
@@ -80,8 +80,8 @@ class NoScreenInactivityPanelTest {
     @Test
     fun codec_round_trips_the_no_screen_and_inactivity_flags() {
         var s = SchedulerState.empty()
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + 2 * HOUR, NOW + 3 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + 2 * HOUR, NOW + 3 * HOUR))
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
         assertNotNull(decoded)
         assertTrue(decoded.panels.any { it.noScreen && it.title == "No screen" })
@@ -159,7 +159,7 @@ class NoScreenInactivityPanelTest {
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + 2 * HOUR, PanelPins(existence = true)),
         )
         // Covers the second half of the task panel → the panel is trimmed to end at the period start.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 3 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 3 * HOUR))
         val taskPanel = s.panels.single { it.taskId == solo }
         assertEquals(NOW, taskPanel.startEpochMillis)
         assertEquals(NOW + HOUR, taskPanel.endEpochMillis)
@@ -173,7 +173,7 @@ class NoScreenInactivityPanelTest {
             s0,
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + 4 * HOUR, PanelPins(existence = true)),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         val pieces = s.panels.filter { it.taskId == solo }.sortedBy { it.startEpochMillis }
         assertEquals(2, pieces.size)
         assertEquals(NOW to NOW + HOUR, pieces[0].startEpochMillis to pieces[0].endEpochMillis)
@@ -183,7 +183,7 @@ class NoScreenInactivityPanelTest {
     @Test
     fun adding_an_on_screen_panel_over_a_no_screen_period_trims_the_period() {
         val (s0, solo) = stateWithOneTask()
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW + HOUR, NOW + 3 * HOUR, PanelPins(existence = true)),
@@ -201,7 +201,7 @@ class NoScreenInactivityPanelTest {
             s0,
             SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + HOUR, PanelPins(existence = true)),
@@ -215,7 +215,7 @@ class NoScreenInactivityPanelTest {
     @Test
     fun a_fully_covered_no_screen_period_is_deleted() {
         val (s0, solo) = stateWithOneTask()
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW, NOW + 3 * HOUR, PanelPins(existence = true)),
@@ -228,7 +228,7 @@ class NoScreenInactivityPanelTest {
     @Test
     fun fill_keeps_an_on_screen_task_out_of_a_no_screen_period() {
         val (s0, solo) = stateWithOneTask()
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         val panels = SchedulerDomain.fillSchedule(s, NOW)
         val taskPanels = panels.filter { it.taskId == solo }
         assertTrue(taskPanels.isNotEmpty())
@@ -256,7 +256,7 @@ class NoScreenInactivityPanelTest {
             s0,
             SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         val panels = SchedulerDomain.fillSchedule(s, NOW)
         val taskPanels = panels.filter { it.taskId == solo && it.auto }
         assertTrue(taskPanels.isNotEmpty(), "the resilient task must be scheduled")
@@ -314,7 +314,7 @@ class NoScreenInactivityPanelTest {
         // hand-added inactivity period is the same period, so it accepts nobody too. (It used to classify
         // nothing at all — the fill planned straight over it.)
         val (s0, solo) = stateWithOneTask()
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddInactivityPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, NOW + 2 * HOUR))
         val taskPanels = SchedulerDomain.fillSchedule(s, NOW).filter { it.taskId == solo }
         assertTrue(taskPanels.isNotEmpty())
         assertTrue(
@@ -342,7 +342,7 @@ class NoScreenInactivityPanelTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[0], "A"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[1], "B"))
         s.tasks.keys.forEach { s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(it, 45)) }
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + 30 * MIN, NOW + 90 * MIN))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + 30 * MIN, NOW + 90 * MIN))
         val autos = SchedulerDomain.fillSchedule(s, NOW).filter { it.auto }.sortedBy { it.startEpochMillis }
         val head = autos.first()
         assertEquals(NOW, head.startEpochMillis, "the half-hour before the grey period must not be left idle")
@@ -363,7 +363,7 @@ class NoScreenInactivityPanelTest {
             s0,
             SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW + HOUR, NOW + 2 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, NOW + 2 * HOUR))
         val taskPanels = SchedulerDomain.fillSchedule(s, NOW).filter { it.taskId == solo && it.auto }
         assertTrue(taskPanels.isNotEmpty(), "the task must still fill the timeline around the grey period")
         assertTrue(
@@ -600,7 +600,7 @@ class NoScreenInactivityPanelTest {
         // A no-screen period covering the middle hour of an elapsed 3-hour auto panel.
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 2 * HOUR, NOW - HOUR),
         )
         s = s.copy(
             panels = s.panels + TaskPanel(
@@ -624,7 +624,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 2 * HOUR, NOW - HOUR),
         )
         s = s.copy(
             panels = s.panels + TaskPanel(
@@ -659,7 +659,7 @@ class NoScreenInactivityPanelTest {
             s0,
             SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 2 * HOUR, NOW - HOUR))
         s = s.copy(
             panels = s.panels + TaskPanel(
                 id = "auto/0",
@@ -680,10 +680,10 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 2 * HOUR, NOW - HOUR),
         )
         // The user already marked that hour inactive by hand — the advance must not double it.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddInactivityPeriod(NOW - 2 * HOUR, NOW - HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW - 2 * HOUR, NOW - HOUR))
         s = s.copy(
             panels = s.panels + TaskPanel(
                 id = "auto/0",
@@ -703,7 +703,7 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         var s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 2 * HOUR, NOW - HOUR),
         )
         s = s.copy(
             panels = s.panels + TaskPanel(
@@ -730,7 +730,7 @@ class NoScreenInactivityPanelTest {
             s0,
             SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddNoScreenPeriod(NOW - 2 * HOUR, NOW - HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 2 * HOUR, NOW - HOUR))
         s = s.copy(
             panels = s.panels + TaskPanel(
                 id = "auto/0",

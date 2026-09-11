@@ -2048,7 +2048,8 @@ object SchedulerDomain {
     const val BEFORE_BED_MILLIS: Long = 60L * MILLIS_PER_MINUTE
 
     /** The title the §17 wind-down periods carry, so a caller can build the same period the fill builds. */
-    const val BEFORE_BED_PANEL_TITLE: String = "Before bed"
+    /** The §17 wind-down band's title — [PeriodKinds.periodTitle]'s answer for the kind, never a second one. */
+    val BEFORE_BED_PANEL_TITLE: String = PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED)
 
     /**
      * The id prefix of a DERIVED §17 wind-down panel (`before-bed/{wake day}`) — the one place the fill's
@@ -3695,14 +3696,16 @@ object SchedulerDomain {
     /**
      * Whether [panel] stands for **real work on a task** — the one reading of that question.
      *
-     * Everything else the calendar draws is not a task: a screen break, a sleep band, a grey inactivity or
-     * no-screen period (none of which carry a [TaskPanel.taskId] anyway) and a §14 reminder tag. Both
+     * Everything else the calendar draws is not a task: a §14 reminder tag, and every **restrictive period**
+     * — a screen break, a sleep band, a wind-down hour, a grey or no-screen period, one of a kind the account
+     * defined (none of which carry a [TaskPanel.taskId] anyway). Asked through [TaskPanel.isRestrictivePeriod],
+     * the single reading of a panel's kind, rather than through the four legacy flags: spelling those out said
+     * the same thing for the four kinds that have one and nothing at all for a kind that has not. Both
      * questions the now-line asks about tasks go through it — what it is on right now ([taskAtNowLine]) and
      * what it was on before ([taskPickerEntries]) — so the two can never disagree about what counts.
      */
     private fun isWorkPanel(panel: TaskPanel): Boolean =
-        panel.taskId != null && !panel.chore && !panel.screenBreak && !panel.sleep && !panel.noScreen &&
-            !panel.inactivity
+        panel.taskId != null && !panel.chore && !panel.isRestrictivePeriod
 
     /**
      * PRD §7 **"Switch task"**: [switch] if the refusal it records is still **outstanding** at [nowMillis],
@@ -4947,8 +4950,10 @@ object SchedulerDomain {
             result = 31 * result + (panel.taskId?.value?.hashCode() ?: 0)
             result = 31 * result + panel.startEpochMillis.hashCode()
             result = 31 * result + panel.endEpochMillis.hashCode()
-            result = 31 * result + (if (panel.noScreen) 1 else 0)
-            result = 31 * result + (if (panel.inactivity) 1 else 0)
+            // The panel's KIND, not the two legacy flags: a period of `before bed` or of a kind the account
+            // defined restricts the walk exactly as the two named ones do, and read off the flags it was
+            // indistinguishable from a task panel — so re-kinding one re-plans nothing.
+            result = 31 * result + panel.restrictiveKind.hashCode()
             result = 31 * result + (if (panel.pinned) 1 else 0)
         }
         return result

@@ -170,9 +170,28 @@ model exists to prevent.
   default for a KIND.** They are different questions. The clipboard writes the difference between the two,
   which is why an ordinary task's copy says nothing about a screen (ADR 0012).
 - **The account's own kinds are `SchedulerState.periodKinds`**, defined by the **`+`** in the task edit
-  window's resilience section. The three built-ins are never in that list; `state.allPeriodKinds` is the one
-  reading of "every kind a task can be resilient to". Removing a kind takes every task's override and every
-  panel laid with it.
+  window's resilience section **and by the calendar's add window** (`PeriodKindField`, same `AddPeriodKind`
+  intent — a second door, not a second rule). The three built-ins are never in that list;
+  `state.allPeriodKinds` is the one reading of "every kind a task can be resilient to". Removing a kind takes
+  every task's override and every panel laid with it.
+- **ONE INTENT LAYS A PERIOD OF ANY KIND** (`AddRestrictivePeriod(kind, start, end)`), reached from PRD §8's
+  single "add…" entry. There is no per-kind intent and no per-kind menu entry: a kind the account defined is
+  a period exactly as `no on-screen task` is, and two intents covering two of the kinds meant a third had no
+  way onto the calendar and the two copies of the lay/trim/strip sequence were free to drift. Nothing in the
+  reducer branches on the kind — the title is `PeriodKinds.periodTitle`, the two legacy flags are
+  `PeriodKinds.legacyNoScreenFlag` / `legacyInactivityFlag` (written only for the two kinds that HAVE one:
+  setting a flag that stands for another kind is a second, disagreeing statement of what the period is), and
+  what the period DOES is its refusal (below).
+- **"MAY THESE TWO SHARE A STRETCH" IS ONE QUESTION: does the period refuse the task** (resilience `0`,
+  `SchedulerReducer.periodRefuses`). It is what `resolveScreenOverrides` trims by in both directions and what
+  `stripRecordsUnderPeriod` clears the record by, so the four cases the code used to enumerate ("an on-screen
+  task panel overrides no-screen periods", "a grey period overrides every task panel", …) are one sentence
+  that also answers for the kinds that have no flag. Do not re-spell them.
+- **`TaskPanel.periodKind` IS PERSISTED AND SYNCED** (`PersistedPanel.periodKind`). It is authoritative — the
+  user chose it — and for a kind with no legacy flag it is the panel's ONLY statement of what it is, so a
+  period of one written without it decoded as a block of **work**. A payload that predates the field decodes
+  to blank and `restrictiveKind` heals it out of the flags exactly as before. It is in `schedulingSignature`
+  too, in place of the two flags: read off those, re-kinding a period re-planned nothing.
 - **PRD §17's wind-down is a KIND, not a rule: `before bed` (`PeriodKinds.BEFORE_BED`).** The hour before
   each §17 bedtime is covered by a period of it (`SchedulerDomain.beforeBedPanels`, derived from
   `sleepPanels` so the hour drifts with the wake time it is measured back from). The hour is empty for the

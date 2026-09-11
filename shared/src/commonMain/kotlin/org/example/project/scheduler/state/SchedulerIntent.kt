@@ -1061,21 +1061,24 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §8 contextual menu "add a no-screen period": lay a user-authored "No screen" panel over the
-     * given span. On-screen task panels it overlaps are trimmed/deleted to fit it (screen-override
-     * resolution), and the §9 fill then only places off-screen tasks inside it. Undoable calendar delta.
+     * PRD §8 contextual menu **"add"** → *restrictive period*: lay a user-authored period of [kind] over the
+     * given span.
+     *
+     * `side-dev/README.md` § *Restrictive Period*: **a period is a start, an end and a KIND**, so ONE intent
+     * lays every one of them — the two the menu used to name separately
+     * ([org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN],
+     * [org.example.project.scheduler.domain.PeriodKinds.NO_TASK]), PRD §17's `before bed`, and every kind the
+     * account has defined. Two intents for two of the kinds was a funnel with an exception list: a third kind
+     * had no way onto the calendar at all, and the two copies of the lay/trim/strip sequence were free to
+     * drift.
+     *
+     * What the period then DOES is read from the kind alone, through each task's resilience to it: the task
+     * panels it overlaps are trimmed/deleted where that resilience is `0` (screen-override resolution), the
+     * §9 fill places only the tasks it leaves above zero inside it, and the work banked under its elapsed
+     * part is stripped for exactly the tasks it refuses. Undoable calendar delta.
      */
-    data class AddNoScreenPeriod(
-        val startEpochMillis: Long,
-        val endEpochMillis: Long,
-    ) : SchedulerIntent
-
-    /**
-     * PRD §8/§12 contextual menu "add an inactivity period": lay a user-authored "Inactivity" panel over
-     * the given span — a real panel recording that the user was away from every device. It stays a
-     * *screen* period (no fill constraint, screen breaks keep their cadence). Undoable calendar delta.
-     */
-    data class AddInactivityPeriod(
+    data class AddRestrictivePeriod(
+        val kind: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
     ) : SchedulerIntent

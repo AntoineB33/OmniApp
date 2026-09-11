@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.ScrollState
@@ -144,6 +145,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
@@ -298,6 +300,17 @@ data class CalendarRecord(
      * (a pattern over the real panels). Off-screen tasks schedule inside it; on-screen tasks never do.
      */
     val noScreen: Boolean = false,
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: **which KIND of period this block is**, or blank for
+     * anything that is not one (a task panel, a reminder tag, a layer region).
+     *
+     * [noScreen] and [inactivity] beside it are the two DRAWINGS — no fill and hatched, or grey — and a
+     * kind maps onto one of them ([org.example.project.App] does that mapping once, where the record is
+     * built). This field is the period's identity rather than its paint: it is what the contextual menu's
+     * "Edit" hands [PeriodEditWindow] so the window can name the period the user is editing, and a kind
+     * the account defined has no flag of its own to be recognised by.
+     */
+    val restrictiveKind: String = "",
     /**
      * For a [sleep] band: the enclosing account-offline "No screen" window. A sleep window is by
      * definition also a no-screen period, and that no-screen stretch may extend past the sleep into a
@@ -555,6 +568,8 @@ data class PlacedRecord(
     val layerDeclared: Boolean = false,
     /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
     val noScreen: Boolean = false,
+    /** `side-dev/README.md`: which KIND of restrictive period this block is, blank if it is not one. */
+    val restrictiveKind: String = "",
     /** For a [sleep] band: its enclosing "No screen" window (>= the sleep range). See [CalendarRecord.noScreenRange]. */
     val noScreenRange: TaskTimeRange? = null,
     /** PRD §12: this derived band is open-ended into the past; the hover bubble shows "∞" as its start. */
@@ -691,6 +706,7 @@ fun recordsForDay(
             layer = record.layer,
             layerDeclared = record.layerDeclared,
             noScreen = record.noScreen,
+            restrictiveKind = record.restrictiveKind,
             noScreenRange = record.noScreenRange,
             openStart = record.openStart,
             fullStartMillis = record.range.startEpochMillis,
@@ -2881,14 +2897,15 @@ fun CalendarFloatingWindow(
     calculating: Boolean = false,
     /** PRD §8 focus: a press anywhere in the window makes the calendar the focused surface again. */
     onFocus: () -> Unit = {},
-    /** PRD §8 Manual add: invoked with the epoch-millis at a right-click position in the calendar. */
-    onAddTaskAt: (Long) -> Unit = {},
-    /** PRD §14: "add reminder" — invoked with the epoch-millis at a right-click position. */
-    onAddReminderAt: (Long) -> Unit = {},
-    /** PRD §8: "add a no-screen period" — invoked with the epoch-millis at a right-click position. */
-    onAddNoScreenAt: (Long) -> Unit = {},
-    /** PRD §8/§12: "add an inactivity period" — invoked with the epoch-millis at a right-click position. */
-    onAddInactivityAt: (Long) -> Unit = {},
+    /**
+     * PRD §8 contextual menu **"add"** — invoked with the epoch-millis at the right-click position.
+     *
+     * ONE callback for the one entry that replaced the four the menu used to carry ("add a task", "add a
+     * no-screen period", "add an inactivity period", "add reminder"). What is being added is chosen in the
+     * window it opens ([org.example.project.ui.CalendarAddWindow]), which is where the account's own kinds of
+     * restrictive period can be offered at all — a menu naming two of them by hand could never list them.
+     */
+    onAddAt: (Long) -> Unit = {},
     /**
      * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
      * (the bounds are raw/overlapping when armed, else already no-overlap snapped).
@@ -3111,10 +3128,7 @@ fun CalendarFloatingWindow(
                 taskColors = taskColors,
                 zoomActions = zoomActions,
                 ctrlHeld = ctrlHeld,
-                onAddTaskAt = onAddTaskAt,
-                onAddReminderAt = onAddReminderAt,
-                onAddNoScreenAt = onAddNoScreenAt,
-                onAddInactivityAt = onAddInactivityAt,
+                onAddAt = onAddAt,
                 onCommitBounds = onCommitBounds,
                 onEditEntry = onEditEntry,
                 onEditTask = onEditTask,
@@ -3423,10 +3437,7 @@ private fun WeekView(
     taskColors: Map<TaskId, Color>,
     zoomActions: CalendarZoomActions,
     ctrlHeld: Boolean,
-    onAddTaskAt: (Long) -> Unit,
-    onAddReminderAt: (Long) -> Unit,
-    onAddNoScreenAt: (Long) -> Unit,
-    onAddInactivityAt: (Long) -> Unit,
+    onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onEditTask: (TaskId) -> Unit,
@@ -3964,10 +3975,7 @@ private fun WeekView(
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
                                     // The badge below is drawn for every row but the top one.
                                     showsDayDate = row > 0,
-                                    onAddTaskAt = onAddTaskAt,
-                                    onAddReminderAt = onAddReminderAt,
-                                    onAddNoScreenAt = onAddNoScreenAt,
-                                    onAddInactivityAt = onAddInactivityAt,
+                                    onAddAt = onAddAt,
                                     onCommitBounds = onCommitBounds,
                                     onEditEntry = onEditEntry,
                                     onEditTask = onEditTask,
@@ -4155,10 +4163,7 @@ private fun DayColumn(
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
      */
     taskColors: Map<TaskId, Color>,
-    onAddTaskAt: (Long) -> Unit,
-    onAddReminderAt: (Long) -> Unit,
-    onAddNoScreenAt: (Long) -> Unit,
-    onAddInactivityAt: (Long) -> Unit,
+    onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditEntry: (PlacedRecord) -> Unit,
     onEditTask: (TaskId) -> Unit,
@@ -4575,7 +4580,7 @@ private fun DayColumn(
         }
 
         // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove (and, on a
-        // task panel, "edit task" / "go to task tree"); both a block and a gap also get the "add" actions
+        // task panel, "edit task" / "go to task tree"); both a block and a gap also get the one "add…" entry
         // (anchored at the right-click time), so a panel's menu is a superset of the gap's.
         val anchor = menuOffset
         fun closeMenu() { menuOffset = null; menuTarget = null }
@@ -4652,31 +4657,15 @@ private fun DayColumn(
                     }
                 }
             }
+            // PRD §8: **one "add" entry**, anchored at the right-click time. The four it replaced named
+            // two of the kinds of restrictive period by hand, which is a funnel with an exception list —
+            // `before bed` and every kind the account defines had no way onto the calendar at all. What is
+            // being added, and (for a period) OF WHICH KIND, is chosen in [CalendarAddWindow]; nothing is
+            // laid until that window's own editor is saved.
             DropdownMenuItem(
-                text = { Text("add a task") },
+                text = { Text("add…") },
                 onClick = {
-                    anchor?.let { onAddTaskAt(millisAt(it.y)) }
-                    closeMenu()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("add a no-screen period") },
-                onClick = {
-                    anchor?.let { onAddNoScreenAt(millisAt(it.y)) }
-                    closeMenu()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("add an inactivity period") },
-                onClick = {
-                    anchor?.let { onAddInactivityAt(millisAt(it.y)) }
-                    closeMenu()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("add reminder") },
-                onClick = {
-                    anchor?.let { onAddReminderAt(millisAt(it.y)) }
+                    anchor?.let { onAddAt(millisAt(it.y)) }
                     closeMenu()
                 },
             )
@@ -6217,10 +6206,14 @@ private fun CalendarBlock(
 /**
  * PRD §8: is this displayed block a **restrictive period** rather than a task panel?
  *
- * The two the user can draw are the no-screen period and the inactivity period, and both are the same object
- * under different scheduling rules — which is why they share one editor. It is asked for the one thing that
- * differs on a period: it is reached by its KIND, so its pin box could only ever state a fact (see
- * [panelPinBoxSpec]).
+ * A period of ANY kind is one — `side-dev/README.md`: a period is a start, an end and a kind, and they are
+ * all the same object under the one set of scheduling rules, which is why they share one editor. It is asked
+ * for the one thing that differs on a period: it is reached by its KIND, so its pin box could only ever state
+ * a fact (see [panelPinBoxSpec]).
+ *
+ * Read off the two PAINTS rather than off [PlacedRecord.restrictiveKind] deliberately: what the question is
+ * really about is whether this block occupies the timeline or patterns it, which is what the paint says. The
+ * two are the same set — [org.example.project.App] derives one from the other, once.
  */
 private fun isPeriodBlock(record: PlacedRecord): Boolean = record.noScreen || record.inactivity
 
@@ -6239,9 +6232,10 @@ internal data class PanelPinBoxSpec(val checked: Boolean, val enabled: Boolean)
  *   for a box to sit on — while the box it would wear could only ever be inert, a period being reached by its
  *   KIND and taken away with "Remove" rather than unpinned. A mark that cannot be pressed on a panel that is
  *   not there to be occupied is two reasons for the same nothing.
- * - **An inactivity period keeps a box, and it is INERT** (`enabled = false`). That one is a real panel — grey
- *   is a statement about the timeline itself — so the mark has a body to sit on and says what the outline
- *   around it says. It is checked as a RULE rather than off the field, so a period an older build wrote
+ * - **Every OTHER period keeps a box, and it is INERT** (`enabled = false`) — a hand-drawn grey one, and one
+ *   of `before bed` or of a kind the account defined, which are drawn grey for the same reason. Those are real
+ *   panels — grey is a statement about the timeline itself — so the mark has a body to sit on and says what the
+ *   outline around it says. It is checked as a RULE rather than off the field, so a period an older build wrote
  *   (before the reducer set the pin on one) still reads checked with no migration: the panel IS the pre-placed
  *   thing, whatever its stored pins happen to say.
  * - **Every other user-placed block gets the real switch**, reading its own `pins.existence`.
@@ -6810,16 +6804,224 @@ fun ManualEntryEditWindow(
 }
 
 /**
- * PRD §8: which of the two hand-added calendar periods a [PeriodEditWindow] is editing. Both are placed,
- * edited and drawn the same way; they differ only in who may be scheduled inside them (§9).
+ * PRD §8 contextual menu **"add…"**: what the one "add" entry opens — *what do you want to put here?*
+ *
+ * The menu used to name four things to add, two of which were restrictive periods spelled out one kind at a
+ * time ("add a no-screen period", "add an inactivity period"). That is a funnel with an exception list, and
+ * the exception was visible: `side-dev/README.md`'s model says a period is a start, an end and a KIND, so
+ * PRD §17's `before bed` and every kind the account defines are periods exactly as those two are — and
+ * neither had any way onto the calendar, because the menu could only ever list the kinds somebody had typed
+ * into it. Here the kind is **chosen**, off [org.example.project.scheduler.state.SchedulerState.allPeriodKinds],
+ * so defining a kind is all it takes to be able to draw one.
+ *
+ * It is a router and nothing else: **nothing is laid here.** Each choice opens the editor that already owns
+ * that object — the calendar edit window, [PeriodEditWindow], the reminder editor — and it is that window's
+ * Save that writes, which is what keeps "nothing is placed until Save" true for all three.
+ *
+ * A **reminder** is the third choice for the same reason the entry exists at all: it was one of the four
+ * things the menu offered to add, and reducing four entries to one that cannot reach it would simply have
+ * lost it. It is not a panel of any sort (PRD §14: a zero-duration tag with an id of its own), so it is a
+ * peer of the two panel families here rather than a kind of period.
  */
-enum class CalendarPeriodKind {
-    /** §8/§9 "No screen": a decorative hatched period only tasks needing no screen are scheduled in. */
-    NoScreen,
+@Composable
+fun CalendarAddWindow(
+    atMillis: Long,
+    tz: TimeZone,
+    /** Every kind a period can be OF: the three built-ins plus the account's own (`allPeriodKinds`). */
+    periodKinds: List<String>,
+    /** Defines a new kind from this window's own field — the same intent the task edit window's `+` sends. */
+    onCreatePeriodKind: (String) -> Unit,
+    onAddTaskPanel: () -> Unit,
+    onAddPeriod: (kind: String) -> Unit,
+    onAddReminder: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var choice by remember { mutableStateOf(CalendarAddChoice.TaskPanel) }
+    // Seeded with the kind the two old entries between them covered most often, and re-seeded whenever the
+    // account's list changes under an open window (a kind deleted from the task edit window).
+    var kind by remember(periodKinds) {
+        mutableStateOf(periodKinds.firstOrNull { it == PeriodKinds.NO_TASK } ?: periodKinds.firstOrNull() ?: "")
+    }
+    val frame = rememberWindowFrameState("CalendarAdd")
 
-    /** §8/§12 "Inactivity": a real GREY period the scheduler places nothing in at all. */
-    Inactivity,
+    TransientPopupLayer(frame.id) {
+        AppWindowFrame(
+            title = "Add at " + formatHm(atMillis, tz),
+            state = frame,
+            onClose = onDismiss,
+            defaultWidth = 340.dp,
+            defaultHeight = 320.dp,
+            claimsKeyboard = true,
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                EditMenuSectionLabel("What to add")
+                for (option in CalendarAddChoice.entries) {
+                    PeriodBoundChip(option.label, choice == option) { choice = option }
+                }
+
+                // The kind field belongs to the RESTRICTIVE PERIOD choice, so it appears with it and says
+                // nothing while another choice is selected — the window asks one question at a time.
+                if (choice == CalendarAddChoice.RestrictivePeriod) {
+                    PeriodKindField(
+                        kind = kind,
+                        periodKinds = periodKinds,
+                        onPick = { kind = it },
+                        onCreate = { newKind ->
+                            onCreatePeriodKind(newKind)
+                            kind = PeriodKinds.normalize(newKind)
+                        },
+                    )
+                    Text(
+                        text = periodKindBlurb(kind),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        enabled = choice != CalendarAddChoice.RestrictivePeriod || kind.isNotBlank(),
+                        onClick = {
+                            when (choice) {
+                                CalendarAddChoice.TaskPanel -> onAddTaskPanel()
+                                CalendarAddChoice.RestrictivePeriod -> onAddPeriod(kind)
+                                CalendarAddChoice.Reminder -> onAddReminder()
+                            }
+                        },
+                    ) { Text("Continue") }
+                }
+            }
+        }
+    }
 }
+
+/** The three things PRD §8's one "add" entry can put on the calendar. See [CalendarAddWindow]. */
+enum class CalendarAddChoice(val label: String) {
+    /** PRD §8 Manual add: a block of work, opened in the calendar edit window. */
+    TaskPanel("task panel"),
+
+    /** `side-dev/README.md` § *Restrictive Period*: a period of the chosen kind, opened in [PeriodEditWindow]. */
+    RestrictivePeriod("restrictive period"),
+
+    /** PRD §14: a zero-duration reminder tag, opened in the reminder editor. */
+    Reminder("reminder"),
+}
+
+/**
+ * **Which kind of restrictive period** — the task cell's categories field ([TaskCategoryCell]) read for a
+ * single value instead of a set.
+ *
+ * Deliberately the same control, because it answers the same shape of question: the account owns a list of
+ * named things, the row merely POINTS at one of them, and the name the user types either matches one that
+ * exists (pick it — never mint a second under the same spelling) or is a new one to define. So it is the same
+ * drop-down holding the same two parts — the rows, then a naming field with a "Create" button under it — with
+ * the one difference the question forces: a task carries any number of categories and a period is of exactly
+ * one kind, so picking closes the menu and REPLACES rather than adding, and there is no bin.
+ *
+ * The **✎** each row carries in the task cell is absent for the same reason: that window is *this kind, every
+ * task*, which is a thing to open from a period that exists, not from the field that is choosing one.
+ */
+@Composable
+private fun PeriodKindField(
+    kind: String,
+    periodKinds: List<String>,
+    onPick: (String) -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        EditMenuSectionLabel("Kind of period")
+        Box {
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp))
+                    .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
+                    .clickable {
+                        draft = ""
+                        open = true
+                    }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                text = kind.ifBlank { "+ kind" },
+                style = MaterialTheme.typography.bodySmall,
+                color =
+                    if (kind.isBlank()) MaterialTheme.colorScheme.outline
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(min = 240.dp, max = 320.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        singleLine = true,
+                        label = { Text("Kind of period") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // Emitted straight into this Column with NO scroll container of its own — a
+                    // `DropdownMenu`'s content already scrolls, so a second scrolling parent under an
+                    // unbounded height is the "measured with an infinity maximum height" crash
+                    // ([TaskCategoryCell] carries the same note, for the same reason).
+                    EditModeMenuBlock(
+                        identityLabel = "Kinds of period",
+                        identityRows =
+                            periodKinds
+                                .filter { draft.isBlank() || it.contains(draft.trim(), ignoreCase = true) }
+                                .map { row ->
+                                    EditMenuItem(label = row, selected = row == kind) {
+                                        open = false
+                                        onPick(row)
+                                    }
+                                },
+                    )
+                    val normalized = PeriodKinds.normalize(draft)
+                    if (PeriodKinds.isUserDefined(normalized) &&
+                        periodKinds.none { it.equals(normalized, ignoreCase = true) }
+                    ) {
+                        TextButton(onClick = {
+                            open = false
+                            onCreate(normalized)
+                        }) { Text("Create and use") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One line saying what a period of [kind] will DO, written out of the model rather than out of a list of
+ * special cases: a period multiplies every covered task's priority by that task's resilience to the kind, and
+ * the only thing that differs between kinds is the resilience the tasks that were never told about it carry
+ * ([PeriodKinds.defaultResilience]). `no on-screen task` is the one kind whose default is `1`, which is
+ * exactly why it is the one that reads as "only the tasks that need no screen".
+ */
+private fun periodKindBlurb(kind: String): String =
+    when (kind) {
+        PeriodKinds.NO_SCREEN ->
+            "Only tasks that need no screen are scheduled here. On-screen task panels and the work banked " +
+                "inside it are removed."
+        PeriodKinds.NO_TASK ->
+            "Grey: the scheduler places nothing here at all. Every task panel and every hour of work banked " +
+                "inside it are removed."
+        else ->
+            "Each task is scheduled here at its resilience to \"" + kind + "\" — 0 by default, so nothing " +
+                "is placed until a task is given a value above zero in the period's own window."
+    }
 
 /**
  * PRD §8: how one bound of a period is given — an explicit wall-clock instant, the moving **now**-line, or
@@ -6830,19 +7032,25 @@ enum class CalendarPeriodKind {
 private enum class PeriodBound { At, Now, Infinite }
 
 /**
- * PRD §8 "add a no-screen period" / "add an inactivity period": the period editor, opened by both
- * contextual-menu entries and by a period's own "Edit". The right-click time only pre-fills it — nothing is
- * laid on the calendar until Save — so a period can be given any span, including the open-ended ones the
- * grid cannot express by dragging: **∞ → now** wipes the recorded past (every task panel and every banked
- * record the period covers is removed, §9), and **now → ∞** keeps the scheduler out of the rest of the
- * timeline.
+ * PRD §8: **the period editor** — reached from [CalendarAddWindow]'s *restrictive period* choice and from a
+ * period's own "Edit". The right-click time only pre-fills it — nothing is laid on the calendar until Save —
+ * so a period can be given any span, including the open-ended ones the grid cannot express by dragging:
+ * **∞ → now** wipes the recorded past (every task panel and every banked record the period covers is removed,
+ * §9), and **now → ∞** keeps the scheduler out of the rest of the timeline.
  *
- * The two kinds share this one window: they are the same object with different rules about who may run
- * inside them, and a second editor is how two things that must agree drift apart.
+ * **EVERY kind shares this one window**, [kind] being the only thing that differs between two periods —
+ * `side-dev/README.md`: a period is a start, an end and a kind. It used to take an enum of the two kinds the
+ * menu named, which made the window itself a place a third kind could not be edited; now the kind is a name
+ * like any other and the window says what it means ([periodKindBlurb]) rather than branching on it. A second
+ * editor per kind is how two things that must agree drift apart.
+ *
+ * The kind is **shown, not changed**: re-kinding an existing period would be a different edit from moving
+ * its bounds (it changes who may run inside it, and what its elapsed part says about the work banked there),
+ * and "Remove" plus a fresh add is the one way to say it today.
  */
 @Composable
 fun PeriodEditWindow(
-    kind: CalendarPeriodKind,
+    kind: String,
     isNew: Boolean,
     startMillis: Long,
     endMillis: Long,
@@ -6867,8 +7075,7 @@ fun PeriodEditWindow(
     var endDateText by remember { mutableStateOf(formatDate(endSeed, tz)) }
     var endTimeText by remember { mutableStateOf(formatHm(endSeed, tz)) }
 
-    val noScreen = kind == CalendarPeriodKind.NoScreen
-    val label = if (noScreen) "no-screen period" else "inactivity period"
+    val label = PeriodKinds.periodTitle(kind)
     val resolvedStart =
         when (startBound) {
             PeriodBound.Infinite -> SchedulerDomain.OPEN_PAST_MILLIS
@@ -6888,12 +7095,7 @@ fun PeriodEditWindow(
 
     TransientPopupLayer(frame.id) {
         AppWindowFrame(
-            title =
-                when {
-                    !isNew -> "Edit $label"
-                    noScreen -> "Add a $label"
-                    else -> "Add an $label"
-                },
+            title = (if (isNew) "Add period: " else "Edit period: ") + label,
             state = frame,
             onClose = onDismiss,
             defaultWidth = 340.dp,
@@ -6906,14 +7108,7 @@ fun PeriodEditWindow(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text =
-                        if (noScreen) {
-                            "Only tasks that need no screen are scheduled here. On-screen task panels and " +
-                                "the work banked inside it are removed."
-                        } else {
-                            "Grey: the scheduler places nothing here at all. Every task panel and every " +
-                                "hour of work banked inside it are removed."
-                        },
+                    text = periodKindBlurb(kind),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

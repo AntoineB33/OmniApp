@@ -410,6 +410,10 @@ object SchedulerStateCodec {
                         noScreen = it.noScreen,
                         inactivity = it.inactivity,
                         conductedBreak = it.conductedBreak,
+                        // The panel's own field, NOT `restrictiveKind`: what is read back out has to be what
+                        // was written, and a panel that only carries a legacy flag goes on being healed from
+                        // it on decode rather than being silently upgraded here.
+                        periodKind = it.periodKind,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -733,6 +737,7 @@ object SchedulerStateCodec {
             noScreen = noScreen,
             inactivity = inactivity,
             conductedBreak = conductedBreak,
+            periodKind = periodKind,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -937,6 +942,7 @@ object SchedulerStateCodec {
                         noScreen = it.noScreen,
                         inactivity = it.inactivity,
                         conductedBreak = it.conductedBreak,
+                        periodKind = it.periodKind,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -1164,6 +1170,7 @@ object SchedulerStateCodec {
             noScreen = noScreen,
             inactivity = inactivity,
             conductedBreak = conductedBreak,
+            periodKind = periodKind,
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -1802,6 +1809,19 @@ private data class PersistedPanel(
     // so). The consequence is bounded and self-healing: such a panel bars the next 20 s period for the twenty
     // minutes after it only once this build has recorded one.
     val conductedBreak: Boolean = false,
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: **the KIND of period this panel is**, blank when it is not
+     * one — [org.example.project.scheduler.model.TaskPanel.periodKind].
+     *
+     * It has to be on the wire, and it has to be here, because it is the only statement of the kind a panel
+     * of a kind with **no legacy flag** carries: PRD §17's `before bed` and every kind the account defined
+     * have none, so a period of one written without this field decoded as a TASK PANEL — a period the user
+     * drew silently becoming a block of work on the next load. The four flags beside it still stand for the
+     * four kinds that have one, which is what makes a missing field safe: a payload that predates this one
+     * decodes to blank and [org.example.project.scheduler.model.TaskPanel.restrictiveKind] heals it back out
+     * of the flags exactly as it always has.
+     */
+    val periodKind: String = "",
 )
 
 @Serializable

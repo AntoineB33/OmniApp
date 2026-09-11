@@ -103,7 +103,7 @@ import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.TaskRelationsWindow
-import org.example.project.ui.CalendarPeriodKind
+import org.example.project.ui.CalendarAddWindow
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.CategoriesWindow
 import org.example.project.ui.CategoryEditWindow
@@ -1226,6 +1226,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             title = "Inactivity",
                             range = gap,
                             inactivity = true,
+                            restrictiveKind = PeriodKinds.NO_TASK,
                             openStart = open != null && gap.startEpochMillis == open,
                         )
                     }
@@ -1411,11 +1412,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §14 "add a checked reminder": the right-click epoch-millis at which to open the reminder-check
         // window (null = closed).
         var addingReminderAtMillis by remember { mutableStateOf<Long?>(null) }
-        // PRD §8: the no-screen / inactivity period the period editor is open on (null = closed). Both
-        // "add a … period" menu entries and a period's own "Edit" open it — nothing is laid on the
+        // PRD §8: the period the period editor is open on (null = closed). Both [CalendarAddWindow]'s
+        // "restrictive period" choice and a period's own "Edit" open it — nothing is laid on the
         // calendar until Save, which is what lets a period be given an open ("∞") bound the grid could
         // never be dragged to.
         var editingPeriod by remember { mutableStateOf<PeriodDraft?>(null) }
+        // PRD §8 contextual menu "add…": the right-click epoch-millis the add CHOOSER is open at (null =
+        // closed). It lays nothing itself — it picks which of the three editors above opens next.
+        var addingAtMillis by remember { mutableStateOf<Long?>(null) }
 
         // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
@@ -1829,40 +1833,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // (e.g. after a click into the tree had handed focus back) and raises it to the
                             // top of the window layers. (onFocus fires inside the window, after its offset.)
                             onFocus = { focusWindow(FloatingWindow.Calendar) },
-                            // PRD §8 Manual add: open the edit window pre-filled with the default task
-                            // (highest absolute priority, min-time span) and a Save button.
-                            onAddTaskAt = { startMillis ->
-                                val taskId = SchedulerDomain.manualAddTaskId(schedulerState)
-                                val task = taskId?.let { schedulerState.tasks[it] }
-                                val span = (task?.minimumMinutes?.toLong() ?: 45L) * 60_000L
-                                addingBlock = PlacedRecord(
-                                    title = task?.title.orEmpty(),
-                                    startHour = 0f,
-                                    endHour = 0f,
-                                    scheduled = false,
-                                    manual = true,
-                                    entryId = null,
-                                    taskId = taskId,
-                                    pinned = true, // PRD §8: the "pin" button is on by default for a new panel
-                                    // PRD §8: seeds the edit window's switches — Existence on by default, the rest off.
-                                    pins = PanelPins(existence = true),
-                                    fullStartMillis = startMillis,
-                                    fullEndMillis = startMillis + span,
-                                )
-                            },
-                            // PRD §14 "add reminder": open the reminder editor at the click.
-                            onAddReminderAt = { atMillis -> addingReminderAtMillis = atMillis },
-                            // PRD §8: open the period editor pre-filled with one hour from the right-click
-                            // time. The user picks the real bounds there (including "∞" and "now") and Save
-                            // lays the period; it stays adjustable by drag/resize like any block afterwards.
-                            onAddNoScreenAt = { atMillis ->
-                                editingPeriod =
-                                    PeriodDraft(CalendarPeriodKind.NoScreen, null, atMillis, atMillis + 3_600_000L)
-                            },
-                            onAddInactivityAt = { atMillis ->
-                                editingPeriod =
-                                    PeriodDraft(CalendarPeriodKind.Inactivity, null, atMillis, atMillis + 3_600_000L)
-                            },
+                            // PRD §8 contextual menu "add…": the ONE add entry. It opens the chooser and
+                            // nothing else — what is being added, and for a period of which KIND, is
+                            // answered there, and the editor that owns that object is what actually lays it.
+                            onAddAt = { atMillis -> addingAtMillis = atMillis },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel. The gesture
                             // itself sets the EXISTENCE pin ([SchedulerDomain.pinsAfterHandPlacement]): the
@@ -1890,18 +1864,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 }
                             },
                             // PRD §8 "Edit": a sleep band's editable object is the §17 sleep schedule, so
-                            // its Edit opens the sleep window; a no-screen / inactivity period has no task
-                            // behind it and opens the shared period editor; every other panel opens the
+                            // its Edit opens the sleep window; a restrictive period has no task behind it
+                            // and opens the shared period editor, WHATEVER ITS KIND (read off the block, not
+                            // guessed from which of the two paints it wears); every other panel opens the
                             // calendar edit window.
                             onEditEntry = { block ->
                                 when {
                                     block.sleep -> sleepWindowOpen = true
-                                    block.noScreen || block.inactivity ->
+                                    block.restrictiveKind.isNotBlank() ->
                                         editingPeriod =
                                             PeriodDraft(
-                                                kind =
-                                                    if (block.noScreen) CalendarPeriodKind.NoScreen
-                                                    else CalendarPeriodKind.Inactivity,
+                                                kind = block.restrictiveKind,
                                                 block = block,
                                                 startMillis = block.fullStartMillis,
                                                 endMillis = block.fullEndMillis,
@@ -2023,13 +1996,62 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             // re-applies the period's own override rule over its new span.
                                             block != null ->
                                                 commitBoundsIntent(block, null, block.title, start, end, block.pins)
-                                            draft.kind == CalendarPeriodKind.NoScreen ->
-                                                SchedulerIntent.AddNoScreenPeriod(start, end)
-                                            else -> SchedulerIntent.AddInactivityPeriod(start, end)
+                                            // `side-dev/README.md`: one intent lays a period of any kind.
+                                            else -> SchedulerIntent.AddRestrictivePeriod(draft.kind, start, end)
                                         }
                                     intent?.let(vm::dispatch)
                                     editingPeriod = null
                                 },
+                            )
+                        }
+
+                        // PRD §8 "add…": the chooser the one menu entry opens. It writes nothing — each
+                        // choice closes it and opens the editor that owns the object being added, so
+                        // "nothing is placed until Save" holds for all three the same way.
+                        addingAtMillis?.let { atMillis ->
+                            CalendarAddWindow(
+                                atMillis = atMillis,
+                                tz = tz,
+                                periodKinds = schedulerState.allPeriodKinds,
+                                // The same intent the task edit window's `+` sends — defining a kind is an
+                                // account setting, and this is a second door onto it, not a second rule.
+                                onCreatePeriodKind = { vm.dispatch(SchedulerIntent.AddPeriodKind(it)) },
+                                // PRD §8 Manual add: the edit window pre-filled with the default task
+                                // (highest absolute priority, min-time span) and a Save button.
+                                onAddTaskPanel = {
+                                    val taskId = SchedulerDomain.manualAddTaskId(schedulerState)
+                                    val task = taskId?.let { schedulerState.tasks[it] }
+                                    val span = (task?.minimumMinutes?.toLong() ?: 45L) * 60_000L
+                                    addingBlock = PlacedRecord(
+                                        title = task?.title.orEmpty(),
+                                        startHour = 0f,
+                                        endHour = 0f,
+                                        scheduled = false,
+                                        manual = true,
+                                        entryId = null,
+                                        taskId = taskId,
+                                        // PRD §8: the "pin" button is on by default for a new panel.
+                                        pinned = true,
+                                        // PRD §8: seeds the edit window's switches — Existence on, rest off.
+                                        pins = PanelPins(existence = true),
+                                        fullStartMillis = atMillis,
+                                        fullEndMillis = atMillis + span,
+                                    )
+                                    addingAtMillis = null
+                                },
+                                // PRD §8: the period editor, pre-filled with one hour from the right-click
+                                // time. The user picks the real bounds there (including "∞" and "now") and
+                                // Save lays it; it stays adjustable by drag/resize like any block after that.
+                                onAddPeriod = { kind ->
+                                    editingPeriod = PeriodDraft(kind, null, atMillis, atMillis + 3_600_000L)
+                                    addingAtMillis = null
+                                },
+                                // PRD §14 "add reminder": the reminder editor at the click.
+                                onAddReminder = {
+                                    addingReminderAtMillis = atMillis
+                                    addingAtMillis = null
+                                },
+                                onDismiss = { addingAtMillis = null },
                             )
                         }
 
@@ -2601,12 +2623,13 @@ private fun commitBoundsIntent(
 }
 
 /**
- * PRD §8: what the period editor ([PeriodEditWindow]) is open on — which of the two periods, the block being
- * edited (null while ADDING one), and the bounds the window opens with. [startMillis]/[endMillis] are the
- * pre-fill only: what is laid comes back from the window's Save, which is where "∞"/"now" are resolved.
+ * PRD §8: what the period editor ([PeriodEditWindow]) is open on — the period's KIND (a name off
+ * `allPeriodKinds`, chosen in [CalendarAddWindow] when adding and read off the panel when editing), the block
+ * being edited (null while ADDING one), and the bounds the window opens with. [startMillis]/[endMillis] are
+ * the pre-fill only: what is laid comes back from the window's Save, which is where "∞"/"now" are resolved.
  */
 private data class PeriodDraft(
-    val kind: CalendarPeriodKind,
+    val kind: String,
     val block: PlacedRecord?,
     val startMillis: Long,
     val endMillis: Long,
@@ -2699,10 +2722,15 @@ private fun mergePanelsForDisplay(
     // as scheduled and the checked state of each reminder is carried over by matching its deterministic id.
     val reminders = if (showReminders) reminderPanels else emptyList()
     val sides = sidePanels
+    // A DERIVED wind-down hour is split off here because it has no object of its own behind it (below).
+    // Asked by the panel's ID, not by its kind: `before bed` is a kind like any other since PRD §8's one
+    // "add" entry, so a period the user drew of that kind is a real, removable block like every other
+    // hand-drawn period and must stay in `blocks` — only the fill's own `before-bed/{wake day}` panels are
+    // the decorative ones.
     val blocks =
         panels.filter {
             !SchedulerDomain.isReminder(it) && !it.screenBreak && !it.sleep &&
-                it.restrictiveKind != PeriodKinds.BEFORE_BED
+                !it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX)
         }
     // PRD §17: the hour before bed, drawn as the grey band it is. DERIVED, like the "Sleep" window it
     // precedes and unlike the user's own periods, so it carries no `entryId`: there is no object of its own
@@ -2710,11 +2738,12 @@ private fun mergePanelsForDisplay(
     // where its menu leads. Its KIND is still `before bed` in the scheduler; grey is only what the calendar
     // paints "nothing is placed here" with.
     val beforeBedRecords =
-        panels.filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }.map { panel ->
+        panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }.map { panel ->
             CalendarRecord(
                 title = panel.title,
                 range = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis),
                 inactivity = true,
+                restrictiveKind = panel.restrictiveKind,
             )
         }
     val reminderRecords =
@@ -2765,10 +2794,18 @@ private fun mergePanelsForDisplay(
                 // per-block attribute here is read off — a run only groups panels of one pin state anyway.
                 userPlaced = SchedulerDomain.isUserPlaced(head),
                 layoutWeight = head.layoutWeight,
-                // PRD §8/§9/§12: user-authored no-screen / inactivity periods stay real, removable blocks
-                // (drawn as decorative pattern / muted band) rather than task panels.
-                noScreen = head.noScreen,
-                inactivity = head.inactivity,
+                // PRD §8/§9/§12: a period the user drew stays a real, removable block (drawn as a decorative
+                // pattern or a muted grey band) rather than a task panel.
+                //
+                // **THE DRAWING IS DERIVED FROM THE KIND, HERE, ONCE.** `noScreen` and `inactivity` on a
+                // CalendarRecord are the two paints the calendar has for a period — no fill + both hatches,
+                // or grey — and reading them off the panel's two legacy flags meant a period of any OTHER
+                // kind (`before bed`, one the account defined) carried neither and was drawn as a task
+                // panel. A kind is grey unless it is `no on-screen task`, which is the one that says
+                // something about screens rather than about the timeline being empty.
+                noScreen = head.restrictiveKind == PeriodKinds.NO_SCREEN,
+                inactivity = head.isRestrictivePeriod && head.restrictiveKind != PeriodKinds.NO_SCREEN,
+                restrictiveKind = head.restrictiveKind,
                 // PRD §8/§12: a hand-added period saved with an open ("∞") start reads as one in the hover
                 // bubble, exactly like a derived band that nothing precedes.
                 openStart = SchedulerDomain.isOpenPast(head.startEpochMillis),
