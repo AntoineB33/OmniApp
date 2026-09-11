@@ -96,6 +96,18 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
 - [ ] Undo (Ctrl+Z) / Redo across each category (edit / selection / calendar); focus routing behaves
       (`scheduler-history-architecture` note).
 - [ ] Add a manual calendar panel, edit it, drag/resize, remove it (PRD §8–§12).
+- [ ] **The resize cursor names the side it would take (PRD §8 *Resize cursor*).** Desktop only — the
+      shapes are drawn cursors, so this is one of the things only the real app can show.
+  - [ ] Hover a panel's **top** edge → a vertical double arrow with the bar **above** it; its **bottom**
+        edge → the same arrow with the bar **below**. The two are visibly different.
+  - [ ] The hover bubble still pops **on the edge itself** (the shape must not swallow it).
+  - [ ] Press and drag that edge: the shape **stays** for the whole drag, and only reverts on release.
+  - [ ] Overlap two panels (`O` while dragging) → hover the vertical boundary between them. Left of it:
+        a horizontal double arrow with the bar on its **right** (it is the left panel's right edge).
+        Right of it: the bar on its **left**. Dragging holds the shape the press started on.
+  - [ ] **Hover the far left of the leftmost panel in a column, and the far right of the rightmost.**
+        No resize shape, and a press there moves the panel instead of resizing it — a column border has
+        no neighbour to hand width to.
 - [ ] **The user's own blocks say so, and the pin box is a real switch (PRD §8/§9).**
   - [ ] A panel the scheduler placed has NO blue outline and NO check box; the one you added by hand has
         both, at the top right, with the box checked.

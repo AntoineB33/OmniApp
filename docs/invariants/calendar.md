@@ -93,15 +93,39 @@ Global rules that always apply: `CLAUDE.md`.
   `pointerHoverIcon` is still a pointer-input node, so it wins the hit test against the tile underneath and
   that tile stops receiving Enter/Move — the bubble blinks out on exactly the edge the user is aiming at.
   So a resize strip is a **cut of the element's own tiling** (`bubbleHoverZones`' `extraCuts`,
-  `CalendarHoverTiles`), carrying the same sections as the rest of it, never a second layer. Three surfaces
-  do this and they are the whole of it: a panel's true **top** and **bottom** grab strips (the vertical
-  resize cursor, `RESIZE_EDGE_DP` — an interior slice edge is not one, it moves the block) and, where
-  overlapping panels **share the column's width**, the boundary between two of them (the horizontal resize
-  cursor, the Overlap-Mode `WeightHandle`, whose two halves each report the neighbour they lie on through
-  the block's own `blockBubbleOverlays`).
+  `CalendarResizeStrip`, `CalendarHoverTiles`), carrying the same sections as the rest of it, never a second
+  layer. Three surfaces do this and they are the whole of it: a panel's true **top** and **bottom** grab
+  strips (`RESIZE_EDGE_DP` — an interior slice edge is not one, it moves the block) and, where overlapping
+  panels **share the column's width**, the boundary between two of them (the Overlap-Mode `WeightHandle`,
+  whose two halves each report the neighbour they lie on through the block's own `blockBubbleOverlays`).
 - **The strip the cursor promises is the strip the press grabs** — one `edgePx`, read by the gesture and by
   the tiles (`rememberUpdatedState`, because the gesture coroutine outlives a zoom). A cursor over a strip
   that would not start a resize is a lie the user only finds out by pressing.
+- **THE SHAPE NAMES THE SIDE, so there are four of them and not two** (`PanelResizeEdge`,
+  `panelResizePointerIcon`): a double arrow along the axis the side moves in, with a **line perpendicular
+  to it on that side**. The plain OS double arrows cannot say *which* of the two edges on an axis a press
+  would take, so the four glyphs are **drawn** on desktop (`PlatformCursor.jvm.kt`, one canonical path
+  rotated about the hot spot, built once — this is read from a hover path) and fall back to a crosshair
+  everywhere else. The hot spot is the glyph's centre because a grab strip is measured **inwards** from its
+  edge, which is what lands the bar on the edge itself. `verticalResizePointerIcon` /
+  `horizontalResizePointerIcon` stay the plain OS arrows and are now **only** the window frame's
+  (`WindowFrame`), where there is no second panel across the line for a bar to point at.
+- **One reading per side, shared by the shape and by the press**: `panelResizeEdgeOf` turns the gesture's
+  `CalendarEdge` into the strip's shape, and `weightHandleEdge` turns *which half of a `WeightHandle`* into
+  it — the hover tiles split that handle by layout order and the drag splits it by pointer x, and a second
+  reading is how one half would start wearing the other's arrow. A handle half lies **over** a neighbour,
+  so what it moves is that neighbour's edge facing the boundary: the LEFT half takes the left panel's
+  **right** edge.
+- **The shape is held for the whole press, not just the hover** (`resizingEdge` in `WeekView`): a drag
+  leaves the few-dp strip within the first millimetre, so only an ancestor of every tile can keep showing
+  it, and only with `overrideDescendants`. Nothing is added at rest — the state is null and the modifier
+  is absent — so this never becomes the lid the rule above forbids.
+- **A COLUMN BORDER IS NOT A PANEL SIDE.** `weightHandles` emits a boundary only **between** two panels, so
+  a panel at the far left of its day column has no strip on its left: no shape, and no press that could
+  resize it from there (the far-right panel likewise, and a lone full-width panel has neither). There is
+  nothing on the other side of a column border to take width from, so an edge there could only fight the
+  column. This is a property of what `weightHandles` produces, not a guard laid over it —
+  `CalendarResizeEdgeTest` is what holds it to that.
 - **The drag/resize gesture and the right-click menu are unaffected by all of this**, and that is structural,
   not luck: both live on **ancestors** of the tiles (the block's slice, the day column), and an ancestor stays
   on the hit path of whatever descendant is hit. `calendarTitleHover` never consumes.

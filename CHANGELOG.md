@@ -11,6 +11,50 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A resize cursor that names the SIDE it would take — 2026-09-11
+
+→ `shared` (`ui/PlatformCursor.kt` + the five actuals, `ui/CalendarUi.kt`); `docs/PRD_TaskScheduler.md` §8,
+`docs/invariants/calendar.md`, `docs/MANUAL_TESTING.md`. Tests: `CalendarResizeEdgeTest` (common),
+`PanelResizeCursorTest` (jvm).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration**
+(nothing persisted or synced changed).
+
+Asked for as: *"when the user hovers over the side of a panel (top, bottom, right, left), the mouse gets the
+form of a double arrow, vertical or horizontal, with a line perpendicular to the arrow at the side of the
+panel that will be resized or is resized. When a panel is at the furthest in the left of its day column, the
+user shouldn't be able to resize from the left."*
+
+**The shape now says WHICH edge, so there are four of them.** The OS offers two — a plain `↕` and a plain
+`↔` — and neither can tell a top strip from a bottom one, which is exactly the question the user is asking
+when hovering there. So the four glyphs are **drawn** (`PlatformCursor.jvm.kt`): one canonical path — a
+double arrow with a perpendicular bar hanging off one end — rotated and mirrored about the hot spot, built
+once and cached because this is read from a hover path. The hot spot is the glyph's centre, which is what
+lands the bar **on** the edge: a grab strip is measured *inwards* from the edge it belongs to. Off desktop
+the fallback is the crosshair it always was. `verticalResizePointerIcon` / `horizontalResizePointerIcon`
+keep the plain OS arrows and are now **only** the window frame's, where there is no second panel across the
+line for a bar to point at.
+
+**The shape is held for the whole press, not just the hover.** "…that will be resized **or is resized**" is
+the second half of the sentence and it did not hold: a resize drag leaves the 6 dp strip within the first
+millimetre, so the tile stopped showing the shape exactly when it was saying what was moving. Only an
+ancestor of every tile can keep it up, and only with `overrideDescendants` — `resizingEdge` in `WeekView`,
+fed by the block's gesture and the `WeightHandle`'s. Nothing is added at rest (null state ⇒ no modifier at
+all), so the "a cursor shape rides the hover tile, never a lid over it" rule is untouched.
+
+**Each strip carries its own shape, through one reading per side.** `CalendarResizeStrip` pairs a span with
+the edge it takes, so `CalendarHoverTiles` can no longer be handed one cursor for all of them;
+`panelResizeEdgeOf` turns the gesture's `CalendarEdge` into a shape and `weightHandleEdge` turns *which half
+of a handle* into one. Both readings existed twice before — the tiles split a `WeightHandle` by layout order
+and the drag splits it by pointer x — and a half wearing the other half's arrow is precisely the lie the
+"the strip the cursor promises is the strip the press grabs" rule already forbids for spans.
+
+**On the left edge: the rule already held, and now it is pinned.** `weightHandles` emits a boundary only
+**between** two panels, so a panel at the far left of its day column has never had a strip on its left (nor
+the far-right one on its right, nor a lone full-width panel on either) — there is nothing across a column
+border to take width from. No code changed for it; what was missing was that nothing said so and nothing
+tested it. `CalendarResizeEdgeTest` now holds it across every shape of overlap, weight and partial cover,
+including the case that would make the sweep vacuous.
+
 ### One "add…" entry on the calendar, and the kind of period is CHOSEN — 2026-09-11
 
 → `shared` (`ui/CalendarUi.kt`, `App.kt`, `scheduler/state/SchedulerIntent.kt`, `SchedulerReducer.kt`,

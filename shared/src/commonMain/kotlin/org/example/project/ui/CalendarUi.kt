@@ -100,7 +100,6 @@ import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEvent
-import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -834,6 +833,31 @@ private fun overlapLayoutOf(blocks: List<PlacedRecord>): Map<String, List<PanelS
     }
     return coalesceSlices(raw)
 }
+
+/**
+ * PRD §8: the panel side a time-edge resize moves — the ONE reading of it, used both by the hover tile that
+ * shows the shape and by the gesture that holds it for the drag. Two readings is how a strip starts wearing
+ * the other edge's arrow.
+ */
+internal fun panelResizeEdgeOf(edge: CalendarEdge): PanelResizeEdge = when (edge) {
+    CalendarEdge.Start -> PanelResizeEdge.Top
+    CalendarEdge.End -> PanelResizeEdge.Bottom
+}
+
+/**
+ * PRD §8 Overlap Mode: the panel side a shared-width [WeightHandle] moves, read from which of its two
+ * halves the pointer is on.
+ *
+ * A half lies OVER one of the two neighbours, and what a press there moves is that neighbour's edge facing
+ * the boundary — so the LEFT half takes the left panel's RIGHT edge. Also the ONE reading: the hover tiles
+ * split the handle by layout order and the drag splits it by pointer x, and they must answer alike.
+ *
+ * Note what this function is never asked about: the column's own left and right borders. [weightHandles]
+ * emits a handle only BETWEEN two panels, so a panel at the far left of its day column has no strip on its
+ * left, no shape there, and no press that could resize it from that side.
+ */
+internal fun weightHandleEdge(onLeftHalf: Boolean): PanelResizeEdge =
+    if (onLeftHalf) PanelResizeEdge.Right else PanelResizeEdge.Left
 
 /** PRD §8 Overlap Mode: a draggable boundary between two horizontally-adjacent panels in one time slice. */
 data class WeightHandle(
@@ -3492,6 +3516,12 @@ private fun WeekView(
     // PRD §8: while a block is being dragged/resized, lock the grid's vertical scroll so it doesn't
     // compete with the block's own drag gesture.
     var scrollLocked by remember { mutableStateOf(false) }
+    // PRD §8: the side a resize press is currently holding, if any — the shape says what "will be resized
+    // OR is resized". The pointer leaves the few-dp grab strip within the first millimetre of the drag, so
+    // the strip's own tile cannot keep showing it; only an ANCESTOR of every tile can, and only with
+    // `overrideDescendants`. Nothing is added at rest (null → no modifier at all), so the tiles below keep
+    // owning the shape while hovering and this never becomes a lid over them.
+    var resizingEdge by remember { mutableStateOf<PanelResizeEdge?>(null) }
     // The gesture handlers below outlive the composition that created them (`pointerInput(Unit)`), so they
     // must never close over a plain per-composition value. State delegates and this holder are remembered
     // objects, so reading through them is always current; the day height is recomputed from [zoom].
@@ -3888,6 +3918,11 @@ private fun WeekView(
                     orientation = Orientation.Vertical,
                     enabled = !scrollLocked,
                     reverseDirection = reverseScroll,
+                )
+                .then(
+                    resizingEdge?.let {
+                        Modifier.pointerHoverIcon(panelResizePointerIcon(it), overrideDescendants = true)
+                    } ?: Modifier,
                 ),
         ) {
             // Each day-row is positioned by a LAYOUT-phase read of [offsetPx] (`offset { … }`), never a
@@ -3984,6 +4019,7 @@ private fun WeekView(
                                     onToggleReminder = onToggleReminder,
                                     onTogglePin = onTogglePin,
                                     onLockScroll = { scrollLocked = it },
+                                    onResizingEdge = { resizingEdge = it },
                                     onAdjustWeights = onAdjustWeights,
                                     allBlocks = allBlocks,
                                     overlapArmed = overlapArmed,
@@ -4173,6 +4209,11 @@ private fun DayColumn(
     /** PRD §8: the pin box on a user-placed block was clicked. See [CalendarFloatingWindow]. */
     onTogglePin: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
+    /**
+     * PRD §8: reports the panel side a resize press is holding (null on release) so the grid can keep that
+     * cursor up for the whole drag — see `resizingEdge` in [WeekView].
+     */
+    onResizingEdge: (PanelResizeEdge?) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
     allBlocks: List<Pair<String, TaskTimeRange>>,
     overlapArmed: Boolean,
@@ -4726,6 +4767,7 @@ private fun DayColumn(
                 onPreviewChange = { range -> dragPreview = range?.let { key to it } },
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
+                onResizingEdge = onResizingEdge,
                 hoverScope = hoverScope,
                 tz = tz,
                 onEditEntry = onEditEntry,
@@ -4766,16 +4808,24 @@ private fun DayColumn(
                             .height(hourHeight * (handle.bottomHour - handle.topHour))
                             .pointerInput(handle.leftIds, handle.rightIds, handle.topHour) {
                                 var accumX = 0f
+                                val halfPx = size.width / 2f
                                 detectHorizontalDragGestures(
-                                    onDragStart = { onLockScroll(true) },
+                                    onDragStart = { start ->
+                                        onLockScroll(true)
+                                        // Same split as the two hover halves below, read from the press:
+                                        // the left half moves the left panel's right edge, and vice versa.
+                                        onResizingEdge(weightHandleEdge(onLeftHalf = start.x < halfPx))
+                                    },
                                     onDragEnd = {
                                         weightDrag?.let(onAdjustWeights)
                                         weightDrag = null
                                         onLockScroll(false)
+                                        onResizingEdge(null)
                                     },
                                     onDragCancel = {
                                         weightDrag = null
                                         onLockScroll(false)
+                                        onResizingEdge(null)
                                     },
                                 ) { change, dragAmount ->
                                     change.consume()
@@ -4793,12 +4843,22 @@ private fun DayColumn(
                                 }
                             },
                     ) {
-                        // The handle's two halves, each tiled over the neighbour it lies on: the
-                        // east/west resize cursor for the whole strip, the covered panel's own section
-                        // stack for the bubble. The drag lives on the parent Box and the contextual menu on
-                        // the day column — both ancestors of these tiles, so both still see every press.
+                        // The handle's two halves, each tiled over the neighbour it lies on: a resize
+                        // cursor for the whole strip, the covered panel's own section stack for the bubble.
+                        // The drag lives on the parent Box and the contextual menu on the day column — both
+                        // ancestors of these tiles, so both still see every press.
+                        //
+                        // The half the pointer is on names the edge a press there would move: the left half
+                        // lies over the LEFT panel, so it takes that panel's RIGHT edge, and the right half
+                        // its neighbour's LEFT edge. This is also where "a panel at the far left of its
+                        // column cannot be resized from the left" is visible — [weightHandles] emits a
+                        // handle only BETWEEN two panels, so the column's own borders carry no strip, no
+                        // shape, and no press that could resize a panel from the side facing them.
                         Row(Modifier.fillMaxSize()) {
-                            listOf(handle.leftIds, handle.rightIds).forEach { ids ->
+                            listOf(
+                                handle.leftIds to weightHandleEdge(onLeftHalf = true),
+                                handle.rightIds to weightHandleEdge(onLeftHalf = false),
+                            ).forEach { (ids, edge) ->
                                 Box(Modifier.weight(1f).fillMaxHeight()) {
                                     val covered = recordFor(ids)?.let {
                                         blockBubbleOverlays(it, handle.topHour, handle.bottomHour, tz)
@@ -4809,8 +4869,9 @@ private fun DayColumn(
                                         overlays = covered + contextOverlays,
                                         hourHeight = hourHeight,
                                         hoverScope = hoverScope,
-                                        resizeCursor = horizontalResizePointerIcon(),
-                                        resizeSpans = listOf(handle.topHour..handle.bottomHour),
+                                        resizeStrips = listOf(
+                                            CalendarResizeStrip(handle.topHour..handle.bottomHour, edge),
+                                        ),
                                     )
                                 }
                             }
@@ -5498,8 +5559,20 @@ internal fun bubbleHoverZones(
 }
 
 /**
+ * PRD §8: one grab strip inside an element's hover tiling — the sub-range of `[top, bottom]` a press takes
+ * as a resize, together with the side of the panel that press would move.
+ *
+ * The span and the shape are ONE value because the cursor must promise exactly what the press grabs: a
+ * strip whose cursor is chosen somewhere else is how the two start disagreeing.
+ */
+private data class CalendarResizeStrip(
+    val span: ClosedFloatingPointRange<Float>,
+    val edge: PanelResizeEdge,
+)
+
+/**
  * PRD §8: draws one element's hover tiles — [bubbleHoverZones] over `[top, bottom]`, each tile a Box
- * reporting its own section stack — and hangs [resizeCursor] on the tiles falling inside [resizeSpans].
+ * reporting its own section stack — and hangs each [CalendarResizeStrip]'s cursor on the tiles inside it.
  *
  * **The cursor rides the hover tile itself; it is never a lid over it.** A Box carrying only
  * `pointerHoverIcon` is still a pointer-input node, so it wins the hit test against the tile underneath and
@@ -5517,14 +5590,15 @@ private fun CalendarHoverTiles(
     overlays: List<BubbleOverlay>,
     hourHeight: Dp,
     hoverScope: CalendarTitleHoverScope,
-    resizeCursor: PointerIcon? = null,
     /** The sub-ranges of `[top, bottom]` that grab a resize edge — see [CalendarBlock] / [WeightHandle]. */
-    resizeSpans: List<ClosedFloatingPointRange<Float>> = emptyList(),
+    resizeStrips: List<CalendarResizeStrip> = emptyList(),
 ) {
-    val cuts = resizeSpans.flatMap { listOf(it.start, it.endInclusive) }
+    val cuts = resizeStrips.flatMap { listOf(it.span.start, it.span.endInclusive) }
     bubbleHoverZones(top, bottom, overlays, cuts).forEach { zone ->
         val mid = (zone.top + zone.bottom) / 2f
-        val cursor = resizeCursor?.takeIf { resizeSpans.any { span -> mid in span } }
+        // Each strip carries its OWN shape: the cursor names the side the press would take, so the top and
+        // bottom strips of one block — and the two halves of one [WeightHandle] — never look alike.
+        val cursor = resizeStrips.firstOrNull { mid in it.span }?.let { panelResizePointerIcon(it.edge) }
         // A tile with neither a section to report nor a cursor to show would be an empty hit-test node
         // over whatever is underneath — emit nothing.
         if (zone.sections.isEmpty() && cursor == null) return@forEach
@@ -5930,6 +6004,11 @@ private fun CalendarBlock(
     onPreviewChange: (TaskTimeRange?) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
+    /**
+     * PRD §8: reports the panel side a resize press is holding (null on release) so the grid can keep that
+     * cursor up for the whole drag — see `resizingEdge` in [WeekView].
+     */
+    onResizingEdge: (PanelResizeEdge?) -> Unit,
     hoverScope: CalendarTitleHoverScope,
     tz: TimeZone,
     onEditEntry: (PlacedRecord) -> Unit,
@@ -6059,6 +6138,11 @@ private fun CalendarBlock(
                                 isLast && localY >= height - grab -> CalendarEdge.End
                                 else -> null
                             }
+                            // The shape shown on the strip is now held by the grid for the whole press: a
+                            // drag leaves the strip immediately, and a cursor that reverts to the default
+                            // the moment the resize actually starts is the same lie as one that promises a
+                            // resize the press would not give (PRD §8). Cleared in the `finally` below.
+                            onResizingEdge(edge?.let(::panelResizeEdgeOf))
                             down.consume()
 
                             var started = false
@@ -6101,6 +6185,7 @@ private fun CalendarBlock(
                                 }
                             } finally {
                                 onLockScroll(false)
+                                onResizingEdge(null)
                                 dragPx = 0f
                                 onPreviewChange(null)
                             }
@@ -6138,12 +6223,27 @@ private fun CalendarBlock(
                             contextOverlays,
                         hourHeight = hourHeight,
                         hoverScope = hoverScope,
-                        resizeCursor = verticalResizePointerIcon(),
-                        // Resize only on the block's TRUE top/bottom — an interior slice edge just moves the
-                        // block — and on exactly the strip the gesture above grabs on ([edgeHours]).
-                        resizeSpans = listOfNotNull(
-                            if (isFirst) slice.topHour..(slice.topHour + edgeHours) else null,
-                            if (isLast) (slice.bottomHour - edgeHours)..slice.bottomHour else null,
+                        // Resize only on the block's TRUE top/bottom — an interior slice edge just moves
+                        // the block — and on exactly the strip the gesture above grabs on ([edgeHours]).
+                        // Each strip wears the shape of the edge it takes, so the two are told apart on
+                        // sight instead of by guessing which half of the block the pointer is nearer.
+                        resizeStrips = listOfNotNull(
+                            if (isFirst) {
+                                CalendarResizeStrip(
+                                    slice.topHour..(slice.topHour + edgeHours),
+                                    panelResizeEdgeOf(CalendarEdge.Start),
+                                )
+                            } else {
+                                null
+                            },
+                            if (isLast) {
+                                CalendarResizeStrip(
+                                    (slice.bottomHour - edgeHours)..slice.bottomHour,
+                                    panelResizeEdgeOf(CalendarEdge.End),
+                                )
+                            } else {
+                                null
+                            },
                         ),
                     )
                     // A dashed separator at every interior boundary where the device set changed (two
