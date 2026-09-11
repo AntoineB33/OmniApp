@@ -134,7 +134,15 @@ class TaskResilienceTest {
         val (s0, _) = stateWithOneTask()
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep focus"))
         assertEquals(
-            listOf(PeriodKinds.NO_TASK, PeriodKinds.NO_SCREEN, PeriodKinds.BEFORE_BED, "deep focus"),
+            listOf(
+                PeriodKinds.NO_TASK,
+                PeriodKinds.NO_SCREEN,
+                PeriodKinds.BEFORE_BED,
+                // PRD §8's two layers, as kinds the user can DRAW rather than only read off a lock history.
+                PeriodKinds.NO_COMPUTER_UNLOCKED,
+                PeriodKinds.NO_PHONE_UNLOCKED,
+                "deep focus",
+            ),
             s.allPeriodKinds,
         )
     }
@@ -157,7 +165,13 @@ class TaskResilienceTest {
         assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.BEFORE_BED))
         // What the edit window puts a row against: every kind the account knows, minus that one.
         assertEquals(
-            listOf(PeriodKinds.NO_SCREEN, PeriodKinds.BEFORE_BED, "deep focus"),
+            listOf(
+                PeriodKinds.NO_SCREEN,
+                PeriodKinds.BEFORE_BED,
+                PeriodKinds.NO_COMPUTER_UNLOCKED,
+                PeriodKinds.NO_PHONE_UNLOCKED,
+                "deep focus",
+            ),
             s.allPeriodKinds.filter(PeriodKinds::isResilienceEditable),
         )
     }

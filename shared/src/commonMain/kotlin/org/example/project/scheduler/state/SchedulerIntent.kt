@@ -1142,21 +1142,6 @@ sealed interface SchedulerIntent {
     data class SetPanelWeights(val weights: Map<String, Double>) : SchedulerIntent
 
     /**
-     * PRD §8: the calendar's **pin box** — the check box a user-placed panel wears at its top right —
-     * toggled on every backing panel of one displayed block ([ids]; a merged block has several).
-     *
-     * It writes the **existence** pin, which is the same switch the calendar edit window's first row holds;
-     * there is one rule for what a pin means and this is a second way of reaching it, not a second rule.
-     * Unpinning is therefore a scheduling-rule change: [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]
-     * reads `pinned`, so the re-plan follows on its own, and the fill then stops seeing the panel — it is
-     * cut where it lies ahead of the now-line, kept where it has already elapsed, and truncated at the line
-     * where it straddles it (the frozen past).
-     *
-     * Recorded as one undoable Calendar delta, like every other panel edit.
-     */
-    data class SetPanelPinned(val ids: List<String>, val pinned: Boolean) : SchedulerIntent
-
-    /**
      * PRD §8 task contextual menu ("Remove") on an auto task-record block: drop the
      * `[startEpochMillis, endEpochMillis]` period from [taskId]'s record. The record lives outside the
      * Undo/Redo history (PRD §8), so this is a side effect, not an undoable delta.

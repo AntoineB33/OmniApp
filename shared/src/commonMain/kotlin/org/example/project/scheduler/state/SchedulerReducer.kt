@@ -423,7 +423,6 @@ object SchedulerReducer {
             is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
             is SchedulerIntent.RemoveTaskPanel -> reduceRemoveTaskPanel(state, intent.id)
             is SchedulerIntent.SetPanelWeights -> reduceSetPanelWeights(state, intent)
-            is SchedulerIntent.SetPanelPinned -> reduceSetPanelPinned(state, intent)
             is SchedulerIntent.RemoveTaskPanels -> reduceRemoveTaskPanels(state, intent.ids)
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
@@ -2073,32 +2072,6 @@ object SchedulerReducer {
         return commitPanels(state, panels.filterNot { it.id == id }, label = "Remove panel")
     }
 
-    /**
-     * PRD §8 pin box: turn the **existence** pin of every panel behind one displayed block on or off.
-     *
-     * The same write the calendar edit window makes, reached from the panel itself — so it goes through the
-     * same [derivePinned], and a restrictive period keeps `pinned = false` there for the reason that overload
-     * gives. Nothing here re-plans: `pinned` is part of
-     * [SchedulerDomain.schedulingSignature], so the rule-change watcher is what asks for the new schedule
-     * (CLAUDE.md: anything that wants to re-plan belongs in the signature, never in a fresh dispatch site).
-     */
-    private fun reduceSetPanelPinned(
-        state: SchedulerState,
-        intent: SchedulerIntent.SetPanelPinned,
-    ): SchedulerState {
-        val idSet = intent.ids.toSet()
-        if (idSet.isEmpty()) return state
-        var changed = false
-        val updated = state.panels.map { panel ->
-            if (panel.id !in idSet) return@map panel
-            val pins = panel.pins.copy(existence = intent.pinned)
-            val next = panel.copy(pins = pins, pinned = derivePinned(pins, panel))
-            if (next != panel) changed = true
-            next
-        }
-        return if (changed) commitPanels(state, updated, label = "Pin panel") else state
-    }
-
     /** PRD §8 Overlap Mode: re-divide shared width by setting the [layoutWeight] of the given panels. */
     private fun reduceSetPanelWeights(
         state: SchedulerState,
@@ -3316,8 +3289,9 @@ private fun applySetPriorityWeight(
  * untouched (the §9 refill, [reduceRefreshSchedule], regenerates them).
  */
 /**
- * PRD §9/§12: every stretch an on-screen task must NOT bank a record over — the user's hand-drawn "No screen"
- * panels UNIONED with what the devices observed ([SchedulerReducer.noScreenEvidence]).
+ * PRD §9/§12: every stretch an on-screen task must NOT bank a record over — what the user DREW
+ * ([SchedulerDomain.assertedNoScreenRanges]: a "No screen" period, or a computer-layer period overlapping a
+ * phone-layer one) UNIONED with what the devices observed ([SchedulerReducer.noScreenEvidence]).
  *
  * Both halves are needed and neither is redundant. The panels are an assertion the user made and hold whatever
  * any history says; the evidence is the OS's own lock/standby record, which is the only half that fires on an
@@ -3328,7 +3302,7 @@ private fun noScreenRangesFor(
     state: SchedulerState,
     noScreenEvidence: List<TaskTimeRange>,
 ): List<TaskTimeRange> {
-    val drawn = state.panels.filter { it.noScreen }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+    val drawn = SchedulerDomain.assertedNoScreenRanges(state.panels)
     if (drawn.isEmpty() && noScreenEvidence.isEmpty()) return emptyList()
     return SchedulerDomain.mergeOccupied(drawn + noScreenEvidence)
 }

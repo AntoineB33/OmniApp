@@ -17,22 +17,24 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.PlacedRecord
-import org.example.project.ui.panelPinBoxSpec
 
 /**
- * PRD §8: **everything the user placed by hand wears a blue outline and a pin box**, and that box is the
- * scheduler's own "keep this occurrence" switch reached from the panel.
+ * PRD §8: **a block's outline says who put it there, and nothing on the calendar wears a check box.**
  *
- * Three separate claims, one per section below:
+ * Four separate claims, one per section below:
  *  - [SchedulerDomain.isUserPlaced] — who placed a panel, asked as the complement of what the app lays down
- *    itself, so a new family of generated panel can never quietly acquire an outline;
+ *    itself, so a new family of generated panel can never quietly acquire the user's blue outline;
+ *  - [SchedulerDomain.panelOutline] — the colour that answer is drawn in: blue for the user, ORANGE for a
+ *    restrictive period a repeating rule lays (the §17 sleep windows and the wind-down hours), and none at
+ *    all for the fill's own task panels;
  *  - a drag or a resize IS the existence pin ([SchedulerDomain.pinsAfterHandPlacement]) — without it the
  *    gesture made the panel user-authored and *unpinned*, which is exactly the shape the fill deletes, so the
  *    re-plan the edit itself triggers silently undid it;
- *  - unpinning hands the stretch back to the scheduler — cut ahead of the now-line, kept behind it, and
- *    truncated AT it, because the frozen past belongs to the timeline whoever placed the panel.
+ *  - unpinning (from the edit window, the one surface that still holds the switch) hands the stretch back to
+ *    the scheduler — cut ahead of the now-line, kept behind it, and truncated AT it, because the frozen past
+ *    belongs to the timeline whoever placed the panel.
  */
-class CalendarPinBoxTest {
+class CalendarPanelOutlineTest {
 
     private val MIN = 60_000L
     private val HOUR = 3_600_000L
@@ -113,11 +115,90 @@ class CalendarPinBoxTest {
         assertTrue(SchedulerDomain.isUserPlaced(s.panels.first { it.taskId == solo && !it.auto }))
     }
 
-    // ----- which blocks wear a box at all -------------------------------------------------------
+    // ----- what the outline says ---------------------------------------------------------------
 
-    /** A displayed block, as the calendar builds one — only the fields the box's rule reads. */
+    @Test
+    fun a_repeating_rule_outlines_its_periods_orange_and_its_task_panels_not_at_all() {
+        val (s0, solo) = oneTask()
+        val s = s0.copy(
+            sleep = SleepSchedule(wakeMinutes = 450, sleepDurationMinutes = 510),
+            screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS,
+        )
+        val panels = SchedulerDomain.fillSchedule(
+            s,
+            NOW,
+            timeZone = TimeZone.UTC,
+            horizonMillis = NOW + 48 * HOUR,
+        )
+        val sleeps = panels.filter { it.sleep }
+        val windDown = panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }
+        assertTrue(sleeps.isNotEmpty() && windDown.isNotEmpty())
+        // The three DYNAMIC periods are neither: the recurrence bars place them against the timeline itself.
+        val breaks = panels.filter { it.screenBreak }
+        assertTrue(breaks.isNotEmpty(), "the fill lays screen breaks")
+        breaks.forEach {
+            assertEquals(
+                SchedulerDomain.PanelOutline.Dynamic,
+                SchedulerDomain.panelOutline(it),
+                "a screen break is a dynamic restrictive period: " + it.id,
+            )
+        }
+        (sleeps + windDown).forEach {
+            assertEquals(
+                SchedulerDomain.PanelOutline.Pattern,
+                SchedulerDomain.panelOutline(it),
+                "the §17 schedule is a repeating rule: " + it.id,
+            )
+        }
+        // A picked task panel is not a period and nobody drew it: no outline of its own at all.
+        panels.filter { it.taskId == solo && it.auto }.forEach {
+            assertEquals(SchedulerDomain.PanelOutline.None, SchedulerDomain.panelOutline(it))
+        }
+    }
+
+    @Test
+    fun every_period_the_user_draws_is_outlined_blue_whatever_its_kind() {
+        var s = SchedulerState.empty()
+        val kinds = listOf(
+            PeriodKinds.NO_SCREEN,
+            PeriodKinds.NO_TASK,
+            PeriodKinds.BEFORE_BED,
+            PeriodKinds.NO_COMPUTER_UNLOCKED,
+            PeriodKinds.NO_PHONE_UNLOCKED,
+        )
+        kinds.forEachIndexed { i, kind ->
+            s = SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.AddRestrictivePeriod(kind, NOW + (2 * i) * HOUR, NOW + (2 * i + 1) * HOUR),
+            )
+        }
+        assertEquals(kinds.size, s.panels.count { it.isRestrictivePeriod })
+        s.panels.filter { it.isRestrictivePeriod }.forEach {
+            assertEquals(
+                SchedulerDomain.PanelOutline.User,
+                SchedulerDomain.panelOutline(it),
+                "the user drew a " + it.restrictiveKind + " period",
+            )
+        }
+    }
+
+    @Test
+    fun a_conducted_break_is_dynamic_and_not_something_the_user_drew() {
+        // "Look away now" records one of the three as a period that really happened. It is `auto = false`
+        // and carries the user's own press, so without the dynamic answer coming FIRST it would read as a
+        // hand-drawn inactivity period and wear the blue outline.
+        val s = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.RecordConductedBreak("look 20 feet away", NOW, NOW + 20_000),
+        )
+        val conducted = s.panels.single { it.conductedBreak }
+        assertTrue(SchedulerDomain.isUserPlaced(conducted), "nothing about the panel says the app laid it")
+        assertEquals(SchedulerDomain.PanelOutline.Dynamic, SchedulerDomain.panelOutline(conducted))
+    }
+
+    /** A displayed block, as the calendar builds one. */
     private fun block(
-        userPlaced: Boolean = true,
+        outline: SchedulerDomain.PanelOutline = SchedulerDomain.PanelOutline.User,
         noScreen: Boolean = false,
         inactivity: Boolean = false,
         existence: Boolean = true,
@@ -126,41 +207,31 @@ class CalendarPinBoxTest {
         startHour = 9f,
         endHour = 10f,
         scheduled = false,
-        userPlaced = userPlaced,
+        outline = outline,
         noScreen = noScreen,
         inactivity = inactivity,
         pins = PanelPins(existence = existence),
     )
 
     @Test
-    fun only_a_user_placed_block_wears_a_box_and_it_is_that_blocks_own_pin() {
-        assertNull(panelPinBoxSpec(block(userPlaced = false)), "the app placed it: no box")
-        val spec = panelPinBoxSpec(block(existence = true))
-        assertNotNull(spec)
-        assertTrue(spec.checked)
-        assertTrue(spec.enabled, "on a task panel the box is a real switch")
-        assertEquals(false, panelPinBoxSpec(block(existence = false))?.checked)
+    fun the_outline_travels_to_the_drawing_untouched() {
+        // The record carries the answer the domain gave; the drawing never re-derives it from the paint.
+        assertEquals(SchedulerDomain.PanelOutline.User, block().outline)
+        assertEquals(
+            SchedulerDomain.PanelOutline.Pattern,
+            block(outline = SchedulerDomain.PanelOutline.Pattern, inactivity = true).outline,
+        )
+        assertEquals(
+            SchedulerDomain.PanelOutline.None,
+            block(outline = SchedulerDomain.PanelOutline.None).outline,
+        )
+        assertEquals(
+            SchedulerDomain.PanelOutline.Dynamic,
+            block(outline = SchedulerDomain.PanelOutline.Dynamic).outline,
+        )
     }
 
-    @Test
-    fun a_no_screen_period_wears_no_box_at_all() {
-        // The user drew it, so it keeps the outline — but it is a DECORATIVE panel (it patterns the timeline
-        // rather than occupying it, and has no fill of its own), and the box it would wear could only ever be
-        // inert: a period is reached by its KIND and taken away with "Remove", never unpinned.
-        assertNull(panelPinBoxSpec(block(noScreen = true)))
-        assertNull(panelPinBoxSpec(block(noScreen = true, existence = false)))
-    }
-
-    @Test
-    fun an_inactivity_period_wears_an_inert_box() {
-        val spec = panelPinBoxSpec(block(inactivity = true, existence = false))
-        assertNotNull(spec)
-        assertFalse(spec.enabled, "a period has no 'still drawn, no longer obeyed' state")
-        // Checked as a RULE, not off the field, so a period an older build wrote needs no migration.
-        assertTrue(spec.checked)
-    }
-
-    // ----- a hand-drawn period's box states a fact ---------------------------------------------
+    // ----- a hand-drawn period is pinned, and that is a fact about the PIN, not a mark on screen -
 
     @Test
     fun a_hand_drawn_period_is_pinned_in_the_box_but_never_in_the_scheduler() {
@@ -169,7 +240,7 @@ class CalendarPinBoxTest {
         val periods = s.panels.filter { it.isRestrictivePeriod }
         assertEquals(2, periods.size)
         periods.forEach { period ->
-            assertTrue(period.pins.existence, "the pin box reads checked on a period: ${period.title}")
+            assertTrue(period.pins.existence, "a hand-drawn period carries the existence pin")
             // A period reaches the scheduler by its KIND. Letting it set `pinned` would ALSO enter it in the
             // walk's pre-placed blocks — a block owned by no task, on top of the period it already is.
             assertFalse(SchedulerDomain.isSchedulerFixed(period), "a period is not a pre-placed block")
@@ -177,13 +248,11 @@ class CalendarPinBoxTest {
     }
 
     @Test
-    fun the_box_cannot_make_a_period_a_pre_placed_block() {
+    fun dragging_a_period_cannot_make_it_a_pre_placed_block() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
         val id = s.panels.first { it.noScreen }.id
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), true))
-        assertFalse(s.panels.first { it.id == id }.pinned)
-
-        // ...and neither does dragging it, which sets the existence pin like every other hand placement.
+        // Dragging sets the existence pin like every other hand placement — and the period still never
+        // becomes a pre-placed block, because it reaches the scheduler by its KIND.
         val period = s.panels.first { it.id == id }
         s = SchedulerReducer.reduce(
             s,
@@ -239,7 +308,11 @@ class CalendarPinBoxTest {
         }
         assertEquals(newEnd, resized.endEpochMillis)
         assertTrue(resized.pinned, "the gesture IS the existence pin")
-        assertTrue(SchedulerDomain.isUserPlaced(resized), "so it wears the blue outline and the box")
+        assertEquals(
+            SchedulerDomain.PanelOutline.User,
+            SchedulerDomain.panelOutline(resized),
+            "so it wears the blue outline",
+        )
 
         // The whole point: the re-plan the edit itself triggers must not undo the resize.
         val kept = fill(s).firstOrNull { it.id == resized.id }
@@ -249,6 +322,25 @@ class CalendarPinBoxTest {
     }
 
     // ----- unpinning hands the stretch back ----------------------------------------------------
+
+    /**
+     * PRD §8: unpin [id] the way the calendar edit window does — its Save, which is the ONE surface the
+     * Existence switch is reached from now that no panel wears a check box.
+     */
+    private fun unpin(s: SchedulerState, id: String, pinned: Boolean = false): SchedulerState {
+        val panel = s.panels.first { it.id == id }
+        return SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel(
+                id,
+                panel.taskId,
+                panel.title,
+                panel.startEpochMillis,
+                panel.endEpochMillis,
+                panel.pins.copy(existence = pinned),
+            ),
+        )
+    }
 
     /** A single hand-placed, pinned panel of [solo] over `[start, end]`, and its id. */
     private fun withPinnedPanel(start: Long, end: Long): Triple<SchedulerState, TaskId, String> {
@@ -266,7 +358,7 @@ class CalendarPinBoxTest {
     fun unpinning_is_a_scheduling_rule_change() {
         var (s, _, id) = withPinnedPanel(NOW + 2 * HOUR, NOW + 3 * HOUR)
         val before = SchedulerDomain.schedulingSignature(s)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), false))
+        s = unpin(s, id)
         assertFalse(s.panels.first { it.id == id }.pinned)
         assertFalse(s.panels.first { it.id == id }.pins.existence)
         // CLAUDE.md: whatever wants to re-plan belongs in the signature, never in a fresh dispatch site.
@@ -277,14 +369,14 @@ class CalendarPinBoxTest {
     fun an_unpinned_panel_ahead_of_the_line_is_cut_by_the_next_fill() {
         var (s, _, id) = withPinnedPanel(NOW + 2 * HOUR, NOW + 3 * HOUR)
         assertNotNull(fill(s).firstOrNull { it.id == id }, "while pinned the fill keeps it")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), false))
+        s = unpin(s, id)
         assertNull(fill(s).firstOrNull { it.id == id }, "unpinned and still ahead: the scheduler owns it again")
     }
 
     @Test
     fun an_unpinned_panel_wholly_behind_the_line_is_kept() {
         var (s, _, id) = withPinnedPanel(NOW - 3 * HOUR, NOW - 2 * HOUR)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), false))
+        s = unpin(s, id)
         val kept = fill(s).firstOrNull { it.id == id }
         assertNotNull(kept, "the past is frozen: unpinning cannot rewrite what already happened")
         assertEquals(NOW - 3 * HOUR, kept.startEpochMillis)
@@ -294,7 +386,7 @@ class CalendarPinBoxTest {
     @Test
     fun unpinning_the_panel_the_line_stands_in_keeps_its_elapsed_head() {
         var (s, _, id) = withPinnedPanel(NOW - HOUR, NOW + HOUR)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), false))
+        s = unpin(s, id)
         val head = fill(s).firstOrNull { it.id == id }
         assertNotNull(head, "side-dev/README.md frozen past: the elapsed head never disappears")
         assertEquals(NOW - HOUR, head.startEpochMillis)
@@ -309,15 +401,15 @@ class CalendarPinBoxTest {
     }
 
     @Test
-    fun the_pin_box_is_one_undoable_calendar_delta() {
+    fun unpinning_is_one_undoable_calendar_delta() {
         var (s, _, id) = withPinnedPanel(NOW + 2 * HOUR, NOW + 3 * HOUR)
         val unitsBefore = s.histories.calendar.units.size
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), false))
+        s = unpin(s, id)
         assertEquals(unitsBefore + 1, s.histories.calendar.units.size)
         s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
         assertTrue(s.panels.first { it.id == id }.pinned, "undo puts the pin back")
         // A toggle that changes nothing records nothing.
-        val stable = SchedulerReducer.reduce(s, SchedulerIntent.SetPanelPinned(listOf(id), true))
+        val stable = unpin(s, id, pinned = true)
         assertEquals(s.histories.calendar.units.size, stable.histories.calendar.units.size)
     }
 }

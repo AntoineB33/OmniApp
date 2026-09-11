@@ -11,6 +11,59 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A period is an empty outlined box, and no block wears a check box — 2026-09-11
+
+→ `shared` (`scheduler/domain/PeriodKinds.kt`, `SchedulerDomain.kt`, `scheduler/state/SchedulerReducer.kt` +
+`SchedulerIntent.kt`, `ui/CalendarUi.kt`, `App.kt`); `docs/PRD_TaskScheduler.md` §8,
+`docs/invariants/calendar.md`, `docs/invariants/scheduler.md`, `docs/invariants/shortcuts.md`,
+`docs/MANUAL_TESTING.md`. Tests: `LayerPeriodKindTest` (new), `CalendarPanelOutlineTest` (was
+`CalendarPinBoxTest`), `SwitchTaskEntryTest`, `TaskResilienceTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"Remove the check box at the top right of blue outlined boxes… A restrictive period that is
+not a 'no screen' period is shown in the calendar as an empty panel outlined in blue… A restrictive period
+that is placed in the calendar by a repeating pattern must be orange outlined… Sleep and before bed are both
+restrictive periods."*, then *"dynamic restrictive periods must be grey outlined, without a grey background.
+Inactivity must be nothing but a title, except if modified by the user directly on the calendar (blue
+outlined) or created by a rule (orange outlined, currently not possible)."*
+
+Four changes, and the first three are one rule:
+
+- **The outline is now the whole of "who put this here"** (`SchedulerDomain.panelOutline`, three answers).
+  Blue is the user's, as before; **orange** is a restrictive period a REPEATING rule laid — the §17 sleep
+  windows and the wind-down hours measured back from them — and it is asked as the complement of the first
+  question rather than as a list of families, so a fill-laid period family added later is orange for the same
+  reason these are. A §15 screen break is not reached by it and needs no exception: a break is not drawn as a
+  block at all.
+- **A restrictive period of any kind is drawn EMPTY** — outline, label, no fill — and the three DYNAMIC
+  periods (§15) are the third colour: **grey**, the recurrence bars being neither a hand nor a standing rule.
+  A break the app *conducted* is one of them (`conductedBreak`), which also fixes it reading as a hand-drawn
+  inactivity period — it is `auto = false`, so it used to wear the user's blue outline. The §17 sleep windows
+  and wind-down hours, which used to be grey bands with no box of their own, are now orange-outlined boxes.
+- **`greyPeriodMarks` is gone and nothing replaced it.** A DERIVED "Inactivity" band is now its label and
+  nothing else: no outline (nobody placed it) and no marking (the app is reporting a stretch it derived, not
+  asserting one). With it goes the last drawing painted ACROSS the timeline to say "nothing is scheduled
+  here" — the thing a task legitimately working through a period kept colliding with.
+- **The pin box is gone**, and with it `SchedulerIntent.SetPanelPinned` (its only intent). On a period it
+  could only ever state a fact — a period is reached by *being a period of its kind*, never by a pin — and on
+  a task panel it was a second control on a surface whose marks are otherwise read-only. `pins.existence` is
+  untouched and keeps its two ways in: the calendar edit window, and the drag/resize gesture.
+- **The two calendar layers became period KINDS** — `no computer unlocked` and `no phone unlocked`. A layer
+  was evidence only (the OS lock history, plus "I'm away" for the device the app runs on), so *nobody was at
+  a computer here* could not be stated unless the user also claimed the phone was down. Each new kind asserts
+  its own layer (`PeriodKinds.assertedLayers`, the one reading) and **restricts nothing on its own** — one
+  locked screen is not "no screen". What restricts is the OVERLAP: `assertedNoScreenRanges` intersects the
+  two layers' *assertions* exactly as `observedNoScreenRegions` intersects their *evidence*, so the two kinds
+  feed the rule `no on-screen task` already has instead of growing one of their own. The implied period is
+  subtracted where an explicit "No screen" period already covers, because the plan multiplies the resilience
+  of every covering kind and counting a stretch twice would square it.
+
+**One thing deliberately not done:** the override rule (`resolveScreenOverrides`) still asks what the period
+the user is *holding* refuses, so laying a one-sided period never evicts on-screen task panels — holding a
+"no computer unlocked" period is not holding a no-screen one. The implied no-screen stretch still stops the
+fill placing on-screen work there and still stops the bank recording it (including retroactively, at the next
+`StripNoScreenRecords`).
+
 ### Every notification has a voice — 2026-09-11
 
 → `shared` (`scheduler/platform/Voice.kt` + the five actuals, `scheduler/engine/SchedulerEngine.kt`,

@@ -1553,8 +1553,8 @@ object SchedulerDomain {
      * shape for two panels genuinely competing for the same hours, which these are not: the scheduler
      * already reads them merged (`mergeOccupied`, `noScreenRangesFor`) and so does the layer assertion.
      *
-     * Fuses every **strictly overlapping** run of [TaskPanel.noScreen] panels into one panel spanning the
-     * run; the rest of [panels] is returned untouched, in place. Two periods that merely **abut** are left
+     * Fuses every **strictly overlapping** run of panels **of one layer-asserting kind** into one panel
+     * spanning the run; the rest of [panels] is returned untouched, in place. Two periods that merely **abut** are left
      * alone: they already draw full-width and each is still an object the user can remove on its own.
      * Within a run the survivor is the panel named by [keepId] if it is there — the one the user just laid,
      * moved or resized, which the caller goes on to apply the override rule for — else the run's earliest;
@@ -1568,7 +1568,21 @@ object SchedulerDomain {
      * older build wrote with overlapping periods in it is healed rather than surfaced (CLAUDE.md).
      */
     fun unifyNoScreenPeriods(panels: List<TaskPanel>, keepId: String? = null): List<TaskPanel> {
-        val periods = panels.filter { it.noScreen }
+        // Per KIND, not per flag: the rule is about a period that states a LAYER, and there are three such
+        // kinds ([PeriodKinds.assertedLayers]). Two overlapping "no computer unlocked" periods say one thing
+        // for exactly the reason two "No screen" ones do. Kinds are never fused ACROSS — a computer-only
+        // statement and a both-screens one are different statements, the same reason a no-screen period never
+        // fuses with an inactivity one.
+        var result = panels
+        for (kind in panels.mapNotNull { it.restrictiveKind.ifBlank { null } }.distinct()) {
+            if (PeriodKinds.assertedLayers(kind).isEmpty()) continue
+            result = unifyPeriodsOfKind(result, kind, keepId)
+        }
+        return result
+    }
+
+    private fun unifyPeriodsOfKind(panels: List<TaskPanel>, kind: String, keepId: String?): List<TaskPanel> {
+        val periods = panels.filter { it.restrictiveKind == kind }
         if (periods.size < 2) return panels
         val runs = mutableListOf<MutableList<TaskPanel>>()
         for (panel in periods.sortedBy { it.startEpochMillis }) {
@@ -2156,8 +2170,8 @@ object SchedulerDomain {
      * **This is the whole of the rule.** No task is scheduled here because every task's resilience to the
      * kind defaults to `0` ([PeriodKinds.defaultResilience]); a task the user hands a value above zero works
      * through the wind-down, and there is nothing else anywhere that says so. The panel carries the KIND and
-     * no legacy flag — it is not an `inactivity` period wearing a different name — and the calendar paints it
-     * as the grey band every "the scheduler places nothing here" stretch is painted as.
+     * no legacy flag — it is not an `inactivity` period wearing a different name — and the calendar draws it
+     * as the empty orange-outlined box every period a repeating rule lays is drawn as.
      */
     fun beforeBedPanels(
         sleep: SleepSchedule?,
@@ -2279,6 +2293,33 @@ object SchedulerDomain {
      * Nothing here is stored, drawn or synced: it is derived evidence handed to a placement, like the live
      * pause beside it.
      */
+    /**
+     * PRD §8: the [PeriodKinds.NO_SCREEN] periods the user drew **without drawing one** — where a period
+     * asserting the computer's layer overlaps one asserting the phone's ([assertedNoScreenRanges]), which by
+     * the layers' own definition is a no-screen stretch.
+     *
+     * The spans an explicit "No screen" period already covers are SUBTRACTED, because the plan multiplies the
+     * resiliences of every covering period ([PeriodKinds.multiplier]): handing it the same stretch twice would
+     * square a task's resilience to the kind and silently halve the share of anybody sitting between 0 and 1.
+     * A `0` and a `1` would not have noticed, which is exactly why this is written down.
+     */
+    fun impliedNoScreenPeriods(panels: List<TaskPanel>): List<RestrictivePeriod> {
+        val drawn = assertedNoScreenRanges(panels)
+        if (drawn.isEmpty()) return emptyList()
+        val explicit =
+            panels.filter { it.restrictiveKind == PeriodKinds.NO_SCREEN }
+                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        val implied = subtractRegions(drawn, explicit)
+        return implied.map {
+            RestrictivePeriod(
+                startMillis = it.startEpochMillis,
+                endMillis = it.endEpochMillis,
+                kind = PeriodKinds.NO_SCREEN,
+                label = PeriodKinds.periodTitle(PeriodKinds.NO_SCREEN),
+            )
+        }
+    }
+
     fun observedNoScreenPeriods(regions: List<TaskTimeRange>): List<RestrictivePeriod> =
         regions.mapNotNull { region ->
             if (region.endEpochMillis <= region.startEpochMillis) {
@@ -2645,6 +2686,41 @@ object SchedulerDomain {
     }
 
     /**
+     * PRD §8: **the stretches a PERIOD asserts [layer] over** — the hand-drawn half of a layer, as opposed to
+     * the OS lock history [layerEvidence] reads.
+     *
+     * One reading, off the panel's KIND ([PeriodKinds.assertedLayers]), so the places that care cannot
+     * disagree: the hatch the calendar paints, the no-screen stretch [assertedNoScreenRanges] takes out of two
+     * of these, and the record bank. A "No screen" period asserts both layers and so appears in both answers;
+     * each one-sided kind appears in its own.
+     */
+    fun assertedLayerRanges(panels: List<TaskPanel>, layer: ActivityLayer): List<TaskTimeRange> =
+        mergeOccupied(
+            panels.filter { layer in PeriodKinds.assertedLayers(it.restrictiveKind) }
+                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+        )
+
+    /**
+     * PRD §8: **the no-screen stretches the user has DRAWN** — where a period asserting the computer's layer
+     * and a period asserting the phone's overlap.
+     *
+     * "A no-screen period is where BOTH layers fall" is the definition the whole app reads no-screen time by
+     * ([observedNoScreenRegions] takes the same intersection over the two layers' *evidence*), so a drawn
+     * no-screen stretch is that same intersection over the two layers' *assertions*. A "No screen" panel
+     * asserts both by itself and therefore intersects to its own span, which is why this REPLACES the old
+     * `panels.filter { it.noScreen }` reading rather than sitting beside it: one funnel, and the two one-sided
+     * kinds ([PeriodKinds.NO_COMPUTER_UNLOCKED] / [PeriodKinds.NO_PHONE_UNLOCKED]) reach the scheduler through
+     * the rule "no screen" already has instead of growing one of their own.
+     */
+    fun assertedNoScreenRanges(panels: List<TaskPanel>): List<TaskTimeRange> {
+        val computer = assertedLayerRanges(panels, ActivityLayer.NoComputerUnlocked)
+        if (computer.isEmpty()) return emptyList()
+        val phone = assertedLayerRanges(panels, ActivityLayer.NoPhoneUnlocked)
+        if (phone.isEmpty()) return emptyList()
+        return intersectRegions(computer, phone)
+    }
+
+    /**
      * PRD §8/§9: the past stretches that were OBSERVED to be no-screen periods — the intersection of the two
      * layers' evidence halves, i.e. the times neither a computer nor a phone was unlocked.
      *
@@ -2688,7 +2764,8 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §8: the past stretches the calendar draws as a derived GREY "Inactivity" band — the elapsed timeline
+     * PRD §8: the past stretches the calendar draws as a derived "Inactivity" band — a label and nothing
+     * else, since nobody placed one — the elapsed timeline
      * minus everything already drawn over it ([coveredRegions]: the task panels, the §17 sleep bands, and the
      * user's own hand-added inactivity panels). The rule it implements is that the past is fully accounted
      * for: every elapsed stretch is either a task panel or a grey period labelled "Inactivity" or "Sleep".
@@ -2794,7 +2871,7 @@ object SchedulerDomain {
                     // `no task allowed` span like any other.
                     dynamic = panel.conductedBreak,
                 )
-        }
+        } + impliedNoScreenPeriods(panels)
 
     /**
      * The schedulable leaves of [state] as the plan layer sees them at [nowMillis] — priority, minimum time
@@ -3980,6 +4057,57 @@ object SchedulerDomain {
         !panel.auto && !panel.chore && !isRegeneratedPanel(panel)
 
     /**
+     * PRD §8: **what a block's outline says — WHO put it there.** The one reading behind every outline the
+     * calendar draws, so the drawing cannot answer it differently from a test.
+     */
+    enum class PanelOutline {
+        /**
+         * Nothing placed it: the §9 fill's own task panels, and the DERIVED bands (a past "Inactivity"
+         * stretch, a layer region). A derived Inactivity band is drawn as **nothing but its title** — there
+         * is no hand to name and nothing was stated, so there is nothing to outline.
+         */
+        None,
+
+        /** [isUserPlaced]: added from the menu, drawn by hand, or since dragged/resized. Drawn BLUE. */
+        User,
+
+        /** A restrictive period a REPEATING RULE lays: the §17 sleep windows and wind-down hours. Drawn ORANGE. */
+        Pattern,
+
+        /**
+         * One of the three DYNAMIC restrictive periods (`side-dev/README.md` § *3 Dynamic Restrictive
+         * Period*) — the 20 s look-away and the two rest poses, whether projected by the recurrence bars
+         * ([TaskPanel.screenBreak]) or conducted and recorded ([TaskPanel.conductedBreak]). Drawn GREY.
+         */
+        Dynamic,
+    }
+
+    /**
+     * PRD §8: **the outline [panel] wears**, asked once.
+     *
+     * **Three ways a period gets onto the timeline, and the colour names which one.** The DYNAMIC periods are
+     * asked for first because they are the one family that is neither the user's hand nor a standing rule:
+     * the recurrence bars place them against the timeline itself, and a break the app CONDUCTED is one of the
+     * three that really happened — it is `auto = false` and so would otherwise read as something the user
+     * drew. After that the two remaining answers are complements: a block the USER placed is blue whatever it
+     * is (a task panel, a period of any kind), and what is left over is orange exactly when it is a
+     * restrictive period — because the only periods the app lays by itself are the ones a repeating rule puts
+     * there (the §17 sleep windows and the wind-down hours measured back from them). So there is no list of
+     * families to keep in step with [isRegeneratedPanel]: add a fill-laid period family tomorrow and it is
+     * orange for the same reason these are.
+     *
+     * A derived band ([derivedInactivityBands], a layer region) has no panel behind it to ask about, and that
+     * is the same answer by the same route: nobody placed it, so it carries no outline — an "Inactivity"
+     * stretch the past left uncovered is drawn as its title and nothing else.
+     */
+    fun panelOutline(panel: TaskPanel): PanelOutline = when {
+        panel.screenBreak || panel.conductedBreak -> PanelOutline.Dynamic
+        isUserPlaced(panel) -> PanelOutline.User
+        panel.isRestrictivePeriod -> PanelOutline.Pattern
+        else -> PanelOutline.None
+    }
+
+    /**
      * PRD §8: the pins a block carries once the user has **put it where it is** — dragged it or dragged one
      * of its edges on the grid.
      *
@@ -4343,7 +4471,8 @@ object SchedulerDomain {
                 val kind = panel.restrictiveKind
                 if (kind.isEmpty()) null
                 else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
-            } + listOfNotNull(liveRestPeriod(liveRest)) + observedNoScreenPeriods(noScreenEvidence)
+            } + impliedNoScreenPeriods(kept) + listOfNotNull(liveRestPeriod(liveRest)) +
+                observedNoScreenPeriods(noScreenEvidence)
         val dynamicBlocks =
             kept.asSequence()
                 .filter { it.taskId != null && !it.chore && !it.isRestrictivePeriod }
@@ -4430,12 +4559,21 @@ object SchedulerDomain {
         val periodPanels =
             kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels + obstructingSidePanels
         val restrictions =
-            periodPanels.mapNotNull { panel ->
-                val kind = panel.restrictiveKind
-                if (kind.isEmpty()) return@mapNotNull null
-                val from = maxOf(panel.startEpochMillis, nowMillis)
-                val to = panel.endEpochMillis
-                if (to <= from) null else RestrictivePeriod(from, to, kind, panel.title)
+            (
+                periodPanels.map { panel ->
+                    RestrictivePeriod(
+                        panel.startEpochMillis, panel.endEpochMillis, panel.restrictiveKind, panel.title,
+                    )
+                } +
+                    // PRD §8: a computer-layer period overlapping a phone-layer one IS a no-screen period —
+                    // the layers' own definition, taken in the one place ([impliedNoScreenPeriods]) rather
+                    // than by giving the two one-sided kinds a scheduling rule of their own.
+                    impliedNoScreenPeriods(periodPanels)
+                ).mapNotNull { period ->
+                if (period.kind.isEmpty()) return@mapNotNull null
+                val from = maxOf(period.startMillis, nowMillis)
+                val to = period.endMillis
+                if (to <= from) null else period.copy(startMillis = from, endMillis = to)
             } +
                 // Mode 2's cover, clipped into the half-open form the rest of the fill measures in. It is the
                 // one period whose end is CLOSED — the README covers `t_p` itself — so in discrete time it

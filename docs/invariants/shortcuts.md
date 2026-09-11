@@ -99,7 +99,7 @@ PRD §13's "start this task now", the intent the task cell's own menu raises. Th
 own; it is a second way of naming the task that one already places.
 
 **Both switch chords then lay the epsilon switch entry** at the now-line on the task selected — an ordinary
-hand-placed block, so it draws with the blue outline and the check box and the calendar is told nothing
+hand-placed block, so it draws with the blue outline and the calendar is told nothing
 about chords (`scheduler.md`, `calendar.md`). `+Z` selects its task by asking the plan who runs instead;
 `+T` by the row the user took. From there the two presses are the same press. The seed says which task and
 when, never for how long — see `scheduler.md` for why it does not grow on its own.

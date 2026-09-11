@@ -330,9 +330,10 @@ disagreeing about what colour a task is.
 - **The uniform §8 event blue survives as the fallback**, for a panel whose task the tree gives no colour. A
   no-screen / inactivity period takes no task colour at all: it is not a task.
 - **Colours are DERIVED, never persisted or synced** — recomputed from the tree, like the percentages.
-- **Grey periods are marked with LINES so every colour stays available to the tasks** (ADR 0002/0013): a wash
-  over an inactivity period, a sleep window or a screen break would repaint the task panels a grey period may
-  legitimately hold, and would cost the palette a corner of the circle.
+- **A period is drawn as an OUTLINE so every colour stays available to the tasks** (ADR 0002/0013): a wash —
+  or the vertical-line marking that preceded the outline — over an inactivity period, a sleep window or a
+  screen break repaints the task panels such a period may legitimately hold, and costs the palette a corner of
+  the circle.
 
 ### The "All tasks" list
 

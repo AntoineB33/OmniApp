@@ -16,7 +16,6 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.time.AppClock
 import org.example.project.ui.PlacedRecord
-import org.example.project.ui.panelPinBoxSpec
 
 /**
  * PRD §7 **the switch entry**: both ways of saying "I am doing this now" — the picker
@@ -26,7 +25,7 @@ import org.example.project.ui.panelPinBoxSpec
  *
  * Four claims, and they are why the feature is one line of code in two reducers rather than a mechanism:
  *  - the block is an ordinary hand-placed panel, so the calendar draws it with the blue outline and the check
- *    box **without being told anything about chords** ([SchedulerDomain.isUserPlaced], [panelPinBoxSpec]);
+ *    outline **without being told anything about chords** ([SchedulerDomain.panelOutline]);
  *  - it is PINNED, so the fill that runs immediately after plans around it instead of over it — a press
  *    undone by the re-plan it asks for would be no press at all;
  *  - it says *this task, from here* and **nothing about how long**: the length is the scheduler's answer, and
@@ -148,7 +147,7 @@ class SwitchTaskEntryTest {
     // ----- what the calendar then draws ---------------------------------------------------------
 
     @Test
-    fun the_entry_is_drawn_as_a_block_the_user_placed_blue_outline_and_a_checked_box() {
+    fun the_entry_is_drawn_as_a_block_the_user_placed_the_blue_outline() {
         val (s0, ids) = stateWithTasks("A", "B")
         val state = planned(s0, T0)
         withClock(T0) {
@@ -158,19 +157,19 @@ class SwitchTaskEntryTest {
             assertTrue(SchedulerDomain.isUserPlaced(entry), "no blue outline: the app would own this block")
             assertTrue(entry.pins.existence)
 
-            val box = assertNotNull(panelPinBoxSpec(placed(entry)), "the block wears no check box")
-            assertTrue(box.checked, "the box must read checked — the user placed this occurrence")
-            assertTrue(box.enabled, "and it is a real switch on a task panel, not an inert mark")
+            // A new way of putting a block on the timeline reaches the drawing through the one outline
+            // question, never through a flag of its own.
+            assertEquals(SchedulerDomain.PanelOutline.User, placed(entry).outline)
         }
     }
 
-    /** The block as the calendar builds it from the panel — only the fields the box's rule reads. */
+    /** The block as the calendar builds it from the panel — only the fields the outline's rule reads. */
     private fun placed(panel: TaskPanel) = PlacedRecord(
         title = panel.title,
         startHour = 9f,
         endHour = 10f,
         scheduled = false,
-        userPlaced = SchedulerDomain.isUserPlaced(panel),
+        outline = SchedulerDomain.panelOutline(panel),
         noScreen = panel.noScreen,
         inactivity = panel.inactivity,
         pins = panel.pins,

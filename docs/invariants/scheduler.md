@@ -23,7 +23,7 @@ Global rules that always apply: `CLAUDE.md`.
   (`SchedulerReducer.placeSwitchEntry`, `SchedulerDomain.SWITCH_ENTRY_MILLIS` = 1 s). It is an ordinary
   user-authored panel — `auto = false`, existence pin, built through the same two helpers the calendar's own
   "add" uses — so it is a fixed obstacle the fill plans around (`isSchedulerFixed`), it is a Calendar history
-  unit, and it draws with the blue outline and the check box without the calendar knowing a chord exists
+  unit, and it draws with the blue outline without the calendar knowing a chord exists
   (`calendar.md`). It states *which task and when*, and **nothing about how long**: the length is the
   scheduler's answer. `Ctrl+Shift+Alt+T` names the task; `Ctrl+Shift+Alt+Z` names it as the **alternative**
   the last fill's rules already give (`alternativeTaskAt`, whose README use IS this press), falling back to
@@ -96,14 +96,15 @@ the served past) and **restrictive periods**. Nothing else, by any other route.
 - **A pre-placed block is a block OWNED BY A TASK, and a period reaches the walk by its KIND** — the two
   slots are not interchangeable, and a panel must never take both. `isSchedulerFixed` (= `TaskPanel.pinned`)
   is what fills the first; `fillSchedule` keeps every `isRestrictivePeriod` panel whatever its pins, which is
-  the second. So a hand-drawn period carries the calendar's **existence pin** (`pins.existence`, the pin box
-  — `calendar.md`) and **not** `pinned`: `SchedulerReducer.derivePinned`'s period-aware overload is the one
+  the second. So a hand-drawn period carries the calendar's **existence pin** (`pins.existence` —
+  `calendar.md`) and **not** `pinned`: `SchedulerReducer.derivePinned`'s period-aware overload is the one
   place that says so, and without it a dragged no-screen period would enter `futureBlocks` as a block owned
   by nobody, on top of the period it already is.
 - **A drag or a resize on the grid IS the existence pin** (`SchedulerDomain.pinsAfterHandPlacement`). The
   gesture is the user placing a block, and an unpinned block is not something the fill keeps — so without it
   the drag became a user-authored *unpinned* panel, exactly the shape the fill deletes, and the re-plan the
-  edit itself triggers undid it. The **pin box** is the same field from the other side: unpinning is what
+  edit itself triggers undid it. The edit window's **Existence** switch is the same field from the other
+  side: unpinning is what
   makes the fill stop seeing a panel, and `pinned` being in `schedulingSignature` is what re-plans.
 
 ### The frozen past includes the block the line is STANDING IN
@@ -118,7 +119,7 @@ increases."*
   `pastPeriodsForTask` reads those same panels, from the clock replay that seeds the walk, taking the resume
   contract with it.
 - **WHOEVER PLACED IT.** The branch reads *a task panel the cut is about to take*, never *an auto panel*: the
-  other panel the cut takes is one the user has just UNPINNED (`calendar.md`, the pin box), and that is the
+  other panel the cut takes is one the user has just UNPINNED (`calendar.md`), and that is the
   one gesture whose whole purpose is to ask for a re-plan. Qualifying the head on `auto` deleted its elapsed
   half — the frozen-past rule breaking on exactly the press that invokes it.
 - **The head is an ordinary auto panel** from there on, however it started (`auto = true` on the kept copy):

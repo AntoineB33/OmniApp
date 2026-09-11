@@ -180,13 +180,16 @@ private object CalColors {
     val muted = Color(0xFF5F6368)
     /** PRD §18 Alarms: a ring marker, deliberately unlike the blue task/reminder chips — it is not work. */
     val alarm = Color(0xFFE8710A)
+    /**
+     * PRD §8: the outline of a restrictive period a **repeating rule** laid (the §17 sleep windows and the
+     * wind-down hours), against [accent] for the one the USER placed. One axis, two answers: the colour of a
+     * period's outline says who put it there and nothing else.
+     */
+    val pattern = Color(0xFFF29900)
     // PRD §8 (uniform blocks): every calendar period — record, scheduled, or manual — is drawn in this
     // single colour, with no visual distinction between auto-calculated and manually-added tasks.
     val event = Color(0xFF1A73E8) // Google-blue calendar event
 }
-
-/** Spacing between the vertical lines a grey period is marked with ([greyPeriodMarks]). */
-private val GREY_PERIOD_LINE_STEP = 7.dp
 
 /**
  * PRD §8: the width of the accent-blue outline a **user-placed** block wears ([CalendarBlockBody]) — one step
@@ -195,21 +198,18 @@ private val GREY_PERIOD_LINE_STEP = 7.dp
  */
 private val USER_PLACED_BORDER_DP = 2.dp
 
-/** PRD §8: the side of the square pin box a user-placed block wears at its top right ([PanelPinBox]). */
-private val PIN_BOX_SIZE = 13.dp
-
 /**
- * PRD §8: the smallest rendered block that still draws its pin box.
- *
- * Same rule as the band names and the panel labels (`docs/invariants/calendar.md`): **a block is never
- * stretched to hold what is drawn on it**, so the mark is what gives way. Below this the box would be
- * clipped to a sliver — the zoom is what brings it back, and the block's own contextual menu and edit window
- * reach the pin at any height.
+ * PRD §8: **the colour an outline is drawn in**, or `null` for a block that wears none of its own (it then
+ * keeps the plain 1 dp border in its own colour). The one reading of
+ * [SchedulerDomain.PanelOutline] on the drawing side, so the grid, the sleep bands and the wind-down bands
+ * cannot answer it differently from one another.
  */
-private val PIN_BOX_MIN_HEIGHT = 17.dp
-
-/** PRD §8: the narrowest slice that still draws a pin box — below it the box would cover the whole column. */
-private val PIN_BOX_MIN_WIDTH = 34.dp
+private fun outlineColor(outline: SchedulerDomain.PanelOutline): Color? = when (outline) {
+    SchedulerDomain.PanelOutline.None -> null
+    SchedulerDomain.PanelOutline.User -> CalColors.accent
+    SchedulerDomain.PanelOutline.Pattern -> CalColors.pattern
+    SchedulerDomain.PanelOutline.Dynamic -> CalColors.muted
+}
 
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
@@ -240,12 +240,13 @@ data class CalendarRecord(
     /** PRD §8 the backing panel's four pin dimensions (head panel for a merged block); seeds the edit-window switches. */
     val pins: PanelPins = PanelPins(),
     /**
-     * PRD §8: **the user put this block here** ([org.example.project.scheduler.domain.SchedulerDomain.isUserPlaced]) —
-     * a panel added from the menu, one of the scheduler's own since dragged or resized, or a period drawn by
-     * hand. It is what the blue outline and the pin box say, and it is a fact about the backing panel, never
-     * a reading of how the block happens to be drawn.
+     * PRD §8: **who put this block here** ([org.example.project.scheduler.domain.SchedulerDomain.panelOutline]) —
+     * the USER (a panel added from the menu, one of the scheduler's own since dragged or resized, a period
+     * drawn by hand) or a repeating RULE (the §17 sleep windows and the wind-down hours they imply). It is
+     * what the outline's colour says — blue and orange respectively — and it is a fact about the backing
+     * panel, never a reading of how the block happens to be drawn.
      */
-    val userPlaced: Boolean = false,
+    val outline: SchedulerDomain.PanelOutline = SchedulerDomain.PanelOutline.None,
     /** PRD §8 Overlap Mode: horizontal weight of the backing panel (head panel for a merged block). */
     val layoutWeight: Double = 1.0,
     /** PRD §14 Reminders: a zero-duration, checkable tag (not a height-proportional panel). */
@@ -272,7 +273,7 @@ data class CalendarRecord(
     /** The user's sleep window, drawn as a labeled greyed band behind the task blocks. */
     val sleep: Boolean = false,
     /**
-     * PRD §8 inactivity period: a stretch where the scheduler places nothing, drawn GREY. Three things are
+     * PRD §8 inactivity period: a stretch where the scheduler places nothing. Three things are
      * one concept here — the user's hand-added inactivity periods, the §17 sleep windows (an inactivity
      * period labelled "Sleep", which also sets [sleep]) and the closed heads of the §15 screen breaks (drawn
      * by the break's own band). A user-authored panel carries an [entryId] and is a real, removable block.
@@ -541,8 +542,8 @@ data class PlacedRecord(
     val pinned: Boolean = false,
     /** PRD §8 the backing panel's four pin dimensions; seeds the edit-window switches. */
     val pins: PanelPins = PanelPins(),
-    /** PRD §8: the user put this block here — the blue outline and the pin box. See [CalendarRecord.userPlaced]. */
-    val userPlaced: Boolean = false,
+    /** PRD §8: who put this block here — the outline and its colour. See [CalendarRecord.outline]. */
+    val outline: SchedulerDomain.PanelOutline = SchedulerDomain.PanelOutline.None,
     /** PRD §8 Overlap Mode: horizontal weight of the backing panel; drives [overlapLayout] widths. */
     val layoutWeight: Double = 1.0,
     /** PRD §14 Reminders: a zero-duration, checkable tag rendered at [startHour] (not a draggable block). */
@@ -692,7 +693,7 @@ fun recordsForDay(
             taskId = record.taskId,
             pinned = record.pinned,
             pins = record.pins,
-            userPlaced = record.userPlaced,
+            outline = record.outline,
             layoutWeight = record.layoutWeight,
             reminder = record.reminder,
             checked = record.checked,
@@ -2955,11 +2956,6 @@ fun CalendarFloatingWindow(
     onRemoveEntry: (PlacedRecord) -> Unit = {},
     /** PRD §14 Reminders: a reminder tag was clicked → toggle its checked (done) state. */
     onToggleReminder: (PlacedRecord) -> Unit = {},
-    /**
-     * PRD §8: the **pin box** on a user-placed block was clicked → flip that block's existence pin. The
-     * handler acts on every backing panel of the (possibly merged) block, like every other block edit.
-     */
-    onTogglePin: (PlacedRecord) -> Unit = {},
     /** PRD §8 Overlap Mode: new horizontal weights for panels whose shared-width edge was dragged. */
     onAdjustWeights: (Map<String, Double>) -> Unit = {},
     /** PRD §8 Overlap Mode: whether overlap is currently armed (toggled by `O` while the calendar is focused). */
@@ -3161,7 +3157,6 @@ fun CalendarFloatingWindow(
                 onGoToTaskTree = onGoToTaskTree,
                 onRemoveEntry = onRemoveEntry,
                 onToggleReminder = onToggleReminder,
-                onTogglePin = onTogglePin,
                 onAdjustWeights = onAdjustWeights,
                 overlapArmed = overlapArmed,
                 jumpNonce = jumpNonce,
@@ -3470,8 +3465,6 @@ private fun WeekView(
     onGoToTaskTree: (TaskId?, String) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
-    /** PRD §8: the pin box on a user-placed block was clicked. See [CalendarFloatingWindow]. */
-    onTogglePin: (PlacedRecord) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
     overlapArmed: Boolean,
     jumpNonce: Int,
@@ -4019,7 +4012,6 @@ private fun WeekView(
                                     onGoToTaskTree = onGoToTaskTree,
                                     onRemoveEntry = onRemoveEntry,
                                     onToggleReminder = onToggleReminder,
-                                    onTogglePin = onTogglePin,
                                     onLockScroll = { scrollLocked = it },
                                     onResizingEdge = { resizingEdge = it },
                                     onAdjustWeights = onAdjustWeights,
@@ -4208,8 +4200,6 @@ private fun DayColumn(
     onGoToTaskTree: (TaskId?, String) -> Unit,
     onRemoveEntry: (PlacedRecord) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
-    /** PRD §8: the pin box on a user-placed block was clicked. See [CalendarFloatingWindow]. */
-    onTogglePin: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     /**
      * PRD §8: reports the panel side a resize press is holding (null on release) so the grid can keep that
@@ -4254,7 +4244,7 @@ private fun DayColumn(
     // pipeline that lays panels out or hit-tests them. An idle stretch that carries no panel now draws no
     // band at all (the derived "Inactivity"/"No screen" bands are gone); it simply shows the layers.
     val layerBands = records.filter { it.layer != null }
-    // PRD §8: the DERIVED grey bands — the past stretches no task panel covers, drawn grey and labelled
+    // PRD §8: the DERIVED bands — the past stretches no task panel covers, drawn as a label alone and named
     // "Inactivity" (the §17 sleep windows are the other grey label and draw as [sleepBands]). Derived means no
     // [entryId]: display-only, neither removable nor draggable. A user-authored inactivity PANEL carries an
     // entryId and stays a real block in the pipeline below.
@@ -4773,7 +4763,6 @@ private fun DayColumn(
                 hoverScope = hoverScope,
                 tz = tz,
                 onEditEntry = onEditEntry,
-                onTogglePin = onTogglePin,
                 // A block opening at midnight writes its title below the day's own date badge. When a
                 // reminder stack sits at the same top edge, it must push the title down too, and when the
                 // block is too short the title is hidden instead of writing over the reminders.
@@ -4936,29 +4925,37 @@ private fun DayColumn(
             }
         }
 
-        // PRD §8/§17: the grey periods — the user's hand-added inactivity periods and the §17 sleep windows
-        // (a sleep window is an inactivity period, one labelled "Sleep"). Grey is exactly "the scheduler
-        // places nothing here", and it is marked the same way as every other one: vertical lines, delimited
-        // top and bottom ([greyPeriodMarks]). They carry no hatch of their own — the two oblique-line slopes
-        // mean only "no computer unlocked" / "no phone unlocked", and a sleep window gets both of them from
-        // the LAYERS drawn over the whole column (see [layerBands] below).
+        // PRD §8/§17: the bands with no block of their own — the §17 sleep windows and wind-down hours, and
+        // the DERIVED "Inactivity" stretches the past leaves uncovered. What each draws is the one question
+        // [SchedulerDomain.panelOutline] answers, and there are only two answers here:
         //
-        // Drawn OVER the panels, like the layers and for the same reason: the fill projects the plan straight
-        // through a sleep window and a task resilient to a break's kind may work through one, so a marking
-        // hidden under the block would leave that stretch unmarked. Lines can be drawn over a block without
-        // taking its colour, which is what a filled band could not do. The "Sleep"/"Inactivity" label is
-        // drawn on top of everything further down, so it stays legible at the band's start.
+        //  • a band that IS a restrictive period — a sleep window, the hour before bed — is drawn EMPTY, like
+        //    every other period: an outline in the colour of whoever placed it (orange here, both being laid
+        //    by the repeating §17 schedule) and nothing inside it;
+        //  • a band nobody placed — the derived past inactivity — draws **nothing but its title** (below).
+        //    An outline says who put this here and the answer is "no one"; a marking would say the app is
+        //    asserting an empty stretch, and it is not — it is reporting one it derived from the panels
+        //    around it, which the absence of anything drawn says by itself.
+        //
+        // The outline is drawn OVER the panels, like the layers and for the same reason: the fill projects
+        // the plan straight through a sleep window and a task resilient to a break's kind may work through
+        // one, so a marking hidden under the block would leave that stretch unmarked — and it has no fill, so
+        // the block underneath keeps its own colour. The "Sleep"/"Inactivity" label is drawn on top of
+        // everything further down, so it stays legible at the band's start. They carry no hatch of their own:
+        // the two oblique-line slopes mean "no computer unlocked" / "no phone unlocked", and a sleep window
+        // gets both of them from the LAYERS drawn over the whole column (see [layerBands] below).
         // Purely decorative: these register no pointer input at all — their bubble section comes from
         // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
         (inactivityBands + sleepBands).forEach { band ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
+            val bandOutline = outlineColor(band.outline) ?: return@forEach
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .offset(y = hourHeight * band.startHour)
                     .height(hourHeight * (band.endHour - band.startHour))
                     .clipToBounds()
-                    .greyPeriodMarks(),
+                    .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
             )
         }
 
@@ -5373,6 +5370,7 @@ private fun ScreenBreakBand(
             title = marker.title,
             showTitle = labelInset != null && height >= labelInset + SCREEN_BREAK_LABEL_MIN_HEIGHT,
             titleTopInset = labelInset ?: 0.dp,
+            outline = marker.outline,
             modifier = Modifier.fillMaxWidth().height(height),
         )
         // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
@@ -5406,17 +5404,19 @@ private fun ScreenBreakBand(
 /**
  * PRD §15: the body of a [ScreenBreakBand] — one span, of one kind, painted one way.
  *
- * PRD §8/§15: all three breaks are periods of kind `no task allowed` **end to end** (ADR 0003), which is
- * precisely an inactivity period — so a break is marked exactly like the inactivity and sleep bands beside
- * it: vertical lines, delimited top and bottom ([greyPeriodMarks]), and a muted label at the top. It used to
- * wear a blue outline and an accent-coloured title, which said it was a different sort of period; it is not.
+ * PRD §8/§15: a break is drawn as the EMPTY OUTLINED BOX every restrictive period is, in the colour that
+ * says who placed it — and the three breaks are placed by neither the user nor a standing rule but by the
+ * recurrence bars, so that colour is **grey** ([SchedulerDomain.PanelOutline.Dynamic]). No fill and no
+ * marking inside it: a break is a stretch a resilient task may legitimately be working through, and anything
+ * painted across it would repaint that task's own block.
  *
  * The label is drawn only where the band has ROOM for it ([showTitle], gated on
  * [SCREEN_BREAK_LABEL_MIN_HEIGHT] by the caller): naming the period is how the three breaks are told apart,
  * but a band is never stretched to make room — that overstated a 20-second look-away by minutes and drew it
- * across the task panel beside it. Un-named, the band is still marked like every other grey period, the
- * hover bubble still names it, and the zoom still grows it until the text fits. A name too wide for the
- * column ellipsises; the hover bubble carries it whole.
+ * across the task panel beside it. Un-named, the band is still an outlined box (down to the
+ * [SCREEN_BREAK_MIN_HEIGHT] hairline, where the two edges meet and it reads as one grey line), the hover
+ * bubble still names it, and the zoom still grows it until the text fits. A name too wide for the column
+ * ellipsises; the hover bubble carries it whole.
  *
  * There is no hollow half either. A break used to be read as a *shape* — a closed head and a tail accepting
  * the off-screen work. A break has no shape now, so a band that was part solid and part hollow would state a
@@ -5428,10 +5428,18 @@ private fun ScreenBreakSegment(
     showTitle: Boolean,
     /** PRD §8: how far below the band's top the name is written — see [panelLabelTopInset]. */
     titleTopInset: Dp,
+    /** PRD §8: who placed this period — grey for the three dynamic ones. See [outlineColor]. */
+    outline: SchedulerDomain.PanelOutline,
     modifier: Modifier,
 ) {
     Box(
-        modifier = modifier.clipToBounds().greyPeriodMarks(),
+        modifier = modifier
+            .clipToBounds()
+            .then(
+                outlineColor(outline)?.let {
+                    Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(3.dp))
+                } ?: Modifier,
+            ),
         contentAlignment = Alignment.TopCenter,
     ) {
         if (showTitle) {
@@ -5982,8 +5990,8 @@ internal fun alarmBubbleSection(marker: PlacedRecord, tz: TimeZone): CalendarBub
  * clamping the reducer commits with, so a block never visually overlaps another. Auto blocks
  * (records/scheduled) become the USER's the moment one is dragged, resized or edited — the gesture IS the
  * existence pin ([SchedulerDomain.pinsAfterHandPlacement]) — so from then on they are drawn like every other
- * block the user placed: accent outline, pin box ([PanelPinBox]), and a block the §9 fill is bound by. The
- * title is written on the block and also shows on hover (PRD §8).
+ * block the user placed: the accent-blue outline, and a block the §9 fill is bound by. The title is written
+ * on the block and also shows on hover (PRD §8).
  */
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -6014,8 +6022,6 @@ private fun CalendarBlock(
     hoverScope: CalendarTitleHoverScope,
     tz: TimeZone,
     onEditEntry: (PlacedRecord) -> Unit,
-    /** PRD §8: the pin box at the block's top right was clicked — toggle the panel's existence pin. */
-    onTogglePin: (PlacedRecord) -> Unit,
     /** PRD §8: how far below its top this block writes its title — see [panelLabelTopInset]. */
     titleTopInset: Dp = 0.dp,
     /** False when the panel is too short to fit its title below the reserved top strip. */
@@ -6114,10 +6120,10 @@ private fun CalendarBlock(
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
 
-                            // PRD §8: the pin box is a DESCENDANT of this slice and consumes its own press,
-                            // so a press it took is not a move, a resize or a double-click. (The block's
-                            // gesture has to sit on the ancestor — that is what keeps the drag alive across
-                            // the rest↔preview swap — so the child says "mine" the only way it can.)
+                            // A press a DESCENDANT of this slice has already taken is not a move, a resize
+                            // or a double-click. (The block's gesture has to sit on the ancestor — that is
+                            // what keeps the drag alive across the rest↔preview swap — so a child that wants
+                            // a press says "mine" the only way it can, by consuming it.)
                             if (down.isConsumed) return@awaitEachGesture
 
                             // Right-click → leave it unconsumed so the enclosing day column shows the
@@ -6208,9 +6214,9 @@ private fun CalendarBlock(
                         record.title,
                         showTitle = isFirst && titleVisible,
                         titleTopInset = titleTopInset,
-                        hatched = record.noScreen,
+                        period = isPeriodBlock(record),
                         titleColor = taskColor ?: CalColors.event,
-                        userPlaced = record.userPlaced,
+                        outline = record.outline,
                     )
                     // The block's own section, one overlay per device-set segment, then re-tiled together
                     // with the grey periods and layers covering it so each tile reports one whole stack —
@@ -6272,33 +6278,6 @@ private fun CalendarBlock(
                                 },
                         )
                     }
-                    // PRD §8: the pin box, at the block's TOP RIGHT — on the first slice only, so a block
-                    // stepped across an overlap wears one box and not one per step (the title follows the
-                    // same rule, at the other corner). Whether there is one at all, and whether it is a
-                    // switch, is [panelPinBoxSpec]'s answer and not decided here. Drawn AFTER the hover tiles
-                    // so it is on top of them, which is the whole reason it carries a copy of them.
-                    //
-                    // A block too short or too narrow for it draws none: a block is never stretched to hold
-                    // what is written on it, and the zoom is what brings the box back — same rule as the
-                    // band names and the panel labels. That is the only part of the decision that is about
-                    // the DRAWING, which is why it is the only part that lives here.
-                    val pinBox = panelPinBoxSpec(record)
-                    if (isFirst && pinBox != null &&
-                        sliceHeight >= PIN_BOX_MIN_HEIGHT &&
-                        colWidth * slice.widthFraction >= PIN_BOX_MIN_WIDTH
-                    ) {
-                        PanelPinBox(
-                            checked = pinBox.checked,
-                            enabled = pinBox.enabled,
-                            topHour = slice.topHour,
-                            hourHeight = hourHeight,
-                            overlays = blockBubbleOverlays(record, slice.topHour, slice.bottomHour, tz) +
-                                contextOverlays,
-                            hoverScope = hoverScope,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
-                            onToggle = { onTogglePin(record) },
-                        )
-                    }
                 }
             }
         }
@@ -6310,44 +6289,14 @@ private fun CalendarBlock(
  *
  * A period of ANY kind is one — `side-dev/README.md`: a period is a start, an end and a kind, and they are
  * all the same object under the one set of scheduling rules, which is why they share one editor. It is asked
- * for the one thing that differs on a period: it is reached by its KIND, so its pin box could only ever state
- * a fact (see [panelPinBoxSpec]).
+ * for the one thing that differs on a period in the DRAWING: a period is drawn EMPTY — an outline, a label
+ * and no fill at all — because it does not occupy the timeline, it states something about it.
  *
- * Read off the two PAINTS rather than off [PlacedRecord.restrictiveKind] deliberately: what the question is
- * really about is whether this block occupies the timeline or patterns it, which is what the paint says. The
- * two are the same set — [org.example.project.App] derives one from the other, once.
+ * Read off the two classifications rather than off [PlacedRecord.restrictiveKind] deliberately: what the
+ * question is really about is whether this block occupies the timeline or patterns it. The two are the same
+ * set — [org.example.project.App] derives one from the other, once.
  */
 private fun isPeriodBlock(record: PlacedRecord): Boolean = record.noScreen || record.inactivity
-
-/** PRD §8: the pin box a block wears — see [panelPinBoxSpec], which is where it is decided. */
-internal data class PanelPinBoxSpec(val checked: Boolean, val enabled: Boolean)
-
-/**
- * PRD §8: **the pin box this block wears, or `null` for a block that wears none.** One reading, off the
- * record alone, so the answer is the same wherever it is asked and can be pinned by a test.
- *
- * - **No box on anything the app placed** — the fill's own panels, the screen breaks, the sleep windows, the
- *   wind-down hours, a derived band ([PlacedRecord.userPlaced]). The box says *the user put this here*, and
- *   they did not.
- * - **No box on a NO-SCREEN period either**, though the user did draw that one. It is a **decorative** panel
- *   (PRD §8 panel taxonomy): it patterns the timeline rather than occupying it, and it has no fill of its own
- *   for a box to sit on — while the box it would wear could only ever be inert, a period being reached by its
- *   KIND and taken away with "Remove" rather than unpinned. A mark that cannot be pressed on a panel that is
- *   not there to be occupied is two reasons for the same nothing.
- * - **Every OTHER period keeps a box, and it is INERT** (`enabled = false`) — a hand-drawn grey one, and one
- *   of `before bed` or of a kind the account defined, which are drawn grey for the same reason. Those are real
- *   panels — grey is a statement about the timeline itself — so the mark has a body to sit on and says what the
- *   outline around it says. It is checked as a RULE rather than off the field, so a period an older build wrote
- *   (before the reducer set the pin on one) still reads checked with no migration: the panel IS the pre-placed
- *   thing, whatever its stored pins happen to say.
- * - **Every other user-placed block gets the real switch**, reading its own `pins.existence`.
- */
-internal fun panelPinBoxSpec(record: PlacedRecord): PanelPinBoxSpec? = when {
-    !record.userPlaced -> null
-    record.noScreen -> null
-    isPeriodBlock(record) -> PanelPinBoxSpec(checked = true, enabled = false)
-    else -> PanelPinBoxSpec(checked = record.pins.existence, enabled = true)
-}
 
 /** One hover tile of a block slice: `devices == null` means "no activity data here" (times-only bubble). */
 private data class DeviceHoverZone(val top: Float, val bottom: Float, val devices: List<String>?)
@@ -6379,8 +6328,8 @@ private fun deviceHoverZones(
 /**
  * The label for a derived (no-[entryId]) sleep / no-screen / inactivity record.
  *
- * A derived band NAMES ITSELF where it has a name: PRD §17's "Before bed" hour is a grey band with no object
- * of its own behind it, exactly like the Inactivity gaps, but it is not one of them and must not read as one.
+ * A derived band NAMES ITSELF where it has a name: PRD §17's "Before bed" hour has no object of its own
+ * behind it, exactly like the Inactivity gaps, but it is not one of them and must not read as one.
  * The Inactivity gaps carry "Inactivity" as their title already, so the fallback is only for a band built
  * without one.
  */
@@ -6396,41 +6345,6 @@ private fun decorativeBandLabel(r: PlacedRecord): String = when {
  */
 private fun underHoverTitle(u: PlacedRecord): String =
     if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title
-
-/**
- * PRD §8/§15/§17: how EVERY grey period is marked — a hand-added inactivity period, a sleep window and all
- * three screen breaks alike. They are one thing (`no task allowed`: the scheduler places nothing there), so
- * they are drawn one way; a screen break used to wear a blue outline of its own, which said it was a
- * different sort of period than the two beside it.
- *
- * VERTICAL LINES, never a filled wash. A tint repaints whatever it covers, so a task panel drawn inside a
- * grey period (§17 projects the plan straight through the night, and a task resilient to the break's kind
- * may work through one) lost its own colour to the marking. Lines mark the stretch and leave every possible
- * task colour readable through the gaps.
- *
- * The band is DELIMITED — a line across its top and its bottom edge — so two grey periods that abut, an
- * inactivity period ending exactly where a sleep window starts, still read as two. A continuous pattern
- * cannot say that; it merges them into one stretch.
- */
-private fun Modifier.greyPeriodMarks(color: Color = CalColors.muted): Modifier =
-    this.drawBehind {
-        val stroke = 1.dp.toPx()
-        val step = GREY_PERIOD_LINE_STEP.toPx()
-        var x = step / 2f
-        while (x < size.width) {
-            drawLine(color.copy(alpha = 0.34f), Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
-            x += step
-        }
-        // The delimitation. Half a stroke in, so the line lands inside the band and two abutting bands draw
-        // two distinct edges rather than one shared pixel row.
-        val edge = color.copy(alpha = 0.6f)
-        val top = stroke / 2f
-        val bottom = size.height - stroke / 2f
-        drawLine(edge, Offset(0f, top), Offset(size.width, top), strokeWidth = stroke)
-        if (bottom > top) {
-            drawLine(edge, Offset(0f, bottom), Offset(size.width, bottom), strokeWidth = stroke)
-        }
-    }
 
 /**
  * PRD §8 decorative panels: an oblique-line hatch. [reversed] flips the slope — the no-screen pattern
@@ -6466,101 +6380,6 @@ private fun Modifier.obliqueHatch(color: Color, reversed: Boolean, dotted: Boole
         }
     }
 
-/**
- * PRD §8: the **pin box** — the check box a user-placed block wears at its **top right**, opposite the title
- * at its top left (the "no two texts share a point" rule again: the two corners are the two marks a panel
- * carries, and neither is ever moved to make room for the other).
- *
- * It is the calendar edit window's **Existence** switch, reached from the panel: one field, one meaning, two
- * ways in ([SchedulerIntent.SetPanelPinned] writes the same `pins.existence` the window's Save does). Checked
- * = the scheduler must keep this occurrence; unchecking it is a rule change, and the re-plan that follows is
- * free to cut the panel where it lies ahead of the now-line.
- *
- * **A restrictive period's box is checked and INERT** ([enabled] = false). A period reaches the scheduler by
- * its KIND, never by a pin (`docs/invariants/scheduler.md` § *What reaches the scheduler*), so it has no
- * "the scheduler stops seeing it" state short of not being there: the way to take a period away is "Remove".
- * The box is still drawn, because the sentence the calendar states is *the user put this here* and a
- * hand-drawn period is exactly that.
- *
- * It **owes the bubble what it hides**, enabled or not (`docs/invariants/calendar.md`): it is opaque, and
- * when it is enabled it is a pointer-input node that wins the hit test against the block's own tiles, so it
- * carries a copy of them over its own rectangle — the same [overlays] the block reports, so the bubble reads
- * the same on the box as an inch to the left of it.
- */
-@Composable
-private fun PanelPinBox(
-    checked: Boolean,
-    enabled: Boolean,
-    /** Where the box is DRAWN, as an hour of the day — the top of the block's first slice. */
-    topHour: Float,
-    hourHeight: Dp,
-    /** The bubble stack the box sits on: the block's own sections plus everything drawn over the block. */
-    overlays: List<BubbleOverlay>,
-    hoverScope: CalendarTitleHoverScope,
-    modifier: Modifier = Modifier,
-    onToggle: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .size(PIN_BOX_SIZE)
-            .then(
-                if (!enabled) {
-                    Modifier
-                } else {
-                    Modifier.pointerInput(checked) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            // A secondary press is the day column's contextual menu (PRD §8) and a pin box is
-                            // not a fourth menu: leave it entirely unconsumed for the ancestor to pick up.
-                            if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
-                            // Consumed so the block's own move/resize/double-click gesture — which lives on an
-                            // ANCESTOR and therefore stays on the hit path — knows this press was not for it.
-                            down.consume()
-                            val up = waitForUpOrCancellation()
-                            up?.consume()
-                            if (up != null) onToggle()
-                        }
-                    }
-                },
-            )
-            .clip(RoundedCornerShape(2.dp))
-            .background(if (checked) CalColors.accent else CalColors.menuBackground)
-            .border(1.dp, CalColors.accent, RoundedCornerShape(2.dp))
-            .drawBehind {
-                if (!checked) return@drawBehind
-                val stroke = 1.6.dp.toPx()
-                val elbow = Offset(size.width * 0.42f, size.height * 0.74f)
-                drawLine(
-                    Color.White,
-                    Offset(size.width * 0.22f, size.height * 0.52f),
-                    elbow,
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
-                )
-                drawLine(
-                    Color.White,
-                    elbow,
-                    Offset(size.width * 0.78f, size.height * 0.28f),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
-                )
-            },
-    ) {
-        // The box's own rectangle, tiled by whatever covers each sub-range of it — one reporter per tile,
-        // never a nest ([bubbleHoverZones]). Its span in hours is its fixed height divided by the hour, so
-        // at the zoom ceiling it is a sliver of a minute and at zoom 1 the better part of an hour; either
-        // way what the bubble names under it is what is actually behind it.
-        val span = if (hourHeight > 0.dp) PIN_BOX_SIZE / hourHeight else 0f
-        CalendarHoverTiles(
-            top = topHour,
-            bottom = topHour + span,
-            overlays = overlays,
-            hourHeight = hourHeight,
-            hoverScope = hoverScope,
-        )
-    }
-}
-
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
 @Composable
 private fun CalendarBlockBody(
@@ -6573,7 +6392,14 @@ private fun CalendarBlockBody(
      * A block clips its own content, so a block with no room for the inset title simply shows none.
      */
     titleTopInset: Dp = 0.dp,
-    hatched: Boolean = false,
+    /**
+     * PRD §8: this block is a **restrictive period**, not a task panel — so it is drawn EMPTY: no fill at
+     * all, an outline and its label. A period does not occupy the timeline the way a task panel does; it
+     * says something about it, and whatever it covers (a task resilient to its kind, the two layer hatches a
+     * no-screen period asserts) has to stay readable straight through it. Grey used to be that statement and
+     * is not any more: the outline is.
+     */
+    period: Boolean = false,
     /**
      * PRD §8: the colour of the title written on the block. Its own [color] for a task panel — so the words
      * match the border around them — but NOT for a grey period, whose muted [color] would leave the label
@@ -6581,29 +6407,29 @@ private fun CalendarBlockBody(
      */
     titleColor: Color = CalColors.event,
     /**
-     * PRD §8: **the user put this block here.** Its outline is then the accent BLUE and a step thicker
-     * ([USER_PLACED_BORDER_DP]) whatever the block's own colour is, which is the whole of what the outline
-     * says — the fill still carries the task's colour, because who placed a panel and which task it is are
-     * two different questions and the panel has to answer both. A blue that only sometimes differed from the
-     * body colour would answer neither: hence the thickness, which reads on a blue task as well as on a red
-     * one, and on a period that has no task colour at all.
+     * PRD §8: **who put this block here**, which is the whole of what the outline says: the accent BLUE for
+     * the user, ORANGE for a period a repeating rule lays, and a step thicker than the plain 1 dp every other
+     * block wears ([USER_PLACED_BORDER_DP]) in both cases. The fill still carries the task's own colour,
+     * because who placed a panel and which task it is are two different questions and the panel has to answer
+     * both. A colour that only sometimes differed from the body would answer neither: hence the thickness,
+     * which reads on a blue task as well as on a red one, and on a period that has no task colour at all.
      */
-    userPlaced: Boolean = false,
+    outline: SchedulerDomain.PanelOutline = SchedulerDomain.PanelOutline.None,
 ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(3.dp))
-            // PRD §8: a NO-SCREEN period ([hatched]) is drawn as an outlined region with NO FILL AT ALL — it
-            // is not grey (it accepts the off-screen tasks) and it draws no pattern of its own: it asserts
-            // both "nobody unlocked" LAYERS, and the column paints those over it as the oblique lines of both
-            // slopes, past and future alike (they are an *asserted* region, so the layer is not clipped to the
-            // now-line). A tint under them would be a third statement nothing means. An INACTIVITY period, by
-            // contrast, is a solid grey block: nothing is scheduled there at all.
-            .background(if (hatched) Color.Transparent else color.copy(alpha = 0.30f))
+            // PRD §8: a restrictive period of ANY kind is drawn as an outlined region with NO FILL AT ALL.
+            // A no-screen period asserts both "nobody unlocked" LAYERS and the column paints those over it as
+            // the oblique lines of both slopes, past and future alike (they are an *asserted* region, so the
+            // layer is not clipped to the now-line); a tint under them would be a third statement nothing
+            // means. The other kinds are fill-less for the same reason one step further out: what a period
+            // covers — a task resilient to its kind, a layer, the grid itself — must read through it.
+            .background(if (period) Color.Transparent else color.copy(alpha = 0.30f))
             .border(
-                if (userPlaced) USER_PLACED_BORDER_DP else 1.dp,
-                if (userPlaced) CalColors.accent else color,
+                if (outline == SchedulerDomain.PanelOutline.None) 1.dp else USER_PLACED_BORDER_DP,
+                outlineColor(outline) ?: color,
                 RoundedCornerShape(3.dp),
             ),
     ) {
@@ -6611,7 +6437,7 @@ private fun CalendarBlockBody(
             Text(
                 text = title.ifEmpty { "(untitled)" },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (hatched) CalColors.muted else titleColor,
+                color = if (period) CalColors.muted else titleColor,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -7109,8 +6935,10 @@ private fun PeriodKindField(
  * One line saying what a period of [kind] will DO, written out of the model rather than out of a list of
  * special cases: a period multiplies every covered task's priority by that task's resilience to the kind, and
  * the only thing that differs between kinds is the resilience the tasks that were never told about it carry
- * ([PeriodKinds.defaultResilience]). `no on-screen task` is the one kind whose default is `1`, which is
- * exactly why it is the one that reads as "only the tasks that need no screen".
+ * ([PeriodKinds.defaultResilience]). The kinds that speak about a SCREEN rather than about the timeline are
+ * the ones whose default is `1` ([PeriodKinds.assertedLayers]), which is exactly why `no on-screen task`
+ * reads as "only the tasks that need no screen" — and why each of the two one-sided LAYER kinds, being half
+ * of that sentence, restricts nothing until the other half is drawn over the same hours.
  */
 private fun periodKindBlurb(kind: String): String =
     when (kind) {
@@ -7118,8 +6946,12 @@ private fun periodKindBlurb(kind: String): String =
             "Only tasks that need no screen are scheduled here. On-screen task panels and the work banked " +
                 "inside it are removed."
         PeriodKinds.NO_TASK ->
-            "Grey: the scheduler places nothing here at all. Every task panel and every hour of work banked " +
+            "The scheduler places nothing here at all. Every task panel and every hour of work banked " +
                 "inside it are removed."
+        PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED ->
+            "Hatches the \"" + PeriodKinds.periodTitle(kind) + "\" layer here. On its own it schedules " +
+                "nothing away — one locked screen is not \"no screen\" — but where it overlaps a period of " +
+                "the other layer, both fall and that stretch is a no-screen period."
         else ->
             "Each task is scheduled here at its resilience to \"" + kind + "\" — 0 by default, so nothing " +
                 "is placed until a task is given a value above zero in the period's own window."

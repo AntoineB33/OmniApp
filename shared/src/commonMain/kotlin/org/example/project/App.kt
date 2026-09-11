@@ -1244,13 +1244,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         //     unlocked-by-nobody counts: the §17 sleep windows and the §15 screen breaks (a break is by
         //     definition time away from every screen). Screen breaks are asserted in the past too: a 20-second
         //     look-away never stops the heartbeat, so evidence alone would never show it.
-        // The user's own no-screen periods (PRD §8) assert both layers across their whole span — a hand-added
-        // no-screen period IS "a period carrying both layers", and the derivation never overwrites it.
-        val layerAsserted =
+        // The user's own periods assert a layer by their KIND (PRD §8,
+        // [SchedulerDomain.assertedLayerRanges]) — a hand-added "No screen" period IS "a period carrying both
+        // layers", and a "no computer unlocked" / "no phone unlocked" period is the user saying ONE of them.
+        // The derivation never overwrites either. Everything else here is a claim about every screen at once.
+        val layerAssertedAll =
             SchedulerDomain.mergeOccupied(
-                schedulerState.panels.filter { it.noScreen }
-                    .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
-                    displaySidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
+                displaySidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
                     displaySleepRegions.filter { it.endEpochMillis > nowMillis }
                         .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) },
             )
@@ -1272,7 +1272,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         lockedIntervals = layerLocked,
                         // Asserted rather than evidence so the seam filter cannot drop a declaration shorter
                         // than a minute: the mode was 3 for it.
-                        assertedRegions = layerAsserted + layerAway,
+                        assertedRegions = layerAssertedAll + layerAway +
+                            SchedulerDomain.assertedLayerRanges(schedulerState.panels, layer),
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
                     )
@@ -1852,16 +1853,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     SchedulerDomain.pinsAfterHandPlacement(block.pins),
                                     allowOverlap,
                                 )?.let(vm::dispatch)
-                            },
-                            // PRD §8 pin box: the check box a user-placed panel wears at its top right. It
-                            // is the edit window's Existence switch reached from the panel — one field, so
-                            // one intent — and unpinning is a rule change the signature picks up, which is
-                            // what makes the scheduler re-plan over the panel it may now cut.
-                            onTogglePin = { block ->
-                                val ids = block.entryIds.ifEmpty { listOfNotNull(block.entryId) }
-                                if (ids.isNotEmpty()) {
-                                    vm.dispatch(SchedulerIntent.SetPanelPinned(ids, !block.pins.existence))
-                                }
                             },
                             // PRD §8 "Edit": a sleep band's editable object is the §17 sleep schedule, so
                             // its Edit opens the sleep window; a restrictive period has no task behind it
@@ -2732,11 +2723,11 @@ private fun mergePanelsForDisplay(
             !SchedulerDomain.isReminder(it) && !it.screenBreak && !it.sleep &&
                 !it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX)
         }
-    // PRD §17: the hour before bed, drawn as the grey band it is. DERIVED, like the "Sleep" window it
+    // PRD §17: the hour before bed, drawn as the empty outlined box every period is. DERIVED, like the "Sleep" window it
     // precedes and unlike the user's own periods, so it carries no `entryId`: there is no object of its own
     // behind it to edit or remove — the sleep schedule is the object, and the Sleep band an hour later is
-    // where its menu leads. Its KIND is still `before bed` in the scheduler; grey is only what the calendar
-    // paints "nothing is placed here" with.
+    // where its menu leads. Its KIND is still `before bed` in the scheduler; the ORANGE outline is only what
+    // the calendar says "a repeating rule put this here" with.
     val beforeBedRecords =
         panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }.map { panel ->
             CalendarRecord(
@@ -2744,6 +2735,9 @@ private fun mergePanelsForDisplay(
                 range = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis),
                 inactivity = true,
                 restrictiveKind = panel.restrictiveKind,
+                // PRD §8: the sleep schedule is a REPEATING rule, so the hour it lays is orange-outlined —
+                // the same answer its "Sleep" window an hour later gets, through the same one funnel.
+                outline = SchedulerDomain.panelOutline(panel),
             )
         }
     val reminderRecords =
@@ -2771,6 +2765,9 @@ private fun mergePanelsForDisplay(
                     entryId = side.id,
                     entryIds = listOf(side.id),
                     screenBreak = true,
+                    // PRD §8/§15: a dynamic restrictive period — the grey outline, through the same one
+                    // funnel every other block's outline comes from.
+                    outline = SchedulerDomain.panelOutline(side),
                 )
             }
         }
@@ -2790,12 +2787,13 @@ private fun mergePanelsForDisplay(
                 taskId = head.taskId,
                 pinned = head.pinned,
                 pins = head.pins,
-                // PRD §8: the blue outline + pin box. Read off the head panel, which is what every other
+                // PRD §8: WHO put this block here, which is the whole of what its outline says (blue for the
+                // user, orange for a repeating rule). Read off the head panel, which is what every other
                 // per-block attribute here is read off — a run only groups panels of one pin state anyway.
-                userPlaced = SchedulerDomain.isUserPlaced(head),
+                outline = SchedulerDomain.panelOutline(head),
                 layoutWeight = head.layoutWeight,
-                // PRD §8/§9/§12: a period the user drew stays a real, removable block (drawn as a decorative
-                // pattern or a muted grey band) rather than a task panel.
+                // PRD §8/§9/§12: a period the user drew stays a real, removable block (drawn as an empty
+                // blue-outlined box) rather than a task panel.
                 //
                 // **THE DRAWING IS DERIVED FROM THE KIND, HERE, ONCE.** `noScreen` and `inactivity` on a
                 // CalendarRecord are the two paints the calendar has for a period — no fill + both hatches,
@@ -2803,8 +2801,9 @@ private fun mergePanelsForDisplay(
                 // kind (`before bed`, one the account defined) carried neither and was drawn as a task
                 // panel. A kind is grey unless it is `no on-screen task`, which is the one that says
                 // something about screens rather than about the timeline being empty.
-                noScreen = head.restrictiveKind == PeriodKinds.NO_SCREEN,
-                inactivity = head.isRestrictivePeriod && head.restrictiveKind != PeriodKinds.NO_SCREEN,
+                noScreen = PeriodKinds.assertedLayers(head.restrictiveKind).isNotEmpty(),
+                inactivity = head.isRestrictivePeriod &&
+                    PeriodKinds.assertedLayers(head.restrictiveKind).isEmpty(),
                 restrictiveKind = head.restrictiveKind,
                 // PRD §8/§12: a hand-added period saved with an open ("∞") start reads as one in the hover
                 // bubble, exactly like a derived band that nothing precedes.
@@ -2829,6 +2828,8 @@ private fun mergePanelsForDisplay(
                 entryIds = listOf(sleepPanel.id),
                 sleep = true,
                 noScreenRange = enclosing,
+                // PRD §8: a §17 sleep window is a restrictive period a repeating rule lays — orange.
+                outline = SchedulerDomain.panelOutline(sleepPanel),
             )
         }
     return sleepRecords + beforeBedRecords + blockRecords + reminderRecords + sideRecords

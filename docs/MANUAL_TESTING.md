@@ -108,23 +108,37 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **Hover the far left of the leftmost panel in a column, and the far right of the rightmost.**
         No resize shape, and a press there moves the panel instead of resizing it — a column border has
         no neighbour to hand width to.
-- [ ] **The user's own blocks say so, and the pin box is a real switch (PRD §8/§9).**
-  - [ ] A panel the scheduler placed has NO blue outline and NO check box; the one you added by hand has
-        both, at the top right, with the box checked.
-  - [ ] **Resize a scheduler panel** by dragging its bottom edge. It gains the blue outline and a checked
-        box at once - and it is STILL there a few seconds later, after the re-plan the edit triggers (that
-        is what used to be undone silently).
-  - [ ] **Uncheck the box** on a panel an hour or two ahead of the now-line → the scheduler re-plans and
-        the panel is gone, its stretch filled with whatever the plan wants there.
-  - [ ] **Uncheck the box on the panel the now-line is standing in** → its elapsed half stays exactly
-        where it is (the past never moves); only the future tail is re-planned.
+- [ ] **An outline says who placed a block, and NOTHING wears a check box (PRD §8/§9).**
+  - [ ] Nothing anywhere on the calendar draws a check box at a block's top right — not a task panel, not
+        a period, not a sleep band.
+  - [ ] A panel the scheduler placed has NO outline at all; the one you added by hand has the blue one.
+  - [ ] **Resize a scheduler panel** by dragging its bottom edge. It gains the blue outline at once - and
+        it is STILL there a few seconds later, after the re-plan the edit triggers (that is what used to
+        be undone silently).
+  - [ ] **Uncheck "Existence" in the edit window** on a panel an hour or two ahead of the now-line → the
+        scheduler re-plans and the panel is gone, its stretch filled with whatever the plan wants there.
+  - [ ] **Uncheck it on the panel the now-line is standing in** → its elapsed half stays exactly where it
+        is (the past never moves); only the future tail is re-planned.
   - [ ] Undo (Ctrl+Z with the calendar focused) puts the pin back.
-  - [ ] **"add…" → restrictive period → "no on-screen task"** → a blue-outlined panel with NO grey fill
-        and NO check box, hatched with the oblique lines of both layers.
-  - [ ] **"add…" → restrictive period → "no task allowed"** → blue outline, its grey kept, and a box that
-        is checked and does nothing when clicked (a period is removed, never unpinned).
-  - [ ] Zoom out until a block is a few pixels tall: the box disappears rather than being clipped, and
-        zooming back in brings it back. Hovering the box shows the same bubble as hovering beside it.
+  - [ ] **"add…" → restrictive period → "no on-screen task"** → a blue-outlined EMPTY box (no fill of any
+        kind), hatched with the oblique lines of both layers.
+  - [ ] **"add…" → restrictive period → "no task allowed"** → the same empty blue-outlined box, with no
+        grey fill and no hatch. "Remove" is the only way to take it away.
+  - [ ] **Scroll to tonight's sleep window and the hour before it** → each is an EMPTY box outlined in
+        **orange** (a repeating rule laid it), labelled "Sleep" / "Before bed", with no grey fill.
+  - [ ] **Scroll back over a past day with idle time in it** → a derived "Inactivity" stretch is its LABEL
+        and nothing else: no outline, no marking, no fill.
+  - [ ] **Find a screen break** (zoom in on the now-line if need be) → an empty box outlined in **grey**,
+        down to a single grey line for a 20-second look-away. "Look away now" records one that looks the
+        same — not a blue-outlined block.
+- [ ] **A layer can be said by hand (PRD §8).**
+  - [ ] **"add…" → restrictive period → "no computer unlocked"** over a couple of hours → an empty
+        blue-outlined box, and over its span the "no computer unlocked" oblique lines appear (only that
+        slope). The plan still places on-screen work inside it.
+  - [ ] **Add a "no phone unlocked" period over the same hours** → both slopes now cross that stretch and
+        it behaves as a no-screen period: on-screen tasks are no longer scheduled in it.
+  - [ ] Two overlapping "no computer unlocked" periods fuse into one box; a "no computer unlocked" and a
+        "no phone unlocked" one stay two, full-width, each removable on its own.
 - [ ] **The menu's one "add…" entry (PRD §8).** Right-click empty grid, and again on a panel — both menus
       offer exactly one entry to add something.
   - [ ] It opens a window headed with the clicked time offering **task panel / restrictive period /
