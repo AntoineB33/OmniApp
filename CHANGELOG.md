@@ -11,6 +11,46 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Anomaly: the task-picker menu would not close — 2026-09-11
+
+→ `shared` (`ui/TaskPickerOverlay.jvm.kt`, `ui/TaskPickerMenu.kt`); `docs/invariants/shortcuts.md`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"when the user does Ctrl+Shift+Alt+T, the only way to get rid of the menu is to click outside,
+then click on the menu, then click outside or press Escape."*
+
+**Two independent bugs, both of them "the menu never got the focus it looks like it has".** Diagnosed by
+driving the chord from outside the process and asking Windows — `GetForegroundWindow` + `EnumWindows` —
+which window was actually in front, rather than by reading the dismiss path.
+
+1. **`SetForegroundWindow` was asked once and assumed.** Compose does not show the window from the
+   composition that builds it (`AwtWindow` sets `isVisible` from a coroutine of its own), so the request
+   could land on a window that was not on screen yet; and the call is refused outright unless the caller
+   received the last input event, which swallowing the chord in a low-level hook is not. Either way AWT then
+   believed itself focused while Windows had never made it foreground — so the real keystrokes went to the
+   other application (Escape dead) *and* no deactivation was ever delivered for an activation that never
+   happened (`windowLostFocus` never fired, so a press outside was invisible). **No way out at all** until a
+   click on the menu handed it the real focus — exactly the three-step sequence reported. Now: wait for
+   `isShowing`, ask, and check `GetForegroundWindow` — and if it is refused for good, dismiss rather than
+   strand.
+2. **Escape was dead even with the foreground.** `fieldFocus.requestFocus()` was keyed on `Unit`, so it ran
+   while the window was still taking the foreground, and a Compose focus request made before the window is
+   focused is dropped. With nothing focused inside the window there is no path for a keystroke to reach the
+   `onPreviewKeyEvent` that reads Escape/Enter/↑/↓ — and the field the invariants say the user can "type
+   straight away" into was not taking text either. Keyed on `LocalWindowInfo.isWindowFocused` now.
+
+Found on the way, and the reason the first fix made things worse before it made them better: **activation is
+asynchronous**, so the foreground reading taken straight after the request still names the *old* foreground.
+A verify-and-retry loop that believes it re-asks forty times a second, each with its own `AttachThreadInput`
+either side, and the thrashing handed back the focus it had just won — `windowLostFocus` read the hand-back
+as a press outside and closed the menu ~300 ms after it opened. So: re-ask at most every ~200 ms, confirm
+twice before believing it, and **arm the dismiss listener only once the foreground is confirmed** — a focus
+lost on the way *to* the foreground is not a press outside.
+
+Verified live against a dev build on its own state dir: the menu takes the real foreground within ~150-600
+ms, stays up, accepts typing, and closes on Escape and on losing the foreground, across four runs. Not
+covered by a `jvmTest` — every part of it is the OS's answer, not the domain's.
+
 ### Anomaly: the Notifications column stopped at 2026-09-07 17:25:37 — 2026-09-11
 
 → `shared` (`scheduler/state/SchedulerReducer.kt`, `SchedulerState.kt`, `SchedulerIntent.kt`);

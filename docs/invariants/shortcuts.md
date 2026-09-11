@@ -124,6 +124,32 @@ when, never for how long — see `scheduler.md` for why it does not grow on its 
   front**. That is the feature, not a side effect: the menu exists to be typed into and answered with Enter.
   It leaves on Escape, on a pick, and on losing the focus — which is what "closes on the first press outside
   it" means for a window nothing else of ours can observe.
+- **Both ways out rest on the menu holding the REAL focus, so taking it is checked, never assumed**
+  (`ui/TaskPickerOverlay.jvm.kt`). Asking once is not enough and the ask cannot be believed:
+
+  - Compose shows the window from a coroutine of its own, so the content's first frame runs while the window
+    may still be off screen — and `requestFocus()`/`SetForegroundWindow` on a window that is not showing are
+    dropped in silence. **Wait for `isShowing` before asking.**
+  - `SetForegroundWindow` is refused unless the caller is the foreground process or *received the last input
+    event*, and neither is true here: our low-level hook swallowing the chord is not our window being typed
+    into. **`GetForegroundWindow` is the only answer**; the call's own return value is not one.
+  - Activation is **asynchronous**, so the reading taken straight after the request still names the old
+    foreground. A loop that believes it re-asks at once, and the thrashing hands back the focus it just won.
+    **Re-ask sparingly (~200 ms), and confirm twice before believing it.**
+
+  The failure this prevents is worse than a menu that opens behind: AWT believes it is focused while Windows
+  never made it foreground, so the keystrokes go to the other application (Escape does nothing) *and* no
+  deactivation is ever delivered for an activation that never happened (`windowLostFocus` never fires). The
+  menu then has **no way out at all** until a click on it hands it the real focus. If the foreground is
+  refused for good, the menu is **dismissed** rather than left standing — without it the menu is not the
+  feature in a degraded form, it is a window with no way out, and the chord can simply be struck again.
+- **A focus lost on the way TO the foreground is not a press outside.** The dismiss listener is armed only
+  once the foreground is confirmed; arming it from the start read one of the crossings inside the activation
+  as a click elsewhere and closed the menu ~300 ms after it opened.
+- **The search field's focus request is keyed on the WINDOW being focused, not on `Unit`** (`TaskPickerMenu`).
+  A Compose focus request made before the window itself is focused is dropped, and a menu with nothing
+  focused inside it has nothing to hand a keystroke to — which is what silently disables Escape, Enter and
+  the arrows, since all three hang off the `onPreviewKeyEvent` on the focused node's path.
 - **The pointer is read at the PRESS, not at the composition** — they are a frame or more apart and the hand
   does not stop moving in between. The instant is captured with it, so the list cannot re-order itself under
   the pointer while it is being read, and a second press re-anchors the menu where the pointer is now.

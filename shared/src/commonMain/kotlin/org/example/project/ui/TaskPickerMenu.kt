@@ -37,6 +37,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -114,7 +115,18 @@ fun TaskPickerMenu(
         onPick(taskId)
     }
 
-    LaunchedEffect(Unit) { fieldFocus.requestFocus() }
+    // The field holds the focus from the moment the menu opens — that is what lets the user type straight
+    // away, and it is also what puts the `onPreviewKeyEvent` below on the path a keystroke takes, so it is
+    // what makes Escape, Enter and the arrows work at all.
+    //
+    // Keyed on **whether the window is focused**, not on `Unit`: this menu is the one surface of the app in
+    // an OS window of its own (`shortcuts.md`), and that window is still taking the foreground from the
+    // application the chord was struck in when this first composes. A focus request made before the window
+    // itself is focused is dropped, and what is left is a menu that holds the keyboard and has nothing
+    // inside it to give the keystrokes to — the state the user met as "Escape does nothing until I click
+    // the menu once", the click being the only other thing that could focus the field.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(windowFocused) { if (windowFocused) fieldFocus.requestFocus() }
     // Keep the highlighted row in view when the arrows walk it past the viewport — the list is the half of
     // the menu the keyboard drives, so a highlight the user cannot see is a highlight they cannot trust.
     LaunchedEffect(highlighted) {
