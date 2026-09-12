@@ -24,9 +24,13 @@ import org.example.project.ui.PlacedRecord
  * Four separate claims, one per section below:
  *  - [SchedulerDomain.isUserPlaced] — who placed a panel, asked as the complement of what the app lays down
  *    itself, so a new family of generated panel can never quietly acquire the user's blue outline;
- *  - [SchedulerDomain.panelOutline] — the colour that answer is drawn in: blue for the user, ORANGE for a
- *    restrictive period a repeating rule lays (the §17 sleep windows and the wind-down hours), and none at
- *    all for the fill's own task panels;
+ *  - [SchedulerDomain.panelOutline] — the colour that answer is drawn in, and the question it really asks is
+ *    **which surface the thing was stated on**: ORANGE for a rule stated in a window off the LEFT MENU (the
+ *    §17 sleep schedule's windows and wind-down hours, the §18 Alarms window's rings —
+ *    [SchedulerDomain.ringOutline]), BLUE for what is stated on the CALENDAR (its right-click menu, a drag,
+ *    a resize, and the §14 reminder tag — [SchedulerDomain.reminderTagOutline]), and none at all for the
+ *    fill's own task panels. Both surfaces are the user's hand, which is why "who placed it" cannot tell
+ *    them apart;
  *  - a drag or a resize IS the existence pin ([SchedulerDomain.pinsAfterHandPlacement]) — without it the
  *    gesture made the panel user-authored and *unpinned*, which is exactly the shape the fill deletes, so the
  *    re-plan the edit itself triggers silently undid it;
@@ -180,6 +184,45 @@ class CalendarPanelOutlineTest {
                 "the user drew a " + it.restrictiveKind + " period",
             )
         }
+    }
+
+    /**
+     * **The two families with no panel behind them**, and the reason the rule had to be restated as *which
+     * SURFACE said this* rather than *who placed it*.
+     *
+     * A §18 ring and a §14 tag are INSTANTS, drawn as fixed-height markers, so [SchedulerDomain.panelOutline]
+     * has nothing to read and each has its own answer. Reading "the whole added period/panel/reminder/alarm
+     * must be outlined in blue" as *the user added it* put both in blue on 2026-09-12 — and every daily
+     * alarm then drew as something placed on the calendar, which is the one thing an alarm cannot be: the
+     * calendar's menu can only EDIT one, by opening the window that owns it.
+     *
+     * So the relation is what this pins, not the two constants: a ring is outlined like the SLEEP SCHEDULE's
+     * windows (both are rules stated off the left menu) and a tag like a period DRAWN on the calendar.
+     */
+    @Test
+    fun a_ring_is_outlined_like_a_sleep_window_and_a_reminder_tag_like_something_drawn_on_the_calendar() {
+        val (s0, _) = oneTask()
+        val s = s0.copy(sleep = SleepSchedule(wakeMinutes = 450, sleepDurationMinutes = 510))
+        val sleeps = SchedulerDomain.fillSchedule(
+            s,
+            NOW,
+            timeZone = TimeZone.UTC,
+            horizonMillis = NOW + 48 * HOUR,
+        ).filter { it.sleep }
+        assertTrue(sleeps.isNotEmpty(), "the §17 schedule lays sleep windows")
+        // An alarm is the Alarms window's rule, as a sleep window is the sleep schedule's: same outline.
+        sleeps.forEach {
+            assertEquals(SchedulerDomain.panelOutline(it), SchedulerDomain.ringOutline(), it.id)
+        }
+        assertEquals(SchedulerDomain.PanelOutline.Pattern, SchedulerDomain.ringOutline())
+        // A reminder is added from the calendar's own menu, as a period drawn there is: same outline.
+        val drawn = SchedulerReducer
+            .reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW, NOW + HOUR))
+            .panels.first { it.isRestrictivePeriod }
+        assertEquals(SchedulerDomain.panelOutline(drawn), SchedulerDomain.reminderTagOutline())
+        assertEquals(SchedulerDomain.PanelOutline.User, SchedulerDomain.reminderTagOutline())
+        // And the two families are NOT the same answer, which is the whole of the anomaly.
+        assertTrue(SchedulerDomain.ringOutline() != SchedulerDomain.reminderTagOutline())
     }
 
     @Test

@@ -1335,6 +1335,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     entryId = occurrence.entry.id,
                     entryIds = listOf(occurrence.entry.id),
                     alarm = true,
+                    // PRD §8: ORANGE — an alarm is a rule stated in a window off the LEFT MENU, like a §17
+                    // sleep window, not something placed on the calendar (which cannot add one at all).
+                    outline = SchedulerDomain.ringOutline(),
                 )
             } +
             displayTimerOccurrences.map { occurrence ->
@@ -1351,6 +1354,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     entryIds = listOf(occurrence.entry.id),
                     alarm = true,
                     timer = true,
+                    // PRD §8: ORANGE for the same reason as the alarm's — the §18 window owns both.
+                    outline = SchedulerDomain.ringOutline(),
                 )
             }
         // Perf: the sizes every derivation above is O(). Recorded here rather than sampled from outside
@@ -2872,6 +2877,9 @@ private fun mergePanelsForDisplay(
                 reminder = true,
                 checked = tag.checked,
                 checkedAtMillis = tag.checkedAtMillis,
+                // PRD §8: BLUE — a reminder is added from the calendar's own right-click menu. A tag is not
+                // a panel, so this is its own answer rather than [SchedulerDomain.panelOutline]'s.
+                outline = SchedulerDomain.reminderTagOutline(),
             )
         }
     // PRD §15 toggle: when screen breaks are hidden, draw none, and let same-task panels separated only by a

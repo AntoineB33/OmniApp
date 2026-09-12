@@ -6127,13 +6127,15 @@ private fun ReminderTag(
             .padding(horizontal = 2.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(if (tag.checked) CalColors.muted.copy(alpha = 0.3f) else CalColors.accent)
-            // PRD §8: a reminder is something the USER added, so it wears the blue outline every other
-            // thing a hand put on the grid wears ([outlineColor] of [SchedulerDomain.PanelOutline.User]).
-            // A tag is not a panel — it is a chip with its own check box, which is why it is outside
-            // `panelOutline` — but "the whole added period/panel/reminder/alarm is outlined in blue" is one
-            // rule over all four, and a CHECKED tag's fill goes muted, so the outline is the only thing
-            // left saying whose it is.
-            .border(USER_PLACED_BORDER_DP, CalColors.accent, RoundedCornerShape(4.dp))
+            // PRD §8: the outline, from the same [outlineColor] funnel every other block reads — blue for a
+            // tag, which is added from the calendar's own menu ([SchedulerDomain.reminderTagOutline], asked
+            // in App.kt like every other record's). The colour is NOT picked here: picking it here is how
+            // the §18 ring beside this one ended up blue.
+            .then(
+                outlineColor(tag.outline)?.let {
+                    Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(4.dp))
+                } ?: Modifier,
+            )
             .clickable(onClick = onClick),
     ) {
         Row(
@@ -6222,10 +6224,16 @@ private fun AlarmMarker(
                 .padding(horizontal = 2.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(CalColors.alarm)
-                // PRD §8: an alarm and a timer are the user's too — set by hand in the Alarms window — so
-                // the ring wears the same blue outline as every other added thing, over its own fill (which
-                // is what says it is a ring and not a block). Same rule as the §14 tag beside it.
-                .border(USER_PLACED_BORDER_DP, CalColors.accent, RoundedCornerShape(4.dp))
+                // PRD §8: the outline, through the same [outlineColor] funnel — ORANGE, because an alarm or
+                // a timer is a rule stated in a window off the LEFT MENU
+                // ([SchedulerDomain.ringOutline]), exactly like a §17 sleep window, and the calendar's own
+                // menu cannot add one at all. Drawn over the ring's own fill, which is what says it is a
+                // ring rather than a block.
+                .then(
+                    outlineColor(marker.outline)?.let {
+                        Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(4.dp))
+                    } ?: Modifier,
+                )
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),

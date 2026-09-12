@@ -129,9 +129,12 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         while the same period drawn over last night's locked hours keeps them **solid**. Three marks, three
         questions: the hatch claims, the blue outline says a hand claimed it, the dots say the lock log
         disagrees. Drawn over the FUTURE it is solid — nothing out there has been observed yet.
-  - [ ] **A reminder tag and an alarm/timer ring wear the blue outline too** ("the whole added
-        period/panel/reminder/alarm"). Check a reminder off: its fill goes muted and the blue border is then
-        the only thing left saying it is the user's.
+  - [ ] **A reminder tag is outlined BLUE and an alarm/timer ring ORANGE** — the outline says which
+        SURFACE the thing was stated on, not who stated it: a reminder is added from the calendar's own menu,
+        an alarm is a rule defined in the Alarms window off the left menu (like the sleep schedule). Check a
+        reminder off: its fill goes muted and the blue border is then the only thing left saying it is the
+        calendar's. **A daily alarm drawn blue is the anomaly of 2026-09-12** — it means the ring is being
+        read as "the user added it" again.
   - [ ] **"add…" → restrictive period → "no task allowed"** → an EMPTY blue-outlined box with **vertical
         lines** across it and no fill of any kind. The bin in its editor is the only way to take it away —
         the menu has no "Remove".

@@ -271,18 +271,25 @@ Global rules that always apply: `CLAUDE.md`.
   The sampler runs **only while the line is on screen**, so a column that is not today's, a grid scrolled to
   another week and a closed calendar all ask for no frames at all. The overdue reminder stack rides the same
   state — and the same fractional placement — or it is not on the line the user sees.
-- **AN OUTLINE SAYS WHO PUT THE BLOCK THERE, AND ITS COLOUR IS THE WHOLE OF THE ANSWER.** One question,
-  `SchedulerDomain.panelOutline`, with four answers — **three ways a block reaches the timeline, plus
-  nothing**:
+- **AN OUTLINE SAYS WHICH SURFACE THE USER SAID IT ON, AND ITS COLOUR IS THE WHOLE OF THE ANSWER.** The
+  user's words: *"things placed by rules defined in windows accessible via the left side menu of the app
+  (Sleep schedule, Alarm) are outlined in ORANGE; the ones that are placed or moved through a right-click
+  menu in the calendar are outlined in BLUE."* **Both are the user's hand**, which is why the question is
+  not *who* — reading it as "the user placed it" is what put every daily alarm in blue (2026-09-12). One
+  question, `SchedulerDomain.panelOutline`, with four answers — **three ways a block reaches the timeline,
+  plus nothing**:
   - **Dynamic → `CalColors.muted` (grey)**, asked FIRST: `screenBreak || conductedBreak`, the three dynamic
     restrictive periods, which the recurrence bars place against the timeline itself. It leads because a break
-    the app CONDUCTED is `auto = false` and would otherwise read as something the user drew.
-  - **User → `CalColors.accent` (blue).** `isUserPlaced`, which is the complement of what the app lays down
+    the app CONDUCTED is `auto = false` and would otherwise read as something the user drew. They are the one
+    family stated on NEITHER surface — the README's bars place them.
+  - **User → `CalColors.accent` (blue): stated ON THE CALENDAR.** `isUserPlaced`, which is the complement of
+    what the app lays down
     itself — not `!auto && !chore && !screenBreak && !sleep && …`, which is the same list a fourth time and the
     reason a new family of generated panel would quietly acquire an outline. A panel is the user's exactly when
     it is neither `isRegeneratedPanel` (the fill's picks, the screen breaks, the derived sleep windows, the
-    wind-down hours) nor a §14 tag (drawn as a chip, not a panel).
-  - **Pattern → `CalColors.pattern` (orange).** What is left over, exactly when it is a restrictive period —
+    wind-down hours) nor a §14 tag (drawn as a chip, not a panel — its own answer below).
+  - **Pattern → `CalColors.pattern` (orange): stated in a WINDOW OFF THE LEFT MENU**, as a rule the app then
+    applies wherever it falls. What is left over, exactly when it is a restrictive period —
     because the only periods the app lays by itself are the ones a REPEATING rule puts there (the §17 sleep
     windows and the hours measured back from them). Add a fill-laid period family tomorrow and it is orange
     for the same reason these are.
@@ -290,12 +297,22 @@ Global rules that always apply: `CLAUDE.md`.
   All three outlines are `USER_PLACED_BORDER_DP`, a step thicker than the 1 dp every other block wears: a task
   panel keeps its task's own colour inside, so a colour that only *sometimes* differed from the body would
   answer neither question the panel has to answer.
-- **WHATEVER THE USER ADDS WEARS THE BLUE, THE TWO ZERO-DURATION FAMILIES INCLUDED.** *"The whole added
-  period/panel/reminder/alarm must be outlined in blue."* A §14 reminder tag and a §18 alarm/timer ring are
-  outside `panelOutline` on purpose — a tag is a chip with its own check box, a ring is an instant and not a
-  panel at all — so each carries the accent border in its own drawing (`ReminderTag`, `AlarmMarker`), at the
-  same `USER_PLACED_BORDER_DP`. The case that makes it load-bearing is a **checked** tag: its fill goes
-  muted, and the outline is then the only thing left saying whose it is.
+- **THE TWO ZERO-DURATION FAMILIES ARE OUTLINED TOO, AND THEY LAND ON OPPOSITE SIDES OF THE RULE**
+  (*"the whole added period/panel/reminder/alarm must be outlined in blue"*, then the correction: *"all daily
+  alarms are outlined in blue"*). A §14 reminder tag and a §18 alarm/timer ring are outside `panelOutline`
+  on purpose — a tag is a chip with its own check box, a ring is an INSTANT and neither is a panel — so each
+  has its own answer in the same funnel, asked in `App.kt` beside every other record's and drawn through the
+  same `outlineColor` + `USER_PLACED_BORDER_DP`:
+  - **a ring is ORANGE** (`SchedulerDomain.ringOutline`): an alarm is a rule stated in the §18 window off the
+    left menu, exactly as a sleep window is one stated in the sleep schedule, and it rings on days the user
+    never looked at. **The calendar's menu cannot add an alarm or a timer at all** — it only edits one, by
+    opening the window that owns it — so there is no blue case to distinguish;
+  - **a tag is BLUE** (`SchedulerDomain.reminderTagOutline`): a reminder is added from the calendar's own
+    right-click menu and edited from its "edit…" chooser. The case that makes the outline load-bearing rather
+    than decorative is a **checked** tag: its fill goes muted, and the border is then the only thing left
+    saying whose it is.
+  - **Neither drawing may pick its own colour.** Picking one at the drawing site is exactly how the ring came
+    to wear the accent: the colour is `outlineColor(record.outline)` in both, as in every other block.
 - **A DERIVED INACTIVITY PERIOD IS DRAWN LIKE AN AUTHORED ONE, MINUS THE OUTLINE.** Same vertical lines, same
   label — it is the same statement — and NO outline, because the outline is the one thing that differs: it
   says who put this here, and the answer is "no one yet". The app is REPORTING an empty stretch it derived,

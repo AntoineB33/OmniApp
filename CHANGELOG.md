@@ -11,6 +11,37 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An outline says WHICH SURFACE stated the thing — so an alarm ring is orange, not blue — 2026-09-12
+
+→ `shared` (`scheduler/domain/SchedulerDomain.kt`, `App.kt`, `ui/CalendarUi.kt`);
+`docs/PRD_TaskScheduler.md`, `docs/invariants/calendar.md`, `docs/MANUAL_TESTING.md`. Tests:
+`CalendarPanelOutlineTest` gains one pinning the two families with no panel behind them (a ring is outlined
+like a §17 sleep window, a tag like a period drawn on the grid).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"things placed by rules defined in windows accessible via the left side menu of the app (Sleep
+schedule, Alarm) are outlined in orange. The ones that are placed or moved through a right-click menu in the
+calendar are outlined in blue. Anomaly: I see that all daily alarms are outlined in blue."*
+
+- **The outline's question was written down as *who put this here*, and that is not the rule.** Both surfaces
+  are the USER'S hand, so "who" cannot separate them; what separates them is WHERE the thing was stated — a
+  rule in a window off the left menu (orange) against a placement or a drag on the calendar itself (blue).
+  `PanelOutline`'s own doc says it that way now, and `panelOutline`'s four answers are unchanged: they were
+  already right for panels, because every left-menu rule it can see is a §17 one.
+- **The regression was the entry below**, which gave the §18 ring the blue border under *"the whole added
+  period/panel/reminder/alarm must be outlined in blue"*, read as *the user added it*. Every daily alarm then
+  drew as something placed on the calendar — the one thing an alarm can never be: **the calendar's menu
+  cannot add an alarm or a timer at all**, it only EDITS one by opening the §18 window that owns it.
+- **The two instant families get their answers from the same funnel** — `SchedulerDomain.ringOutline()`
+  (orange: the Alarms window is a left-menu rule window, exactly like the sleep schedule) and
+  `reminderTagOutline()` (blue: a reminder is added from the calendar's own menu). Asked in `App.kt` beside
+  every other record's `outline`, so the two drawings read `outlineColor(record.outline)` like every other
+  block and **neither picks a colour of its own** — picking one at the drawing site is precisely how the
+  ring came to wear the accent.
+- **Not a per-object provenance question**, which is why `ringOutline()` takes no argument: nothing records
+  where an alarm was created, and nothing needs to. `repeats`/`days` are not consulted either — a one-shot
+  alarm is stated in the same window as a daily one.
+
 ### A hand-drawn no-screen period is DOTTED over hours the machine was unlocked, and OUTLINED like everything else the user adds — 2026-09-12
 
 → `shared` (`scheduler/domain/SchedulerDomain.kt`, `App.kt`, `ui/CalendarUi.kt`);
@@ -45,10 +76,11 @@ whole added period/panel/reminder/alarm must be outlined in blue."*
   is **claimed**, the blue outline says a **hand** placed it, the dots say the machine's **log disagrees**. A
   declared absence has dots and no outline; a no-screen period over a locked night has an outline and no
   dots; one over an evening at the keyboard has both.
-- **The §14 reminder tag and the §18 alarm/timer ring wear the blue too**, in their own drawings rather than
-  through `panelOutline` (a tag is a chip with a check box, a ring is an instant — neither is a panel), at
-  the same `USER_PLACED_BORDER_DP`. The load-bearing case is a **checked** tag: its fill goes muted, so the
-  outline is the only thing left saying whose it is.
+- **The §14 reminder tag and the §18 alarm/timer ring wear an outline too**, in their own drawings rather
+  than through `panelOutline` (a tag is a chip with a check box, a ring is an instant — neither is a panel),
+  at the same `USER_PLACED_BORDER_DP`. The load-bearing case is a **checked** tag: its fill goes muted, so
+  the outline is the only thing left saying whose it is. ⚠️ Both were drawn BLUE here, which was wrong for
+  the ring — corrected the same day by the entry above (*an alarm is a rule off the left menu*).
 
 ### A kind of restrictive period is named by the USER'S word, everywhere — and `no task allowed` is two kinds — 2026-09-12
 

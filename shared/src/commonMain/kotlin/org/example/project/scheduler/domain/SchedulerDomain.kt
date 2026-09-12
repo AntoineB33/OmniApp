@@ -4132,8 +4132,15 @@ object SchedulerDomain {
         !panel.auto && !panel.chore && !isRegeneratedPanel(panel)
 
     /**
-     * PRD §8: **what a block's outline says — WHO put it there.** The one reading behind every outline the
-     * calendar draws, so the drawing cannot answer it differently from a test.
+     * PRD §8: **what a block's outline says — WHERE THE USER SAID IT.** The one reading behind every outline
+     * the calendar draws, so the drawing cannot answer it differently from a test.
+     *
+     * The user's own statement of the rule, and it is a rule about **which surface** the thing was stated on
+     * rather than about who benefits from it: *"things placed by rules defined in windows accessible via the
+     * left side menu of the app (Sleep schedule, Alarm) are outlined in ORANGE; the ones that are placed or
+     * moved through a right-click menu in the calendar are outlined in BLUE."* Both surfaces are the user's
+     * hand, which is why "who placed it" could not tell them apart — and reading it as "the user's" is what
+     * put every daily alarm in blue.
      */
     enum class PanelOutline {
         /**
@@ -4143,10 +4150,18 @@ object SchedulerDomain {
          */
         None,
 
-        /** [isUserPlaced]: added from the menu, drawn by hand, or since dragged/resized. Drawn BLUE. */
+        /**
+         * Stated **on the calendar**: added from its right-click menu, or an existing block the user has
+         * since dragged or resized there ([isUserPlaced]) — plus the §14 reminder tag, which is added the
+         * same way ([reminderTagOutline]). Drawn BLUE.
+         */
         User,
 
-        /** A restrictive period a REPEATING RULE lays: the §17 sleep windows and wind-down hours. Drawn ORANGE. */
+        /**
+         * Stated in a **window off the left menu**, as a rule the app then applies wherever it falls: the
+         * §17 sleep schedule's windows and the wind-down hours it implies, and the §18 Alarms window's
+         * alarms and timers ([ringOutline]). Drawn ORANGE.
+         */
         Pattern,
 
         /**
@@ -4174,6 +4189,11 @@ object SchedulerDomain {
      * A derived band ([derivedInactivityBands], a layer region) has no panel behind it to ask about, and that
      * is the same answer by the same route: nobody placed it, so it carries no outline — an "Inactivity"
      * stretch the past left uncovered is drawn as its title and nothing else.
+     *
+     * The two families that are neither a panel nor derived have their own answers beside this one, and for
+     * the same reason a derived band has none — there is no [TaskPanel] to read: [ringOutline] for a §18
+     * alarm/timer ring (orange, a rule off the left menu) and [reminderTagOutline] for a §14 tag (blue,
+     * added from the calendar's own menu).
      */
     fun panelOutline(panel: TaskPanel): PanelOutline = when {
         panel.screenBreak || panel.conductedBreak -> PanelOutline.Dynamic
@@ -4181,6 +4201,35 @@ object SchedulerDomain {
         panel.isRestrictivePeriod -> PanelOutline.Pattern
         else -> PanelOutline.None
     }
+
+    /**
+     * PRD §8/§18: **the outline an alarm's or a timer's ring wears — ORANGE**, the same as a §17 sleep
+     * window's, and for the identical reason: it is a rule the user stated in a window off the LEFT MENU,
+     * which the app then applies wherever the rule falls. A daily alarm rings on days the user never
+     * looked at, exactly as the sleep schedule lays a window on every one of them.
+     *
+     * It is asked here rather than at the drawing site because a ring has no [TaskPanel] behind it for
+     * [panelOutline] to read — it is an INSTANT, drawn as a fixed-height marker — and that absence is what
+     * made it the easy one to get wrong: on 2026-09-12 the ring was given the blue border under "the whole
+     * added period/panel/reminder/alarm must be outlined in blue", read as *the user added it*. Every daily
+     * alarm then drew as something placed on the calendar, which is the one thing an alarm can never be:
+     * **the calendar's own menu cannot add an alarm or a timer at all** — it only EDITS one, by opening the
+     * §18 window that owns it. There is no blue case to distinguish, so this takes no argument.
+     */
+    fun ringOutline(): PanelOutline = PanelOutline.Pattern
+
+    /**
+     * PRD §8/§14: **the outline a reminder tag wears — BLUE.** A reminder is added from the calendar's own
+     * right-click menu ("add…" → reminder) and edited from its "edit…" chooser, so it is on the calendar
+     * side of the rule, unlike the ring beside it.
+     *
+     * Its own answer for the same reason as [ringOutline]'s — a tag is a chip at an instant with its own
+     * check box, not a panel, so [isUserPlaced] deliberately excludes it ([TaskPanel.chore]) and
+     * [panelOutline] would say [PanelOutline.None]. The case that makes the outline load-bearing rather
+     * than decorative is a **checked** tag: its fill goes muted, and the border is then the only thing left
+     * saying whose it is.
+     */
+    fun reminderTagOutline(): PanelOutline = PanelOutline.User
 
     /**
      * PRD §8: the pins a block carries once the user has **put it where it is** — dragged it or dragged one
