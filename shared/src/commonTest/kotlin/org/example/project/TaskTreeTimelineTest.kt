@@ -416,7 +416,7 @@ class TaskTreeTimelineTest {
 
     @Test
     fun a_resilience_travels_with_it_too() {
-        // "On screen" is a resilience of 0 to "no on-screen task", so a task that goes off screen between two
+        // "On screen" is a resilience of 0 to PeriodKinds.NO_SCREEN, so a task that goes off screen between two
         // keyframes crosses over evenly rather than flipping on the date.
         var s = stateWithTasks("A")
         val a = taskIdOf(s, "A")

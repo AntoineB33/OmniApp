@@ -8,7 +8,7 @@ package org.example.project.scheduler.domain
  * They used to be three differently-shaped objects: the look-away accepted nobody, the 5-minute pose had a
  * closed first minute and then accepted the "doable during a screen break" tasks, and the 15-minute pose
  * accepted every off-screen task. The README allows none of that — **all three have the kind
- * [PeriodKinds.NO_TASK]**, end to end — and their *placement* is no longer a cadence off a "last rest"
+ * [PeriodKinds.INACTIVITY]**, end to end — and their *placement* is no longer a cadence off a "last rest"
  * anchor but the three recurrence bars below. So there is no shape to read any more, and no
  * `doableDuringBreak` switch for a shape to read: whether a task may run somewhere is a resilience, and
  * inside a period that allows no task there is nothing to be resilient to.
@@ -21,7 +21,7 @@ package org.example.project.scheduler.domain
  *   the next **2 hours** ([BAR_15MIN_AFTER_LONG_MILLIS]).
  *
  * A **rest stretch** is that phrase read literally, and it takes all three of its clauses ([isRestAt]):
- * *covered by* "no on-screen task" — a period of that kind, or [PeriodKinds.NO_TASK], which turns the
+ * *covered by* "no on-screen task" — a period of that kind, or [PeriodKinds.INACTIVITY], which turns the
  * on-screen tasks away a fortiori; *without any task* — so a period that still accepts somebody makes none
  * at all (the no-idling rule puts a task there), and neither does a pre-placed block, since a pre-placed task
  * IS a task; and it is a **stretch**, not a period — two that abut make one ([growStretch]).
@@ -155,7 +155,7 @@ object DynamicPeriods {
      *
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes* states them in one clause — *"Mode 2 & 3: $now
      * line$ must be covered by the period 'no on-screen task'"* — and a dynamic period's kind is
-     * [PeriodKinds.NO_TASK], which covers "no on-screen task" a fortiori. So being covered and being coverable
+     * [PeriodKinds.INACTIVITY], which covers "no on-screen task" a fortiori. So being covered and being coverable
      * BY ONE OF THE THREE are not two questions: there was a second predicate here (`breaksAreTakenAt`, mode 3
      * only) and it made mode 2 place the three somewhere mode 3 did not, which the requirements no longer say.
      * The two modes differ over the CUE ([breaksAreNotifiedAt]) and over nothing else.
@@ -215,7 +215,7 @@ object DynamicPeriods {
         val durationMillis: Long get() = spec.durationMillis
 
         /**
-         * The README's period: one span of [PeriodKinds.NO_TASK]. [openStart] carries the half-open
+         * The README's period: one span of [PeriodKinds.INACTIVITY]. [openStart] carries the half-open
          * `(t_p, t_p + duration]` of a period the line is dragging — the instant `t_p` itself must NOT be
          * covered while every instant after it is.
          */
@@ -223,7 +223,7 @@ object DynamicPeriods {
             RestrictivePeriod(
                 startMillis = startMillis,
                 endMillis = endMillis,
-                kind = PeriodKinds.NO_TASK,
+                kind = PeriodKinds.INACTIVITY,
                 label = spec.label,
                 openStart = openStart,
                 closedEnd = openStart,
@@ -538,7 +538,7 @@ object DynamicPeriods {
      * Modes 2 and 3 both want `t_p` COVERED BY "no on-screen task" ([lineIsCoveredAt]). The period that just
      * ended is the one the line came out of, so the GAP BEHIND IT is covered up to `t_p` — the break itself is
      * never stretched — as [PeriodKinds.NO_SCREEN]
-     * rather than [PeriodKinds.NO_TASK],
+     * rather than [PeriodKinds.INACTIVITY],
      * which is what the README's own example asks for: *"the gap between the end of the 15min period and
      * $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero resilience to
      * the kind 'no on-screen task', or no task if none have such resilience"*.
@@ -622,7 +622,7 @@ object DynamicPeriods {
      *   chain does not take it and the drag above keeps it. The look-away is not that case in any mode — it
      *   is assumed taken, so the line is *meant* to walk through it — and neither away mode is, the line
      *   being covered there by definition.
-     * - **It reads the ENVIRONMENT, never the walk's own output.** A dynamic period is [PeriodKinds.NO_TASK]
+     * - **It reads the ENVIRONMENT, never the walk's own output.** A dynamic period is [PeriodKinds.INACTIVITY]
      *   and so would qualify as a chain of its own; where two of the three touch, the README's *chain merge*
      *   ([mergeChain]) is the rule, and letting both fire would be two answers to one question.
      */
@@ -660,7 +660,7 @@ object DynamicPeriods {
      *
      * It is read for two things that are one rule: where a chain TAKES a break falling due in it
      * ([chainTaking]), and where the mode-1 drag puts an owed pose DOWN ([instances]). It reads the
-     * ENVIRONMENT, never the walk's own output — a dynamic period is [PeriodKinds.NO_TASK] and would qualify
+     * ENVIRONMENT, never the walk's own output — a dynamic period is [PeriodKinds.INACTIVITY] and would qualify
      * as a chain of its own, and where two of the three touch the README's *chain merge* ([mergeChain]) is
      * the rule instead.
      */

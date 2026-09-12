@@ -129,7 +129,7 @@ class NoScreenPeriodUnifyTest {
         // Different kinds say different things (grey refuses everybody; no-screen only the on-screen tasks),
         // so there is no union to take — they are two periods and the calendar shows them as two.
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, NOW + 3 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW + HOUR, NOW + 3 * HOUR))
         assertEquals(NOW to NOW + 2 * HOUR, span(noScreenPeriods(s).single()))
         assertEquals(NOW + HOUR to NOW + 3 * HOUR, span(s.panels.single { it.inactivity }))
     }

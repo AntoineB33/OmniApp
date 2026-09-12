@@ -93,7 +93,7 @@ class CalendarPeriodEditTest {
     fun an_open_period_round_trips_through_the_codec() = withClock {
         val s = SchedulerReducer.reduce(
             SchedulerState.empty(),
-            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, SchedulerDomain.OPEN_PAST_MILLIS, NOW),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, SchedulerDomain.OPEN_PAST_MILLIS, NOW),
         )
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))
         assertNotNull(decoded)
@@ -108,7 +108,7 @@ class CalendarPeriodEditTest {
         val (s0, screen, _) = twoTasks()
         val s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, SchedulerDomain.OPEN_FUTURE_MILLIS),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW + HOUR, SchedulerDomain.OPEN_FUTURE_MILLIS),
         )
         val taskPanels = SchedulerDomain.fillSchedule(s, NOW).filter { it.taskId == screen }
         assertTrue(
@@ -132,7 +132,7 @@ class CalendarPeriodEditTest {
         )
         // Grey refuses everybody (PRD §8/§9), so BOTH panels are cut back to the period's start — unlike a
         // no-screen period, which an off-screen task is allowed to run inside.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, NOW + 5 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW + HOUR, NOW + 5 * HOUR))
         val kept = s.panels.filter { it.taskId != null }
         assertEquals(1, kept.size, "the off-screen panel is fully covered and must be deleted: $kept")
         assertEquals(screen, kept[0].taskId)
@@ -142,7 +142,7 @@ class CalendarPeriodEditTest {
     @Test
     fun an_off_screen_task_panel_laid_over_an_inactivity_period_trims_it() = withClock {
         val (s0, _, away) = twoTasks()
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW, NOW + 2 * HOUR))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.AddTaskPanel(away, "Away", NOW + HOUR, NOW + 3 * HOUR, PanelPins(existence = true)),
@@ -183,7 +183,7 @@ class CalendarPeriodEditTest {
         )
         s = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, SchedulerDomain.OPEN_PAST_MILLIS, NOW),
+            SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, SchedulerDomain.OPEN_PAST_MILLIS, NOW),
         )
 
         assertTrue(s.tasks.getValue(screen).record.isEmpty(), "on-screen work in the erased past must go")
@@ -242,7 +242,7 @@ class CalendarPeriodEditTest {
     fun a_period_that_covers_no_elapsed_work_changes_no_record() = withClock {
         val (s0, screen, _) = twoTasks()
         val s = withRecord(s0, screen, NOW - 3 * HOUR, NOW - 2 * HOUR)
-        val after = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + HOUR, NOW + 2 * HOUR))
+        val after = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW + HOUR, NOW + 2 * HOUR))
         assertEquals(
             s.tasks.getValue(screen).record,
             after.tasks.getValue(screen).record,

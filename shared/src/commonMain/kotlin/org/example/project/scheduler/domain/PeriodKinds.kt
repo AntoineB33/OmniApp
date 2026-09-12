@@ -10,13 +10,14 @@ package org.example.project.scheduler.domain
  * as long as the period lasts — so "on screen" is not a flag: it is exactly **a resilience of 0 to the kind
  * [NO_SCREEN]**, read through [resilienceFor] like every other kind.
  *
- * Five kinds are built in — two because the README names them, one because the app's own §17 sleep
- * schedule lays it, and two because PRD §8's two calendar LAYERS are sentences the user must be able to say
+ * Six kinds are built in — three because the README names them (its one grey kind being two here), one
+ * because the app's own §17 sleep schedule lays it, and two because PRD §8's two calendar LAYERS are sentences the user must be able to say
  * as well as read off a lock history:
- * - [NO_TASK] — *"no task allowed"*, the kind of the three dynamic restrictive periods (§ *3 Dynamic
- *   Restrictive Period*) and of the app's grey regions (an inactivity period, a §17 sleep window). Its
- *   default resilience is `0` — by its own name it accepts nobody — and it is the one kind a task may not be
- *   given a value for at all ([isResilienceEditable]).
+ * - [INACTIVITY] / [SLEEP] — the README's *"no task allowed"*, split in two because the calendar always
+ *   drew and named them apart: the kind of the three dynamic restrictive periods (§ *3 Dynamic Restrictive
+ *   Period*) and of every grey stretch, and the kind of a §17 sleep window. Their default resilience is `0` —
+ *   by their own names they accept nobody — and they are the two kinds a task may not be given a value for at
+ *   all ([isResilienceEditable]).
  * - [NO_SCREEN] — *"no on-screen task"*, the kind the two `t_p` modes and all three recurrence bars are
  *   written in terms of.
  * - [BEFORE_BED] — PRD §17's wind-down: **the hour before bed is covered by the period "before bed"**. It
@@ -44,11 +45,41 @@ package org.example.project.scheduler.domain
  * restrictions at all until they overlap each other.
  */
 object PeriodKinds {
-    /** `side-dev/README.md`'s "no task allowed" — the kind of the three dynamic periods and of grey. */
-    const val NO_TASK: String = "no task allowed"
+    /**
+     * **A stretch nothing at all is scheduled in** — the app's grey: a past hour no panel covers, a period the
+     * user drew to say nothing happened, and the three dynamic periods (§ *3 Dynamic Restrictive Period*).
+     *
+     * With [SLEEP] it replaces the README's single `no task allowed`, which was ONE kind doing two jobs: the
+     * calendar has always drawn and named the two separately ("Inactivity", "Sleep"), the user says them
+     * separately, and a chooser offering `no task allowed` could not offer either of the words the rest of the
+     * app uses. Splitting them is what makes **the kind the user's own word** — so a kind needs no second name
+     * for the menus, which is the drift three spellings of this one had already started.
+     *
+     * "Always allows no tasks": its resilience is `0` and [isResilienceEditable] refuses to write one, exactly
+     * as `no task allowed`'s was — the split renames and divides, it does not change what a grey period does.
+     */
+    const val INACTIVITY: String = "inactivity"
 
-    /** `side-dev/README.md`'s "no on-screen task" — what the modes and the recurrence bars are written in. */
-    const val NO_SCREEN: String = "no on-screen task"
+    /**
+     * **A sleep window** — PRD §17's own periods, and one the user may draw by hand like any other kind.
+     * [INACTIVITY]'s twin: the other half of the README's `no task allowed`, and the same rules (nothing is
+     * placed, no resilience to write).
+     *
+     * Being a KIND is all it is. What makes a §17 window a §17 window is still the schedule that laid it and
+     * the `sleep` flag it carries — the carving, the block bridging and the rest-pose reading all key on that,
+     * not on the kind — so a hand-drawn `sleep` period is a grey period that admits nobody, in exactly the way
+     * a hand-drawn `before bed` period is: the same statement, made by a hand instead of by the rule.
+     */
+    const val SLEEP: String = "sleep"
+
+    /**
+     * `side-dev/README.md`'s "no on-screen task" — what the modes and the recurrence bars are written in —
+     * **under the name the calendar says it in**. The README's spelling was the stored one until 2026-09-12,
+     * which made it the third of three names for one kind (the stored one, the chooser's "no screen", the
+     * panel's "No screen"); the kinds are the user's words now and the spellings a payload may hold are
+     * healed by [migrateStoredKind].
+     */
+    const val NO_SCREEN: String = "no screen"
 
     /**
      * PRD §17's wind-down: the kind the hour before each §17 bedtime is covered by
@@ -85,20 +116,51 @@ object PeriodKinds {
     const val NO_PHONE_UNLOCKED: String = "no phone unlocked"
 
     /**
-     * The two kinds the README itself names plus the one PRD §17 lays and the two that state a LAYER; the
-     * rest of the list is the account's.
+     * The kinds the README itself names (its grey one as two) plus the one PRD §17 lays and the two that
+     * state a LAYER; the rest of the list is the account's.
      * A payload that predates [BEFORE_BED] and holds a *user-defined* kind of that very name decodes into
      * this one (`SchedulerStateCodec` keeps only [isUserDefined] names), which is the right healing: the
      * tasks' overrides are keyed by the name, so they go on answering for the period they were written for.
      */
     val BUILT_IN: List<String> =
-        listOf(NO_TASK, NO_SCREEN, BEFORE_BED, NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED)
+        listOf(INACTIVITY, SLEEP, NO_SCREEN, BEFORE_BED, NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED)
+
+    /**
+     * **The kind a stored name means** — the one reading of every spelling a payload written before
+     * 2026-09-12 may hold, asked by `SchedulerStateCodec` (panels, the account's kind list and every task's
+     * resilience map) and by [org.example.project.scheduler.model.TaskPanel.restrictiveKind], which is the
+     * single reading of a panel's kind.
+     *
+     * Two renames to undo, and the second is why this cannot be a plain map: `no task allowed` became TWO
+     * kinds, so which one a panel meant is read off the panel — [isSleep] (its `sleep` flag, the thing §17
+     * has always marked its own windows with). Everything that is not a panel has no sleep to speak of and
+     * lands on [INACTIVITY], which is right: a resilience override or an account kind list naming
+     * `no task allowed` was about grey in general.
+     *
+     * **The resilience map is the one that must not be missed.** A task is on-screen exactly when it holds a
+     * `0` against [NO_SCREEN] ([org.example.project.scheduler.model.Task.onScreen]); left un-migrated, every
+     * task in an existing account would have carried its `0` under a name nothing asks about any more and
+     * every one of them would have read as off-screen — free to be scheduled inside the no-screen periods
+     * that were keeping them out.
+     */
+    fun migrateStoredKind(stored: String, isSleep: Boolean = false): String =
+        when (normalize(stored)) {
+            LEGACY_NO_TASK -> if (isSleep) SLEEP else INACTIVITY
+            LEGACY_NO_SCREEN -> NO_SCREEN
+            else -> normalize(stored)
+        }
+
+    /** The README's one grey kind, split into [INACTIVITY] and [SLEEP] on 2026-09-12. */
+    private const val LEGACY_NO_TASK: String = "no task allowed"
+
+    /** [NO_SCREEN]'s stored name until 2026-09-12. */
+    private const val LEGACY_NO_SCREEN: String = "no on-screen task"
 
     /**
      * The resilience a task that was never told about [kind] has to it: **`0` for every kind but
      * [NO_SCREEN]**.
      *
-     * That is what a restrictive period *is* — [NO_TASK] accepts nobody by its own name, and a kind the user
+     * That is what a restrictive period *is* — [INACTIVITY] and [SLEEP] accept nobody by their own names, and a kind the user
      * has just defined accepts nobody either until its edit window says otherwise, which is what "adding a
      * period adds it to every task with the default value 0" means. The exceptions are the kinds that say
      * something about a SCREEN rather than about the timeline being empty ([assertedLayers]): [NO_SCREEN],
@@ -117,7 +179,7 @@ object PeriodKinds {
      * (a kind that speaks about a screen restricts nobody by itself).
      *
      * [NO_SCREEN] asserts BOTH — *"a no-screen period is where both layers fall"*, which is the same sentence
-     * read from the other end — and each one-sided kind asserts its own. Every other kind, [NO_TASK] and
+     * read from the other end — and each one-sided kind asserts its own. Every other kind, [INACTIVITY], [SLEEP] and
      * [BEFORE_BED] included, asserts none: they are statements about the TIMELINE being empty, and a user at
      * a locked screen and a user at an unlocked screen with nothing to do are different facts.
      */
@@ -141,15 +203,15 @@ object PeriodKinds {
     /**
      * Whether a task may be given a resilience to [kind] **at all**.
      *
-     * [NO_TASK] is the one kind it may not: *"no task allowed"* says in its own name that it accepts nobody,
-     * so its multiplier is always `0` and there is nothing for a task to choose. Every other kind — [NO_SCREEN]
+     * [INACTIVITY] and [SLEEP] are the two it may not: each says in its own name that nothing happens there,
+     * so the multiplier is always `0` and there is nothing for a task to choose. Every other kind — [NO_SCREEN]
      * and every kind the user defines — is an ordinary editable value.
      *
-     * This is a rule about the EDIT WINDOW, not about [resilienceFor]: the map is still read for [NO_TASK]
+     * This is a rule about the EDIT WINDOW, not about [resilienceFor]: the map is still read for both
      * everywhere (that is how a grey period refuses everybody), and an override an older payload wrote is
      * still honoured. What is gone is the row that offered to write one.
      */
-    fun isResilienceEditable(kind: String): Boolean = kind != NO_TASK
+    fun isResilienceEditable(kind: String): Boolean = kind != INACTIVITY && kind != SLEEP
 
     /** A resilience is a multiplier in `[0, 1]`; anything outside is healed to the nearest bound. */
     fun clamp(value: Double): Double = if (value.isNaN()) 1.0 else value.coerceIn(0.0, 1.0)
@@ -178,16 +240,16 @@ object PeriodKinds {
 
     /**
      * Whether a stretch of [kind] is one the two `t_p` modes and the recurrence bars are written about — the
-     * README says *"covered by the period 'no on-screen task'"*, and [NO_TASK] covers it a fortiori (a period
+     * README says *"covered by the period 'no on-screen task'"*, and the two grey kinds cover it a fortiori (a period
      * that turns everybody away turns the on-screen tasks away too). That is exactly why the three dynamic
-     * periods, whose kind is [NO_TASK], are the ones the modes govern.
+     * periods, whose kind is [INACTIVITY], are the ones the modes govern.
      *
      * [BEFORE_BED] is deliberately not one of them, though it too refuses everybody by default: the wind-down
      * hour says nothing about screens — the user is expected to be at one, and PRD §17 lets the screen breaks
      * fall inside it — so it absorbs a dynamic period like any other emptiness without becoming a REST that
      * bars the breaks that follow.
      */
-    fun coversNoScreen(kind: String): Boolean = kind == NO_TASK || kind == NO_SCREEN
+    fun coversNoScreen(kind: String): Boolean = kind == INACTIVITY || kind == SLEEP || kind == NO_SCREEN
 
     /**
      * **The title a period of [kind] the user lays carries** — the one place a kind becomes a name on the
@@ -201,7 +263,8 @@ object PeriodKinds {
     fun periodTitle(kind: String): String =
         when (kind) {
             NO_SCREEN -> "No screen"
-            NO_TASK -> "Inactivity"
+            INACTIVITY -> "Inactivity"
+            SLEEP -> "Sleep"
             BEFORE_BED -> "Before bed"
             NO_COMPUTER_UNLOCKED -> SchedulerDomain.ActivityLayer.NoComputerUnlocked.calendarLabel
             NO_PHONE_UNLOCKED -> SchedulerDomain.ActivityLayer.NoPhoneUnlocked.calendarLabel
@@ -222,8 +285,12 @@ object PeriodKinds {
      */
     fun legacyNoScreenFlag(kind: String): Boolean = kind == NO_SCREEN
 
-    /** The other half of [legacyNoScreenFlag]: the legacy `inactivity` flag is [NO_TASK]'s and no other's. */
-    fun legacyInactivityFlag(kind: String): Boolean = kind == NO_TASK
+    /**
+     * The other half of [legacyNoScreenFlag]: the legacy `inactivity` flag is [INACTIVITY]'s and no other's —
+     * [SLEEP] has a legacy flag of its own (`sleep`), which is what tells the two halves of the README's old
+     * `no task allowed` apart in a payload ([migrateStoredKind]).
+     */
+    fun legacyInactivityFlag(kind: String): Boolean = kind == INACTIVITY
 
     /** A user-defined kind is any that is not one of the two the README names. Blank names are refused. */
     fun isUserDefined(kind: String): Boolean = kind.isNotBlank() && kind !in BUILT_IN

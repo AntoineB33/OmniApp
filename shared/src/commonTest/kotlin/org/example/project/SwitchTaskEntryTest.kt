@@ -251,7 +251,7 @@ class SwitchTaskEntryTest {
         val (s0, ids) = stateWithTasks("A", "B")
         val (_, b) = ids
         var state = planned(s0, T0)
-        state = SchedulerReducer.reduce(state, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, T0 + 5 * MIN, T0 + 2 * HOUR))
+        state = SchedulerReducer.reduce(state, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, T0 + 5 * MIN, T0 + 2 * HOUR))
         withClock(T0) {
             val after = SchedulerReducer.reduce(state, SchedulerIntent.ForceTaskStart(b))
             val run = assertNotNull(

@@ -148,19 +148,26 @@ so the strictest still forbids. There is no other mechanism, and adding a second
 model exists to prevent.
 
 - **`Task.resilience` holds OVERRIDES ONLY.** An absent kind takes `PeriodKinds.defaultResilience`, which is
-  `0` for every kind except `no on-screen task`. Two things follow, and both are load-bearing: **a kind the
+  `0` for every kind except `no screen`. Two things follow, and both are load-bearing: **a kind the
   user has just defined is added to every task at `0`** — a restrictive period restricts, so a new one turns
   everybody away until its own edit window hands somebody a value above zero, and it is why defining one
   still writes nothing to any task (absence *is* the default, which is also what makes a task created *later*
-  carry the same answer) — and **"on screen" is not a flag**: it is exactly a `0` against `no on-screen task`,
+  carry the same answer) — and **"on screen" is not a flag**: it is exactly a `0` against `no screen`,
   read through the derived `Task.onScreen`, which is the one kind whose default has to be `1` or the
   off-screen task would be the one that has to say so. `doableDuringBreak` is gone: all three dynamic periods
-  are `no task allowed` end to end, so there is nothing there to be resilient to.
-- **Three kinds are built in** (`PeriodKinds.BUILT_IN`): `no task allowed`, `no on-screen task` — the two the
-  README names — and `before bed`, which PRD §17's sleep schedule lays by itself (below).
-- **`no task allowed` is the one kind a task has NO resilience to define** (`PeriodKinds.isResilienceEditable`
-  — the single predicate, applied by the edit window's row loop and by nothing else). It accepts nobody by its
-  own name, so its multiplier is always `0` and there is nothing there for a task to choose; the window shows
+  are `inactivity` end to end, so there is nothing there to be resilient to.
+- **SIX kinds are built in** (`PeriodKinds.BUILT_IN`): `inactivity` and `sleep` — the README's one
+  `no task allowed`, split in two on 2026-09-12 because the calendar has always drawn and named them apart —
+  `no screen` (the README's `no on-screen task`), `before bed`, which PRD §17's sleep schedule lays by itself
+  (below), and PRD §8's two layer sentences `no computer unlocked` and `no phone unlocked`.
+  **The stored name is the USER'S word**: the kinds were renamed out of the README's vocabulary so that the
+  picker, the "edit…" chooser's row and the editor's heading are one word and cannot drift. The spellings a
+  payload written before that holds are migrated on load, and the clipboard's are too
+  (`PeriodKinds.migrateStoredKind`, the single reading of a stored kind name).
+- **`inactivity` and `sleep` are the two kinds a task has NO resilience to define**
+  (`PeriodKinds.isResilienceEditable` — the single predicate, applied by the edit window's row loop and by
+  nothing else). Each accepts nobody by its own name, so its multiplier is always `0` and there is nothing
+  there for a task to choose; the window shows
   no row for it and writes no override. That is a rule about the **window**, not about the model:
   `resilienceFor` still answers for it everywhere (that is how a grey period refuses everybody), and an
   override an older payload wrote is still honoured on decode, on the wire and in the walk.

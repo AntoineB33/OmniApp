@@ -1035,8 +1035,13 @@ object SchedulerStateCodec {
             // A blank or built-in name is not a kind; duplicates collapse. A payload written
             // before kinds existed decodes to the two built-ins alone, which is right — an account that
             // defined no kind has none.
+            // Migrated FIRST, then filtered: the two legacy names are built-ins under their new spellings,
+            // and a payload holding one would otherwise pass `isUserDefined` and turn into an account-defined
+            // kind that duplicates a built-in.
             periodKinds =
-                periodKinds.map(PeriodKinds::normalize).filter(PeriodKinds::isUserDefined).distinct(),
+                periodKinds.map { PeriodKinds.migrateStoredKind(it) }
+                    .filter(PeriodKinds::isUserDefined)
+                    .distinct(),
             // PRD §5: a blank-titled category is dropped (a category is named by its title; a blank one
             // could never be typed or picked), duplicate ids collapse, and a rule's share is healed into
             // `[0, 1]` — decode heals what an older or hand-edited payload holds rather than surfacing it.
@@ -1174,7 +1179,10 @@ object SchedulerStateCodec {
             noScreen = noScreen,
             inactivity = inactivity,
             conductedBreak = conductedBreak,
-            periodKind = periodKind,
+            // Healed here as well as in `restrictiveKind`, so the STATE holds the current spelling rather
+            // than re-deriving it at every read: the two legacy names, and `sleep` telling apart the two
+            // kinds the README's one grey kind became ([PeriodKinds.migrateStoredKind]).
+            periodKind = PeriodKinds.migrateStoredKind(periodKind, sleep),
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -1924,7 +1932,11 @@ private fun decodeResilience(p: PersistedTask): Map<String, Double> {
     val raw = p.resilience ?: return if (p.onScreen) mapOf(PeriodKinds.NO_SCREEN to 0.0) else emptyMap()
     val out = HashMap<String, Double>(raw.size)
     for ((kindRaw, value) in raw) {
-        val kind = PeriodKinds.normalize(kindRaw)
+        // **Re-keyed, not just normalized.** A task is on-screen exactly when it holds a `0` against
+        // `no screen`, and that kind was stored as `no on-screen task` until 2026-09-12: left alone, every
+        // task in an existing account would carry its `0` under a name nothing asks about any more and would
+        // read as OFF-screen — free to be placed inside the very periods it was being kept out of.
+        val kind = PeriodKinds.migrateStoredKind(kindRaw)
         if (kind.isEmpty()) continue
         val clamped = PeriodKinds.clamp(value)
         if (clamped == PeriodKinds.defaultResilience(kind)) continue

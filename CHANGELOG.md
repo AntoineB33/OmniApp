@@ -11,6 +11,154 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A hand-drawn no-screen period is DOTTED over hours the machine was unlocked, and OUTLINED like everything else the user adds — 2026-09-12
+
+→ `shared` (`scheduler/domain/SchedulerDomain.kt`, `App.kt`, `ui/CalendarUi.kt`);
+`docs/PRD_TaskScheduler.md`, `docs/invariants/calendar.md`, `docs/adr/0002-calendar-layers-and-grey.md`,
+`docs/MANUAL_TESTING.md`. Tests: `CalendarLayerTest` gains three (the drawn period is dotted and splits at a
+lock, the future half of a straddling one stays solid, the app's own promises dot nothing);
+`CalendarEditChoicesTest.aNoScreenPeriodIsAMenuTargetButNotABox` becomes
+`everyPeriodKindIsABoxExceptTheSleepBandAndTheUsersIsBlue`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"When the user adds a 'no screen' period on a past time period where some computers were
+unlocked, the oblique lines for the 'no computer unlocked' restrictive period must be dotted there. Also, the
+whole added period/panel/reminder/alarm must be outlined in blue."*
+
+- **The dots are no longer the "I'm away" button's alone — same funnel, second source.**
+  `declaredLayerRegions` takes `declaredRegions` (the away spells **plus** `assertedLayerRanges`, the value
+  the hatch is already built from) instead of `declaredAway`. Both are the user stating a layer where the OS
+  lock log disagrees, and the dots say exactly that; the two would have been one rule written twice.
+- **A declaration is clipped to the OBSERVED window first** (`[since, until]`, the caller's now-line). Ahead
+  of the line there is no evidence to contradict, so "declared minus evidence" would have dotted every
+  projected hatch in the future. A period straddling the line now dots only its elapsed half.
+- **The app's own promises stay out of it.** A projected sleep window and a screen break hatch the layers
+  too, but neither is anybody's statement about what happened, and each already wears the outline (orange,
+  grey) that says which rule laid it.
+- **A `no screen` period draws its box again** (`isDrawnPeriodRecord`, which is now "every period but the
+  sleep band"). It was excluded that morning because it asserts both layers and the slopes are already
+  painted over it — but the hatch and the box answer different questions, and the app derives that same
+  hatch out of the lock log all day. With no box, the user's own no-screen period was the ONE thing they
+  could add to the calendar that left no trace of having been added.
+- **THREE MARKS, THREE QUESTIONS**, which is the rule that keeps the dots and the outline from being deleted
+  as each other every time one of them is looked at (it happened twice on 2026-09-12): the hatch says what
+  is **claimed**, the blue outline says a **hand** placed it, the dots say the machine's **log disagrees**. A
+  declared absence has dots and no outline; a no-screen period over a locked night has an outline and no
+  dots; one over an evening at the keyboard has both.
+- **The §14 reminder tag and the §18 alarm/timer ring wear the blue too**, in their own drawings rather than
+  through `panelOutline` (a tag is a chip with a check box, a ring is an instant — neither is a panel), at
+  the same `USER_PLACED_BORDER_DP`. The load-bearing case is a **checked** tag: its fill goes muted, so the
+  outline is the only thing left saying whose it is.
+
+### A kind of restrictive period is named by the USER'S word, everywhere — and `no task allowed` is two kinds — 2026-09-12
+
+→ `shared` (`scheduler/domain/PeriodKinds.kt`, `scheduler/persistence/SchedulerStateCodec.kt`,
+`scheduler/domain/SchedulerDomain.kt`, `ui/CalendarUi.kt`); `docs/invariants/calendar.md`. Tests: new
+`PeriodKindNamingTest` (4) and `RestrictivePeriodKindTest.a_payload_written_before_the_rename…`, new
+`CalendarEditChoicesTest.aPeriodRowIsNamedByItsKind` + `aSleepBandIsItsPeriodAndTheScheduleBehindIt`, new
+`TaskCellCopyTest.a_clipboard_naming_a_kind_by_its_old_spelling…`, and `TaskResilienceTest` extended.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy. No `.sqm`: the payload is
+JSON in `app_state` and is migrated ON LOAD.**
+
+Reported as: the "add…" window's kind picker listed the kinds under their STORED names, so the user looking
+for *inactivity* — the word the "edit…" chooser uses, and the word the editor that picker opens is headed
+with — found "no task allowed" and read it as missing.
+
+- **Fixed by RENAMING the kinds, not by adding a label table.** `no on-screen task` → `no screen`, and
+  `no task allowed` → [`inactivity`]. The stored name IS the menu row now, so no surface can pick its own
+  spelling because there is no second spelling to pick; the `periodChoiceLabel` that used to translate one
+  into the other was DELETED rather than left standing as an identity. `PeriodKinds.periodTitle` stays a
+  separate answer and differs by CASE alone ("Inactivity") — it is the title a period CARRIES on the grid,
+  where it heads a box rather than a menu line.
+- **`no task allowed` became TWO kinds, `inactivity` and `sleep`**, because the calendar has always drawn and
+  named them apart and the user says them apart — one name could not be offered as either word. Both refuse
+  everybody (`defaultResilience` 0, `isResilienceEditable` false), so the split renames and divides without
+  changing what a grey period does. A sleep band is therefore a `sleep` PERIOD row plus the §17 `sleep
+  schedule` row — two objects, two rows, exactly as `task` and `task panel` are over one block — and it still
+  draws no period box over itself, because §17 already draws it.
+- **Every name a kind has resolves BACK to it** (`periodKindNamed`): its own word, its grid title, and the
+  pre-rename spellings. Without that, an old account typing the word its own payload stores would be offered
+  "Create and use" and would mint a second kind differing from a built-in only in spelling.
+- **Three stored paths are migrated on load** (`migrateStoredKind`), and each fails differently if missed:
+  the RESILIENCE MAP (a task is on-screen exactly when it holds a `0` against `no screen`, so left alone
+  every task in an existing account would read as OFF-screen — free to be placed inside the very periods it
+  was being kept out of); a PANEL's kind (which of the two grey kinds it means is read off its own `sleep`
+  flag, since the name alone cannot say); and the ACCOUNT'S KIND LIST, where the old name passes
+  `isUserDefined` and would give the account a user-defined kind DUPLICATING a built-in, offered twice in
+  every picker.
+- **The clipboard parser was the funnel that had been missed** — found while finishing this, and a real bug:
+  `parseTreeText` normalized the kind in `- resilience to <kind>: <n> %` but never migrated it, so a
+  clipboard cut before the rename pasted `no on-screen task` as a USER-DEFINED kind of that name. That
+  kind's default is `0`, so the `0 %` that made the task ON-SCREEN read as redundant, was dropped, and the
+  task came back off-screen — the codec's own failure mode arriving by the other door. It reads through
+  `migrateStoredKind` now, like every other stored kind name.
+- **The period chooser's table gained `sleep`** (`PERIOD_CHOOSER_KIND_ORDER`, second), and the kinds the
+  README names are still its vocabulary rather than the calendar's: `docs/invariants/calendar.md` records
+  that the two vocabularies are allowed to differ — what is not allowed is a SURFACE picking its own.
+
+### A right-click after a zoom hit-tested the wrong hour ("add…" alone on a task panel) — 2026-09-12
+
+→ `shared` (`ui/CalendarUi.kt`); `docs/invariants/calendar.md`, `docs/adr/0002-calendar-layers-and-grey.md`,
+`docs/MANUAL_TESTING.md`. Tests: new `CalendarPressScaleTest` (4). **Client only — an app rebuild
+(`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"I clicked on a task panel with a no phone unlocked layer, and the only option I got was
+add…"* — on the release account, right after the chooser reshape above. Neither the chooser nor the layer
+kinds were involved.
+
+- **`Modifier.pointerInput(day)` outlives a ZOOM.** A `pointerInput` whose key has not changed keeps running
+  the lambda it started with, captures and all. The column guarded its record LISTS with
+  `rememberUpdatedState` for exactly that reason and then read `hourHeight` directly, so after a zoom in
+  (without a scroll, which would have changed `day` and restarted the coroutine) every press was divided by
+  the old hour height — landing past the end of the day, where there is nothing. Empty hits ⇒ no chooser rows
+  ⇒ "add…" alone. `millisAt` had it too, so that "add…" was anchored at 23:59.
+- **Fixed by reading the scale live**: `currentHourHeightPx`, `currentReminderHeightPx`, `currentRingHeightPx`
+  and `currentAllBlocks` in the column; `currentHourHeightPx` and `currentOthers` in `CalendarBlock`, whose
+  `millisDelta` had the same staleness — so a drag or resize after a zoom moved a panel by the wrong amount.
+  (`currentEdgePx`/`currentSliceHeightPx` were already guarded "because the gesture coroutine outlives a
+  zoom": the rule had been found once and applied to two values instead of to the closure.)
+- **Re-keying the modifier on `hourHeight` was rejected**: it cancels the gesture in flight, leaving
+  `dragPreview` set and the scroll lock held.
+- **The conversion is now pure** (`pressHour` / `pressSpans`, scale as a parameter) because there is no
+  Compose UI test harness in the project: `CalendarPressScaleTest` pins that one pixel is two different hours
+  at two zooms and that the stale scale yields the empty chooser that was reported.
+- **Found by probing the release DB read-only**, not by reading the chooser: it said the account holds NO
+  layer-kind periods (so the hatch was evidence, covering the whole past — a description of where the click
+  was, not a participant) and that a task record really did cover the instant clicked.
+
+### "edit task" is a row of the "edit…" chooser, and the order is the user's six — 2026-09-12
+
+→ `shared` (`ui/CalendarUi.kt`, `App.kt`); `docs/PRD_TaskScheduler.md` §8, `docs/invariants/calendar.md`,
+`docs/adr/0002-calendar-layers-and-grey.md`, `docs/MANUAL_TESTING.md`. Tests: `CalendarEditChoicesTest` (four
+new — the task row, one row per TASK rather than per panel, the double-click's exclusion, the new order — and
+three updated). **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema
+migration.**
+
+Asked for as: *"All the edit options of the right-click menu in the calendar must be reduced to 'edit…' …
+They must appear in this order: task / task panel / restrictive period / reminder / alarm / timer. When there
+is only one of them, it replaces 'edit…' directly."*
+
+- **`edit task` was the last edit standing outside the chooser** — offered beside it on a task panel. It is
+  the chooser's **first row** now (`EDIT_LABEL_TASK`), routed by `App.kt`'s `onEditChoice` to the same §13
+  window; the calendar's `onEditTask` callback is gone, so there is one way in and not two. What stayed
+  beside the chooser is what is not an edit: `go to task tree` (navigates), `move` (a phone gesture), `add…`.
+- **`CALENDAR_EDIT_ROW_ORDER` is now the user's six** — task, task panel, restrictive period, reminder,
+  alarm, timer — and `editRowRank` ranks the ROW rather than its label, so a lone period keeps its kind's
+  NAME while sitting in the restrictive-period slot. The old table was one mixed list that also ranked every
+  kind, which put a lone `before bed` row last and a lone `inactivity` row third.
+- **The period chooser got its own table**, `PERIOD_CHOOSER_KIND_ORDER` (inactivity, no computer unlocked, no
+  phone unlocked, no screen, before bed, then the account's). Two tables that rank disjoint sets — families at
+  the top level, kinds inside the one family that has them — so neither can contradict the other; ADR 0002
+  records why that is not the drift the single mixed table was built to prevent.
+- **The double-click drops the `task` row** (`calendarBlockEditChoice`): it still goes through the one table,
+  but a double-click is a gesture ON the block, and with `task` ranked first it would otherwise have started
+  opening the §13 window instead of the panel's editor.
+- **`sleep` ranks after the six.** Its editable object is the §17 schedule rather than anything the calendar
+  lays, so it is not one of the things the user ordered, and an unlisted row ranks last.
+- **No change to the two layer kinds**: `no computer unlocked` / `no phone unlocked` have been restrictive
+  periods since 2026-09-12's earlier `PeriodKinds` work (`LayerPeriodKindTest`) — the only doc gap was the
+  add-window's list of kinds in PRD §8 and `MANUAL_TESTING.md`, which named three of the five built-ins.
+
 ### The declared-away hatch is DOTTED again — 2026-09-12
 
 → `shared` (`scheduler/domain/SchedulerDomain.kt`, `ui/CalendarUi.kt`, `App.kt`);

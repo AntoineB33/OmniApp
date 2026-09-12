@@ -67,7 +67,7 @@ class PeriodKindWindowTest {
 
     @Test
     fun the_window_reads_the_built_in_kinds_too() {
-        // "on screen" is not a flag: it is a 0 against "no on-screen task", so the window for that kind is
+        // "on screen" is not a flag: it is a 0 against PeriodKinds.NO_SCREEN, so the window for that kind is
         // exactly the list of which tasks need a screen.
         val (s0, ids, _) = stateWithThreeTasks()
         val rows = SchedulerDomain.periodKindTaskRows(s0, PeriodKinds.NO_SCREEN)

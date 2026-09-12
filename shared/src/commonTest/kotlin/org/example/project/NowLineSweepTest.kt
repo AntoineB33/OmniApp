@@ -219,7 +219,7 @@ class NowLineSweepTest {
 
     @Test
     fun the_swept_cover_bars_the_breaks_that_follow_it() {
-        // The behavioural payoff, in the bars' own terms: a stretch covered by "no on-screen task" with no task
+        // The behavioural payoff, in the bars' own terms: a stretch covered by PeriodKinds.NO_SCREEN with no task
         // in it is the README's rest stretch, so a night of it bars the 20 s period for twenty minutes and the
         // 15 min for two hours after the wake. An on-screen task is a 0 against `no on-screen task`, which is
         // what "on screen" IS.

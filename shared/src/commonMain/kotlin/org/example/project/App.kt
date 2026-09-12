@@ -99,7 +99,8 @@ import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.ReminderEditSeed
 import org.example.project.ui.EDIT_LABEL_ALARM
 import org.example.project.ui.EDIT_LABEL_REMINDER
-import org.example.project.ui.EDIT_LABEL_SLEEP
+import org.example.project.ui.EDIT_LABEL_SLEEP_SCHEDULE
+import org.example.project.ui.EDIT_LABEL_TASK
 import org.example.project.ui.EDIT_LABEL_TIMER
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
@@ -863,7 +864,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     tz,
                 ).map {
                     RestrictivePeriod(
-                        it.startEpochMillis, it.endEpochMillis, PeriodKinds.NO_TASK, SchedulerDomain.SLEEP_PANEL_TITLE,
+                        it.startEpochMillis, it.endEpochMillis, PeriodKinds.SLEEP, SchedulerDomain.SLEEP_PANEL_TITLE,
                     )
                 } +
                 // PRD §17: and the hour before each of those bedtimes, which is covered by the period
@@ -1229,7 +1230,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             title = "Inactivity",
                             range = gap,
                             inactivity = true,
-                            restrictiveKind = PeriodKinds.NO_TASK,
+                            restrictiveKind = PeriodKinds.INACTIVITY,
                             openStart = open != null && gap.startEpochMillis == open,
                         )
                     }
@@ -1270,31 +1271,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // nothing about the phone — while everything in [layerAsserted] is a claim about every screen
                 // at once.
                 val layerAway = if (layer == ownLayer) declaredAwayRegions else emptyList()
+                // The periods the user DREW asserting this layer (PRD §8, by their kind). Hoisted because
+                // it is the second half of what the dots below are asked about: a hand-drawn period and an
+                // away spell are the same thing said two ways — the user's own word about who was at a
+                // screen — while everything in [layerAssertedAll] is the APP promising something.
+                val layerStated = SchedulerDomain.assertedLayerRanges(schedulerState.panels, layer)
                 val regions =
                     SchedulerDomain.layerRegions(
                         lockedIntervals = layerLocked,
                         // Asserted rather than evidence so the seam filter cannot drop a declaration shorter
                         // than a minute: the mode was 3 for it.
-                        assertedRegions = layerAssertedAll + layerAway +
-                            SchedulerDomain.assertedLayerRanges(schedulerState.panels, layer),
+                        assertedRegions = layerAssertedAll + layerAway + layerStated,
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
                     )
-                // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the sub-stretches of this hatch
-                // that a device of the layer's kind was UNLOCKED for, the "I'm away" button being what says
-                // nobody was at it — mode 3. They are drawn DOTTED, so the band is emitted as one record per
-                // stretch of each kind rather than one per merged region. Nothing else about them differs:
-                // same title, same layer, so the hover bubble names the layer once whichever piece the
-                // cursor is over (the time it reads beside it is that piece's, which is the stretch the dots
-                // are true of).
+                // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the sub-stretches of
+                // this hatch that a device of the layer's kind really was UNLOCKED for, the user having said
+                // otherwise — the "I'm away" button (mode 3) or a period they drew over hours already
+                // elapsed. They are drawn DOTTED, so the band is emitted as one record per stretch of each
+                // kind rather than one per merged region. Nothing else about them differs: same title, same
+                // layer, so the hover bubble names the layer once whichever piece the cursor is over (the
+                // time it reads beside it is that piece's, which is the stretch the dots are true of).
                 //
-                // The 2026-09-12 removal of the dots ("an outline says who put this here") does not reach
-                // this: an outline belongs to a PERIOD, and the away button lays no period — so without the
-                // dots a declared stretch and an observed one draw identically.
+                // The dots are NOT the blue outline again ("an outline says who put this here", 2026-09-12,
+                // which is why they were deleted that morning and restored that afternoon): an outline says
+                // a hand placed this — the away button places no period at all, and a drawn period wears one
+                // whether or not anything contradicts it — while the dots say the machine's own log
+                // disagrees. Both marks, two questions.
                 val declared =
                     SchedulerDomain.declaredLayerRegions(
                         regions = regions,
-                        declaredAway = layerAway,
+                        declaredRegions = layerAway + layerStated,
                         lockedIntervals = layerLocked,
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
@@ -1866,11 +1873,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 )?.let(vm::dispatch)
                             },
                             // PRD §8 "edit…": the chooser's pick, routed to the editor that already OWNS the
-                            // thing the row names — and that is the whole of the routing. A sleep band's
-                            // editable object is the §17 schedule; an alarm's and a timer's is the §18
-                            // window; a restrictive period's is the one period editor, WHATEVER ITS KIND
-                            // (read off the row, not guessed from which paint the block wears); a reminder's
-                            // is the §14 editor; a task panel's is the calendar edit window.
+                            // thing the row names — and that is the whole of the routing, for EVERY edit the
+                            // calendar offers. A "task" row's editor is the §13 window, the very window the
+                            // tree cell's own "edit task" opens (that row is what that entry became, so the
+                            // calendar has no second way to the task editor); a sleep band's editable object
+                            // is the §17 schedule under the row "sleep schedule" — the band itself is now an
+                            // ordinary period of kind `sleep`, so it has a period row too; an alarm's and a timer's is the §18 window; a restrictive
+                            // period's is the one period editor, WHATEVER ITS KIND (read off the row, not
+                            // guessed from which paint the block wears) — `sleep` included, since a sleep
+                            // window is a period of that kind now, and "sleep schedule" is the separate row
+                            // that reaches the RULE behind it; a reminder's is the §14 editor; a
+                            // task panel's is the calendar edit window.
                             //
                             // The period row carries EVERY record behind it, which is the user's "no screen"
                             // rule: a stretch spelt as a computer period overlapping a phone period is one
@@ -1881,7 +1894,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onEditChoice = { choice ->
                                 val head = choice.records.firstOrNull()
                                 when {
-                                    choice.label == EDIT_LABEL_SLEEP -> sleepWindowOpen = true
+                                    choice.label == EDIT_LABEL_TASK ->
+                                        head?.taskId?.let { taskId ->
+                                            popupFromDefaultSubtree = false
+                                            editTaskId = taskId
+                                        }
+                                    choice.label == EDIT_LABEL_SLEEP_SCHEDULE -> sleepWindowOpen = true
                                     choice.label == EDIT_LABEL_ALARM ||
                                         choice.label == EDIT_LABEL_TIMER -> alarmWindowOpen = true
                                     choice.label == EDIT_LABEL_REMINDER -> editingReminder = head
@@ -1895,12 +1913,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             )
                                     head != null -> editingBlock = head
                                 }
-                            },
-                            // PRD §8 "edit task": the SAME window the tree cell's own "edit task" opens —
-                            // one editor for the task, reached from either surface.
-                            onEditTask = { taskId ->
-                                popupFromDefaultSubtree = false
-                                editTaskId = taskId
                             },
                             // PRD §8 "go to task tree" — the app's one handler, shared with the "All
                             // tasks" window's rows (declared beside [appMessage]).

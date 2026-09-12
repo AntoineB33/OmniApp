@@ -14,10 +14,10 @@ import org.example.project.scheduler.model.TaskId
 
 /**
  * `docs/scheduler_requirements.md` § *3 Dynamic Restrictive Period*, last bullet — **a dynamic period is
- * pulled back onto the start of the "no on-screen task" chain that touches it**:
+ * pulled back onto the start of the PeriodKinds.NO_SCREEN chain that touches it**:
  *
- * > When a "no on-screen task" period touches the start of a dynamic restrictive period, and that this chain
- * > of "no on-screen task" periods ends somewhere in $[now line;+infinity)$, then the dynamic restrictive
+ * > When a PeriodKinds.NO_SCREEN period touches the start of a dynamic restrictive period, and that this chain
+ * > of PeriodKinds.NO_SCREEN periods ends somewhere in $[now line;+infinity)$, then the dynamic restrictive
  * > period now starts at the start of this chain. If it means starting in the past, this is the only
  * > exception to the **frozen past** rule.
  *
@@ -27,7 +27,7 @@ import org.example.project.scheduler.model.TaskId
  * away. Read without this rule the break rides the line and never happens, which is what the calendar showed:
  * the period vanished from the past instead of staying in it. With it, the minutes already spent away COUNT
  * towards the break, the break is placed where they began, and the stretch from its end to the line is
- * covered by the ordinary "no on-screen task" cover — an Inactivity band, or Sleep inside a §17 window.
+ * covered by the ordinary PeriodKinds.NO_SCREEN cover — an Inactivity band, or Sleep inside a §17 window.
  *
  * Where the pull-back is REFUSED is mode 1's own rule and not an exception to this one; that pair is the third
  * test here. The modes themselves are [TpModeTest] and [DynamicPeriodsTest].
@@ -38,7 +38,7 @@ class ScreenBreakChainPullBackTest {
     private val MIN = 60_000L
     private val HOUR = 3_600_000L
 
-    /** One on-screen task, so a "no on-screen task" period is a stretch nobody can run in. */
+    /** One on-screen task, so a PeriodKinds.NO_SCREEN period is a stretch nobody can run in. */
     private val onScreenOnly =
         listOf(PlanTask(TaskId("task/user/0"), 1.0, 0L, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
 
@@ -129,7 +129,7 @@ class ScreenBreakChainPullBackTest {
 
     @Test
     fun mode_one_refuses_a_pull_back_that_would_cover_the_line_with_a_pose() {
-        // Mode 1's rule: the now-line must NOT be covered by the period "no on-screen task". A pose pulled
+        // Mode 1's rule: the now-line must NOT be covered by the period PeriodKinds.NO_SCREEN. A pose pulled
         // back far enough to reach the line would cover it, so mode 1 keeps the drag — the half-open
         // (t_p, t_p + d] — while the away modes, where the line is covered by definition, take the pull-back.
         val chainStart = 53 * MIN
@@ -165,7 +165,7 @@ class ScreenBreakChainPullBackTest {
     fun the_break_is_never_stretched_the_gap_behind_the_line_is_covered_instead() {
         // The user's rule for a line still moving in mode 2 or 3: the 20 s / 5 min / 15 min period is NOT
         // stretched to keep covering the line. It stays the length it is and is frozen where it happened, and
-        // what reaches from its end to the line is the ordinary "no on-screen task" cover.
+        // what reaches from its end to the line is the ordinary PeriodKinds.NO_SCREEN cover.
         val chainStart = 50 * MIN
         val tp = 52 * MIN
         val base = awayChain(chainStart, tp, closedEnd = true)
@@ -175,7 +175,7 @@ class ScreenBreakChainPullBackTest {
                 base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
                 mode = DynamicPeriods.MODE_AWAY, sweepFromMillis = 0L,
             )
-        val crossed = out.single { it.kind == PeriodKinds.NO_TASK && it.startMillis in chainStart..tp }
+        val crossed = out.single { it.kind == PeriodKinds.INACTIVITY && it.startMillis in chainStart..tp }
         assertEquals(20 * SEC, crossed.durationMillis, "the break keeps its own length")
         assertTrue(!crossed.covers(tp), "so it is not what covers the line")
         // Here the live pause itself covers the line, which is why `awayCover` finds nothing left to do.

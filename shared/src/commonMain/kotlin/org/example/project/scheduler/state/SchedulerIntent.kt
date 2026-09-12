@@ -328,7 +328,7 @@ sealed interface SchedulerIntent {
      * actually conducted**, recorded where it happened.
      *
      * `side-dev/README.md` calls this a pre-placed restrictive period, and that is exactly what it is: a span
-     * of [org.example.project.scheduler.domain.PeriodKinds.NO_TASK] the user really took, standing on the
+     * of [org.example.project.scheduler.domain.PeriodKinds.INACTIVITY] the user really took, standing on the
      * timeline for the recurrence bars to read as the rest stretch it is. So it needs no anchor and no rule
      * of its own — the next 20 s period is barred for twenty minutes after it by the ordinary bar.
      *
@@ -1068,7 +1068,7 @@ sealed interface SchedulerIntent {
      * `side-dev/README.md` § *Restrictive Period*: **a period is a start, an end and a KIND**, so ONE intent
      * lays every one of them — the two the menu used to name separately
      * ([org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN],
-     * [org.example.project.scheduler.domain.PeriodKinds.NO_TASK]), PRD §17's `before bed`, and every kind the
+     * [org.example.project.scheduler.domain.PeriodKinds.INACTIVITY]), PRD §17's `before bed`, and every kind the
      * account has defined. Two intents for two of the kinds was a funnel with an exception list: a third kind
      * had no way onto the calendar at all, and the two copies of the lay/trim/strip sequence were free to
      * drift.

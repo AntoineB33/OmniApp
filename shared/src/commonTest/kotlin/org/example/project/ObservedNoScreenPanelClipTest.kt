@@ -11,7 +11,7 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 
 /**
- * PRD §8/§9 + ADR 0002: **a stretch carrying BOTH calendar layers is a "no on-screen task" period**, and a
+ * PRD §8/§9 + ADR 0002: **a stretch carrying BOTH calendar layers is a PeriodKinds.NO_SCREEN period**, and a
  * no-screen period overrides the on-screen task panels it covers.
  *
  * Only half of that was implemented. §9 already refused to BANK a record over an observed no-screen stretch
@@ -28,7 +28,7 @@ class ObservedNoScreenPanelClipTest {
     private val onScreenId = TaskId("task/user/1")
     private val offScreenId = TaskId("task/user/2")
 
-    /** A task is on-screen exactly when it is forbidden inside a "no on-screen task" period. */
+    /** A task is on-screen exactly when it is forbidden inside a PeriodKinds.NO_SCREEN period. */
     private val tasks: Map<TaskId, Task> =
         mapOf(
             onScreenId to Task(id = onScreenId, title = "At the desk", resilience = Task.DEFAULT_RESILIENCE),
@@ -91,7 +91,7 @@ class ObservedNoScreenPanelClipTest {
     fun a_restrictive_period_and_a_taskless_panel_are_left_alone() {
         val panels =
             listOf(
-                panel("period/0", null, NOW - 3 * HOUR, NOW, kind = PeriodKinds.NO_TASK),
+                panel("period/0", null, NOW - 3 * HOUR, NOW, kind = PeriodKinds.INACTIVITY),
                 panel("period/1", null, NOW - 3 * HOUR, NOW),
             )
         assertEquals(panels, SchedulerDomain.clipPanelsForObservedNoScreen(panels, tasks, observed))

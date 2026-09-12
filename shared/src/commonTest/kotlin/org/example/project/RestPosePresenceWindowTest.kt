@@ -95,7 +95,7 @@ class RestPosePresenceWindowTest {
             breaks,
             NOW,
             basePeriods = listOf(
-                RestrictivePeriod(NOW, NOW + 30 * MIN, PeriodKinds.NO_TASK, "away"),
+                RestrictivePeriod(NOW, NOW + 30 * MIN, PeriodKinds.INACTIVITY, "away"),
             ),
         )[SchedulerDomain.FIVE_MIN_BREAK_KEY]
         assertNotNull(bare)
@@ -135,7 +135,7 @@ class RestPosePresenceWindowTest {
                 RestrictivePeriod(
                     NOW - HOUR,
                     NOW + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS + HOUR,
-                    PeriodKinds.NO_TASK,
+                    PeriodKinds.INACTIVITY,
                     "asleep",
                 ),
             ),

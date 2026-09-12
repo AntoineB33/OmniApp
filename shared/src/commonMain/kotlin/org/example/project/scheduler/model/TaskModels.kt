@@ -513,7 +513,7 @@ data class TaskPanel(
     /**
      * PRD §15: true for a dynamic period the app **CONDUCTED** — the 20-second look-away it ran and the user
      * sat through (`SchedulerIntent.RecordConductedBreak`). It is an ordinary recorded
-     * [org.example.project.scheduler.domain.PeriodKinds.NO_TASK] period in every other respect, and that is
+     * [org.example.project.scheduler.domain.PeriodKinds.INACTIVITY] period in every other respect, and that is
      * exactly why the flag is needed: nothing else on the panel tells it apart from a 20-second
      * [inactivity] span the user drew by hand.
      *
@@ -541,7 +541,7 @@ data class TaskPanel(
      * The README's period is a start, an end and a kind, and every task's behaviour inside it is its
      * resilience to that kind ([Task.resilience]) — so this one field replaces asking *which boolean* a
      * period panel carries. The built-in kinds are [PeriodKinds.NO_SCREEN] (what [noScreen] used to say on
-     * its own) and [PeriodKinds.NO_TASK] (what [inactivity] and [sleep] say); anything else is **a kind the
+     * its own) and [PeriodKinds.INACTIVITY] (what [inactivity] and [sleep] say); anything else is **a kind the
      * user defined**, and a task says nothing about it until it is given a resilience below one.
      *
      * [noScreen] / [inactivity] are kept beside it because the calendar, the record bank and the merge all
@@ -576,9 +576,16 @@ data class TaskPanel(
     val restrictiveKind: String
         get() =
             when {
-                periodKind.isNotBlank() -> periodKind
+                // Healed on the way out, because this getter is the single reading of a panel's kind: a
+                // payload written before the 2026-09-12 rename holds `no on-screen task`, or `no task
+                // allowed` for what are now two kinds — and which of the two it meant is exactly what the
+                // `sleep` flag beside it says ([PeriodKinds.migrateStoredKind]).
+                periodKind.isNotBlank() -> PeriodKinds.migrateStoredKind(periodKind, sleep)
                 noScreen -> PeriodKinds.NO_SCREEN
-                inactivity || sleep || screenBreak -> PeriodKinds.NO_TASK
+                // The legacy flags, which is how every panel an older build wrote says what it is: a sleep
+                // window is the one kind `sleep` stands for, and a break is grey like an idle stretch.
+                sleep -> PeriodKinds.SLEEP
+                inactivity || screenBreak -> PeriodKinds.INACTIVITY
                 else -> ""
             }
 

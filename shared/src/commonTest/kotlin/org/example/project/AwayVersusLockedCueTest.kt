@@ -53,7 +53,7 @@ class AwayVersusLockedCueTest {
      * between them as the line walks — a switch is what the cue announces, so one task would leave the
      * whole walk at one level and prove nothing either way.
      *
-     * [offScreen] gives both a non-zero resilience to "no on-screen task" — the one thing that decides
+     * [offScreen] gives both a non-zero resilience to PeriodKinds.NO_SCREEN — the one thing that decides
      * whether they may be scheduled at a line the away modes require to be covered.
      */
     private fun configure(vm: TaskSchedulerViewModel, offScreen: Boolean = false) {
@@ -95,7 +95,7 @@ class AwayVersusLockedCueTest {
 
     /**
      * The half the button really owns: a task that CAN be scheduled while nobody is at the screen (a
-     * non-zero resilience to "no on-screen task") is announced to the away device exactly as before.
+     * non-zero resilience to PeriodKinds.NO_SCREEN) is announced to the away device exactly as before.
      * Nothing about the away flag reaches the output gate.
      */
     @Test
@@ -113,7 +113,7 @@ class AwayVersusLockedCueTest {
         assertTrue(engine.userAway.value)
 
         // The away device is still told, and — the half that matters — the task is still SCHEDULED at the
-        // line while the account is away, because it is resilient to "no on-screen task".
+        // line while the account is away, because it is resilient to PeriodKinds.NO_SCREEN.
         var scheduledAtTheLineWhileAway = false
         repeat(80) {
             advanceTimeBy(30_000)
@@ -137,7 +137,7 @@ class AwayVersusLockedCueTest {
 
     /**
      * The other half, and the 2026-09-12 anomaly: an ON-SCREEN task is **not scheduled** at a line the away
-     * modes require to be covered by "no on-screen task", so there is nothing to announce there.
+     * modes require to be covered by PeriodKinds.NO_SCREEN, so there is nothing to announce there.
      *
      * The app announced one anyway (account 3, "Task to do now — planning" at 15:08:40, away since
      * 14:54:15). The cover the fill builds for mode 2/3 is one millisecond wide at the `t_p` it was built

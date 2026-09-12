@@ -120,8 +120,18 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **Uncheck it on the panel the now-line is standing in** → its elapsed half stays exactly where it
         is (the past never moves); only the future tail is re-planned.
   - [ ] Undo (Ctrl+Z with the calendar focused) puts the pin back.
-  - [ ] **"add…" → restrictive period → "no on-screen task"** → **NO box is drawn at all**: the stretch
-        shows only the oblique lines of both layers, which is what a no-screen period IS.
+  - [ ] **"add…" → restrictive period → "no screen"** → an EMPTY box **outlined in blue**, labelled "No
+        screen", with the oblique lines of BOTH layers painted across it (which is what a no-screen period
+        IS) and no fill. The hatch is the statement, the blue outline is the hand that stated it — the app
+        draws that same hatch out of the OS lock log with no box and no outline.
+  - [ ] **Add that no-screen period over a stretch you were REALLY at the machine for** (earlier today, at
+        the keyboard, screen never locked) → the `/` "no computer unlocked" lines over it are **DOTTED**,
+        while the same period drawn over last night's locked hours keeps them **solid**. Three marks, three
+        questions: the hatch claims, the blue outline says a hand claimed it, the dots say the lock log
+        disagrees. Drawn over the FUTURE it is solid — nothing out there has been observed yet.
+  - [ ] **A reminder tag and an alarm/timer ring wear the blue outline too** ("the whole added
+        period/panel/reminder/alarm"). Check a reminder off: its fill goes muted and the blue border is then
+        the only thing left saying it is the user's.
   - [ ] **"add…" → restrictive period → "no task allowed"** → an EMPTY blue-outlined box with **vertical
         lines** across it and no fill of any kind. The bin in its editor is the only way to take it away —
         the menu has no "Remove".
@@ -160,8 +170,8 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **task panel** → the calendar edit window pre-filled with the highest-priority task and its minimum
         time; **reminder** → the reminder editor at the clicked time. (Both used to be their own entry.)
   - [ ] **restrictive period** reveals a **kind** field with a drop-down — the same control as a task cell's
-        categories field. It lists "no on-screen task", "no task allowed", "before bed" and every kind the
-        account has defined; typing narrows the list; a name it does not hold offers **"Create and use"**,
+        categories field. It lists "no on-screen task", "no task allowed", "before bed", "no computer
+        unlocked", "no phone unlocked" and every kind the account has defined; typing narrows the list; a name it does not hold offers **"Create and use"**,
         and the kind then appears in the task edit window's resilience section too (it is one list).
   - [ ] Pick a kind → the **period editor**, headed with that kind's name and describing what it does.
         Its bounds (date+time / now / ∞) behave exactly as before, whichever kind was picked.
@@ -173,14 +183,25 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         takes it away. Close and reopen the app: the period is still there and still of that kind (not a
         block of work).
 - [ ] **The menu names THINGS, not editors (PRD §8).**
-  - [ ] Right-click a stretch carrying exactly one thing (a lone task panel) → the entry reads
-        **"edit task panel"** and opens its editor directly. There is no "edit…" and no "Remove".
-  - [ ] Right-click a task panel that sits inside a restrictive period → **"edit…"**, which opens a chooser
-        reading **task panel**, then the period's row.
-  - [ ] Right-click a stretch carrying several periods → the chooser's second row is **"restrictive
-        period"**; picking it opens a second chooser naming each period by kind — **inactivity**, **no
-        computer unlocked**, **no phone unlocked**, **no screen**, **before bed**, then any kind you
-        defined, in that order.
+  - [ ] Right-click a task panel whose title names a task → **"edit…"**, whose chooser reads **task**, then
+        **task panel**, in that order. There is no "Remove", and no "edit task" entry beside the chooser:
+        that is the first row now.
+  - [ ] Right-click a stretch carrying exactly one thing — a panel naming NO task (add one whose title you
+        blank, or a manual entry) → the entry reads **"edit task panel"** and opens its editor directly,
+        with no chooser at all.
+  - [ ] **task** opens the §13 edition window on that task — the same window the tree cell's own
+        **"edit task"** opens (that entry is no longer called "edit"). Two panels of the SAME task at one
+        point still give **one** "task" row; two panels of different tasks give two.
+  - [ ] Right-click a task panel that sits inside a restrictive period → the chooser reads **task**, **task
+        panel**, then the period's row, which is third.
+  - [ ] Right-click a stretch carrying several periods → the **"restrictive period"** row sits third,
+        wherever the periods are; picking it opens a second chooser naming each period by kind —
+        **inactivity**, **sleep**, **no computer unlocked**, **no phone unlocked**, **no screen**,
+        **before bed**, then any kind you defined, in that order.
+  - [ ] **The order is always task, task panel, restrictive period, reminder, alarm, timer.** Right-click a
+        point carrying as many of them as you can arrange (a panel inside a period with a reminder tag and an
+        alarm ring on it) and read the chooser top to bottom. A **sleep** row, where there is one, comes
+        after all six.
   - [ ] With a "no computer unlocked" period and a "no phone unlocked" period over the same hours, the
         period chooser also offers **"no screen"**. Pick it, change the end time, Save → **both** periods
         take the new end.
@@ -193,14 +214,23 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         the **blue** outline, and it survives closing and reopening the app.
   - [ ] Right-click the §17 "Before bed" hour → its row is **"before bed"**; saving it materializes a
         `before bed` period (not an inactivity one) and the box turns blue.
-  - [ ] **Double-click a task panel** → the same editor its chooser row opens.
+  - [ ] **Double-click a task panel** → the **task panel** editor, i.e. the same editor that row opens —
+        never the §13 task window, which is asked for by name in the chooser.
+- [ ] **ZOOM, THEN RIGHT-CLICK — the press must still hit what is under it (PRD §8).** The regression: the
+      column's gesture closure outlives a zoom, so it used to convert the press at the PREVIOUS hour height.
+  - [ ] Zoom the calendar IN (Ctrl+wheel) without scrolling, then right-click a task panel → its chooser, not
+        **"add…" alone**. Zoom OUT and right-click it again → the same chooser, not some other hour's rows
+        (a sleep band's "edit sleep", say).
+  - [ ] In the same state, open **"add…"** → the window is headed with the time you clicked, not 23:59.
+  - [ ] Zoom in, then **drag** a panel one hour down and **resize** its bottom edge → both follow the cursor
+        one-for-one. Before the fix they moved by the pre-zoom scale (a fraction of the distance, or a
+        multiple of it).
 - [ ] **A task panel's menu reaches its task (PRD §8).** Right-click a task panel:
-  - [ ] **"edit task"** opens the §13 edition window on that task — the same window the tree cell's own
-        **"edit task"** opens (that entry is no longer called "edit").
-  - [ ] **"go to task tree"** selects the task's first cell, expanding whatever hid it, scrolling it into
-        view, and handing the tree the focus. On a mirrored task it is the FIRST row that is selected.
-  - [ ] Neither entry appears on an inactivity/no-screen period, a sleep band, a screen break, a reminder
-        tag or an alarm marker.
+  - [ ] **"go to task tree"** — the one task entry left BESIDE the chooser, because it is not an edit —
+        selects the task's first cell, expanding whatever hid it, scrolling it into view, and handing the
+        tree the focus. On a mirrored task it is the FIRST row that is selected.
+  - [ ] Neither it nor the chooser's **task** row appears on an inactivity/no-screen period, a sleep band, a
+        screen break, a reminder tag or an alarm marker.
   - [ ] Delete the task from the tree (empty its cell) with its panel still on the calendar, then
         "go to task tree" on that panel → a message says it is not in the task tree; nothing is selected.
         The message is a window like any other: pressing elsewhere does its normal job and leaves it
@@ -477,9 +507,10 @@ rows, and re-derive right after each reconcile.
       layers (it is a mode-3 period, so it is a no-screen period), and the hover bubble names both.
   - [ ] The lines of **this device's own** layer are **DOTTED** over that stretch — the machine was really
         unlocked and only the button says otherwise. The peer layer's lines stay solid (a device nobody can
-        ask is assumed locked, not observed unlocked). A period's **blue outline** is the other half of
-        "who said this" and answers for hand-drawn PERIODS; the away button lays none, which is why it needs
-        the dots.
+        ask is assumed locked, not observed unlocked). The dots are not the blue outline in another guise:
+        the outline says a HAND placed a period (the away button places none at all), the dots say the lock
+        log DISAGREES — so a hand-drawn no-screen period over unlocked hours carries both marks, and this
+        stretch carries only the dots.
   - [ ] **Let a real lock happen inside it.** Leave the button on and let the screen turn off / the machine
         reach standby for a few minutes (on a Modern-Standby machine `Win+L` is what the power log records),
         then unlock — which clears the button. Relaunch if the layer has not refreshed (the OS scan runs at

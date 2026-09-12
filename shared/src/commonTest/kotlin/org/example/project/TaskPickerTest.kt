@@ -268,12 +268,12 @@ class TaskPickerTest {
         val (s0, ids) = stateWithTasks("A", "B", "C")
         val (a, b, c) = ids
         // A grey period over the line: its kind refuses everybody by default...
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, T0 - 5 * MIN, T0 + 5 * MIN))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, T0 - 5 * MIN, T0 + 5 * MIN))
         // ... unless a task has deliberately been given a value for it.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(b, PeriodKinds.NO_TASK, 0.5))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, PeriodKinds.NO_TASK, 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(b, PeriodKinds.INACTIVITY, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, PeriodKinds.INACTIVITY, 1.0))
 
-        assertEquals(setOf(PeriodKinds.NO_TASK), SchedulerDomain.restrictiveKindsAt(s, T0))
+        assertEquals(setOf(PeriodKinds.INACTIVITY), SchedulerDomain.restrictiveKindsAt(s, T0))
         assertEquals(0.0, SchedulerDomain.taskResilienceAt(s, a, T0))
         assertEquals(0.5, SchedulerDomain.taskResilienceAt(s, b, T0))
         assertEquals(1.0, SchedulerDomain.taskResilienceAt(s, c, T0))
@@ -288,7 +288,7 @@ class TaskPickerTest {
         // "The colours update as soon as the now-line is on new periods": the answer is a pure function of
         // the instant, so the menu re-asking it at the display's own instant is the whole of the update.
         val (s0, ids) = stateWithTasks("A", "B")
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, T0 + HOUR, T0 + 2 * HOUR))
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, T0 + HOUR, T0 + 2 * HOUR))
 
         assertTrue(SchedulerDomain.restrictiveKindsAt(s, T0).isEmpty(), "nothing covers the line yet")
         assertNull(restrictionColor(SchedulerDomain.taskResilienceAt(s, ids[0], T0)))
@@ -304,10 +304,10 @@ class TaskPickerTest {
         // half-resilient to one kind and forbidden by another is red, not orange.
         val (s0, ids) = stateWithTasks("A")
         val a = ids[0]
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, T0 - MIN, T0 + MIN))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, T0 - MIN, T0 + MIN))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, T0 - MIN, T0 + MIN))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(a, PeriodKinds.NO_TASK, 0.5))
-        // The task is on screen (a 0 against "no on-screen task", `Task.DEFAULT_RESILIENCE`), so the
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(a, PeriodKinds.INACTIVITY, 0.5))
+        // The task is on screen (a 0 against PeriodKinds.NO_SCREEN, `Task.DEFAULT_RESILIENCE`), so the
         // no-screen period alone already forbids it.
         assertEquals(0.0, SchedulerDomain.taskResilienceAt(s, a, T0))
         assertEquals(RED, restrictionColor(SchedulerDomain.taskResilienceAt(s, a, T0)))
@@ -352,7 +352,7 @@ class TaskPickerTest {
         )
         val s = s0.copy(panels = listOf(taken))
 
-        assertEquals(setOf(PeriodKinds.NO_TASK), SchedulerDomain.restrictiveKindsAt(s, T0))
+        assertEquals(setOf(PeriodKinds.INACTIVITY), SchedulerDomain.restrictiveKindsAt(s, T0))
         assertEquals(RED, restrictionColor(SchedulerDomain.taskResilienceAt(s, ids[0], T0)))
     }
 

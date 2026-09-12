@@ -49,7 +49,7 @@ class ScreenBreakKindTest {
             )
         assertTrue(panels.isNotEmpty(), "the case needs breaks to be about")
         assertTrue(
-            panels.all { it.restrictiveKind == PeriodKinds.NO_TASK },
+            panels.all { it.restrictiveKind == PeriodKinds.INACTIVITY },
             "every break must be \"no task allowed\": ${panels.map { it.title to it.restrictiveKind }.distinct()}",
         )
         // …and over the WHOLE span. A shape would show up here as a second panel, or a shorter one.
@@ -94,7 +94,7 @@ class ScreenBreakKindTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[1], "Stretch"))
         val resilient = s.tasks.keys.first { s.tasks[it]!!.title == "Stretch" }
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(resilient, 3))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(resilient, PeriodKinds.NO_TASK, 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(resilient, PeriodKinds.INACTIVITY, 1.0))
         return s.copy(screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS) to resilient
     }
 
@@ -112,7 +112,7 @@ class ScreenBreakKindTest {
                     id = resilient,
                     title = "Stretch",
                     minimumMinutes = 3,
-                    resilience = mapOf(PeriodKinds.NO_TASK to 1.0),
+                    resilience = mapOf(PeriodKinds.INACTIVITY to 1.0),
                 ),
             )
         val pose = ScreenBreak(

@@ -3557,7 +3557,7 @@ private fun applySetTaskResilience(
 /**
  * PRD §15: record a dynamic period the app CONDUCTED, exactly where it happened.
  *
- * It is a period of [PeriodKinds.NO_TASK] like any other, and it is marked [TaskPanel.conductedBreak] so the
+ * It is a period of [PeriodKinds.INACTIVITY] like any other, and it is marked [TaskPanel.conductedBreak] so the
  * recurrence bars know it was one of the THREE — no anchor, no cadence arithmetic, no special case, but not
  * nothing either: the README's first bar keys on a dynamic restrictive *period* ("no 20 s period in the next
  * 20 minutes") where the other two key on a rest *stretch*, and twenty seconds is far too short to be one of
@@ -3589,7 +3589,7 @@ private fun reduceRecordConductedBreak(
             startEpochMillis = intent.startEpochMillis,
             endEpochMillis = intent.endEpochMillis,
             inactivity = true,
-            periodKind = PeriodKinds.NO_TASK,
+            periodKind = PeriodKinds.INACTIVITY,
             // What makes it one of the THREE and not a 20-second inactivity span the user drew: the README's
             // first bar is "after any dynamic restrictive period, no 20 s period in the next 20 minutes", and
             // this is the only thing on the panel that says this period was one of them.

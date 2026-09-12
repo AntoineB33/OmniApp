@@ -210,13 +210,18 @@ class CalendarLayerTest {
         )
     }
 
-    // ----- the mode-3 hatch is DOTTED --------------------------------------------------------------------
+    // ----- a hatch the LOCK LOG contradicts is DOTTED ----------------------------------------------------
+    //
+    // Two things put a hatch over hours a device of the kind really was unlocked for, and they are one rule:
+    // the "I'm away" button (mode 3) and a period the user DREW over hours already elapsed. [declared] is
+    // whichever of the two the case under test is about; the dots do not distinguish them, because the
+    // sentence they add is the same one ("the user said so, the machine says otherwise").
 
     private fun dottedIn(
         drawn: List<TaskTimeRange>,
-        away: List<TaskTimeRange>,
+        declared: List<TaskTimeRange>,
         locked: List<TaskTimeRange>?,
-    ) = SchedulerDomain.declaredLayerRegions(drawn, away, locked, T0, T4)
+    ) = SchedulerDomain.declaredLayerRegions(drawn, declared, locked, T0, T4)
 
     @Test
     fun the_stretch_the_button_hatched_is_dotted_and_the_locked_one_beside_it_is_not() {
@@ -257,8 +262,9 @@ class CalendarLayerTest {
 
     @Test
     fun an_asserted_region_over_the_spell_does_not_undot_it() {
-        // A sleep window, a screen break or a hand-added no-screen period is a promise about EVERY screen,
-        // and a promise cannot un-unlock the machine the button was pressed on. Evidence can; a claim cannot.
+        // A sleep window or a screen break is a promise about EVERY screen, and a promise cannot un-unlock
+        // the machine the button was pressed on. Evidence can; a claim cannot. (A hand-drawn no-screen
+        // period cannot undot one either — it is a claim too, and one of the two that ADD dots.)
         val away = at(1, 2)
         val sleep = at(0, 3)
         val drawn = regions(emptyList(), asserted = listOf(away, sleep))
@@ -276,6 +282,56 @@ class CalendarLayerTest {
         assertTrue(dottedIn(peer, listOf(at(1, 2)), null).isEmpty())
         // The own layer with the button never pressed: an ordinary locked stretch, drawn solid.
         assertTrue(dottedIn(regions(listOf(at(1, 2))), emptyList(), listOf(at(1, 2))).isEmpty())
+    }
+
+    @Test
+    fun the_no_screen_period_the_user_drew_over_unlocked_hours_is_dotted() {
+        // The requirement: "when the user adds a no screen period on a past time period where some computers
+        // were unlocked, the oblique lines for the no computer unlocked restrictive period must be dotted
+        // there". The machine was never locked over those hours, so the hatch the period asserts is the
+        // user's word about the past and not a reading of it — exactly what the away button's dots say.
+        val drawn0 = at(1, 2)
+        assertEquals(listOf(drawn0), regions(emptyList(), asserted = listOf(drawn0)))
+        assertEquals(listOf(drawn0), dottedIn(listOf(drawn0), listOf(drawn0), emptyList()))
+        // And the same slice-by-slice split the button gets: the hours the machine really WAS locked for are
+        // a reading again, so the box's hatch is dotted on one side of the lock and solid over it.
+        val locked = TaskTimeRange(T0 + 90 * 60_000L, T0 + 105 * 60_000L)
+        val period = at(1, 2)
+        val drawn = regions(listOf(locked), asserted = listOf(period))
+        assertEquals(listOf(period), drawn) // the period covers the lock: one band
+        assertEquals(
+            listOf(
+                TaskTimeRange(period.startEpochMillis, locked.startEpochMillis),
+                TaskTimeRange(locked.endEpochMillis, period.endEpochMillis),
+            ),
+            dottedIn(drawn, listOf(period), listOf(locked)),
+        )
+    }
+
+    @Test
+    fun a_period_drawn_ahead_of_the_now_line_is_solid_and_one_straddling_it_dots_its_elapsed_half() {
+        // Nothing ahead of the now-line has been WATCHED, so a period drawn over the future contradicts no
+        // reading and states nothing yet — it is not "unlocked and declared", it is simply unobserved. Only
+        // the elapsed half of a straddling period can disagree with anything.
+        val future = TaskTimeRange(T4 + HOUR, T4 + 2 * HOUR)
+        val drawn = regions(emptyList(), asserted = listOf(future))
+        assertEquals(listOf(future), drawn) // asserted regions are drawn past the line; evidence is not
+        assertTrue(dottedIn(drawn, listOf(future), emptyList()).isEmpty())
+        val straddling = TaskTimeRange(T0 + 3 * HOUR, T4 + 2 * HOUR)
+        assertEquals(
+            listOf(TaskTimeRange(T0 + 3 * HOUR, T4)),
+            dottedIn(regions(emptyList(), asserted = listOf(straddling)), listOf(straddling), emptyList()),
+        )
+    }
+
+    @Test
+    fun the_apps_own_promises_are_not_the_users_word_and_are_never_dotted() {
+        // A projected sleep window and a screen break hatch the layers too, and nothing was unlocked-and-
+        // declared under them: they are nobody's statement about what HAPPENED, and each already wears the
+        // orange or grey outline that says who laid it. Only the away spells and the drawn periods reach
+        // the dots, which is what the caller hands over.
+        val sleep = at(1, 2)
+        assertTrue(dottedIn(regions(emptyList(), asserted = listOf(sleep)), emptyList(), emptyList()).isEmpty())
     }
 
     @Test

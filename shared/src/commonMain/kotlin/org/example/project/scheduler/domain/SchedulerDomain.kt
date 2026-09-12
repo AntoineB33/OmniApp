@@ -2241,7 +2241,7 @@ object SchedulerDomain {
      * recurrence bars know how to read.
      *
      * A pause the user is in the middle of is a stretch of the timeline nobody is working in, so it is a
-     * period of [PeriodKinds.NO_TASK] behind (and up to) the now-line — and the bars then do the rest by
+     * period of [PeriodKinds.INACTIVITY] behind (and up to) the now-line — and the bars then do the rest by
      * themselves: it is a *rest stretch*, so a pause of five minutes bars the 5-min period for an hour and
      * one of a quarter of an hour bars the 15-min period for two. That replaces the old placement overlay,
      * which folded the gap into every break's stored rest anchor and re-derived the grid from there.
@@ -2255,7 +2255,7 @@ object SchedulerDomain {
         return RestrictivePeriod(
             startMillis = gap.startEpochMillis,
             endMillis = gap.endEpochMillis,
-            kind = PeriodKinds.NO_TASK,
+            kind = PeriodKinds.INACTIVITY,
             label = "Inactivity",
             // An ONGOING pause is drawn to the now-line and the line is inside it — the user has not come
             // back yet. So it covers its end, which is what makes `t_p` genuinely covered while the device is
@@ -2284,7 +2284,7 @@ object SchedulerDomain {
      * so the placement, the §9 record bank and the calendar's panel clipping are all answering the same
      * reading of "nobody was at a screen here" and cannot drift apart.
      *
-     * The kind is [PeriodKinds.NO_SCREEN] and not [PeriodKinds.NO_TASK], because that is exactly what the
+     * The kind is [PeriodKinds.NO_SCREEN] and not [PeriodKinds.INACTIVITY], because that is exactly what the
      * evidence says: nobody was at a SCREEN. An off-screen task may legitimately have run there (§9 exempts
      * one from the record ban for that very reason), and the README's clause is *"covered by the period 'no
      * on-screen task' **without any task**"* — so the stretch is a rest on an account whose tasks are all
@@ -2647,46 +2647,73 @@ object SchedulerDomain {
     /**
      * PRD §8 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: which sub-stretches of one layer's
      * [regions] the calendar draws **DOTTED** rather than solid — *"the oblique lines must be dotted if at
-     * least one of the corresponding devices was unlocked but the I'm away button was clicked"*, for the
+     * least one of the corresponding devices was unlocked but the I'm away button was clicked"*, and
+     * *"when the user adds a no-screen period on a past time period where some computers were unlocked, the
+     * oblique lines for the no computer unlocked restrictive period must be dotted there"* — for the
      * computer's slope and the phone's alike.
      *
-     * A hatch says *no device of this kind was unlocked*. Over a declared-away stretch that sentence is a
-     * CLAIM and not a reading: the machine **stays unlocked** while the button is on — that is the whole
-     * reason the button exists ([declaredAwayRegions]) — so a device of this layer's kind really was sitting
-     * there unlocked. The dots say exactly that and change nothing else: same slope, same span, same bubble
-     * section. Solid = nothing of the kind was unlocked; dotted = one was, and the user declared themselves
-     * away from it, which is what mode 3 is made of.
+     * **A hatch says *no device of this kind was unlocked*, and the dots say that sentence is the USER'S
+     * WORD against the machine's.** Two things put a hatch somewhere the OS log contradicts, and they are
+     * one rule and not two:
      *
-     * It is the one thing the 2026-09-12 "an outline says who put this here" rule cannot answer, which is
-     * why it came back the day it was removed: an outline belongs to a PERIOD, and the away button lays no
-     * period — it is a derived declaration with no panel to outline. Without the dots a declared stretch and
-     * an observed one are the same drawing.
+     * - the **"I'm away" button** ([declaredAwayRegions]): the machine **stays unlocked** while it is on —
+     *   that is the whole reason the button exists — so a device of this layer's kind really was sitting
+     *   there unlocked;
+     * - a **period the user DREW** asserting this layer ([assertedLayerRanges]) over a stretch already
+     *   elapsed: the user is stating what the past was, and where the lock history disagrees, the hatch over
+     *   it is that statement rather than a reading.
      *
-     * So the answer is [declaredAway] MINUS this kind's lock evidence, intersected with the band actually
+     * Solid = nothing of the kind was unlocked. Dotted = one was, and the user said otherwise. The dots
+     * change nothing else: same slope, same span, same bubble section.
+     *
+     * **The blue outline is not this answer in another guise**, which is why both exist. An outline says WHO
+     * PUT THIS HERE and belongs to a PERIOD — the away button lays none at all, and a drawn no-screen period
+     * wears one whether or not a device was unlocked inside it. The dots say the statement is CONTRADICTED.
+     * So a declared-away stretch has dots and no outline; a no-screen period over a locked night has an
+     * outline and no dots; one over an evening at the keyboard has both, and each mark answers its own
+     * question. (The dots were deleted on 2026-09-12 for being the outline twice and restored the same day.)
+     *
+     * So the answer is [declaredRegions] MINUS this kind's lock evidence, intersected with the band actually
      * drawn:
      *
      * - the lock evidence wins wherever it overlaps — the button was pressed and the machine then locked or
-     *   went to standby, and over that slice nothing of the kind was unlocked, so the hatch is a reading
-     *   again. It is the SAME evidence [layerRegions] draws (same clipping, same sub-minute seam filter), or
-     *   a standby flicker too short to hatch would still break a dotted band into pieces;
-     * - an ASSERTED region does NOT win. A sleep window, a screen break or a hand-added no-screen period is a
-     *   promise about every screen, and a promise cannot un-unlock the machine the button was pressed on;
+     *   went to standby, or the drawn period covers hours the machine really was asleep for, and over that
+     *   slice nothing of the kind was unlocked, so the hatch is a reading again. It is the SAME evidence
+     *   [layerRegions] draws (same clipping, same sub-minute seam filter), or a standby flicker too short to
+     *   hatch would still break a dotted band into pieces;
+     * - **only the OBSERVED window can contradict anything**, so a declaration is clipped to
+     *   `[sinceMillis, untilMillis]` (the caller's now-line) before the evidence is taken out of it. Nothing
+     *   ahead of that line has been watched, so a period drawn over the future is not yet a claim about
+     *   anything and draws solid — one straddling the line dots only its elapsed half;
+     * - an ASSERTED region does NOT win. A sleep window or a screen break is a promise about every screen,
+     *   and a promise cannot un-unlock the machine. Only lock EVIDENCE takes a slice back;
+     * - and the app's own promises are not in [declaredRegions] either: a projected sleep window or a screen
+     *   break is nobody's statement about what happened, and it wears the orange or grey outline that says
+     *   so. The hand's statements are the away spells and the drawn periods;
      * - [lockedIntervals] `null` — "no device of this kind could be asked", hence assumed locked throughout
-     *   ([layerRegions]) — dots nothing, for the same reason. That is the PEER layers' case, and a peer
-     *   carries no declaration here anyway (no channel brings one), so the dots stay this device's own.
+     *   ([layerRegions]) — dots nothing, for the same reason: nothing was read, so nothing is contradicted.
+     *   That is every PEER layer's case.
      */
     fun declaredLayerRegions(
         regions: List<TaskTimeRange>,
-        declaredAway: List<TaskTimeRange>,
+        declaredRegions: List<TaskTimeRange>,
         lockedIntervals: List<TaskTimeRange>?,
         sinceMillis: Long,
         untilMillis: Long,
     ): List<TaskTimeRange> {
-        if (regions.isEmpty() || declaredAway.isEmpty()) return emptyList()
-        // Assumed-locked leaves nothing unlocked to dot (see the docstring's third bullet).
+        if (regions.isEmpty() || declaredRegions.isEmpty() || untilMillis <= sinceMillis) return emptyList()
+        // Assumed-locked leaves nothing unlocked to dot (see the docstring's last bullet).
         val locked = lockedIntervals ?: return emptyList()
+        // Only what has been WATCHED can be contradicted: a period drawn ahead of the now-line makes no
+        // claim about an observation yet, so it is no more dotted than an ordinary locked stretch is.
+        val declaredAndObserved =
+            intersectRegions(
+                mergeOccupied(declaredRegions),
+                listOf(TaskTimeRange(sinceMillis, untilMillis)),
+            )
+        if (declaredAndObserved.isEmpty()) return emptyList()
         val unlockedAndDeclared =
-            subtractRegions(mergeOccupied(declaredAway), layerEvidence(locked, sinceMillis, untilMillis))
+            subtractRegions(declaredAndObserved, layerEvidence(locked, sinceMillis, untilMillis))
         return intersectRegions(regions, unlockedAndDeclared)
     }
 
@@ -3061,7 +3088,7 @@ object SchedulerDomain {
      * The three the README names, read off the account's [ScreenBreak] list: a label (its role among the
      * three), how long it lasts, and its own recurrence bar — which is exactly [ScreenBreak.intervalMillis],
      * already 20 min / 1 h / 2 h in [DEFAULT_SCREEN_BREAKS]. The **kind** is not read from anywhere: all
-     * three are [PeriodKinds.NO_TASK], as the README says in as many words.
+     * three are [PeriodKinds.INACTIVITY], as the README says in as many words.
      *
      * The labels the bars key on are positional, not textual — the shortest of the three is the README's
      * "20s", the longest its "15min" — so the debug fast-break override (which retimes the durations and
@@ -3370,7 +3397,7 @@ object SchedulerDomain {
      * Whether the restrictive period [band] admits [task] at all — the README's resilience, read at a panel.
      *
      * There is nothing special about a screen break here any more. `side-dev/README.md` gives all three
-     * dynamic periods the kind [PeriodKinds.NO_TASK], whose default resilience is `0`, so a break admits
+     * dynamic periods the kind [PeriodKinds.INACTIVITY], whose default resilience is `0`, so a break admits
      * nobody unless a task has deliberately been given a non-zero resilience to "no task allowed" — which is
      * the same sentence, and the same code path, as any other kind.
      */
@@ -4646,7 +4673,15 @@ object SchedulerDomain {
         // placed inside it, which is the same escape a break already has.
         val blockedRegions =
             mergeOccupied(
-                restrictions.filter { it.kind == PeriodKinds.NO_TASK || it.kind == PeriodKinds.BEFORE_BED }
+                restrictions
+                    .filter {
+                        // BOTH grey kinds. `no task allowed` was one kind doing two jobs, so a single name
+                        // here used to catch the sleep windows too; missing [PeriodKinds.SLEEP] would let the
+                        // plan schedule straight through the night.
+                        it.kind == PeriodKinds.INACTIVITY ||
+                            it.kind == PeriodKinds.SLEEP ||
+                            it.kind == PeriodKinds.BEFORE_BED
+                    }
                     .map { TaskTimeRange(it.startMillis, it.endMillis) },
             )
         val noScreenRegions =
@@ -4654,7 +4689,7 @@ object SchedulerDomain {
                 restrictions.filter { it.kind == PeriodKinds.NO_SCREEN }
                     .map { TaskTimeRange(it.startMillis, it.endMillis) },
             )
-        // PRD §15: the screen-break regions — now ordinary [PeriodKinds.NO_TASK] periods, kept as their own
+        // PRD §15: the screen-break regions — now ordinary [PeriodKinds.INACTIVITY] periods, kept as their own
         // list only because a break SUSPENDS a chunk rather than cutting it.
         val sideRegions =
             mergeOccupied(obstructingSidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
@@ -6450,15 +6485,19 @@ object SchedulerDomain {
     private const val ATTR_NO_SCREEN: String = "can be done during a no-screen period"
 
     /**
-     * `side-dev/README.md` § *Restrictive Period*: one line per resilience override, `- resilience to <kind>:
-     * <n> %`. The kind is spelled out because it is what a person reading the clipboard needs; the value is a
-     * percentage because that is what the multiplier means — 0 % is forbidden, 100 % is unaffected.
-     */
-    /**
      * PRD §5: `- category: <title>`, one line per category the task carries. One line each rather than a
      * comma-separated list, so a title holding a comma needs no second escaping rule.
      */
     private const val ATTR_CATEGORY: String = "category"
+
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: one line per resilience override, `- resilience to <kind>:
+     * <n> %`. The kind is spelled out because it is what a person reading the clipboard needs; the value is a
+     * percentage because that is what the multiplier means — 0 % is forbidden, 100 % is unaffected.
+     *
+     * It is written in the kind's own name and READ through [PeriodKinds.migrateStoredKind], so a clipboard
+     * cut before the 2026-09-12 rename still pastes onto the kind it meant.
+     */
     private const val ATTR_RESILIENCE: String = "resilience to"
     private const val ATTR_WEIGHTS: String = "priority weights"
     private const val ATTR_COLUMNS: String = "sub-list weight columns"
@@ -6934,7 +6973,12 @@ object SchedulerDomain {
                 // `- resilience to <kind>: <n> %`. The kind is part of the attribute NAME, so it is matched
                 // by prefix rather than by equality — the one attribute of the format whose name varies.
                 if (!name.startsWith("$ATTR_RESILIENCE ")) return false
-                val kind = PeriodKinds.normalize(name.removePrefix("$ATTR_RESILIENCE "))
+                // Read through [PeriodKinds.migrateStoredKind], exactly as a stored payload's resilience map
+                // is: a clipboard written before the 2026-09-12 rename spells the kind `no on-screen task`,
+                // and left un-migrated that pastes as a USER-DEFINED kind of that name — whose default is 0,
+                // so the `0 %` that made the task on-screen is read as redundant and DROPPED, and the task
+                // comes back off-screen. The one reading of a stored kind name, here too.
+                val kind = PeriodKinds.migrateStoredKind(name.removePrefix("$ATTR_RESILIENCE "))
                 if (kind.isEmpty()) return false
                 val parsed = parseSharePercent(value) ?: return false
                 val clamped = PeriodKinds.clamp(parsed)

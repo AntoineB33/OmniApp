@@ -105,7 +105,7 @@ class CalendarPanelOutlineTest {
     fun a_hand_drawn_period_and_a_hand_added_task_panel_are_user_placed() {
         val (s0, solo) = oneTask()
         var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + 3 * HOUR, NOW + 4 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW + 3 * HOUR, NOW + 4 * HOUR))
         s = SchedulerReducer.reduce(
             s,
             SchedulerIntent.AddTaskPanel(solo, "Solo", NOW + 5 * HOUR, NOW + 6 * HOUR, PanelPins(existence = true)),
@@ -161,7 +161,7 @@ class CalendarPanelOutlineTest {
         var s = SchedulerState.empty()
         val kinds = listOf(
             PeriodKinds.NO_SCREEN,
-            PeriodKinds.NO_TASK,
+            PeriodKinds.INACTIVITY,
             PeriodKinds.BEFORE_BED,
             PeriodKinds.NO_COMPUTER_UNLOCKED,
             PeriodKinds.NO_PHONE_UNLOCKED,
@@ -236,7 +236,7 @@ class CalendarPanelOutlineTest {
     @Test
     fun a_hand_drawn_period_is_pinned_in_the_box_but_never_in_the_scheduler() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW + 2 * HOUR, NOW + 3 * HOUR))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW + 2 * HOUR, NOW + 3 * HOUR))
         val periods = s.panels.filter { it.isRestrictivePeriod }
         assertEquals(2, periods.size)
         periods.forEach { period ->

@@ -504,7 +504,9 @@ are not tasks):
 - **"edit task"** — the §13 edition window, **under the name the tree cell's menu now uses too**. The tree's
   entry was renamed "edit" → "edit task" in the same change, deliberately: it is one window, and two names
   for it is how two surfaces start reading as two features. The window itself is untouched — `App` already
-  hoists it out of the tree onto the top layer, so the calendar only had to set `editTaskId`.
+  hoists it out of the tree onto the top layer, so the calendar only had to set `editTaskId`. (It stopped
+  being an entry of its own on 2026-09-12 and became the chooser's first row, `task` — see the reshape below.
+  The window, and this reasoning for reaching it from a panel at all, are unchanged.)
 - **"go to task tree"** — select the task's **first** cell. Three decisions:
   - **"First" is the tree's own reading order**, not "some cell holding the task". `SchedulerDomain.
     firstTaskOccurrence` is the one place that says so: depth-first, **each LIST visited once** (a sub-list
@@ -595,6 +597,38 @@ The rejected alternative was a flat menu listing every thing inline. It reads wo
 overlap (which is precisely the case the reshape is for), and it would have needed a second ordering table for
 the period rows — the exact drift `CALENDAR_EDIT_ROW_ORDER` exists to prevent.
 
+#### `edit task` was the last edit standing outside, and the order made it obvious — later the same day
+
+The first cut left `edit task` as its own entry beside the chooser, on the reading that the chooser's rows are
+things ON the calendar while that one is about the task BEHIND one of them. Two things were wrong with it. It
+is an **edit**, so it was an edit the user's order did not govern — the one place a "reduce every edit to
+`edit…`" rule leaked. And sitting under the panel's own row it read as being about that panel, which is the
+misreading the chooser exists to end.
+
+It is the chooser's **first** row now (`EDIT_LABEL_TASK`), and the user's order is the whole top level: **task,
+task panel, restrictive period, reminder, alarm, timer**. What stayed outside is what is not an edit —
+`go to task tree` navigates, `move` (phone) is a gesture, `add…` creates.
+
+Three consequences worth naming:
+
+- **The table stopped ranking labels and started ranking rows.** The old one was one mixed list of every label
+  either level could show, so a lone period landed at its KIND's slot. The user's order has ONE slot for a
+  period whatever its kind, so `editRowRank` asks the row (`periodKind` non-blank ⇒ the restrictive-period
+  slot) and the kind survives only as the row's NAME.
+- **So the period chooser needed its own table** (`PERIOD_CHOOSER_KIND_ORDER`) — the very thing the paragraph
+  above rejected the flat menu for needing. The difference is that these two rank **disjoint sets**: one ranks
+  the six families of thing a top-level row can name, the other ranks which KIND a row of the single family
+  that has kinds is. No row is ranked by both, so there is no question the two tables can answer differently,
+  which is the only reason the original note gave for fearing a second one.
+- **The double-click had to stop taking the first row.** It goes through the same table (so the gesture and the
+  menu can never open two windows for one thing) but through `calendarBlockEditChoice`, which drops the `task`
+  row: a double-click is a gesture ON an object, and with `task` ranked first a double-click on a panel would
+  silently have started opening the §13 window instead of the panel's editor.
+
+`sleep` is the one row outside the user's six, and it ranks after them. Its editable object is the §17
+schedule, not something the calendar lays, so it is not one of the things the order is about — and an unlisted
+row ranking last is the same rule an account-defined kind already obeys inside the period chooser.
+
 ### Periods were competing for width, which is a question they never ask
 
 `unifyNoScreenPeriods` had already noticed half of this in 2026-09-08: two overlapping periods of one
@@ -617,12 +651,16 @@ Three consequences fell out, and each answers a question the old drawing was fud
   hover tile, read for a press instead of a hover — while a marking drawn underneath would be hidden by the
   very task the period admits. Under the panels, the hit test says the right thing by itself: a press on a
   task panel moves the task panel, a press on the part no panel covers moves the period.
-- **A `no screen` period is not drawn as a box at all.** It is shown by the presence of both layer hatches,
-  which is its own definition read from the other end; it asserts both layers, so the slopes are already
-  there and a box would be a second drawing of one statement. It stays a menu target, and the user's own
-  equivalence is what the `no screen` row implements: editing it and editing the `no computer unlocked` +
-  `no phone unlocked` pair are the same edit, so the row stands for either spelling and its Save writes to
-  every record behind it.
+- **A `no screen` period was not drawn as a box at all, and that lasted until the afternoon.** The argument
+  was the usual one: it asserts both layers, so the slopes are already there and a box would be a second
+  drawing of one statement. What it missed is that the hatch and the box answer different questions — the app
+  derives hatches out of the OS lock log continuously, and the only mark that can say *a hand stated this
+  stretch* is the blue outline. So the user's own no-screen period was the single thing they could add to the
+  calendar that left no trace of having been added, and the box came back (*"the whole added
+  period/panel/reminder/alarm must be outlined in blue"*). The §17 sleep band remains the one kind that draws
+  no period box, because it really does draw itself. Either way the `no screen` row implements the user's
+  equivalence: editing it and editing the `no computer unlocked` + `no phone unlocked` pair are the same
+  edit, so the row stands for either spelling and its Save writes to every record behind it.
 
 ### The dots, and the marking beside them
 
@@ -643,9 +681,24 @@ identically. The user restored the requirement in the same words as the original
 > the oblique lines must be dotted if at least one of the corresponding devices was unlocked but the I'm
 > away button was clicked
 
-So the two coexist, and the line between them is what kind of thing made the statement: an **outline** says a
-hand placed a PERIOD; the **dots** say a device of the layer's kind was genuinely unlocked underneath the
-hatch. The three decisions above (only the line changes, evidence wins, an assertion does not) are unchanged.
+So the two coexist, and the line between them is not *who* but *what is being asked*. **Three marks, three
+questions:** the hatch says what is CLAIMED (nobody of this kind was unlocked here), the outline says a HAND
+placed it, the dots say the machine's own log DISAGREES. Independent by construction — a declared-away
+stretch has dots and no outline, a no-screen period over a locked night has an outline and no dots, one over
+an evening at the keyboard has both. The three decisions above (only the line changes, evidence wins, an
+assertion does not) are unchanged.
+
+Which then answered the requirement that arrived next, without a new mechanism:
+
+> when the user adds a "no screen" period on a past time period where some computers were unlocked, the
+> oblique lines for the "no computer unlocked" restrictive period must be dotted there
+
+A drawn period is a statement about the past exactly as an away spell is, so it goes into the same
+`declaredLayerRegions` as its second source and the dots fall out. Two things had to be added with it. One:
+the declaration is **clipped to the observed window** first, because ahead of the now-line there is no
+evidence to contradict and every projected hatch would otherwise dot. Two: the app's **own** asserted
+regions stay out — a projected sleep window and a screen break are nobody's word about what happened, and
+each already wears the outline that says which rule laid it.
 
 Inactivity got its marking back for the same reason, as **vertical lines**: three statements, three slopes
 (`/`, `\`, `|`), each saying what covers the stretch without occupying it. The 2026-09-11 deletion removed a
@@ -670,3 +723,45 @@ of unbounded stored panels, which is the mistake this ADR is largely about.
 
 The phone's contextual menu still names only the panel it was opened on — a phone has no hover bubble, and
 the touch menu was not reshaped into a section stack.
+
+
+#### The chooser was right and the hit test was wrong: a press read at the previous zoom — 2026-09-12
+
+Reported as *"I clicked on a task panel with a no phone unlocked layer, and the only option I got was add…"*.
+The chooser had just been reshaped, so the suspicion was the new row order or the layer kinds. Both were
+innocent, and reading the chooser could never have found it: **the row list was empty because the hit list
+was**, and the hit list was empty because the press was converted at the wrong scale.
+
+A probe of the account (read-only copy of the release DB, decoded through `SchedulerStateCodec`) is what
+turned it around. It said two things that redirected the search:
+
+- **there were no `no computer unlocked` / `no phone unlocked` PERIODS at all** — so the hatch in the report is
+  *evidence*, and with no phone able to answer it covers the whole displayed past (a device that cannot be
+  asked was locked). The layer was a description of where the user clicked, not a participant;
+- **there was a task record right there** (15:53→16:38 that afternoon), so a panel really was under the cursor.
+
+Which leaves the conversion. `DayColumn`'s handler is `Modifier.pointerInput(day)`, and a `pointerInput` whose
+key has not changed **keeps running the lambda it started with, captures and all**. The column had guarded the
+record lists with `rememberUpdatedState` for exactly that reason ("so the right-click hit-test closure never
+reads a stale list ... without restarting the long-lived gesture coroutine") — and then divided the press by
+`hourHeight` read directly. Zoom in without scrolling and every right-click hit-tests the hour the column had
+when the coroutine started: at 3× that is past the end of the day, where nothing is. No hits, no rows, no
+`edit…`. `millisAt` had it too, so the surviving `add…` was anchored at 23:59.
+
+Three things worth keeping from it:
+
+- **Fresh data with stale arithmetic is not half a fix.** The guarded lists made the bug *harder* to see: the
+  hit test was demonstrably reading live records, so the conversion was the last place anyone looked.
+- **The same closure class had already been caught once, locally.** `currentEdgePx` / `currentSliceHeightPx`
+  carry the comment "because the gesture coroutine outlives a zoom" — someone found it for the resize strips
+  and fixed those two values rather than the rule. `millisDelta`, the px→ms conversion behind every move and
+  resize, was still stale, so a drag after a zoom moved a panel by the wrong amount. Fixed here too.
+- **Re-keying the modifier on `hourHeight` was rejected.** It looks smaller — one key, every capture fresh —
+  but it cancels whatever gesture is in flight, and this node's drags leave state behind them (`dragPreview`
+  set, `onLockScroll(true)` never released). `rememberUpdatedState` is what the file already uses and it
+  restarts nothing.
+
+The conversion is now `pressHour` / `pressSpans`, pure and taking the scale as a parameter — which is the only
+way the thing can be tested at all without a Compose UI harness (there is none): `CalendarPressScaleTest`
+pins that one pixel is two different hours at two zooms, and that the stale one yields the empty chooser the
+user saw.

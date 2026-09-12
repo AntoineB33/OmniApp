@@ -75,26 +75,42 @@ Global rules that always apply: `CLAUDE.md`.
   START, extended in place by the 30-s active-session beat and never by a timer of its own, so a kill
   mid-away lands the episode closed at its last beat exactly as a live `device_active_session` row does.
   LOCAL-ONLY, pruned to the same 24 h window the no-screen evidence answers over.
-- **A DECLARED STRETCH IS HATCHED DOTTED WHERE A DEVICE OF THE KIND WAS REALLY UNLOCKED**
+- **A HATCH THE LOCK LOG CONTRADICTS IS DOTTED — WHOEVER SAID IT**
   (`SchedulerDomain.declaredLayerRegions` -> `CalendarRecord.layerDeclared` -> `obliqueHatch(dotted = …)`).
-  The user's words: *"the oblique lines must be dotted if at least one of the corresponding devices was
-  unlocked but the I'm away button was clicked."* A hatch says *no device of this kind was unlocked*, and
-  over a declared-away stretch that is a CLAIM, not a reading — the machine stays unlocked while the button
-  is on, which is the whole reason the button exists. The dots are the footnote saying so.
+  A hatch says *no device of this kind was unlocked*; the dots say that sentence is the USER'S WORD against
+  the machine's. Two things state it where the OS log disagrees, and they are **one rule**, in one funnel:
+  - the **"I'm away" button** (*"the oblique lines must be dotted if at least one of the corresponding
+    devices was unlocked but the I'm away button was clicked"*) — the machine stays unlocked while the
+    button is on, which is the whole reason the button exists;
+  - a **period the user DREW** asserting the layer over hours already elapsed (*"when the user adds a no
+    screen period on a past time period where some computers were unlocked, the oblique lines for the no
+    computer unlocked restrictive period must be dotted there"*) — `assertedLayerRanges`, the same value the
+    hatch itself is built from, so there is no second reading of which periods assert what.
   - The answer is **the declaration MINUS this kind's lock evidence, intersected with the band drawn**. The
-    evidence wins where it overlaps (the button survives a lock, and over that slice nothing was unlocked,
-    so the hatch is a reading again) and it is read through the same `layerEvidence` funnel `layerRegions`
+    evidence wins where it overlaps (the button survives a lock, a drawn period covers hours the machine
+    really did sleep through, and over that slice nothing was unlocked, so the hatch is a reading again) and
+    it is read through the same `layerEvidence` funnel `layerRegions`
     draws from, seam filter included — rebuilt beside it, a standby flicker too short to hatch would still
     slice a dotted band into hairlines. An **asserted** region does not win: a sleep window or a screen
     break is a promise about every screen, and a promise cannot un-unlock the machine. A `null` lock history
     ("cannot be asked", hence assumed locked) dots nothing, which is every PEER layer.
+  - **Only the OBSERVED window can contradict anything**, so a declaration is clipped to
+    `[since, until]` — the caller's now-line — before the evidence is subtracted. A period drawn over the
+    FUTURE is not yet a claim about an observation and draws solid; one straddling the line dots only its
+    elapsed half. Without that clip every projected hatch ahead of the line would dot, since there is no
+    evidence out there to contradict.
+  - The app's **own** promises are not declarations: a projected sleep window and a screen break are
+    nobody's statement about what happened, and each already wears the outline (orange, grey) that says who
+    laid it. `App.kt` hands over the away spells and the drawn periods, and nothing else.
   - **Only the LINE changes** — same slope, same spacing, same colour, same span, same bubble section. The
     both-layers identity is untouched: the dots are a drawing, not a classification.
-  - **This is NOT the outline rule in another guise, and that is why deleting it did not stick.** It was
-    removed on 2026-09-12 under *one drawing per statement* — "a stretch a hand states is a restrictive
-    period, and a period is outlined in the accent blue" — and restored the same day. An outline belongs to
-    a PERIOD; the away button lays **no period**, it is a derived declaration with no panel to outline. With
-    the dots gone there was nothing whatever to tell a declared stretch from an observed one.
+  - **THREE MARKS, THREE QUESTIONS, AND THAT IS WHY DELETING THE DOTS DID NOT STICK.** They were removed on
+    2026-09-12 under *one drawing per statement* — "a stretch a hand states is a restrictive period, and a
+    period is outlined in the accent blue" — and restored the same day. The hatch says **what is claimed**
+    (nobody of this kind was unlocked), the blue outline says **a hand placed this**, the dots say **the
+    machine's log disagrees**. They are independent: a declared-away stretch has dots and no outline (the
+    button lays no period to outline); a no-screen period over a locked night has an outline and no dots; one
+    over an evening at the keyboard has both.
   - What the removal got right and the dots do not undo: the REGION is unchanged. A declaration still rides
     the **asserted** slot (so the sub-minute seam filter can never drop one) and still merges with the
     evidence beside it into one region — the dots split the region's DRAWING, which is why the `∞` marker is
@@ -274,6 +290,12 @@ Global rules that always apply: `CLAUDE.md`.
   All three outlines are `USER_PLACED_BORDER_DP`, a step thicker than the 1 dp every other block wears: a task
   panel keeps its task's own colour inside, so a colour that only *sometimes* differed from the body would
   answer neither question the panel has to answer.
+- **WHATEVER THE USER ADDS WEARS THE BLUE, THE TWO ZERO-DURATION FAMILIES INCLUDED.** *"The whole added
+  period/panel/reminder/alarm must be outlined in blue."* A §14 reminder tag and a §18 alarm/timer ring are
+  outside `panelOutline` on purpose — a tag is a chip with its own check box, a ring is an instant and not a
+  panel at all — so each carries the accent border in its own drawing (`ReminderTag`, `AlarmMarker`), at the
+  same `USER_PLACED_BORDER_DP`. The case that makes it load-bearing is a **checked** tag: its fill goes
+  muted, and the outline is then the only thing left saying whose it is.
 - **A DERIVED INACTIVITY PERIOD IS DRAWN LIKE AN AUTHORED ONE, MINUS THE OUTLINE.** Same vertical lines, same
   label — it is the same statement — and NO outline, because the outline is the one thing that differs: it
   says who put this here, and the answer is "no one yet". The app is REPORTING an empty stretch it derived,
@@ -361,12 +383,15 @@ Global rules that always apply: `CLAUDE.md`.
   inactivity one, or a "no computer unlocked" one and a "no phone unlocked" one, are different statements (the
   last pair's overlap is a no-screen stretch, which is a reading, not a fusion). Within a fused run the survivor is the panel the user is
   holding — it keeps its id, its pins and its weight, and only its bounds grow.
-- **A "NO SCREEN" PERIOD IS NOT DRAWN AS A BOX AT ALL** (`isDrawnPeriodRecord`): it is shown by the presence
-  of BOTH layer hatches and nothing else, which is its own definition read from the other end. It asserts
-  both layers, so the two slopes are already painted over it; a box as well would be a second drawing of one
-  statement. Not being drawn is not the same as not being there — it stays a menu target
-  (`isRestrictivePeriodRecord`), and the `no screen` row of the period chooser is how it is edited and
-  binned. That row is also the user's equivalence: **editing a "no screen" period is editing both one-sided
+- **EVERY PERIOD IS DRAWN AS A BOX BUT THE SLEEP BAND** (`isDrawnPeriodRecord`), which draws itself (§17's
+  own orange box, its own label, its own carving) and would otherwise be one statement drawn twice. The
+  `no screen` kind was the second exception until 2026-09-12 — it asserts both layers, so the two slopes are
+  already painted over it — and it is **back**, because *"the whole added period/panel/reminder/alarm must be
+  outlined in blue"*: the hatch and the box do not say the same thing. A hatch is *nobody of this kind was
+  unlocked here*, which the app derives out of the OS log all day; the box's outline is *a hand stated this*,
+  which no derived hatch can ever say. With no box, the user's own no-screen period was the one thing they
+  could add to the calendar that left no trace of having been added. Its chooser row also carries the user's
+  equivalence: **editing a "no screen" period is editing both one-sided
   layer periods**, so the row stands for either spelling — a real `no on-screen task` panel, or a
   `no computer unlocked` period overlapping a `no phone unlocked` one — and its Save writes the new bounds to
   every record behind it.
@@ -377,38 +402,75 @@ Global rules that always apply: `CLAUDE.md`.
   flag), applied at once rather than at the next engine start; outside Undo/Redo like every write to the
   record. A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
   sleep band moving is not the user saying they were not working.
+- **EVERYTHING A GESTURE CLOSURE READS MUST BE READ LIVE** (`rememberUpdatedState`), the ARITHMETIC included.
+  A `Modifier.pointerInput` whose key has not changed keeps running the lambda it started with, captures and
+  all — so the day column's handler (keyed on `day`) and a block's move/resize (keyed on its entry's id and
+  bounds) both outlive every ZOOM and every change to the rest of the day. The record lists were guarded from
+  the start; the **scale** was not, and fresh lists with stale arithmetic is the same bug: a right-click
+  converted the press at the hour height the column had when its coroutine started, which after a zoom IN is
+  an hour past the end of the day — nothing there, so no rows, so the menu came up as **"add…" alone on a task
+  panel the cursor was plainly inside** (and `millisAt` anchored "add…" at 23:59 for the same reason). Now
+  `currentHourHeightPx` / `currentReminderHeightPx` / `currentRingHeightPx` / `currentAllBlocks` in the column
+  and `currentHourHeightPx` / `currentOthers` in the block, beside the `currentEdgePx` /
+  `currentSliceHeightPx` that were already there for this exact reason. The conversion itself is
+  `pressHour` / `pressSpans`, pure and taking the scale as a PARAMETER so `CalendarPressScaleTest` can say
+  that one pixel is two different hours at two zooms. **Guarding is not optional for a new read in one of
+  those closures** — and re-keying the modifier instead is not the fix: it cancels the gesture in flight,
+  leaving `dragPreview` set and the scroll lock held.
 - **THE MENU NAMES THINGS, NOT EDITORS: EVERY EDIT ENTRY IS ONE "edit…" CHOOSER** (`calendarEditChoices`,
   fed by the column's `menuHitsAt`). A point on the timeline carries as many truths as are drawn there — a
   task panel inside a restrictive period under a layer, with a reminder tag on it — and each has an editor,
-  so a menu whose "Edit" silently took the top-most block could reach only one of them. Five rules, and
+  so a menu whose "Edit" silently took the top-most block could reach only one of them. **No edit stands
+  outside it**: the last one that did, "edit task", is the chooser's first row. Seven rules, and
   `CalendarEditChoicesTest` holds them:
-  - **one order for both levels** (`CALENDAR_EDIT_ROW_ORDER`, the user's list): task panel, restrictive
-    period, inactivity, reminder, alarm, timer, no computer unlocked, no phone unlocked, no screen, sleep,
-    before bed. It ranks LABELS, so both choosers sort through the same table and cannot disagree about
-    where `before bed` goes; a kind the account defined is not in it and ranks last;
+  - **the order is the user's list** (`CALENDAR_EDIT_ROW_ORDER`): **task, task panel, restrictive period,
+    reminder, alarm, timer**. It ranks what a row **IS**, not what it reads (`editRowRank` is asked the row) —
+    which is what lets a lone period wear its KIND's name and still sit in the restrictive-period slot;
+  - **`sleep` is the one row outside that list, and ranks last.** Its editable object is the §17 schedule
+    rather than anything the calendar lays, so it is not one of the six things the user ordered;
+  - **the period chooser has its own table** (`PERIOD_CHOOSER_KIND_ORDER`): inactivity, sleep, no computer
+    unlocked, no phone unlocked, no screen, before bed, then the account's kinds in hit order. Two tables, and not the
+    drift ADR 0002 feared, because **they rank disjoint sets** — the first ranks the six FAMILIES a top-level
+    row can name, the second ranks WHICH KIND inside the one family that has kinds, so no row is ranked by
+    both and there is no question they can answer differently;
   - **a chooser of one is not a chooser**, at either level: one thing under the cursor replaces "edit…" in
     the menu itself, and a lone restrictive period is named by its KIND rather than by a generic
     "restrictive period" row that would open a chooser of one;
-  - **the row names the thing in the user's words** (`periodChoiceLabel`), which is deliberately not
-    `PeriodKinds.periodTitle`: `no task allowed` reads "inactivity" and `no on-screen task` reads "no
-    screen". An account-defined kind is its own row — it was already named;
-  - **a row is routed to the editor that already OWNS what it names** (`App.kt`'s `onEditChoice`): §17's
-    schedule for `sleep`, §18's window for `alarm`/`timer`, the one period editor for every kind, §14's for
-    a reminder, the calendar edit window for a task panel. The menu never names a window;
-  - **the double-click goes through the same table** — one block is exactly the one-row case — so a
-    double-click and a chooser row can never open two different windows for one thing.
+  - **the row names the thing in the user's words, and the KIND *is* those words** — a period row is
+    `restrictiveKind` itself, with no label table in between. The 2026-09-12 rename is what removed the
+    translation: `no task allowed` became `inactivity` (and `sleep`), `no on-screen task` became `no screen`,
+    so the stored name is the menu row, and the `periodChoiceLabel` that used to map one to the other was
+    deleted rather than kept as an identity. An account-defined kind is its own row — it was already named.
+    `PeriodKinds.periodTitle` stays a separate answer, differing by CASE alone ("Inactivity"), because it is
+    the title a period CARRIES on the grid, where it heads a box rather than a menu line;
+  - **every name a kind has must RESOLVE BACK to it** (`periodKindNamed`): its own word, its grid title, and
+    the pre-rename spellings a stored payload may still hold (`PeriodKinds.migrateStoredKind`). That is what
+    stops the add-window's field offering to CREATE a second kind differing from a built-in only in spelling;
+    `PeriodKindNamingTest` holds both directions;
+  - **a row is routed to the editor that already OWNS what it names** (`App.kt`'s `onEditChoice`): §13's
+    window for `task`, §17's schedule for `sleep`, §18's window for `alarm`/`timer`, the one period editor
+    for every kind, §14's for a reminder, the calendar edit window for a task panel. The menu never names a
+    window;
+  - **the double-click goes through the same table, minus the `task` row** (`calendarBlockEditChoice`): one
+    block is the one-row case, so a double-click and a chooser row can never open two different windows for
+    one thing — but the gesture is ON the block, and the task behind a panel is not what was double-clicked.
+- **THE `task` ROW IS ONE PER TASK, NOT ONE PER PANEL.** Two panels of one task stacked at a point are
+  occurrences of that task and the row edits the task, so two rows would offer the identical window; panels of
+  DIFFERENT tasks are two answers to "which task?" and stay two rows. A panel whose title names no task grows
+  no `task` row at all — there is nothing to open.
 - **"Remove" IS GONE: DELETING TRAVELS WITH EDITING.** Each editor carries a bin (`EditorBinButton`), absent
   where there is nothing stored to delete — a derived band, or a window that is still adding. A menu entry
   that deleted whatever happened to be top-most had exactly the defect that turned "Edit" into the chooser,
   and one funnel for "get rid of this" is the point: a thing is binned from the window that names it.
-- **A task panel's menu reaches the TASK as well as the panel.** The chooser's rows are about things ON the
-  calendar; **"edit task"** opens the §13 window and **"go to task tree"** selects the task's first
-  cell. Both are offered on a task panel only — a period, a reminder, an alarm, a sleep band, a screen break
-  and a layer region are not tasks. Two things they must not become: **"edit task" is the tree cell menu's
-  own entry, under its own name** — one window for the task, so the tree's entry was renamed "edit" → "edit
-  task" rather than the calendar inventing a second name for it; and **"go to task tree" goes through
-  `RevealCell`**, the find bar's primitive (expand the way in as ONE unit, then select), never a fresh
-  selection path.
+- **A task panel's menu reaches the TASK as well as the panel** — the `task` row opens the §13 window, and
+  **"go to task tree"** selects the task's first cell. Both are offered on a task panel only: a period, a
+  reminder, an alarm, a sleep band, a screen break and a layer region are not tasks. **"go to task tree" is
+  the one entry left beside the chooser that concerns a task, and it is there because it is not an EDIT** — it
+  navigates, as "move" (phone) is a gesture and "add…" creates. Two things they must not become: **the §13
+  window is the tree cell menu's own, under its own name** — one window for the task, so the tree's entry was
+  renamed "edit" → "edit task" rather than the calendar growing a second way in (`App.kt` sets `editTaskId`
+  from the `task` row and from nowhere else); and **"go to task tree" goes through `RevealCell`**, the find
+  bar's primitive (expand the way in as ONE unit, then select), never a fresh selection path.
 - **`firstTaskOccurrence` is where "the first occurrence" is decided**, and `null` is a real answer, not an
   error path — a panel outlives the cell that laid it (panels are not per-tree), so it may name a detached
   parent, a task §4's blank title deleted, or a task another tree owns. The walk is `TaskTreeSearch.matches`'

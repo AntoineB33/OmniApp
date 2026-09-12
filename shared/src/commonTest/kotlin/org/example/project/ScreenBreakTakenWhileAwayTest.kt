@@ -41,7 +41,7 @@ class ScreenBreakTakenWhileAwayTest {
     private val MIN = 60_000L
     private val HOUR = 3_600_000L
 
-    /** One on-screen task, so a "no on-screen task" period is a stretch nobody can run in. */
+    /** One on-screen task, so a PeriodKinds.NO_SCREEN period is a stretch nobody can run in. */
     private val onScreenOnly =
         listOf(PlanTask(TaskId("task/user/0"), 1.0, 0L, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
 

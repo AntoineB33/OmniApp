@@ -65,7 +65,7 @@ class BeforeBedPeriodTest {
         // The user is expected to be AT a screen in that hour (PRD §17 lets the screen breaks fall in it), so
         // the wind-down absorbs a dynamic period like any other emptiness but never bars the breaks after it.
         assertFalse(PeriodKinds.coversNoScreen(PeriodKinds.BEFORE_BED))
-        assertTrue(PeriodKinds.coversNoScreen(PeriodKinds.NO_TASK))
+        assertTrue(PeriodKinds.coversNoScreen(PeriodKinds.INACTIVITY))
         assertTrue(PeriodKinds.coversNoScreen(PeriodKinds.NO_SCREEN))
     }
 

@@ -103,7 +103,7 @@ class PoseWindowRulesTest {
             listOf(
                 org.example.project.scheduler.domain.RestrictivePeriod(
                     NOW, NOW + 12 * HOUR,
-                    org.example.project.scheduler.domain.PeriodKinds.NO_TASK,
+                    org.example.project.scheduler.domain.PeriodKinds.INACTIVITY,
                     "Inactivity",
                 ),
             )

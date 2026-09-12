@@ -69,7 +69,7 @@ class LayerPeriodKindTest {
     fun a_no_screen_period_asserts_both_layers_and_a_grey_one_asserts_neither() {
         val panels = listOf(
             period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
-            period(PeriodKinds.NO_TASK, NOW + 2 * HOUR, NOW + 3 * HOUR),
+            period(PeriodKinds.INACTIVITY, NOW + 2 * HOUR, NOW + 3 * HOUR),
             period(PeriodKinds.BEFORE_BED, NOW + 4 * HOUR, NOW + 5 * HOUR),
         )
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
@@ -222,7 +222,7 @@ class LayerPeriodKindTest {
         assertEquals(1.0, PeriodKinds.defaultResilience(PeriodKinds.NO_PHONE_UNLOCKED))
         assertEquals(1.0, PeriodKinds.defaultResilience(PeriodKinds.NO_SCREEN))
         // Everything that speaks about the TIMELINE rather than about a screen still refuses everybody.
-        assertEquals(0.0, PeriodKinds.defaultResilience(PeriodKinds.NO_TASK))
+        assertEquals(0.0, PeriodKinds.defaultResilience(PeriodKinds.INACTIVITY))
         assertEquals(0.0, PeriodKinds.defaultResilience(PeriodKinds.BEFORE_BED))
         assertEquals(0.0, PeriodKinds.defaultResilience("deep focus"))
     }

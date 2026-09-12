@@ -44,8 +44,8 @@ class TaskResilienceTest {
         // period adds it to every task with the default value 0" means.
         val (s, solo) = stateWithOneTask()
         assertEquals(0.0, s.tasks[solo]!!.resilienceFor("deep focus"))
-        assertEquals(0.0, s.tasks[solo]!!.resilienceFor(PeriodKinds.NO_TASK))
-        // …except "no on-screen task", whose default has to be the other answer: an ON-screen task is
+        assertEquals(0.0, s.tasks[solo]!!.resilienceFor(PeriodKinds.INACTIVITY))
+        // …except PeriodKinds.NO_SCREEN, whose default has to be the other answer: an ON-screen task is
         // exactly a 0 against it, so it is the off-screen one that carries an override.
         assertEquals(1.0, PeriodKinds.defaultResilience(PeriodKinds.NO_SCREEN))
     }
@@ -135,7 +135,9 @@ class TaskResilienceTest {
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep focus"))
         assertEquals(
             listOf(
-                PeriodKinds.NO_TASK,
+                PeriodKinds.INACTIVITY,
+                // The other half of the README's one grey kind, split out on 2026-09-12.
+                PeriodKinds.SLEEP,
                 PeriodKinds.NO_SCREEN,
                 PeriodKinds.BEFORE_BED,
                 // PRD §8's two layers, as kinds the user can DRAW rather than only read off a lock history.
@@ -157,7 +159,7 @@ class TaskResilienceTest {
     fun no_task_allowed_is_the_one_kind_with_no_resilience_to_edit() {
         val (s0, _) = stateWithOneTask()
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep focus"))
-        assertFalse(PeriodKinds.isResilienceEditable(PeriodKinds.NO_TASK))
+        assertFalse(PeriodKinds.isResilienceEditable(PeriodKinds.INACTIVITY))
         assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.NO_SCREEN))
         assertTrue(PeriodKinds.isResilienceEditable("deep focus"))
         // PRD §17's wind-down is an ordinary kind in this respect: "I may still do this in the hour before
@@ -184,8 +186,8 @@ class TaskResilienceTest {
     @Test
     fun a_no_task_allowed_override_already_stored_is_still_honoured() {
         val (s0, solo) = stateWithOneTask()
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_TASK, 0.5))
-        assertEquals(0.5, s.tasks[solo]!!.resilienceFor(PeriodKinds.NO_TASK))
+        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.INACTIVITY, 0.5))
+        assertEquals(0.5, s.tasks[solo]!!.resilienceFor(PeriodKinds.INACTIVITY))
     }
 
     @Test
@@ -232,7 +234,7 @@ class TaskResilienceTest {
     @Test
     fun codec_migrates_the_pre_resilience_on_screen_flag() {
         // CLAUDE.md persisted-DB rule: a payload written by the previous shape must still load. An
-        // on-screen task is exactly a 0 against "no on-screen task".
+        // on-screen task is exactly a 0 against PeriodKinds.NO_SCREEN.
         val json =
             """
             {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
@@ -290,8 +292,12 @@ class TaskResilienceTest {
         assertEquals(1.0, task.resilienceFor("noisy"))
         // `quiet: 0` IS the default for a user-defined kind, so it is redundant and is dropped…
         assertFalse("quiet" in task.resilience)
-        // …while `no on-screen task: 0` is an override, that kind's default being 1.
+        // …while `no on-screen task: 0` is an override, that kind's default being 1 — and it is kept under
+        // the kind's NAME rather than the spelling the payload used, which is the migration a task's
+        // on-screen answer hangs on ([PeriodKinds.migrateStoredKind]).
         assertEquals(0.0, task.resilienceFor(PeriodKinds.NO_SCREEN))
         assertTrue(PeriodKinds.NO_SCREEN in task.resilience)
+        assertTrue("no on-screen task" !in task.resilience)
+        assertTrue(task.onScreen)
     }
 }

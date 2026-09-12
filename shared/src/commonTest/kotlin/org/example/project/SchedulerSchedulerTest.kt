@@ -502,7 +502,7 @@ class SchedulerSchedulerTest {
             breaks, pose5.title, now,
             basePeriods = listOf(
                 org.example.project.scheduler.domain.RestrictivePeriod(
-                    now, restEnd, org.example.project.scheduler.domain.PeriodKinds.NO_TASK, "away",
+                    now, restEnd, org.example.project.scheduler.domain.PeriodKinds.INACTIVITY, "away",
                 ),
             ),
         )

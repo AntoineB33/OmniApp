@@ -125,7 +125,7 @@ class DynamicPeriodsTest {
         // What it bars is what comes AFTER it. The one occurrence the stretch TAKES is not after it — the
         // requirements' pull-back puts that one at the stretch's own start ([DynamicPeriods.chainTaking]) —
         // so the bars are measured from the stretch's end over the periods that follow.
-        val quiet = RestrictivePeriod(NOW, NOW + 30 * MIN, PeriodKinds.NO_TASK, "Inactivity")
+        val quiet = RestrictivePeriod(NOW, NOW + 30 * MIN, PeriodKinds.INACTIVITY, "Inactivity")
         val panels = place(periods = listOf(quiet))
         assertEquals(
             0L,
@@ -197,7 +197,7 @@ class DynamicPeriodsTest {
         )
         val periods = DynamicPeriods.periods(base, specs, 0L, 6 * HOUR, tpMillis = 0L)
         assertTrue(periods.isNotEmpty())
-        assertTrue(periods.all { it.kind == PeriodKinds.NO_TASK }, "every dynamic period is 'no task allowed'")
+        assertTrue(periods.all { it.kind == PeriodKinds.INACTIVITY }, "every dynamic period is 'no task allowed'")
     }
 
     // ----- the two t_p modes --------------------------------------------------------------------
@@ -307,7 +307,7 @@ class DynamicPeriodsTest {
         assertTrue(!cover.label.equals("Away", ignoreCase = true), "the scheduler period is no-screen logic, not an Away band label")
         // The pose itself elapsed where the bars put it: mode 3 is the one mode the line walks through one in.
         assertTrue(
-            out.any { it.kind == PeriodKinds.NO_TASK && it.startMillis == 2 * HOUR },
+            out.any { it.kind == PeriodKinds.INACTIVITY && it.startMillis == 2 * HOUR },
             "mode 3: the pose is taken where it fell due, not dragged: $out",
         )
     }
@@ -325,7 +325,7 @@ class DynamicPeriodsTest {
         val onBreak =
             DynamicPeriods.periods(base, specs, 0L, 6 * HOUR, tpMillis = tp, mode = DynamicPeriods.MODE_ON_BREAK)
         assertEquals(onBreak, away, "the two away modes place the three identically")
-        val pose = away.filter { it.kind == PeriodKinds.NO_TASK }.minBy { it.startMillis }
+        val pose = away.filter { it.kind == PeriodKinds.INACTIVITY }.minBy { it.startMillis }
         assertEquals(2 * HOUR, pose.startMillis, "the pose elapsed where the bars put it; nothing dragged it")
         assertTrue(!pose.openStart, "…so it is an ordinary closed period, not the dragged (t_p, t_p + d]")
         val cover = away.single { it.kind == PeriodKinds.NO_SCREEN }
@@ -620,7 +620,7 @@ class DynamicPeriodsTest {
         assertEquals(1, periods.size)
         assertEquals(PeriodKinds.NO_SCREEN, periods.single().kind)
 
-        // An ordinary on-screen task: a 0 against "no on-screen task" is what "on screen" IS.
+        // An ordinary on-screen task: a 0 against PeriodKinds.NO_SCREEN is what "on screen" IS.
         val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
         val barred = place(periods = periods, tasks = onScreen)
         val offending = starts(barred, pose5).filter { NOW + it >= restEnd && NOW + it < restEnd + HOUR }
@@ -635,7 +635,7 @@ class DynamicPeriodsTest {
     fun an_observed_pause_is_no_on_screen_task_so_an_off_screen_task_keeps_it_from_being_a_rest() {
         // The evidence says nobody was at a SCREEN, and that is all it says - which is why the period's kind
         // is `no on-screen task` and not `no task allowed`. The README's clause takes all three of its parts:
-        // *covered by "no on-screen task"* **without any task**. A task that may run off a screen could have
+        // *covered by PeriodKinds.NO_SCREEN* **without any task**. A task that may run off a screen could have
         // been working straight through it, so the stretch is correctly not a rest on such an account.
         val baselineFirst5 = starts(place(), pose5).minOrNull()
         assertTrue(baselineFirst5 != null)
@@ -696,7 +696,7 @@ class DynamicPeriodsTest {
             TaskPanel(
                 id = "p1", taskId = null, title = "Inactivity",
                 startEpochMillis = NOW - 4 * HOUR, endEpochMillis = NOW - 3 * HOUR,
-                inactivity = true, periodKind = PeriodKinds.NO_TASK,
+                inactivity = true, periodKind = PeriodKinds.INACTIVITY,
             )
         val base =
             SchedulerDomain.dynamicPeriodBase(
@@ -733,7 +733,7 @@ class DynamicPeriodsTest {
         // The scenario is the user's: a rest half an hour back has the 5 min and the 15 min barred, so the
         // 20 s is the only one in play, and one falls due inside the next twenty minutes.
         val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
-        val earlierRest = RestrictivePeriod(NOW - 50 * MIN, NOW - 30 * MIN, PeriodKinds.NO_TASK, "Inactivity")
+        val earlierRest = RestrictivePeriod(NOW - 50 * MIN, NOW - 30 * MIN, PeriodKinds.INACTIVITY, "Inactivity")
         assertTrue(
             starts(place(periods = listOf(earlierRest), tasks = onScreen), lookAway)
                 .any { it in 0 until DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS },
@@ -765,8 +765,8 @@ class DynamicPeriodsTest {
         // the README bars nothing after it. Read as "a short `no task allowed` period" instead of as the mark
         // it is, the fix above would have quietly changed what a hand-drawn period means.
         val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
-        val earlierRest = RestrictivePeriod(NOW - 50 * MIN, NOW - 30 * MIN, PeriodKinds.NO_TASK, "Inactivity")
-        val drawn = RestrictivePeriod(NOW - 20 * SEC, NOW, PeriodKinds.NO_TASK, "Inactivity")
+        val earlierRest = RestrictivePeriod(NOW - 50 * MIN, NOW - 30 * MIN, PeriodKinds.INACTIVITY, "Inactivity")
+        val drawn = RestrictivePeriod(NOW - 20 * SEC, NOW, PeriodKinds.INACTIVITY, "Inactivity")
         assertEquals(
             starts(place(periods = listOf(earlierRest), tasks = onScreen), lookAway),
             starts(place(periods = listOf(earlierRest, drawn), tasks = onScreen), lookAway),

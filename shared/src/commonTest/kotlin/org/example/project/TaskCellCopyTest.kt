@@ -249,6 +249,34 @@ class TaskCellCopyTest {
         assertEquals(true, dst.tasks[dst.cells[target]!!.taskId!!]!!.onScreen)
     }
 
+    /**
+     * A clipboard cut before the 2026-09-12 rename spells the kind `no on-screen task`, and the paste must
+     * land it on [PeriodKinds.NO_SCREEN] — the same migration a stored payload's resilience map gets
+     * ([PeriodKinds.migrateStoredKind]), because the clipboard is a stored payload that happens to live in
+     * the OS.
+     *
+     * Read as its literal self it would be a USER-DEFINED kind of that name, whose default is `0` — so the
+     * `0 %` that makes the task ON-SCREEN reads as redundant, is dropped, and the task pastes back
+     * off-screen: free to be scheduled inside the very no-screen periods it was being kept out of. That is
+     * the failure the codec's own migration exists to prevent, arriving by the other door.
+     */
+    @Test
+    fun a_clipboard_naming_a_kind_by_its_old_spelling_pastes_onto_that_kind() {
+        val sep = SchedulerDomain.COPY_SECTION_SEPARATOR
+        val old = "P" +
+            "\n\t- resilience to no on-screen task: 0 %" +
+            "\n\t- minimum time: 45 min" +
+            "\n$sep\nP\t45"
+        val p = SchedulerDomain.parseTreeText(old)!!.single()
+        assertEquals(mapOf(PeriodKinds.NO_SCREEN to 0.0), p.resilience)
+        assertTrue("no on-screen task" !in p.resilience)
+
+        val (dst, target) = pasteIntoFreshTree(old)
+        assertEquals(true, dst.tasks[dst.cells[target]!!.taskId!!]!!.onScreen)
+        // And the stale spelling mints no kind of its own on the way in.
+        assertTrue(dst.periodKinds.none { it == "no on-screen task" })
+    }
+
     @Test
     fun a_payload_written_before_these_fields_existed_still_pastes() {
         // The pre-§13 shape: tree lines, one separator, the min-time appendix, and nothing after it.
@@ -261,7 +289,7 @@ class TaskCellCopyTest {
         assertEquals(90, p.children.single().minMinutes)
         // The fields the payload says nothing about land on their defaults.
         // A pre-1.6.0 payload says nothing about resilience, so the node carries the fresh-task default:
-        // on screen, i.e. a 0 against "no on-screen task".
+        // on screen, i.e. a 0 against PeriodKinds.NO_SCREEN.
         assertEquals(mapOf(PeriodKinds.NO_SCREEN to 0.0), p.resilience)
         assertTrue(p.scheduleUnit.isEmpty() && p.text.isEmpty())
 
@@ -491,7 +519,7 @@ class TaskCellCopyTest {
         assertTrue(!text.contains("- id:"), text)
         assertTrue(!text.contains("- text:"), text)
         // Everything else the edit window holds still travels.
-        assertTrue(text.contains("- resilience to no on-screen task: 100 %"), text)
+        assertTrue(text.contains("- resilience to ${PeriodKinds.NO_SCREEN}: 100 %"), text)
         assertTrue(text.contains("- schedule unit:"), text)
 
         val node = SchedulerDomain.parseTreeText(text)!!.single()

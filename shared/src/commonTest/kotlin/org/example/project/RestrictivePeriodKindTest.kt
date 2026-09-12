@@ -122,12 +122,12 @@ class RestrictivePeriodKindTest {
 
         val grey =
             SchedulerReducer
-                .reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_TASK, NOW, NOW + HOUR))
+                .reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, NOW, NOW + HOUR))
                 .panels.single { it.isRestrictivePeriod }
         assertEquals("Inactivity", grey.title)
         assertTrue(grey.inactivity)
         assertFalse(grey.noScreen)
-        assertEquals(PeriodKinds.NO_TASK, grey.restrictiveKind)
+        assertEquals(PeriodKinds.INACTIVITY, grey.restrictiveKind)
     }
 
     @Test
@@ -320,8 +320,51 @@ class RestrictivePeriodKindTest {
         val decoded = SchedulerStateCodec.decode(json)
         assertNotNull(decoded)
         assertEquals(PeriodKinds.NO_SCREEN, decoded.panels.single { it.id == "panel/0" }.restrictiveKind)
-        assertEquals(PeriodKinds.NO_TASK, decoded.panels.single { it.id == "panel/1" }.restrictiveKind)
+        assertEquals(PeriodKinds.INACTIVITY, decoded.panels.single { it.id == "panel/1" }.restrictiveKind)
         assertEquals("", decoded.panels.single { it.id == "panel/2" }.restrictiveKind)
+    }
+
+    /**
+     * Persisted-DB compatibility for the 2026-09-12 RENAME: the kinds became the words the user says
+     * (`no task allowed` → `inactivity` and `sleep`, `no on-screen task` → `no screen`), so a payload
+     * written before it holds names nothing asks about any more.
+     *
+     * Two paths, and each fails differently if missed. A PANEL keeping its old spelling would be a period of
+     * an account-defined kind nobody defined — its own name, drawn and ranked as a stranger. And the
+     * ACCOUNT'S KIND LIST is worse: the old name passes `isUserDefined` (it is not a built-in under that
+     * spelling any more), so the account would acquire a user-defined kind DUPLICATING a built-in, offered
+     * twice in every picker.
+     *
+     * Which of the two kinds the README's one grey name became is read off the panel's own `sleep` flag —
+     * the thing §17 has always marked its windows with — because the name alone cannot say.
+     */
+    @Test
+    fun a_payload_written_before_the_rename_decodes_onto_the_kinds_new_names() {
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[],
+             "periodKinds":["no on-screen task","no task allowed","deep work"],
+             "panels":[
+               {"id":"panel/0","title":"No screen","start":0,"end":3600000,
+                "periodKind":"no on-screen task"},
+               {"id":"panel/1","title":"Inactivity","start":7200000,"end":10800000,
+                "periodKind":"no task allowed"},
+               {"id":"panel/2","title":"Sleep","start":14400000,"end":18000000,
+                "periodKind":"no task allowed","sleep":true}
+             ]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        assertEquals(PeriodKinds.NO_SCREEN, decoded.panels.single { it.id == "panel/0" }.restrictiveKind)
+        assertEquals(PeriodKinds.INACTIVITY, decoded.panels.single { it.id == "panel/1" }.restrictiveKind)
+        // The same stored name, told apart by the flag §17 marks its own windows with.
+        assertEquals(PeriodKinds.SLEEP, decoded.panels.single { it.id == "panel/2" }.restrictiveKind)
+        // The two legacy names were built-ins: they leave the account's own list, and only the kind the
+        // user really defined stays in it — no built-in is duplicated under an old spelling.
+        assertEquals(listOf("deep work"), decoded.periodKinds)
+        assertEquals(PeriodKinds.BUILT_IN + "deep work", decoded.allPeriodKinds)
     }
 
     @Test
@@ -345,14 +388,14 @@ class RestrictivePeriodKindTest {
     @Test
     fun a_kinds_title_and_legacy_flags_come_from_one_place() {
         assertEquals("No screen", PeriodKinds.periodTitle(PeriodKinds.NO_SCREEN))
-        assertEquals("Inactivity", PeriodKinds.periodTitle(PeriodKinds.NO_TASK))
+        assertEquals("Inactivity", PeriodKinds.periodTitle(PeriodKinds.INACTIVITY))
         assertEquals("Before bed", PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED))
         assertEquals(SchedulerDomain.BEFORE_BED_PANEL_TITLE, PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED))
         assertEquals(DEEP, PeriodKinds.periodTitle(DEEP))
 
         assertTrue(PeriodKinds.legacyNoScreenFlag(PeriodKinds.NO_SCREEN))
-        assertFalse(PeriodKinds.legacyNoScreenFlag(PeriodKinds.NO_TASK))
-        assertTrue(PeriodKinds.legacyInactivityFlag(PeriodKinds.NO_TASK))
+        assertFalse(PeriodKinds.legacyNoScreenFlag(PeriodKinds.INACTIVITY))
+        assertTrue(PeriodKinds.legacyInactivityFlag(PeriodKinds.INACTIVITY))
         assertFalse(PeriodKinds.legacyInactivityFlag(PeriodKinds.BEFORE_BED))
         assertFalse(PeriodKinds.legacyInactivityFlag(DEEP))
         assertFalse(PeriodKinds.legacyNoScreenFlag(DEEP))
