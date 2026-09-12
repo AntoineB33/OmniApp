@@ -475,15 +475,20 @@ rows, and re-derive right after each reconcile.
 - [ ] **A declared absence hatches its layer (PRD §8).** With the machine **unlocked**, press **I'm away**
       and leave it a couple of minutes → that stretch behind the now-line carries **both** oblique-line
       layers (it is a mode-3 period, so it is a no-screen period), and the hover bubble names both.
-  - [ ] The lines are **SOLID**, the same as a locked stretch's. The dotted variant is gone (2026-09-12):
-        what says a stretch was stated by a hand rather than read off a lock history is a restrictive
-        period's **blue outline**, not a second texture on one layer.
+  - [ ] The lines of **this device's own** layer are **DOTTED** over that stretch — the machine was really
+        unlocked and only the button says otherwise. The peer layer's lines stay solid (a device nobody can
+        ask is assumed locked, not observed unlocked). A period's **blue outline** is the other half of
+        "who said this" and answers for hand-drawn PERIODS; the away button lays none, which is why it needs
+        the dots.
   - [ ] **Let a real lock happen inside it.** Leave the button on and let the screen turn off / the machine
         reach standby for a few minutes (on a Modern-Standby machine `Win+L` is what the power log records),
         then unlock — which clears the button. Relaunch if the layer has not refreshed (the OS scan runs at
-        launch on a coarse bucket): the band is drawn as **one** hatch across the whole stretch, with no
-        seam where the lock began. Nothing else moves — no panel is displaced and the band's span is
-        unchanged.
+        launch on a coarse bucket): the band is **one region** across the whole stretch, its span unchanged
+        and no panel displaced — but its lines go **solid** exactly where the lock was and dotted either
+        side of it, because over the lock nothing of the kind was unlocked and the hatch is a reading again.
+  - [ ] **The episode survives a restart** (schema v13). Press **I'm away**, wait a minute, press it again,
+        then close and relaunch the app: the stretch keeps its hatch and its dots. Before 2026-09-12 the
+        episodes lived in memory only and every restart erased them — a redeploy included.
 - [ ] **Peer coverage removes the band.** Desktop and phone signed into account 1, phone foregrounded
       while the desktop is closed → after each side has reconciled (make an edit on each, or press Sync to
       force it), the desktop-closed window shows **no** band (the phone covered it). A window where **both**

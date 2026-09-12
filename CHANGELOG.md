@@ -11,6 +11,89 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The declared-away hatch is DOTTED again — 2026-09-12
+
+→ `shared` (`scheduler/domain/SchedulerDomain.kt`, `ui/CalendarUi.kt`, `App.kt`);
+`docs/invariants/calendar.md`, `docs/adr/0002-calendar-layers-and-grey.md`, `docs/MANUAL_TESTING.md`.
+Tests: `CalendarLayerTest`'s five dotted-hatch tests restored, plus one pinning that the REGION is still
+unsplit. **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema
+migration.**
+
+Asked for as: *"now the oblique lines must be dotted if at least one of the corresponding devices was
+unlocked but the I'm away button was clicked"* — the same requirement `declaredLayerRegions` was written
+for on 2026-09-05, reinstated hours after that morning's commit deleted it.
+
+- **The deletion's reasoning was right but too broad.** *One drawing per statement* said the dots were a
+  second answer to "who said this", the first being a period's blue outline. That holds for everything an
+  outline can reach — and the **"I'm away" button lays no period.** It is a derived declaration going
+  straight into the layer's asserted slot, so there is no panel to outline, and with the dots gone a
+  declared stretch and an observed one drew identically.
+- **Restored unchanged**: `declaredLayerRegions` (declaration MINUS this kind's lock evidence, intersected
+  with the band drawn), `CalendarRecord.layerDeclared`, `PlacedRecord.layerDeclared`, and
+  `obliqueHatch(dotted = …)`'s dash effect. Evidence wins where it overlaps, an asserted region does not,
+  a `null` lock history dots nothing (every peer layer).
+- **The REGION is still unsplit**, which is what the deletion got right: a declaration still rides the
+  asserted slot and still merges with the evidence beside it into one region. The dots split the region's
+  *drawing*, which is why the `∞` marker is still asked of the merged list.
+
+### "Task to do now" is no longer announced at an away line — 2026-09-12
+
+→ `shared` (`scheduler/domain/SchedulerDomain.kt`, `scheduler/engine/SchedulerEngine.kt`);
+`docs/invariants/screen-breaks.md`. Tests: new `CurrentTaskAtLineModeTest`; `AwayVersusLockedCueTest`
+rebuilt as a true pair (an off-screen task IS still announced to an away device, an on-screen one is not).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"it is impossible for a task to be scheduled between these two notifications, as it is a no
+screen period and no task has a resilience to no screen periods. However, at 15:08:40, the app did a
+notification for a new task to do"* — away since 14:54:15, back at 15:16:26 (account 3).
+
+- **`SchedulerDomain.currentPanel` did not read the mode.** `docs/scheduler_requirements.md` § *$now line$
+  3 modes* binds the line at every instant it is in mode 2 or 3; `DynamicPeriods.awayCover` expresses that
+  to the fill as one millisecond at the `t_p` the fill was built for, and time passing never re-plans — so
+  the line walked out of it into the task the plan had put after it, and the cue read that stored panel.
+- **The mode is now applied where the question is asked**: in either away mode an on-screen task is not at
+  the line. Who survives is `Task.onScreen`, the SAME predicate `clipPanelsForObservedNoScreen` already cut
+  the display with and `clipRecordsForObservedNoScreen` already refused to bank a record with — the cue was
+  the third reading of one rule and the only one never written, which is why the calendar drew no task over
+  the stretch, the §9 bank stored none, and the app still spoke one.
+- **This is not the away flag silencing the device.** A task resilient to `no on-screen task` is still
+  scheduled at an away line and still announced — the case the button exists for. A LOCK is the other
+  thing, and still gates the output outright.
+- **Suppressed, not spent**: `lastNotifiedTaskId` is untouched (the diagnostics line dedupes on its own
+  `lastAwaySuppressedTaskId`), so coming back — which flips the mode and re-plans — announces the task the
+  user came back to.
+- The cue sweep now takes **one** reading of `tpModeNow` for the whole pass, shared by the break crossings
+  and the task cue, so the two can never disagree about the same instant.
+
+### An "I'm away" episode survives a restart (schema v13) — 2026-09-12
+
+→ `shared` (`scheduler/persistence/DeclaredAwaySpan.kt` (new), `SqlDelightSchedulerStore.kt`,
+`sqldelight/.../Scheduler.sq` + `12.sqm`, `scheduler/engine/SchedulerEngine.kt`, `App.kt`);
+`androidApp/SchedulerHolder.kt`; `docs/invariants/calendar.md`, `docs/invariants/screen-breaks.md`.
+Tests: new `DeclaredAwayPersistenceTest`; `SchedulerStoreTest` gains a round-trip, a
+"local-only, does not touch the snapshot" and the v12→v13 migration test.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy. SQLite schema
+migration v12 → v13, applied on first open.**
+
+Reported as: *"I don't see a blue outlined no screen period right before now line"* (account 3), after an
+away spell from 14:21:08 to 14:38:23 that the app had drawn correctly while it ran — the diagnostics'
+no-screen evidence grew with it (11 spans/886 min at 14:03, 13/899 at 14:34) and collapsed back the moment
+the 14:38 redeploy restarted the process (10/880 at 14:39).
+
+- **`SchedulerEngine._declaredAwaySpans` was memory-only**, and the "I'm away" button is the ONE no-screen
+  fact the OS can never re-supply: the machine stays UNLOCKED while it is on, so no Windows session log will
+  ever show the stretch. A restart therefore erased it from the calendar layer, the hatch built out of it
+  and the §9 record-bank evidence at once — over a stretch `t_p` had just been in mode 3 for.
+- **`device_away_span` (12.sqm) is that record**: LOCAL-ONLY, never synced, never a History Unit. One row
+  per episode keyed by its START, so the press that opens it, every extension and the "I'm back" that
+  closes it are one row. The server's `away_spans` is not a substitute — it is the ACCOUNT's record, it is
+  best-effort (every `syncDeviceAway` on the day 504'd), and nothing on the display path reads it back.
+- **Extended on the 30-s active-session beat, never on a timer of its own** (CLAUDE.md's rule), so a kill
+  mid-away lands the episode closed at its last beat, exactly as a live `device_active_session` row does.
+- **The FLAG is deliberately NOT restored.** It is a live declaration, and only a lock→unlock edge clears
+  it: an app that re-asserted it at startup on an unlocked machine would claim an absence it can never see
+  the end of.
+
 ### The calendar menu names THINGS, and overlapping periods share one box — 2026-09-12
 
 → `shared` (`ui/CalendarUi.kt`, `App.kt`, `scheduler/domain/SchedulerDomain.kt`);

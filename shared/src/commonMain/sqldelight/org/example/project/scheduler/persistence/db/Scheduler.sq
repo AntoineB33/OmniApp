@@ -145,6 +145,30 @@ CREATE TABLE device_active_session (
     PRIMARY KEY (device_id, start_ms)
 );
 
+-- PRD §8/§15 "I'm away": the stretches THIS install's "I'm away" button was on for, LOCAL-ONLY.
+--
+-- The button is the one piece of no-screen evidence the OS can never re-supply: the machine stays UNLOCKED
+-- while it is on, so nothing in the Windows session log will ever show the stretch, and a restart that
+-- forgot it left the calendar with no record that the user had said they were not at the screen — the
+-- hatch, the layer and the §9 record bank all went quiet over a period the `t_p` mode had been 3 for.
+-- Hence a table: the declaration is a recorded FACT, like device_sleep_gap or device_active_session, not
+-- something re-derivable from other state.
+--
+-- Keyed by `start_ms`, one row per episode, `end_ms` EXTENDED in place while the button is on (the 30-s
+-- active-session beat writes it, no timer of its own) — so an unclean shutdown mid-away is bounded by the
+-- last beat exactly as a live device_active_session row is, and the episode still lands as a closed span.
+-- The button itself is NOT restored on load: it is a live declaration, and an app that has restarted cannot
+-- know the user is still away (nothing would clear it but a lock→unlock edge that may never come).
+--
+-- LOCAL-ONLY, never synced and never a History Unit. The ACCOUNT's away history is the server's
+-- (`device_away` / `away_spans`); this is this DEVICE's own layer, which is per device kind and means
+-- nothing on a peer. Pruned to the same 24 h window the no-screen evidence answers over. Added in
+-- migration 12.sqm; existing DBs (schema v12) gain it on open.
+CREATE TABLE device_away_span (
+    start_ms INTEGER NOT NULL PRIMARY KEY,
+    end_ms   INTEGER NOT NULL
+);
+
 -- PRD §15 device-sleep gaps: LOCAL-ONLY watermark of how far this device has already scanned its OS
 -- sleep/wake log for the launch backfill. `scanned_through` (epoch millis) means the log up to that instant
 -- was examined, so the next launch resumes from there instead of re-reading the full 3-day horizon. It is
@@ -250,6 +274,17 @@ VALUES (?, ?, ?, ?, ?);
 
 deleteActiveSessionsByDevice:
 DELETE FROM device_active_session WHERE device_id = ?;
+
+selectAllAwaySpans:
+SELECT start_ms, end_ms FROM device_away_span ORDER BY start_ms;
+
+-- Opens the episode and extends it: the same `start_ms` replaces its own row, so the beat that advances a
+-- live away span costs one row write and never accumulates fragments of one episode.
+upsertAwaySpan:
+INSERT OR REPLACE INTO device_away_span(start_ms, end_ms) VALUES (?, ?);
+
+deleteAwaySpansBefore:
+DELETE FROM device_away_span WHERE end_ms <= ?;
 
 selectSleepScanCheckpoint:
 SELECT scanned_through FROM sleep_scan_checkpoint WHERE id = 0;

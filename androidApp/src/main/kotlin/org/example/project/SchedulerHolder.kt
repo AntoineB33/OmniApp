@@ -15,6 +15,7 @@ import org.example.project.scheduler.platform.AndroidUnlockTracker
 import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
+import org.example.project.scheduler.persistence.DeclaredAwayStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
@@ -83,6 +84,7 @@ object SchedulerHolder {
                 planDispatcher = Dispatchers.Default,
                 sleepGapStore = store as? DeviceSleepGapStore,
                 sleepScanCheckpoint = store as? SleepScanCheckpointStore,
+                declaredAwayStore = store as? DeclaredAwayStore,
                 activeSessionStore = store as? ActiveSessionStore,
                 pauseCue = vm.pauseCue,
                 // PRD §15: deliver the pause-end cue as an OS-scheduled alarm (fires even if the app was

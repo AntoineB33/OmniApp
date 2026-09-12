@@ -22,7 +22,7 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  */
 class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
     SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore,
-    SleepScanCheckpointStore {
+    SleepScanCheckpointStore, DeclaredAwayStore {
     private val queries = database.schedulerQueries
 
     /** The account whose partition [load]/[save] read and write: the signed-in user, else "unclaimed". */
@@ -341,6 +341,19 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 )
             }
         }
+    }
+
+    override fun loadDeclaredAwaySpans(): List<DeclaredAwaySpanRecord> =
+        queries.selectAllAwaySpans().executeAsList().map {
+            DeclaredAwaySpanRecord(startMillis = it.start_ms, endMillis = it.end_ms)
+        }
+
+    override fun saveDeclaredAwaySpan(record: DeclaredAwaySpanRecord) {
+        queries.upsertAwaySpan(start_ms = record.startMillis, end_ms = record.endMillis)
+    }
+
+    override fun pruneDeclaredAwaySpans(floorMillis: Long) {
+        queries.deleteAwaySpansBefore(floorMillis)
     }
 
     override fun loadSleepScanCheckpoint(): Long? =

@@ -62,15 +62,43 @@ Global rules that always apply: `CLAUDE.md`.
   (hence `observedNoScreenRegions`' `computerAway`/`phoneAway`). A peer needs no equivalent: its layer is
   already hatched whole ("a device that cannot be asked was locked"), so an away press with every other device
   locked comes out as both layers — which is what makes mode 3 and "a no-screen period" the same set.
-- **A DECLARED STRETCH HATCHES LIKE ANY OTHER; THE DOTS ARE GONE.** The hatch used to be split into what was
-  read off a lock history (solid) and what the "I'm away" button declared (dotted), by
-  `SchedulerDomain.declaredLayerRegions` — deleted, with `CalendarRecord.layerDeclared` and `obliqueHatch`'s
-  `dotted`. The split was a second answer to "who said this", on the one surface that could wear it: a
-  stretch a HAND states is a **restrictive period** of that layer's kind, and every period is outlined in the
-  accent blue exactly where a hand placed it (`periodSegmentOutline`). One answer, on the same surface as
-  every other statement the user makes. What did not change is the region: a declaration still rides the
-  **asserted** slot (so the sub-minute seam filter can never drop one) and still merges with the evidence
-  beside it into a single band — `CalendarLayerTest` pins that.
+- **AN AWAY EPISODE OUTLIVES THE PROCESS; THE BUTTON DOES NOT** (`device_away_span`, schema v13,
+  `DeclaredAwayStore`). The two halves are deliberately opposite. The *flag* is a live declaration and a
+  restart rightly drops it: only a lock→unlock edge clears it, so an app that re-asserted it on an unlocked
+  machine would claim an absence it can never see the end of. The *episodes* are recorded FACTS and a restart
+  must not drop them, because nothing can re-supply one — the machine stays unlocked throughout, which is
+  the whole point of the button. They were memory-only until 2026-09-12, when a redeploy erased a 17-minute
+  declared-away spell from account 3's calendar the instant it restarted the app: the layer above, the hatch
+  built out of it and the §9 record bank all went quiet over a stretch `t_p` had just been in mode 3 for. The
+  server's `away_spans` is not a substitute — it is the ACCOUNT's record, it is best-effort (it had been
+  504-ing all session), and nothing on the display path reads it back. One row per episode keyed by its
+  START, extended in place by the 30-s active-session beat and never by a timer of its own, so a kill
+  mid-away lands the episode closed at its last beat exactly as a live `device_active_session` row does.
+  LOCAL-ONLY, pruned to the same 24 h window the no-screen evidence answers over.
+- **A DECLARED STRETCH IS HATCHED DOTTED WHERE A DEVICE OF THE KIND WAS REALLY UNLOCKED**
+  (`SchedulerDomain.declaredLayerRegions` -> `CalendarRecord.layerDeclared` -> `obliqueHatch(dotted = …)`).
+  The user's words: *"the oblique lines must be dotted if at least one of the corresponding devices was
+  unlocked but the I'm away button was clicked."* A hatch says *no device of this kind was unlocked*, and
+  over a declared-away stretch that is a CLAIM, not a reading — the machine stays unlocked while the button
+  is on, which is the whole reason the button exists. The dots are the footnote saying so.
+  - The answer is **the declaration MINUS this kind's lock evidence, intersected with the band drawn**. The
+    evidence wins where it overlaps (the button survives a lock, and over that slice nothing was unlocked,
+    so the hatch is a reading again) and it is read through the same `layerEvidence` funnel `layerRegions`
+    draws from, seam filter included — rebuilt beside it, a standby flicker too short to hatch would still
+    slice a dotted band into hairlines. An **asserted** region does not win: a sleep window or a screen
+    break is a promise about every screen, and a promise cannot un-unlock the machine. A `null` lock history
+    ("cannot be asked", hence assumed locked) dots nothing, which is every PEER layer.
+  - **Only the LINE changes** — same slope, same spacing, same colour, same span, same bubble section. The
+    both-layers identity is untouched: the dots are a drawing, not a classification.
+  - **This is NOT the outline rule in another guise, and that is why deleting it did not stick.** It was
+    removed on 2026-09-12 under *one drawing per statement* — "a stretch a hand states is a restrictive
+    period, and a period is outlined in the accent blue" — and restored the same day. An outline belongs to
+    a PERIOD; the away button lays **no period**, it is a derived declaration with no panel to outline. With
+    the dots gone there was nothing whatever to tell a declared stretch from an observed one.
+  - What the removal got right and the dots do not undo: the REGION is unchanged. A declaration still rides
+    the **asserted** slot (so the sub-minute seam filter can never drop one) and still merges with the
+    evidence beside it into one region — the dots split the region's DRAWING, which is why the `∞` marker is
+    asked of the merged list. `CalendarLayerTest` pins both halves.
 - Layers are non-interactive overlays: they displace nothing and register no pointer input. A layer is
   *named* by the hover bubble anyway — its section rides whatever the cursor is over, or the bottom-most
   hover pickup where that is nothing. (An **alarm/timer ring** is inert in the other sense — it registers no

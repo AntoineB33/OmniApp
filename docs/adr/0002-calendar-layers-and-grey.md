@@ -107,7 +107,7 @@ evidence": a screen break is not time the user was absent for, and a declared ab
 Runtime state, like the flag itself — never persisted, never synced. After a restart the layer falls back to
 whatever the OS history says.
 
-### …and the lines over it are DOTTED — 2026-09-05 (SUPERSEDED 2026-09-12, see *One drawing per statement*)
+### …and the lines over it are DOTTED — 2026-09-05 (removed 2026-09-12, RESTORED the same day — see *The dots, and the marking beside them*)
 
 Hatching the declaration made the calendar agree with the mode, and immediately made it say something slightly
 false: *"no computer unlocked"* drawn over a stretch where a computer was demonstrably **unlocked** — the user
@@ -624,14 +624,28 @@ Three consequences fell out, and each answers a question the old drawing was fud
   `no phone unlocked` pair are the same edit, so the row stands for either spelling and its Save writes to
   every record behind it.
 
-### The dots, and the marking that replaced them
+### The dots, and the marking beside them
 
-`declaredLayerRegions` is deleted. It split one layer's hatch into "read off a lock history" (solid) and
-"declared with the I'm away button" (dotted) — a second answer to *who said this*, on the one surface that
-could wear it. There is now a first answer that works everywhere: a stretch a HAND states is a restrictive
-period of that layer's kind, and every period is outlined in the accent blue exactly where a hand placed it.
-The user's own example is that reading — *no computer unlocked for real at 10–11, extended by the user to 12:
+`declaredLayerRegions` was deleted here and restored the same day (2026-09-12), which is worth recording
+because the reasoning that deleted it was not wrong — it was too broad.
+
+The deletion said: the dots are a second answer to *who said this*, on the one surface that could wear it,
+and there is now a first answer that works everywhere — a stretch a HAND states is a restrictive period of
+that layer's kind, and every period is outlined in the accent blue exactly where a hand placed it. The
+user's own example is that reading: *no computer unlocked for real at 10–11, extended by the user to 12:
 oblique lines over 10–12, outlined in blue over 11–12*.
+
+That holds for everything the outline can reach, and the **"I'm away" button is not one of those things.**
+It lays no period. It is a derived declaration — `declaredAwayRegions`, straight into the layer's asserted
+slot — so there is no panel to outline, and with the dots gone a declared stretch and an observed one drew
+identically. The user restored the requirement in the same words as the original:
+
+> the oblique lines must be dotted if at least one of the corresponding devices was unlocked but the I'm
+> away button was clicked
+
+So the two coexist, and the line between them is what kind of thing made the statement: an **outline** says a
+hand placed a PERIOD; the **dots** say a device of the layer's kind was genuinely unlocked underneath the
+hatch. The three decisions above (only the line changes, evidence wins, an assertion does not) are unchanged.
 
 Inactivity got its marking back for the same reason, as **vertical lines**: three statements, three slopes
 (`/`, `\`, `|`), each saying what covers the stretch without occupying it. The 2026-09-11 deletion removed a

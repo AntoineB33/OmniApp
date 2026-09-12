@@ -2627,9 +2627,8 @@ object SchedulerDomain {
     /**
      * The EVIDENCE half of one layer: that device kind'''s lock history clipped to the asked window, with the
      * sub-minute slivers dropped (the seam rule, [MIN_INACTIVITY_BAND_MILLIS]). Its own function because two
-     * readings must agree on it — the hatch [layerRegions] draws and the seam rule the bank applies. (It
-     * used to have a third reader, the dotted "I'm away" sub-stretches; those are gone — a stretch a hand
-     * stated is a restrictive period now, and the period's outline is what says so.)
+     * readings must agree on it — the hatch [layerRegions] draws, the seam rule the bank applies, and which
+     * part of that hatch [declaredLayerRegions] dots.
      */
     private fun layerEvidence(
         lockedIntervals: List<TaskTimeRange>,
@@ -2644,6 +2643,52 @@ object SchedulerDomain {
                 )
             }
             .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
+
+    /**
+     * PRD §8 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: which sub-stretches of one layer's
+     * [regions] the calendar draws **DOTTED** rather than solid — *"the oblique lines must be dotted if at
+     * least one of the corresponding devices was unlocked but the I'm away button was clicked"*, for the
+     * computer's slope and the phone's alike.
+     *
+     * A hatch says *no device of this kind was unlocked*. Over a declared-away stretch that sentence is a
+     * CLAIM and not a reading: the machine **stays unlocked** while the button is on — that is the whole
+     * reason the button exists ([declaredAwayRegions]) — so a device of this layer's kind really was sitting
+     * there unlocked. The dots say exactly that and change nothing else: same slope, same span, same bubble
+     * section. Solid = nothing of the kind was unlocked; dotted = one was, and the user declared themselves
+     * away from it, which is what mode 3 is made of.
+     *
+     * It is the one thing the 2026-09-12 "an outline says who put this here" rule cannot answer, which is
+     * why it came back the day it was removed: an outline belongs to a PERIOD, and the away button lays no
+     * period — it is a derived declaration with no panel to outline. Without the dots a declared stretch and
+     * an observed one are the same drawing.
+     *
+     * So the answer is [declaredAway] MINUS this kind's lock evidence, intersected with the band actually
+     * drawn:
+     *
+     * - the lock evidence wins wherever it overlaps — the button was pressed and the machine then locked or
+     *   went to standby, and over that slice nothing of the kind was unlocked, so the hatch is a reading
+     *   again. It is the SAME evidence [layerRegions] draws (same clipping, same sub-minute seam filter), or
+     *   a standby flicker too short to hatch would still break a dotted band into pieces;
+     * - an ASSERTED region does NOT win. A sleep window, a screen break or a hand-added no-screen period is a
+     *   promise about every screen, and a promise cannot un-unlock the machine the button was pressed on;
+     * - [lockedIntervals] `null` — "no device of this kind could be asked", hence assumed locked throughout
+     *   ([layerRegions]) — dots nothing, for the same reason. That is the PEER layers' case, and a peer
+     *   carries no declaration here anyway (no channel brings one), so the dots stay this device's own.
+     */
+    fun declaredLayerRegions(
+        regions: List<TaskTimeRange>,
+        declaredAway: List<TaskTimeRange>,
+        lockedIntervals: List<TaskTimeRange>?,
+        sinceMillis: Long,
+        untilMillis: Long,
+    ): List<TaskTimeRange> {
+        if (regions.isEmpty() || declaredAway.isEmpty()) return emptyList()
+        // Assumed-locked leaves nothing unlocked to dot (see the docstring's third bullet).
+        val locked = lockedIntervals ?: return emptyList()
+        val unlockedAndDeclared =
+            subtractRegions(mergeOccupied(declaredAway), layerEvidence(locked, sinceMillis, untilMillis))
+        return intersectRegions(regions, unlockedAndDeclared)
+    }
 
     /**
      * PRD §8: **the stretches a PERIOD asserts [layer] over** — the hand-drawn half of a layer, as opposed to
@@ -3672,9 +3717,40 @@ object SchedulerDomain {
     fun panelAt(panels: List<TaskPanel>, nowMillis: Long): TaskPanel? =
         panels.firstOrNull { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }
 
-    /** PRD §11: the panel covering [nowMillis] (pinned or auto) — what to notify as the current task. */
-    fun currentPanel(state: SchedulerState, nowMillis: Long): TaskPanel? =
-        panelAt(state.panels, nowMillis)
+    /**
+     * PRD §11: the panel covering [nowMillis] (pinned or auto) — what to notify as the current task.
+     *
+     * **Asked with the MODE, because that is what the schedule is parameterized by.**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: *"Mode 2 & 3: $now line$ must be covered by
+     * the period 'no on-screen task'"* — a constraint on the line at EVERY instant it is in one of those
+     * modes, not only at the instant the last fill happened to run. The fill expresses it as
+     * [DynamicPeriods.awayCover], one millisecond wide at the line it was built for
+     * (`[now, now + 1)`); the line then walks on without re-planning (CLAUDE.md: time passing never
+     * re-plans), straight into the on-screen task the plan put after it. Reading the stored panel alone is
+     * therefore reading an answer computed for a different `t_p` — and the app **announced "Task to do now"
+     * in the middle of a declared-away spell** (account 3, 15:08:40 on 2026-09-12, away since 14:54:15).
+     *
+     * So the mode is applied HERE, where the question is asked, rather than by trying to keep a stored plan
+     * continuously true: in either away mode an ON-SCREEN task is not scheduled at the line, whatever a plan
+     * built under mode 1 says. Who survives is the resilience and nothing else ([Task.onScreen] — a `0`
+     * against [PeriodKinds.NO_SCREEN]), the same predicate [clipPanelsForObservedNoScreen] cuts the display
+     * with and [clipRecordsForObservedNoScreen] refuses to bank a record with. Those two shipped and this one
+     * did not, which is why the calendar drew no task across the stretch, the bank stored none, and the app
+     * still spoke one.
+     *
+     * A period, a screen break, a reminder tag or a panel of no task at all is not work and is returned
+     * unchanged — the mode says nothing about them.
+     */
+    fun currentPanel(
+        state: SchedulerState,
+        nowMillis: Long,
+        tpMode: Int = DynamicPeriods.MODE_AT_SCREEN,
+    ): TaskPanel? {
+        val panel = panelAt(state.panels, nowMillis) ?: return null
+        if (!DynamicPeriods.lineIsCoveredAt(tpMode)) return panel
+        val task = panel.taskId?.let { state.tasks[it] } ?: return panel
+        return if (task.onScreen) null else panel
+    }
 
     /**
      * PRD §7 **"Switch task"**: the task the now-line is actually **on** — the panel covering [nowMillis]

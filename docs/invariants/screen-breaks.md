@@ -173,7 +173,10 @@ identifiers, persisted keys.
   `pastCoveredRegions` counts a sleep band as covered so no Inactivity is derived under it). Both **oblique
   layers** hatch that stretch by their own rule and need nothing added: in mode 2 this device's OS lock scan
   hatches its own layer and a peer that cannot be asked is assumed locked, and in mode 3 the away button feeds
-  its own layer, drawn dotted (`SchedulerDomain.declaredAwayRegions`).
+  its own layer, drawn dotted (`SchedulerDomain.declaredAwayRegions`). Those episodes are **persisted**
+  (`device_away_span`, schema v13) while the flag itself is not — see `calendar.md` § *an away episode
+  outlives the process*: no OS log can re-supply a stretch the machine spent unlocked, so a restart that
+  forgot them silenced the layer, the hatch and the §9 bank over a stretch the mode had been 3 for.
 - **A `no on-screen task` chain TAKES the break that falls due in it, and the break is drawn at the chain's
   START** (`DynamicPeriods.chainTaking`, the ONE reading) — the requirements' last bullet in this section, and
   their one sanctioned exception to the **frozen past**. The pause the user spends away IS the break they were
@@ -287,6 +290,28 @@ identifiers, persisted keys.
   — never two derivations, which is how the two paths would start naming different breaks. The 20 s look-away
   is not in the set: it is assumed taken, so it is never cued, and its 20-minute cadence would rewrite the set
   for an answer nothing reads.
+- **"WHAT IS THE TASK TO DO NOW" IS ASKED WITH THE MODE, OR THE APP ANNOUNCES WORK IT DID NOT SCHEDULE**
+  (`SchedulerDomain.currentPanel`, the one reading the cue sweep uses). The requirement — *"Mode 2 & 3: $now
+  line$ must be covered by the period 'no on-screen task'"* — binds the line at **every** instant it is in
+  one of those modes, not only at the instant the last fill ran. The fill expresses it as
+  `DynamicPeriods.awayCover`, one millisecond wide at the `t_p` it was built for (`[now, now + 1)`), and
+  time passing never re-plans — so the line walks straight out of that millisecond into the task the plan
+  put after it. A reader that takes the stored panel at face value is reading an answer computed for a `t_p`
+  the line has left, and the app **spoke "Task to do now" in the middle of a declared-away spell** (account
+  3, 15:08:40 on 2026-09-12, away since 14:54:15). So the mode is applied where the question is asked: in
+  either away mode an ON-SCREEN task is not at the line, whatever a plan built under mode 1 says. Who
+  survives is `Task.onScreen` and nothing else — the **same predicate** `clipPanelsForObservedNoScreen` cuts
+  the display with and `clipRecordsForObservedNoScreen` refuses to bank a record with. Those two shipped and
+  this third reading did not, which is exactly why the calendar drew no task across the stretch, the §9 bank
+  stored none, and the app still announced one.
+- **That is NOT the away flag silencing the device, and the distinction is the whole of the pair in
+  `AwayVersusLockedCueTest`.** A LOCK gates the OUTPUT (`deviceUnlocked`): nothing is announced, whatever is
+  scheduled, because nobody can read it. "I'm away" gates nothing — it changes what is SCHEDULED. A task
+  with a non-zero resilience to `no on-screen task` is still placed at an away line and still announced,
+  which is the case the button exists for; an on-screen one is not placed there, so there is nothing to
+  announce. Neither suppression is ever marked delivered (`lastNotifiedTaskId` is left untouched in both,
+  the away one logging through its own `lastAwaySuppressedTaskId`), so the task the user comes back to is
+  announced when they come back rather than lost to a level that moved on while nobody was there.
 - **An UNLOCK clears "I'm away", and it is an EDGE, not a poll** (`SchedulerEngine.noteScreenSignal`). The
   toggle overrides the platform screen sensor, so nothing but this would ever take it off by itself — and a
   flag left standing across a return holds this device's session finalized and its presence heartbeat closed

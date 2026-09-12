@@ -54,6 +54,7 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
+import org.example.project.scheduler.persistence.DeclaredAwayStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.persistence.SyncMetaStore
 import org.example.project.scheduler.persistence.WindowPlacement
@@ -313,6 +314,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     tz = tz,
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepScanCheckpoint = store as? SleepScanCheckpointStore,
+                    declaredAwayStore = store as? DeclaredAwayStore,
                     activeSessionStore = store as? ActiveSessionStore,
                     pauseCue = vm.pauseCue,
                     // PRD §15: the OS-scheduled local cue seam for the engine App() builds itself (iOS delivers
@@ -1278,21 +1280,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
                     )
+                // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the sub-stretches of this hatch
+                // that a device of the layer's kind was UNLOCKED for, the "I'm away" button being what says
+                // nobody was at it — mode 3. They are drawn DOTTED, so the band is emitted as one record per
+                // stretch of each kind rather than one per merged region. Nothing else about them differs:
+                // same title, same layer, so the hover bubble names the layer once whichever piece the
+                // cursor is over (the time it reads beside it is that piece's, which is the stretch the dots
+                // are true of).
+                //
+                // The 2026-09-12 removal of the dots ("an outline says who put this here") does not reach
+                // this: an outline belongs to a PERIOD, and the away button lays no period — so without the
+                // dots a declared stretch and an observed one draw identically.
+                val declared =
+                    SchedulerDomain.declaredLayerRegions(
+                        regions = regions,
+                        declaredAway = layerAway,
+                        lockedIntervals = layerLocked,
+                        sinceMillis = displayFloorMillis,
+                        untilMillis = nowMillis,
+                    )
                 // PRD §12 "∞ start": the earliest layer region is open-ended into the past when nothing at all
                 // precedes it (an emptied DB) — its drawn start is only the display floor, so it reads "∞".
-                //
-                // ONE record per merged region. The band used to be split further, into the sub-stretches a
-                // device of the kind was UNLOCKED for with the "I'm away" button on, which were drawn DOTTED.
-                // That split is gone with the dots: a stretch a HAND stated is a restrictive period of the
-                // layer's kind now, and a period is outlined in the accent blue exactly where a hand placed
-                // it — so "who said this" is answered once, by the outline, on the same surface as every
-                // other statement the user makes.
+                // Asked of the MERGED regions, so splitting a band for the dots cannot move the ∞.
                 val layerOpenStart = SchedulerDomain.derivedBandsOpenStart(regions, earliestEvidenceMillis)
-                regions.map { region ->
+                val solid = SchedulerDomain.subtractRegions(regions, declared)
+                (solid.map { it to false } + declared.map { it to true }).map { (region, isDeclared) ->
                     CalendarRecord(
                         title = layer.calendarLabel,
                         range = region,
                         layer = layer,
+                        layerDeclared = isDeclared,
                         openStart = layerOpenStart != null && region.startEpochMillis == layerOpenStart,
                     )
                 }

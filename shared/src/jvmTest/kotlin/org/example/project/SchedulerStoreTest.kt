@@ -3,6 +3,7 @@ package org.example.project
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.persistence.ActiveSessionRecord
+import org.example.project.scheduler.persistence.DeclaredAwaySpanRecord
 import org.example.project.scheduler.persistence.HistoryPointerRow
 import org.example.project.scheduler.persistence.HistoryRow
 import org.example.project.scheduler.persistence.PersistedSnapshot
@@ -976,6 +977,153 @@ class SchedulerStoreTest {
 
         store.saveSyncMeta(SyncMeta(deviceId = "dev-1", userId = "user-1"))
         assertEquals("ANCESTOR-1", store.loadSyncMeta()!!.baseSnapshot, "and comes back with its own account")
+    }
+
+    /**
+     * PRD §8/§15: an "I'm away" EPISODE is a recorded fact and must round-trip. The row is keyed by its
+     * START, so opening the episode, every beat that extends it and its close are all the same row — an
+     * episode can never come back as a pile of fragments.
+     */
+    @Test
+    fun declared_away_spans_round_trip_and_extend_one_row() {
+        val store = newStore()
+        assertTrue(store.loadDeclaredAwaySpans().isEmpty())
+
+        // The press opens it degenerate, the beat extends it, the "I'm back" closes it: one row throughout.
+        store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(1_000, 1_000))
+        store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(1_000, 31_000))
+        store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(1_000, 44_000))
+        assertEquals(listOf(DeclaredAwaySpanRecord(1_000, 44_000)), store.loadDeclaredAwaySpans())
+
+        store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(90_000, 120_000))
+        assertEquals(
+            listOf(DeclaredAwaySpanRecord(1_000, 44_000), DeclaredAwaySpanRecord(90_000, 120_000)),
+            store.loadDeclaredAwaySpans(),
+            "episodes come back oldest first",
+        )
+
+        // Pruning drops what had already ENDED at the floor and keeps what straddles it.
+        store.pruneDeclaredAwaySpans(50_000)
+        assertEquals(listOf(DeclaredAwaySpanRecord(90_000, 120_000)), store.loadDeclaredAwaySpans())
+    }
+
+    /**
+     * The away episodes are LOCAL-ONLY, like the sleep-scan checkpoint: writing one must not change the
+     * [org.example.project.scheduler.persistence.PersistedSnapshot] the store loads (and syncs).
+     */
+    @Test
+    fun declared_away_spans_do_not_affect_persisted_snapshot() {
+        val store = newStore()
+        store.save(SchedulerStateCodec.encodeSnapshot(stateWithHistory()))
+        val before = store.load()!!
+
+        store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(1_000, 2_000))
+
+        assertEquals(before, store.load()!!)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v12 — everything
+     * through `history_unit.window`, no `device_away_span`) must still load, with 12.sqm adding the table
+     * on open and the existing data untouched.
+     */
+    @Test
+    fun upgrades_pre_away_span_v12_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v12", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            // The v12 shape, exactly as 11.sqm left it.
+            raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "seq INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
+                    "debug_tainted INTEGER NOT NULL, delta_length INTEGER NOT NULL DEFAULT -1, " +
+                    "delta_hash INTEGER, delta TEXT NOT NULL, window TEXT, " +
+                    "PRIMARY KEY (account_id, category, seq))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "acknowledged_logout_at INTEGER, base_payload TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                    "PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(account_id, payload) VALUES ('user-1', ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(
+                null,
+                "INSERT INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email) " +
+                    "VALUES (0, 'dev-1', 'at', 'rt', 'user-1', 'u1@x.y')",
+                0,
+            )
+            raw.execute(
+                null,
+                "INSERT INTO device_active_session(device_id, start_ms, end_ms, updated_at, kind) " +
+                    "VALUES ('dev-1', 1000, 2000, 9000, 'desktop')",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 12", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload, "the upgrade kept the state")
+            assertEquals(
+                ActiveSessionRecord("dev-1", 1_000, 2_000, 9_000, kind = "desktop"),
+                store.loadActiveSessions().single(),
+                "the upgrade kept the activity history",
+            )
+            // An upgraded DB has no away episodes on record, and the new table is usable at once.
+            assertTrue(store.loadDeclaredAwaySpans().isEmpty())
+            store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(5_000, 6_000))
+            assertEquals(listOf(DeclaredAwaySpanRecord(5_000, 6_000)), store.loadDeclaredAwaySpans())
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
     }
 
     @Test

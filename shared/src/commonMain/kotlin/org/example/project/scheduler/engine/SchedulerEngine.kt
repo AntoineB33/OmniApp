@@ -44,6 +44,8 @@ import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.persistence.ActiveSessionStore
 import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.SleepGapRecord
+import org.example.project.scheduler.persistence.DeclaredAwaySpanRecord
+import org.example.project.scheduler.persistence.DeclaredAwayStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.DeviceSleepGap
@@ -341,6 +343,11 @@ class SchedulerEngine(
     // PRD §15 device-sleep gaps: LOCAL-ONLY watermark of how far the OS sleep/wake log has been scanned, so the
     // launch backfill resumes instead of re-reading the full 3-day horizon each launch; null re-scans it fully.
     private val sleepScanCheckpoint: SleepScanCheckpointStore? = null,
+    // PRD §8/§15: LOCAL-ONLY store for this device's "I'm away" episodes ([_declaredAwaySpans]). The button
+    // is the one no-screen fact the OS can never re-supply — the machine stays UNLOCKED while it is on — so
+    // without a row a restart erases the stretch from the layer, the hatch and the §9 record bank alike.
+    // Null keeps the old in-memory-only behaviour (a store without the capability, e.g. web).
+    private val declaredAwayStore: DeclaredAwayStore? = null,
     // PRD §15: store for the active-session intervals — this device's own rows (the beat writes them) plus
     // the peers' rows the manual Sync button pulls in. The input to the "Inactivity" bands / "Sleep"-band
     // carve / live-rest placement and the calendar's per-panel device sets. Null disables activity tracking.
@@ -530,9 +537,17 @@ class SchedulerEngine(
     // says this device's screen is not in use, which no OS lock log will ever show, and a stretch where it is
     // true of every device of the account is exactly what mode 3 is — so it has to hatch, or the calendar
     // contradicts the mode it is drawing. Appended to at the two edges the flag has ([noteAwayEdge]) and
-    // pruned to the window the no-screen evidence answers over. Runtime state like the flag itself: never
-    // persisted, never synced.
-    private val _declaredAwaySpans = MutableStateFlow<List<TaskTimeRange>>(emptyList())
+    // pruned to the window the no-screen evidence answers over.
+    //
+    // PERSISTED, unlike the flag itself ([declaredAwayStore], schema v13). The flag is a live declaration
+    // and a restart rightly forgets it; the EPISODES are recorded facts and a restart must NOT, because no
+    // OS log can ever re-supply them - the machine stays unlocked throughout, which is the whole point of
+    // the button. Forgetting them erased a 17-minute declared-away stretch from the calendar the instant a
+    // redeploy restarted the app (account 3, 2026-09-12): the layer, the hatch built out of it and the §9
+    // record bank all went quiet over a stretch the `t_p` mode had just been 3 for. The server's
+    // `away_spans` is no substitute - it is the ACCOUNT's record, it is best-effort (it had been 504-ing
+    // all session), and nothing on the display path reads it back.
+    private val _declaredAwaySpans = MutableStateFlow(loadPersistedAwaySpans())
     private val _declaredAwaySince = MutableStateFlow<Long?>(null)
 
     /** The closed "I'm away" stretches of this device — the calendar unions the open one in with the now-line. */
@@ -598,6 +613,12 @@ class SchedulerEngine(
 
     // PRD §11/§15 notification de-dupe (see the long-form rationale in git history of App.kt).
     private var lastNotifiedTaskId: TaskId? = null
+
+    // The task whose announcement the away modes last swallowed, for the DIAGNOSTICS line alone. It cannot
+    // be [lastNotifiedTaskId]: marking the cue delivered is exactly what must not happen here, for the same
+    // reason a locked device does not mark it either - the task the user comes back to has to be announced
+    // when they do, not lost to a level that moved on while nobody could read it.
+    private var lastAwaySuppressedTaskId: TaskId? = null
 
     // PRD §15 (20s look-away) / wind-down bookkeeping; survives a collectLatest restart like the old remember.
     private var announcedStarts = setOf<Long>()
@@ -1472,6 +1493,11 @@ class SchedulerEngine(
             // sample below must already be answering the flag that unlock left behind.
             noteScreenSignal()
             advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended)
+            // PRD §8/§15: extend the OPEN "I'm away" episode to this beat, on the beat that is already
+            // running rather than a timer of its own - so an unclean shutdown mid-away is bounded by the
+            // last beat exactly as a live active session is, instead of losing the whole stretch. Costs one
+            // row write per beat while the button is on and nothing at all the rest of the time.
+            _declaredAwaySince.value?.let { persistAwaySpan(it, clock.nowMillis()) }
             lastRealBeat = realNow
             // Beat faster while accelerated (re-checked each pass — the speed changes at runtime) so the session
             // timeline tracks the racing `now` finely; keys off the clock's actual speed so the phone beats fast
@@ -1882,12 +1908,53 @@ class SchedulerEngine(
         val now = clock.nowMillis()
         val since = _declaredAwaySince.value
         if (away) {
-            if (since == null) _declaredAwaySince.value = now
+            if (since == null) {
+                _declaredAwaySince.value = now
+                // Open the row at the press, so the episode is on disk before any beat has run.
+                persistAwaySpan(now, now)
+            }
         } else if (since != null) {
             _declaredAwaySince.value = null
             if (now > since) {
                 _declaredAwaySpans.value = pruneAwaySpans(_declaredAwaySpans.value + TaskTimeRange(since, now))
+                // Close the SAME row (it is keyed by its start) at the real end, then age out what has left
+                // the window - the one place this table is pruned, because it is the one place it grows.
+                persistAwaySpan(since, now)
+                runCatching {
+                    declaredAwayStore?.pruneDeclaredAwaySpans(now - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS)
+                }
             }
+        }
+    }
+
+    /**
+     * PRD §8/§15: this device's "I'm away" episodes as the store has them - the seed for
+     * [_declaredAwaySpans] at construction, which is what makes a declaration survive a restart.
+     *
+     * A row the store still holds OPEN (the app was killed while the button was on) comes back as a CLOSED
+     * span ending at its last beat, exactly like a live `device_active_session` row: the stretch the user
+     * declared is a fact whatever became of the process, while how much longer it ran past the last thing
+     * the app saw is not knowable. The BUTTON is deliberately not restored with it - it is a live
+     * declaration, and a restarted app that re-asserted it would be claiming an absence it cannot see the
+     * end of (only a lock->unlock edge clears the flag, and a machine left unlocked never produces one).
+     */
+    private fun loadPersistedAwaySpans(): List<TaskTimeRange> {
+        val floor = clock.nowMillis() - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
+        val stored = runCatching { declaredAwayStore?.loadDeclaredAwaySpans() }.getOrNull() ?: return emptyList()
+        return stored
+            .filter { it.endMillis > it.startMillis && it.endMillis > floor }
+            .map { TaskTimeRange(it.startMillis, it.endMillis) }
+    }
+
+    /**
+     * Write one episode through, keyed by its START - so opening it, every extension of it and its close
+     * are all the same row. Best-effort: a store without the capability, or a failing one, simply leaves
+     * this device where it was before the table existed.
+     */
+    private fun persistAwaySpan(startMillis: Long, endMillis: Long) {
+        val store = declaredAwayStore ?: return
+        runCatching {
+            store.saveDeclaredAwaySpan(DeclaredAwaySpanRecord(startMillis, maxOf(startMillis, endMillis)))
         }
     }
 
@@ -2237,6 +2304,10 @@ class SchedulerEngine(
                     // in `st.panels`) and the tasks. Asked without them the bars would answer a different
                     // timeline, and the app would announce a break at an instant the calendar does not draw
                     // one at, which is the very drift this change exists to remove.
+                    // ONE reading of the mode for this whole sweep: the breaks' placement reads it, and so
+                    // does the task cue below — a second `tpModeNow` call could answer differently mid-sweep
+                    // and let the two disagree about the very same instant.
+                    val mode = tpModeNow(simNow)
                     val crossings = SchedulerDomain.cueCrossings(
                         screenBreaks = st.screenBreaks,
                         windDownInstants = windDownInstants,
@@ -2249,7 +2320,7 @@ class SchedulerEngine(
                         // ...and the mode, because half that reading is the AT-LINE run: the 20 s look-away
                         // is never dragged, so its cue keys on where it really falls, and where a POSE the
                         // line is dragging falls is what decides that.
-                        mode = tpModeNow(simNow),
+                        mode = mode,
                     )
 
                     // Each fire as (instant, tie, action); executed in boundary order below. `tie` only
@@ -2260,7 +2331,21 @@ class SchedulerEngine(
 
                     // Task-switch (PRD §11/§13) — level: the task the now-line currently sits in, announced
                     // once when it changes ([lastNotifiedTaskId]); ordered by that panel's start.
-                    val currentPanel = SchedulerDomain.currentPanel(st, simNow)
+                    // Asked WITH the mode: in either away mode the line must be covered by "no on-screen
+                    // task", so an on-screen task is not scheduled at it and there is nothing to announce
+                    // ([SchedulerDomain.currentPanel]). Without this the app spoke "Task to do now" in the
+                    // middle of a declared-away spell, off a plan built for a `t_p` the line had left.
+                    val currentPanel = SchedulerDomain.currentPanel(st, simNow, mode)
+                    // Logged on the EDGE only - the instant an announcement would otherwise have been made -
+                    // because this loop runs every tick and the mode holds for as long as the user is away.
+                    val plannedTaskId = SchedulerDomain.currentPanel(st, simNow)?.taskId
+                    if (currentPanel == null && plannedTaskId != null && plannedTaskId != lastAwaySuppressedTaskId) {
+                        lastAwaySuppressedTaskId = plannedTaskId
+                        Diagnostics.log(
+                            "task switch notification suppressed: t_p mode $mode - the line must be covered " +
+                                "by \"no on-screen task\" (sim now=${Diagnostics.formatInstant(simNow)})",
+                        )
+                    }
                     val currentTaskId = currentPanel?.taskId
                     if (currentTaskId != null && currentTaskId != lastNotifiedTaskId) {
                         val message = SchedulerDomain.taskSwitchNotificationMessage(
@@ -2278,6 +2363,7 @@ class SchedulerEngine(
                                 // must not take away ([deviceUnlocked]).
                                 if (deviceUnlocked()) {
                                     lastNotifiedTaskId = currentTaskId
+                                    lastAwaySuppressedTaskId = null
                                     notifyUser("Task to do now", message)
                                 } else {
                                     Diagnostics.log(

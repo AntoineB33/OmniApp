@@ -1,0 +1,18 @@
+-- Schema v12 -> v13: keep this device's "I'm away" episodes across a restart (PRD §8/§15).
+--
+-- The button is the one no-screen fact the OS cannot re-supply. It says *this screen is not in use* while
+-- the machine stays UNLOCKED, so the Windows session log never shows the stretch — and the engine held the
+-- episodes in memory only. A restart therefore erased them: the calendar's own layer, the hatch built out
+-- of it and the §9 record-bank evidence all fell silent over a stretch the `t_p` mode had just been 3 for.
+-- Observed on account 3 (2026-09-12): a 17-minute declared-away spell, drawn while the app ran, vanished
+-- the moment a redeploy restarted it. The server half (`device_away` / `away_spans`) is the ACCOUNT's
+-- record, is best-effort, and the calendar layer never reads it back — so it is no substitute for this.
+--
+-- One row per episode, keyed by its start and extended in place while the button is on, so an unclean
+-- shutdown mid-away is bounded exactly as a live `device_active_session` row is. LOCAL-ONLY: never synced,
+-- never a History Unit (a device's own layer is per device kind and means nothing on a peer).
+
+CREATE TABLE device_away_span (
+    start_ms INTEGER NOT NULL PRIMARY KEY,
+    end_ms   INTEGER NOT NULL
+);
