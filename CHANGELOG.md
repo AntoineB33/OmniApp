@@ -11,6 +11,42 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar menu names THINGS, and overlapping periods share one box — 2026-09-12
+
+→ `shared` (`ui/CalendarUi.kt`, `App.kt`, `scheduler/domain/SchedulerDomain.kt`);
+`docs/invariants/calendar.md`, `docs/adr/0002-calendar-layers-and-grey.md`, `docs/MANUAL_TESTING.md`.
+Tests: new `CalendarEditChoicesTest`; `CalendarLayerTest`'s five dotted-hatch tests replaced by one that
+pins the merged band.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"All the edit options of the right-click menu in the calendar must be reduced to 'edit…',
+which then asks what to edit among the choices deduced by the position of the mouse"*, and *"when there are
+many restrictive periods in the same time period, then instead of sharing the width of the day column, it
+shows only one restrictive period with the title of all the restrictive periods at the top left"*.
+
+- **`Edit` / `edit task`'s panel half → one `edit…` chooser** (`calendarEditChoices`, fed by the column's new
+  `menuHitsAt`, which collects EVERYTHING under the cursor instead of the top-most block). The rows are in
+  one order for both levels (`CALENDAR_EDIT_ROW_ORDER`): task panel, restrictive period, inactivity,
+  reminder, alarm, timer, no computer unlocked, no phone unlocked, no screen, sleep, before bed. A chooser
+  of one is not a chooser — the row replaces `edit…` in the menu, and a lone period is named by its kind.
+  The double-click goes through the same table.
+- **`Remove` is gone; each editor has a BIN** (`EditorBinButton`), absent where nothing is stored to delete.
+- **A `reminder` row edits a tag** — `ReminderEditWindow` grew a `ReminderEditSeed` and a bin; a tag could
+  only be added and checked off from the calendar before.
+- **Every restrictive period leaves the block pipeline** and is drawn as one full-width box per stretch
+  (`periodSegments` / `periodSegmentLabel` / `periodSegmentOutline`): A 10–12 with B 11–13 is three boxes.
+  Dragging or resizing a shared box moves every period in it; the gesture is emitted UNDER the panels and
+  the marking OVER them.
+- **A `no screen` period draws no box** (`isDrawnPeriodRecord`) — both layer hatches are its whole drawing.
+  Its chooser row also stands for a `no computer unlocked` + `no phone unlocked` pair, and its Save writes
+  to every record behind it.
+- **Inactivity is marked by VERTICAL LINES again** (`Modifier.verticalHatch`) — a third slope beside the two
+  oblique layers, not the grey wash deleted on 2026-09-11.
+- **The dotted layer hatch is gone**, with `SchedulerDomain.declaredLayerRegions` and
+  `CalendarRecord.layerDeclared`: a stretch a hand stated is a period, and a period is outlined blue.
+- **Derived inactivity now runs to the definitive-schedule front**, not to the now-line. It stays derived on
+  both sides (ADR 0002); **editing one MATERIALIZES it**, under the band's own kind.
+
 ### The per-panel device bubble is gone — the layers already say it — 2026-09-12
 
 → `shared` (`ui/CalendarUi.kt`, `App.kt`); `docs/adr/0002-calendar-layers-and-grey.md`,

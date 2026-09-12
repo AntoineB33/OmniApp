@@ -286,15 +286,6 @@ data class CalendarRecord(
      */
     val layer: SchedulerDomain.ActivityLayer? = null,
     /**
-     * PRD §8 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: for a [layer] region, whether the
-     * hatch stands on the **"I'm away" button** rather than on a locked screen — a device of that layer's kind
-     * was sitting there UNLOCKED and the user had declared themselves away from it, which is what a mode-3
-     * period is made of. Same slope, same span, same bubble section; drawn DOTTED.
-     * `SchedulerDomain.declaredLayerRegions` decides which sub-stretches those are, and `App.kt` emits one
-     * record per stretch of each kind — so a declaration that starts inside a locked stretch splits the band.
-     */
-    val layerDeclared: Boolean = false,
-    /**
      * PRD §8/§9 no-screen period: a user-authored "No screen" panel, drawn as a decorative hatched block
      * (a pattern over the real panels). Off-screen tasks schedule inside it; on-screen tasks never do.
      */
@@ -361,8 +352,6 @@ data class PlacedRecord(
     val inactivity: Boolean = false,
     /** PRD §8: one region of one decorative layer ("no computer/phone unlocked"). See [CalendarRecord.layer]. */
     val layer: SchedulerDomain.ActivityLayer? = null,
-    /** PRD §8: this [layer] region is the "I'm away" button's, drawn dotted. See [CalendarRecord.layerDeclared]. */
-    val layerDeclared: Boolean = false,
     /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
     val noScreen: Boolean = false,
     /** `side-dev/README.md`: which KIND of restrictive period this block is, blank if it is not one. */
@@ -482,7 +471,6 @@ fun recordsForDay(
             sleep = record.sleep,
             inactivity = record.inactivity,
             layer = record.layer,
-            layerDeclared = record.layerDeclared,
             noScreen = record.noScreen,
             restrictiveKind = record.restrictiveKind,
             noScreenRange = record.noScreenRange,
@@ -611,6 +599,280 @@ private fun overlapLayoutOf(blocks: List<PlacedRecord>): Map<String, List<PanelS
     }
     return coalesceSlices(raw)
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// PRD §8 contextual menu: WHAT the cursor is on, and the one order it is offered in.
+// ---------------------------------------------------------------------------------------------------------
+
+internal const val EDIT_LABEL_TASK_PANEL = "task panel"
+internal const val EDIT_LABEL_RESTRICTIVE_PERIOD = "restrictive period"
+internal const val EDIT_LABEL_INACTIVITY = "inactivity"
+internal const val EDIT_LABEL_REMINDER = "reminder"
+internal const val EDIT_LABEL_ALARM = "alarm"
+internal const val EDIT_LABEL_TIMER = "timer"
+internal const val EDIT_LABEL_NO_COMPUTER = "no computer unlocked"
+internal const val EDIT_LABEL_NO_PHONE = "no phone unlocked"
+internal const val EDIT_LABEL_NO_SCREEN = "no screen"
+internal const val EDIT_LABEL_SLEEP = "sleep"
+internal const val EDIT_LABEL_BEFORE_BED = "before bed"
+
+/**
+ * PRD §8: **the ONE order the calendar's two "edit…" choosers are written in** — the user's own list, read by
+ * the top level and by the "restrictive period" chooser alike.
+ *
+ * The list mixes the two levels on purpose: it is a ranking of every row LABEL the menu can show, and each
+ * chooser sorts whatever rows it happens to hold through the same [editRowRank]. That is what keeps a single
+ * period row (which collapses to its KIND's name — see [calendarEditChoices]) landing where the user put that
+ * kind, rather than where the generic "restrictive period" row would have gone. A second ordering — one list
+ * per chooser — is how the two would start disagreeing about where `before bed` goes.
+ *
+ * `no screen` is the one label not in the user's list: it is a row of the period chooser alone (the two
+ * one-sided layer kinds' conjunction, see [periodEditChoices]) and sits directly after the two it is made of.
+ * A kind the ACCOUNT defined is not here either and ranks last, by name: the list names the built-ins.
+ */
+private val CALENDAR_EDIT_ROW_ORDER: List<String> =
+    listOf(
+        EDIT_LABEL_TASK_PANEL,
+        EDIT_LABEL_RESTRICTIVE_PERIOD,
+        EDIT_LABEL_INACTIVITY,
+        EDIT_LABEL_REMINDER,
+        EDIT_LABEL_ALARM,
+        EDIT_LABEL_TIMER,
+        EDIT_LABEL_NO_COMPUTER,
+        EDIT_LABEL_NO_PHONE,
+        EDIT_LABEL_NO_SCREEN,
+        EDIT_LABEL_SLEEP,
+        EDIT_LABEL_BEFORE_BED,
+    )
+
+/** Where [label] sits in [CALENDAR_EDIT_ROW_ORDER]; a kind the account defined ranks after every built-in. */
+private fun editRowRank(label: String): Int =
+    CALENDAR_EDIT_ROW_ORDER.indexOf(label).takeIf { it >= 0 } ?: CALENDAR_EDIT_ROW_ORDER.size
+
+/**
+ * PRD §8: **the name a restrictive period wears in the chooser**, asked here and nowhere else.
+ *
+ * It is deliberately NOT [PeriodKinds.periodTitle]: that is the title a period CARRIES on the calendar
+ * ("Inactivity", "No screen"), and these are menu rows written in the user's words. The two built-in kinds
+ * whose internal name says something else — `no task allowed` reads "inactivity", `no on-screen task` reads
+ * "no screen" — are exactly why this mapping exists. **A kind the account defined is its own row**, for the
+ * same reason it is its own title: the user already named it.
+ */
+internal fun periodChoiceLabel(kind: String): String =
+    when (kind) {
+        PeriodKinds.NO_TASK -> EDIT_LABEL_INACTIVITY
+        PeriodKinds.NO_SCREEN -> EDIT_LABEL_NO_SCREEN
+        PeriodKinds.BEFORE_BED -> EDIT_LABEL_BEFORE_BED
+        PeriodKinds.NO_COMPUTER_UNLOCKED -> EDIT_LABEL_NO_COMPUTER
+        PeriodKinds.NO_PHONE_UNLOCKED -> EDIT_LABEL_NO_PHONE
+        else -> kind
+    }
+
+/**
+ * PRD §8: **ONE ROW of a calendar "edit…" chooser** — one thing the cursor is on that has an editor behind it.
+ *
+ * The menu no longer names editors ("Edit", "edit task"): it names THINGS, and every one of them is reached
+ * the same way. That is the whole point of the reshape — a position on the calendar carries several truths at
+ * once (a task panel inside a restrictive period under a layer, with a reminder on it), and a menu whose Edit
+ * silently took the top-most block could reach only one of them.
+ */
+data class CalendarEditChoice(
+    /** What the row reads — one of the `EDIT_LABEL_*` names, or an account-defined kind's own name. */
+    val label: String,
+    /**
+     * What picking the row edits. Usually one record; **several only where one statement is spelt by more
+     * than one object** — the `no screen` row over a `no computer unlocked` period overlapping a
+     * `no phone unlocked` one, where the user's rule is that editing the pair and editing the no-screen
+     * period are the same edit.
+     */
+    val records: List<PlacedRecord>,
+    /** Non-blank on a period row: the KIND its editor opens on. */
+    val periodKind: String = "",
+    /**
+     * Non-empty on the generic "restrictive period" row ALONE: the rows its own chooser offers. A row either
+     * edits something ([records]) or opens a chooser (this) — never both.
+     */
+    val children: List<CalendarEditChoice> = emptyList(),
+)
+
+/** PRD §8: is [r] a TASK PANEL — the thing the chooser's first row edits? Everything else here is not one. */
+internal fun isTaskPanelRecord(r: PlacedRecord): Boolean =
+    !r.reminder && !r.alarm && !r.sleep && !r.screenBreak && r.layer == null && r.restrictiveKind.isBlank()
+
+/** PRD §8: is [r] a restrictive PERIOD the chooser can open the period editor on? */
+internal fun isRestrictivePeriodRecord(r: PlacedRecord): Boolean =
+    r.restrictiveKind.isNotBlank() && !r.sleep && !r.screenBreak && r.layer == null
+
+/**
+ * PRD §8: is [r] a period the calendar draws a BOX for?
+ *
+ * Every restrictive period but one. A **"no screen" period is shown by the presence of both layer hatches**
+ * and by nothing else — which is the user's own definition of one read from the other end ("a stretch
+ * carrying both layers is a no-screen period"), and it asserts both layers, so the two slopes are already
+ * painted over it. A box as well would be a second drawing of one statement.
+ *
+ * It stays a menu target ([isRestrictivePeriodRecord], which is what the chooser reads): not being drawn is
+ * not the same as not being there, and the `no screen` row is how it is edited and binned.
+ */
+internal fun isDrawnPeriodRecord(r: PlacedRecord): Boolean =
+    isRestrictivePeriodRecord(r) && r.restrictiveKind != PeriodKinds.NO_SCREEN
+
+/**
+ * PRD §8: the rows of the **"restrictive period" chooser** at one point — one per period the cursor is on,
+ * named by its kind, in [CALENDAR_EDIT_ROW_ORDER].
+ *
+ * The `no screen` row is the one that is not a period one-for-one, and it is the user's own rule: *"editing a
+ * 'no screen' restrictive period is the equivalent of doing this edit in both no computer unlocked and no
+ * phone unlocked"*. So the row stands for whichever of the two spellings is there — a period of kind
+ * [PeriodKinds.NO_SCREEN], or a one-sided computer period overlapping a one-sided phone one — and carries
+ * every record behind it, because the edit is applied to all of them at once. A lone one-sided period gets no
+ * such row: one locked screen is not "no screen" ([PeriodKinds.assertedLayers]), which is the same rule the
+ * scheduler and the hatch already read.
+ */
+private fun periodEditChoices(hits: List<PlacedRecord>): List<CalendarEditChoice> {
+    val periods = hits.filter(::isRestrictivePeriodRecord)
+    if (periods.isEmpty()) return emptyList()
+    val rows = mutableListOf<CalendarEditChoice>()
+    for (period in periods) {
+        if (period.restrictiveKind == PeriodKinds.NO_SCREEN) continue // folded into the one row below
+        rows +=
+            CalendarEditChoice(
+                label = periodChoiceLabel(period.restrictiveKind),
+                records = listOf(period),
+                periodKind = period.restrictiveKind,
+            )
+    }
+    val stated = periods.filter { it.restrictiveKind == PeriodKinds.NO_SCREEN }
+    val computer = periods.filter { it.restrictiveKind == PeriodKinds.NO_COMPUTER_UNLOCKED }
+    val phone = periods.filter { it.restrictiveKind == PeriodKinds.NO_PHONE_UNLOCKED }
+    val spelled = if (computer.isNotEmpty() && phone.isNotEmpty()) computer + phone else emptyList()
+    val noScreen = stated + spelled
+    if (noScreen.isNotEmpty()) {
+        rows +=
+            CalendarEditChoice(
+                label = EDIT_LABEL_NO_SCREEN,
+                records = noScreen,
+                periodKind = PeriodKinds.NO_SCREEN,
+            )
+    }
+    return rows.sortedBy { editRowRank(it.label) }
+}
+
+/**
+ * PRD §8: **the ordered rows of the calendar's "edit…" chooser** for the things [hits] says the cursor is on.
+ *
+ * One funnel for a menu that used to be several entries ("Edit", "edit task"): a position on the timeline
+ * carries as many truths as are drawn there, and each of them has an editor. Two rules, and
+ * `CalendarEditChoicesTest` holds both:
+ *  - **the order is [CALENDAR_EDIT_ROW_ORDER]**, wherever a row came from;
+ *  - **a chooser of one is not a chooser**: the caller collapses a single row into the menu itself (there is
+ *    no "edit…" to open), and this function does the same one level down — a lone restrictive period is its
+ *    own row under its kind's name rather than a "restrictive period" row that would open a chooser of one.
+ *
+ * [hits] is what the column's hit test found, not the whole day: this function ranks, it does not select.
+ */
+fun calendarEditChoices(hits: List<PlacedRecord>): List<CalendarEditChoice> {
+    val rows = mutableListOf<CalendarEditChoice>()
+    hits.filter(::isTaskPanelRecord).forEach { rows += CalendarEditChoice(EDIT_LABEL_TASK_PANEL, listOf(it)) }
+    val periods = periodEditChoices(hits)
+    when (periods.size) {
+        0 -> Unit
+        1 -> rows += periods.single()
+        else -> rows += CalendarEditChoice(EDIT_LABEL_RESTRICTIVE_PERIOD, emptyList(), children = periods)
+    }
+    hits.filter { it.reminder }.forEach { rows += CalendarEditChoice(EDIT_LABEL_REMINDER, listOf(it)) }
+    hits.filter { it.alarm && !it.timer }.forEach { rows += CalendarEditChoice(EDIT_LABEL_ALARM, listOf(it)) }
+    hits.filter { it.alarm && it.timer }.forEach { rows += CalendarEditChoice(EDIT_LABEL_TIMER, listOf(it)) }
+    hits.filter { it.sleep }.forEach { rows += CalendarEditChoice(EDIT_LABEL_SLEEP, listOf(it)) }
+    return rows.sortedBy { editRowRank(it.label) }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// PRD §8: how overlapping restrictive periods are DRAWN.
+// ---------------------------------------------------------------------------------------------------------
+
+/**
+ * PRD §8: **one drawn box of the period layer** — a stretch of the timeline over which the same set of
+ * restrictive periods is in force, and the [records] that make it up, in the order their titles are written.
+ */
+data class PeriodSegment(
+    val startHour: Float,
+    val endHour: Float,
+    /** Every period covering this segment. Never empty. */
+    val records: List<PlacedRecord>,
+)
+
+/**
+ * PRD §8: **overlapping restrictive periods are ONE box per stretch, never a shared column width.**
+ *
+ * A period is not an object owning a slice of the timeline the way a task panel is — it is a statement about
+ * it — so two of them overlapping are two statements about one stretch, not two competitors for its width.
+ * Overlap Mode's side-by-side answer is for panels genuinely fighting over the same hours, which these never
+ * are. So the periods are cut at every boundary and each resulting stretch is drawn **full width, once**,
+ * labelled with the title of every period in force over it (the user's rule: *"A 10–12 and B 11–13 shows
+ * three boxes: A, then A and B, then B"*).
+ *
+ * Adjacent stretches carrying the IDENTICAL set are fused back into one box, so a lone period is one box and
+ * not a run of them — the cut is a consequence of overlap, never of how many boundaries happen to be nearby.
+ *
+ * What this deliberately does NOT do is merge the periods themselves: each stays its own object with its own
+ * bounds, its own kind and its own editor, which is what the "edit…" chooser reaches
+ * ([calendarEditChoices]). The box is a drawing; [SchedulerDomain.unifyNoScreenPeriods] is the one place
+ * periods are actually fused, and it still runs on the state.
+ */
+fun periodSegments(periods: List<PlacedRecord>): List<PeriodSegment> {
+    if (periods.isEmpty()) return emptyList()
+    // Same shape as [overlapLayout]'s sweep and for the same reason: `sortedSetOf` is JVM-only, so distinct
+    // boundaries are collected then sorted, which also keeps this file portable to iOS/JS.
+    val bounds = periods.flatMap { listOf(it.startHour, it.endHour) }.distinct().sorted()
+    val out = mutableListOf<PeriodSegment>()
+    for (i in 0 until bounds.size - 1) {
+        val a = bounds[i]
+        val b = bounds[i + 1]
+        if (b <= a) continue
+        val active =
+            periods
+                .filter { it.startHour <= a && it.endHour >= b }
+                .sortedWith(compareBy({ it.startHour }, { calendarBlockKey(it) }))
+        if (active.isEmpty()) continue
+        val last = out.lastOrNull()
+        if (last != null && last.endHour == a && last.records == active) {
+            out[out.size - 1] = last.copy(endHour = b)
+        } else {
+            out += PeriodSegment(a, b, active)
+        }
+    }
+    return out
+}
+
+/**
+ * PRD §8: the label of a [PeriodSegment] — **every period in force over it, at the top left**.
+ *
+ * One box says as many things as are true of the stretch it covers, which is the price of drawing them as one
+ * box; the chooser is what tells them apart again.
+ */
+fun periodSegmentLabel(segment: PeriodSegment): String =
+    segment.records.joinToString(", ") { it.title.ifBlank { "(untitled)" } }
+
+/**
+ * PRD §8: the outline a [PeriodSegment] wears — **the strongest hand among the periods in force**, in the
+ * order [SchedulerDomain.panelOutline] itself ranks them: a hand (blue) over a repeating rule (orange) over
+ * the app's own dynamic periods (grey).
+ *
+ * The box is shared, so the outline answers "did a hand state any of this?" rather than "who placed this
+ * one" — and the user's own example is that reading: a `no computer unlocked` stretch that is OS evidence for
+ * one hour and the user's extension for the next draws unoutlined, then blue.
+ */
+fun periodSegmentOutline(segment: PeriodSegment): SchedulerDomain.PanelOutline =
+    when {
+        segment.records.any { it.outline == SchedulerDomain.PanelOutline.User } ->
+            SchedulerDomain.PanelOutline.User
+        segment.records.any { it.outline == SchedulerDomain.PanelOutline.Pattern } ->
+            SchedulerDomain.PanelOutline.Pattern
+        segment.records.any { it.outline == SchedulerDomain.PanelOutline.Dynamic } ->
+            SchedulerDomain.PanelOutline.Dynamic
+        else -> SchedulerDomain.PanelOutline.None
+    }
 
 /**
  * PRD §8: the panel side a time-edge resize moves — the ONE reading of it, used both by the hover tile that
@@ -2716,7 +2978,7 @@ fun CalendarFloatingWindow(
      */
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
     /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
-    onEditEntry: (PlacedRecord) -> Unit = {},
+    onEditChoice: (CalendarEditChoice) -> Unit = {},
     /**
      * PRD §8 task contextual menu "edit task": requests the §13 task edit window for the panel's task —
      * the same window the tree's own cell menu opens, so a task's resilience, schedule unit and text are
@@ -2730,7 +2992,6 @@ fun CalendarFloatingWindow(
      */
     onGoToTaskTree: (TaskId?, String) -> Unit = { _, _ -> },
     /** PRD §8 task contextual menu "Remove": requests deleting this block. */
-    onRemoveEntry: (PlacedRecord) -> Unit = {},
     /** PRD §14 Reminders: a reminder tag was clicked → toggle its checked (done) state. */
     onToggleReminder: (PlacedRecord) -> Unit = {},
     /** PRD §8 Overlap Mode: new horizontal weights for panels whose shared-width edge was dragged. */
@@ -2929,10 +3190,9 @@ fun CalendarFloatingWindow(
                 ctrlHeld = ctrlHeld,
                 onAddAt = onAddAt,
                 onCommitBounds = onCommitBounds,
-                onEditEntry = onEditEntry,
+                onEditChoice = onEditChoice,
                 onEditTask = onEditTask,
                 onGoToTaskTree = onGoToTaskTree,
-                onRemoveEntry = onRemoveEntry,
                 onToggleReminder = onToggleReminder,
                 onAdjustWeights = onAdjustWeights,
                 overlapArmed = overlapArmed,
@@ -3237,10 +3497,9 @@ private fun WeekView(
     ctrlHeld: Boolean,
     onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
-    onEditEntry: (PlacedRecord) -> Unit,
+    onEditChoice: (CalendarEditChoice) -> Unit,
     onEditTask: (TaskId) -> Unit,
     onGoToTaskTree: (TaskId?, String) -> Unit,
-    onRemoveEntry: (PlacedRecord) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
     overlapArmed: Boolean,
@@ -3784,11 +4043,10 @@ private fun WeekView(
                                     showsDayDate = row > 0,
                                     onAddAt = onAddAt,
                                     onCommitBounds = onCommitBounds,
-                                    onEditEntry = onEditEntry,
+                                    onEditChoice = onEditChoice,
                                     onEditTask = onEditTask,
                                     onGoToTaskTree = onGoToTaskTree,
-                                    onRemoveEntry = onRemoveEntry,
-                                    onToggleReminder = onToggleReminder,
+                                                        onToggleReminder = onToggleReminder,
                                     onLockScroll = { scrollLocked = it },
                                     onResizingEdge = { resizingEdge = it },
                                     onAdjustWeights = onAdjustWeights,
@@ -3972,10 +4230,9 @@ private fun DayColumn(
     taskColors: Map<TaskId, Color>,
     onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
-    onEditEntry: (PlacedRecord) -> Unit,
+    onEditChoice: (CalendarEditChoice) -> Unit,
     onEditTask: (TaskId) -> Unit,
     onGoToTaskTree: (TaskId?, String) -> Unit,
-    onRemoveEntry: (PlacedRecord) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     /**
@@ -4021,18 +4278,31 @@ private fun DayColumn(
     // pipeline that lays panels out or hit-tests them. An idle stretch that carries no panel now draws no
     // band at all (the derived "Inactivity"/"No screen" bands are gone); it simply shows the layers.
     val layerBands = records.filter { it.layer != null }
-    // PRD §8: the DERIVED bands — the past stretches no task panel covers, drawn as a label alone and named
-    // "Inactivity" (the §17 sleep windows are the other grey label and draw as [sleepBands]). Derived means no
-    // [entryId]: display-only, neither removable nor draggable. A user-authored inactivity PANEL carries an
-    // entryId and stays a real block in the pipeline below.
-    // (PRD §17's "Before bed" hour is one of these too: derived from the sleep schedule, so it carries no
-    // entryId either, and it NAMES ITSELF — a derived band's own title is its label wherever one is drawn.)
-    val inactivityBands = records.filter { it.inactivity && it.entryId == null }
+    // PRD §8: **EVERY restrictive period leaves the block pipeline.** A period is not an object owning a
+    // slice of the timeline the way a task panel is — it states something about it — so it never competes for
+    // the column's width: overlapping periods are cut at their boundaries and each stretch is drawn once,
+    // full width, naming every period in force over it ([periodSegments]). Which also means they are out of
+    // [overlapLayout] and out of [weightHandles] below, by construction rather than by a guard.
+    //
+    // Derived and authored alike: a past "Inactivity" stretch nothing covers, the §17 wind-down hour and a
+    // period the user drew are the same statement from three hands, and the hand is what the OUTLINE says
+    // ([periodSegmentOutline]) — not whether the thing is drawn at all.
+    val periodHits = records.filter(::isRestrictivePeriodRecord)
+    // PRD §8: a **"no screen" period is not drawn as a box** — it is shown by the presence of BOTH layer
+    // hatches, which is the user's own definition of one ("a stretch carrying both layers is a no-screen
+    // period", read from the other end). It asserts both layers, so the two slopes are already painted over
+    // it; a box as well would be a second drawing of one statement. It stays a menu target: the "no screen"
+    // row of the period chooser is how it is edited and removed.
+    val periodRecords = periodHits.filter(::isDrawnPeriodRecord)
     val blockRecords =
         records.filterNot {
             it.reminder || it.screenBreak || it.alarm || it.sleep || it.layer != null ||
-                (it.inactivity && it.entryId == null)
+                isRestrictivePeriodRecord(it)
         }
+    // PRD §8: the drawn period boxes — one per stretch over which the same set of periods is in force.
+    // Cached on the record list like [overlapLayout], for the same reason: this column recomposes for every
+    // state change App's body sees, and the partition is a pure function of the periods.
+    val drawnPeriods = remember(periodRecords) { periodSegments(periodRecords) }
     // PRD §8 / ADR 0009: is any of `[top, bottom]` on screen? Every emission below asks this first. The
     // lists themselves are deliberately NOT filtered — the sweeps and layouts above/below need the whole
     // day — so culling can never move an element, only omit one that is not visible anyway.
@@ -4089,14 +4359,27 @@ private fun DayColumn(
                     )
                 }
             }
-            inactivityBands.forEach { band ->
+            // PRD §8: **one section per PERIOD, not per drawn box.** Overlapping periods share a box
+            // ([periodSegments]) and the box can only write one label; the bubble is the surface that still
+            // tells them apart, so each period names itself over its own true span. A "no screen" period
+            // draws no box at all and this is the only place it is named.
+            periodHits.forEach { band ->
                 add(
                     BubbleOverlay(
                         band.startHour,
                         band.endHour,
                         CalendarBubbleSection(
-                            CalendarBubbleSection.Kind.Inactivity,
-                            decorativeBandLabel(band),
+                            if (band.restrictiveKind == PeriodKinds.NO_SCREEN) {
+                                CalendarBubbleSection.Kind.NoScreen
+                            } else {
+                                CalendarBubbleSection.Kind.Inactivity
+                            },
+                            // Its own title where it has one ("No computer unlocked", a kind the account
+                            // named); [decorativeBandLabel]'s fallback only for a DERIVED band, which is
+                            // exactly what [underHoverTitle] answers. Asking decorativeBandLabel directly
+                            // would read "No screen" off the noScreen PAINT — which every layer-asserting
+                            // kind wears, one-sided ones included.
+                            underHoverTitle(band),
                             placedTimeRange(band, tz),
                         ),
                     ),
@@ -4154,9 +4437,11 @@ private fun DayColumn(
         }
 
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
-    // when no menu is open. [menuTarget] is the block the click landed on (null = empty space).
+    // when no menu is open. [menuHits] is everything the click landed on (empty = empty space), and
+    // [menuBranch] is the "restrictive period" chooser while it is open.
     var menuOffset by remember { mutableStateOf<Offset?>(null) }
-    var menuTarget by remember { mutableStateOf<PlacedRecord?>(null) }
+    var menuHits by remember { mutableStateOf<List<PlacedRecord>>(emptyList()) }
+    var menuBranch by remember { mutableStateOf<List<CalendarEditChoice>>(emptyList()) }
     // PRD §8 (phone): whether the open menu came from the touch double-tap — it then carries the panel
     // info at its top (no hover bubble on a phone) and offers "move" (no direct touch drag).
     var menuFromTouch by remember { mutableStateOf(false) }
@@ -4166,9 +4451,22 @@ private fun DayColumn(
     // Latest records, so the right-click hit-test closure never reads a stale list (records change
     // every scheduler tick) without restarting the long-lived gesture coroutine.
     val currentRecords by rememberUpdatedState(blockRecords)
-    // PRD §8: the sleep bands are menu targets too (their menu leads with "Edit" → the §17 sleep-schedule
-    // window), hit-tested behind the real blocks. Same staleness guard as [currentRecords].
+    // PRD §8: the sleep bands are menu targets too (their row opens the §17 sleep-schedule window), as are
+    // the restrictive periods — which no longer pass through the block pipeline at all — and the two
+    // zero-duration marker families. Same staleness guard as [currentRecords] on every one of them.
     val currentSleepBands by rememberUpdatedState(sleepBands)
+    val currentPeriodHits by rememberUpdatedState(periodHits)
+    val currentAlarmPlacements by rememberUpdatedState(alarmPlacements)
+    val currentReminderPlacements by rememberUpdatedState(
+        reminderTagPlacements(reminderTags, hourHeight, nowHour) { tag ->
+            tag.checkedAtMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() }
+        },
+    )
+
+    // PRD §8: the period box currently held, if any — see [PeriodSegmentGesture]. It is hoisted to the column
+    // because the box is drawn in two halves that must move together: the invisible gesture under the panels
+    // and the marking over them.
+    var periodDrag by remember { mutableStateOf<PeriodDragState?>(null) }
 
     // PRD §8 Overlap Mode: live width-edge drag. While a weight handle is held this maps panel ids to
     // their in-progress weights so the layout (and the handle position) follow the drag; on release the
@@ -4223,13 +4521,39 @@ private fun DayColumn(
         }
     }
 
-    // PRD §8: the contextual-menu target at [offsetY] — a real block first, else the sleep band under
-    // the click (the §17 band is a panel too: its menu leads with "Edit", opening the sleep window).
-    fun menuTargetAt(offsetY: Float): PlacedRecord? {
-        blockAt(offsetY)?.let { return it }
+    /**
+     * PRD §8: **EVERYTHING the cursor is on at [offsetY]** — what the "edit…" chooser is built from.
+     *
+     * The menu used to take one target, the top-most block, which is the whole reason the chooser exists: a
+     * point on the timeline carries as many truths as are drawn there (a task panel inside a restrictive
+     * period under a layer, with a reminder tag on it), and each of them has an editor. So this collects
+     * them all and [calendarEditChoices] is what orders them — this function selects, it does not rank.
+     *
+     * The two zero-duration markers are hit on their DRAWN rectangle, not on their instant: a reminder tag
+     * and a ring are a fixed height however long the thing they mark lasts, and both are pushed downward by
+     * their own stacking sweeps ([reminderTagPlacements], [alarmPlacements]) — so the drawn position is the
+     * only one a click can mean. Both sweeps are read here rather than recomputed, for the same reason the
+     * bubble reads them: a second copy is how the menu would start offering a ring the calendar draws
+     * somewhere else.
+     */
+    fun menuHitsAt(offsetY: Float): List<PlacedRecord> {
         val hourHeightPx = with(density) { hourHeight.toPx() }
-        return currentSleepBands.lastOrNull {
-            offsetY >= it.startHour * hourHeightPx && offsetY <= it.endHour * hourHeightPx
+        fun spans(r: PlacedRecord) =
+            offsetY >= r.startHour * hourHeightPx && offsetY <= r.endHour * hourHeightPx
+        val markerHeightPx = with(density) { REMINDER_TAG_HEIGHT.toPx() }
+        val ringHeightPx = with(density) { ALARM_MARKER_HEIGHT.toPx() }
+        return buildList {
+            currentRecords.filter(::spans).let(::addAll)
+            currentPeriodHits.filter(::spans).let(::addAll)
+            currentSleepBands.filter(::spans).let(::addAll)
+            currentReminderPlacements.forEach { (tag, y) ->
+                val top = with(density) { y.toPx() }
+                if (offsetY >= top && offsetY <= top + markerHeightPx) add(tag)
+            }
+            currentAlarmPlacements.forEach { (ring, y) ->
+                val top = with(density) { y.toPx() }
+                if (offsetY >= top && offsetY <= top + ringHeightPx) add(ring)
+            }
         }
     }
 
@@ -4257,7 +4581,8 @@ private fun DayColumn(
                         if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                             val change = event.changes.firstOrNull() ?: continue
                             change.consume()
-                            menuTarget = menuTargetAt(change.position.y)
+                                        menuHits = menuHitsAt(change.position.y)
+                            menuBranch = emptyList()
                             menuOffset = change.position
                             menuFromTouch = false
                             continue
@@ -4322,7 +4647,8 @@ private fun DayColumn(
                                         touch.uptimeMillis - tapUpAtMs <= viewConfiguration.doubleTapTimeoutMillis &&
                                         (touch.position - tapPos).getDistance() <= viewConfiguration.touchSlop * 4
                                     ) {
-                                        menuTarget = menuTargetAt(touch.position.y)
+                                        menuHits = menuHitsAt(touch.position.y)
+                                        menuBranch = emptyList()
                                         menuOffset = touch.position
                                         menuFromTouch = true
                                         tapUpAtMs = 0L
@@ -4389,54 +4715,83 @@ private fun DayColumn(
             )
         }
 
-        // PRD §8 contextual menu, anchored at the right-click position. A block gets Edit/Remove (and, on a
-        // task panel, "edit task" / "go to task tree"); both a block and a gap also get the one "add…" entry
-        // (anchored at the right-click time), so a panel's menu is a superset of the gap's.
+        // PRD §8 contextual menu, anchored at the right-click position.
+        //
+        // **Every edit entry the menu used to carry is one "edit…" chooser** whose rows are whatever the
+        // cursor is actually on, in the one order [calendarEditChoices] holds. The menu names THINGS now, not
+        // editors: a point on the timeline carries as many truths as are drawn there, and "Edit" could only
+        // ever reach the top-most block. Two collapses keep it from being a click deeper than it has to be —
+        // a chooser of ONE row is not a chooser, at either level: the row replaces "edit…" in the menu
+        // itself, and a lone restrictive period is named by its kind rather than by a "restrictive period"
+        // row that would open a chooser of one.
+        //
+        // **"Remove" is gone**: what a row opens is the editor of the thing it names, and the bin button
+        // there is the one way to delete it. A menu entry that deleted whatever happened to be top-most had
+        // the same defect "Edit" did, and one funnel for "get rid of this" is the point.
         val anchor = menuOffset
-        fun closeMenu() { menuOffset = null; menuTarget = null }
+        fun closeMenu() { menuOffset = null; menuHits = emptyList(); menuBranch = emptyList() }
+        /** Open what [choice] names, or descend into its own chooser. */
+        fun pickChoice(choice: CalendarEditChoice) {
+            if (choice.children.isNotEmpty()) {
+                menuBranch = choice.children
+            } else {
+                closeMenu()
+                onEditChoice(choice)
+            }
+        }
         DropdownMenu(
             expanded = anchor != null,
             onDismissRequest = { closeMenu() },
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
         ) {
-            val target = menuTarget
+            val hits = menuHits
+            val branch = menuBranch
+            val choices = remember(hits) { calendarEditChoices(hits) }
+            val topMost = hits.lastOrNull()
             // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble.
-            if (menuFromTouch && target != null) {
+            if (menuFromTouch && topMost != null) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     Text(
-                        text = target.title.ifEmpty { "(untitled)" },
+                        text = topMost.title.ifEmpty { "(untitled)" },
                         style = MaterialTheme.typography.labelMedium,
                     )
                     Text(
                         text =
-                            placedTimeRange(target, tz),
+                            placedTimeRange(topMost, tz),
                         style = MaterialTheme.typography.labelSmall,
                         color = CalColors.muted,
                     )
                 }
             }
-            if (target != null) {
-                // PRD §8: the menu on a task / period / sleep panel leads with "Edit" — a task panel
-                // opens the calendar edit window, a no-screen or inactivity period the shared period
-                // editor, a sleep band the §17 sleep-schedule window (all routed by the App's
-                // onEditEntry). A DERIVED grey band is display-only (no panel behind it, so no entryId)
-                // and has nothing to edit.
-                if (!target.inactivity || target.entryId != null) {
+            if (branch.isNotEmpty()) {
+                // The "restrictive period" chooser, in place of the menu that opened it.
+                branch.forEach { child ->
                     DropdownMenuItem(
-                        text = { Text("Edit") },
-                        onClick = { closeMenu(); onEditEntry(target) },
+                        text = { Text(child.label) },
+                        onClick = { pickChoice(child) },
                     )
                 }
-                // PRD §8: the two entries a TASK panel gets on top of "Edit" — "Edit" is about the panel
-                // (this occurrence's bounds and pins), these two are about the task behind it. A period, a
+            } else {
+                when (choices.size) {
+                    0 -> Unit
+                    // One thing under the cursor: its own name replaces "edit…" and opens its editor.
+                    1 -> DropdownMenuItem(
+                        text = { Text("edit ${choices.single().label}") },
+                        onClick = { pickChoice(choices.single()) },
+                    )
+                    else -> DropdownMenuItem(
+                        text = { Text("edit…") },
+                        onClick = { menuBranch = choices },
+                    )
+                }
+                // PRD §8: the two entries a TASK panel gets beside the chooser — the chooser's rows are about
+                // things ON the calendar, these two are about the TASK behind one of them. A period, a
                 // reminder tag, an alarm marker, a sleep band, a screen break and a layer region are not
                 // tasks, so neither is offered on them.
-                val taskPanel = !target.reminder && !target.alarm && !target.sleep &&
-                    !target.inactivity && !target.noScreen && !target.screenBreak && target.layer == null
-                if (taskPanel) {
+                hits.lastOrNull(::isTaskPanelRecord)?.let { panel ->
                     // "edit task" is the tree cell menu's own entry, under the same name: it opens the §13
                     // window on the panel's task. A panel whose title names no task has nothing to open.
-                    target.taskId?.let { taskId ->
+                    panel.taskId?.let { taskId ->
                         DropdownMenuItem(
                             text = { Text("edit task") },
                             onClick = { closeMenu(); onEditTask(taskId) },
@@ -4447,24 +4802,17 @@ private fun DayColumn(
                     // handler is the one place that says so.
                     DropdownMenuItem(
                         text = { Text("go to task tree") },
-                        onClick = { closeMenu(); onGoToTaskTree(target.taskId, target.title) },
+                        onClick = { closeMenu(); onGoToTaskTree(panel.taskId, panel.title) },
                     )
                 }
-                // The generated sleep band is not a removable/movable entity (no panel behind it).
-                if (!target.sleep) {
+                // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this menu
+                // option and then dragging — the release commits (see the column's gesture handler). The
+                // generated sleep band is not a movable entity (no panel behind it).
+                if (menuFromTouch && topMost != null && !topMost.sleep) {
                     DropdownMenuItem(
-                        text = { Text("Remove") },
-                        onClick = { closeMenu(); onRemoveEntry(target) },
+                        text = { Text("move") },
+                        onClick = { closeMenu(); movePending = topMost },
                     )
-                    // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this
-                    // menu option and then dragging — the release commits (see the column's gesture
-                    // handler).
-                    if (menuFromTouch) {
-                        DropdownMenuItem(
-                            text = { Text("move") },
-                            onClick = { closeMenu(); movePending = target },
-                        )
-                    }
                 }
             }
             // PRD §8: **one "add" entry**, anchored at the right-click time. The four it replaced named
@@ -4478,6 +4826,33 @@ private fun DayColumn(
                     anchor?.let { onAddAt(millisAt(it.y)) }
                     closeMenu()
                 },
+            )
+        }
+        // PRD §8: **the period boxes' GESTURE, emitted UNDER the panels** — the other half of the drawing
+        // further down, which is emitted OVER them.
+        //
+        // The split is forced and it is the rule "a cursor shape rides the hover tile; it is never a lid over
+        // it", read for a press instead of for a hover. A period box is FULL WIDTH now, so an interactive box
+        // drawn over the panels would be a lid over every one of them: no task panel inside a period could be
+        // hovered, clicked, dragged or right-clicked again. Under them, the hit test says the right thing by
+        // itself — a press on a task panel moves the task panel, a press on the part of the period no panel
+        // covers moves the period — and the MARKING still has to be drawn on top, because a task resilient to
+        // the kind is drawn straight through the period and would otherwise hide the statement covering it.
+        drawnPeriods.forEach { segment ->
+            if (!onScreen(segment.startHour, segment.endHour)) return@forEach
+            PeriodSegmentGesture(
+                segment = segment,
+                hourHeight = hourHeight,
+                drag = periodDrag,
+                onDragChange = { periodDrag = it },
+                onCommitBounds = onCommitBounds,
+                onLockScroll = onLockScroll,
+                onResizingEdge = onResizingEdge,
+                // What the box hides from the bubble. It is a pointer-input node, so it wins the hit test
+                // against the column-wide pickup underneath it and those tiles stop reporting — the same
+                // debt a §14 tag owes, and the reason this list is passed rather than assumed empty.
+                overlays = contextOverlays,
+                hoverScope = hoverScope,
             )
         }
         // PRD §8 (uniform blocks): every period — task record, scheduled "to do now", or manual entry
@@ -4539,7 +4914,7 @@ private fun DayColumn(
                 onResizingEdge = onResizingEdge,
                 hoverScope = hoverScope,
                 tz = tz,
-                onEditEntry = onEditEntry,
+                onEditChoice = onEditChoice,
                 // A block opening at midnight writes its title below the day's own date badge. When a
                 // reminder stack sits at the same top edge, it must push the title down too, and when the
                 // block is too short the title is hidden instead of writing over the reminders.
@@ -4702,28 +5077,18 @@ private fun DayColumn(
             }
         }
 
-        // PRD §8/§17: the bands with no block of their own — the §17 sleep windows and wind-down hours, and
-        // the DERIVED "Inactivity" stretches the past leaves uncovered. What each draws is the one question
-        // [SchedulerDomain.panelOutline] answers, and there are only two answers here:
-        //
-        //  • a band that IS a restrictive period — a sleep window, the hour before bed — is drawn EMPTY, like
-        //    every other period: an outline in the colour of whoever placed it (orange here, both being laid
-        //    by the repeating §17 schedule) and nothing inside it;
-        //  • a band nobody placed — the derived past inactivity — draws **nothing but its title** (below).
-        //    An outline says who put this here and the answer is "no one"; a marking would say the app is
-        //    asserting an empty stretch, and it is not — it is reporting one it derived from the panels
-        //    around it, which the absence of anything drawn says by itself.
+        // PRD §17: the sleep windows, drawn EMPTY like every other period — an outline in the colour of
+        // whoever placed it (orange: the repeating §17 schedule lays them) and nothing inside.
         //
         // The outline is drawn OVER the panels, like the layers and for the same reason: the fill projects
-        // the plan straight through a sleep window and a task resilient to a break's kind may work through
-        // one, so a marking hidden under the block would leave that stretch unmarked — and it has no fill, so
-        // the block underneath keeps its own colour. The "Sleep"/"Inactivity" label is drawn on top of
-        // everything further down, so it stays legible at the band's start. They carry no hatch of their own:
-        // the two oblique-line slopes mean "no computer unlocked" / "no phone unlocked", and a sleep window
-        // gets both of them from the LAYERS drawn over the whole column (see [layerBands] below).
-        // Purely decorative: these register no pointer input at all — their bubble section comes from
+        // the plan straight through a sleep window, so a marking hidden under the block would leave that
+        // stretch unmarked — and it has no fill, so the block underneath keeps its own colour. The "Sleep"
+        // label is drawn on top of everything further down, so it stays legible at the band's start. It
+        // carries no hatch of its own: the two oblique slopes mean "no computer unlocked" / "no phone
+        // unlocked", and a sleep window gets both from the LAYERS drawn over the whole column (below).
+        // Purely decorative: this registers no pointer input — its bubble section comes from
         // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
-        (inactivityBands + sleepBands).forEach { band ->
+        sleepBands.forEach { band ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
             val bandOutline = outlineColor(band.outline) ?: return@forEach
             Box(
@@ -4733,6 +5098,30 @@ private fun DayColumn(
                     .height(hourHeight * (band.endHour - band.startHour))
                     .clipToBounds()
                     .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
+            )
+        }
+
+        // PRD §8: **the restrictive periods, as one full-width box per stretch** ([periodSegments]).
+        //
+        // Three things are drawn and each answers one question:
+        //  • the MARKING says what kind of statement this is — vertical lines for "no task allowed", nothing
+        //    of its own for any other kind (the two layer kinds get their oblique slopes from [layerBands]
+        //    below, which is also the whole drawing of a "no screen" period);
+        //  • the OUTLINE says whether a HAND stated any of it ([periodSegmentOutline]) — the user's own
+        //    example: an hour of OS lock evidence draws unoutlined and the hour they extended it by draws
+        //    blue;
+        //  • and nothing else, because a period does not occupy the timeline. There is no fill at any depth:
+        //    a task resilient to the kind works through the period and must read straight through it.
+        //
+        // The box is also the GESTURE: dragging or resizing it moves every period in force over it at once
+        // (see [PeriodSegmentBox]) — the boundary it was cut at belongs to no single period, so there is no
+        // one period a press there could mean.
+        drawnPeriods.forEach { segment ->
+            if (!onScreen(segment.startHour, segment.endHour)) return@forEach
+            PeriodSegmentMarking(
+                segment = segment,
+                hourHeight = hourHeight,
+                drag = periodDrag,
             )
         }
 
@@ -4754,7 +5143,6 @@ private fun DayColumn(
                     .obliqueHatch(
                         CalColors.muted,
                         reversed = band.layer == SchedulerDomain.ActivityLayer.NoPhoneUnlocked,
-                        dotted = band.layerDeclared,
                     ),
             )
         }
@@ -4854,30 +5242,43 @@ private fun DayColumn(
             }
         }
 
-        // The "Sleep"/"Inactivity" band label, drawn over the panels and the markings so it stays legible at
-        // the start of the band even though the work plan now projects tinted blocks through the window. Non-
-        // interactive (a plain Text Box consumes no pointer events), so the blocks beneath stay clickable.
-        // Only the reminder tags go above it — they are the one element that must stay hittable.
-        (sleepBands.map { it to "Sleep" } + inactivityBands.map { it to decorativeBandLabel(it) })
-            .forEach { (band, label) ->
-            if (!onScreen(band.startHour, band.endHour)) return@forEach
-            val height = hourHeight * (band.endHour - band.startHour)
+        // The band labels — "Sleep", and **every period in force over a drawn box, at its top left**
+        // ([periodSegmentLabel]: the box is shared, so it says all of them). Drawn over the panels and the
+        // markings so they stay legible at the start of the band even though the work plan projects tinted
+        // blocks through the window. Non-interactive (a plain Text Box consumes no pointer events), so the
+        // boxes and blocks beneath stay clickable. Only the reminder tags go above them — they are the one
+        // element that must stay hittable.
+        (
+            sleepBands.map { Triple(it.startHour, it.endHour, "Sleep") } +
+                drawnPeriods.map { Triple(it.startHour, it.endHour, periodSegmentLabel(it)) }
+            )
+            .forEach { (bandStart, bandEnd, label) ->
+            if (!onScreen(bandStart, bandEnd)) return@forEach
+            val height = hourHeight * (bandEnd - bandStart)
             // A band opening at midnight would write its name straight over the day's own date. It is
             // pushed below the badge instead — and dropped where the band is too short to hold it there
             // (the zoom brings it back). See [panelLabelTopInset].
-            val inset = panelLabelTopInset(band.startHour, height, hourHeight, showsDayDate) ?: return@forEach
+            val inset = panelLabelTopInset(bandStart, height, hourHeight, showsDayDate) ?: return@forEach
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = hourHeight * band.startHour)
+                    .offset(y = hourHeight * bandStart)
                     .height(height),
-                contentAlignment = Alignment.TopCenter,
+                // PRD §8: **at the TOP LEFT**, where a task panel writes its own label — one place on a block
+                // where a name goes, whatever kind of block it is. (A shared period box may name several
+                // periods, so the line can be long: it ellipsizes rather than centring on nothing.)
+                contentAlignment = Alignment.TopStart,
             ) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     color = CalColors.muted,
-                    modifier = Modifier.padding(top = inset + 2.dp),
+                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 3.dp)
+                        .padding(top = inset + 2.dp),
                 )
             }
         }
@@ -5060,6 +5461,43 @@ private fun panelLabelTopInset(
 }
 
 /**
+ * PRD §14: **where each reminder tag is placed down the column**, and the one answer to it.
+ *
+ * Two rules, both of them §14's: a still-future or checked tag sits at its own hour and is pushed below the
+ * previous one wherever two would overlap (a downward stacking sweep in time order), and an OVERDUE one
+ * rides the now-line, stacked in order beneath it. Read by the panel-title inset ([reminderStackOverlapAt])
+ * and by the contextual menu's hit test — a second reading is how the menu would start offering a reminder
+ * the calendar draws somewhere else.
+ *
+ * The DRAWING places the overdue stack off the per-frame now-line instead (ADR 0009: the line is sampled in
+ * the draw phase and is the one thing on the calendar that moves continuously). That is the same split every
+ * derivation on this surface makes — what EXISTS is a function of the quantized instant, only where it is
+ * drawn is continuous — so a tag can be up to one resample out of step here, which is well inside its own
+ * height.
+ */
+private fun reminderTagPlacements(
+    reminderTags: List<PlacedRecord>,
+    hourHeight: Dp,
+    nowHour: Float?,
+    checkedAtHour: (PlacedRecord) -> Float?,
+): List<Pair<PlacedRecord, Dp>> {
+    val scheduled = reminderTags.filter { nowHour == null || it.checked || it.startHour > nowHour }
+    val overdue = reminderTags.filter { nowHour != null && !it.checked && it.startHour <= nowHour }
+    return buildList {
+        var lastScheduledBottom = 0.dp
+        scheduled.sortedBy { checkedAtHour(it) ?: it.startHour }.forEach { tag ->
+            val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
+            val y = maxOf(naturalY, lastScheduledBottom)
+            add(tag to y)
+            lastScheduledBottom = y + REMINDER_TAG_HEIGHT
+        }
+        overdue.forEachIndexed { index, tag ->
+            add(tag to (hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * index))
+        }
+    }
+}
+
+/**
  * PRD §8: the actual vertical space occupied by the reminder stack at the panel's top edge after the
  * tags have been stacked to avoid overlap. If a reminder crosses into the panel at the top, the title is
  * moved below that occupied strip and hidden when the panel is too short to hold the text beneath it.
@@ -5075,21 +5513,9 @@ private fun reminderStackOverlapAt(
 ): Dp {
     val panelTop = hourHeight * startHour
     val panelBottom = hourHeight * endHour
-    val scheduled = reminderTags.filter { nowHour == null || it.checked || it.startHour > nowHour }
-    val overdue = reminderTags.filter { nowHour != null && !it.checked && it.startHour <= nowHour }
-    val tagBounds = buildList {
-        var lastScheduledBottom = 0.dp
-        scheduled.sortedBy { checkedAtHour(it) ?: it.startHour }.forEach { tag ->
-            val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
-            val y = maxOf(naturalY, lastScheduledBottom)
-            add(y to (y + REMINDER_TAG_HEIGHT))
-            lastScheduledBottom = y + REMINDER_TAG_HEIGHT
-        }
-        overdue.forEachIndexed { index, _ ->
-            val y = hourHeight * (nowHour ?: 0f) + REMINDER_TAG_HEIGHT * index
-            add(y to (y + REMINDER_TAG_HEIGHT))
-        }
-    }
+    val tagBounds =
+        reminderTagPlacements(reminderTags, hourHeight, nowHour, checkedAtHour)
+            .map { (_, y) -> y to (y + REMINDER_TAG_HEIGHT) }
 
     var titleTop = panelTop +
         if (showsDayDate) (DAY_DATE_BADGE_HEIGHT - panelTop).coerceAtLeast(0.dp) else 0.dp
@@ -5752,8 +6178,10 @@ internal fun alarmBubbleSection(marker: PlacedRecord, tz: TimeZone): CalendarBub
  * now", or manual entry), drawn identically (same colour) with the same behaviour:
  *  - Click and drag while holding → move; committed once, on release, via [onCommitBounds].
  *  - Grab the top/bottom edge and drag → resize that edge, also committed via [onCommitBounds].
- *  - Double-click (no drag) → open the edit window via [onEditEntry] (same as the right-click "Edit").
- * Right-click (the Edit/Remove menu) is handled by the enclosing day column, so a secondary press is
+ *  - Double-click (no drag) → open its editor via [onEditChoice], the same funnel the menu's chooser uses:
+ *    the block is run through [calendarEditChoices] so the double-click and the chooser row can never open
+ *    two different windows for one thing.
+ * Right-click (the "edit…" chooser) is handled by the enclosing day column, so a secondary press is
  * left unconsumed here for it to pick up. The live preview applies the SAME no-overlap snapping/
  * clamping the reducer commits with, so a block never visually overlaps another. Auto blocks
  * (records/scheduled) become the USER's the moment one is dragged, resized or edited — the gesture IS the
@@ -5789,7 +6217,7 @@ private fun CalendarBlock(
     onResizingEdge: (PanelResizeEdge?) -> Unit,
     hoverScope: CalendarTitleHoverScope,
     tz: TimeZone,
-    onEditEntry: (PlacedRecord) -> Unit,
+    onEditChoice: (CalendarEditChoice) -> Unit,
     /** PRD §8: how far below its top this block writes its title — see [panelLabelTopInset]. */
     titleTopInset: Dp = 0.dp,
     /** False when the panel is too short to fit its title below the reserved top strip. */
@@ -5933,13 +6361,13 @@ private fun CalendarBlock(
                                             val b = if (edge != null) resizedBounds(edge) else movedBounds()
                                             onCommitBounds(record, b.startEpochMillis, b.endEpochMillis, armed.value)
                                         } else if (downUptime - lastTapUptime <= doubleTapWindowMs) {
-                                            // Second quick tap with no drag → open the edit window (a
-                                            // no-screen period gets the times-only editor), then reset so
-                                            // a third tap starts a fresh pair. An inactivity period has
-                                            // nothing to edit (PRD §8).
-                                            if (!record.inactivity || record.entryId != null) {
-                                                onEditEntry(record)
-                                            }
+                                            // Second quick tap with no drag → open this block's own
+                                            // editor, then reset so a third tap starts a fresh pair. It goes
+                                            // through the chooser's own table rather than naming an editor
+                                            // here: one block is exactly the one-row case, and a block the
+                                            // table has no row for has nothing to open (PRD §8).
+                                            calendarEditChoices(listOf(record)).firstOrNull()
+                                                ?.let(onEditChoice)
                                             lastTapUptime = 0L
                                         } else {
                                             lastTapUptime = downUptime
@@ -5982,7 +6410,6 @@ private fun CalendarBlock(
                         record.title,
                         showTitle = isFirst && titleVisible,
                         titleTopInset = titleTopInset,
-                        period = isPeriodBlock(record),
                         titleColor = taskColor ?: CalColors.event,
                         outline = record.outline,
                     )
@@ -6029,20 +6456,6 @@ private fun CalendarBlock(
 }
 
 /**
- * PRD §8: is this displayed block a **restrictive period** rather than a task panel?
- *
- * A period of ANY kind is one — `side-dev/README.md`: a period is a start, an end and a kind, and they are
- * all the same object under the one set of scheduling rules, which is why they share one editor. It is asked
- * for the one thing that differs on a period in the DRAWING: a period is drawn EMPTY — an outline, a label
- * and no fill at all — because it does not occupy the timeline, it states something about it.
- *
- * Read off the two classifications rather than off [PlacedRecord.restrictiveKind] deliberately: what the
- * question is really about is whether this block occupies the timeline or patterns it. The two are the same
- * set — [org.example.project.App] derives one from the other, once.
- */
-private fun isPeriodBlock(record: PlacedRecord): Boolean = record.noScreen || record.inactivity
-
-/**
  * The label for a derived (no-[entryId]) sleep / no-screen / inactivity record.
  *
  * A derived band NAMES ITSELF where it has a name: PRD §17's "Before bed" hour has no object of its own
@@ -6068,20 +6481,15 @@ private fun underHoverTitle(u: PlacedRecord): String =
  * draws "/" (bottom-left → top-right); the sleep pattern draws "\" (top-left → bottom-right), so a sleep
  * window (which is also a no-screen period) reads as the two crossed.
  *
- * [dotted] breaks each line into dashes without touching its slope, spacing or colour: PRD §8 +
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* — over a mode-3 period a device of the layer's kind
- * really was UNLOCKED (with the "I'm away" button on), so the hatch there is the user's declaration rather
- * than a locked screen. Only the LINE changes, because it is the same layer saying the same thing about the
- * same stretch; a second colour or a second slope would read as a third layer.
+ * There is no longer a DOTTED variant. It used to split each layer into "read off a locked screen" and
+ * "declared with the I'm away button", and the split said nothing the calendar does not now say better: a
+ * stretch a HAND stated is a restrictive period of that layer's kind, and a period is outlined in the
+ * accent blue wherever a hand placed it ([periodSegmentOutline]). One drawing of "who said this", not two.
  */
-private fun Modifier.obliqueHatch(color: Color, reversed: Boolean, dotted: Boolean = false): Modifier =
+private fun Modifier.obliqueHatch(color: Color, reversed: Boolean): Modifier =
     this.drawBehind {
         val step = 10.dp.toPx()
         val stroke = 1.dp.toPx()
-        // Dash and gap in the same unit as the stroke, so the dotting reads the same at every zoom (the band's
-        // height changes, the line's texture does not).
-        val effect =
-            if (dotted) PathEffect.dashPathEffect(floatArrayOf(1.5.dp.toPx(), 2.5.dp.toPx())) else null
         var x = -size.height
         while (x < size.width) {
             val start = if (reversed) Offset(x, 0f) else Offset(x, size.height)
@@ -6091,11 +6499,242 @@ private fun Modifier.obliqueHatch(color: Color, reversed: Boolean, dotted: Boole
                 start = start,
                 end = end,
                 strokeWidth = stroke,
-                pathEffect = effect,
             )
             x += step
         }
     }
+
+/**
+ * PRD §8: **the marking of an INACTIVITY period — vertical lines**, and the third member of a family whose
+ * whole job is to say *what kind of statement covers this stretch* without occupying it: "/" for no computer
+ * unlocked, "\" for no phone unlocked, "|" for "no task allowed".
+ *
+ * Same colour, same weight and the same 35 % alpha as [obliqueHatch], so an inactivity period under a layer
+ * reads as two markings crossing rather than as one thing changing colour — and, like them, it is drawn
+ * BEHIND whatever the box contains, because a task resilient to the kind may work straight through the
+ * period and must stay readable.
+ *
+ * The slope is what carries the meaning here, which is why the lines are vertical rather than, say, a second
+ * shade of grey: the calendar had a grey wash for this until 2026-09-11 and it collided with every task
+ * drawn through a period (ADR 0002). A marking made of lines does not.
+ */
+private fun Modifier.verticalHatch(color: Color): Modifier =
+    this.drawBehind {
+        val step = 10.dp.toPx()
+        val stroke = 1.dp.toPx()
+        var x = step / 2f
+        while (x < size.width) {
+            drawLine(
+                color = color.copy(alpha = 0.35f),
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = stroke,
+            )
+            x += step
+        }
+    }
+
+/**
+ * PRD §8: which period box is being dragged or resized, and by how far — the live state
+ * [PeriodSegmentGesture] writes and [PeriodSegmentMarking] reads, so the two halves of one box move together.
+ */
+private data class PeriodDragState(
+    /** [periodSegmentKey] of the held box. */
+    val key: String,
+    /** Pointer travel since the press, in pixels. */
+    val deltaPx: Float,
+    /** Which edge is held, or null for a move of the whole box. */
+    val edge: CalendarEdge?,
+)
+
+/**
+ * PRD §8: the identity of a drawn period box — every period in force over it, plus where it starts.
+ *
+ * A box is not an object, it is a stretch, so it has no id of its own; this is what the live drag state is
+ * keyed by. Both halves of the drawing derive it from the same [PeriodSegment], so they cannot disagree.
+ */
+private fun periodSegmentKey(segment: PeriodSegment): String =
+    segment.records.joinToString("|") { calendarBlockKey(it) } + "@" + segment.startHour
+
+/** How far [drag] displaces this box's top edge and its height, in that order. */
+private fun periodDragShift(segment: PeriodSegment, drag: PeriodDragState?): Pair<Float, Float> {
+    if (drag == null || drag.key != periodSegmentKey(segment)) return 0f to 0f
+    return when (drag.edge) {
+        CalendarEdge.Start -> drag.deltaPx to -drag.deltaPx
+        CalendarEdge.End -> 0f to drag.deltaPx
+        null -> drag.deltaPx to 0f
+    }
+}
+
+/**
+ * PRD §8: **what a period box DRAWS** — its marking, its outline, and nothing else. Emitted over the panels
+ * and registering no pointer input at all (the press half is [PeriodSegmentGesture], emitted under them).
+ *
+ * There is no fill at any depth: a period does not occupy the timeline, it states something about it, so a
+ * task resilient to its kind working through it, the grid, and the oblique layer hatches over it must all
+ * read straight through.
+ */
+@Composable
+private fun PeriodSegmentMarking(
+    segment: PeriodSegment,
+    hourHeight: Dp,
+    drag: PeriodDragState?,
+) {
+    val density = LocalDensity.current
+    val (topShiftPx, heightShiftPx) = periodDragShift(segment, drag)
+    val height = hourHeight * (segment.endHour - segment.startHour) + with(density) { heightShiftPx.toDp() }
+    // PRD §8: the vertical lines are "no task allowed"'s marking. A shared box carries them when ANY period
+    // in force is of that kind — the statement is true of the stretch whichever period makes it.
+    val idle = segment.records.any { it.restrictiveKind == PeriodKinds.NO_TASK }
+    val outline = outlineColor(periodSegmentOutline(segment))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
+            .height(height.coerceAtLeast(1.dp))
+            .clipToBounds()
+            .then(if (idle) Modifier.verticalHatch(CalColors.muted) else Modifier)
+            .then(
+                outline?.let { Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(3.dp)) }
+                    ?: Modifier,
+            ),
+    )
+}
+
+/**
+ * PRD §8: **the press half of a period box** — an invisible full-width node under the panels that moves or
+ * resizes EVERY period in force over the box at once.
+ *
+ * Moving all of them is the only answer a shared box can give: the stretch was cut at a boundary that belongs
+ * to no single period, so there is no one period a press there could mean. Which is also why the box is not
+ * how a single period is edited — the "edit…" chooser is ([calendarEditChoices]), and the editor is where a
+ * period's own bounds and its bin button live.
+ *
+ * A resize moves the same edge of every period in force, not just of whichever one happens to end there: the
+ * box's top IS the start of the statement the user is holding.
+ */
+@Composable
+private fun PeriodSegmentGesture(
+    segment: PeriodSegment,
+    hourHeight: Dp,
+    drag: PeriodDragState?,
+    onDragChange: (PeriodDragState?) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
+    onLockScroll: (Boolean) -> Unit,
+    onResizingEdge: (PanelResizeEdge?) -> Unit,
+    /** PRD §8: what this box hides from the hover bubble — see the call site. */
+    overlays: List<BubbleOverlay>,
+    hoverScope: CalendarTitleHoverScope,
+) {
+    val density = LocalDensity.current
+    val key = periodSegmentKey(segment)
+    val hourHeightPx = with(density) { hourHeight.toPx() }
+    val (topShiftPx, heightShiftPx) = periodDragShift(segment, drag)
+    val heightPx = (hourHeightPx * (segment.endHour - segment.startHour)).coerceAtLeast(1f)
+    // The same grab strip a task panel's edge wears, capped at a third of the box so a short one keeps a
+    // central "move" region — ONE value, read by the gesture and by the cursor shape it promises.
+    val edgePx = minOf(with(density) { RESIZE_EDGE_DP.toPx() }, heightPx / 3f)
+    val currentEdgePx = rememberUpdatedState(edgePx)
+    val currentHeightPx = rememberUpdatedState(heightPx)
+    val currentHourPx = rememberUpdatedState(hourHeightPx)
+    val currentRecords = rememberUpdatedState(segment.records)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
+            .height((with(density) { (heightPx + heightShiftPx).toDp() }).coerceAtLeast(1.dp))
+            .pointerInput(key) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (down.isConsumed) return@awaitEachGesture
+                    // Right-click belongs to the column's contextual menu, and a touch press to the grid's
+                    // scroll / double-tap menu — the same two exemptions a task panel's gesture makes.
+                    if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+                    if (down.type == PointerType.Touch) return@awaitEachGesture
+                    val grab = currentEdgePx.value
+                    val boxHeight = currentHeightPx.value
+                    val edge = when {
+                        down.position.y <= grab -> CalendarEdge.Start
+                        down.position.y >= boxHeight - grab -> CalendarEdge.End
+                        else -> null
+                    }
+                    onResizingEdge(edge?.let(::panelResizeEdgeOf))
+                    down.consume()
+                    var travelled = 0f
+                    var started = false
+                    onLockScroll(true)
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (!event.changes.any { it.pressed }) break
+                            val change = event.changes.firstOrNull() ?: continue
+                            travelled += change.positionChange().y
+                            if (!started && kotlin.math.abs(travelled) < viewConfiguration.touchSlop) continue
+                            started = true
+                            onDragChange(PeriodDragState(key, travelled, edge))
+                            change.consume()
+                        }
+                        if (started) {
+                            val deltaMillis =
+                                if (currentHourPx.value > 0f) {
+                                    ((travelled / currentHourPx.value) * 3_600_000f).toLong()
+                                } else {
+                                    0L
+                                }
+                            // Every period in force moves together; a period is free to overlap anything, so
+                            // the non-overlap snap the task panels use is deliberately bypassed.
+                            currentRecords.value.forEach { record ->
+                                val start =
+                                    if (edge == CalendarEdge.End) record.fullStartMillis
+                                    else record.fullStartMillis + deltaMillis
+                                val end =
+                                    if (edge == CalendarEdge.Start) record.fullEndMillis
+                                    else record.fullEndMillis + deltaMillis
+                                if (end > start) onCommitBounds(record, start, end, true)
+                            }
+                        }
+                    } finally {
+                        onDragChange(null)
+                        onResizingEdge(null)
+                        onLockScroll(false)
+                    }
+                }
+            },
+    ) {
+        // PRD §8: the tiles this box owes the bubble, and the cursor shapes its two grab strips promise.
+        //
+        // They are CHILDREN of the gesture, never siblings of it: an ancestor stays on the hit path of
+        // whatever descendant is hit, so the press still reaches the drag while the hover reaches the tile —
+        // which is exactly how a task panel's own tiles sit inside its slice. As siblings they would be the
+        // "lid over the tile" the rule forbids, with the roles swapped: the press would never land.
+        //
+        // The strips are CUTS of this tiling rather than a second layer over it, so the strip the cursor
+        // promises is the strip the press grabs — one `edgePx`, read by both.
+        val edgeHours = if (hourHeightPx > 0f) edgePx / hourHeightPx else 0f
+        CalendarHoverTiles(
+            top = segment.startHour,
+            bottom = segment.endHour,
+            overlays = overlays,
+            hourHeight = hourHeight,
+            hoverScope = hoverScope,
+            resizeStrips =
+                if (edgeHours <= 0f || segment.endHour - segment.startHour <= 2 * edgeHours) {
+                    emptyList()
+                } else {
+                    listOf(
+                        CalendarResizeStrip(
+                            segment.startHour..(segment.startHour + edgeHours),
+                            PanelResizeEdge.Top,
+                        ),
+                        CalendarResizeStrip(
+                            (segment.endHour - edgeHours)..segment.endHour,
+                            PanelResizeEdge.Bottom,
+                        ),
+                    )
+                },
+        )
+    }
+}
 
 /** PRD §8: the coloured body + title of a calendar block (or one of its overlap slices). */
 @Composable
@@ -6110,17 +6749,8 @@ private fun CalendarBlockBody(
      */
     titleTopInset: Dp = 0.dp,
     /**
-     * PRD §8: this block is a **restrictive period**, not a task panel — so it is drawn EMPTY: no fill at
-     * all, an outline and its label. A period does not occupy the timeline the way a task panel does; it
-     * says something about it, and whatever it covers (a task resilient to its kind, the two layer hatches a
-     * no-screen period asserts) has to stay readable straight through it. Grey used to be that statement and
-     * is not any more: the outline is.
-     */
-    period: Boolean = false,
-    /**
-     * PRD §8: the colour of the title written on the block. Its own [color] for a task panel — so the words
-     * match the border around them — but NOT for a grey period, whose muted [color] would leave the label
-     * unreadable on its own fill; those keep the event blue they have always been written in.
+     * PRD §8: the colour of the title written on the block. Its own [color], so the words match the border
+     * around them.
      */
     titleColor: Color = CalColors.event,
     /**
@@ -6137,13 +6767,10 @@ private fun CalendarBlockBody(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(3.dp))
-            // PRD §8: a restrictive period of ANY kind is drawn as an outlined region with NO FILL AT ALL.
-            // A no-screen period asserts both "nobody unlocked" LAYERS and the column paints those over it as
-            // the oblique lines of both slopes, past and future alike (they are an *asserted* region, so the
-            // layer is not clipped to the now-line); a tint under them would be a third statement nothing
-            // means. The other kinds are fill-less for the same reason one step further out: what a period
-            // covers — a task resilient to its kind, a layer, the grid itself — must read through it.
-            .background(if (period) Color.Transparent else color.copy(alpha = 0.30f))
+            // Every block this draws is a TASK PANEL — it occupies the timeline, so it is tinted. A
+            // restrictive period does not and is not: it never reaches this composable at all, being drawn by
+            // [PeriodSegmentMarking] as a full-width box with a marking, an outline and no fill.
+            .background(color.copy(alpha = 0.30f))
             .border(
                 if (outline == SchedulerDomain.PanelOutline.None) 1.dp else USER_PLACED_BORDER_DP,
                 outlineColor(outline) ?: color,
@@ -6154,7 +6781,7 @@ private fun CalendarBlockBody(
             Text(
                 text = title.ifEmpty { "(untitled)" },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (period) CalColors.muted else titleColor,
+                color = titleColor,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -6279,6 +6906,8 @@ fun ManualEntryEditWindow(
     titleForTaskId: (TaskId) -> String?,
     onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins, noScreenResilience: Double) -> Unit,
     onDismiss: () -> Unit,
+    /** PRD §8: the bin — see [EditorBinButton]. Null while ADDING a panel. */
+    onRemove: (() -> Unit)? = null,
     /** PRD §8: the panel's current four pin dimensions, toggled by the switches in this window. */
     initialPins: PanelPins = PanelPins(),
     /**
@@ -6431,17 +7060,20 @@ fun ManualEntryEditWindow(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
-                            val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                            onSave(effectiveTaskId, title, start, end, pins, noScreenResilience)
-                        },
-                    ) { Text("Save") }
+                    EditorBinButton(onRemove)
+                    Row {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
+                                val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
+                                onSave(effectiveTaskId, title, start, end, pins, noScreenResilience)
+                            },
+                        ) { Text("Save") }
+                    }
                 }
             }
         }
@@ -6709,6 +7341,8 @@ fun PeriodEditWindow(
     tz: TimeZone,
     onSave: (startMillis: Long, endMillis: Long) -> Unit,
     onDismiss: () -> Unit,
+    /** PRD §8: the bin — see [EditorBinButton]. Null while ADDING, and on a period the app derived. */
+    onRemove: (() -> Unit)? = null,
 ) {
     // An already-open bound has no wall-clock time to show, so its (hidden) fields are seeded from `now`
     // rather than from the sentinel instant — switching the bound back to "date & time" then offers today,
@@ -6789,8 +7423,10 @@ fun PeriodEditWindow(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
+                    EditorBinButton(onRemove)
+                    Row {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
                     Button(
@@ -6801,9 +7437,30 @@ fun PeriodEditWindow(
                             if (start != null && end != null && end > start) onSave(start, end)
                         },
                     ) { Text("Save") }
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * PRD §8: **the bin of a calendar editor** — the one way to get rid of the thing the window names.
+ *
+ * It replaced the contextual menu's "Remove", which named no thing in particular: on a stretch carrying a
+ * task panel inside a restrictive period it deleted whichever happened to be top-most, exactly the defect
+ * that turned "Edit" into the "edit…" chooser. Deleting now travels with the editing — you are rid of a thing
+ * from the window that names it — so there is one funnel for both and a row the chooser cannot reach is a
+ * thing the user cannot accidentally delete.
+ *
+ * Absent ([onRemove] null) where there is nothing stored to delete: a period the app DERIVED has no panel
+ * behind it, and a window that is ADDING something has nothing yet.
+ */
+@Composable
+private fun EditorBinButton(onRemove: (() -> Unit)?) {
+    if (onRemove == null) return
+    TextButton(onClick = onRemove) {
+        Text("Delete", color = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -6886,17 +7543,22 @@ fun ReminderEditWindow(
     titleForReminderId: (String) -> String?,
     onSave: (reminderId: String, title: String, atMillis: Long, checked: Boolean, pinned: Boolean) -> Unit,
     onDismiss: () -> Unit,
+    /** PRD §14: the tag's title/checked/pinned state when EDITING an existing one; null while adding. */
+    initial: ReminderEditSeed? = null,
+    /** PRD §8: the bin — see [EditorBinButton]. Null while ADDING a reminder. */
+    onRemove: (() -> Unit)? = null,
 ) {
-    var title by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf(initial?.title.orEmpty()) }
     // The explicitly-picked reminder id, if any; typing reverts to resolving the id from the title. The
     // empty string is a distinct sentinel meaning the user explicitly picked "New Reminder" (a brand-new,
     // distinct reminder) even when the typed title matches an existing one; null means "no explicit pick".
     var selectedReminderId by remember { mutableStateOf<String?>(null) }
     var timeText by remember { mutableStateOf(formatHm(initialMillis, tz)) }
-    // PRD §14: the two switches. "checked" defaults on (the common case — recording something just done);
-    // "pinned" off. At least one keeps the tag alive across regeneration.
-    var checked by remember { mutableStateOf(true) }
-    var pinned by remember { mutableStateOf(false) }
+    // PRD §14: the two switches. "checked" defaults on when ADDING (the common case — recording something
+    // just done) and "pinned" off; editing an existing tag seeds both from it. At least one keeps the tag
+    // alive across regeneration.
+    var checked by remember { mutableStateOf(initial?.checked ?: true) }
+    var pinned by remember { mutableStateOf(initial?.pinned ?: false) }
 
     val entries = reminderMenuEntries(title)
     // The reminder this window will save against: an explicit "New Reminder" pick (blank), else the explicit
@@ -6981,17 +7643,20 @@ fun ReminderEditWindow(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        enabled = title.isNotBlank(),
-                        onClick = {
-                            val at = parseHmOnDateOf(timeText, initialMillis, tz) ?: initialMillis
-                            onSave(effectiveReminderId, title, at, checked, pinned)
-                        },
-                    ) { Text("Save") }
+                    EditorBinButton(onRemove)
+                    Row {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            enabled = title.isNotBlank(),
+                            onClick = {
+                                val at = parseHmOnDateOf(timeText, initialMillis, tz) ?: initialMillis
+                                onSave(effectiveReminderId, title, at, checked, pinned)
+                            },
+                        ) { Text("Save") }
+                    }
                 }
             }
         }
@@ -7102,6 +7767,13 @@ fun ReminderConstraintEditWindow(
         }
     }
 }
+
+/**
+ * PRD §14: what [ReminderEditWindow] opens on when it is EDITING a tag rather than adding one — the tag's
+ * title and its two switches. The instant comes through `initialMillis` like it does for an add, so there is
+ * one seed for the time whichever the window is doing.
+ */
+data class ReminderEditSeed(val title: String, val checked: Boolean, val pinned: Boolean)
 
 /**
  * PRD §14: the edit modes for a reminder title field, mirroring a task cell's Edit Mode (PRD §4):

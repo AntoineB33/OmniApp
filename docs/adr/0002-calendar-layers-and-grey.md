@@ -107,7 +107,7 @@ evidence": a screen break is not time the user was absent for, and a declared ab
 Runtime state, like the flag itself — never persisted, never synced. After a restart the layer falls back to
 whatever the OS history says.
 
-### …and the lines over it are DOTTED — 2026-09-05
+### …and the lines over it are DOTTED — 2026-09-05 (SUPERSEDED 2026-09-12, see *One drawing per statement*)
 
 Hatching the declaration made the calendar agree with the mode, and immediately made it say something slightly
 false: *"no computer unlocked"* drawn over a stretch where a computer was demonstrably **unlocked** — the user
@@ -195,6 +195,9 @@ Modern-Standby machine dips in and out for seconds all day and would draw hairli
 20-second look-away is a real claim and must keep its hatch.
 
 ## GREY = the scheduler places nothing here
+
+*(The grey WASH is gone since 2026-09-11 and the concept was re-drawn on 2026-09-12 — see *One drawing per
+statement* below. What this section decided about the MEANING is unchanged.)*
 
 One concept wearing several names:
 
@@ -565,6 +568,89 @@ Three consequences worth keeping:
 
 Tests: `CalendarHoverTilingTest` (a cut never costs a tile its sections — the whole safety of building the
 strip out of the tiling).
+
+## One drawing per statement, and a menu that names things — 2026-09-12
+
+Two changes, asked for together, and they are two halves of one idea.
+
+### The menu named EDITORS, so it could only reach one thing
+
+`Edit` opened the editor of the top-most block, plus `edit task` beside it on a task panel. But a point on the
+calendar carries as many truths as are drawn there — a task panel inside a restrictive period under a layer,
+with a reminder tag on it, during sleep — and each of them has an editor. There was no way to say *edit the
+period* while the cursor was over the task inside it, and there never could be while the menu named windows
+instead of things.
+
+So every edit entry became one **`edit…` chooser** whose rows are what the cursor is on, in one order the user
+gave (`CALENDAR_EDIT_ROW_ORDER`). Two collapses keep it from costing a click: a chooser of one is not a
+chooser (the row replaces `edit…` in the menu), and that applies one level down too, so a lone restrictive
+period is named by its KIND rather than by a generic row opening a chooser of one.
+
+`Remove` went with it, for the same reason and not as a simplification: it named no thing in particular, so on
+a stretch carrying several it deleted whichever happened to be top-most. Deleting now travels with editing —
+a **bin in each editor** — so you are rid of a thing from the window that names it, and a row the chooser
+cannot reach is a thing the user cannot accidentally delete.
+
+The rejected alternative was a flat menu listing every thing inline. It reads worse the moment two periods
+overlap (which is precisely the case the reshape is for), and it would have needed a second ordering table for
+the period rows — the exact drift `CALENDAR_EDIT_ROW_ORDER` exists to prevent.
+
+### Periods were competing for width, which is a question they never ask
+
+`unifyNoScreenPeriods` had already noticed half of this in 2026-09-08: two overlapping periods of one
+layer-asserting kind are one statement, not two panels fighting over the same hours, so the display was the
+only place they were still two. The general case is the same and the fix is a DRAWING rather than a fusion:
+periods leave the block pipeline entirely and `periodSegments` cuts them at every boundary, drawing **one
+full-width box per stretch** labelled with every period in force over it. A 10–12 with B 11–13 is three boxes
+— A, then A and B, then B.
+
+That is what makes the chooser load-bearing rather than merely nicer: once the boxes are shared, the chooser
+is the only thing that tells the periods apart again. The two changes are one change.
+
+Three consequences fell out, and each answers a question the old drawing was fudging:
+
+- **A shared box moves everything in it.** The box was cut at a boundary belonging to no single period, so
+  there is no one period a press there could mean. The alternative — arming a period through the menu and
+  then dragging — was rejected: it is the phone's `move` workaround on a surface that does not need one.
+- **The gesture sits UNDER the panels, the marking OVER them.** A full-width interactive box drawn on top
+  would be a lid over every task panel inside the period — the same mistake as a cursor-shape box over a
+  hover tile, read for a press instead of a hover — while a marking drawn underneath would be hidden by the
+  very task the period admits. Under the panels, the hit test says the right thing by itself: a press on a
+  task panel moves the task panel, a press on the part no panel covers moves the period.
+- **A `no screen` period is not drawn as a box at all.** It is shown by the presence of both layer hatches,
+  which is its own definition read from the other end; it asserts both layers, so the slopes are already
+  there and a box would be a second drawing of one statement. It stays a menu target, and the user's own
+  equivalence is what the `no screen` row implements: editing it and editing the `no computer unlocked` +
+  `no phone unlocked` pair are the same edit, so the row stands for either spelling and its Save writes to
+  every record behind it.
+
+### The dots, and the marking that replaced them
+
+`declaredLayerRegions` is deleted. It split one layer's hatch into "read off a lock history" (solid) and
+"declared with the I'm away button" (dotted) — a second answer to *who said this*, on the one surface that
+could wear it. There is now a first answer that works everywhere: a stretch a HAND states is a restrictive
+period of that layer's kind, and every period is outlined in the accent blue exactly where a hand placed it.
+The user's own example is that reading — *no computer unlocked for real at 10–11, extended by the user to 12:
+oblique lines over 10–12, outlined in blue over 11–12*.
+
+Inactivity got its marking back for the same reason, as **vertical lines**: three statements, three slopes
+(`/`, `\`, `|`), each saying what covers the stretch without occupying it. The 2026-09-11 deletion removed a
+grey WASH, and a wash is what collided with every task drawn through a period; lines do not.
+
+### What is still DERIVED, deliberately
+
+The user's rule is that the timeline is fully accounted for — every stretch is a task panel or a restrictive
+period — with the one exception of the future the scheduler has no definitive schedule for yet. So the derived
+inactivity now runs to the schedule front instead of stopping at the now-line.
+
+It is still **derived on both sides**, and that is the decision this ADR already made under *A period is never
+manufactured from evidence*. Nothing is persisted or synced; `materializePastInactivity` grew to 218 panels on
+the release account and is not coming back. What the reshape adds is the other half: **editing a derived band
+MATERIALIZES it**, under the band's own kind, so a §17 wind-down hour becomes a `before bed` period and never
+plain inactivity. That is the one moment the user has actually stated something about the stretch — the
+observation was the app's, the statement is theirs — and it is why the box then wears the blue outline. The
+alternative, having the fill lay a real inactivity panel in every gap, gives the identical picture at the cost
+of unbounded stored panels, which is the mistake this ADR is largely about.
 
 ## Known gap
 

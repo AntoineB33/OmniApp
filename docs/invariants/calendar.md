@@ -10,7 +10,9 @@ Global rules that always apply: `CLAUDE.md`.
 → ADR 0002.
 
 - **Two orthogonal things, and keeping them orthogonal is the point.** The **layers** say who was at a
-  screen; **grey** says whether anything is scheduled.
+  screen; the **restrictive periods** say what may be placed. Both are markings drawn over the timeline
+  without occupying it, and the marking is what names the statement: `/` no computer unlocked, `\` no phone
+  unlocked, `|` no task allowed.
 - **A layer is read from the DEVICE'S OS HISTORY** (`deviceLockedIntervals`), never from the app's own
   sessions or from banked panels. Both of those were shipped and both were wrong.
 - **`WindowsPowerLog` is the ONLY reading of that history** — the ids, the debounce, the pairing, the query.
@@ -60,19 +62,15 @@ Global rules that always apply: `CLAUDE.md`.
   (hence `observedNoScreenRegions`' `computerAway`/`phoneAway`). A peer needs no equivalent: its layer is
   already hatched whole ("a device that cannot be asked was locked"), so an away press with every other device
   locked comes out as both layers — which is what makes mode 3 and "a no-screen period" the same set.
-- **A declared stretch is drawn DOTTED, and only the LINE changes** (`SchedulerDomain.declaredLayerRegions` →
-  `CalendarRecord.layerDeclared` → `obliqueHatch(dotted = …)`). PRD §8: *"the periods where $now line$ mode goes
-  to 3, the oblique lines of no computer unlocked are dotted if there was at least one computer unlocked with the
-  app having the I'm away button clicked"*, and the same for the phone's slope. A device of that kind really was
-  **unlocked** there — that is what the button is for — so the hatch is a claim, not a reading. Three rules
-  hold it together, and each has a test in `CalendarLayerTest`: the LOCK EVIDENCE wins where it overlaps (the
-  same clipped, seam-filtered evidence `layerRegions` draws — read through the one `layerEvidence` funnel, or a
-  sub-minute standby flicker slices a dotted band into hairlines); an ASSERTED region does NOT (a sleep window
-  or a break is a promise about every screen and cannot un-unlock the machine the button was pressed on); and
-  `null` — the peer's assumed-locked layer — dots nothing. `App.kt` emits one record per stretch of each kind,
-  same title and same layer — so the bubble still names the layer ONCE (the time beside it reads the hovered
-  piece), the both-layers/no-screen identity is untouched (**the dots are a drawing, not a classification**),
-  and the ∞-start is asked of the MERGED regions, so splitting a band can never move it.
+- **A DECLARED STRETCH HATCHES LIKE ANY OTHER; THE DOTS ARE GONE.** The hatch used to be split into what was
+  read off a lock history (solid) and what the "I'm away" button declared (dotted), by
+  `SchedulerDomain.declaredLayerRegions` — deleted, with `CalendarRecord.layerDeclared` and `obliqueHatch`'s
+  `dotted`. The split was a second answer to "who said this", on the one surface that could wear it: a
+  stretch a HAND states is a **restrictive period** of that layer's kind, and every period is outlined in the
+  accent blue exactly where a hand placed it (`periodSegmentOutline`). One answer, on the same surface as
+  every other statement the user makes. What did not change is the region: a declaration still rides the
+  **asserted** slot (so the sub-minute seam filter can never drop one) and still merges with the evidence
+  beside it into a single band — `CalendarLayerTest` pins that.
 - Layers are non-interactive overlays: they displace nothing and register no pointer input. A layer is
   *named* by the hover bubble anyway — its section rides whatever the cursor is over, or the bottom-most
   hover pickup where that is nothing. (An **alarm/timer ring** is inert in the other sense — it registers no
@@ -176,9 +174,13 @@ Global rules that always apply: `CLAUDE.md`.
   head and no hollow tail any more). It is not a screen classification: it refuses off-screen tasks too.
   "Refuses" means the task's resilience to the covering kind is `0`, so a task given a non-zero one may work
   through a break — the only thing that is ever placed there. The calendar draws every one of them the same
-  way, as an empty box outlined in the colour of whoever placed it, so the statement is not a kind either: a
-  band still carries its own kind and its own name (`decorativeBandLabel` — a derived band names itself where
-  it has a name). (Until 2026-09-11 this was GREY, a vertical-line marking painted across the stretch.)
+  way — see the period-box rules below — so the statement is not a kind either: a band still carries its own
+  kind and its own name (`decorativeBandLabel` — a derived band names itself where it has a name). **The one
+  kind that is MARKED is `no task allowed`**, by vertical lines (`Modifier.verticalHatch`), which makes it
+  the third member of a family whose whole job is to say what kind of statement covers a stretch without
+  occupying it: `/` no computer unlocked, `\` no phone unlocked, `|` no task allowed. (It was a grey WASH
+  until 2026-09-11, and the wash is what collided with every task drawn through a period. A marking made of
+  lines does not.)
 - **A band spans its TRUE duration and is NEVER stretched to hold its own name.** A break drawn taller than it
   lasts covers the task panel it abuts, which reads on the calendar as a task running through the break. So the
   band's floor is a hairline (`SCREEN_BREAK_MIN_HEIGHT`) and the NAME is what gives way: it is drawn only where
@@ -244,11 +246,13 @@ Global rules that always apply: `CLAUDE.md`.
   All three outlines are `USER_PLACED_BORDER_DP`, a step thicker than the 1 dp every other block wears: a task
   panel keeps its task's own colour inside, so a colour that only *sometimes* differed from the body would
   answer neither question the panel has to answer.
-- **A DERIVED INACTIVITY BAND IS NOTHING BUT ITS TITLE.** No outline (nobody placed it) and no marking of its
-  own: the app is not asserting an empty stretch there, it is REPORTING one it derived from the panels around
-  it, and the absence of anything drawn is what says so. It is the one thing on the calendar whose whole
-  drawing is the label — which is also why the label path is separate from the band path in `DayColumn`, and
-  why a band with no outline is skipped outright there rather than drawn empty.
+- **A DERIVED INACTIVITY PERIOD IS DRAWN LIKE AN AUTHORED ONE, MINUS THE OUTLINE.** Same vertical lines, same
+  label — it is the same statement — and NO outline, because the outline is the one thing that differs: it
+  says who put this here, and the answer is "no one yet". The app is REPORTING an empty stretch it derived,
+  not asserting one. **Editing it is what materializes it** (the period editor's Save lays a real panel), and
+  the box then wears the blue outline like anything else a hand placed. That is the one moment the user has
+  actually said something about the stretch, which is why it is the only moment anything is stored — ADR
+  0002, and the reason `materializePastInactivity` is not coming back.
 - **NOTHING ON THE CALENDAR WEARS A CHECK BOX.** The pin box is gone (with `SetPanelPinned`, its only intent):
   on a period it could only ever state a fact, and on a task panel it was a second control on a surface whose
   marks are otherwise all read-only. `pins.existence` is unchanged and has two ways in — the edit window and
@@ -273,8 +277,10 @@ Global rules that always apply: `CLAUDE.md`.
 - **A hand-drawn period carries `pins.existence` but never `pinned`** (`derivePinned`'s period-aware
   overload), or `isSchedulerFixed` would enter it in the walk's **pre-placed blocks** — a list of blocks owned
   by a task — on top of the period it already is.
-- **A RESTRICTIVE PERIOD OF ANY KIND HAS NO FILL AT ALL** — outline, label, nothing else (`CalendarBlockBody`'s
-  `period` flag, `isPeriodBlock`). A period does not occupy the timeline the way a task panel does; it states
+- **A RESTRICTIVE PERIOD OF ANY KIND HAS NO FILL AT ALL** — a marking, an outline, a label, nothing else
+  (`PeriodSegmentMarking`; `CalendarBlockBody` draws task panels and only task panels now, so it has no
+  `period` flag left and `isPeriodBlock` is gone). A period does not occupy the timeline the way a task panel
+  does; it states
   something about it, so whatever it covers must read straight through it: a task resilient to its kind working
   through it, the grid, and — for a period that asserts a LAYER — the oblique lines painted over it. Those are
   ASSERTED regions, so `layerRegions` does not clip them to the now-line and both slopes are painted over a
@@ -297,12 +303,28 @@ Global rules that always apply: `CLAUDE.md`.
   the answer the old flag-spelling could not give. The periods it may take are the **user's**
   (`isUserPlaced`): a screen break, a sleep window and a wind-down hour are `no task allowed` too, but a
   hand-placed panel is placed *through* them (§15/§17), never over their corpses.
-- **Two overlapping periods of ONE layer-asserting kind are ONE period — their union — and never two blocks
-  sharing the column's width.** A period is not an object owning a slice of the timeline the way a task panel is; it is
+- **NO RESTRICTIVE PERIOD EVER SHARES THE COLUMN'S WIDTH.** Periods leave the block pipeline entirely
+  (`isRestrictivePeriodRecord` — so they are out of `overlapLayout` and out of `weightHandles` by
+  construction, not by a guard) and are drawn as **one full-width box per stretch**: `periodSegments` cuts
+  them at every boundary and fuses back the adjacent stretches carrying the identical set, so A 10–12 with
+  B 11–13 is three boxes — A, then A and B, then B — and a lone period is still one box. Each box is labelled
+  with **every period in force over it, at the top left** (`periodSegmentLabel`) and outlined by the
+  strongest hand among them (`periodSegmentOutline`: blue over orange over grey). Splitting the width is
+  Overlap Mode's answer for panels genuinely competing for the same hours, which periods never are — they
+  state things about a stretch, and several statements about one stretch are not competitors. The box is a
+  DRAWING: each period stays its own object with its own bounds, kind, editor and bin, which is what the
+  "edit…" chooser reaches.
+- **A SHARED BOX MOVES EVERYTHING IN IT.** A box was cut at a boundary belonging to no single period, so
+  there is no one period a press there could mean: `PeriodSegmentGesture` drags or resizes **every** period
+  in force, by the same delta. And the gesture is emitted UNDER the panels while the marking is emitted OVER
+  them — a full-width interactive box drawn on top would be a lid over every task panel inside the period
+  (the "a cursor shape is never a lid over the tile" rule, read for a press), while a marking drawn
+  underneath would be hidden by the very task the period admits.
+- **Two overlapping periods of ONE layer-asserting kind are ONE period — their union — in the STATE.**
+  A period is not an object owning a slice of the timeline the way a task panel is; it is
   the statement *no screen was in use here*, and two overlapping statements of it say one thing. Splitting
-  the width is Overlap Mode's answer for panels genuinely competing for the same hours, which these are not:
   the scheduler has always read them merged (`mergeOccupied` in `noScreenRangesFor`) and so has the layer
-  assertion, so the display was the only place they were still two. `SchedulerDomain.unifyNoScreenPeriods`
+  assertion. `SchedulerDomain.unifyNoScreenPeriods`
   is the whole rule and it runs **before the trim** in `resolveScreenOverrides` — so the override and the
   record strip above act on the fused span, not on the span the user typed — with no exception list: it
   runs whatever panel changed, and `decode` runs it too so a state an older build wrote is healed rather
@@ -311,6 +333,15 @@ Global rules that always apply: `CLAUDE.md`.
   inactivity one, or a "no computer unlocked" one and a "no phone unlocked" one, are different statements (the
   last pair's overlap is a no-screen stretch, which is a reading, not a fusion). Within a fused run the survivor is the panel the user is
   holding — it keeps its id, its pins and its weight, and only its bounds grow.
+- **A "NO SCREEN" PERIOD IS NOT DRAWN AS A BOX AT ALL** (`isDrawnPeriodRecord`): it is shown by the presence
+  of BOTH layer hatches and nothing else, which is its own definition read from the other end. It asserts
+  both layers, so the two slopes are already painted over it; a box as well would be a second drawing of one
+  statement. Not being drawn is not the same as not being there — it stays a menu target
+  (`isRestrictivePeriodRecord`), and the `no screen` row of the period chooser is how it is edited and
+  binned. That row is also the user's equivalence: **editing a "no screen" period is editing both one-sided
+  layer periods**, so the row stands for either spelling — a real `no on-screen task` panel, or a
+  `no computer unlocked` period overlapping a `no phone unlocked` one — and its Save writes the new bounds to
+  every record behind it.
 - **A period LAID or DRAGGED over the past clears the work banked under it**, for exactly the tasks it
   **refuses** — the same question the override rule asks, so the on-screen tasks' records go under a
   no-screen period and everybody's under a grey one, as two resiliences rather than as two rules. Same
@@ -318,8 +349,32 @@ Global rules that always apply: `CLAUDE.md`.
   flag), applied at once rather than at the next engine start; outside Undo/Redo like every write to the
   record. A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
   sleep band moving is not the user saying they were not working.
-- **A task panel's menu reaches the TASK as well as the panel.** "Edit" is the panel (this occurrence's
-  bounds and pins); **"edit task"** opens the §13 window and **"go to task tree"** selects the task's first
+- **THE MENU NAMES THINGS, NOT EDITORS: EVERY EDIT ENTRY IS ONE "edit…" CHOOSER** (`calendarEditChoices`,
+  fed by the column's `menuHitsAt`). A point on the timeline carries as many truths as are drawn there — a
+  task panel inside a restrictive period under a layer, with a reminder tag on it — and each has an editor,
+  so a menu whose "Edit" silently took the top-most block could reach only one of them. Five rules, and
+  `CalendarEditChoicesTest` holds them:
+  - **one order for both levels** (`CALENDAR_EDIT_ROW_ORDER`, the user's list): task panel, restrictive
+    period, inactivity, reminder, alarm, timer, no computer unlocked, no phone unlocked, no screen, sleep,
+    before bed. It ranks LABELS, so both choosers sort through the same table and cannot disagree about
+    where `before bed` goes; a kind the account defined is not in it and ranks last;
+  - **a chooser of one is not a chooser**, at either level: one thing under the cursor replaces "edit…" in
+    the menu itself, and a lone restrictive period is named by its KIND rather than by a generic
+    "restrictive period" row that would open a chooser of one;
+  - **the row names the thing in the user's words** (`periodChoiceLabel`), which is deliberately not
+    `PeriodKinds.periodTitle`: `no task allowed` reads "inactivity" and `no on-screen task` reads "no
+    screen". An account-defined kind is its own row — it was already named;
+  - **a row is routed to the editor that already OWNS what it names** (`App.kt`'s `onEditChoice`): §17's
+    schedule for `sleep`, §18's window for `alarm`/`timer`, the one period editor for every kind, §14's for
+    a reminder, the calendar edit window for a task panel. The menu never names a window;
+  - **the double-click goes through the same table** — one block is exactly the one-row case — so a
+    double-click and a chooser row can never open two different windows for one thing.
+- **"Remove" IS GONE: DELETING TRAVELS WITH EDITING.** Each editor carries a bin (`EditorBinButton`), absent
+  where there is nothing stored to delete — a derived band, or a window that is still adding. A menu entry
+  that deleted whatever happened to be top-most had exactly the defect that turned "Edit" into the chooser,
+  and one funnel for "get rid of this" is the point: a thing is binned from the window that names it.
+- **A task panel's menu reaches the TASK as well as the panel.** The chooser's rows are about things ON the
+  calendar; **"edit task"** opens the §13 window and **"go to task tree"** selects the task's first
   cell. Both are offered on a task panel only — a period, a reminder, an alarm, a sleep band, a screen break
   and a layer region are not tasks. Two things they must not become: **"edit task" is the tree cell menu's
   own entry, under its own name** — one window for the task, so the tree's entry was renamed "edit" → "edit
@@ -352,24 +407,30 @@ Global rules that always apply: `CLAUDE.md`.
   two the menu used to offer, which is what made the window itself a place a third kind could not be edited;
   what it *says* about the kind is `periodKindBlurb`, written out of the model (`PeriodKinds.defaultResilience`)
   rather than out of a list of cases. The kind is **shown, not changed**: re-kinding a period is a different
-  edit from moving its bounds, and "Remove" plus a fresh add is the one way to say it. Each bound is a
+  edit from moving its bounds, and the bin plus a fresh add is the one way to say it. Each bound is a
   date+time, **"now"** (resolved at Save), or **"∞"** (`SchedulerDomain.OPEN_PAST_MILLIS` /
   `OPEN_FUTURE_MILLIS` — real 1900/2200 instants, never `Long.MIN_VALUE`: every consumer does plain arithmetic
-  on a panel's bounds). A *derived* grey band has no "Edit". The case it exists for: **an inactivity period
-  from ∞ to now** empties the recorded past.
+  on a panel's bounds). A *derived* band HAS an editor, and saving it is what **materializes** the period it
+  was standing in for — under the band's own kind, not the row's, so a §17 wind-down hour materializes as
+  `before bed` and never as plain inactivity. It has no bin: there is nothing stored to delete. The case the
+  editor exists for: **an inactivity period from ∞ to now** empties the recorded past.
 - **A PERIOD'S PAINT IS DERIVED FROM ITS KIND, IN ONE PLACE** (`App.kt`'s `calendarRecords`). Both paints are
   now fill-less, and what the two bits still say is whether the period **asserts a layer**
   (`CalendarRecord.noScreen`, read off `PeriodKinds.assertedLayers` — the hatch is painted over it and the
   stretch is not covered past, so a derived Inactivity band may still be drawn under it) or only speaks about
   the timeline (`.inactivity` — it covers the past, so no band is derived under it). Read off the panel's two
   legacy flags instead, a period of any other kind carried neither and was drawn as a **task panel**. `CalendarRecord.restrictiveKind` / `PlacedRecord.restrictiveKind` carry the identity beside the
-  paint, and that is what "Edit" hands the editor — a kind with no flag has nothing else to be recognised by.
-  The same rule on the other side: the derived §17 wind-down bands are split off **by panel id**
-  (`BEFORE_BED_PANEL_ID_PREFIX`), never by kind, or a `before bed` period the user drew would lose its Edit
-  and its Remove along with the fill's own.
-- Derived "Inactivity" bands are `[displayFloor, now]` minus everything already drawn, except the periods
-  that assert a layer and the screen breaks. Display-only, sub-minute remnants dropped, and drawn as a label
-  and nothing else.
+  paint, and that is what the chooser's row hands the editor — a kind with no flag has nothing else to be
+  recognised by. The same rule on the other side: the derived §17 wind-down bands are split off **by panel
+  id** (`BEFORE_BED_PANEL_ID_PREFIX`), never by kind, or a `before bed` period the user drew would lose its
+  row and its bin along with the fill's own.
+- **Derived inactivity periods run to the DEFINITIVE-SCHEDULE FRONT, not to the now-line**:
+  `[displayFloor, max(now, nearHorizonEnd)]` minus everything already drawn, except the periods that assert a
+  layer and the screen breaks. The user's rule is that the timeline is fully accounted for — every stretch is
+  a task panel or a restrictive period — and the ONE place that may fail is past the instant the scheduler
+  has a definitive schedule for, where there is no answer yet to give. The future's empty stretches are the
+  same statement as the past's, derived from the plan instead of from what happened. Display-only on both
+  sides, sub-minute remnants dropped.
 - **A stretch carrying both layers OVERRIDES the on-screen task panels it covers**
   (`clipPanelsForObservedNoScreen`), because it *is* a `no on-screen task` period — the same rule a hand-drawn
   "No screen" panel follows, and the same set §9 refuses to bank a record over

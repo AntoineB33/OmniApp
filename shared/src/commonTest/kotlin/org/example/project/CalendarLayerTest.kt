@@ -210,73 +210,24 @@ class CalendarLayerTest {
         )
     }
 
-    // ----- the mode-3 hatch is DOTTED --------------------------------------------------------------------
-
-    private fun dottedIn(
-        drawn: List<TaskTimeRange>,
-        away: List<TaskTimeRange>,
-        locked: List<TaskTimeRange>?,
-    ) = SchedulerDomain.declaredLayerRegions(drawn, away, locked, T0, T4)
+    // ----- the mode-3 hatch is no longer split -----------------------------------------------------------
 
     @Test
-    fun the_stretch_the_button_hatched_is_dotted_and_the_locked_one_beside_it_is_not() {
-        // The requirement: "the periods where $now line$ mode goes to 3, the oblique lines of no computer
-        // unlocked are dotted if there was at least one computer unlocked with the app having the I'm away
-        // button clicked" (and the same for the phone's slope). Over that stretch the machine really was
-        // UNLOCKED — the button is the only reason the hatch is there at all — so the line says so.
+    fun a_declared_stretch_hatches_exactly_like_a_locked_one() {
+        // The hatch used to be split in two: the sub-stretches a device of the kind was UNLOCKED for with the
+        // "I'm away" button on were drawn DOTTED, the rest solid. That split is gone, and with it
+        // `declaredLayerRegions`. A stretch a HAND stated is a restrictive period of the layer's kind now,
+        // and a period is outlined in the accent blue exactly where a hand placed it — so "who said this" is
+        // answered ONCE, by the outline, on the same surface as every other statement the user makes, rather
+        // than by a second texture that only this one layer could wear.
+        //
+        // What did NOT change is the region itself: a declaration still hatches its layer, still rides the
+        // ASSERTED slot (so the sub-minute seam filter can never drop one), and still merges with the lock
+        // evidence beside it into a single band.
         val away = at(1, 2)
         val locked = at(3, 4)
-        val drawn = regions(listOf(locked), asserted = listOf(away))
-        assertEquals(listOf(away, locked), drawn)
-        assertEquals(listOf(away), dottedIn(drawn, listOf(away), listOf(locked)))
-        // Dotted and solid TILE the hatch: same slope, same span, same bubble section — only the line differs.
-        assertEquals(listOf(locked), SchedulerDomain.subtractRegions(drawn, dottedIn(drawn, listOf(away), listOf(locked))))
-    }
-
-    @Test
-    fun a_lock_inside_the_spell_takes_its_slice_back_but_a_standby_flicker_does_not() {
-        // The button stays on across a lock (only an unlock clears it), and over that slice nothing of the
-        // kind was unlocked — so the hatch is a reading again and the dots stop.
-        val away = at(1, 4)
-        val locked = at(2, 3)
-        val drawn = regions(listOf(locked), asserted = listOf(away))
-        assertEquals(listOf(away), drawn) // one band: the declaration already covers the lock
-        assertEquals(listOf(at(1, 2), at(3, 4)), dottedIn(drawn, listOf(away), listOf(locked)))
-        // A flicker too short to hatch is too short to break the dots: the split reads the SAME evidence the
-        // hatch does, sub-minute seam filter included, or a machine dipping in and out of modern standby
-        // would slice one declaration into hairlines of solid line.
-        val flicker = TaskTimeRange(T0 + 2 * HOUR, T0 + 2 * HOUR + 30_000L)
-        assertEquals(listOf(away), dottedIn(drawn, listOf(away), listOf(flicker)))
-    }
-
-    @Test
-    fun an_asserted_region_over_the_spell_does_not_undot_it() {
-        // A sleep window, a screen break or a hand-added no-screen period is a promise about EVERY screen,
-        // and a promise cannot un-unlock the machine the button was pressed on. Evidence can; a claim cannot.
-        val away = at(1, 2)
-        val sleep = at(0, 3)
-        val drawn = regions(emptyList(), asserted = listOf(away, sleep))
-        assertEquals(listOf(at(0, 3)), drawn)
-        assertEquals(listOf(away), dottedIn(drawn, listOf(away), emptyList()))
-    }
-
-    @Test
-    fun a_layer_no_device_of_its_kind_was_unlocked_for_stays_solid() {
-        // The PEER's layer: assumed locked across the whole window, and no channel carries a peer's
-        // declaration either — nothing was unlocked, so nothing is dotted.
-        val peer = regions(null)
-        assertEquals(listOf(TaskTimeRange(T0, T4)), peer)
-        assertTrue(dottedIn(peer, emptyList(), null).isEmpty())
-        assertTrue(dottedIn(peer, listOf(at(1, 2)), null).isEmpty())
-        // The own layer with the button never pressed: an ordinary locked stretch, drawn solid.
-        assertTrue(dottedIn(regions(listOf(at(1, 2))), emptyList(), listOf(at(1, 2))).isEmpty())
-    }
-
-    @Test
-    fun only_what_is_drawn_is_dotted() {
-        // The dots are a property of the BAND, so they are clipped to it: a declaration reaching past the
-        // display floor dots only the part on screen, and one no band was drawn for dots nothing at all.
-        assertEquals(listOf(at(1, 2)), dottedIn(listOf(at(1, 2)), listOf(at(0, 3)), emptyList()))
-        assertTrue(dottedIn(listOf(at(2, 3)), listOf(at(0, 1)), emptyList()).isEmpty())
+        assertEquals(listOf(away, locked), regions(listOf(locked), asserted = listOf(away)))
+        // Abutting evidence and declaration are ONE band, not two pieces wearing two textures.
+        assertEquals(listOf(at(1, 4)), regions(listOf(at(2, 4)), asserted = listOf(at(1, 2))))
     }
 }

@@ -120,14 +120,17 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **Uncheck it on the panel the now-line is standing in** → its elapsed half stays exactly where it
         is (the past never moves); only the future tail is re-planned.
   - [ ] Undo (Ctrl+Z with the calendar focused) puts the pin back.
-  - [ ] **"add…" → restrictive period → "no on-screen task"** → a blue-outlined EMPTY box (no fill of any
-        kind), hatched with the oblique lines of both layers.
-  - [ ] **"add…" → restrictive period → "no task allowed"** → the same empty blue-outlined box, with no
-        grey fill and no hatch. "Remove" is the only way to take it away.
+  - [ ] **"add…" → restrictive period → "no on-screen task"** → **NO box is drawn at all**: the stretch
+        shows only the oblique lines of both layers, which is what a no-screen period IS.
+  - [ ] **"add…" → restrictive period → "no task allowed"** → an EMPTY blue-outlined box with **vertical
+        lines** across it and no fill of any kind. The bin in its editor is the only way to take it away —
+        the menu has no "Remove".
   - [ ] **Scroll to tonight's sleep window and the hour before it** → each is an EMPTY box outlined in
-        **orange** (a repeating rule laid it), labelled "Sleep" / "Before bed", with no grey fill.
-  - [ ] **Scroll back over a past day with idle time in it** → a derived "Inactivity" stretch is its LABEL
-        and nothing else: no outline, no marking, no fill.
+        **orange** (a repeating rule laid it), labelled "Sleep" / "Before bed", with no fill.
+  - [ ] **Scroll back over a past day with idle time in it** → a derived inactivity stretch draws the same
+        vertical lines and the same label, and **no outline** (nobody placed it).
+  - [ ] **Scroll FORWARD past the last scheduled panel** → the empty stretches ahead carry the same
+        inactivity lines, up to the point the plan stops; beyond that, nothing at all.
   - [ ] **Find a screen break** (zoom in on the now-line if need be) → an empty box outlined in **grey**,
         down to a single grey line for a 20-second look-away. "Look away now" records one that looks the
         same — not a blue-outlined block.
@@ -137,8 +140,19 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         slope). The plan still places on-screen work inside it.
   - [ ] **Add a "no phone unlocked" period over the same hours** → both slopes now cross that stretch and
         it behaves as a no-screen period: on-screen tasks are no longer scheduled in it.
-  - [ ] Two overlapping "no computer unlocked" periods fuse into one box; a "no computer unlocked" and a
-        "no phone unlocked" one stay two, full-width, each removable on its own.
+  - [ ] Two overlapping "no computer unlocked" periods fuse into one period (one object, one box).
+  - [ ] **Let the OS lock the machine for an hour, then draw a "no computer unlocked" period over that hour
+        AND the hour after it.** The first hour shows the oblique lines with no outline; the second shows
+        the same lines inside a **blue-outlined** box. The outline is the whole of what says a hand stated
+        it.
+- [ ] **Overlapping periods share ONE box (PRD §8).**
+  - [ ] Draw an "inactivity" period 10:00→12:00 and a period of a kind you defined 11:00→13:00. The column
+        shows **three full-width boxes**, never two half-width ones: 10–11 named for the first, 11–12 named
+        for both (`A, B` at the top left), 12–13 named for the second.
+  - [ ] **Drag the middle box down an hour** → BOTH periods move an hour: the three boxes are now 11–12,
+        12–13, 13–14. Drag its top edge instead → both periods' starts move.
+  - [ ] **Right-click inside a task panel that sits inside one of those periods** → the menu offers
+        "edit…", not the panel's editor directly (see the chooser check below).
 - [ ] **The menu's one "add…" entry (PRD §8).** Right-click empty grid, and again on a panel — both menus
       offer exactly one entry to add something.
   - [ ] It opens a window headed with the clicked time offering **task panel / restrictive period /
@@ -155,8 +169,31 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         of it over both tasks' panels.** The task left at 0 has its panel trimmed away; the resilient one
         keeps its panel where it is, inside the period. Draw it over the elapsed past instead: the same
         split happens to the two tasks' green record blocks.
-  - [ ] Right-click that period → **"Edit"** opens the period editor naming its kind; **"Remove"** takes it.
-        Close and reopen the app: the period is still there and still of that kind (not a block of work).
+  - [ ] Right-click that period → its row opens the period editor naming its kind; the editor's **bin**
+        takes it away. Close and reopen the app: the period is still there and still of that kind (not a
+        block of work).
+- [ ] **The menu names THINGS, not editors (PRD §8).**
+  - [ ] Right-click a stretch carrying exactly one thing (a lone task panel) → the entry reads
+        **"edit task panel"** and opens its editor directly. There is no "edit…" and no "Remove".
+  - [ ] Right-click a task panel that sits inside a restrictive period → **"edit…"**, which opens a chooser
+        reading **task panel**, then the period's row.
+  - [ ] Right-click a stretch carrying several periods → the chooser's second row is **"restrictive
+        period"**; picking it opens a second chooser naming each period by kind — **inactivity**, **no
+        computer unlocked**, **no phone unlocked**, **no screen**, **before bed**, then any kind you
+        defined, in that order.
+  - [ ] With a "no computer unlocked" period and a "no phone unlocked" period over the same hours, the
+        period chooser also offers **"no screen"**. Pick it, change the end time, Save → **both** periods
+        take the new end.
+  - [ ] Right-click a reminder tag → **"edit reminder"** opens the reminder editor seeded with its title
+        and switches; its bin removes the tag. Right-click an alarm ring → **"edit alarm"** opens the §18
+        window ("edit timer" for a timer's ring).
+  - [ ] Right-click inside tonight's sleep band → **"edit sleep"** opens the §17 sleep schedule.
+  - [ ] Right-click a DERIVED inactivity stretch in the past → **"edit inactivity"** opens the period
+        editor with **no bin** (nothing is stored yet). Save it → the stretch is now a real period wearing
+        the **blue** outline, and it survives closing and reopening the app.
+  - [ ] Right-click the §17 "Before bed" hour → its row is **"before bed"**; saving it materializes a
+        `before bed` period (not an inactivity one) and the box turns blue.
+  - [ ] **Double-click a task panel** → the same editor its chooser row opens.
 - [ ] **A task panel's menu reaches its task (PRD §8).** Right-click a task panel:
   - [ ] **"edit task"** opens the §13 edition window on that task — the same window the tree cell's own
         **"edit task"** opens (that entry is no longer called "edit").
@@ -435,19 +472,18 @@ rows, and re-derive right after each reconcile.
 - [ ] **Live tail.** Lock the desktop / walk away with the app open → the Inactivity band grows live
       behind the now-line (`live-inactivity-tail` note); come back → it stops growing and stays until a
       derive retires it.
-- [ ] **A declared absence hatches its layer, DOTTED (PRD §8).** With the machine **unlocked**, press
-      **I'm away** and leave it a couple of minutes → that stretch behind the now-line carries **both**
-      oblique-line layers (it is a mode-3 period, so it is a no-screen period), and the "/" *no computer
-      unlocked* lines over it are **dotted**: a computer is sitting there unlocked, so the hatch is your
-      declaration and not a locked screen. Same slope, same spacing, same colour, same hover bubble
-      ("No computer unlocked") — only the line differs. The "\\" *no phone unlocked* slope over the same
-      stretch stays **solid** (no phone declared anything; a peer that cannot be asked was locked).
-- [ ] **…and a real lock inside it goes back to solid.** Leave the button on and let the screen turn off /
-      the machine reach standby for a few minutes (on a Modern-Standby machine `Win+L` is what the power log
-      records), then unlock — which clears the button. Relaunch if the layer has not refreshed (the OS scan
-      runs at launch on a coarse bucket): the slice the machine was actually off for must be drawn **solid**
-      inside the same band, the declared slices around it dotted. Nothing else moves — no panel is displaced
-      and the band's span is unchanged.
+- [ ] **A declared absence hatches its layer (PRD §8).** With the machine **unlocked**, press **I'm away**
+      and leave it a couple of minutes → that stretch behind the now-line carries **both** oblique-line
+      layers (it is a mode-3 period, so it is a no-screen period), and the hover bubble names both.
+  - [ ] The lines are **SOLID**, the same as a locked stretch's. The dotted variant is gone (2026-09-12):
+        what says a stretch was stated by a hand rather than read off a lock history is a restrictive
+        period's **blue outline**, not a second texture on one layer.
+  - [ ] **Let a real lock happen inside it.** Leave the button on and let the screen turn off / the machine
+        reach standby for a few minutes (on a Modern-Standby machine `Win+L` is what the power log records),
+        then unlock — which clears the button. Relaunch if the layer has not refreshed (the OS scan runs at
+        launch on a coarse bucket): the band is drawn as **one** hatch across the whole stretch, with no
+        seam where the lock began. Nothing else moves — no panel is displaced and the band's span is
+        unchanged.
 - [ ] **Peer coverage removes the band.** Desktop and phone signed into account 1, phone foregrounded
       while the desktop is closed → after each side has reconciled (make an edit on each, or press Sync to
       force it), the desktop-closed window shows **no** band (the phone covered it). A window where **both**
@@ -513,9 +549,9 @@ fast-break script (`*-fast-break*.bat`) so the bars fire in seconds rather than 
 - [ ] **A break the line crossed while away STAYS in the past.** Let the line run past the end of a
       20 s / 5 min / 15 min band while away → the band is still drawn where it happened, at its own length. It
       must **not** be stretched forward to keep touching the now-line, and it must not vanish. What fills the
-      gap from its end to the line is a grey **Inactivity** band (or **Sleep**, if you are inside a §17 sleep
-      window), hatched by **both** oblique layers — solid in mode 2, and dotted for this device's layer in
-      mode 3, which is what the "I'm away" button draws.
+      gap from its end to the line is an **Inactivity** period (vertical lines and its label; or **Sleep**,
+      if you are inside a §17 sleep window), crossed by **both** oblique layers — solid in mode 2 and in
+      mode 3 alike.
 - [ ] **A break falling due while you are already away is credited to the time you have been away.** Walk away,
       then let a break fall due → it does not start at the now-line: it starts where the pause did, so it may
       already be over by the time you look. (Before 2026-09-10 it was pushed to the end of the pause, which

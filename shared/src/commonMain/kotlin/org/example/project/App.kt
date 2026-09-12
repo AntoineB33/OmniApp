@@ -95,6 +95,11 @@ import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.AlarmWindow
 import org.example.project.ui.CalendarFloatingWindow
+import org.example.project.ui.ReminderEditSeed
+import org.example.project.ui.EDIT_LABEL_ALARM
+import org.example.project.ui.EDIT_LABEL_REMINDER
+import org.example.project.ui.EDIT_LABEL_SLEEP
+import org.example.project.ui.EDIT_LABEL_TIMER
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.ChoresManagerWindow
 import org.example.project.ui.HistoryManagerWindow
@@ -1186,23 +1191,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
             )
             }
-        // PRD §8: the elapsed timeline is fully accounted for — every past stretch is either a TASK PANEL or a
-        // GREY period. So whatever the panels leave uncovered in the past is drawn as a derived "Inactivity"
-        // band (the user's rule: "the areas in the past that don't have a task panel should have a grey panel
-        // either labelled inactivity or sleep"). "Sleep" is the other label, and the §17 sleep bands already
-        // draw and label themselves, so they are subtracted rather than relabelled — as are the hand-added
-        // inactivity panels, which are real panels and already grey. A screen break and a no-screen period
-        // are deliberately NOT subtracted: neither is a task panel, so idle time inside one is still idle
-        // (and the break's own band draws over whatever is underneath it). See [derivedInactivityBands],
-        // which also drops the sub-minute seams between adjacent panels. Display-only: no `entryId`, so it
-        // is neither removable nor draggable.
+        // PRD §8: **the whole timeline is accounted for** — every stretch is either a TASK PANEL or a
+        // restrictive period — so whatever the panels leave uncovered is drawn as a derived INACTIVITY
+        // period (the user's rule: "the only stretches with no task panel and no inactivity period are the
+        // ones the scheduler has no definitive schedule for yet").
+        //
+        // The far end is therefore the **definitive-schedule front**, not the now-line: the past's empty
+        // stretches and the future's are the same statement, derived from what happened and from the plan
+        // respectively, and the one place the rule may fail to hold is `[front, +∞)` where there is no answer
+        // yet to give. (Bounded by the visible window like every other display derivation, ADR 0009: the
+        // front is already capped at the 168 h ceiling of what is on screen.)
+        //
+        // "Sleep" is subtracted rather than relabelled — the §17 bands draw and label themselves — as are the
+        // user's own periods, which are real panels. A screen break and a no-screen period are deliberately
+        // NOT subtracted: neither is a task panel, so idle time inside one is still idle (and the break's own
+        // band draws over whatever is underneath it). See [derivedInactivityBands], which also drops the
+        // sub-minute seams between adjacent panels.
+        //
+        // Display-only: no `entryId`, so the period is neither removable nor separately draggable — until the
+        // user EDITS it, which is what lays the real panel (the period editor's Save). ADR 0002: an
+        // observation stays derived, a statement is stored.
         val pastCoveredRegions =
             baseCalendarRecords
                 .filterNot { it.reminder || it.alarm || it.screenBreak || it.noScreen }
                 .map { it.range }
+        val inactivityUntilMillis = maxOf(nowMillis, nearHorizonEndMillis)
         val pastInactivityRecords =
             Perf.measure("display.inactivityBands") {
-            SchedulerDomain.derivedInactivityBands(pastCoveredRegions, displayFloorMillis, nowMillis)
+            SchedulerDomain.derivedInactivityBands(pastCoveredRegions, displayFloorMillis, inactivityUntilMillis)
                 .let { gaps ->
                     // PRD §12 "∞ start": the earliest band is open-ended into the past when nothing precedes it.
                     val open = SchedulerDomain.derivedBandsOpenStart(gaps, earliestEvidenceMillis)
@@ -1262,31 +1278,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         sinceMillis = displayFloorMillis,
                         untilMillis = nowMillis,
                     )
-                // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the sub-stretches of this hatch that
-                // a device of the layer's kind was UNLOCKED for, the "I'm away" button being what says nobody
-                // was at it — mode 3. They are drawn DOTTED, so the band is emitted as one record per stretch
-                // of each kind rather than one per merged region. Nothing else about them differs: same title,
-                // same layer, so the hover bubble names the layer once whichever piece the cursor is over (the
-                // time it reads beside it is that piece's, which is the stretch the dots are true of).
-                val declared =
-                    SchedulerDomain.declaredLayerRegions(
-                        regions = regions,
-                        declaredAway = layerAway,
-                        lockedIntervals = layerLocked,
-                        sinceMillis = displayFloorMillis,
-                        untilMillis = nowMillis,
-                    )
                 // PRD §12 "∞ start": the earliest layer region is open-ended into the past when nothing at all
                 // precedes it (an emptied DB) — its drawn start is only the display floor, so it reads "∞".
-                // Asked of the MERGED regions, so splitting a band for the dots cannot move the ∞.
+                //
+                // ONE record per merged region. The band used to be split further, into the sub-stretches a
+                // device of the kind was UNLOCKED for with the "I'm away" button on, which were drawn DOTTED.
+                // That split is gone with the dots: a stretch a HAND stated is a restrictive period of the
+                // layer's kind now, and a period is outlined in the accent blue exactly where a hand placed
+                // it — so "who said this" is answered once, by the outline, on the same surface as every
+                // other statement the user makes.
                 val layerOpenStart = SchedulerDomain.derivedBandsOpenStart(regions, earliestEvidenceMillis)
-                val solid = SchedulerDomain.subtractRegions(regions, declared)
-                (solid.map { it to false } + declared.map { it to true }).map { (region, isDeclared) ->
+                regions.map { region ->
                     CalendarRecord(
                         title = layer.calendarLabel,
                         range = region,
                         layer = layer,
-                        layerDeclared = isDeclared,
                         openStart = layerOpenStart != null && region.startEpochMillis == layerOpenStart,
                     )
                 }
@@ -1392,6 +1398,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val taskPanelColors = remember(taskHues) { TaskPalette.accentColors(taskHues) }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
+        // PRD §14: the reminder tag the "edit…" chooser's `reminder` row is open on (null = none). A tag had
+        // no editor reachable from the calendar at all before the chooser — only "add reminder" did.
+        var editingReminder by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
         // button (null = not adding). Distinct from [editingBlock] so Save knows to add vs. update.
         var addingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
@@ -1839,23 +1848,35 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     allowOverlap,
                                 )?.let(vm::dispatch)
                             },
-                            // PRD §8 "Edit": a sleep band's editable object is the §17 sleep schedule, so
-                            // its Edit opens the sleep window; a restrictive period has no task behind it
-                            // and opens the shared period editor, WHATEVER ITS KIND (read off the block, not
-                            // guessed from which of the two paints it wears); every other panel opens the
-                            // calendar edit window.
-                            onEditEntry = { block ->
+                            // PRD §8 "edit…": the chooser's pick, routed to the editor that already OWNS the
+                            // thing the row names — and that is the whole of the routing. A sleep band's
+                            // editable object is the §17 schedule; an alarm's and a timer's is the §18
+                            // window; a restrictive period's is the one period editor, WHATEVER ITS KIND
+                            // (read off the row, not guessed from which paint the block wears); a reminder's
+                            // is the §14 editor; a task panel's is the calendar edit window.
+                            //
+                            // The period row carries EVERY record behind it, which is the user's "no screen"
+                            // rule: a stretch spelt as a computer period overlapping a phone period is one
+                            // statement, so one edit moves both. And a row whose record is DERIVED (a past
+                            // Inactivity stretch, the §17 wind-down hour) carries no panel id — editing it is
+                            // what MATERIALIZES it, in the period editor's Save, which is the one place that
+                            // happens.
+                            onEditChoice = { choice ->
+                                val head = choice.records.firstOrNull()
                                 when {
-                                    block.sleep -> sleepWindowOpen = true
-                                    block.restrictiveKind.isNotBlank() ->
+                                    choice.label == EDIT_LABEL_SLEEP -> sleepWindowOpen = true
+                                    choice.label == EDIT_LABEL_ALARM ||
+                                        choice.label == EDIT_LABEL_TIMER -> alarmWindowOpen = true
+                                    choice.label == EDIT_LABEL_REMINDER -> editingReminder = head
+                                    choice.periodKind.isNotBlank() && head != null ->
                                         editingPeriod =
                                             PeriodDraft(
-                                                kind = block.restrictiveKind,
-                                                block = block,
-                                                startMillis = block.fullStartMillis,
-                                                endMillis = block.fullEndMillis,
+                                                kind = choice.periodKind,
+                                                blocks = choice.records,
+                                                startMillis = head.fullStartMillis,
+                                                endMillis = head.fullEndMillis,
                                             )
-                                    else -> editingBlock = block
+                                    head != null -> editingBlock = head
                                 }
                             },
                             // PRD §8 "edit task": the SAME window the tree cell's own "edit task" opens —
@@ -1867,8 +1888,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // PRD §8 "go to task tree" — the app's one handler, shared with the "All
                             // tasks" window's rows (declared beside [appMessage]).
                             onGoToTaskTree = goToTaskTree,
-                            // PRD §8 task contextual menu "Remove": delete the block by its source.
-                            onRemoveEntry = { block -> removeBlockIntent(block)?.let(vm::dispatch) },
                             // PRD §14 Reminders: clicking a reminder tag toggles its checked (done) state.
                             onToggleReminder = { block ->
                                 block.entryId?.let { vm.dispatch(SchedulerIntent.SetReminderChecked(it, !block.checked, nowMillis)) }
@@ -1928,6 +1947,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     schedulerState.tasks[id]?.resilienceFor(PeriodKinds.NO_SCREEN)
                                 },
                                 onDismiss = { editingBlock = null; addingBlock = null },
+                                // PRD §8: the bin — the menu's "Remove" now lives in the window that names
+                                // what it deletes. Absent while ADDING: nothing is laid until Save.
+                                onRemove =
+                                    if (isNew) {
+                                        null
+                                    } else {
+                                        {
+                                            removeBlockIntent(block)?.let(vm::dispatch)
+                                            editingBlock = null
+                                        }
+                                    },
                                 onSave = { taskId, title, startMillis, endMillis, pins, noScreenResilience ->
                                     val intent =
                                         if (isNew) {
@@ -1953,29 +1983,58 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 )
                         }
 
-                        // PRD §8: the period editor for both hand-added periods — add (no [block]) and
-                        // edit alike. The same sort of window as the calendar edit window above.
+                        // PRD §8: the period editor — one window for every kind, reached from the "add…"
+                        // chooser and from a period's own row of the "edit…" chooser.
                         editingPeriod?.let { draft ->
                             PeriodEditWindow(
                                 kind = draft.kind,
-                                isNew = draft.block == null,
+                                isNew = draft.blocks.isEmpty(),
                                 startMillis = draft.startMillis,
                                 endMillis = draft.endMillis,
                                 nowMillis = nowMillis,
                                 tz = tz,
                                 onDismiss = { editingPeriod = null },
+                                // PRD §8: the bin — the ONE way to get rid of a period now that the menu has
+                                // no "Remove". Offered only where there is something stored to delete: a
+                                // derived band has no panel behind it, so there is nothing to bin (the way to
+                                // be rid of one is to stop whatever derives it).
+                                onRemove =
+                                    draft.blocks.takeIf { blocks -> blocks.any { it.entryId != null } }
+                                        ?.let { blocks ->
+                                            {
+                                                blocks.forEach { removeBlockIntent(it)?.let(vm::dispatch) }
+                                                editingPeriod = null
+                                            }
+                                        },
                                 onSave = { start, end ->
-                                    val block = draft.block
-                                    val intent =
-                                        when {
-                                            // An existing period: the ordinary panel-bounds commit, which
-                                            // re-applies the period's own override rule over its new span.
-                                            block != null ->
-                                                commitBoundsIntent(block, null, block.title, start, end, block.pins)
-                                            // `side-dev/README.md`: one intent lays a period of any kind.
-                                            else -> SchedulerIntent.AddRestrictivePeriod(draft.kind, start, end)
+                                    if (draft.blocks.isEmpty()) {
+                                        // `side-dev/README.md`: one intent lays a period of any kind.
+                                        vm.dispatch(SchedulerIntent.AddRestrictivePeriod(draft.kind, start, end))
+                                    } else {
+                                        // Every period the row stands for takes the new bounds — one for an
+                                        // ordinary period, two where a "no screen" stretch is spelt as the
+                                        // computer + phone pair.
+                                        draft.blocks.forEach { block ->
+                                            val intent =
+                                                if (block.entryId != null) {
+                                                    // The ordinary panel-bounds commit, which re-applies the
+                                                    // period's own override rule over its new span.
+                                                    commitBoundsIntent(
+                                                        block, null, block.title, start, end, block.pins,
+                                                    )
+                                                } else {
+                                                    // A DERIVED band: the app was reporting this stretch and
+                                                    // the user has just stated it, so the edit lays the
+                                                    // period the band was standing in for. Its own kind, not
+                                                    // the row's: a wind-down hour materializes as
+                                                    // `before bed`, never as plain inactivity.
+                                                    SchedulerIntent.AddRestrictivePeriod(
+                                                        block.restrictiveKind.ifBlank { draft.kind }, start, end,
+                                                    )
+                                                }
+                                            intent?.let(vm::dispatch)
                                         }
-                                    intent?.let(vm::dispatch)
+                                    }
                                     editingPeriod = null
                                 },
                             )
@@ -2019,7 +2078,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 // time. The user picks the real bounds there (including "∞" and "now") and
                                 // Save lays it; it stays adjustable by drag/resize like any block after that.
                                 onAddPeriod = { kind ->
-                                    editingPeriod = PeriodDraft(kind, null, atMillis, atMillis + 3_600_000L)
+                                    editingPeriod =
+                                        PeriodDraft(kind, emptyList(), atMillis, atMillis + 3_600_000L)
                                     addingAtMillis = null
                                 },
                                 // PRD §14 "add reminder": the reminder editor at the click.
@@ -2028,6 +2088,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     addingAtMillis = null
                                 },
                                 onDismiss = { addingAtMillis = null },
+                            )
+                        }
+
+                        // PRD §14: the same editor, opened on an EXISTING tag by the "edit…" chooser's
+                        // `reminder` row. A tag had no way of being edited from the calendar before the
+                        // chooser — only added, and only checked off — so the row is what made this window
+                        // need a seed and a bin.
+                        editingReminder?.let { tag ->
+                            ReminderEditWindow(
+                                initialMillis = tag.fullStartMillis,
+                                tz = tz,
+                                initial = ReminderEditSeed(tag.title, tag.checked, tag.pinned),
+                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
+                                onDismiss = { editingReminder = null },
+                                onRemove = {
+                                    removeBlockIntent(tag)?.let(vm::dispatch)
+                                    editingReminder = null
+                                },
+                                // A tag's identity is its panel, and §14 lays one through AddReminder — so an
+                                // edit is the old tag struck off and the new one laid, in that order. (Two
+                                // intents, therefore two history units: an edited tag takes two Ctrl+Z. The
+                                // alternative is a third way of writing a reminder panel, which is the kind
+                                // of second funnel this whole reshape exists to remove.)
+                                onSave = { reminderId, title, at, checked, pinned ->
+                                    removeBlockIntent(tag)?.let(vm::dispatch)
+                                    vm.dispatch(SchedulerIntent.AddReminder(reminderId, title, at, checked, pinned))
+                                    editingReminder = null
+                                },
                             )
                         }
 
@@ -2606,15 +2697,32 @@ private fun commitBoundsIntent(
  */
 private data class PeriodDraft(
     val kind: String,
-    val block: PlacedRecord?,
+    /**
+     * The periods being edited — EMPTY while adding one.
+     *
+     * More than one only where a single statement is spelt by several objects: the user's rule is that
+     * editing a "no screen" period and editing the `no computer unlocked` + `no phone unlocked` pair it is
+     * made of are the same edit, so Save writes the new bounds to all of them.
+     *
+     * A member with no [PlacedRecord.entryId] is a DERIVED band (a past Inactivity stretch, the §17
+     * wind-down hour). Saving MATERIALIZES it — the app was reporting that stretch, and the user is now
+     * stating it — which is the one place a derived band becomes a real period, and why the outline it then
+     * wears is the accent blue.
+     */
+    val blocks: List<PlacedRecord>,
     val startMillis: Long,
     val endMillis: Long,
 )
 
 /**
- * PRD §8 task contextual menu "Remove": the intent that deletes a calendar [block] from its source —
- * a panel is removed, a green task-record period is dropped from the task record. Returns null when
- * the block has no removable identity (defensive).
+ * PRD §8: the intent that deletes a calendar [block] from its source — a panel is removed, a green
+ * task-record period is dropped from the task record. Returns null when the block has no removable identity,
+ * which a DERIVED band has by definition: nothing is stored, so there is nothing to delete.
+ *
+ * This is what the **bin button** in each editor sends. The contextual menu has no "Remove" of its own any
+ * more: it named no thing in particular, so on a stretch carrying several it deleted whichever happened to
+ * be top-most. Deleting is now one funnel with the editing — you get rid of a thing from the window that
+ * names it.
  */
 private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
     block.entryIds.size > 1 -> SchedulerIntent.RemoveTaskPanels(block.entryIds)
