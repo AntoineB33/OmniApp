@@ -151,7 +151,6 @@ import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
-import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.ShortcutBinding
@@ -324,209 +323,7 @@ data class CalendarRecord(
      * boundary). The hover bubble / phone menu then shows "∞" as the start instead of a wall-clock time.
      */
     val openStart: Boolean = false,
-    /**
-     * The elapsed part of this panel, segmented by WHICH DEVICES were open (from the stored active
-     * sessions — own + Sync-pulled peers; see [deviceActivitySegments]). Consecutive segments differ in
-     * device set; the block draws a dashed separator at each interior boundary and the hover bubble names
-     * the segment's devices. Empty when no activity data covers the panel (bubble falls back to times only).
-     */
-    val deviceSegments: List<DeviceActivitySegment> = emptyList(),
 )
-
-/**
- * One sub-range of a panel during which the set of open devices was constant. [devices] holds the
- * human-readable labels ("Desktop", "Phone", "Phone 2"…), empty = no device was open.
- */
-data class DeviceActivitySegment(
-    val startMillis: Long,
-    val endMillis: Long,
-    val devices: List<String>,
-)
-
-/**
- * The hover bubble's per-install device labels, in first-appearance order: the kind capitalized ("desktop" →
- * "Desktop"), numbered "Phone 2", "Phone 3"… when several distinct installs share a kind, and the anonymous
- * "Device" for an install no row names a kind for.
- *
- * A KIND IS A FACT ABOUT THE DEVICE, NOT ABOUT ONE SESSION, so the label reads the first row that actually
- * states one rather than simply the device's oldest row. `ActiveSessionRecord.kind` post-dates the earliest
- * sessions on a long-lived install (schema v8), so on any account older than that column the oldest row is
- * blank — and naming the device off it left a desktop that has been recording "desktop" for a month
- * permanently labelled "Device". The numbering still follows first appearance, so the labels are stable.
- *
- * [byStart] must be start-ordered; both callers below share this function so their labels cannot diverge.
- */
-private fun deviceLabels(byStart: List<ActiveSessionRecord>): Map<String, String> {
-    val kindByDevice = LinkedHashMap<String, String>()
-    for (session in byStart) {
-        val kind = session.kind.trim().lowercase()
-        val known = kindByDevice[session.deviceId]
-        // Re-putting an existing key keeps its insertion position, so upgrading a blank kind to a real one
-        // never reorders — and hence never renumbers — the labels.
-        if (known == null || (known.isEmpty() && kind.isNotEmpty())) kindByDevice[session.deviceId] = kind
-    }
-    val labelById = LinkedHashMap<String, String>()
-    val kindCounts = mutableMapOf<String, Int>()
-    for ((deviceId, kind) in kindByDevice) {
-        val base = if (kind.isEmpty()) "Device" else kind.replaceFirstChar { it.uppercase() }
-        val n = (kindCounts[base] ?: 0) + 1
-        kindCounts[base] = n
-        labelById[deviceId] = if (n == 1) base else "$base $n"
-    }
-    return labelById
-}
-
-/**
- * Segments `[range.start, min(range.end, untilMillis)]` of a panel by the set of devices with an active
- * session covering each instant — the data behind the hover bubble's "which devices were open" line and
- * the dashed set-change separators. Pure so the sweep is unit-testable.
- *
- * Only the region the data can speak for is segmented: nothing is claimed before the oldest known session
- * start (a panel predating all activity data gets no segments, not a false "no device"), and nothing after
- * [untilMillis] (the future part of a still-running panel). Within that region, a covered instant lists the
- * open devices and an uncovered one is a real "no device was open" segment. The labels are [deviceLabels]'.
- */
-fun deviceActivitySegments(
-    range: TaskTimeRange,
-    sessions: List<ActiveSessionRecord>,
-    untilMillis: Long,
-): List<DeviceActivitySegment> {
-    if (sessions.isEmpty()) return emptyList()
-    val knownSince = sessions.minOf { it.startMillis }
-    val start = maxOf(range.startEpochMillis, knownSince)
-    val end = minOf(range.endEpochMillis, untilMillis)
-    if (end <= start) return emptyList()
-
-    // Stable per-install labels: kind capitalized, numbered by order of first appearance within a kind.
-    val labelById = deviceLabels(sessions.sortedBy { it.startMillis })
-
-    // Sweep the clipped window over every session boundary; between two consecutive cuts the open set is
-    // constant. Consecutive equal sets merge, so the result is minimal. (distinct+sorted, not sortedSetOf —
-    // that is JVM-only and breaks the non-JVM targets.)
-    val cuts = mutableListOf(start, end)
-    for (s in sessions) {
-        val a = maxOf(s.startMillis, start)
-        val b = minOf(s.endMillis, end)
-        if (b > a) {
-            cuts.add(a)
-            cuts.add(b)
-        }
-    }
-    val bounds = cuts.distinct().sorted()
-    val segments = mutableListOf<DeviceActivitySegment>()
-    for (i in 0 until bounds.size - 1) {
-        val a = bounds[i]
-        val b = bounds[i + 1]
-        val open =
-            sessions.asSequence()
-                .filter { it.startMillis < b && it.endMillis > a }
-                .map { labelById.getValue(it.deviceId) }
-                .distinct()
-                .sorted()
-                .toList()
-        val last = segments.lastOrNull()
-        if (last != null && last.devices == open && last.endMillis == a) {
-            segments[segments.lastIndex] = last.copy(endMillis = b)
-        } else {
-            segments.add(DeviceActivitySegment(a, b, open))
-        }
-    }
-    return segments
-}
-
-/**
- * ADR 0009 display hot path: [deviceActivitySegments] for MANY panels against ONE session history.
- *
- * The per-call form rebuilds the whole label table (a sort plus a pass over every session) for every panel
- * it is asked about, so segmenting a day's worth of panels costs `panels x sessions log sessions` on every
- * observed now-line. Here the labels, the "known since" floor and the start-ordered sessions are built once,
- * and each query scans only the sessions that can actually overlap it (a descending walk from the last
- * session starting before the window, stopped by a prefix maximum of the end instants).
- *
- * The OUTPUT is [deviceActivitySegments]'s, exactly - that function stays as the readable reference
- * definition, and `CalendarDisplayEquivalenceTest` pins the two together over randomized histories.
- */
-class DeviceActivityIndex(sessions: List<ActiveSessionRecord>) {
-
-    private val byStart: List<ActiveSessionRecord> = sessions.sortedBy { it.startMillis }
-
-    /** Stable per-install labels — the per-call form's own [deviceLabels], so the two cannot diverge. */
-    private val labelById: Map<String, String> = deviceLabels(byStart)
-
-    /** `maxEnd[i]` = the latest end instant among `byStart[0..i]`, so a backward scan knows when to stop. */
-    private val maxEnd: LongArray =
-        LongArray(byStart.size).also { out ->
-            var running = Long.MIN_VALUE
-            for (i in byStart.indices) {
-                running = maxOf(running, byStart[i].endMillis)
-                out[i] = running
-            }
-        }
-
-    /** Nothing is claimed before the oldest known session start - see [deviceActivitySegments]. */
-    private val knownSince: Long? = byStart.firstOrNull()?.startMillis
-
-    /** The segments of [range] up to [untilMillis], exactly as [deviceActivitySegments] would build them. */
-    fun segmentsFor(range: TaskTimeRange, untilMillis: Long): List<DeviceActivitySegment> {
-        val since = knownSince ?: return emptyList()
-        val start = maxOf(range.startEpochMillis, since)
-        val end = minOf(range.endEpochMillis, untilMillis)
-        if (end <= start) return emptyList()
-
-        // Every session that can touch `[start, end)`: it must begin before `end` (so the walk starts at the
-        // last such session) and end after `start` (so it stops once no earlier session reaches that far).
-        val overlapping = mutableListOf<ActiveSessionRecord>()
-        var i = firstStartingAtOrAfter(end) - 1
-        while (i >= 0 && maxEnd[i] > start) {
-            val session = byStart[i]
-            if (session.endMillis > start) overlapping.add(session)
-            i--
-        }
-        if (overlapping.isEmpty()) return listOf(DeviceActivitySegment(start, end, emptyList()))
-
-        val cuts = mutableListOf(start, end)
-        for (session in overlapping) {
-            val a = maxOf(session.startMillis, start)
-            val b = minOf(session.endMillis, end)
-            if (b > a) {
-                cuts.add(a)
-                cuts.add(b)
-            }
-        }
-        val bounds = cuts.distinct().sorted()
-        val segments = mutableListOf<DeviceActivitySegment>()
-        for (j in 0 until bounds.size - 1) {
-            val a = bounds[j]
-            val b = bounds[j + 1]
-            // Sorted distinct labels, so the open set does not depend on the order the sessions were walked.
-            val open =
-                overlapping.asSequence()
-                    .filter { it.startMillis < b && it.endMillis > a }
-                    .map { labelById.getValue(it.deviceId) }
-                    .distinct()
-                    .sorted()
-                    .toList()
-            val last = segments.lastOrNull()
-            if (last != null && last.devices == open && last.endMillis == a) {
-                segments[segments.lastIndex] = last.copy(endMillis = b)
-            } else {
-                segments.add(DeviceActivitySegment(a, b, open))
-            }
-        }
-        return segments
-    }
-
-    /** Binary search: the first index of [byStart] whose session starts at or after [millis]. */
-    private fun firstStartingAtOrAfter(millis: Long): Int {
-        var lo = 0
-        var hi = byStart.size
-        while (lo < hi) {
-            val mid = (lo + hi) / 2
-            if (byStart[mid].startMillis < millis) lo = mid + 1 else hi = mid
-        }
-        return lo
-    }
-}
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
 data class PlacedRecord(
@@ -577,15 +374,6 @@ data class PlacedRecord(
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
-    /** [CalendarRecord.deviceSegments] clipped to this day, as hour-of-day sub-ranges. */
-    val deviceSegments: List<PlacedDeviceSegment> = emptyList(),
-)
-
-/** One [DeviceActivitySegment] clipped to a day: hour-of-day bounds + the open devices' labels. */
-data class PlacedDeviceSegment(
-    val startHour: Float,
-    val endHour: Float,
-    val devices: List<String>,
 )
 
 /**
@@ -670,16 +458,6 @@ fun recordsForDay(
         if (!record.reminder && !record.screenBreak && !record.alarm && endHour <= startHour) {
             return@mapNotNull null
         }
-        // Clip the device-set segments to this day too, in the same hour-of-day space as the block.
-        val daySegments =
-            record.deviceSegments.mapNotNull { seg ->
-                val s = Instant.fromEpochMilliseconds(seg.startMillis).toLocalDateTime(tz)
-                val e = Instant.fromEpochMilliseconds(seg.endMillis).toLocalDateTime(tz)
-                if (s.date > day || e.date < day) return@mapNotNull null
-                val sh = if (s.date < day) 0f else s.time.hourOfDayExact().toFloat()
-                val eh = if (e.date > day) 24f else e.time.hourOfDayExact().toFloat()
-                if (eh <= sh) null else PlacedDeviceSegment(sh.coerceIn(0f, 24f), eh.coerceIn(0f, 24f), seg.devices)
-            }
         val dayStartHour = startHour.coerceIn(0f, 24f)
         val dayEndHour = endHour.coerceIn(0f, 24f)
         PlacedRecord(
@@ -711,7 +489,6 @@ fun recordsForDay(
             openStart = record.openStart,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
-            deviceSegments = daySegments,
         )
     }
 }
@@ -5530,8 +5307,8 @@ internal class BubbleHoverZone(val top: Float, val bottom: Float, val sections: 
  * which cut the tiling without contributing a section — so each tile is covered by one constant set of
  * sections and can carry a single hover reporter.
  *
- * Tiling rather than nesting is the calendar's rule for hover (see [deviceHoverZones]): two hover reporters
- * at the same position race unpredictably, because a parent's Move overwrites the child's report.
+ * Tiling rather than nesting is the calendar's rule for hover: two hover reporters at the same position
+ * race unpredictably, because a parent's Move overwrites the child's report.
  *
  * [extraCuts] is what a resize edge is made of: the grab strip needs a tile of its own to hang the resize
  * cursor on, and it must be a tile of THIS tiling — carrying the same sections as the rest of the element —
@@ -5628,7 +5405,7 @@ private fun CalendarHoverTiles(
 
 /**
  * PRD §8: the bubble overlays a placed block contributes over the hour range `[top, bottom]` — its own
- * section, cut into one overlay per device-set segment so the "Open: …" line follows the cursor.
+ * section, over the whole of it.
  *
  * Shared by the block's own tiles and by the [WeightHandle] drawn ON TOP of the block (a handle must report
  * the panel it covers, or the bubble would blink out along every shared-width edge); a second reading is how
@@ -5641,16 +5418,7 @@ private fun blockBubbleOverlays(
     tz: TimeZone,
 ): List<BubbleOverlay> {
     val timeRange = bubbleTimeRange(record.fullStartMillis, record.fullEndMillis, tz)
-    return deviceHoverZones(record.deviceSegments, top, bottom).map { zone ->
-        val line = zone.devices?.let { d ->
-            if (d.isEmpty()) "Open: no device" else "Open: ${d.joinToString(", ")}"
-        }
-        BubbleOverlay(
-            zone.top,
-            zone.bottom,
-            panelBubbleSection(record, tz, if (line == null) timeRange else "$timeRange\n$line"),
-        )
-    }
+    return listOf(BubbleOverlay(top, bottom, panelBubbleSection(record, tz, timeRange)))
 }
 
 /** PRD §8: which bubble section one of the two decorative [SchedulerDomain.ActivityLayer]s contributes. */
@@ -6254,30 +6022,6 @@ private fun CalendarBlock(
                             },
                         ),
                     )
-                    // A dashed separator at every interior boundary where the device set changed (two
-                    // adjacent segments always differ — equal neighbours were merged in the sweep).
-                    record.deviceSegments.forEachIndexed { segIndex, seg ->
-                        val prev = record.deviceSegments.getOrNull(segIndex - 1) ?: return@forEachIndexed
-                        if (!approxEq(prev.endHour, seg.startHour)) return@forEachIndexed
-                        if (seg.startHour <= slice.topHour + 1e-4f || seg.startHour >= slice.bottomHour - 1e-4f) {
-                            return@forEachIndexed
-                        }
-                        Box(
-                            Modifier
-                                .offset(y = hourHeight * (seg.startHour - slice.topHour))
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .drawBehind {
-                                    drawLine(
-                                        color = color,
-                                        start = Offset(0f, size.height / 2f),
-                                        end = Offset(size.width, size.height / 2f),
-                                        strokeWidth = size.height,
-                                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
-                                    )
-                                },
-                        )
-                    }
                 }
             }
         }
@@ -6297,33 +6041,6 @@ private fun CalendarBlock(
  * set — [org.example.project.App] derives one from the other, once.
  */
 private fun isPeriodBlock(record: PlacedRecord): Boolean = record.noScreen || record.inactivity
-
-/** One hover tile of a block slice: `devices == null` means "no activity data here" (times-only bubble). */
-private data class DeviceHoverZone(val top: Float, val bottom: Float, val devices: List<String>?)
-
-/**
- * Tiles a slice's `[top, bottom]` hour range with the device-set segments overlapping it, filling the
- * uncovered leftovers (a future part / a part predating all activity data) with `devices == null` zones,
- * so every point of the block reports a hover bubble. No segments ⇒ one whole-slice null zone.
- */
-private fun deviceHoverZones(
-    segments: List<PlacedDeviceSegment>,
-    top: Float,
-    bottom: Float,
-): List<DeviceHoverZone> {
-    val zones = mutableListOf<DeviceHoverZone>()
-    var cursor = top
-    for (seg in segments.sortedBy { it.startHour }) {
-        val a = maxOf(seg.startHour, top)
-        val b = minOf(seg.endHour, bottom)
-        if (b <= a) continue
-        if (a > cursor) zones.add(DeviceHoverZone(cursor, a, null))
-        zones.add(DeviceHoverZone(maxOf(a, cursor), b, seg.devices))
-        cursor = b
-    }
-    if (cursor < bottom) zones.add(DeviceHoverZone(cursor, bottom, null))
-    return zones
-}
 
 /**
  * The label for a derived (no-[entryId]) sleep / no-screen / inactivity record.

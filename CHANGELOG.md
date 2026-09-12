@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The per-panel device bubble is gone — the layers already say it — 2026-09-12
+
+→ `shared` (`ui/CalendarUi.kt`, `App.kt`); `docs/adr/0002-calendar-layers-and-grey.md`,
+`docs/adr/0005-sync-and-merge.md`, `docs/MANUAL_TESTING.md`. Tests: `DeviceActivitySegmentsTest` deleted,
+`CalendarDisplayEquivalenceTest` loses its session-index equivalence.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for as: *"If all the computers are down, asleep or unlocked, there is a no computer unlocked layer.
+Remove this dotted horizontal line and Open:… in the info bubble."*
+
+A past task panel used to be cut into one segment per **set of open devices**, drawn with a dashed
+horizontal separator at each change and named by an `Open: Desktop` / `Open: no device` line in the hover
+bubble (2026-07-16, ADR 0005). It is removed: the two oblique layers answer the same question already —
+"no computer unlocked" *is* every computer being down, asleep or locked — so the segmentation was a second
+reading of "was anybody at a screen", drawn more quietly and per install, over a panel the hatch already
+covers.
+
+Deleted whole: `DeviceActivitySegment` / `PlacedDeviceSegment`, `deviceLabels`, `deviceActivitySegments`,
+`DeviceActivityIndex` (its ADR 0009 hoist with it), `deviceHoverZones` and the dashed separator.
+`blockBubbleOverlays` now contributes one overlay over the whole slice, so a block's hover tiling is cut by
+its covering sections and its resize strips alone.
+
+**The active sessions themselves stay.** They are what `derivePauses`, the Inactivity bands and the rest
+stretches are made of, they still sync with their `kind` column, and nothing about the bands moves — only
+the drawing on top of the panels is gone.
+
 ### A period is an empty outlined box, and no block wears a check box — 2026-09-11
 
 → `shared` (`scheduler/domain/PeriodKinds.kt`, `SchedulerDomain.kt`, `scheduler/state/SchedulerReducer.kt` +

@@ -8,13 +8,9 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
-import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.ui.CalendarRecord
-import org.example.project.ui.DeviceActivityIndex
-import org.example.project.ui.DeviceActivitySegment
 import org.example.project.ui.PanelSlice
 import org.example.project.ui.PlacedRecord
-import org.example.project.ui.deviceActivitySegments
 import org.example.project.ui.overlapLayout
 import org.example.project.ui.recordsByDay
 import org.example.project.ui.recordsForDay
@@ -25,9 +21,9 @@ import kotlin.test.assertEquals
 
 /**
  * ADR 0009 display hot path: the calendar's per-frame derivations were rewritten for COST only — a
- * per-span index instead of a per-column scan, an incremental sweep instead of a per-slice rescan, a
- * session index instead of a per-record rebuild. Nothing about the output may move, so each new form is
- * pinned here against the previous definition (kept below as the oracle) over randomized inputs.
+ * per-span index instead of a per-column scan, an incremental sweep instead of a per-slice rescan.
+ * Nothing about the output may move, so each new form is pinned here against the previous definition
+ * (kept below as the oracle) over randomized inputs.
  */
 class CalendarDisplayEquivalenceTest {
 
@@ -165,12 +161,6 @@ class CalendarDisplayEquivalenceTest {
                 reminder = rnd.nextInt(8) == 0,
                 screenBreak = rnd.nextInt(8) == 0,
                 alarm = rnd.nextInt(12) == 0,
-                deviceSegments =
-                    if (rnd.nextInt(3) == 0) {
-                        listOf(DeviceActivitySegment(start, start + len / 2, listOf("Desktop")))
-                    } else {
-                        emptyList()
-                    },
             )
         }
 
@@ -214,35 +204,6 @@ class CalendarDisplayEquivalenceTest {
                 index.keys.filter { it < firstDay || it >= day },
                 "out-of-span days at iter $iter",
             )
-        }
-    }
-
-    @Test
-    fun deviceActivityIndexMatchesThePerCallForm() {
-        val rnd = Random(7)
-        val base = 1_700_000_000_000L
-        repeat(80) { iter ->
-            val sessions = (0 until rnd.nextInt(0, 12)).map { _ ->
-                val s = base + rnd.nextLong(-86_400_000L, 86_400_000L)
-                ActiveSessionRecord(
-                    deviceId = "d${rnd.nextInt(0, 4)}",
-                    startMillis = s,
-                    endMillis = s + rnd.nextLong(0L, 7_200_000L),
-                    updatedAtMillis = s,
-                    kind = listOf("", "desktop", "phone")[rnd.nextInt(3)],
-                )
-            }
-            val index = DeviceActivityIndex(sessions)
-            repeat(20) {
-                val s = base + rnd.nextLong(-86_400_000L, 86_400_000L)
-                val range = TaskTimeRange(s, s + rnd.nextLong(0L, 10_800_000L))
-                val until = base + rnd.nextLong(0L, 86_400_000L)
-                assertEquals(
-                    deviceActivitySegments(range, sessions, until),
-                    index.segmentsFor(range, until),
-                    "segments differ at iter $iter",
-                )
-            }
         }
     }
 }

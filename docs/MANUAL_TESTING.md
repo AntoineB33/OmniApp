@@ -466,10 +466,6 @@ rows, and re-derive right after each reconcile.
 - [ ] **Freshly emptied account** (`account1-empty-and-open.bat`) shows the whole past as one Inactivity
       pause on first load — and **stays** that way (no phantom activity resurrected from an old install;
       `allowBackup=false` guards the Android side — `empty-account-whole-past-inactivity` note).
-- [ ] **Device bubble.** Hover a **past task panel** on the desktop → the bubble names which devices
-      were open ("Open: …") over that stretch; a **dashed horizontal separator** splits the panel where
-      the device set changed (`DeviceActivitySegmentsTest` covers the pure logic; here confirm the
-      rendering and that hover zones tile without overlap).
 - [ ] **Sleep-band carving.** Work through (or simulate, §16 time panel) a scheduled Sleep window on the
       desktop → the "Sleep" band shows a gap over the active stretch, retracting live at the now-line.
       The peer shows the same gap only after **both** sides have reconciled (any trigger; press Sync to
@@ -648,8 +644,6 @@ and `supabase functions logs pause-cue` visible.
       **Inactivity** (the iPhone contributes no sessions). A window covered by the desktop **or** the
       Android shows no band on any of the three calendars — the iPhone renders the same bands as the
       others purely from pulled peer rows.
-- [ ] **Device bubble.** Hover a past task panel on the desktop → "Open: …" names the desktop/Android
-      stretches; the iPhone never appears in the set (no sessions).
 - [ ] **Cue fan-out reaches both phones.** With a screen break pending, background/lock the desktop
       and the Android (the iPhone's state is irrelevant — it never writes a heartbeat) → the last device's
       clean lock POSTs `pause-cue` at once (or, if it was killed instead, the cron POSTs `pause-cue-cron`

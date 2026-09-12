@@ -485,10 +485,8 @@ drawing now, and their sections ride the pickup or the block on top.
 ### Tiling, never nesting
 
 Two hover reporters at one position race — a parent's `Move` overwrites the child's report. So every
-hoverable element is cut at each covering section's boundary (`bubbleHoverZones`), exactly as
-`deviceHoverZones` already cut a block at each device-set change; the two compose (a block's own overlays
-are the device zones, re-tiled against the context). Emission is still culled to the visible window
-(ADR 0009).
+hoverable element is cut at each covering section's boundary (`bubbleHoverZones`) and each tile carries
+one reporter. Emission is still culled to the visible window (ADR 0009).
 
 Tests: `CalendarBubbleSectionTest` (the ordering, the ties, the break/task exclusion).
 

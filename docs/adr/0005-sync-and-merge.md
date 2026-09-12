@@ -259,10 +259,19 @@ idle and never restarted stay stale (the button is the manual collapse for that 
   within a minute and activity may over-report by ≤1 min. That is the spec's granularity.
 - **Desktop:** observed-only heartbeat extension.
 
-Rows carry a `kind` column (schema v8, local `7.sqm`; remote migration `20260716000000`) so the calendar's
-hover bubble on a past task panel names **which devices were open**, and a **dashed separator** splits the
-panel where the device set changed (`deviceActivitySegments` — hoisted per frame into `DeviceActivityIndex`,
-ADR 0009 — plus `deviceHoverZones` in `CalendarUi`, fed by `SchedulerEngine.activeSessions`). Tests: `DeviceActivitySegmentsTest`, `ActiveSessionSyncTest`.
+Rows carry a `kind` column (schema v8, local `7.sqm`; remote migration `20260716000000`). Test:
+`ActiveSessionSyncTest`.
+
+### Retired: the per-panel device bubble — 2026-09-12
+
+The `kind` column was added so the calendar could say WHICH devices were open behind a past task panel: an
+"Open: …" line in the hover bubble and a dashed separator wherever the device set changed
+(`deviceActivitySegments`/`DeviceActivityIndex`/`deviceHoverZones`, `DeviceActivitySegmentsTest` — all
+deleted). The user's reading: the two oblique layers already answer it. "No computer unlocked" is exactly
+"every computer is down, asleep or locked", so a panel with nobody at a screen is already hatched, and the
+second, per-install reading only cut the panel into pieces saying the same thing more quietly. The sessions
+themselves stay — they are what `derivePauses` and the Inactivity bands are made of; only the drawing is
+gone.
 
 ## Retired: adopted remote-activity rows
 
