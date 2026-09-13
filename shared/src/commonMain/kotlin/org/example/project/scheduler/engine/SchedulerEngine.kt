@@ -1262,7 +1262,7 @@ class SchedulerEngine(
         // Append to the History Manager's local-only Notifications column (capped, non-syncing). Written
         // whether or not the OS is told: the switch silences the interruption, never the record, so the
         // column still answers "what did the app decide to say while I had it muted".
-        vm.dispatch(SchedulerIntent.RecordNotification(title, message, now))
+        vm.dispatch(SchedulerIntent.RecordNotification(title, message, now, cue))
         if (!muted) postNotification(title, message)
         if (spoken) speak(utterance)
     }

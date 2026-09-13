@@ -1212,12 +1212,14 @@ sealed interface SchedulerIntent {
      * Notifications column. Dispatched by [org.example.project.scheduler.engine.SchedulerEngine.notifyUser]
      * every time a system notification is shown. Non-syncing (derived, per-device) and capped at
      * [org.example.project.scheduler.state.SchedulerState.MAX_NOTIFICATION_LOG] — a **rolling tail**, so a
-     * full log evicts its oldest entry rather than refusing the new one.
+     * full log evicts its oldest entry rather than refusing the new one. [cue] is the bundled recording it was
+     * spoken with, if any ([org.example.project.scheduler.state.NotificationLogEntry.cue]).
      */
     data class RecordNotification(
         val title: String,
         val message: String,
         val timeMillis: Long,
+        val cue: org.example.project.scheduler.platform.VoiceCue? = null,
     ) : SchedulerIntent
 
     /**

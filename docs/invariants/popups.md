@@ -138,6 +138,15 @@ means.
   in — no scrim, no pointer input, so the app behind it stays live.
 - A window that opens a second window beside it (the task-trees list and its detail, the history list and
   its row info) wraps both in one `Box` and positions the second off the first's `frame.offset`.
+  - **The companion is a plain frame in that `Box`, never a `TransientPopupLayer`.** The layer is
+    `fillMaxSize`, so it grows the `Box` to the whole content area and the first window, placed inside it,
+    jumps across the screen the moment the companion opens (the History window did, 2026-09-13).
+  - **The `Box` centres its content** (`contentAlignment = Alignment.Center`): a frame's offset is "from
+    centred", and the `Box` is as big as its larger child, so a top-start `Box` moves the first window
+    whenever the companion is the bigger of the two.
+- **Asking again for a window that is already open brings it back** (`WindowFrameHost.present`: out of the
+  reduce bar, to the top, into the focus). Opening raises it through `register`, but re-asking for the same
+  subject changes no state of the caller's, so without it the window stays under whatever the user moved to.
 
 ## What is drawn OVER what
 

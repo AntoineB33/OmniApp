@@ -11,6 +11,42 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### History rows get an info button; a notification's window replays its voice — 2026-09-13
+
+→ PRD §6. `shared` (`ui/CalendarUi.kt`, `scheduler/state/SchedulerState.kt` + `SchedulerIntent.kt` +
+`SchedulerReducer.kt`, `scheduler/engine/SchedulerEngine.kt`, `scheduler/persistence/SchedulerStateCodec.kt`);
+`docs/PRD_TaskScheduler.md`, `docs/invariants/screen-breaks.md`, `docs/MANUAL_TESTING.md`. Tests:
+`HistoryEntryInfoTest` (new, 3), `NotificationLogTest` (+1, two extended).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no SQLite migration** (the
+notification log rides the JSON payload; the field is optional).
+
+Asked for: *"every element should have a button to display a window for more information, except if there is
+nothing more to show"* and *"the notification history units must have in their info window a button to play the
+vocal message that plays when this notification happens"*.
+
+- **The button:** `historyEntryHasMoreInfo` is the one answer, read by both the new **info** chip and the
+  existing double click. Units, scheduler runs and notifications: yes. Supabase calls: no — and their resource
+  line is no longer ellipsized, so "nothing more to show" is literally true.
+- **The replay:** `(title, message)` could not say which voice a notification used — the look-away's start (WAV)
+  and a rest pose's (synthesized) are both "Screen break". `NotificationLogEntry` / `RecordNotification` now
+  carry the `VoiceCue` `notifyUser` passed, persisted as `cue` (default `null`; an unknown name decodes to `null`).
+  The window adds a **Voice** info and **▶ Play the voice message**, through `NotificationLogEntry.utterance`
+  (= `VoiceUtterance.forNotification`). It ignores both switches: it is an explicit request.
+- **Follow-up, same day — three anomalies on the button:**
+  1. *"doesn't look like a button, and the mouse is the text-field one"* — it was a bare clickable text inside
+     the list's `SelectionContainer`. Now `HistorySmallButton` (also the info window's copy buttons): bordered
+     and filled, `PointerIcon.Hand` overriding the descendants' I-beam, label in `DisableSelection`.
+  2. *"clicking it moves the History window"* — the info window was drawn in a `TransientPopupLayer`
+     (`fillMaxSize`) inside the History window's pair `Box`, which grew the `Box` to the whole area and put the
+     History frame at its top-left. Double click had the same bug. The info window is now a plain frame beside
+     it, opened off `frame.offset`, and the `Box` centres its content. `docs/invariants/popups.md` records both.
+  3. *"clicking info again doesn't bring the focus back to the info window"* — the same row changes no state.
+     New `WindowFrameHost.present(id)` (restore + raise + focus), called on every open. Tests:
+     `WindowFrameHostTest` (+2).
+- **Limit:** entries logged before this build have no cue, so a pre-existing look-away/resume row replays
+  synthesized from its text rather than the WAV. Not healed on decode — guessing from the text is exactly the
+  ambiguity the field removes.
+
 ### A Mode pick puts the caret back in the edited cell — 2026-09-13
 
 → PRD §4. `shared` (`scheduler/ui/TaskSchedulerScreen.kt`); `docs/invariants/task-tree.md`,

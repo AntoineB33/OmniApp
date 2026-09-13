@@ -24,6 +24,8 @@ import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.EncodedDelta
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.ShortcutBinding
+import org.example.project.scheduler.platform.VoiceCue
+import org.example.project.scheduler.platform.VoiceUtterance
 
 data class SchedulerSelection(
     val main: CellId? = null,
@@ -239,12 +241,22 @@ data class HistoryUnit(
  * via the non-syncing [org.example.project.scheduler.state.SchedulerIntent.RecordNotification], stripped from
  * the sync fingerprint, and carried across a remote pull ([SchedulerState.withLocalViewStateFrom]) so a
  * peer's snapshot never overwrites it.
+ *
+ * [cue] is the bundled recording the notification was spoken with, when it was one of the phrases PRD §15
+ * fixes word for word — the same argument `notifyUser` passed to [VoiceUtterance.forNotification]. It is kept
+ * so the History window can replay **the** vocal message of the entry: `(title, message)` alone cannot tell a
+ * look-away's start (spoken off the WAV) from a rest pose's (synthesized from its text), both titled "Screen
+ * break". `null` = spoken from its own text, and also what every entry recorded before this field decodes to.
  */
 data class NotificationLogEntry(
     val timeMillis: Long,
     val title: String,
     val message: String,
-)
+    val cue: VoiceCue? = null,
+) {
+    /** What this notification SOUNDS like — through the one funnel that decided it when it fired. */
+    val utterance: VoiceUtterance get() = VoiceUtterance.forNotification(title, message, cue)
+}
 
 /**
  * One line in the History Manager's **Supabase usage** column: a single Supabase HTTP call the app made, with

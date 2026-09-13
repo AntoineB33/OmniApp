@@ -77,6 +77,7 @@ import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.platform.ShortcutKey
+import org.example.project.scheduler.platform.VoiceCue
 import org.example.project.scheduler.state.ShortcutBindingDelta
 import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.state.TaskTreeStateSnapshot
@@ -546,7 +547,8 @@ object SchedulerStateCodec {
             // PRD §13 "start this task now": the outstanding request, flattened the same way.
             forcedStartTaskId = forcedStart?.taskId?.value,
             forcedStartAtMillis = forcedStart?.atMillis,
-            notificationLog = notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message) },
+            notificationLog =
+                notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message, it.cue?.name) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
                     PersistedSupabaseUsageEntry(it.timeMillis, it.resource, it.operation, it.requestBytes, it.responseBytes, it.status)
@@ -1068,7 +1070,15 @@ object SchedulerStateCodec {
                 forcedStartTaskId?.let { id ->
                     forcedStartAtMillis?.let { at -> ForcedTaskStart(TaskId(id), at) }
                 },
-            notificationLog = notificationLog.map { NotificationLogEntry(it.timeMillis, it.title, it.message) },
+            notificationLog =
+                notificationLog.map { entry ->
+                    NotificationLogEntry(
+                        entry.timeMillis,
+                        entry.title,
+                        entry.message,
+                        entry.cue?.let { name -> VoiceCue.entries.firstOrNull { it.name == name } },
+                    )
+                },
             supabaseUsageLog =
                 supabaseUsageLog.map {
                     SupabaseUsageEntry(it.timeMillis, it.resource, it.operation, it.requestBytes, it.responseBytes, it.status)
@@ -1413,6 +1423,10 @@ private data class PersistedNotificationEntry(
     val timeMillis: Long,
     val title: String,
     val message: String,
+    // The name of the bundled VoiceCue it was spoken with; absent on entries written before the History
+    // window could replay a notification's voice, and on every entry spoken from its own text. An unknown
+    // name (a cue a later build retired) decodes to null, i.e. replayed from the text.
+    val cue: String? = null,
 )
 
 @Serializable

@@ -419,6 +419,10 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
 - **The log is written BEFORE the platform call, muted or not.** The History window's **Notifications** source
   answers "what did the app decide to say", which is why it was never proof of delivery — and why the switch
   can silence the interruption without touching the record.
+- **The log records the `cue` the notification was spoken with** (`NotificationLogEntry.cue`), and the History
+  window replays a row through `NotificationLogEntry.utterance` = the same `VoiceUtterance.forNotification`
+  call. Do not re-derive the cue from the text: a look-away's start and a rest pose's are both titled
+  "Screen break" and only one plays the WAV. A new `notifyUser(…, cue)` needs nothing else.
 - **Switching off also withdraws what the OS is still showing** (`cancelSystemNotifications`): a notification
   sits in Android's shade / iOS's Notification Centre until dismissed, so "cancel every notification" has to
   answer the pile already on screen too. The desktop actual is a deliberate no-op — a tray balloon cannot be

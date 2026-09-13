@@ -48,13 +48,15 @@ class NotificationLogTest {
         )
 
         engine.announceResumeWork()
+        // The entry remembers the recording it was spoken with, so the History window replays THAT.
         assertEquals(
-            NotificationLogEntry(7_000L, "Screen break over", "Resume your work"),
+            NotificationLogEntry(7_000L, "Screen break over", "Resume your work", VoiceCue.ResumeWork),
             vm.state.value.notificationLog.single(),
         )
         // Spoken off the BUNDLED recording rather than re-synthesized from the notification's text: this
         // is one of the two phrases PRD §15 fixes word for word.
         assertEquals(listOf(VoiceUtterance.of(VoiceCue.ResumeWork)), spoken)
+        assertEquals(spoken.single(), vm.state.value.notificationLog.single().utterance, "the replay is what was said")
 
         // Voice off: still posted and still logged, just not said.
         vm.dispatch(SchedulerIntent.SetNotificationVoice(enabled = false))
@@ -120,6 +122,7 @@ class NotificationLogTest {
             vm.state.value.notificationLog.map { it.message },
             "the break's start posts a notification",
         )
+        assertEquals(VoiceCue.LookAway, vm.state.value.notificationLog.single().cue, "logged with its recording")
 
         advanceTimeBy(20_001) // cross the break's end
         runCurrent()
@@ -186,13 +189,35 @@ class NotificationLogTest {
     @Test
     fun log_round_trips_through_the_codec() {
         val entries = listOf(
-            NotificationLogEntry(1_000, "Screen break", "Look away"),
+            NotificationLogEntry(1_000, "Screen break", "Look away", VoiceCue.LookAway),
             NotificationLogEntry(2_000, "Stop work", "Wind down — bedtime in 1 hour"),
         )
         val state = SchedulerState.empty().copy(notificationLog = entries)
         val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(state))
         assertNotNull(decoded)
         assertEquals(entries, decoded.notificationLog)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): an entry written before the log recorded its voice cue carries
+     * no `cue` and decodes to `null` (replayed from its own text); a cue name no build knows any more does too,
+     * rather than failing the whole payload.
+     */
+    @Test
+    fun entries_without_a_cue_or_with_an_unknown_one_decode_to_no_cue() {
+        val legacy =
+            """{"rootListId":"list/main","lists":[],"cells":[],"tasks":[],"notificationLog":[""" +
+                """{"timeMillis":1000,"title":"Screen break over","message":"Resume your work"},""" +
+                """{"timeMillis":2000,"title":"Screen break","message":"look away","cue":"RetiredCue"}]}"""
+        val decoded = SchedulerStateCodec.decode(legacy)
+        assertNotNull(decoded)
+        assertEquals(
+            listOf(
+                NotificationLogEntry(1_000, "Screen break over", "Resume your work"),
+                NotificationLogEntry(2_000, "Screen break", "look away"),
+            ),
+            decoded.notificationLog,
+        )
     }
 
     /**

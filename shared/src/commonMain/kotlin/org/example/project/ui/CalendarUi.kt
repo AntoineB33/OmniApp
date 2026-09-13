@@ -40,6 +40,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -100,6 +101,7 @@ import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -166,6 +168,8 @@ import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SupabaseUsageEntry
 import org.example.project.scheduler.state.SchedulerHistories
+import org.example.project.scheduler.platform.VoiceUtterance
+import org.example.project.scheduler.platform.speak
 import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.ui.contextMenuModifier
 
@@ -2025,12 +2029,22 @@ fun HistoryManagerWindow(
     // holds the set of rules the user came here to copy, and a notification / Supabase call holds fields the
     // row itself elides. Opened by a DOUBLE click.
     var infoRow by remember { mutableStateOf<FilteredHistoryEntry?>(null) }
+    val windowFrames = LocalWindowFrameHost.current
+    val openInfo: (FilteredHistoryEntry) -> Unit = { row ->
+        infoRow = row
+        // Asking again for the window already open on this row changes no state here, so the host is told
+        // to bring it back — out of the reduce bar, to the top, into the focus ([WindowFrameHost.present]).
+        windowFrames?.present(HISTORY_ENTRY_INFO_WINDOW_ID)
+    }
     var filter by remember { mutableStateOf(HistoryFilterConfig()) }
     val rows = filteredHistoryUnits(histories, filter, notificationLog, supabaseUsageLog, schedulerRuns)
 
     // The pair — this window and the row-info window beside it — is what stands among the app's other
     // windows, so the stacking order goes on the Box, not only on the frame inside it ([windowStackZ]).
-    Box(modifier.windowStackZ(frame.id)) {
+    // CENTRED content: both frames' offsets are "from centred", and the Box is as big as its larger child, so
+    // with the default top-start alignment the info window opening (or being bigger than a shrunken History
+    // window) would shift the History window across the screen.
+    Box(modifier.windowStackZ(frame.id), contentAlignment = Alignment.Center) {
         AppWindowFrame(
             title = "History",
             state = frame,
@@ -2147,9 +2161,11 @@ fun HistoryManagerWindow(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 rows.take(HISTORY_LIST_MAX_ROWS).forEach { row ->
-                                    // PRD §6: a DOUBLE click opens the row's information window. A
-                                    // single click is left alone so the list stays text-selectable.
-                                    val open = { infoRow = row }
+                                    // PRD §6: the row's "info" button — or a DOUBLE click — opens its
+                                    // information window. A single click is left alone so the list stays
+                                    // text-selectable. A row that already shows everything the window
+                                    // would has neither ([historyEntryHasMoreInfo]).
+                                    val open = if (historyEntryHasMoreInfo(row)) ({ openInfo(row) }) else null
                                     when (row) {
                                         is FilteredHistoryEntry.Unit ->
                                             HistoryUnitRow(entry = row, onOpen = open)
@@ -2179,8 +2195,14 @@ fun HistoryManagerWindow(
 
         // PRD §6: the row's own information window, opened by a double click. About ONE row, so opening it
         // on another row replaces it — but, like every window now, it stays until it is closed.
+        // Drawn beside the History frame in this Box — never in a full-screen layer, which would grow the Box
+        // to the whole app and move the History window — and opened off its (possibly dragged) position.
         infoRow?.let { row ->
-            HistoryEntryInfoWindow(entry = row, onDismiss = { infoRow = null })
+            HistoryEntryInfoWindow(
+                entry = row,
+                onDismiss = { infoRow = null },
+                initialOffset = frame.offset + Offset(120f, 40f),
+            )
         }
     }
 }
@@ -2190,11 +2212,12 @@ fun HistoryManagerWindow(
  * notification's title and its message text.
  *
  * It is drawn beside the History Units on purpose — the app's record of what it decided to say is part of
- * the same timeline — but it carries no position, no applied/current marker and no click: a notification is
- * not a History Unit, nothing undoes it, and everything it holds is already on the row.
+ * the same timeline — but it carries no position and no applied/current marker: a notification is not a
+ * History Unit and nothing undoes it. It does have an information window, because the row is only what was
+ * POSTED — what was SAID, and the button that says it again, are in the window.
  */
 @Composable
-private fun NotificationLogRow(entry: NotificationLogEntry, onOpen: () -> Unit) {
+private fun NotificationLogRow(entry: NotificationLogEntry, onOpen: (() -> Unit)?) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2212,6 +2235,8 @@ private fun NotificationLogRow(entry: NotificationLogEntry, onOpen: () -> Unit) 
                 style = MaterialTheme.typography.labelSmall,
                 color = CalColors.muted,
             )
+            Spacer(Modifier.weight(1f))
+            HistoryInfoButton(onOpen)
         }
         Text(
             text = entry.title,
@@ -2304,14 +2329,80 @@ private fun <T> HistoryDropdownField(
 }
 
 /**
- * PRD §6: what opens a row's information window — a **double** click, on every kind of row.
+ * PRD §6: whether the row at [entry] has an information window at all — i.e. whether that window would show
+ * anything the row does not already. The ONE answer both ways of opening it read (the row's "info" button and
+ * the double click), so a row can never offer one and refuse the other.
+ *
+ *  - a **History Unit**: always — its chrono id (and its debug-clock taint) are never on the row, and its
+ *    label and detail lines are cut to fit it;
+ *  - a **notification**: always — the row is what was posted, the window is what was spoken, with the button
+ *    that plays it again;
+ *  - a **scheduler run**: always — the rule state and the set of rules do not fit on a row;
+ *  - a **Supabase call**: never — its row prints every field it stores, unabridged.
+ *
+ * A new field on one of these rows must be weighed here: stored but not drawn on the row means `true`.
+ */
+fun historyEntryHasMoreInfo(entry: FilteredHistoryEntry): Boolean =
+    when (entry) {
+        is FilteredHistoryEntry.Unit -> true
+        is FilteredHistoryEntry.Notification -> true
+        is FilteredHistoryEntry.SchedulerRun -> true
+        is FilteredHistoryEntry.SupabaseUsage -> false
+    }
+
+/**
+ * PRD §6: the double click that opens a row's information window, beside the row's [HistoryInfoButton].
+ * [onOpen] `null` = the row has no window ([historyEntryHasMoreInfo]), so the gesture does nothing.
  *
  * It is a raw double-tap rather than a `clickable`, because the list is inside a `SelectionContainer`: a
  * single click has to stay the beginning of a text selection, which is the other thing this window is for.
  */
-private fun Modifier.historyRowOpen(onOpen: () -> Unit): Modifier =
+private fun Modifier.historyRowOpen(onOpen: (() -> Unit)?): Modifier =
     this.clip(RoundedCornerShape(4.dp))
-        .pointerInput(onOpen) { detectTapGestures(onDoubleTap = { onOpen() }) }
+        .then(
+            if (onOpen == null) {
+                Modifier
+            } else {
+                Modifier.pointerInput(onOpen) { detectTapGestures(onDoubleTap = { onOpen() }) }
+            },
+        )
+
+/**
+ * PRD §6: the button on a history row that opens its information window. Drawn only when [onOpen] is set —
+ * a row with nothing more to show has no button rather than a button that opens a copy of itself.
+ */
+@Composable
+private fun HistoryInfoButton(onOpen: (() -> Unit)?) {
+    if (onOpen == null) return
+    HistorySmallButton(label = "ⓘ info", onClick = onOpen)
+}
+
+/**
+ * The History window's small button — the row's **info** and the info window's **copy** buttons — drawn so it
+ * reads as a button: a bordered, filled shape with the hand cursor.
+ *
+ * The rows sit inside a `SelectionContainer`, which gives every text the I-beam and makes it selectable, so a
+ * bare clickable text there looks and hovers like part of the text. The hand cursor therefore overrides the
+ * descendants' icon, and the label is kept out of the selection ([DisableSelection]) so a press on it is a
+ * click, never the start of a selection.
+ */
+@Composable
+private fun HistorySmallButton(label: String, onClick: () -> Unit) {
+    DisableSelection {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .border(1.dp, CalColors.accent, RoundedCornerShape(6.dp))
+                .background(Color(0xFFEEF3FF))
+                .pointerHoverIcon(PointerIcon.Hand, overrideDescendants = true)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 3.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text = label, color = CalColors.accent, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
 
 /** The small tag naming which source a row of the History window's merged list came out of. */
 @Composable
@@ -2333,11 +2424,12 @@ private fun HistorySourceTag(label: String) {
  * [org.example.project.scheduler.state.SupabaseUsageEntry] — the account's draw-down on the Supabase
  * **free-plan** limits).
  *
- * Like a notification row it carries no position, no applied/current marker and no click: a Supabase call is
- * not a History Unit, nothing undoes it, and everything it holds is already on the row.
+ * It carries no position and no applied/current marker (a Supabase call is not a History Unit) and no info
+ * button: everything it stores is printed here in full — which is why the resource line is NOT ellipsized; a
+ * cut line would be something more to show ([historyEntryHasMoreInfo]).
  */
 @Composable
-private fun SupabaseUsageRow(entry: SupabaseUsageEntry, onOpen: () -> Unit) {
+private fun SupabaseUsageRow(entry: SupabaseUsageEntry, onOpen: (() -> Unit)?) {
     // A non-2xx status is worth flagging (a failed call still spends bandwidth).
     val ok = entry.status in 200..299
     Column(
@@ -2357,13 +2449,13 @@ private fun SupabaseUsageRow(entry: SupabaseUsageEntry, onOpen: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall,
                 color = CalColors.muted,
             )
+            Spacer(Modifier.weight(1f))
+            HistoryInfoButton(onOpen)
         }
         Text(
             text = "${entry.resource} · ${entry.operation}",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = "↑${formatBytes(entry.requestBytes)}  ↓${formatBytes(entry.responseBytes)}  ·  ${entry.status}",
@@ -2387,11 +2479,11 @@ private fun formatBytes(bytes: Long): String =
  * rules it returned.
  *
  * Like a notification row it carries no position and no applied/current marker: a re-plan is not a History
- * Unit (PRD §9 — a schedule is derived, so nothing undoes it). Unlike one it DOES open an information
- * window, because the rules themselves do not fit on a row and copying them is the point.
+ * Unit (PRD §9 — a schedule is derived, so nothing undoes it). It opens an information window, because the
+ * rules themselves do not fit on a row and copying them is the point.
  */
 @Composable
-private fun SchedulerRunRow(entry: SchedulerRunEntry, onOpen: () -> Unit) {
+private fun SchedulerRunRow(entry: SchedulerRunEntry, onOpen: (() -> Unit)?) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2409,6 +2501,8 @@ private fun SchedulerRunRow(entry: SchedulerRunEntry, onOpen: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall,
                 color = CalColors.muted,
             )
+            Spacer(Modifier.weight(1f))
+            HistoryInfoButton(onOpen)
         }
         Text(
             text = entry.kind.label,
@@ -2438,13 +2532,13 @@ private const val HISTORY_ROW_DETAIL_LINES = 3
  * One History Unit as a **clickable row** (PRD §6). It shows what the unit *is* — its category, its
  * timestamp, its position in that category's stack, its label and the first of its per-change detail lines
  * — plus what the list knows about it: undone units (ahead of the pointer, still redoable) are dimmed and
- * the pointer itself is marked. Clicking it ([onClick]) opens the information window with all of the unit's
- * data, which is where the detail lines beyond [HISTORY_ROW_DETAIL_LINES] are.
+ * the pointer itself is marked. Its "info" button, or a double click ([onOpen]), opens the information window
+ * with all of the unit's data, which is where the detail lines beyond [HISTORY_ROW_DETAIL_LINES] are.
  */
 @Composable
 private fun HistoryUnitRow(
     entry: FilteredHistoryEntry.Unit,
-    onOpen: () -> Unit,
+    onOpen: (() -> Unit)?,
 ) {
     val unit = entry.unit
     // Undone units (past the pointer, redoable) are dimmed.
@@ -2487,6 +2581,7 @@ private fun HistoryUnitRow(
                     color = CalColors.muted,
                 )
             }
+            HistoryInfoButton(onOpen)
         }
         Text(
             text = unit.delta.label,
@@ -2559,6 +2654,13 @@ private fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
                 HistoryInfo("Title", entry.entry.title),
                 HistoryInfo("Time", formatHistoryTime(entry.entry.timeMillis)),
                 HistoryInfo("Message", entry.entry.message),
+                // What the notification SAID, which is not its text: dashes and line breaks are normalized
+                // for speech, and a PRD §15 cue plays its bundled recording instead. The window's play
+                // button says exactly this.
+                HistoryInfo(
+                    "Voice",
+                    entry.entry.utterance.let { if (it.cue != null) "${it.text} (recorded phrase)" else it.text },
+                ),
             )
         is FilteredHistoryEntry.SupabaseUsage ->
             listOf(
@@ -2610,46 +2712,56 @@ private fun historyEntryTitle(entry: FilteredHistoryEntry): String =
         is FilteredHistoryEntry.SchedulerRun -> "Scheduler run"
     }
 
+/** The frame id of the History window's row-info window — the one slot opening any row's info reuses. */
+private const val HISTORY_ENTRY_INFO_WINDOW_ID = "HistoryEntryInfo"
+
 /**
- * PRD §6: the information window for a **double-clicked** history row — a modal overlay (scrim + centered
- * card, dismissed by clicking outside or the ✕) listing **every stored info** of that row, each with its own
- * button that copies the value to the system clipboard. "Copy all" takes the lot as `label: value` lines.
+ * PRD §6: the information window of a history row, opened by the row's **info** button or a double click — an
+ * ordinary window (it stays until its ✕) listing **every stored info** of that row, each with its own button
+ * that copies the value to the system clipboard. "Copy all" takes the lot as `label: value` lines.
  *
  * It is one window for all four kinds of row, over [historyEntryInfos], rather than one per kind: what a row
  * holds is a question the list already answers, and a second window per kind would be a second answer to it
  * (CLAUDE.md *one rule, one funnel*).
+ *
+ * A **notification** adds one control: the button that plays its vocal message again —
+ * [NotificationLogEntry.utterance], the same [VoiceUtterance.forNotification] call the engine spoke it
+ * through. It is an explicit request, so it reads neither the Notifications switch nor the voice switch (a
+ * notification recorded while muted is still one the user may want to hear); like every utterance it queues
+ * behind whatever is already being said rather than cutting it.
  */
 @Composable
-private fun HistoryEntryInfoWindow(entry: FilteredHistoryEntry, onDismiss: () -> Unit) {
+private fun HistoryEntryInfoWindow(entry: FilteredHistoryEntry, onDismiss: () -> Unit, initialOffset: Offset) {
     val infos = historyEntryInfos(entry)
-    val frame = rememberWindowFrameState("HistoryEntryInfo")
-    TransientPopupLayer(frame.id) {
-        AppWindowFrame(
-            title = historyEntryTitle(entry),
-            state = frame,
-            onClose = onDismiss,
-            defaultWidth = 480.dp,
-            defaultHeight = 420.dp,
-            claimsKeyboard = true,
-            modifier = Modifier.align(Alignment.Center),
-            // "Copy all" belongs in this window's head rather than its body: it is about the window's whole
-            // subject, exactly like the five buttons beside it.
-            headTrailing = {
-                HistoryCopyButton(
-                    label = "Copy all",
-                    value = infos.joinToString("\n") { "${it.label}: ${it.value}" },
-                )
-            },
+    val voice = (entry as? FilteredHistoryEntry.Notification)?.entry?.utterance
+    val frame = rememberWindowFrameState(HISTORY_ENTRY_INFO_WINDOW_ID, initialOffset)
+    AppWindowFrame(
+        title = historyEntryTitle(entry),
+        state = frame,
+        onClose = onDismiss,
+        defaultWidth = 480.dp,
+        defaultHeight = 420.dp,
+        claimsKeyboard = true,
+        // "Copy all" belongs in this window's head rather than its body: it is about the window's whole
+        // subject, exactly like the five buttons beside it.
+        headTrailing = {
+            HistoryCopyButton(
+                label = "Copy all",
+                value = infos.joinToString("\n") { "${it.label}: ${it.value}" },
+            )
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                infos.forEach { info -> HistoryInfoLine(info) }
+            if (voice != null) {
+                Button(onClick = { speak(voice) }) { Text("▶ Play the voice message") }
             }
+            infos.forEach { info -> HistoryInfoLine(info) }
         }
     }
 }
@@ -2669,18 +2781,12 @@ private fun HistoryCopyButton(label: String, value: String) {
             copied = false
         }
     }
-    Text(
-        text = if (copied) "copied" else label,
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xFFEEF3FF))
-            .clickable {
-                writeSystemClipboardText(value)
-                copied = true
-            }
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        color = CalColors.accent,
-        style = MaterialTheme.typography.labelSmall,
+    HistorySmallButton(
+        label = if (copied) "copied" else label,
+        onClick = {
+            writeSystemClipboardText(value)
+            copied = true
+        },
     )
 }
 

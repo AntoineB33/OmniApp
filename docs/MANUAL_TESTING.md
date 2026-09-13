@@ -405,6 +405,20 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
       the app's own rows take their place — **Scheduler**, **Notification** and **Supabase** rows in one
       newest-first list. Pick each source in turn and check the list narrows to it. There must be at least one
       **Scheduler** row (edit the tree to force a re-plan if not).
+- [ ] **The info button — only where there is more to show.** Every History Unit, **Scheduler** and
+      **Notification** row carries an **info** button at the right of its first line; a **Supabase** row has
+      none, and double-clicking one opens nothing. It must **look like a button** (bordered, filled) and show
+      the **hand** cursor on hover, not the text I-beam. Click **info** on a unit: the information window opens,
+      the same one a double click opens, and **the History window does not move** — try it with the History
+      window dragged off-centre and shrunk narrower than the info window. Then click another window (or reduce
+      the info window), and click the **same** row's **info** again: the info window comes back to the front,
+      restored, with the focus.
+- [ ] **A notification's window plays its voice.** Tick the check box, pick **Notification**, open a row's
+      **info**: besides Title / Time / Message it lists a **Voice** line and a **▶ Play the voice message**
+      button. Press it: a 20 s look-away start or a *Resume your work* row (fired by this build) plays the
+      bundled recording and its Voice line ends in *(recorded phrase)*; a *Task to do now* row is read out
+      from its text. It must play with the voice switch off too. Rows recorded before this build replay from
+      their text.
 - [ ] **Double click opens the information window, and every info copies.** Single-clicking a row must do
       nothing but start a text selection. **Double-click** a History Unit: the window lists its label, window,
       time, chrono id and every detail line, each with a *copy* button — click one and paste it somewhere to

@@ -434,6 +434,18 @@ class WindowFrameHost {
         raise(id)
     }
 
+    /**
+     * The user asked for [id] again — pressed the control that opens it while it is already open. It must come
+     * back to them however it had been put away: out of the reduce bar, to the top of the stack, and into the
+     * focus. Opening it the first time needs none of this ([register] raises it), but asking a second time
+     * changes no state of the caller's, so without this the window stays wherever it was, under whatever the
+     * user had moved to. Safe before the window registers: the focus and the stack slot are simply taken early.
+     */
+    fun present(id: String) {
+        entries.firstOrNull { it.id == id }?.state?.restore()
+        focus(id)
+    }
+
     /** The task tree took a press: no framed window is focused any more. */
     fun blur() {
         focusedId = null

@@ -247,6 +247,40 @@ class WindowFrameHostTest {
         assertFalse(host.keyboardClaimed)
     }
 
+    /**
+     * The History window's "info" button pressed on the row whose information window is already open: the
+     * press landed in the History window (which took the focus and the top), and the row it asks for changes no
+     * state — so the host has to be told to bring the window back, reduced or not.
+     */
+    @Test
+    fun `presenting an open window restores it, raises it and focuses it`() {
+        val host = WindowFrameHost()
+        val info = register(host, "HistoryEntryInfo", claimsKeyboard = true)
+        register(host, "History")
+        info.minimize()
+        host.focus("History")
+        assertEquals("History", host.frontId)
+
+        host.present("HistoryEntryInfo")
+
+        assertFalse(info.minimized)
+        assertEquals("HistoryEntryInfo", host.frontId)
+        assertEquals("HistoryEntryInfo", host.focusedId)
+        assertTrue(host.keyboardClaimed)
+    }
+
+    @Test
+    fun `presenting a window before it registers leaves it on top once it does`() {
+        val host = WindowFrameHost()
+        register(host, "History")
+
+        host.present("HistoryEntryInfo")
+        register(host, "HistoryEntryInfo")
+
+        assertEquals(listOf("History", "HistoryEntryInfo"), host.stackOrder)
+        assertEquals("HistoryEntryInfo", host.focusedId)
+    }
+
     @Test
     fun `closing the focused window releases the keyboard`() {
         val host = WindowFrameHost()
