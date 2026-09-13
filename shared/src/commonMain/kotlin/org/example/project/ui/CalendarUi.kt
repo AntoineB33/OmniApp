@@ -4493,8 +4493,9 @@ private fun DayColumn(
     // §15 screen-break bands and the §14 reminder tags. ONE list, because a second reading of "what is under
     // the cursor here" is how two elements start naming the same panel differently (the same reason
     // [blockBubbleOverlays] is shared with the width handle drawn over a block). Each of the three also
-    // stacks whatever of the other two is drawn BELOW it: the markers add nothing, the bands add
-    // [alarmOverlays], the tags add both.
+    // stacks whatever of the other two is drawn BELOW it, and WHICH those are is [CalendarOverlayLayer]'s
+    // to answer — never a list written out at the call site, which is exactly how the §18 rings came to be
+    // ranked above the §15 bands in the bubble while being painted under them.
     val underPanelOverlays: List<BubbleOverlay> =
         blockRecords.map { BubbleOverlay(it.startHour, it.endHour, panelBubbleSection(it, tz)) } +
             contextOverlays
@@ -4518,14 +4519,26 @@ private fun DayColumn(
     // them — and, being inert (no click to lose, unlike a §14 tag), it is easy to leave reporting nothing at
     // all, which is exactly what it did: hovering a timer's end named the task panel underneath and never the
     // timer. Its section rides its DRAWN rectangle, which is the stacked position above and not the raw
-    // instant. Read by the marker's own tiles and by the two elements drawn OVER it (the §15 bands and the
-    // §14 tags), through this one list.
+    // instant. Read by the marker's own tiles and by the one element drawn OVER it — the §14 tags — through
+    // this one list. The §15 bands are UNDER a ring ([CalendarOverlayLayer]) and stack it no longer.
     val alarmOverlays: List<BubbleOverlay> =
         if (hourHeight <= 0.dp) emptyList()
         else alarmPlacements.map { (marker, y) ->
             val top = y / hourHeight
             BubbleOverlay(top, top + ALARM_MARKER_HEIGHT / hourHeight, alarmBubbleSection(marker, tz))
         }
+    // PRD §8/§15: what a break band OWES the bubble — its own span, named as a Break. Hoisted beside
+    // [alarmOverlays] because BOTH elements drawn over it ask for it now (the §18 rings and the §14 tags),
+    // and a second reading is how the bubble starts naming a break at a span the calendar does not draw it
+    // at. Built only where something above it will ask: a day carries a look-away every 20 minutes and this
+    // column recomposes for every state change App's body sees.
+    val screenBreakOverlays: List<BubbleOverlay> =
+        if (alarmMarkers.isEmpty() && reminderTags.isEmpty()) emptyList()
+        else screenBreakMarkers.map { BubbleOverlay(it.startHour, it.endHour, panelBubbleSection(it, tz)) }
+    // PRD §8: what a call site stacks under its own section — asked of [CalendarOverlayLayer] and never
+    // spelled out at the emission. Three readers, one answer.
+    fun underOverlaysFor(layer: CalendarOverlayLayer): List<BubbleOverlay> =
+        overlaysUnder(layer, screenBreakOverlays, alarmOverlays, underPanelOverlays)
 
     // The right-click position (in this column's local pixels) that anchors the contextual menu; null
     // when no menu is open. [menuHits] is everything the click landed on (empty = empty space), and
@@ -5286,24 +5299,6 @@ private fun DayColumn(
             )
         }
 
-        // PRD §18 Alarms and Timers: each ring is drawn at its own instant — a fixed-height marker, since a
-        // ring has no duration. Unlike a reminder it is never checked off and never follows the now-line: an
-        // alarm's instant is a fixed wall-clock boundary, so a past ring stays where it went off, and a
-        // running timer's is the absolute instant it was started for. Where it goes (the downward stacking
-        // sweep) is [alarmPlacements], derived once above so the bubble names it where it is drawn.
-        alarmPlacements.forEach { (marker, y) ->
-            if (!onScreenDp(y, y + ALARM_MARKER_HEIGHT)) return@forEach
-            AlarmMarker(
-                marker = marker,
-                topHour = if (hourHeight > 0.dp) y / hourHeight else 0f,
-                hourHeight = hourHeight,
-                underOverlays = underPanelOverlays,
-                tz = tz,
-                hoverScope = hoverScope,
-                modifier = Modifier.offset(y = y),
-            )
-        }
-
         // PRD §15 Screen breaks: drawn as real time-positioned bands spanning their true duration, so the §9
         // fill leaves an exact gap for each one (no overlap with the surrounding task, no stray white where
         // a multi-minute rest pause sits). A sub-minute look-away therefore renders as a hairline (down to
@@ -5318,12 +5313,14 @@ private fun DayColumn(
         val visibleScreenBreaks = screenBreakMarkers.filter { onScreen(it.startHour, it.endHour) }
         if (visibleScreenBreaks.isNotEmpty()) {
             val sideLayout = remember(screenBreakMarkers) { overlapLayout(screenBreakMarkers) }
-            // PRD §8: a screen break is drawn on top of every panel and band (only the reminder tags go
-            // above it), so whatever sits under it is otherwise hidden — the grey periods and the layers,
-            // plus, rarely (the fill normally carves an exact gap for the break), a real panel. That is
-            // [underPanelOverlays], the one list the reminder tags read too. A TASK panel under a break is
+            // PRD §8: a screen break is drawn on top of every panel and band — only the two ZERO-DURATION
+            // markers go above it ([CalendarOverlayLayer]: a §18 ring, then a §14 tag) — so whatever sits
+            // under it is otherwise hidden: the grey periods and the layers, plus, rarely (the fill normally
+            // carves an exact gap for the break), a real panel. That is
+            // [underPanelOverlays], the one list the markers above read too. A TASK panel under a break is
             // dropped by the user's rule ("when there is a break, there can't be a task"); every other panel
             // still stacks. See [orderedBubbleSections].
+            val underBreakOverlays = underOverlaysFor(CalendarOverlayLayer.ScreenBreak)
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 visibleScreenBreaks.forEach { marker ->
@@ -5333,7 +5330,7 @@ private fun DayColumn(
                     slices.forEach { slice ->
                         ScreenBreakBand(
                             marker, slice, hourHeight, colWidth, tz, hoverScope,
-                            alarmOverlays + underPanelOverlays, showsDayDate,
+                            underBreakOverlays, showsDayDate,
                         )
                     }
                 }
@@ -5344,8 +5341,9 @@ private fun DayColumn(
         // ([periodSegmentLabel]: the box is shared, so it says all of them). Drawn over the panels and the
         // markings so they stay legible at the start of the band even though the work plan projects tinted
         // blocks through the window. Non-interactive (a plain Text Box consumes no pointer events), so the
-        // boxes and blocks beneath stay clickable. Only the reminder tags go above them — they are the one
-        // element that must stay hittable.
+        // boxes and blocks beneath stay clickable. Only the two zero-duration markers go above them
+        // ([CalendarOverlayLayer]) — the §14 tag that must stay hittable, and the §18 ring that must stay
+        // visible at the instant it names.
         (
             sleepBands.map { Triple(it.startHour, it.endHour, "Sleep") } +
                 drawnPeriods.map { Triple(it.startHour, it.endHour, periodSegmentLabel(it)) }
@@ -5381,6 +5379,36 @@ private fun DayColumn(
             }
         }
 
+        // PRD §18 Alarms and Timers: each ring is drawn at its own instant — a fixed-height marker, since a
+        // ring has no duration. Unlike a reminder it is never checked off and never follows the now-line: an
+        // alarm's instant is a fixed wall-clock boundary, so a past ring stays where it went off, and a
+        // running timer's is the absolute instant it was started for. Where it goes (the downward stacking
+        // sweep) is [alarmPlacements], derived once above so the bubble names it where it is drawn.
+        //
+        // **A RING IS THE SECOND OF THE TWO TOP-MOST THINGS THE COLUMN DRAWS** ([CalendarOverlayLayer]), so
+        // it is emitted HERE — after the bands and the band labels, under the tags and nothing else. It sat
+        // above the §15 bands until 2026-09-12, and a marker is a FIXED [ALARM_MARKER_HEIGHT] whatever the
+        // zoom: zoomed out its rectangle is minutes wide, so any 20-s look-away falling inside it was
+        // painted straight across it. A ring is inert, so unlike the §14 tag beside it nothing was lost to
+        // the hit test — it simply went under, while [CalendarBubbleSection.Kind] went on ranking it ABOVE
+        // the break that was hiding it. That disagreement between the paint and the bubble is the whole bug,
+        // and [CalendarOverlayLayer] is why it can only be fixed in one place now.
+        val underRingOverlays =
+            if (alarmPlacements.isEmpty()) emptyList()
+            else underOverlaysFor(CalendarOverlayLayer.Ring)
+        alarmPlacements.forEach { (marker, y) ->
+            if (!onScreenDp(y, y + ALARM_MARKER_HEIGHT)) return@forEach
+            AlarmMarker(
+                marker = marker,
+                topHour = if (hourHeight > 0.dp) y / hourHeight else 0f,
+                hourHeight = hourHeight,
+                underOverlays = underRingOverlays,
+                tz = tz,
+                hoverScope = hoverScope,
+                modifier = Modifier.offset(y = y),
+            )
+        }
+
         // PRD §14 Reminders: zero-duration checkable tags, placed by three rules. A still-future, unchecked
         // reminder sits at its scheduled time. An unchecked reminder whose time has passed is *overdue* and
         // accumulates on the live now-line, stacked top-down (so it tracks the clock until dealt with). A
@@ -5407,9 +5435,7 @@ private fun DayColumn(
         // join that list.
         val underReminderOverlays =
             if (reminderTags.isEmpty()) emptyList()
-            else screenBreakMarkers.map {
-                BubbleOverlay(it.startHour, it.endHour, panelBubbleSection(it, tz))
-            } + alarmOverlays + underPanelOverlays
+            else underOverlaysFor(CalendarOverlayLayer.Tag)
         fun checkedAtHour(tag: PlacedRecord): Float? =
             tag.checkedAtMillis?.let {
                 Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
@@ -5650,7 +5676,7 @@ private fun ScreenBreakBand(
     colWidth: Dp,
     tz: TimeZone,
     hoverScope: CalendarTitleHoverScope,
-    /** PRD §8: the bubble sections stacked under this (topmost) band's own — see the caller's [sideUnders]. */
+    /** PRD §8: the bubble sections stacked under this band's own — [CalendarOverlayLayer] says which. */
     underOverlays: List<BubbleOverlay>,
     /** PRD §8: does this column's day boundary carry the day-date badge? See [panelLabelTopInset]. */
     showsDayDate: Boolean,
@@ -5797,6 +5823,42 @@ data class CalendarBubbleSection(
         NoComputerUnlocked(4),
         NoPhoneUnlocked(4),
     }
+}
+
+/**
+ * PRD §8: **the three things a day column draws OVER its panels, bottom to top.**
+ *
+ * ONE declaration, because it settles two questions that must never disagree: the EMISSION order in
+ * [DayColumn] (what is composed last is painted and hit-tested on top) and what each of the three owes the
+ * hover bubble (every one of them it hides, stacked under its own section — [overlaysUnder]). They were
+ * spelled out by hand at each call site and they drifted apart: the 2026-09-04 z-order fix lifted the §14
+ * tags to the top and left the §18 rings where they were, UNDER the §15 bands, while
+ * [CalendarBubbleSection.Kind] went on ranking a ring above a break. The paint and the bubble were then
+ * answering the same question two ways, and the paint was the wrong one.
+ *
+ * The two ZERO-DURATION markers are top-most because each is a thing the user must reach at an INSTANT: a
+ * §14 tag is clicked, a §18 ring is opaque and names a boundary that a band would otherwise cover (a marker
+ * is a fixed height whatever the zoom, so zoomed out its rectangle is minutes wide and a 20-s look-away
+ * lands inside it). The tag is over the ring, which is PRD §8's own order — `reminder > alarm/timer ring`.
+ */
+internal enum class CalendarOverlayLayer { ScreenBreak, Ring, Tag }
+
+/**
+ * PRD §8: the bubble sections [layer] stacks UNDER its own — every layer below it, then the panels
+ * ([DayColumn]'s `underPanelOverlays`, which is beneath all three).
+ *
+ * An element never stacks itself and never one drawn above it: what is above is what the cursor is actually
+ * on, and it is that element's business to name what IT hides.
+ */
+internal fun overlaysUnder(
+    layer: CalendarOverlayLayer,
+    screenBreaks: List<BubbleOverlay>,
+    rings: List<BubbleOverlay>,
+    panels: List<BubbleOverlay>,
+): List<BubbleOverlay> = buildList {
+    if (layer > CalendarOverlayLayer.Ring) addAll(rings)
+    if (layer > CalendarOverlayLayer.ScreenBreak) addAll(screenBreaks)
+    addAll(panels)
 }
 
 /**
@@ -7449,6 +7511,9 @@ private fun periodKindBlurb(kind: String): String =
         PeriodKinds.INACTIVITY, PeriodKinds.SLEEP ->
             "The scheduler places nothing here at all, and no task can be given a resilience to it. Every " +
                 "task panel and every hour of work banked inside it are removed."
+        PeriodKinds.BEFORE_BED ->
+            "Always also a no-screen period. Each task is scheduled here at its resilience to \"before bed\" " +
+                "— 0 by default — and only if it needs no screen."
         PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED ->
             "Hatches the \"" + PeriodKinds.periodTitle(kind) + "\" layer here. On its own it schedules " +
                 "nothing away — one locked screen is not \"no screen\" — but where it overlaps a period of " +

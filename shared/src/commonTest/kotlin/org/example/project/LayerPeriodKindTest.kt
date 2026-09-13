@@ -66,7 +66,8 @@ class LayerPeriodKindTest {
     }
 
     @Test
-    fun a_no_screen_period_asserts_both_layers_and_a_grey_one_asserts_neither() {
+    fun a_no_screen_period_and_a_before_bed_one_assert_both_layers_and_a_grey_one_asserts_neither() {
+        // `before bed` is always also a no-screen period (PRD §17, [PeriodKinds.impliedKind]).
         val panels = listOf(
             period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
             period(PeriodKinds.INACTIVITY, NOW + 2 * HOUR, NOW + 3 * HOUR),
@@ -74,9 +75,9 @@ class LayerPeriodKindTest {
         )
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
             assertEquals(
-                listOf(range(NOW, NOW + HOUR)),
+                listOf(range(NOW, NOW + HOUR), range(NOW + 4 * HOUR, NOW + 5 * HOUR)),
                 SchedulerDomain.assertedLayerRanges(panels, layer),
-                "only the no-screen period speaks about a screen: " + layer.name,
+                "no screen and before bed speak about a screen, inactivity does not: " + layer.name,
             )
         }
     }

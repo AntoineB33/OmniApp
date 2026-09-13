@@ -11,6 +11,7 @@ import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -61,12 +62,60 @@ class BeforeBedPeriodTest {
     }
 
     @Test
-    fun it_says_nothing_about_screens_so_it_is_never_a_rest_stretch() {
-        // The user is expected to be AT a screen in that hour (PRD §17 lets the screen breaks fall in it), so
-        // the wind-down absorbs a dynamic period like any other emptiness but never bars the breaks after it.
+    fun every_before_bed_period_is_also_a_no_screen_period() {
+        // The user's rule: "Everytime there is 'before bed' restrictive period, there is also 'no screen'
+        // period" — so the hour is at least FOUR periods at once: before bed, no screen, and the two layer
+        // sentences no screen is made of. An IMPLICATION of the kind, not a companion panel.
+        assertEquals(PeriodKinds.NO_SCREEN, PeriodKinds.impliedKind(PeriodKinds.BEFORE_BED))
+        assertEquals(
+            SchedulerDomain.ActivityLayer.entries.toSet(),
+            PeriodKinds.assertedLayers(PeriodKinds.BEFORE_BED),
+        )
+        // ...but it is not a no-screen period BY NAME: it still turns everybody away by default, and the
+        // bars read the implied period rather than a second answer off the kind.
+        assertFalse(PeriodKinds.isLayerKind(PeriodKinds.BEFORE_BED))
         assertFalse(PeriodKinds.coversNoScreen(PeriodKinds.BEFORE_BED))
-        assertTrue(PeriodKinds.coversNoScreen(PeriodKinds.INACTIVITY))
-        assertTrue(PeriodKinds.coversNoScreen(PeriodKinds.NO_SCREEN))
+        listOf(PeriodKinds.NO_SCREEN, PeriodKinds.INACTIVITY, PeriodKinds.SLEEP, "deep focus").forEach {
+            assertEquals(null, PeriodKinds.impliedKind(it), it)
+        }
+    }
+
+    @Test
+    fun the_wind_down_hour_carries_its_no_screen_period_and_both_layers() {
+        // What was missing on the calendar: the hatch ("no computer unlocked", "no phone unlocked") over the
+        // next before-bed hour, and the no-screen period the scheduler reads there.
+        val now = utc(2024, 1, 1, 10, 0)
+        val panels = SchedulerDomain.fillSchedule(sleeping(), now, tz)
+        val windDowns = panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }
+        assertTrue(windDowns.isNotEmpty())
+        val spans = windDowns.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }.sortedBy { it.startEpochMillis }
+        SchedulerDomain.ActivityLayer.entries.forEach { layer ->
+            assertEquals(spans, SchedulerDomain.assertedLayerRanges(panels, layer), "$layer hatch")
+        }
+        val implied = SchedulerDomain.impliedNoScreenPeriods(panels)
+        assertEquals(spans, implied.map { TaskTimeRange(it.startMillis, it.endMillis) }.sortedBy { it.startEpochMillis })
+        assertTrue(implied.all { it.kind == PeriodKinds.NO_SCREEN })
+        // restrictivePeriodsOf (the display's and the cue's environment) carries both kinds over the hour.
+        val periods = SchedulerDomain.restrictivePeriodsOf(windDowns)
+        spans.forEach { span ->
+            val here = periods.filter { it.startMillis == span.startEpochMillis && it.endMillis == span.endEpochMillis }
+            assertEquals(setOf(PeriodKinds.BEFORE_BED, PeriodKinds.NO_SCREEN), here.map { it.kind }.toSet())
+        }
+    }
+
+    @Test
+    fun an_explicit_no_screen_period_over_the_hour_is_not_counted_twice() {
+        // The plan MULTIPLIES covering resiliences, so a hand-drawn "No screen" period over a wind-down hour
+        // must not be joined by a second, implied one — that would square a fractional resilience.
+        val now = utc(2024, 1, 1, 10, 0)
+        val windDown = SchedulerDomain.beforeBedPanels(SchedulerDomain.DEFAULT_SLEEP, now, now + 24 * HOUR_MS, tz).first()
+        val drawn = SchedulerReducer.reduce(
+            SchedulerState.empty(),
+            SchedulerIntent.AddRestrictivePeriod(
+                PeriodKinds.NO_SCREEN, windDown.startEpochMillis - HOUR_MS, windDown.endEpochMillis,
+            ),
+        ).panels.filter { it.isRestrictivePeriod }
+        assertTrue(SchedulerDomain.impliedNoScreenPeriods(drawn + windDown).isEmpty())
     }
 
     @Test
@@ -153,12 +202,14 @@ class BeforeBedPeriodTest {
     }
 
     @Test
-    fun a_task_resilient_to_the_kind_works_through_the_wind_down() {
-        // The escape is the model's own, and the only one: a value above 0 against "before bed", exactly as
-        // for a screen break. There is no second switch anywhere that says so.
+    fun an_off_screen_task_resilient_to_the_kind_works_through_the_wind_down() {
+        // The escape is the model's own, and the only one: a value above 0 against "before bed" — and, since
+        // the hour is also a no-screen period, against "no screen" too (an OFF-screen task). There is no
+        // second switch anywhere that says so.
         val (base, solo) = soloTask()
+        val resilient = SchedulerReducer.reduce(base, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.BEFORE_BED, 1.0))
         val state = SchedulerReducer
-            .reduce(base, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.BEFORE_BED, 1.0))
+            .reduce(resilient, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.NO_SCREEN, 1.0))
             .copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
         val now = utc(2024, 1, 1, 10, 0)
         val panels = SchedulerDomain.fillSchedule(state, now, tz)
@@ -172,6 +223,27 @@ class BeforeBedPeriodTest {
             },
             "a task resilient to \"before bed\" was still kept out of the wind-down hour",
         )
+    }
+
+    @Test
+    fun an_on_screen_task_resilient_to_before_bed_is_still_kept_out_by_its_no_screen_period() {
+        val (base, solo) = soloTask()
+        val state = SchedulerReducer
+            .reduce(base, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.BEFORE_BED, 1.0))
+            .copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
+        assertTrue(state.tasks[solo]!!.onScreen)
+        val now = utc(2024, 1, 1, 10, 0)
+        val panels = SchedulerDomain.fillSchedule(state, now, tz)
+        val windDowns = panels.filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }
+        assertTrue(windDowns.isNotEmpty())
+        windDowns.forEach { w ->
+            assertTrue(
+                panels.none {
+                    it.auto && it.startEpochMillis < w.endEpochMillis && it.endEpochMillis > w.startEpochMillis
+                },
+                "an on-screen task was placed in the no-screen period the wind-down hour carries",
+            )
+        }
     }
 
     @Test

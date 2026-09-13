@@ -186,25 +186,39 @@ Global rules that always apply: `CLAUDE.md`.
 - **The drag/resize gesture and the right-click menu are unaffected by all of this**, and that is structural,
   not luck: both live on **ancestors** of the tiles (the block's slice, the day column), and an ancestor stays
   on the hit path of whatever descendant is hit. `calendarTitleHover` never consumes.
-- **A REMINDER TAG IS THE TOP-MOST THING THE DAY COLUMN DRAWS**, and that is the same rule as the one above
-  read from the other side. It is the one marker on the calendar the user has to be able to **hit**; every
-  other element there is decorative (the grey marks, the layers, the now-line, the band labels) or reports
-  only hover (a `ScreenBreakBand`'s tiles, an alarm/timer ring's). So the tags are emitted LAST and nothing
-  goes after them. Drawn earlier they
-  were covered at exactly the position that matters most — the now-line, where the overdue stack accumulates
+- **THE TWO ZERO-DURATION MARKERS ARE THE TOP-MOST THINGS THE DAY COLUMN DRAWS** — a §18 alarm/timer ring,
+  and a §14 reminder tag over it — and that is the same rule as the one above read from the other side. Each
+  is a thing the user must reach at an INSTANT: a tag is the one marker on the calendar that has to be
+  **hit**, a ring is opaque and names a boundary. Everything else there is decorative (the grey marks, the
+  layers, the now-line, the band labels) or reports only hover (a `ScreenBreakBand`'s tiles). So the bands
+  and the band labels are emitted first, then the rings, then the tags, and nothing goes after them.
+  Drawn earlier, a tag
+  was covered at exactly the position that matters most — the now-line, where the overdue stack accumulates
   and where mode 1 parks an owed pose: an opaque alarm marker hid one, and a `ScreenBreakBand`'s hover tiles,
   being pointer-input nodes, won the hit test against the tag underneath so the click that checks a reminder
   off never reached it. The bubble said so — hovering a tag named the break and the two "nobody unlocked"
   layers instead of the reminder.
+- **A FIX THAT LIFTS ONE OF THE TWO LEAVES THE OTHER UNDER THE BANDS, AND ONLY THE PAINT SAYS SO.** The
+  2026-09-04 fix above moved the tags and left the rings where they were, below the §15 bands, so a 20-s
+  look-away was painted straight across a ring. It took eight days to see, and the reason is that a ring is
+  **inert**: there was no click to lose the way a tag's was, and `CalendarBubbleSection.Kind` went on ranking
+  a ring ABOVE a break the whole time, so the bubble kept insisting the ring was on top. It shows at **zoom
+  out**, not in: a marker is a fixed `ALARM_MARKER_HEIGHT` whatever the zoom, so the further out the calendar
+  is, the more minutes its rectangle covers and the more certain a look-away is to land inside it.
+  **`CalendarOverlayLayer` is the single answer now** — the bottom-to-top order of the three things drawn over
+  the panels, read BOTH by the emission order and by `overlaysUnder`, which is what each of them stacks under
+  its own section. Neither list is written out at a call site any more, and `CalendarOverlayLayerTest` pins
+  that a layer carries exactly the layers below it — never itself, never one above it.
 - **Being on top is exactly why a tag OWES the bubble what it hides.** The tag is itself a pointer-input node
   — it has to be, it is clicked — so it wins the hit test against every tile beneath it and those tiles stop
   reporting: a hovered tag named *nothing at all*. It therefore carries hover tiles of its own over its own
   drawn rectangle (`ReminderTag` → `CalendarHoverTiles`), with its own section (`reminderBubbleSection`) over
-  `underReminderOverlays` — the screen breaks, the `alarmOverlays`, plus the one `underPanelOverlays` list a
+  `underReminderOverlays` — the rings, the screen breaks, plus the one `underPanelOverlays` list a
   `ScreenBreakBand` reads for the same purpose. **One list, not two readings**, for the same reason
   `blockBubbleOverlays` is shared with the width handle drawn over a block. **Three** elements are drawn over
-  the panels and each stacks whatever of the other two is below it: the §18 markers add nothing, a
-  `ScreenBreakBand` adds `alarmOverlays`, a tag adds both. Two rules hold it:
+  the panels and each stacks whatever of the other two is below it — a band adds nothing, a ring adds the
+  bands, a tag adds both — and that is `overlaysUnder(CalendarOverlayLayer)`, not three lists spelled out at
+  three emissions. Two rules hold it:
   - the **click lives on the ancestor** the tiles hang under, never beside them. A sibling tile layer is the
     "lid over the tile" mistake with the roles swapped — it would eat the one click on the calendar that has
     to land. `Box(clickable) { Row(the chip); CalendarHoverTiles(…) }`.
@@ -214,7 +228,8 @@ Global rules that always apply: `CLAUDE.md`.
     anchor, like every other derivation; only the placement is exact).
 - **"NOTHING IS PLACED HERE" IS A STATEMENT ABOUT THE SCHEDULER, AND IT HAS NO PAINT** — it covers an
   inactivity period, a sleep window, the §17 **"Before bed" hour** (`before bed`, whose default resilience is
-  `0` like theirs), and **all three screen breaks end to end** (they are `no task allowed`; there is no closed
+  `0` like theirs — and which is always ALSO a no-screen period, so both layer hatches are painted across its
+  orange box: `PeriodKinds.impliedKind`, read through `assertedLayerRanges` like any drawn layer), and **all three screen breaks end to end** (they are `no task allowed`; there is no closed
   head and no hollow tail any more). It is not a screen classification: it refuses off-screen tasks too.
   "Refuses" means the task's resilience to the covering kind is `0`, so a task given a non-zero one may work
   through a break — the only thing that is ever placed there. The calendar draws every one of them the same

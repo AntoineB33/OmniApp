@@ -292,6 +292,10 @@ each was chosen:
 - **Not `coversNoScreen`.** The user is expected to be at a screen in that hour (PRD §17 lets the screen
   breaks fall in it), so it absorbs a dynamic period like any other emptiness but is never a *rest stretch*
   barring the breaks that follow. `no task allowed` would have made the wind-down re-anchor every bar.
+  **Superseded 2026-09-13:** the user's rule is that every `before bed` period is also a `no screen` period,
+  so the hour IS a rest now. The kind still is not `coversNoScreen` by name — it implies a `no screen` period
+  (`PeriodKinds.impliedKind`) and that period answers — which keeps `no task allowed`'s objection intact: the
+  wind-down re-anchors the bars exactly as a hand-drawn "No screen" hour would, no more.
 - **Not the user's** (`isUserDefined` is false), so it can be neither defined again nor deleted, and an older
   payload that held a user-defined kind of that name collapses into it on decode with the tasks' overrides
   intact — they are keyed by the name, so they go on answering for the period they were written for.

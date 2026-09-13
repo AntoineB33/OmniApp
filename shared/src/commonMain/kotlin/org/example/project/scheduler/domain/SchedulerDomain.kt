@@ -1569,13 +1569,14 @@ object SchedulerDomain {
      */
     fun unifyNoScreenPeriods(panels: List<TaskPanel>, keepId: String? = null): List<TaskPanel> {
         // Per KIND, not per flag: the rule is about a period that states a LAYER, and there are three such
-        // kinds ([PeriodKinds.assertedLayers]). Two overlapping "no computer unlocked" periods say one thing
+        // kinds ([PeriodKinds.isLayerKind]). Two overlapping "no computer unlocked" periods say one thing
         // for exactly the reason two "No screen" ones do. Kinds are never fused ACROSS — a computer-only
         // statement and a both-screens one are different statements, the same reason a no-screen period never
-        // fuses with an inactivity one.
+        // fuses with an inactivity one. By NAME, not by what a kind implies: a `before bed` period carries a
+        // no-screen period ([PeriodKinds.impliedKind]) but is not one, so it keeps its own bounds.
         var result = panels
         for (kind in panels.mapNotNull { it.restrictiveKind.ifBlank { null } }.distinct()) {
-            if (PeriodKinds.assertedLayers(kind).isEmpty()) continue
+            if (!PeriodKinds.isLayerKind(kind)) continue
             result = unifyPeriodsOfKind(result, kind, keepId)
         }
         return result
@@ -2198,16 +2199,6 @@ object SchedulerDomain {
         }
     }
 
-    /** The §17 wind-down hours from [beforeBedPanels] as occupied time ranges. */
-    fun beforeBedRegions(
-        sleep: SleepSchedule?,
-        fromMillis: Long,
-        toMillis: Long,
-        timeZone: TimeZone,
-    ): List<TaskTimeRange> =
-        beforeBedPanels(sleep, fromMillis, toMillis, timeZone)
-            .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-
     /**
      * PRD §15: a screen break that **happened** — the object the "what serves a break" rules are written
      * against. [range] is the span it occupied, so its `end` is the rest instant a shorter break anchors to.
@@ -2302,6 +2293,10 @@ object SchedulerDomain {
      * resiliences of every covering period ([PeriodKinds.multiplier]): handing it the same stretch twice would
      * square a task's resilience to the kind and silently halve the share of anybody sitting between 0 and 1.
      * A `0` and a `1` would not have noticed, which is exactly why this is written down.
+     *
+     * PRD §17's `before bed` reaches the scheduler HERE too: it asserts both layers by implication
+     * ([PeriodKinds.impliedKind]), so every wind-down hour among [panels] comes out as the no-screen period
+     * the user's rule says it always carries. A caller that builds wind-down periods has to hand them in.
      */
     fun impliedNoScreenPeriods(panels: List<TaskPanel>): List<RestrictivePeriod> {
         val drawn = assertedNoScreenRanges(panels)
@@ -4590,12 +4585,16 @@ object SchedulerDomain {
         // Bounded by THIS fill's [horizon], not by the fixed 168h default: a fill for a short horizon must
         // not project a week of breaks it will then carry in `panels`, and a DISPLAY fill for a far week
         // must project across it.
+        val standingPeriodPanels = kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels
         val dynamicBase =
-            (kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels).mapNotNull { panel ->
+            standingPeriodPanels.mapNotNull { panel ->
                 val kind = panel.restrictiveKind
                 if (kind.isEmpty()) null
                 else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
-            } + impliedNoScreenPeriods(kept) + listOfNotNull(liveRestPeriod(liveRest)) +
+            } +
+                // The wind-down hours are laid by THIS fill, not kept, so they are handed in beside `kept`:
+                // each one's implied no-screen period (PRD §17) is what makes the hour a rest to the bars.
+                impliedNoScreenPeriods(standingPeriodPanels) + listOfNotNull(liveRestPeriod(liveRest)) +
                 observedNoScreenPeriods(noScreenEvidence)
         val dynamicBlocks =
             kept.asSequence()

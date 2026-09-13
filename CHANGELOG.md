@@ -11,6 +11,69 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every "before bed" period is also a "no screen" period — 2026-09-13
+
+→ PRD §17, ADR 0001. `shared` (`scheduler/domain/PeriodKinds.kt`, `scheduler/domain/SchedulerDomain.kt`,
+`App.kt`, `ui/CalendarUi.kt`); `docs/invariants/scheduler.md`, `docs/invariants/calendar.md`,
+`docs/MANUAL_TESTING.md`. Tests: `BeforeBedPeriodTest` (+4, one rewritten), `LayerPeriodKindTest`,
+`CalendarEditChoicesTest`.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"the next before bed period doesn't have the 'no screen' period (it doesn't have the 'no computer
+unlocked' and 'no phone unlocked')"*, then the rule: *"Everytime there is 'before bed' restrictive period,
+there is also 'no screen' period. Meaning that 'before bed' is always at least 4 restrictive periods at the
+same time t."*
+
+- **Not a regression — the old spec said the opposite.** Since 2026-08-29 the wind-down "said nothing about
+  screens" (PRD §17 let the breaks fall in it), and `PeriodKinds.assertedLayers` answered none for it. The
+  spec is now the user's rule.
+- **An implication of the kind, not a companion panel.** `PeriodKinds.impliedKind(before bed) = no screen`,
+  folded into `assertedLayers`. Everything that already reads "which layers does this stretch carry" answers
+  for the hour from there: both hatches (`assertedLayerRanges`), the scheduler and the recurrence bars
+  (`impliedNoScreenPeriods` — so the hour is now a no-screen REST, and an on-screen task given a resilience to
+  `before bed` still stays out), the record bank. An explicit "No screen" period over the hour is subtracted
+  as before, so a fractional resilience is not squared.
+- **What the period IS did not change**: `PeriodKinds.isLayerKind` (by name) keeps its default resilience at
+  `0`, keeps its box orange and grey-kinded rather than repainted as a no-screen period, and keeps it out of
+  `unifyNoScreenPeriods`.
+- **Two places built wind-down periods by hand and would have dropped the no-screen half**: the fill's
+  `dynamicBase` (which passed only the KEPT panels to `impliedNoScreenPeriods`, and the wind-down hours are
+  laid by that very fill) and the calendar's display environment (which mapped `beforeBedRegions` straight to
+  `RestrictivePeriod`s). Both now route through the funnel; `beforeBedRegions` is gone.
+
+### A §18 ring is the OTHER top-most marker — it was left under the §15 bands — 2026-09-12
+
+→ `shared` (`ui/CalendarUi.kt` — `DayColumn`'s emission order, the new `CalendarOverlayLayer` /
+`overlaysUnder`); `docs/invariants/calendar.md`, `docs/MANUAL_TESTING.md`. Tests: a new
+`CalendarOverlayLayerTest` (5).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Reported as: *"it seems like 20s screen breaks appear above the reminders"* — and the marker under the break
+turned out to be a §18 **alarm**, not a §14 reminder: *"the 'claude' alarm in the current day column, when
+zoomed out enough, a 20s break appears over the 'claude' alarm panel."*
+
+- **The 2026-09-04 z-order fix lifted ONE of the two zero-duration markers.** It moved the §14 tags to the
+  end of `DayColumn`'s emission and left the §18 rings exactly where they were — before the §15 screen-break
+  bands and before the band labels. PRD §8 and the invariants had already written the rule for **both**
+  ("the two zero-duration markers lead… each is drawn *on top* of the panels"), so the docs were describing
+  a calendar the code did not draw.
+- **It takes ZOOMING OUT to see, which is why it survived eight days.** A ring is a fixed
+  `ALARM_MARKER_HEIGHT` whatever the zoom, so the further out the calendar goes the more minutes its
+  rectangle spans — and a 20-s look-away recurring every 20 min is then near-certain to fall inside one. Zoomed
+  in, the band is a hairline somewhere else entirely.
+- **A ring is INERT, so only the paint complained.** A tag is a pointer-input node, and that is how the same
+  defect announced itself in September: the click that checks a reminder off stopped landing. A ring
+  registers no click, so nothing broke — meanwhile `CalendarBubbleSection.Kind` went on ranking
+  `alarm/timer ring` **above** `break`, so the hover bubble kept saying the ring was on top of the thing
+  painted over it. The bubble and the paint were answering one question two ways.
+- **`CalendarOverlayLayer` is now that one answer**: `ScreenBreak < Ring < Tag`, the bottom-to-top order of
+  everything the column draws over its panels. The emission order follows it, and `overlaysUnder(layer, …)`
+  derives what each one stacks under its own bubble section from the same declaration — so a band stacks the
+  panels only, a ring stacks the bands, a tag stacks both. Those three lists used to be written out by hand at
+  the three emissions, which is precisely how they drifted apart. `screenBreakOverlays` is hoisted beside
+  `alarmOverlays` for the same reason the placements are: two readers now, one derivation.
+- **Emission order is `bands → band labels → rings → tags`**, and nothing goes after the tags.
+
 ### An outline says WHICH SURFACE stated the thing — so an alarm ring is orange, not blue — 2026-09-12
 
 → `shared` (`scheduler/domain/SchedulerDomain.kt`, `App.kt`, `ui/CalendarUi.kt`);

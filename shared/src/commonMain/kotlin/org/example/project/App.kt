@@ -869,20 +869,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 } +
                 // PRD §17: and the hour before each of those bedtimes, which is covered by the period
                 // "before bed". Projected here for the same reason the sleep windows are — the visible span
-                // may run past the fill's horizon, where `schedulerState.panels` holds neither.
-                SchedulerDomain.beforeBedRegions(
-                    schedulerState.sleep,
-                    visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
-                    visibleSpanEndMillis,
-                    tz,
-                ).map {
-                    RestrictivePeriod(
-                        it.startEpochMillis,
-                        it.endEpochMillis,
-                        PeriodKinds.BEFORE_BED,
-                        SchedulerDomain.BEFORE_BED_PANEL_TITLE,
-                    )
-                }
+                // may run past the fill's horizon, where `schedulerState.panels` holds neither. Through
+                // [SchedulerDomain.restrictivePeriodsOf] and not mapped by hand, so each hour arrives WITH the
+                // no-screen period it always carries ([PeriodKinds.impliedKind]) — the grid the calendar
+                // draws and the one the fill places must see the same rest.
+                SchedulerDomain.restrictivePeriodsOf(
+                    SchedulerDomain.beforeBedPanels(
+                        schedulerState.sleep,
+                        visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
+                        visibleSpanEndMillis,
+                        tz,
+                    ),
+                )
             }
         val displayDynamicTasks =
             Perf.measure("display.planTasks") { SchedulerDomain.planTasksOf(schedulerState, nowMillis) }
@@ -2929,11 +2927,11 @@ private fun mergePanelsForDisplay(
                 // CalendarRecord are the two paints the calendar has for a period — no fill + both hatches,
                 // or grey — and reading them off the panel's two legacy flags meant a period of any OTHER
                 // kind (`before bed`, one the account defined) carried neither and was drawn as a task
-                // panel. A kind is grey unless it is `no on-screen task`, which is the one that says
-                // something about screens rather than about the timeline being empty.
-                noScreen = PeriodKinds.assertedLayers(head.restrictiveKind).isNotEmpty(),
-                inactivity = head.isRestrictivePeriod &&
-                    PeriodKinds.assertedLayers(head.restrictiveKind).isEmpty(),
+                // panel. A kind is grey unless it is, BY ITS OWN NAME, a sentence about screens
+                // ([PeriodKinds.isLayerKind]) — a `before bed` period implies a no-screen one, and that
+                // implied period is drawn by the layer hatch, not by repainting the wind-down box.
+                noScreen = PeriodKinds.isLayerKind(head.restrictiveKind),
+                inactivity = head.isRestrictivePeriod && !PeriodKinds.isLayerKind(head.restrictiveKind),
                 restrictiveKind = head.restrictiveKind,
                 // PRD §8/§12: a hand-added period saved with an open ("∞") start reads as one in the hover
                 // bubble, exactly like a derived band that nothing precedes.

@@ -313,6 +313,16 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         Same for an alarm's ⏰ marker. Start a timer and set an alarm to ring within a minute of it so the
         two markers **stack**: each is still named at its own instant, not at the row it was pushed down to.
         Hover a reminder tag drawn over a ring → the reminder leads and the ring follows it.
+  - [ ] **The next "Before bed" hour carries its "no screen" period (PRD §17).** Look at the coming
+        evening's orange "Before bed" box: both oblique hatches ("no computer unlocked" `/`, "no phone
+        unlocked" `\`) run across its whole span, and hovering it names both layers under "Before bed". A task
+        set resilient to "before bed" but still on-screen stays
+        out of it (an off-screen one may run there).
+  - [ ] **A ring stays VISIBLE when the calendar is zoomed OUT (PRD §8, the two top-most markers).** Set an
+        alarm for a time the §15 look-aways run through, then zoom the calendar out until the marker's fixed
+        height spans several minutes of column. No 20-s break band may be painted across the ring — the
+        bands and the band labels go under both zero-duration markers, the tag over the ring. Hover it there
+        → the ring leads and the **break** is named under it (not the other way round, and not missing).
 - [ ] Close and relaunch → the task tree, records, and pinned panels are exactly as left (local SQLite,
       ~400 ms save debounce — **no** sync involved).
 - [ ] **A weight-table pin outlives its window.** In a sub-list's **Priority weights** table, pin a cell's
