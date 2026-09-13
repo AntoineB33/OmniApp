@@ -649,12 +649,13 @@ internal fun CellListSection(
             },
             editMenus =
                 if (isEditing) {
-                    {
+                    { refocusField ->
                         EditModeMenus(
                             state = state,
                             cellId = cellId,
                             draftText = editDraft,
                             onIntent = onIntent,
+                            onModePicked = refocusField,
                             // PRD §7: a root row of the "All tasks" window is always renaming, so it is
                             // offered no choice (the reducer opens its session in Rename mode to match).
                             hideModeSelector = rootRenameOnly && depth == 0,
@@ -864,6 +865,38 @@ private fun TaskTreeSelector(
 }
 
 /**
+ * PRD §4: the **Mode** selector's two options for [cellId]'s edit session, or none where the selector is not
+ * offered — a cell being *created* (it had no task before this edit began, so there is no title to Rename)
+ * and the "All tasks" window's roots ([hideModeSelector]).
+ *
+ * **Every pick ends in [onModePicked]**, the one that already holds the mode included: after a pick the user
+ * can type straight away, so the caret has to go back into the field the drop-down took it from. It is a
+ * separate call and not a consequence of the intent because re-picking the current mode changes nothing in
+ * the state — there would be nothing for the field to react to.
+ */
+internal fun cellEditModeOptions(
+    state: SchedulerState,
+    cellId: CellId,
+    hideModeSelector: Boolean,
+    onIntent: (SchedulerIntent) -> Unit,
+    onModePicked: () -> Unit,
+): List<EditModeOption> {
+    val session = state.editSession ?: return emptyList()
+    val isBeingCreated = session.treeBefore.cells[cellId]?.taskId == null
+    if (isBeingCreated || hideModeSelector) return emptyList()
+    fun option(label: String, mode: CellEditMode) =
+        EditModeOption(
+            label = label,
+            selected = session.mode == mode,
+            onSelect = {
+                onIntent(SchedulerIntent.SetEditMode(mode))
+                onModePicked()
+            },
+        )
+    return listOf(option("Change Task", CellEditMode.ChangeTask), option("Rename", CellEditMode.Rename))
+}
+
+/**
  * PRD §4 Edit Mode: the menus under a task cell being edited — the **Mode** selector, the **Tasks** id menu
  * and the **Title suggestions** menu, in the one order [EditModeMenuBlock] fixes for every naming field.
  *
@@ -884,11 +917,10 @@ internal fun EditModeMenus(
      * which cells are that window's roots.
      */
     hideModeSelector: Boolean = false,
+    /** Hands the caret back to the cell's field after a Mode pick — see [cellEditModeOptions]. */
+    onModePicked: () -> Unit = {},
 ) {
     val session = state.editSession ?: return
-    // A cell that had no task before this edit began is being *created* — it is always in Change Task mode
-    // (there is no existing title to Rename), so the Mode selector is hidden, mirroring the reminders manager.
-    val isBeingCreated = session.treeBefore.cells[cellId]?.taskId == null
 
     // Only the in-progress "New task" draft is hidden (it's already the "New task" row itself). A picked
     // existing task must stay listed so it can render as selected (purple) — excluding it here would drop it
@@ -905,23 +937,7 @@ internal fun EditModeMenus(
             emptyList()
         }
 
-    val modeOptions =
-        if (isBeingCreated || hideModeSelector) {
-            emptyList()
-        } else {
-            listOf(
-                EditModeOption(
-                    label = "Change Task",
-                    selected = session.mode == CellEditMode.ChangeTask,
-                    onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.ChangeTask)) },
-                ),
-                EditModeOption(
-                    label = "Rename",
-                    selected = session.mode == CellEditMode.Rename,
-                    onSelect = { onIntent(SchedulerIntent.SetEditMode(CellEditMode.Rename)) },
-                ),
-            )
-        }
+    val modeOptions = cellEditModeOptions(state, cellId, hideModeSelector, onIntent, onModePicked)
     // The Tasks menu is worth showing only beyond the lone "New task" row (the reminders manager applies the
     // same rule to its "New Reminder" row).
     val identityRows =
@@ -1877,7 +1893,7 @@ internal fun PriorityWeightWindow(
                             onToggleExpand = {},
                             editMenus =
                                 if (isEditing) {
-                                    {
+                                    { _ ->
                                         OptionalTaskEditMenus(
                                             state = state,
                                             eligibleTaskIds = eligibleTaskIds,
@@ -2505,7 +2521,12 @@ internal fun TaskRow(
     onTextChange: (String) -> Unit,
     onExitEdit: (EditExitNavigation) -> Unit,
     onToggleExpand: () -> Unit,
-    editMenus: (@Composable () -> Unit)?,
+    /**
+     * The menus under the cell while it is in Edit Mode. The argument hands the caret back to the edit
+     * field: a menu calls it after a pick that must leave the user typing (PRD §4's Mode selector), because
+     * the drop-down it was made in took the focus and nothing in the state changes to give it back.
+     */
+    editMenus: (@Composable (refocusField: () -> Unit) -> Unit)?,
     /**
      * Whether the row opens with the expand/collapse arrow. False only for a row drawn OUTSIDE a tree — the
      * relative-priority window's occurrence chains (PRD §5) — where there is no sub-tree to open under it
@@ -2553,9 +2574,20 @@ internal fun TaskRow(
     // keyboard and hands it back when it does not, so keystrokes meant for the window the user just went
     // to never land in a rename they left behind — and coming back puts the caret straight back in it.
     val keyboardOwned = LocalTreeKeyboardOwned.current
-    LaunchedEffect(isEditing, keyboardOwned) {
+    // PRD §4: a pick in the Mode selector — either mode, the one already chosen included — puts the caret
+    // back in the field. The drop-down is a focusable popup, so it took the focus; the state cannot say
+    // "give it back" (re-picking the current mode is a reducer no-op), so the pick bumps this counter and
+    // the ONE effect that owns this field's focus re-runs. Never a second requestFocus call site: the
+    // keyboardOwned gate below must hold for this too.
+    var fieldRefocusRequests by remember(cellId) { mutableStateOf(0) }
+    LaunchedEffect(isEditing, keyboardOwned, fieldRefocusRequests) {
         when {
-            isEditing && keyboardOwned -> editFocusRequester.requestFocus()
+            isEditing && keyboardOwned -> {
+                // Let the closing drop-down leave the composition first, so its own focus handling on
+                // dismissal cannot land after ours.
+                if (fieldRefocusRequests > 0) withFrameNanos { }
+                editFocusRequester.requestFocus()
+            }
             isEditing && editFieldFocused -> focusManager.clearFocus()
         }
     }
@@ -3107,7 +3139,7 @@ internal fun TaskRow(
                     .fillMaxWidth()
                     .padding(start = (depth * INDENT_STEP_DP).dp),
             ) {
-                editMenus?.invoke()
+                editMenus?.invoke { fieldRefocusRequests++ }
             }
         }
     }

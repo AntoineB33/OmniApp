@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Mode pick puts the caret back in the edited cell — 2026-09-13
+
+→ PRD §4. `shared` (`scheduler/ui/TaskSchedulerScreen.kt`); `docs/invariants/task-tree.md`,
+`docs/MANUAL_TESTING.md`. Tests: `EditModeRefocusTest` (new, 4).
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
+
+Asked for: *"after selecting one of the two modes, the cursor must reappear on the text field"*, the same mode
+included.
+
+- **Why it didn't:** the Mode drop-down is a focusable popup, so opening it took the focus off the field, and
+  the cell's focus effect was keyed only on `isEditing`/`keyboardOwned` — neither changes on a pick. Re-picking
+  the current mode is a reducer no-op, so no state change could have carried it either.
+- **Fix:** the options are built by `cellEditModeOptions`, every one of which ends in `onModePicked`; the row
+  turns that into a counter keyed into its existing focus effect (one frame after the popup leaves), so the
+  `keyboardOwned` gate still decides. The `editMenus` slot now receives that refocus callback.
+- The focus itself is not machine-verified (no Compose UI test harness in the project); the test pins the
+  wiring. Checked by hand via the new `MANUAL_TESTING.md` §2 item.
+
 ### Every "before bed" period is also a "no screen" period — 2026-09-13
 
 → PRD §17, ADR 0001. `shared` (`scheduler/domain/PeriodKinds.kt`, `scheduler/domain/SchedulerDomain.kt`,

@@ -195,6 +195,7 @@ The application maintains a dual-state selection model: **Main Selection** (a si
 While in Edit Mode, *Selected Cells List* resets with only the *Main Selection* and two contextual menus remain visible until editing concludes:
 
 **Menu 1: Mode Selector ("Change Task" vs. "Rename")**
+* *Caret:* As soon as a mode is picked — either one, including the mode already selected — the cursor is back in the cell's text field, so the user can type and edit the text straight away without clicking the cell again.
 * **Change Task (Default):** A task menu displays existing `taskIds` matching the cell's current text. The menu doesn't appear if there is only one element. There is always one of the elements that is selected. 
   * *Presentation:* The first `taskId` is represented by "New task". The other `taskIds` are represented by their shortest path in the Task Tree (or a list of child titles if the tree does not hold them). **The path is read from the tree itself** — the cells and sub-lists on screen — so a task that arrived by a move, a paste or an id assignment is named by where it actually sits; a menu listing many tasks that share one title is a column of distinct paths, which is the only thing telling those rows apart.
   * *Filtering:* Impossible IDs (already in the same list, or in the cell's ancestor path) are hidden.

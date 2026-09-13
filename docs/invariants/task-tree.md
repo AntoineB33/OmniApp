@@ -247,6 +247,12 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   composition local, like `LocalTransientPopupHost`, so all three drawings of the tree get it at once; never a
   flag each surface has to remember to pass on. Losing focus must never end the session — that is the
   behaviour this replaced.
+- **A Mode pick hands the caret back to the field — every pick, the current mode included**
+  (`cellEditModeOptions`, which ends each option in `onModePicked`). The drop-down is a focusable popup, so it
+  took the focus, and the state cannot give it back: re-picking the current mode is a reducer no-op. So the
+  pick bumps a counter that is a key of the cell's ONE focus effect (the `LocalTreeKeyboardOwned` one above),
+  which waits a frame for the popup to leave and requests focus. Do not add a second `requestFocus` call
+  site for it — it would skip the `keyboardOwned` gate.
 - **Clicking the cell that is being edited is not "another cell"**: `applySelectionChange` ends the session
   only for a *different* `clickedCellId`, which is what lets a click back into the field resume the rename.
 

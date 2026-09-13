@@ -282,6 +282,10 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **The tree goes deaf only while a window has the keyboard.** With the priority-weight window focused,
         typing a letter must edit *there*, not rename the selected tree cell. Click the tree → the same
         letter renames the cell again, and the weight window is still open.
+  - [ ] **A Mode pick puts the caret back in the cell.** Double-click a titled task cell, open **Mode** and
+        pick **Rename** → type a letter without clicking: it lands in the cell. Open **Mode** again and pick
+        **Rename** once more (the mode it already has) → typing still lands in the cell. Same with
+        **Change Task**.
 - [ ] **Timers (PRD §18, the Alarms window's second section).** Open **Alarms** → *Timers*:
   - [ ] **+ Add timer** → a row at 5:00, idle. Set it to `0:20`, press **Start** → the countdown reads down
         every second; press **Pause** → it holds; **Start** (now *Resume*) → it continues from there, not
