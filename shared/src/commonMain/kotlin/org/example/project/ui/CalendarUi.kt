@@ -66,8 +66,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -328,6 +329,14 @@ data class CalendarRecord(
      * boundary). The hover bubble / phone menu then shows "∞" as the start instead of a wall-clock time.
      */
     val openStart: Boolean = false,
+    /**
+     * ADR 0009: this record's START follows the now-line — it is `now + a` until the next boundary the rules
+     * name, not a fixed instant (a pose the line drags, the panel resuming after it). Derived by
+     * [withLineMotion] from two readings of the display derivation; false for everything built by hand.
+     */
+    val startFollowsLine: Boolean = false,
+    /** ADR 0009: this record's END follows the now-line (the panel growing behind it, a live band). */
+    val endFollowsLine: Boolean = false,
 )
 
 /** A [CalendarRecord] clipped to a single day, as start/end hour-of-day fractions in `[0, 24]`. */
@@ -379,6 +388,13 @@ data class PlacedRecord(
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
+    /**
+     * ADR 0009: [startHour] follows the now-line on THIS day — the record's start does
+     * ([CalendarRecord.startFollowsLine]) and falls on this day rather than being clipped to its midnight.
+     */
+    val startFollowsLine: Boolean = false,
+    /** ADR 0009: [endHour] follows the now-line on this day. See [startFollowsLine]. */
+    val endFollowsLine: Boolean = false,
 )
 
 /**
@@ -403,7 +419,7 @@ internal fun LocalTime.hourOfDay(): Float = hour + minute / 60f + second / 3600f
  * the zoom ceiling an hour is [MAX_CALENDAR_ZOOM] x 48 dp, so one second is ~1.7 dp: anything read to the
  * second there advances in visible 1.7 dp jerks once a second. That bites twice —
  *  • the LINE, which is one number and can be placed as finely as the clock can be read: at the ceiling this
- *    moves it ~0.03 dp per frame, motion rather than steps (see [rememberNowLineHour], and note that the
+ *    moves it ~0.03 dp per frame, motion rather than steps (see [rememberFrameNowMillis], and note that the
  *    remaining pixel grid is crossed by DRAWING it sub-pixel, not by rounding to it);
  *  • and every bound PINNED to the line, which follows it affinely (a pose the line drags, the panel growing
  *    behind it, a live band ending at it). Those are recomputed only on the app's quantized display instant,
@@ -494,6 +510,9 @@ fun recordsForDay(
             openStart = record.openStart,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
+            // An edge clipped to this day's midnight is the day's edge, not the record's: it stays put.
+            startFollowsLine = record.startFollowsLine && start.date == day,
+            endFollowsLine = record.endFollowsLine && end.date == day,
         )
     }
 }
@@ -3151,7 +3170,7 @@ fun CalendarFloatingWindow(
      * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
      * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
      * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
-     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberNowLineHour]).
+     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberFrameNowMillis]).
      * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
      */
     nowExactMillis: () -> Long = { nowMillis },
@@ -3684,7 +3703,7 @@ private fun WeekView(
      * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
      * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
      * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
-     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberNowLineHour]).
+     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberFrameNowMillis]).
      * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
      */
     nowExactMillis: () -> Long = { nowMillis },
@@ -3790,6 +3809,11 @@ private fun WeekView(
     val nowFraction = now.hourOfDay() / 24f
     val nowFractionState = rememberUpdatedState(nowFraction)
     val todayState = rememberUpdatedState(today)
+    // ADR 0009: where the line is for the LOCK — the reading of the rules until the grid's own line clock
+    // exists (further down), then that clock stepped to the pixel, so a locked grid keeps the line centred as
+    // it moves rather than only when the rules are read again.
+    val lockLineMillis = remember { mutableStateOf<() -> Long?>({ null }) }
+    fun lockLineTime() = lockLineMillis.value()?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) }
 
     // Scroll so the now-line lands on the middle of the viewport — VERTICALLY, and only vertically: the
     // occurrence nearest where the grid already is ([nowLineCenterOffset]), so the timeline moves less than
@@ -3800,16 +3824,19 @@ private fun WeekView(
     // change prompted the re-centring.
     fun centerOnNowLine(dayH: Float) {
         if (dayH <= 0f || viewportHpx <= 0f) return
+        val lineTime = lockLineTime()
+        val dayFraction = lineTime?.time?.hourOfDay()?.div(24f) ?: nowFractionState.value
+        val lineDay = lineTime?.date ?: todayState.value
         offsetPx = nowLineCenterOffset(
-            dayFraction = nowFractionState.value,
+            dayFraction = dayFraction,
             dayHeightPx = dayH,
             viewportPx = viewportHpx,
             currentOffsetPx = offsetPx,
         )
         rebase(dayH)
         val shift = nowLineCenterColumnShift(
-            daysFromAnchorToToday = anchorDay.daysUntil(todayState.value),
-            dayFraction = nowFractionState.value,
+            daysFromAnchorToToday = anchorDay.daysUntil(lineDay),
+            dayFraction = dayFraction,
             dayHeightPx = dayH,
             viewportPx = viewportHpx,
             offsetPx = offsetPx,
@@ -3966,6 +3993,52 @@ private fun WeekView(
             List(rollingRowCount(viewportHpx, dayPx)) { row ->
                 visibleHourWindow(row, offsetPx, dayPx, viewportHpx)
             }
+        }
+    }
+
+    // ADR 0009 § *Everything that follows the line moves continuously*: the EXACT clock, sampled on the frame
+    // clock ([rememberFrameNowMillis]) for as long as something on screen moves with it — the now-line on
+    // today's column, or any block, band or period whose edge follows the line ([PlacedRecord.followsLine]).
+    // Asked of the same quantized cull windows every column culls by, so a grid scrolled away from the present
+    // asks for no frames at all.
+    val sampleNowState = rememberUpdatedState(nowMillis)
+    val todayState0 = rememberUpdatedState(today)
+    val nowHourState = rememberUpdatedState(now.hourOfDay())
+    val recordsPerDayState = rememberUpdatedState(recordsPerDay)
+    val framesWanted by remember {
+        derivedStateOf {
+            val windows = hourWindows.value
+            windows.indices.any { row ->
+                val window = windows[row]
+                (0 until DAY_COLUMNS).any { column ->
+                    val day = rollingDayAt(anchorDay, row, column)
+                    val lineHere =
+                        day == todayState0.value && window.intersects(nowHourState.value, nowHourState.value)
+                    lineHere ||
+                        recordsPerDayState.value[day].orEmpty().any {
+                            it.followsLine && window.intersects(it.startHour, it.endHour)
+                        }
+                }
+            }
+        }
+    }
+    val frameNowMillis = rememberFrameNowMillis(nowMillis, nowExactMillis, sampling = framesWanted)
+    // ...and the instant the COMPOSITION reads the line at: the same clock, stepped once per pixel of travel at
+    // the zoom in force ([lineCompositionMillis]). What a pointer, a hover tile or a label's fit reads cannot
+    // tell two positions under a pixel apart; what is DRAWN gets the rest of the pixel in the layout phase.
+    val millisPerPixelState = rememberUpdatedState(nowLineMillisPerPixel)
+    val compositionNowMillis = remember {
+        derivedStateOf {
+            lineCompositionMillis(sampleNowState.value, frameNowMillis.value, millisPerPixelState.value)
+        }
+    }
+    // PRD §8 now-line lock, on the same clock: re-centred once per pixel the line travels, from an effect
+    // rather than a composition read, so the grid itself never recomposes for it.
+    SideEffect { lockLineMillis.value = { compositionNowMillis.value } }
+    LaunchedEffect(lockNowLine) {
+        if (!lockNowLine) return@LaunchedEffect
+        snapshotFlow { compositionNowMillis.value }.collect {
+            if (lockNow.value) centerOnNowLine(dayHeightPxAt(zoom))
         }
     }
 
@@ -4236,8 +4309,10 @@ private fun WeekView(
                                     isToday = day == today,
                                     hourHeight = hourHeight,
                                     now = if (day == today) now else null,
-                                    nowExactMillis = nowExactMillis,
-                                    records = recordsPerDay[day].orEmpty(),
+                                    sampleNowMillis = nowMillis,
+                                    frameNowMillis = frameNowMillis,
+                                    compositionNowMillis = compositionNowMillis,
+                                    sampledRecords = recordsPerDay[day].orEmpty(),
                                     taskColors = taskColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
                                     // The badge below is drawn for every row but the top one.
@@ -4357,8 +4432,8 @@ private fun DayHeader(
 }
 
 /**
- * PRD §8 / `docs/scheduler_requirements.md` § *$now line$*: **the now-line's own position, sampled on the
- * frame clock and readable without recomposing anything.**
+ * PRD §8 / `docs/scheduler_requirements.md` § *$now line$*: **the exact clock, sampled on the frame clock and
+ * readable without recomposing anything.**
  *
  * The requirement is that *"the $now line$ moves continuously forward in time"*, and the engine honours that
  * where it counts — it walks the line, never teleports it (`SchedulerEngine.sweepNowLineTo`). What the
@@ -4368,41 +4443,33 @@ private fun DayHeader(
  * while costing an O(visible window) re-derivation sixty times a second. Both halves are wrong the same way:
  * the line and the things derived from it were treated as one value.
  *
- * They are two. The app's `nowMillis` is QUANTIZED — every band, panel, projection and cull is a function of
- * it, and those can only be redone a few times a second. The line is one number, so it is sampled here on
- * every frame and read back in the DRAW phase (`Modifier.graphicsLayer { translationY = … }`), which re-draws
- * it without recomposing, without re-measuring, without re-placing and without touching a single derivation.
- * A moving line costs a frame; it does not have to cost a recomposition. The layer is also what lets it be
- * placed BETWEEN pixels ([nowLineOffsetPx]) — `offset { IntOffset(…) }` is integers, and a glide rounded to
- * the pixel grid is not a glide, it is a jump held still for 75 s.
+ * They are two. The app's `nowMillis` is the instant the set of rules was READ at — every band, panel,
+ * projection and cull is derived from it, and that is redone only where the rules say the picture changes
+ * shape. Everything that MOVES between two of those readings moves with this clock instead: the line itself,
+ * the overdue reminder stack riding it, and every edge the reading says follows the line
+ * ([PlacedRecord.followsLine], placed by [timelineSpan]). Each is read back in the layout or draw phase, so a
+ * frame re-places a handful of nodes and recomposes, re-measures and re-derives nothing.
  *
- * [sampling] is what keeps it honest about energy: the caller passes `true` only while the line is actually on
- * screen, so a column that is not today's — or a grid scrolled to another week, or a closed calendar — asks
- * for no frames at all and the app goes idle. While it is `false` the state simply tracks [coarseHour], so
- * anything reading it still lands where the quantized instant says.
+ * [sampling] is what keeps it honest about energy: the caller passes `true` only while something that moves is
+ * actually on screen, so a grid scrolled to another week, or a closed calendar, asks for no frames at all and
+ * the app goes idle. While it is `false` the state simply tracks [sampleMillis], so anything reading it lands
+ * where the reading of the rules says.
  */
 @Composable
-private fun rememberNowLineHour(
-    coarseHour: Float,
-    tz: TimeZone,
+private fun rememberFrameNowMillis(
+    sampleMillis: Long,
     nowExactMillis: () -> Long,
     sampling: Boolean,
-): State<Double> {
-    val state = remember { mutableDoubleStateOf(coarseHour.toDouble()) }
+): State<Long> {
+    val state = remember { mutableLongStateOf(sampleMillis) }
     val exact = rememberUpdatedState(nowExactMillis)
-    // Not composition-phase writes: the value is read only from layout lambdas, and this keeps it in step
-    // with the quantized instant for as long as nothing is sampling it.
-    SideEffect { if (!sampling) state.doubleValue = coarseHour.toDouble() }
-    LaunchedEffect(sampling, tz) {
+    // Not a composition-phase read: the value is read only from layout/draw lambdas and derived states, and
+    // this keeps it in step with the reading of the rules for as long as nothing is sampling it.
+    SideEffect { if (!sampling) state.longValue = sampleMillis }
+    LaunchedEffect(sampling) {
         if (!sampling) return@LaunchedEffect
         while (true) {
-            withFrameNanos {
-                state.doubleValue =
-                    Instant.fromEpochMilliseconds(exact.value())
-                        .toLocalDateTime(tz)
-                        .time
-                        .hourOfDayExact()
-            }
+            withFrameNanos { state.longValue = exact.value() }
         }
     }
     return state
@@ -4416,12 +4483,20 @@ private fun DayColumn(
     isToday: Boolean,
     hourHeight: Dp,
     now: LocalTime?,
+    /** The instant [sampledRecords] (and [now]) were derived at — the reading of the set of rules. */
+    sampleNowMillis: Long,
     /**
-     * The exact clock, for the now-line alone — see [rememberNowLineHour]. [now] is the quantized display
-     * instant every OTHER placement in this column is derived from.
+     * ADR 0009: the exact clock, sampled per frame ([rememberFrameNowMillis]) — read only in the layout and draw
+     * phases, by the now-line and by every edge that follows it.
      */
-    nowExactMillis: () -> Long,
-    records: List<PlacedRecord>,
+    frameNowMillis: State<Long>,
+    /**
+     * ADR 0009: the same clock stepped once per pixel of travel ([lineCompositionMillis]) — what this column's
+     * COMPOSITION reads the line at, and only while it holds something that follows the line.
+     */
+    compositionNowMillis: State<Long>,
+    /** This day's records as the rules were read at [sampleNowMillis]; see [advancedAlongLine]. */
+    sampledRecords: List<PlacedRecord>,
     /**
      * PRD §8: each task's own colour — its place in the one colour space the tree partitions
      * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
@@ -4464,6 +4539,36 @@ private fun DayColumn(
     // when deciding whether a stutter is the derivation or the drawing.
     Perf.count("recompose.DayColumn")
     val density = LocalDensity.current
+    // ADR 0009 § *Everything that follows the line moves continuously*: this day's records where the line has
+    // carried them since the rules were read. Only a column holding something that follows the line reads the
+    // clock here — stepped to the pixel, so it recomposes once per pixel of travel and every other column not
+    // at all — and everything below (hit-testing, hover tiles, the overlap slices, whether a label fits) is
+    // answered for that position. The remaining fraction of a pixel is the layout phase's ([lineDriftHours]).
+    val columnFollowsLine = sampledRecords.any { it.followsLine }
+    val lineElapsedMillis = if (columnFollowsLine) compositionNowMillis.value - sampleNowMillis else 0L
+    val records =
+        remember(sampledRecords, lineElapsedMillis) {
+            if (lineElapsedMillis == 0L) sampledRecords
+            else sampledRecords.map { it.advancedAlongLine(lineElapsedMillis) }
+        }
+    // The edges on this column that follow the line, by the hour they are drawn at. Every placement below asks
+    // this ONE set whether its top or bottom moves, so a slice, a period box and a label cut from the same
+    // record move together — they carry the very value this set holds.
+    val lineHours: Set<Float> =
+        remember(records) {
+            buildSet {
+                records.forEach {
+                    if (it.startFollowsLine) add(it.startHour)
+                    if (it.endFollowsLine) add(it.endHour)
+                }
+            }
+        }
+    fun followsLine(hour: Float) = hour in lineHours
+    // How far past the composed position the line has travelled, in hours — under a pixel. Read ONLY inside
+    // [timelineSpan]'s layout lambda, so a frame re-places the moving nodes and recomposes nothing.
+    val lineDriftHours: () -> Double = {
+        (frameNowMillis.value - compositionNowMillis.value).coerceAtLeast(0L) / 3_600_000.0
+    }
     // PRD §14/§15/§18: reminders and alarm rings (zero-duration) and screen breaks (sub-minute durations)
     // render on their own fixed-height marker paths; everything else is a height-proportional, draggable
     // block. Split them so the block pipeline only sees real blocks (drawing screen breaks to scale would
@@ -4519,7 +4624,9 @@ private fun DayColumn(
     //    only WHERE those elements are placed, which is the half that has to be continuous.
     val nowHour = now?.hourOfDay()
     val nowLineOnScreen = nowHour != null && onScreen(nowHour, nowHour)
-    val nowLineHour = rememberNowLineHour(nowHour ?: 0f, tz, nowExactMillis, sampling = nowLineOnScreen)
+    // Read only inside the `graphicsLayer` blocks below: the exact clock as an hour of THIS day.
+    fun nowLineHour(): Double =
+        Instant.fromEpochMilliseconds(frameNowMillis.value).toLocalDateTime(tz).time.hourOfDayExact()
 
     // PRD §8: the bubble sections EVERY hoverable element in this column stacks under its own — the grey
     // periods the cursor sits inside and the two "nobody unlocked" LAYERS hatched over it. The layers
@@ -5057,6 +5164,8 @@ private fun DayColumn(
             PeriodSegmentGesture(
                 segment = segment,
                 hourHeight = hourHeight,
+                followsLine = ::followsLine,
+                lineDriftHours = lineDriftHours,
                 drag = periodDrag,
                 onDragChange = { periodDrag = it },
                 onCommitBounds = onCommitBounds,
@@ -5134,6 +5243,8 @@ private fun DayColumn(
                 // block is too short the title is hidden instead of writing over the reminders.
                 titleTopInset = titleInset ?: 0.dp,
                 titleVisible = true,
+                followsLine = ::followsLine,
+                lineDriftHours = lineDriftHours,
             )
         }
 
@@ -5308,8 +5419,10 @@ private fun DayColumn(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = hourHeight * band.startHour)
-                    .height(hourHeight * (band.endHour - band.startHour))
+                    .timelineSpan(
+                        hourHeight, band.startHour, band.endHour,
+                        followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
+                    )
                     .clipToBounds()
                     .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
             )
@@ -5337,6 +5450,8 @@ private fun DayColumn(
             PeriodSegmentMarking(
                 segment = segment,
                 hourHeight = hourHeight,
+                followsLine = ::followsLine,
+                lineDriftHours = lineDriftHours,
                 drag = periodDrag,
             )
         }
@@ -5353,8 +5468,10 @@ private fun DayColumn(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = hourHeight * band.startHour)
-                    .height(hourHeight * (band.endHour - band.startHour))
+                    .timelineSpan(
+                        hourHeight, band.startHour, band.endHour,
+                        followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
+                    )
                     .clipToBounds()
                     .obliqueHatch(
                         CalColors.muted,
@@ -5371,7 +5488,7 @@ private fun DayColumn(
         // Both offsets are DRAW-phase reads, and both are SUB-PIXEL. Two separate things buy the glide, and
         // the second one is the one that was missing:
         //
-        //  • sampled per frame ([rememberNowLineHour]) and read from a `graphicsLayer` block, so a new
+        //  • sampled per frame ([rememberFrameNowMillis]) and read from a `graphicsLayer` block, so a new
         //    position re-draws two nodes and recomposes, re-measures and re-places nothing — the answer to
         //    "can the line move continuously without burning energy": the frame motion costs is unavoidable,
         //    everything above it is not;
@@ -5389,7 +5506,7 @@ private fun DayColumn(
         if (nowLineOnScreen) {
             Box(
                 modifier = Modifier
-                    .graphicsLayer { translationY = nowLineOffsetPx(hourHeight, nowLineHour.value) }
+                    .graphicsLayer { translationY = nowLineOffsetPx(hourHeight, nowLineHour()) }
                     .fillMaxWidth()
                     .height(2.dp)
                     .background(CalColors.now),
@@ -5397,7 +5514,7 @@ private fun DayColumn(
             Box(
                 modifier = Modifier
                     .graphicsLayer {
-                        translationY = nowLineOffsetPx(hourHeight, nowLineHour.value) - 4.dp.toPx()
+                        translationY = nowLineOffsetPx(hourHeight, nowLineHour()) - 4.dp.toPx()
                     }
                     .size(8.dp)
                     .clip(CircleShape)
@@ -5437,6 +5554,9 @@ private fun DayColumn(
                         ScreenBreakBand(
                             marker, slice, hourHeight, colWidth, tz, hoverScope,
                             underBreakOverlays, showsDayDate,
+                            topFollowsLine = followsLine(slice.topHour),
+                            bottomFollowsLine = followsLine(slice.bottomHour),
+                            lineDriftHours = lineDriftHours,
                         )
                     }
                 }
@@ -5464,8 +5584,10 @@ private fun DayColumn(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = hourHeight * bandStart)
-                    .height(height),
+                    .timelineSpan(
+                        hourHeight, bandStart, bandEnd,
+                        followsLine(bandStart), followsLine(bandEnd), lineDriftHours,
+                    ),
                 // PRD §8: **at the TOP LEFT**, where a task panel writes its own label — one place on a block
                 // where a name goes, whatever kind of block it is. (A shared period box may name several
                 // periods, so the line can be long: it ellipsizes rather than centring on nothing.)
@@ -5589,7 +5711,7 @@ private fun DayColumn(
                 tz = tz,
                 hoverScope = hoverScope,
                 modifier = Modifier.graphicsLayer {
-                    translationY = nowLineOffsetPx(hourHeight, nowLineHour.value) + stackOffset.toPx()
+                    translationY = nowLineOffsetPx(hourHeight, nowLineHour()) + stackOffset.toPx()
                 },
             ) { onToggleReminder(tag) }
         }
@@ -5786,14 +5908,22 @@ private fun ScreenBreakBand(
     underOverlays: List<BubbleOverlay>,
     /** PRD §8: does this column's day boundary carry the day-date badge? See [panelLabelTopInset]. */
     showsDayDate: Boolean,
+    /** ADR 0009: whether this slice's top / bottom follows the now-line — see [timelineSpan]. */
+    topFollowsLine: Boolean = false,
+    bottomFollowsLine: Boolean = false,
+    lineDriftHours: () -> Double = { 0.0 },
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
     val timeRange = bubbleTimeRange(marker.fullStartMillis, marker.fullEndMillis, tz)
     Box(
         modifier = Modifier
-            .offset(x = colWidth * slice.xFraction, y = hourHeight * slice.topHour)
-            .width(colWidth * slice.widthFraction)
-            .height(height),
+            .timelineSpan(
+                hourHeight, slice.topHour, slice.bottomHour,
+                topFollowsLine, bottomFollowsLine, lineDriftHours,
+                x = colWidth * slice.xFraction,
+                minHeight = SCREEN_BREAK_MIN_HEIGHT,
+            )
+            .width(colWidth * slice.widthFraction),
     ) {
         // A break falling at midnight has the day's own date written where its name goes, so the name is
         // inset below the badge — and dropped when the band has no room for it there, which is the same
@@ -6507,6 +6637,9 @@ private fun CalendarBlock(
     titleTopInset: Dp = 0.dp,
     /** False when the panel is too short to fit its title below the reserved top strip. */
     titleVisible: Boolean = true,
+    /** ADR 0009: whether an hour this block is cut at follows the now-line — see [timelineSpan]. */
+    followsLine: (Float) -> Boolean = { false },
+    lineDriftHours: () -> Double = { 0.0 },
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -6574,7 +6707,6 @@ private fun CalendarBlock(
         slices.forEachIndexed { index, slice ->
             val isFirst = index == 0
             val isLast = index == slices.lastIndex
-            val sliceTop = hourHeight * slice.topHour
             val sliceHeight = hourHeight * (slice.bottomHour - slice.topHour)
             val sliceHeightPx = with(density) { sliceHeight.toPx() }.coerceAtLeast(minPx)
             // PRD §8 extend/shorten: the grab strip on the block's true top/bottom edge — 6 dp, capped at a
@@ -6588,9 +6720,12 @@ private fun CalendarBlock(
             val currentSliceHeightPx = rememberUpdatedState(sliceHeightPx)
             Box(
                 modifier = Modifier
-                    .offset(x = colWidth * slice.xFraction, y = sliceTop)
+                    .timelineSpan(
+                        hourHeight, slice.topHour, slice.bottomHour,
+                        followsLine(slice.topHour), followsLine(slice.bottomHour), lineDriftHours,
+                        x = colWidth * slice.xFraction,
+                    )
                     .width(colWidth * slice.widthFraction)
-                    .height(sliceHeight)
                     // These resting slices (at committed positions) hold the move/resize gesture. While a
                     // preview overlay shows they are hidden — but stay mounted so the gesture is never
                     // cancelled — and the column's live overlay draws the in-progress shared layout.
@@ -6881,6 +7016,9 @@ private fun PeriodSegmentMarking(
     segment: PeriodSegment,
     hourHeight: Dp,
     drag: PeriodDragState?,
+    /** ADR 0009: whether an hour this box is cut at follows the now-line — see [timelineSpan]. */
+    followsLine: (Float) -> Boolean = { false },
+    lineDriftHours: () -> Double = { 0.0 },
 ) {
     val density = LocalDensity.current
     val (topShiftPx, heightShiftPx) = periodDragShift(segment, drag)
@@ -6895,8 +7033,20 @@ private fun PeriodSegmentMarking(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
-            .height(height.coerceAtLeast(1.dp))
+            .then(
+                // A box the user is holding is placed by the hand; one at rest by the rules, line included.
+                if (drag?.key == periodSegmentKey(segment)) {
+                    Modifier
+                        .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
+                        .height(height.coerceAtLeast(1.dp))
+                } else {
+                    Modifier.timelineSpan(
+                        hourHeight, segment.startHour, segment.endHour,
+                        followsLine(segment.startHour), followsLine(segment.endHour), lineDriftHours,
+                        minHeight = 1.dp,
+                    )
+                },
+            )
             .clipToBounds()
             .then(if (idle) Modifier.verticalHatch(CalColors.muted) else Modifier)
             .then(
@@ -6930,6 +7080,9 @@ private fun PeriodSegmentGesture(
     /** PRD §8: what this box hides from the hover bubble — see the call site. */
     overlays: List<BubbleOverlay>,
     hoverScope: CalendarTitleHoverScope,
+    /** ADR 0009: whether an hour this box is cut at follows the now-line — see [timelineSpan]. */
+    followsLine: (Float) -> Boolean = { false },
+    lineDriftHours: () -> Double = { 0.0 },
 ) {
     val density = LocalDensity.current
     val key = periodSegmentKey(segment)
@@ -6946,8 +7099,20 @@ private fun PeriodSegmentGesture(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
-            .height((with(density) { (heightPx + heightShiftPx).toDp() }).coerceAtLeast(1.dp))
+            .then(
+                // Held: placed by the hand. At rest: placed by the rules, line included — see the marking.
+                if (drag?.key == key) {
+                    Modifier
+                        .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
+                        .height((with(density) { (heightPx + heightShiftPx).toDp() }).coerceAtLeast(1.dp))
+                } else {
+                    Modifier.timelineSpan(
+                        hourHeight, segment.startHour, segment.endHour,
+                        followsLine(segment.startHour), followsLine(segment.endHour), lineDriftHours,
+                        minHeight = 1.dp,
+                    )
+                },
+            )
             .pointerInput(key) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)

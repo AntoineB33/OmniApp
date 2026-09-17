@@ -283,9 +283,15 @@ Global rules that always apply: `CLAUDE.md`.
   the grid does not glide: it holds still and jumps a whole pixel (~75 s of travel at zoom 1, ~0.5 s at the
   ceiling). One pixel is not imperceptible when it is the only thing moving. Sub-pixel placement hands the
   crossing to Skia's anti-aliasing, which is the whole of what continuous motion means on a discrete grid.
-  The sampler runs **only while the line is on screen**, so a column that is not today's, a grid scrolled to
-  another week and a closed calendar all ask for no frames at all. The overdue reminder stack rides the same
-  state — and the same fractional placement — or it is not on the line the user sees.
+  The sampler runs **only while something that moves is on screen**, so a grid scrolled to another week and a
+  closed calendar ask for no frames at all. The overdue reminder stack rides the same state — and the same
+  fractional placement — or it is not on the line the user sees.
+- **AND EVERYTHING THE LINE DRAGS GLIDES WITH IT** (ADR 0009, 2026-09-17; `display-hot-path.md`). A pose the
+  line drags in mode 1 is `(t_p, t_p + d]` — its top edge IS the line — so a band placed one pixel at a time
+  beside a line placed between pixels draws the pose behind the line pushing it, which the rules never say.
+  Every edge the reading of the rules marks as following the line (`withLineMotion`) is placed by
+  `timelineSpan` from the same frame clock as the line, and every block, band, period box and label goes
+  through that one placement.
 - **AN OUTLINE SAYS WHICH SURFACE THE USER SAID IT ON, AND ITS COLOUR IS THE WHOLE OF THE ANSWER.** The
   user's words: *"things placed by rules defined in windows accessible via the left side menu of the app
   (Sleep schedule, Alarm) are outlined in ORANGE; the ones that are placed or moved through a right-click

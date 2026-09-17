@@ -403,9 +403,79 @@ sleeps on its answer instead of ticking.
   simply stop. The delay is read through `rememberUpdatedState` so each iteration still sleeps on the freshest
   answer.
 
-**What this does not do.** The pin is re-*derived* at one pixel of resolution, not placed continuously: a
+**What this does not do** *(superseded 2026-09-17 — see the next section)*. The pin is re-*derived* at one
+pixel of resolution, not placed continuously: a
 dragged pose's top edge and the growing panel behind it are composition-phase geometry, unlike the now-line
 itself. Making them layout-phase too would mean giving the block pipeline (`overlapLayout`, the slices, the
 hover tiling, the drag/resize gesture) a layout-phase notion of a block's bounds, which is a much larger
 change for a lag that is one pixel by construction. The now-line, which is the thing the eye tracks, is
 already exact.
+
+## Everything that follows the line moves continuously (2026-09-17)
+
+**Symptom.** The user's report against `docs/scheduler_requirements.md`: *"the panels don't move as smoothly as
+the current now line, which makes situations where the now line must drag a panel visually incorrect."* In mode
+1 the pose the line drags is `(t_p, t_p + d]` — its top edge IS the line — and the calendar drew it one pixel
+at a time beside a line that glided, so the band sat visibly behind the line that is supposed to be pushing it.
+The note above had called that residual acceptable. It is not: it draws something the rules do not say.
+
+**The question behind it** was the right one: *can't the movement of those rectangles and text be
+mathematically continuous, with the screen's pixels the only rounding, and the set of rules read once with
+every smooth movement known in advance?* Yes — because the section above already established the property that
+makes it possible: between two boundaries the display is **piecewise AFFINE** in the line, and every bound is
+either fixed (`t = a`) or follows the line (`t = now + a`).
+
+**Decision — read the motion once, draw it on the frame clock.**
+
+- **The motion is READ, not declared.** The display derivation (`App.kt`'s `deriveCalendarDisplay`, one
+  function) is read twice: at the line and one millisecond later. `withLineMotion` matches the two readings by
+  position and marks each edge that moved by exactly the probe as following the line
+  (`CalendarRecord.startFollowsLine` / `endFollowsLine`). Declaring it at the source was rejected: the edges
+  that follow the line come out of a dozen domain functions (the dragged pose, the plan clipped around it, the
+  live inactivity tail, the live sleep band, the layers ending at the line, the floor of the derived bands…),
+  and a flag threaded through all of them is a second copy of each one's rule. The reading cannot drift from the
+  rules because it IS the rules, asked twice. A record whose two readings straddle a boundary (a different
+  count, a different record, an edge moving by anything but the probe) is left still — drawn exactly as before
+  — and the fixed-bound pin rule below still re-derives it per pixel until a reading recovers its motion. The
+  second reading is taken only while the calendar is open and only when the first reading or the instant
+  changed, so a recomposition for an unrelated reason (a keystroke) pays for one derivation, not two.
+- **The boundaries include the motion's own.** `displayResampleDelayMillis` takes the following edges as
+  offsets from the line: one meets a fixed bound at `bound − offset` (a dragged pose reaching the next period —
+  the requirements' 5 min → 15 min merge) and crosses into the next day's column at the midnight after its
+  position. Those instants are known from the reading, so they are boundaries; a following edge is never a pin
+  and never a busy loop. The per-pixel resample survives only for a FIXED bound sitting on the line, which is
+  now exactly the "motion not read" case.
+- **Three clocks, one instant.** `WeekView` samples the exact clock on the frame clock (`rememberFrameNowMillis`)
+  while anything that moves is on screen — the line on today's column, or a record that follows the line in a
+  cull window. From it:
+  - the **composition** reads the line stepped to the pixel (`lineCompositionMillis`), and only in a column that
+    holds something following the line: its records are advanced along the line (`advancedAlongLine`), and
+    hit-testing, hover tiles, the overlap slices and whether a label fits are answered for that position. None
+    of those can tell two positions under a pixel apart, so they recompose once per pixel of travel — ~75 s at
+    the default zoom, ~0.6 s at the ceiling — and every other column not at all;
+  - the **layout phase** gets the rest of the pixel (`lineDriftHours`), and `timelineSpan` — the one placement
+    every block slice, screen-break band, period box, sleep outline, layer band and band label goes through —
+    places a node with a following edge BETWEEN pixels: laid out on whole pixels covering the exact span, its
+    layer translated by the fraction and scaled by `height / ceil(height)` about its top, so both edges land
+    exactly where the rules put them and everything inside (title, outline, hover tiles, hit area) rides along.
+    The scale differs from one by under a pixel over the whole element; a rigidly moving pose keeps one
+    constant scale and only glides. A node with no following edge keeps the whole-pixel `Dp` placement, which
+    is what keeps still text crisp;
+  - the **line** and the overdue-reminder stack read the frame clock in their `graphicsLayer`, as before.
+
+  The now-line lock re-centres on the composition clock from an effect (`snapshotFlow`), so a locked grid
+  follows the line once per pixel without the grid recomposing.
+
+**The contract, and its test.**
+`CalendarLineMotionTest.extrapolating_one_reading_draws_what_reading_the_rules_again_would_until_the_next_boundary`
+reads the real rules (`screenBreakPanels` in mode 1 over a plan made once, `clipPlanForPinnedScreenBreak`) at
+one instant, extrapolates the reading, and requires it to equal a fresh reading at several instants up to the
+boundary the reading itself predicts. If it did not, the calendar would be drawing a motion the rules do not
+describe.
+
+**What is still quantized, honestly.** The block a hand is dragging is placed by the hand (its preview overlay
+and the held period box keep their pixel geometry). A record whose motion was not read (a boundary inside the
+probe) steps per pixel until the next reading. The column-wide hover pickup and the weight handles are
+composition geometry, at most one pixel out of step, and invisible. And a hidden kink — a slope change the
+derivation makes at an instant that is not one of its own output bounds — would be drawn wrong until the next
+reading, bounded by the 30 s ceiling; none is known, and the contract test is where one would show.

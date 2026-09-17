@@ -35,33 +35,48 @@ Global rules that always apply: `CLAUDE.md`.
   either until the line crosses a boundary the rules already named**, and **what does follow the line follows
   it AFFINELY** (a pose the line drags in mode 1 at `(t_p, t_p + d]`, the panel growing behind it, a live
   band ending at it). So:
-  - **The boundaries are the derived model's own bounds.** The model is built out of those instants, so it
-    cannot change before the first one still ahead of the line — plus the next local midnight, the one
-    boundary no panel carries (the day rollover). Sleep until it.
-  - **A bound sitting ON the line is a PIN, never a boundary ahead of it** (`NOW_LINE_ANCHOR_SLACK`, 2 ms — a
-    dragged pose starts at `t_p + 1`, a taken break is drawn to `t_p − 1`). Counting one as a boundary answers
-    "one millisecond" and turns the sleep into a busy loop.
-  - **A pin is re-derived at the DISPLAY'S OWN RESOLUTION**, not at its bound: the calendar reports how long
-    the line takes to cross one pixel at the zoom in force (`onNowLineResolutionChanged` — ~75 s at the
-    default zoom, ~0.6 s at the ceiling), and redrawing more often than that redraws the picture already on
-    screen. Same principle as `visibleHourWindow`'s quantization: the temporal resolution follows the spatial
-    one.
+  - **The motion of every edge is READ, never declared** (`withLineMotion`): `App`'s one derivation
+    (`deriveCalendarDisplay`) is read at the line and one millisecond later, and an edge that moved by exactly
+    that millisecond follows the line (`CalendarRecord.startFollowsLine` / `endFollowsLine`). Never thread a
+    "this follows the line" flag through the domain functions — that is a second copy of each one's rule.
+    The second reading is taken only while the calendar is open and only when the first reading or the
+    instant changed. Records whose readings straddle a boundary are left still, never guessed.
+  - **The boundaries are the derived model's own bounds** — its FIXED ones, plus the instants an edge that
+    follows the line meets a fixed one (`bound − offset`) or crosses a midnight into another row. The model
+    cannot change shape before the first of those still ahead of the line — plus the next local midnight, the
+    one boundary no panel carries (the day rollover). Sleep until it.
+  - **An edge that follows the line is never a boundary and never a pin: it is DRAWN** (see the next rule). A
+    FIXED bound sitting ON the line (`NOW_LINE_ANCHOR_SLACK`, 2 ms) is a pin whose motion was not read, never a
+    boundary ahead of it — counting one answers "one millisecond" and turns the sleep into a busy loop — and it
+    alone is re-derived at the display's own resolution (`onNowLineResolutionChanged`: ~75 s per pixel at the
+    default zoom, ~0.6 s at the ceiling) until a reading recovers its motion.
   - **The floor and the ceiling only BOUND that answer** (250 ms / 50 ms accelerated; 30 s). The ceiling is
     the engine's own production cadence, so a boundary this gets wrong costs a late redraw and never a wrong
     answer — no derivation can go staler than it did when the engine's tick drove it.
   - **The sampler's effect is keyed on its own TICK, never on the delay.** `App` recomposes for plenty of
     reasons that have nothing to do with the clock, and a key that moved with the answer would restart the
     sleep each time — a busy app would then never reach the end of one and the now-line would stop.
-  The line's own continuity is bought separately and for free, in the draw phase (see *Calendar* above).
-  Never point the two at one value again, and never put this back on a timer.
-- **Nothing the now-line drags may be read to the second, and the line may not be rounded to the pixel.**
-  Both are the same mistake as reading it to the minute was, one order of magnitude down each time, and both
-  show up only at zoom. `recordsForDay` places every block at `hourOfDayExact` (a bound pinned to the line
-  moves WITH it, so flooring it to the second makes it jump ~1.7 dp at the zoom ceiling however finely the
-  display resamples), and the line, its dot and the overdue-reminder stack are placed with a **fractional**
-  `graphicsLayer { translationY = nowLineOffsetPx(…) }` — `IntOffset` cannot carry a fraction, and a glide
-  snapped to the pixel grid is not a glide. A block's edge is still whole-pixel `Dp` geometry; that residual
-  is deliberate and ADR 0009 records what closing it would cost.
+  What moves is bought separately, on the frame clock (next rule). Never point the two at one value again, and
+  never put this back on a timer.
+- **EVERYTHING THAT FOLLOWS THE LINE MOVES CONTINUOUSLY, and the screen's pixels are the only rounding**
+  (ADR 0009, 2026-09-17). Nothing the line drags may be read to the second (`recordsForDay` places at
+  `hourOfDayExact`), and nothing that moves may be rounded to the pixel. `WeekView` samples the exact clock on
+  the frame clock (`rememberFrameNowMillis`) only while something that moves is on screen, and three readers
+  share it:
+  - the **composition** reads it stepped to the pixel (`lineCompositionMillis`) and ONLY in a column holding a
+    record that follows the line: that column's records are advanced along the line (`advancedAlongLine`), so
+    hit-testing, hover tiles, the overlap slices and label fits are one pixel at most out of step, and every
+    other column recomposes not at all;
+  - the **layout phase** adds the rest of the pixel (`lineDriftHours`) in `timelineSpan` — THE placement for
+    every block slice, screen-break band, period box, sleep outline, layer band and band label. A node with a
+    following edge is laid out on whole pixels and its layer translated by the fraction and scaled by
+    `height / ceil(height)` about its top, so both edges are exact. A node with no following edge keeps the
+    whole-pixel `Dp` path, which keeps still text crisp. Never place one of those elements with a bare
+    `offset(y = …)` again: it would step beside everything that glides;
+  - the **line**, its dot and the overdue-reminder stack read it in a fractional
+    `graphicsLayer { translationY = nowLineOffsetPx(…) }` — `IntOffset` cannot carry a fraction.
+  The contract is `CalendarLineMotionTest`: extrapolating one reading equals reading the rules again at every
+  instant before the boundary the reading predicts.
 - **What the calendar COMPOSES is bounded by the visible window too.** A day row is one whole day tall while
   the viewport is not, so every `DayColumn` culls its output to `visibleHourWindow(...)`: a record scrolled
   out of view emits no UI node. This is a frame cost, not a tick cost — every floating window shares one

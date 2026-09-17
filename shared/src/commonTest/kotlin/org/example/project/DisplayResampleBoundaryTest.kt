@@ -48,6 +48,9 @@ class DisplayResampleBoundaryTest {
 
     @Test
     fun a_pose_the_line_is_dragging_is_re_derived_once_it_would_have_moved_a_pixel() {
+        // Since 2026-09-17 this is the case of a pose whose MOTION WAS NOT READ (its bounds handed over as fixed
+        // ones): a pose whose motion was read is drawn on the frame clock instead and is never a pin at all —
+        // see `CalendarLineMotionTest`. The fallback must still behave exactly as every pin used to.
         val now = at(10, 0)
         // `side-dev/README.md` mode 1: the owed pose is pushed onto the line as `(t_p, t_p + d]`, so its
         // start is literally `t_p + 1`. Answering "one millisecond" there is a busy loop; answering "the

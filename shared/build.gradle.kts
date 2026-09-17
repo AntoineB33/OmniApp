@@ -102,6 +102,9 @@ kotlin {
             implementation(libs.ktor.client.mock)
             implementation(libs.ktor.client.contentNegotiation)
             implementation(libs.ktor.serialization.kotlinxJson)
+            // ADR 0009: Skia natives for this machine, so a test can RENDER a calendar element headlessly
+            // (`ImageComposeScene`) and measure where its edges land between pixels. Test classpath only.
+            implementation(compose.desktop.currentOs)
         }
         iosMain.dependencies {
             implementation(libs.sqldelight.nativeDriver)

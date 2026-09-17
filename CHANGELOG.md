@@ -11,6 +11,29 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Everything the now-line drags moves as continuously as the line — 2026-09-17
+
+→ ADR 0009 § *Everything that follows the line moves continuously* (new), `docs/invariants/display-hot-path.md`
+(the resample rules, the continuity rule rewritten), `docs/invariants/calendar.md` (now-line). `shared`:
+`ui/CalendarLineMotion.kt` (new: `withLineMotion`, `displayBoundsOf`, `advancedAlongLine`, `lineCompositionMillis`,
+`Modifier.timelineSpan`), `CalendarRecord`/`PlacedRecord.startFollowsLine`/`endFollowsLine`, `recordsForDay`,
+`WeekView` (`rememberFrameNowMillis` replaces `rememberNowLineHour`; the lock re-centres on the line clock),
+`DayColumn` (records advanced along the line; every block slice, screen-break band, period box, sleep outline,
+layer band and band label placed by `timelineSpan`), `SchedulerDomain.displayResampleDelayMillis` (`lineOffsets`:
+meeting and midnight-crossing boundaries), `App.kt` (the calendar derivation is one local function,
+`deriveCalendarDisplay`, read at the line and 1 ms later). Tests: `CalendarLineMotionTest` (new, 9),
+`TimelineSpanRenderTest` (new, 5 — renders headlessly and measures the edges between pixels). Build: `shared` jvmTest
+gains `compose.desktop.currentOs` (Skia natives; test classpath only). **Client only —
+an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.** No persisted or synced shape changed (the two
+new flags are display-only and never stored).
+
+The user's report: *"the panels don't move as smoothly as the current now line, which makes situations where the now
+line must drag a panel visually incorrect."* A mode-1 dragged pose `(t_p, t_p + d]` and the panels around it were
+re-derived once per pixel while the line glided between pixels. Now the motion of every edge is read once from the
+rules and drawn on the frame clock, with the screen's pixels the only rounding; the app re-derives only at the
+instants the rules name (including where a moving edge meets a fixed one), instead of once per pixel while
+something was pinned.
+
 ### Reaching the best score when it is reachable, and the best score wins between devices — 2026-09-17
 
 → ADR 0001 § 12 (new), ADR 0015 § *The best score wins* (new), `docs/scheduler_score.md` § *Degradation* and § *The
