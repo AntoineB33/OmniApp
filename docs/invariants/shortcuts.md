@@ -69,8 +69,9 @@ handler.
 ### A button that has a chord names it on hover
 
 **Every control that duplicates a keyboard shortcut shows that chord in an info bubble while the pointer rests
-on it** — `ShortcutHint` is the one place a bubble is drawn, and a control with no chord passes `null` and gets
-a plain `Box`. Today: the lateral menu's "Look away now" / "Switch task" / "I'm away" / **"Notifications"**
+on it** — `ShortcutHint` is the one place a bubble is drawn (it is `InfoHint` with the chord for text; a control
+that explains *what it is* instead, like the default sub-tree's per-row switch, calls `InfoHint` directly and
+gets the same bubble under the same rules), and a control with no chord passes `null` and gets a plain `Box`. Today: the lateral menu's "Look away now" / "Switch task" / "I'm away" / **"Notifications"**
 (the one *switch* that has a chord), the find bar's ↑ / ↓ / ✕ / Replace, and the deep-copy window's "copy".
 
 - **The chord is always a LIVE lookup, never a constant, for the four that can be rebound.** The buttons read

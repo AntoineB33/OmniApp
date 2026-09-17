@@ -3,6 +3,7 @@ package org.example.project.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -56,13 +57,26 @@ fun ShortcutHint(
     chord: String?,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
+) = InfoHint(text = chord, modifier = modifier, content = content)
+
+/**
+ * The info bubble itself — [ShortcutHint] is this with a chord for text; a control that needs to explain
+ * *what it is* rather than which chord fires it (the default sub-tree's per-row switch) passes that
+ * explanation. One bubble, drawn in one place, under the same rules: below the control with a gap, no pointer
+ * input, no focus, and a plain [Box] when [text] is null.
+ */
+@Composable
+fun InfoHint(
+    text: String?,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
 ) {
     var hovered by remember { mutableStateOf(false) }
     var size by remember { mutableStateOf(IntSize.Zero) }
     Box(
         modifier = modifier
             .then(
-                if (chord == null) {
+                if (text == null) {
                     Modifier
                 } else {
                     Modifier
@@ -75,7 +89,7 @@ fun ShortcutHint(
             ),
     ) {
         content()
-        if (chord != null && hovered) {
+        if (text != null && hovered) {
             val gapPx = with(LocalDensity.current) { HINT_GAP.roundToPx() }
             Popup(
                 alignment = Alignment.TopStart,
@@ -84,10 +98,11 @@ fun ShortcutHint(
                 properties = PopupProperties(focusable = false),
             ) {
                 Text(
-                    text = chord,
+                    text = text,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.inverseOnSurface,
                     modifier = Modifier
+                        .widthIn(max = 320.dp)
                         .shadow(4.dp, RoundedCornerShape(4.dp))
                         .background(MaterialTheme.colorScheme.inverseSurface, RoundedCornerShape(4.dp))
                         .padding(horizontal = 8.dp, vertical = 4.dp),

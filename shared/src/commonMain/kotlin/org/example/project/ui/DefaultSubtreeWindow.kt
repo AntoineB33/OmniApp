@@ -219,10 +219,19 @@ private fun SchedulerIntent.forDefaultSubtree(): SchedulerIntent =
  * task now, so turning it off never lacks something to point at.
  */
 @Composable
-private fun DefaultSubtreeRowSwitch(checked: Boolean, onToggle: () -> Unit) {
+private fun DefaultSubtreeRowSwitch(checked: Boolean, onToggle: () -> Unit) = InfoHint(
+    text =
+        if (checked) {
+            "ON — new task: every cell built from this row gets its own brand new task. " +
+                "Turn off to make them all mirror the task this row points at."
+        } else {
+            "OFF — mirror: every cell built from this row is the task this row points at. " +
+                "Turn on to give each one its own brand new task."
+        },
+    modifier = Modifier.padding(start = 8.dp),
+) {
     Box(
         modifier = Modifier
-            .padding(start = 8.dp)
             .size(width = 26.dp, height = 14.dp)
             .clip(RoundedCornerShape(7.dp))
             .background(if (checked) SheetColors.activeBorder else SheetColors.guideLine)
