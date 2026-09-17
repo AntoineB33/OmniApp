@@ -43,6 +43,8 @@ tasks.withType<JavaExec>().configureEach {
     // reused Gradle daemon whose environment is unreliable.
     (project.findProperty("omniapp.loginUser") as String?)?.let { systemProperty("omniapp.loginUser", it) }
     (project.findProperty("omniapp.loginPass") as String?)?.let { systemProperty("omniapp.loginPass", it) }
+    // Working offline: `-Pomniapp.startOffline=true` launches with every server request cut off.
+    (project.findProperty("omniapp.startOffline") as String?)?.let { systemProperty("omniapp.startOffline", it) }
     // The dev `run` task (a JavaExec) enables time simulation by default; override with
     // `-Pomniapp.timeSim=false`. The packaged release (createDistributable, not a JavaExec) never sets it,
     // so main() reads it absent and ships with the debug tooling off.

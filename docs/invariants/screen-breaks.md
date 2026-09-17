@@ -284,7 +284,7 @@ identifiers, persisted keys.
   a cue for the END of the one it is inside (`tick_pause_cues` pass (c) → `claim_mode3_break_cue`, ADR 0006).
   **The server never runs the scheduler** — its whole question is `start <= now < end`, and that reading is
   legitimate only because mode 3 is the mode nothing drags a pose in, so where the scheduler placed one is
-  where it happens. `PlanWalk` stays the only copy of the rules.
+  where it happens. The score (`docs/scheduler_score.md`) stays the only copy of the rules.
   **One query, two readings**: the windows the mode-3 evaluation compares against, and the two `device_break`
   dues the walk-away gate asks about the past with, are the same `poseWindowsBetween` call projected two ways
   — never two derivations, which is how the two paths would start naming different breaks. The 20 s look-away

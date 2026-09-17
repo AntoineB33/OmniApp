@@ -1948,7 +1948,7 @@ fun filteredHistoryUnits(
                             category = category,
                             unit = unit,
                             position = index + 1,
-                            applied = index <= history.pointer,
+                            applied = !unit.undone,
                             isCurrent = index == history.pointer,
                         )
                     }

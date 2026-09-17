@@ -1,5 +1,7 @@
 package org.example.project
 
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -36,6 +38,14 @@ import org.example.project.ui.HistoryFilterConfig
 import org.example.project.ui.filteredHistoryUnits
 
 class SchedulerReducerTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
+
     /**
      * PRD §6 *Empty DB*: the tree starts at ONE root — there is no second `main` level under it any more
      * (named task trees are how the account holds several trees), and the root is drawn as a real row.

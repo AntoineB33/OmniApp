@@ -73,6 +73,8 @@ import org.example.project.scheduler.state.DefaultSubtreeDelta
 import org.example.project.scheduler.state.DefaultSubtreeTemplate
 import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.state.TaskTreeDelta
+import org.example.project.scheduler.state.TaskTreesDiff
+import org.example.project.scheduler.state.TreeDiff
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.ShortcutBinding
@@ -103,10 +105,18 @@ import org.example.project.scheduler.state.TreeSnapshot
  * index is derived, so it is rebuilt on load rather than stored.
  */
 object SchedulerStateCodec {
+    // Compact: every byte of a payload and of a history unit is written to the device's database AND to the account's
+    // server (`docs/invariants/server-quota.md`); indentation roughly doubled both. Pretty-printed payloads an older
+    // build wrote still decode.
     private val json = Json {
         ignoreUnknownKeys = true
-        prettyPrint = true
     }
+
+    /**
+     * A unit text longer than this was written with whole copies by an older build: a unit that records only what it
+     * changed is far smaller (`HistoryUnitSizeTest`). It is re-encoded on load instead of trusted.
+     */
+    private const val LEGACY_UNIT_CHARS = 32_000
 
     fun encode(state: SchedulerState): String = json.encodeToString(state.toPersisted())
 
@@ -290,10 +300,74 @@ object SchedulerStateCodec {
      * whole Undo/Redo history — tens of MB — twice per keystroke debounce, before the store had even been
      * asked to write anything. A unit is immutable once committed, so the answer can never go stale.
      */
+    /**
+     * A unit's row text: its delta, with its owner, number and undone flag as three more keys beside the delta's own
+     * (`docs/invariants/persistence.md` § *One history, per-device undo*) — omitted while they hold their defaults,
+     * which is also what a unit written before they existed looks like. The delta decoder ignores them.
+     */
     private fun encodedDeltaOf(unit: HistoryUnit): EncodedDelta =
-        unit.encodedDelta ?: json.encodeToString(unit.delta.toPersisted())
-            .let { EncodedDelta(json = it, hash = HistoryDigest.hash(it)) }
+        unit.encodedDelta ?: run {
+            val delta = json.encodeToJsonElement(PersistedDelta.serializer(), unit.delta.toPersisted()) as JsonObject
+            val extra = LinkedHashMap<String, JsonElement>()
+            if (unit.deviceId.isNotEmpty()) extra[UNIT_DEVICE_KEY] = JsonPrimitive(unit.deviceId)
+            if (unit.deviceSeq != 0L) extra[UNIT_SEQ_KEY] = JsonPrimitive(unit.deviceSeq)
+            if (unit.undone) extra[UNIT_UNDONE_KEY] = JsonPrimitive(true)
+            if (unit.changedAtMillis != 0L) extra[UNIT_CHANGED_KEY] = JsonPrimitive(unit.changedAtMillis)
+            if (extra.isEmpty()) delta.toString() else JsonObject(delta + extra).toString()
+        }.let { EncodedDelta(json = it, hash = HistoryDigest.hash(it)) }
             .also { unit.encodedDelta = it }
+
+    /** A unit's row text — what the store writes and what the account's `history_unit` row holds. */
+    fun encodeUnit(unit: HistoryUnit): String = encodedDeltaOf(unit).json
+
+    /** A unit read back from a `history_unit` row, or null when this build cannot read its delta (a newer build's). */
+    fun decodeUnit(
+        timeMillis: Long,
+        chronoId: Long,
+        tainted: Boolean,
+        window: String?,
+        deviceId: String,
+        deviceSeq: Long,
+        undone: Boolean,
+        text: String,
+    ): HistoryUnit? =
+        runCatching {
+            HistoryUnit(
+                timeMillis = timeMillis,
+                chronoId = chronoId,
+                delta = decodeMigrating<PersistedDelta>(text).toDelta(),
+                debugTainted = tainted,
+                window = window?.let { name -> runCatching { HistoryWindow.valueOf(name) }.getOrNull() },
+                deviceId = deviceId,
+                deviceSeq = deviceSeq,
+                undone = undone,
+            )
+        }.getOrNull()
+
+    private const val UNIT_DEVICE_KEY = "deviceId"
+    private const val UNIT_SEQ_KEY = "deviceSeq"
+    private const val UNIT_UNDONE_KEY = "undone"
+    private const val UNIT_CHANGED_KEY = "changedAt"
+
+    /** The owner, number and undone flag a unit's row text carries; the flag is null when the row predates it. */
+    /** When the unit last changed on its device (`HistoryUnit.changedAtMillis`), from its row text; 0 when absent. */
+    private fun changedAtOf(text: String): Long {
+        val at = text.indexOf("\"$UNIT_CHANGED_KEY\":")
+        if (at < 0) return 0L
+        return text.substring(at + UNIT_CHANGED_KEY.length + 3).takeWhile { it.isDigit() }.toLongOrNull() ?: 0L
+    }
+
+    private fun unitOwnerOf(text: String): Triple<String, Long, Boolean?> {
+        if (!text.contains("\"$UNIT_DEVICE_KEY\"") && !text.contains("\"$UNIT_UNDONE_KEY\"")) return Triple("", 0L, null)
+        val obj = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return Triple("", 0L, null)
+        fun prim(key: String) = obj[key] as? JsonPrimitive
+        val device = prim(UNIT_DEVICE_KEY)?.content.orEmpty()
+        return Triple(
+            device,
+            prim(UNIT_SEQ_KEY)?.content?.toLongOrNull() ?: 0L,
+            prim(UNIT_UNDONE_KEY)?.content?.toBooleanStrictOrNull() ?: if (device.isNotEmpty()) false else null,
+        )
+    }
 
     private fun buildHistories(
         rows: List<HistoryRow>,
@@ -306,12 +380,19 @@ object SchedulerStateCodec {
             val units =
                 (rowsByCategory[category.name] ?: emptyList())
                     .sortedBy { it.ordinal }
-                    .map { row ->
+                    .mapIndexed { index, row ->
+                        val owner = unitOwnerOf(row.deltaJson)
                         HistoryUnit(
                             timeMillis = row.timeMillis,
                             chronoId = row.chronoId,
                             delta = decodeMigrating<PersistedDelta>(row.deltaJson).toDelta(),
                             debugTainted = row.debugTainted,
+                            deviceId = owner.first,
+                            deviceSeq = owner.second,
+                            // A unit written before units carried the flag was undone exactly when it sat past its
+                            // category's pointer.
+                            undone = owner.third ?: (index > (pointerByCategory[category.name] ?: -1)),
+                            changedAtMillis = changedAtOf(row.deltaJson),
                             // An unknown name (a window this build no longer has) heals to "no window":
                             // the unit is still listed, under the drop-down's "All windows".
                             window = row.window?.let { name ->
@@ -321,13 +402,20 @@ object SchedulerStateCodec {
                             // Seed the memo from the text we were just handed: re-serializing a unit the
                             // store (or a peer's snapshot) already spelled out would be pure waste, and it
                             // is what made the first save of every launch re-encode the whole history.
-                            it.encodedDelta =
-                                EncodedDelta(
-                                    json = row.deltaJson,
-                                    hash =
-                                        row.deltaHash.takeIf { hash -> hash != HistoryDigest.UNKNOWN_HASH }
-                                            ?: HistoryDigest.hash(row.deltaJson),
-                                )
+                            //
+                            // EXCEPT a unit written in an older shape — pretty-printed, or with whole copies of
+                            // what it changed (`docs/invariants/persistence.md`): its text is not what this build
+                            // writes, so it is left unseeded, re-encoded once as the change it describes, and the
+                            // store's digest diff rewrites that one row small. Both shapes show in the text itself.
+                            if (!row.deltaJson.contains('\n') && row.deltaJson.length <= LEGACY_UNIT_CHARS) {
+                                it.encodedDelta =
+                                    EncodedDelta(
+                                        json = row.deltaJson,
+                                        hash =
+                                            row.deltaHash.takeIf { hash -> hash != HistoryDigest.UNKNOWN_HASH }
+                                                ?: HistoryDigest.hash(row.deltaJson),
+                                    )
+                            }
                         }
                     }
             histories =
@@ -685,11 +773,15 @@ object SchedulerStateCodec {
     /** Maps each [Delta] subtype to its serializable mirror. Exhaustive over the sealed hierarchy. */
     private fun Delta.toPersisted(): PersistedDelta =
         when (this) {
-            is TreeMutationDelta -> PersistedDelta.TreeMutation(before.toPersisted(), after.toPersisted(), label)
+            // `docs/invariants/persistence.md` § *A History Unit records what it changed*: every diff is written in
+            // its tag's original before/after shape, holding ONLY the touched entries on each side. Decoding rebuilds
+            // the diff from whatever the two sides hold (`TreeDiff.of`, `EntryChanges.ofList`, `SetChanges.of`), so a
+            // unit an older build wrote with whole copies is converted by the very same path.
+            is TreeMutationDelta -> PersistedDelta.TreeMutation(diff.side(forward = false), diff.side(forward = true), label)
             is EmptyCellsDelta ->
                 PersistedDelta.EmptyCells(
-                    treeBefore.toPersisted(),
-                    treeAfter.toPersisted(),
+                    diff.side(forward = false),
+                    diff.side(forward = true),
                     selectionBefore.toPersisted(),
                     selectionAfter.toPersisted(),
                 )
@@ -697,20 +789,26 @@ object SchedulerStateCodec {
             is FocusDelta -> PersistedDelta.Focus(before.name, after.name)
             is PanelDelta ->
                 PersistedDelta.Panels(
-                    before.map { it.toPersistedPanel() },
-                    after.map { it.toPersistedPanel() },
+                    changes.before.values.map { it.toPersistedPanel() },
+                    changes.after.values.map { it.toPersistedPanel() },
                     label,
                 )
             is ToggleExpandDelta -> PersistedDelta.ToggleExpand(cellId.value)
+            // A set change is written as (removed, added): `SetChanges.of(removed, added)` gives it back.
             is SetExpandedDelta ->
-                PersistedDelta.SetExpanded(before.map { it.value }, after.map { it.value })
-            is TaskTreeDelta -> PersistedDelta.TaskTrees(before.toPersisted(), after.toPersisted(), label)
+                PersistedDelta.SetExpanded(changes.removed.map { it.value }, changes.added.map { it.value })
+            is TaskTreeDelta -> PersistedDelta.TaskTrees(diff.side(forward = false), diff.side(forward = true), label)
             is DefaultSubtreeDelta ->
-                PersistedDelta.DefaultSubtreeUnit(before.toPersisted(), after.toPersisted(), label)
+                PersistedDelta.DefaultSubtreeUnit(
+                    PersistedDefaultSubtree(tree.side(forward = false), expanded.removed.map { it.value }, boundCells.removed.map { it.value }),
+                    PersistedDefaultSubtree(tree.side(forward = true), expanded.added.map { it.value }, boundCells.added.map { it.value }),
+                    label,
+                )
+            // Written as (removed periods, added periods) per task: `RecordChanges.of` gives the change back.
             is RecordDelta ->
                 PersistedDelta.Record(
-                    before.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
-                    after.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
+                    changes.removed.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
+                    changes.added.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
                 )
             is SleepDelta ->
                 PersistedDelta.Sleep(
@@ -720,9 +818,9 @@ object SchedulerStateCodec {
             is ShortcutBindingDelta ->
                 PersistedDelta.ShortcutBindings(before.toPersistedRows(), after.toPersistedRows())
             is AlarmsDelta ->
-                PersistedDelta.Alarms(before.map { it.toPersisted() }, after.map { it.toPersisted() })
+                PersistedDelta.Alarms(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is TimersDelta ->
-                PersistedDelta.Timers(before.map { it.toPersisted() }, after.map { it.toPersisted() })
+                PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             NoOpDelta -> PersistedDelta.NoOp
         }
 
@@ -756,6 +854,41 @@ object SchedulerStateCodec {
             newTaskDraftId = newTaskDraftId?.value,
             treeBefore = treeBefore.toPersisted(),
             renameTreeBefore = renameTreeBefore?.toPersisted(),
+        )
+
+    /** One side of a [TreeDiff]: a partial tree holding only the touched entries present on that side. */
+    private fun TreeDiff.side(forward: Boolean): PersistedTreeSnapshot =
+        TreeSnapshot(
+            cells = if (forward) cells.after else cells.before,
+            lists = if (forward) lists.after else lists.before,
+            tasks = if (forward) tasks.after else tasks.before,
+            titleToTaskIds = emptyMap(),
+            nextTaskCounter = if (forward) nextTaskCounterAfter else nextTaskCounterBefore,
+            nextCellCounter = if (forward) nextCellCounterAfter else nextCellCounterBefore,
+        ).toPersisted()
+
+    /**
+     * One side of a [TaskTreesDiff]: the entries created or deleted on it whole, every changed entry as its partial
+     * self, the live tree partial, and the full ORDER of the trees (which the partial list cannot carry).
+     */
+    private fun TaskTreesDiff.side(forward: Boolean): PersistedTaskTreeState =
+        PersistedTaskTreeState(
+            trees =
+                (if (forward) added else removed).map { it.toPersisted() } +
+                    changed.map { c ->
+                        PersistedTaskTree(
+                            id = c.id.value,
+                            title = if (forward) c.titleAfter else c.titleBefore,
+                            tree = c.tree.side(forward),
+                            expanded = (if (forward) c.expanded.added else c.expanded.removed).map { it.value },
+                            date = if (forward) c.dateAfter else c.dateBefore,
+                        )
+                    },
+            activeId = (if (forward) activeAfter else activeBefore)?.value,
+            nextCounter = if (forward) counterAfter else counterBefore,
+            tree = live.side(forward),
+            expanded = (if (forward) liveExpanded.added else liveExpanded.removed).map { it.value },
+            order = (if (forward) orderAfter else orderBefore).map { it.value },
         )
 
     private fun TaskTreeEntry.toPersisted(): PersistedTaskTree =
@@ -1140,7 +1273,16 @@ object SchedulerStateCodec {
             is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
             is PersistedDelta.SetExpanded ->
                 SetExpandedDelta(before.map { CellId(it) }.toSet(), after.map { CellId(it) }.toSet())
-            is PersistedDelta.TaskTrees -> TaskTreeDelta(before.toTaskTreeState(), after.toTaskTreeState(), label)
+            is PersistedDelta.TaskTrees ->
+                TaskTreeDelta(
+                    TaskTreesDiff.of(before.toTaskTreeState(), after.toTaskTreeState()).let { diff ->
+                        diff.copy(
+                            orderBefore = before.order?.map(::TaskTreeId) ?: diff.orderBefore,
+                            orderAfter = after.order?.map(::TaskTreeId) ?: diff.orderAfter,
+                        )
+                    },
+                    label,
+                )
             is PersistedDelta.DefaultSubtreeUnit ->
                 DefaultSubtreeDelta(before.toTemplate(), after.toTemplate(), label)
             is PersistedDelta.Record ->
@@ -1893,6 +2035,8 @@ private data class PersistedTaskTreeState(
     val nextCounter: Int = 0,
     val tree: PersistedTreeSnapshot,
     val expanded: List<String> = emptyList(),
+    /** The trees' ids in order. Absent on a unit written with whole copies, whose [trees] ARE the order. */
+    val order: List<String>? = null,
 )
 
 @Serializable

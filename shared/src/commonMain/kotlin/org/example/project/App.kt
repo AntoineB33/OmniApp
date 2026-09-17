@@ -2,6 +2,7 @@ package org.example.project
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -86,6 +87,7 @@ import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.RelativePriorityWindow
 import org.example.project.scheduler.ui.SignInDialog
 import org.example.project.scheduler.ui.SyncStatusChip
+import org.example.project.scheduler.ui.WorkOfflineButton
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.scheduler.ui.TaskEditWindow
@@ -222,7 +224,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val syncEngine =
             remember(store) {
                 (store as? SyncMetaStore)?.let {
-                    SchedulerSyncEngine(RemoteSnapshotClient(), it, activeSessionStore = store as? ActiveSessionStore)
+                    SchedulerSyncEngine(
+                        RemoteSnapshotClient(),
+                        it,
+                        activeSessionStore = store as? ActiveSessionStore,
+                        networkModeStore = store as? org.example.project.scheduler.persistence.NetworkModeStore,
+                        startOffline = org.example.project.scheduler.sync.startOfflineRequested(),
+                    )
                 }
             }
 
@@ -318,6 +326,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     declaredAwayStore = store as? DeclaredAwayStore,
                     activeSessionStore = store as? ActiveSessionStore,
                     pauseCue = vm.pauseCue,
+                    // `docs/invariants/scheduler.md` § *One device plans*: the account's broadcast channel.
+                    schedulerPeers = vm.schedulerPeers,
                     // PRD §15: the OS-scheduled local cue seam for the engine App() builds itself (iOS delivers
                     // via UNUserNotificationCenter; desktop/web are inert). Android does not reach here — it
                     // injects an AlarmManager seam via SchedulerHolder.
@@ -758,23 +768,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             maxOf(nowMillis + SchedulerDomain.MIN_SCHEDULE_HORIZON_MILLIS, visibleSpanEndMillis)
 
         // `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_goal$**, the instant the
-        // scheduler may stop at — `max(end of the first day that does not appear in the calendar, end of the
-        // first day of the week after the current week)`. Its calendar half is one day past the bottom of the
-        // grid, so it follows the SCROLL: it is what the whole plan is computed out to, while the displayed
-        // span above only bounds what is DRAWN (ADR 0009).
-        val goalEndMillis = SchedulerDomain.scheduleGoalEndMillis(nowMillis, visibleSpanEndMillis, tz)
+        // scheduler may stop at — the end of the timeline the calendar shows, or `now + 10 min` if further. It
+        // follows the SCROLL: it is what the whole plan is computed out to.
+        val goalEndMillis = SchedulerDomain.scheduleGoalEndMillis(nowMillis, visibleSpanEndMillis)
 
         // PRD §9: tell the ENGINE which days are on screen, so its §9 refills materialize the work plan out
-        // to exactly that span (clamped to [24h, 168h]) instead of unconditionally computing 168h of schedule
-        // the user is not looking at. Closing the calendar drops it back to the 24h floor the headless
-        // notification/cue paths need. Growing it (scrolling further out) triggers one refill in the engine.
+        // to exactly that span (capped at 168h) instead of computing schedule the user is not looking at.
+        // Closing the calendar drops it back to the ten-minute floor the headless notification/cue paths
+        // need. Growing it past the plan (scrolling further out) triggers one extension in the engine.
         LaunchedEffect(engine, calendarOpen, visibleSpanEndMillis) {
             engine.setCalendarHorizon(if (calendarOpen) visibleSpanEndMillis else null)
         }
 
         // PRD §9/§17 "schedule the whole span displayed": the engine materializes the work plan out to
-        // $t_goal$, but a CALENDAR-driven goal never past its 168h CEILING
-        // ([SchedulerDomain.scheduleHorizonEndMillis] — the current week's own goal is never capped). When the
+        // $t_goal$, but never past the 168h CEILING ([SchedulerDomain.scheduleHorizonEndMillis]). When the
         // scroll reaches past that, compute the plan from the now-line out to the goal for DISPLAY — off the
         // UI thread (Dispatchers.Default) so a distant day "simply takes time to be displayed" instead of
         // freezing, keyed only on the displayed span so it doesn't rerun every now-tick. The result is never
@@ -783,11 +790,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // engine already fills exactly to the goal (`engine.setCalendarHorizon` above), so
         // `schedulerState.panels` covers the whole displayed span.
         val nearHorizonEndMillis =
-            SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis, tz)
+            SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis)
         val visibleSpanBeyondNearHorizon = goalEndMillis > nearHorizonEndMillis
         var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }
         var farWeekCalculating by remember { mutableStateOf(false) }
-        LaunchedEffect(visibleSpanStartMillis, visibleSpanBeyondNearHorizon, goalEndMillis) {
+        // Keyed on the displayed END, not on `goalEndMillis`: beyond the ceiling the two are the same instant,
+        // and below it the goal's ten-minute floor rolls with every now-tick.
+        LaunchedEffect(visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis) {
             if (!visibleSpanBeyondNearHorizon) {
                 farWeekPlan = null
                 farWeekCalculating = false
@@ -795,11 +804,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             farWeekPlan = null
             farWeekCalculating = true
+            // An EXTENSION of the materialized plan, never a re-plan: the far week is the continuation of the
+            // rules already returned. When those rules repeat (`schedulerState.scheduleCycle`,
+            // `docs/scheduler_score.md` § *The rules repeat*) the tail is unrolled, not searched, so a far week
+            // costs a walk over the environment rather than an optimization.
             val fill =
                 withContext(Dispatchers.Default) {
                     SchedulerDomain.fillSchedule(
                         schedulerState, nowMillis, timeZone = tz, horizonMillis = goalEndMillis,
                         noScreenEvidence = observedNoScreenEvidence,
+                        keepExistingUntilMillis = SchedulerDomain.firstFreeMoment(schedulerState.panels, nowMillis),
                     )
                 }
             farWeekPlan = fill
@@ -2623,12 +2637,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val syncStateValue = vm.syncState?.collectAsState()?.value
             val accountValue = vm.account?.collectAsState()?.value
             var showSignIn by remember { mutableStateOf(false) }
-            SyncStatusChip(
-                state = syncStateValue,
-                onClick = { showSignIn = true },
+            val offlineValue = vm.offline?.collectAsState()?.value
+            Row(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).zIndex(120f),
-                account = accountValue,
-            )
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // `sync-and-accounts.md` § *Working offline*: the device-wide switch, always one click away.
+                if (offlineValue != null) WorkOfflineButton(offline = offlineValue, onSetOffline = vm::setOffline)
+                SyncStatusChip(
+                    state = syncStateValue,
+                    onClick = { showSignIn = true },
+                    account = accountValue,
+                )
+            }
             if (showSignIn) {
                 SignInDialog(
                     state = syncStateValue,
@@ -2641,6 +2662,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // runs the side channels (active sessions, derived pauses, exact pause gaps) — see
                     // SchedulerEngine.launchSyncMomentSideChannels.
                     onFetch = { vm.syncNow() },
+                    offline = offlineValue == true,
+                    onSetOffline = vm::setOffline,
                 )
             }
 

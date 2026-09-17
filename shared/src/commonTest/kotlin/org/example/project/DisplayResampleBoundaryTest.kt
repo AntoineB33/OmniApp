@@ -94,7 +94,7 @@ class DisplayResampleBoundaryTest {
 
     @Test
     fun midnight_is_a_boundary_no_panel_carries() {
-        // The day rollover (and the $t_goal$ staircase that steps with it) is the one boundary the derived
+        // The day rollover is the one boundary the derived
         // model does not name, so it is added by hand — an empty calendar must still roll over on time.
         val now = at(23, 59, 30)
         assertEquals(

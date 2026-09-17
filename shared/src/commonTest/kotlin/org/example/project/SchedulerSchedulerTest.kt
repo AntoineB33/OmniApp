@@ -1,5 +1,7 @@
 package org.example.project
 
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,6 +32,13 @@ import org.example.project.ui.recordsForDay
  * (history-excluded, persisted, calendar-mapped).
  */
 class SchedulerSchedulerTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
 
     private val MIN = 60_000L
     private val HOUR_MS = 3_600_000L
@@ -281,7 +290,11 @@ class SchedulerSchedulerTest {
 
         assertTrue(autos.size >= 4, "expected an alternating fill, got ${autos.map { it.taskId }}")
         assertEquals(now, autos[0].startEpochMillis) // fresh fill starts at now
-        assertEquals(listOf(b, a, b, a), autos.take(4).map { it.taskId }) // B first, then alternates
+        // `docs/scheduler_score.md`: the pinned A deprived B, so B's target share is
+        // raised right after it and decays with the distance — B holds most of the first two hours.
+        fun servedIn(task: org.example.project.scheduler.model.TaskId, until: Long) =
+            autos.filter { it.taskId == task }.sumOf { maxOf(0L, minOf(it.endEpochMillis, until) - it.startEpochMillis) }
+        assertTrue(servedIn(b, now + 120 * MIN) > servedIn(a, now + 120 * MIN), "B is not compensated first")
         // Excess is not balanced: across the whole window A and B still get equal time (~50/50).
         val byTask = autos.groupBy { it.taskId }
             .mapValues { (_, ps) -> ps.sumOf { it.endEpochMillis - it.startEpochMillis } }
@@ -556,7 +569,8 @@ class SchedulerSchedulerTest {
         // execution time is a **soft** optimization goal beside it (*"another optimization goal"*), so it
         // yields. Earlier revisions left the gap empty, citing a `fitting` rule from `scheduler_logic.py`, a
         // reference file that no longer exists; the current `side-dev/scheduler.py` idles only where the
-        // candidate set is empty, and so does [SchedulerPlanner.runRange].
+        // candidate set is empty, and so does the score (`docs/scheduler_score.md`: a continuation that idles
+        // where a task may run is not a candidate at all).
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val pin = pinned("panel/0", b, now + 20 * MIN, now + 25 * MIN)
@@ -567,13 +581,17 @@ class SchedulerSchedulerTest {
         // No idling: the stretch before the obstacle is worked, short though it is.
         assertEquals(now, autos[0].startEpochMillis)
         assertEquals(now + 20 * MIN, autos[0].endEpochMillis)
-        assertEquals(a, autos[0].taskId)
+        // `docs/scheduler_score.md`, criterion 2: the 20 minutes go to B, because
+        // they join B's own pre-placed 5 minutes into ONE panel — 25 minutes short of its minimum by 20, where
+        // A there would leave two panels short by 25 and by 40.
+        assertEquals(b, autos[0].taskId)
 
-        // …and the obstacle CUT that chunk rather than suspending it: what follows is a fresh whole minimum,
-        // not the 25 minutes A would still have owed. (A screen break, above, gives back the remainder.)
-        assertEquals(now + 25 * MIN, autos[1].startEpochMillis) // the plan resumes after the obstacle
-        assertEquals(a, autos[1].taskId)
-        assertEquals(45 * MIN, autos[1].endEpochMillis - autos[1].startEpochMillis)
+        // …and the plan resumes after the obstacle: B's panel, still short of its minimum, continues to reach it
+        // before the task that has not run yet takes over.
+        assertEquals(now + 25 * MIN, autos[1].startEpochMillis)
+        assertEquals(b, autos[1].taskId)
+        assertTrue(autos[1].endEpochMillis - now >= 45 * MIN, "B's panel stops short of its minimum: ${autos[1]}")
+        assertEquals(a, autos[2].taskId)
     }
 
     // ----- §9 RefreshSchedule (calculation event) --------------------------------------------

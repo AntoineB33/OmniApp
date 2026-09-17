@@ -19,7 +19,7 @@ import org.example.project.scheduler.state.SchedulerState
  * release account one stored weight had reached `4.99e42` while every other weight in the account was `<= 90`.
  *
  * The consequence is not cosmetic. Its sibling's absolute priority collapsed to `8.4e-44`, which put
- * `SchedulerPlanner`'s minimal period (`max(mᵢ / pᵢ)`) at `9e42` HOURS — see [DegeneratePlanScaleTest] for
+ * its score window (`mᵢ / pᵢ`, `docs/scheduler_score.md`) at `9e42` HOURS — see [DegeneratePlanScaleTest] for
  * what that does to the fill.
  */
 class RelativePriorityWeightBoundTest {

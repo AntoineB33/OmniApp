@@ -180,6 +180,14 @@ CREATE TABLE sleep_scan_checkpoint (
     scanned_through INTEGER NOT NULL
 );
 
+-- Working offline (docs/invariants/sync-and-accounts.md): the user's choice to cut this DEVICE off the server.
+-- LOCAL-ONLY, device-level, one row (id always 0), separate from sync_meta for the same reason as
+-- sleep_scan_checkpoint. No row = never chosen. Added in migration 13.sqm.
+CREATE TABLE network_mode (
+    id INTEGER NOT NULL PRIMARY KEY,
+    offline INTEGER NOT NULL
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE account_id = ?;
 
@@ -291,3 +299,9 @@ SELECT scanned_through FROM sleep_scan_checkpoint WHERE id = 0;
 
 upsertSleepScanCheckpoint:
 INSERT OR REPLACE INTO sleep_scan_checkpoint(id, scanned_through) VALUES (0, ?);
+
+selectNetworkMode:
+SELECT offline FROM network_mode WHERE id = 0;
+
+upsertNetworkMode:
+INSERT OR REPLACE INTO network_mode(id, offline) VALUES (0, ?);

@@ -30,6 +30,7 @@ import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.sync.AccountInfo
 import org.example.project.scheduler.sync.PauseCueGateway
 import org.example.project.scheduler.sync.RealtimeSnapshotSubscriber
+import org.example.project.scheduler.sync.SchedulerPeerChannel
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SnapshotChangeSubscription
 import org.example.project.scheduler.sync.StartupLogin
@@ -54,6 +55,12 @@ class TaskSchedulerViewModel(
     // when sync is enabled.
     snapshotSubscription: SnapshotChangeSubscription? = null,
 ) : ViewModel() {
+    // `docs/invariants/persistence.md` § *One history, per-device undo*: every unit this device commits is stamped with
+    // its sync device id — set BEFORE the state below is loaded, whose units the load claims for this device.
+    init {
+        syncEngine?.let { engine -> SchedulerReducer.deviceId = { engine.deviceId } }
+    }
+
     // PRD §5 Initialization: load from local persistence when present, otherwise start
     // from the empty DB (root → main).
     private val _state = MutableStateFlow(loadInitialState(store, initial))
@@ -123,7 +130,7 @@ class TaskSchedulerViewModel(
     private val pushRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     // PRD §5 bidirectional sync — remote→local auto-pull. While signed in this holds a Realtime `postgres_changes`
-    // subscription on this account's `scheduler_snapshot` row; a server-side change (a peer pushed) pokes
+    // subscription on this account's `scheduler_head` row; a server-side change (a peer pushed) pokes
     // [syncNow], which pulls via the LWW reconcile (the `revision` guard drops this device's own echo). Null when
     // sync is disabled (tests / offline builds), so no WebSocket is opened. Kept for [onCleared] cleanup only via
     // [saveScope] cancellation — the subscriber's coroutines live on that scope.
@@ -135,9 +142,17 @@ class TaskSchedulerViewModel(
                 apiKey = engine.realtimeApiKey,
                 auth = { engine.realtimeAuth() },
                 refreshAuth = { engine.refreshRealtimeAuth() },
+                ownDeviceId = { engine.deviceId },
                 onRemoteChange = { syncNow() },
             )
         }
+
+    /**
+     * `docs/invariants/scheduler.md` § *One device plans*: the account's private scheduler broadcast channel, riding
+     * the same Realtime socket as the auto-pull. Null when sync is disabled or the subscription is a test fake —
+     * the engine then plans every re-plan itself.
+     */
+    val schedulerPeers: SchedulerPeerChannel? get() = snapshotSubscriber as? SchedulerPeerChannel
 
     init {
         // PRD §6/§9: collect the scheduler's own runs. The reducer reduces plan intents on the plan
@@ -175,6 +190,11 @@ class TaskSchedulerViewModel(
                 localSnapshot = { SchedulerStateCodec.syncFingerprint(_state.value) },
                 applyRemote = { snapshot -> applyRemoteSnapshot(snapshot) },
             )
+            // `docs/invariants/persistence.md` § *One history, per-device undo*: every History Unit syncs as its own row.
+            engine.bindHistory(
+                own = { _state.value.histories.all().associate { (category, history) -> category.name to history.units } },
+                mergePeer = { units, dropped -> dispatch(SchedulerIntent.MergePeerHistory(units, dropped)) },
+            )
             // PRD §5 bidirectional sync — local→remote auto-push: coalesce authoritative edits and reconcile
             // (push) after a 500 ms quiet period. Only authoritative, fingerprint-changing edits reach here
             // (emitted by [markDirtyIfAuthoritativeChanged]); derived/tick changes are gated out upstream, so an
@@ -191,35 +211,45 @@ class TaskSchedulerViewModel(
             // so it is not a switch and the data simply stays.
             watchAccountChanges(engine)
             engine.restoreSession()
-            // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
-            // credentials were supplied, sign in to that account — that is how the scripts open the app
-            // already on account 1/2/3 instead of on a guest account. Otherwise PRD §5 applies: the app is
-            // always connected to an account, so a device without one creates its GUEST account here.
-            // Both of those land in [watchAccountChanges], which reconciles once against the new account.
-            if (engine.isSignedIn) {
-                refreshRealtimeSubscription()
-                // STARTUP RECONCILE — the app checks the server for remote changes every launch.
-                //
-                // A RESTORED session is NOT an account change: [SchedulerSyncEngine._account] is seeded from the
-                // persisted `sync_meta` at engine construction, so by the time [watchAccountChanges] subscribes the
-                // value is already this account and its first emission is filtered out. Without this call nothing
-                // else reconciles at startup, and the device opens on whatever `revision` it last saw — for as long
-                // as the user makes no edit. That is not merely stale: the FIRST authoritative edit is what then
-                // triggers the auto-push reconcile, which fetches, finds the remote ahead, and takes the LWW `pull`
-                // branch — silently DESTROYING that very edit. Observed 2026-07-28 on account 3: a restart left the
-                // device one revision behind for 17 h; the user deleted two task cells and the pull put them back.
-                // Reconciling here collapses that window: the launch adopts (or pulls) whatever the server holds
-                // before the user can touch anything, and equally FLUSHES any edit a previous session left unpushed.
-                // Offline is a non-event — [SchedulerSyncEngine.reconcile] catches transport failures, logs them and
-                // keeps the local state for the next trigger.
-                saveScope.launch { engine.reconcile() }
+            // Working offline (`sync-and-accounts.md` § *Working offline*): no startup reconcile, no startup sign-in, no guest
+            // account and no Realtime socket until the user goes online ([setOffline]).
+            if (engine.offline.value) refreshRealtimeSubscription() else connect(engine)
+        }
+    }
+
+    /**
+     * What a launch does to reach the server, and what going back online does: reconcile a restored session, or sign
+     * in with the startup credentials, or create the guest account.
+     */
+    private fun connect(engine: SchedulerSyncEngine) {
+        // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
+        // credentials were supplied, sign in to that account — that is how the scripts open the app
+        // already on account 1/2/3 instead of on a guest account. Otherwise PRD §5 applies: the app is
+        // always connected to an account, so a device without one creates its GUEST account here.
+        // Both of those land in [watchAccountChanges], which reconciles once against the new account.
+        if (engine.isSignedIn) {
+            refreshRealtimeSubscription()
+            // STARTUP RECONCILE — the app checks the server for remote changes every launch.
+            //
+            // A RESTORED session is NOT an account change: [SchedulerSyncEngine._account] is seeded from the
+            // persisted `sync_meta` at engine construction, so by the time [watchAccountChanges] subscribes the
+            // value is already this account and its first emission is filtered out. Without this call nothing
+            // else reconciles at startup, and the device opens on whatever `revision` it last saw — for as long
+            // as the user makes no edit. That is not merely stale: the FIRST authoritative edit is what then
+            // triggers the auto-push reconcile, which fetches, finds the remote ahead, and takes the LWW `pull`
+            // branch — silently DESTROYING that very edit. Observed 2026-07-28 on account 3: a restart left the
+            // device one revision behind for 17 h; the user deleted two task cells and the pull put them back.
+            // Reconciling here collapses that window: the launch adopts (or pulls) whatever the server holds
+            // before the user can touch anything, and equally FLUSHES any edit a previous session left unpushed.
+            // Offline is a non-event — [SchedulerSyncEngine.reconcile] catches transport failures, logs them and
+            // keeps the local state for the next trigger.
+            saveScope.launch { engine.reconcile() }
+        } else {
+            val creds = startupLogin()
+            if (creds != null) {
+                signIn(usernameToEmail(creds.username), creds.password)
             } else {
-                val creds = startupLogin()
-                if (creds != null) {
-                    signIn(usernameToEmail(creds.username), creds.password)
-                } else {
-                    saveScope.launch { engine.ensureAccount() }
-                }
+                saveScope.launch { engine.ensureAccount() }
             }
         }
     }
@@ -339,6 +369,10 @@ class TaskSchedulerViewModel(
             // Materializes more of the SAME plan as the horizon rolls (see SchedulerIntent.ExtendSchedule) —
             // derived panels only, exactly like the two above.
             is SchedulerIntent.ExtendSchedule,
+            // Another device's answer to the same rules — derived panels, exactly like a local re-plan.
+            is SchedulerIntent.AdoptScheduleRules,
+            // Another device's History Units, taken in: they arrived from the server, and never go back to it as an edit.
+            is SchedulerIntent.MergePeerHistory,
             is SchedulerIntent.ReportDeviceSleep,
             // Derived time-driven materialization — see the KDoc above: its `allocatePanelId()` counter bump
             // would otherwise phantom-push identical content and clobber peers' edits via whole-doc LWW.
@@ -464,6 +498,21 @@ class TaskSchedulerViewModel(
         }
     }
 
+    /** `sync-and-accounts.md` § *Working offline*: true while this device works completely offline; null when sync is disabled. */
+    val offline: StateFlow<Boolean>? get() = syncEngine?.offline
+
+    /**
+     * The "work offline" button. Offline: the Realtime socket closes and nothing is sent or received — edits keep
+     * being saved and marked for the next push. Back online: the device reconnects exactly as a launch does, so the
+     * edits made offline are pushed (merged with whatever the other devices did meanwhile).
+     */
+    fun setOffline(offline: Boolean) {
+        val engine = syncEngine ?: return
+        engine.setOffline(offline)
+        refreshRealtimeSubscription()
+        if (!offline) connect(engine)
+    }
+
     /** The manual sync trigger (fallback / force-now). Auto-push + Realtime auto-pull also reconcile on their own. */
     fun syncNow() = saveScope.launch { syncEngine?.reconcile() }
 
@@ -484,7 +533,10 @@ class TaskSchedulerViewModel(
 
     /** Decodes a pulled remote snapshot, prepares it like a fresh load, swaps it in, and mirrors it locally. */
     private fun applyRemoteSnapshot(snapshot: PersistedSnapshot) {
-        val decoded = SchedulerStateCodec.decodeSnapshot(snapshot) ?: return
+        val decoded =
+            (SchedulerStateCodec.decodeSnapshot(snapshot) ?: return)
+                // The account's rows carry no history: it syncs unit by unit, so this device's own stays as it is.
+                .let { if (snapshot.history.isEmpty()) it.copy(histories = _state.value.histories) else it }
         // CLAUDE.md reconstructibility rule: the per-device view state (focused window, tree selection,
         // calendar display switches, WindowNav/Selection history) is local-only and must never be adopted
         // from another device — carry the current local values across the pull. (syncFingerprint likewise
@@ -522,7 +574,7 @@ class TaskSchedulerViewModel(
         fun prepareLoadedState(loaded: SchedulerState): SchedulerState {
             // PRD §6: revert any changes committed under the diverged debug clock before they reach the
             // running app, so a fast-forwarded session never pollutes the real saved data on restart.
-            val clean = SchedulerReducer.rollbackDebugTainted(loaded)
+            val clean = SchedulerReducer.claimUnownedUnits(SchedulerReducer.rollbackDebugTainted(loaded), SchedulerReducer.deviceId())
             // PRD §15: screen breaks are a hardcoded set (not persisted user data); seed them onto whatever
             // was loaded so they are always present in the running app, never in the bare test states.
             // The sleep schedule is seeded with the default only when none was persisted, so production

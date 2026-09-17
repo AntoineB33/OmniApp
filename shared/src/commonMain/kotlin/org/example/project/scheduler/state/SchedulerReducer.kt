@@ -12,6 +12,7 @@ import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CategoryRule
+import org.example.project.scheduler.model.ScheduleCycle
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -71,6 +72,17 @@ object SchedulerReducer {
     var activeWindow: () -> HistoryWindow? = { null }
 
     /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: this device's id, stamped on every unit it
+     * commits ([HistoryUnit.deviceId]) — the account's devices share one history, and undo/redo walk only the units
+     * of the device they are pressed on. The ViewModel injects the sync device id; the default names one device,
+     * which is every test and every build without sync.
+     */
+    var deviceId: () -> String = { LOCAL_DEVICE_ID }
+
+    /** The device id of a build without sync. */
+    const val LOCAL_DEVICE_ID: String = "local"
+
+    /**
      * PRD §6/§9: where a run of the scheduler is recorded ([SchedulerRunEntry] — the
      * [HistorySource.SchedulerEngine] rows of the History window), including the set of rules it ran.
      *
@@ -126,10 +138,9 @@ object SchedulerReducer {
     /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
      * ([SchedulerDomain.scheduleHorizonEndMillis] over [SchedulerDomain.scheduleGoalEndMillis]): the end of
-     * the first day of the week after the week the calendar is showing, or after the current week, whichever
-     * is further. The engine injects a provider over the day span `App.kt` publishes
-     * (`SchedulerEngine.setCalendarHorizon`); the default (no engine / tests) is the calendar-closed goal,
-     * which is all a headless app needs for its notifications and cues.
+     * the timeline the calendar shows, or `now + 10 min` if further. The engine injects a provider over the
+     * day span `App.kt` publishes (`SchedulerEngine.setCalendarHorizon`); the default (no engine / tests) is
+     * the calendar-closed goal, which is all a headless app needs for its notifications and cues.
      */
     var scheduleHorizonEndMillis: (Long) -> Long = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
 
@@ -373,8 +384,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetScreenBreaks ->
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
-            is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis)
-            is SchedulerIntent.ExtendSchedule -> reduceExtendSchedule(state, intent.nowMillis)
+            is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis, intent.horizonCapMillis)
+            is SchedulerIntent.ExtendSchedule -> reduceExtendSchedule(state, intent.nowMillis, intent.horizonCapMillis)
+            is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
             is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis)
@@ -477,6 +489,7 @@ object SchedulerReducer {
             is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
             is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
             is SchedulerIntent.RecordSupabaseUsage -> reduceRecordSupabaseUsage(state, intent)
+            is SchedulerIntent.MergePeerHistory -> reduceMergePeerHistory(state, intent)
             SchedulerIntent.Undo -> undo(state, contentCategory(state))
             SchedulerIntent.Redo -> redo(state, contentCategory(state))
             SchedulerIntent.UndoSelection -> undo(state, HistoryCategory.Selection)
@@ -2144,12 +2157,13 @@ object SchedulerReducer {
      * walk only the user changes and the schedule re-derives from whatever state they land on. A no-op
      * tick returns the same instance.
      */
-    private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+    private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long, horizonCapMillis: Long? = null): SchedulerState {
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
-        val horizon = scheduleHorizonEndMillis(nowMillis)
+        val horizon = cappedHorizon(nowMillis, horizonCapMillis)
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
+        var cycle: ScheduleCycle? = null
         val filled =
             SchedulerDomain.fillSchedule(
                 advanced,
@@ -2159,9 +2173,46 @@ object SchedulerReducer {
                 tpMode = mode,
                 horizonMillis = horizon,
                 rulesSink = { rules = it },
+                cycleSink = { cycle = it },
             )
-        val result = if (filled == advanced.panels) advanced else advanced.copy(panels = filled)
+        val result =
+            if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
+            else advanced.copy(panels = filled, scheduleCycle = cycle)
         recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules)
+        return result
+    }
+
+    /**
+     * `docs/invariants/scheduler.md` § *One device plans*: a re-plan whose runs come from the account's elected
+     * device ([SchedulerIntent.AdoptScheduleRules]). The same advance and the same fill as [reduceRefreshSchedule],
+     * with the search replaced by the placements it was handed — so this device's own environment, elapsed head
+     * and frozen past are laid exactly as its own re-plan would lay them.
+     */
+    private fun reduceAdoptScheduleRules(state: SchedulerState, intent: SchedulerIntent.AdoptScheduleRules): SchedulerState {
+        val nowMillis = intent.nowMillis
+        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
+        if (!advanced.automaticSchedule) return advanced
+        val horizon = maxOf(intent.horizonMillis, nowMillis)
+        val mode = tpMode()
+        var rules = SchedulerRunRules.EMPTY
+        var cycle: ScheduleCycle? = null
+        val filled =
+            SchedulerDomain.fillSchedule(
+                advanced,
+                nowMillis,
+                liveRest = liveRestGap(),
+                noScreenEvidence = noScreenEvidence(),
+                tpMode = mode,
+                horizonMillis = horizon,
+                rulesSink = { rules = it },
+                cycleSink = { cycle = it },
+                adoptedPlacements = intent.placements,
+                adoptedCycle = intent.cycle,
+            )
+        val result =
+            if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
+            else advanced.copy(panels = filled, scheduleCycle = cycle)
+        recordRun(SchedulerRunEntry.Kind.Adopted, nowMillis, mode, horizon, result, rules)
         return result
     }
 
@@ -2243,13 +2294,10 @@ object SchedulerReducer {
      *  - the **switch entry** ([placeSwitchEntry]) — an epsilon-long block on the task, authored by the user,
      *    which is what the calendar draws with the blue outline and the check box. It says *this task, from
      *    here* and nothing about how long;
-     *  - the **request** ([ForcedTaskStart]) — which is what carries the task past the seed, and the only
-     *    thing that can. A pre-placed block is committed service the walk steps OVER (`fillSchedule`'s
-     *    `futureBlocks`), and stepping over it sets the walk's `last`, so the never-twice-in-a-row rule
-     *    would refuse the very task just started and the starved one would take the slot an instant later.
-     *    Nor can the seed GROW: the rule that continues a chunk short of its minimum reads the recorded
-     *    PAST, and a block at the line is not in it. What makes the run a usable length is the first slot
-     *    after the seed, floored at the task's minimum by `PlanWalk.chunkMillis` — the README's soft
+     *  - the **request** ([ForcedTaskStart]) — which is what makes the task the first run after the seed.
+     *    Without it the seed is only a pre-placed block, and the best continuation after a block need not be
+     *    the same task. With it, the seed and that run are one panel on the score's clock, so criterion 2
+     *    (`docs/scheduler_score.md`) charges its shortfall until it reaches the task's minimum — the soft
      *    *Minimum Execution Time* goal, yielding as ever to whatever the timeline restricts.
      *
      * An outstanding refusal **of this same task** is cleared, as ever: the user has now said explicitly what
@@ -2331,6 +2379,12 @@ object SchedulerReducer {
         return reduceRefreshSchedule(startTaskNow(state, taskId, now), now)
     }
 
+    /** $t_{goal}$, or a progressive stage's cap when that comes first (never before the now-line). */
+    private fun cappedHorizon(nowMillis: Long, capMillis: Long?): Long {
+        val goal = scheduleHorizonEndMillis(nowMillis)
+        return if (capMillis == null) goal else minOf(goal, maxOf(nowMillis, capMillis))
+    }
+
     /**
      * PRD §9 rolling horizon ([SchedulerIntent.ExtendSchedule]): advance, then materialize the plan further
      * WITHOUT re-planning it. Everything already laid down ahead of the now-line is kept and fed to the
@@ -2338,13 +2392,14 @@ object SchedulerReducer {
      * grew (time passing, or the calendar navigating to a further week) is not a change to the scheduling
      * rules and must not rewrite what the user is looking at. A no-op tick returns the same instance.
      */
-    private fun reduceExtendSchedule(state: SchedulerState, nowMillis: Long): SchedulerState {
+    private fun reduceExtendSchedule(state: SchedulerState, nowMillis: Long, horizonCapMillis: Long? = null): SchedulerState {
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val materializedUntil = SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis)
-        val horizon = scheduleHorizonEndMillis(nowMillis)
+        val horizon = cappedHorizon(nowMillis, horizonCapMillis)
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
+        var cycle: ScheduleCycle? = null
         val filled =
             SchedulerDomain.fillSchedule(
                 advanced,
@@ -2355,8 +2410,11 @@ object SchedulerReducer {
                 horizonMillis = horizon,
                 keepExistingUntilMillis = materializedUntil,
                 rulesSink = { rules = it },
+                cycleSink = { cycle = it },
             )
-        val result = if (filled == advanced.panels) advanced else advanced.copy(panels = filled)
+        val result =
+            if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
+            else advanced.copy(panels = filled, scheduleCycle = cycle)
         recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules)
         return result
     }
@@ -2381,6 +2439,7 @@ object SchedulerReducer {
         // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).
         if (!committed.automaticSchedule) return committed
         val now = clock.nowMillis()
+        var cycle: ScheduleCycle? = null
         val filled =
             SchedulerDomain.fillSchedule(
                 committed,
@@ -2389,8 +2448,9 @@ object SchedulerReducer {
                 noScreenEvidence = noScreenEvidence(),
                 tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(now),
+                cycleSink = { cycle = it },
             )
-        return committed.copy(panels = filled)
+        return committed.copy(panels = filled, scheduleCycle = cycle)
     }
 
     /**
@@ -2412,16 +2472,18 @@ object SchedulerReducer {
             state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
         if (!updated.automaticSchedule) return updated
         val now = clock.nowMillis()
-        return updated.copy(
-            panels = SchedulerDomain.fillSchedule(
+        var cycle: ScheduleCycle? = null
+        val filled =
+            SchedulerDomain.fillSchedule(
                 updated,
                 now,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(now),
-            ),
-        )
+                cycleSink = { cycle = it },
+            )
+        return updated.copy(panels = filled, scheduleCycle = cycle)
     }
 
     /**
@@ -2432,8 +2494,8 @@ object SchedulerReducer {
      * Off-screen tasks are untouched: they are ALLOWED to run in a no-screen period (PRD §9), so their records
      * over one are true. Same reason [appendRecordOutsideNoScreen] banks their whole span.
      *
-     * Refills for the same reason [reduceRemoveRecordPeriod] does: the records seed the virtual clocks' past
-     * service, so removing some genuinely changes the plan, and the engine's signature watcher cannot see it.
+     * Refills for the same reason [reduceRemoveRecordPeriod] does: the records are the frozen past the lags
+     * are replayed from, so removing some genuinely changes the plan, and the engine's signature watcher cannot see it.
      * Returns the same instance when nothing was covered, so the start-up pass is a no-op on a clean account.
      */
     private fun reduceStripNoScreenRecords(
@@ -2492,42 +2554,129 @@ object SchedulerReducer {
         val stripped = state.copy(tasks = tasks)
         if (!stripped.automaticSchedule) return stripped
         val now = clock.nowMillis()
-        return stripped.copy(
-            panels = SchedulerDomain.fillSchedule(
+        var cycle: ScheduleCycle? = null
+        val filled =
+            SchedulerDomain.fillSchedule(
                 stripped,
                 now,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 tpMode = tpMode(),
                 horizonMillis = scheduleHorizonEndMillis(now),
-            ),
-        )
+                cycleSink = { cycle = it },
+            )
+        return stripped.copy(panels = filled, scheduleCycle = cycle)
     }
 
+    /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: undo THIS device's newest applied unit of
+     * [category] — a unit another device made is never walked, whatever it sits between.
+     */
     private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
         val history = state.histories.forCategory(category)
-        val pointer = history.pointer
-        if (pointer < 0) return state
-        val unit = history.units[pointer]
+        val me = deviceId()
+        val index = history.units.indexOfLast { it.ownedBy(me) && !it.undone }
+        if (index < 0) return state
+        val unit = history.units[index]
         val undone = unit.delta.undo(state)
-        val moved =
-            undone.copy(
-                histories = state.histories.withCategory(category, history.copy(pointer = pointer - 1)),
-            )
+        val units = history.units.toMutableList().also { it[index] = unit.copy(undone = true, changedAtMillis = clock.nowMillis()) }
+        val moved = undone.copy(histories = state.histories.withCategory(category, historyOf(units, me)))
         return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
     }
 
+    /** Redo THIS device's oldest undone unit of [category]. */
     private fun redo(state: SchedulerState, category: HistoryCategory): SchedulerState {
         val history = state.histories.forCategory(category)
-        val next = history.pointer + 1
-        if (next >= history.units.size) return state
-        val unit = history.units[next]
+        val me = deviceId()
+        val index = history.units.indexOfFirst { it.ownedBy(me) && it.undone }
+        if (index < 0) return state
+        val unit = history.units[index]
         val redone = unit.delta.redo(state)
-        val moved =
-            redone.copy(
-                histories = state.histories.withCategory(category, history.copy(pointer = next)),
-            )
+        val units = history.units.toMutableList().also { it[index] = unit.copy(undone = false, changedAtMillis = clock.nowMillis()) }
+        val moved = redone.copy(histories = state.histories.withCategory(category, historyOf(units, me)))
         return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
+    }
+
+    private fun reduceMergePeerHistory(state: SchedulerState, intent: SchedulerIntent.MergePeerHistory): SchedulerState {
+        val me = deviceId()
+        var next = state
+        for (name in intent.units.keys + intent.dropped.keys) {
+            val category = runCatching { HistoryCategory.valueOf(name) }.getOrNull() ?: continue
+            next = mergePeerUnits(next, category, intent.units[name].orEmpty(), me, intent.dropped[name].orEmpty())
+        }
+        return next
+    }
+
+    /** A category's history with its pointer on [me]'s newest applied unit (what the History window marks). */
+    internal fun historyOf(units: List<HistoryUnit>, me: String): SchedulerHistory =
+        SchedulerHistory(pointer = units.indexOfLast { it.ownedBy(me) && !it.undone }, units = units)
+
+    /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: give every unit that has no owner — written
+     * before units had one — to [me], numbered as a unit of [me] is, and undone when it sat past its category's
+     * pointer. Run on load; a no-op once every unit has an owner.
+     */
+    fun claimUnownedUnits(state: SchedulerState, me: String): SchedulerState {
+        if (state.histories.all().none { (_, h) -> h.units.any { it.deviceId.isEmpty() } }) return state
+        var histories = state.histories
+        for ((category, history) in state.histories.all()) {
+            if (history.units.none { it.deviceId.isEmpty() }) continue
+            val units = history.units.mapIndexed { index, unit ->
+                if (unit.deviceId.isNotEmpty()) unit
+                else unit.copy(
+                    deviceId = me,
+                    deviceSeq = deviceSeqOf(unit.timeMillis, unit.chronoId),
+                    undone = unit.undone || index > history.pointer,
+                    // Claimed now, so the next sync gives the account this device's older history too.
+                    changedAtMillis = clock.nowMillis(),
+                )
+            }
+            histories = histories.withCategory(category, historyOf(units, me))
+        }
+        return state.copy(histories = histories)
+    }
+
+    /**
+     * A unit's number among its device's units of a category: its commit instant and tie-break, which never repeat
+     * for one device — so a number is never handed out twice, even after the unit that had it is evicted.
+     */
+    internal fun deviceSeqOf(timeMillis: Long, chronoId: Long): Long = timeMillis * 1000 + chronoId
+
+    /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: [state]'s history of [category] with the
+     * units the account's OTHER devices have — new ones inserted in time order, known ones taking their device's
+     * `undone` flag — capped like a commit. Nothing is applied: what another device changed reaches the state
+     * through the sync of the state itself; its units are there to be seen, and undone on the device that made them.
+     */
+    fun mergePeerUnits(
+        state: SchedulerState,
+        category: HistoryCategory,
+        peerUnits: List<HistoryUnit>,
+        me: String,
+        dropped: Set<Pair<String, Long>> = emptySet(),
+    ): SchedulerState {
+        val foreign = peerUnits.filter { it.deviceId != me && it.deviceId.isNotEmpty() }
+        if (foreign.isEmpty() && dropped.isEmpty()) return state
+        val history = state.histories.forCategory(category)
+        val byIdentity = LinkedHashMap<Pair<String, Long>, HistoryUnit>()
+        for (u in history.units) byIdentity[u.deviceId to u.deviceSeq] = u
+        var changed = false
+        // A redo branch its device discarded: forgotten here too.
+        for (identity in dropped) if (identity.first != me && byIdentity.remove(identity) != null) changed = true
+        for (u in foreign) {
+            val known = byIdentity[u.deviceId to u.deviceSeq]
+            if (known == null) {
+                byIdentity[u.deviceId to u.deviceSeq] = u
+                changed = true
+            } else if (known.undone != u.undone) {
+                byIdentity[u.deviceId to u.deviceSeq] = known.copy(undone = u.undone)
+                changed = true
+            }
+        }
+        if (!changed) return state
+        val merged = byIdentity.values.sortedWith(compareBy({ it.timeMillis }, { it.chronoId }, { it.deviceId }, { it.deviceSeq }))
+        val (capped, _) = dropOldestUntainted(merged, (merged.size - MAX_HISTORY_UNITS).coerceAtLeast(0))
+        return state.copy(histories = state.histories.withCategory(category, historyOf(capped, me)))
     }
 
     /**
@@ -2700,14 +2849,13 @@ object SchedulerReducer {
         forward: Delta,
         category: HistoryCategory = HistoryCategory.Main,
     ): SchedulerState {
-        val newState = forward.redo(state)
+        val newState = forward.commit(state)
         val history = state.histories.forCategory(category)
+        val me = deviceId()
 
-        // PRD §5 Branching: a new mutation after an undo orphans the redo units — keep only the prefix
-        // up to the pointer, then append this unit after it.
-        val retained =
-            if (history.pointer == history.units.lastIndex) history.units
-            else history.units.take(history.pointer + 1)
+        // PRD §5 Branching: a new mutation after an undo orphans the redo units — THIS device's undone units are
+        // dropped (`docs/invariants/persistence.md` § *One history, per-device undo*); another device's are its own.
+        val retained = history.units.filterNot { it.ownedBy(me) && it.undone }
 
         // PRD §5/§6: a live-edited field commits on every keystroke, so a unit carrying a
         // [Delta.coalesceKey] is offered to the unit at the pointer first — the same field, in the same
@@ -2715,58 +2863,52 @@ object SchedulerReducer {
         // timestamp (the gesture began there) and its `before` side, so undoing walks the whole edit back
         // to what the field held when it took the focus. Nothing is appended, so the cap cannot bite here.
         if (forward.coalesceKey != null) {
-            val previous = retained.lastOrNull()
+            val previousIndex = retained.indexOfLast { it.ownedBy(me) }
+            val previous = retained.getOrNull(previousIndex)
             val merged = previous?.let { forward.coalesceOnto(it.delta) }
             if (merged != null) {
                 val absorbed =
-                    retained.dropLast(1) +
-                        previous.copy(
-                            delta = merged,
-                            // A gesture that began on the real clock and ended on the diverged one is
-                            // tainted: the restart rollback must still reach it.
-                            debugTainted = previous.debugTainted || debugTainting(),
-                        )
-                return newState.copy(
-                    histories =
-                        state.histories.withCategory(
-                            category,
-                            history.copy(pointer = absorbed.lastIndex, units = absorbed),
-                        ),
-                )
+                    retained.toMutableList().also {
+                        it[previousIndex] =
+                            previous.copy(
+                                delta = merged,
+                                // A gesture that began on the real clock and ended on the diverged one is
+                                // tainted: the restart rollback must still reach it.
+                                debugTainted = previous.debugTainted || debugTainting(),
+                                changedAtMillis = clock.nowMillis(),
+                            )
+                    }
+                return newState.copy(histories = state.histories.withCategory(category, historyOf(absorbed, me)))
             }
         }
 
         // PRD §6: stamp the change's wall-clock time; chronoId stays 0 unless an already-retained unit
         // shares this exact timestamp, in which case it is the next tie-break index (1, 2, …).
         val now = clock.nowMillis()
+        val chronoId = retained.count { it.timeMillis == now }.toLong()
         val newUnit =
             HistoryUnit(
                 timeMillis = now,
-                chronoId = retained.count { it.timeMillis == now }.toLong(),
+                chronoId = chronoId,
                 delta = forward,
                 debugTainted = debugTainting(),
                 // PRD §6: where the change was made. A merged gesture above keeps the previous unit's
                 // window along with its timestamp — one gesture is one window.
                 window = activeWindow(),
+                deviceId = me,
+                deviceSeq = deviceSeqOf(now, chronoId),
+                changedAtMillis = now,
             )
         val appendedUnits = retained + newUnit
-        val appendedPointer = retained.size
 
         // PRD §5: each category's history list is capped — drop the oldest units once it exceeds
         // [MAX_HISTORY_UNITS], shifting the pointer back by however many were removed. Debug-tainted
         // units are exempt from the cap: dropping one would break the chain the restart rollback walks,
         // leaving a half-reverted state, so only the oldest *untainted* units are evicted.
         val overflow = (appendedUnits.size - MAX_HISTORY_UNITS).coerceAtLeast(0)
-        val (cappedUnits, removed) = dropOldestUntainted(appendedUnits, overflow)
-        val cappedPointer = appendedPointer - removed
+        val (cappedUnits, _) = dropOldestUntainted(appendedUnits, overflow)
 
-        return newState.copy(
-            histories =
-                state.histories.withCategory(
-                    category,
-                    history.copy(pointer = cappedPointer, units = cappedUnits),
-                ),
-        )
+        return newState.copy(histories = state.histories.withCategory(category, historyOf(cappedUnits, me)))
     }
 
     /**
@@ -2829,9 +2971,10 @@ object SchedulerReducer {
         val histories = state.histories
         if (!histories.hasPendingDebugRollback) return state
 
+        val me = deviceId()
         val appliedTainted =
             histories.all().flatMap { (_, history) ->
-                history.units.filterIndexed { index, unit -> unit.debugTainted && index <= history.pointer }
+                history.units.filter { unit -> unit.debugTainted && unit.ownedBy(me) && !unit.undone }
             }.sortedWith(
                 compareByDescending<HistoryUnit> { it.timeMillis }.thenByDescending { it.chronoId },
             )
@@ -2841,20 +2984,7 @@ object SchedulerReducer {
         var newHistories = histories
         for ((category, history) in histories.all()) {
             if (history.units.none { it.debugTainted }) continue
-            val kept = ArrayList<HistoryUnit>(history.units.size)
-            var droppedAtOrBeforePointer = 0
-            history.units.forEachIndexed { index, unit ->
-                if (unit.debugTainted) {
-                    if (index <= history.pointer) droppedAtOrBeforePointer++
-                } else {
-                    kept.add(unit)
-                }
-            }
-            newHistories =
-                newHistories.withCategory(
-                    category,
-                    history.copy(units = kept, pointer = history.pointer - droppedAtOrBeforePointer),
-                )
+            newHistories = newHistories.withCategory(category, historyOf(history.units.filterNot { it.debugTainted }, me))
         }
         return reverted.copy(histories = newHistories)
     }
@@ -4590,22 +4720,31 @@ private fun applySetCellTitle(
 }
 
 internal data class EmptyCellsDelta(
-    val treeBefore: TreeSnapshot,
-    val treeAfter: TreeSnapshot,
+    val diff: TreeDiff,
     val selectionBefore: SchedulerSelection,
     val selectionAfter: SchedulerSelection,
     // PRD §13: Ctrl+X empties the same cells, so the unit the History window shows says "Cut" instead.
     override val label: String = "Clear cells",
 ) : Delta {
+    constructor(
+        treeBefore: TreeSnapshot,
+        treeAfter: TreeSnapshot,
+        selectionBefore: SchedulerSelection,
+        selectionAfter: SchedulerSelection,
+        label: String = "Clear cells",
+    ) : this(TreeDiff.of(treeBefore, treeAfter), selectionBefore, selectionAfter, label)
 
     override val details: List<String>
-        get() = treeDiffLines(treeBefore, treeAfter) + selectionDiffLines(selectionBefore, selectionAfter)
+        get() = treeDiffLines(diff) + selectionDiffLines(selectionBefore, selectionAfter)
 
     override fun undo(state: SchedulerState): SchedulerState =
-        state.applyTree(treeBefore).copy(selection = selectionBefore)
+        diff.applyTo(state, forward = false).copy(selection = selectionBefore)
 
     override fun redo(state: SchedulerState): SchedulerState =
-        state.applyTree(treeAfter).copy(selection = selectionAfter)
+        diff.applyTo(state, forward = true).copy(selection = selectionAfter)
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        diff.applyTo(state, forward = true, exact = true).copy(selection = selectionAfter)
 }
 
 internal data class SetSelectionDelta(
@@ -4644,16 +4783,24 @@ internal data class FocusDelta(
  * no history unit.
  */
 internal data class PanelDelta(
-    val before: List<TaskPanel>,
-    val after: List<TaskPanel>,
+    val changes: EntryChanges<String, TaskPanel>,
     override val label: String = "Calendar edit",
 ) : Delta {
+    /** Built from the whole panel list before and after; only the panels that differ are kept. */
+    constructor(before: List<TaskPanel>, after: List<TaskPanel>, label: String = "Calendar edit") :
+        this(EntryChanges.ofList(before, after) { it.id }, label)
+
     override val details: List<String>
-        get() = panelDiffLines(before, after)
+        get() = panelDiffLines(changes)
 
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(panels = before)
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(panels = changes.applyToList(state.panels, forward = false) { it.id })
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(panels = after)
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(panels = changes.applyToList(state.panels, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(panels = changes.applyToList(state.panels, forward = true, exact = true) { it.id })
 }
 
 /**
@@ -4661,17 +4808,18 @@ internal data class PanelDelta(
  * whole path, unlike [ToggleExpandDelta] which is one cell — see [SchedulerReducer.reduceRevealCell].
  */
 internal data class SetExpandedDelta(
-    val before: Set<CellId>,
-    val after: Set<CellId>,
+    val changes: SetChanges<CellId>,
 ) : Delta {
+    constructor(before: Set<CellId>, after: Set<CellId>) : this(SetChanges.of(before, after))
+
     override val label: String = "Expand"
 
     override val details: List<String>
-        get() = (after - before).map { "expand ${it.value}" } + (before - after).map { "collapse ${it.value}" }
+        get() = changes.added.map { "expand ${it.value}" } + changes.removed.map { "collapse ${it.value}" }
 
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(expanded = before)
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(expanded = changes.applyTo(state.expanded, forward = false))
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(expanded = after)
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(expanded = changes.applyTo(state.expanded, forward = true))
 }
 
 internal data class ToggleExpandDelta(
@@ -4699,16 +4847,20 @@ internal data class ToggleExpandDelta(
 }
 
 internal data class TreeMutationDelta(
-    val before: TreeSnapshot,
-    val after: TreeSnapshot,
+    val diff: TreeDiff,
     override val label: String = "Tree change",
 ) : Delta {
+    /** Built from the whole tree before and after the change; only what differs is kept ([TreeDiff]). */
+    constructor(before: TreeSnapshot, after: TreeSnapshot, label: String = "Tree change") : this(TreeDiff.of(before, after), label)
+
     override val details: List<String>
-        get() = treeDiffLines(before, after)
+        get() = treeDiffLines(diff)
 
-    override fun undo(state: SchedulerState): SchedulerState = state.applyTree(before)
+    override fun undo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = false)
 
-    override fun redo(state: SchedulerState): SchedulerState = state.applyTree(after)
+    override fun redo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true)
+
+    override fun commit(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true, exact = true)
 }
 
 /**
@@ -4718,29 +4870,26 @@ internal data class TreeMutationDelta(
  * must put every part back together.
  */
 internal data class TaskTreeDelta(
-    val before: TaskTreeStateSnapshot,
-    val after: TaskTreeStateSnapshot,
+    val diff: TaskTreesDiff,
     override val label: String,
 ) : Delta {
+    constructor(before: TaskTreeStateSnapshot, after: TaskTreeStateSnapshot, label: String) : this(TaskTreesDiff.of(before, after), label)
+
     override val details: List<String>
         get() = buildList {
-            val b = before.trees.associate { it.id to it.title }
-            val a = after.trees.associate { it.id to it.title }
-            (a.keys - b.keys).forEach { add("+ tree \"${a.getValue(it)}\"") }
-            (b.keys - a.keys).forEach { add("− tree \"${b.getValue(it)}\"") }
-            (b.keys intersect a.keys).forEach { id ->
-                if (b.getValue(id) != a.getValue(id)) add("\"${b.getValue(id)}\" → \"${a.getValue(id)}\"")
-            }
-            if (before.activeId != after.activeId) {
-                val from = before.activeId?.let { b[it] } ?: "—"
-                val to = after.activeId?.let { a[it] } ?: "—"
-                add("selected: \"$from\" → \"$to\"")
+            diff.added.forEach { add("+ tree \"${it.title}\"") }
+            diff.removed.forEach { add("− tree \"${it.title}\"") }
+            diff.changed.forEach { if (it.titleBefore != it.titleAfter) add("\"${it.titleBefore}\" → \"${it.titleAfter}\"") }
+            if (diff.activeBefore != diff.activeAfter) {
+                add("selected: ${diff.activeBefore?.value ?: "—"} → ${diff.activeAfter?.value ?: "—"}")
             }
         }
 
-    override fun undo(state: SchedulerState): SchedulerState = state.applyTaskTreeState(before)
+    override fun undo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = false)
 
-    override fun redo(state: SchedulerState): SchedulerState = state.applyTaskTreeState(after)
+    override fun redo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true)
+
+    override fun commit(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true, exact = true)
 }
 
 /**
@@ -4786,26 +4935,49 @@ internal object NoOpDelta : Delta {
  * is not part of either side.
  */
 internal data class DefaultSubtreeDelta(
-    val before: DefaultSubtreeTemplate,
-    val after: DefaultSubtreeTemplate,
+    val tree: TreeDiff,
+    val expanded: SetChanges<CellId>,
+    val boundCells: SetChanges<CellId>,
     override val label: String,
 ) : Delta {
+    constructor(before: DefaultSubtreeTemplate, after: DefaultSubtreeTemplate, label: String) :
+        this(
+            TreeDiff.of(before.tree, after.tree),
+            SetChanges.of(before.expanded, after.expanded),
+            SetChanges.of(before.boundCells, after.boundCells),
+            label,
+        )
+
     override val details: List<String>
         get() = buildList {
-            val b = before.tree.tasks.mapValues { it.value.title }
-            val a = after.tree.tasks.mapValues { it.value.title }
+            val b = tree.tasks.before.mapValues { it.value.title }
+            val a = tree.tasks.after.mapValues { it.value.title }
             (a.keys - b.keys).forEach { a.getValue(it).ifBlank { null }?.let { t -> add("+ \"$t\"") } }
             (b.keys - a.keys).forEach { b.getValue(it).ifBlank { null }?.let { t -> add("− \"$t\"") } }
             (b.keys intersect a.keys).forEach { id ->
                 if (b.getValue(id) != a.getValue(id)) add("\"${b.getValue(id)}\" → \"${a.getValue(id)}\"")
             }
-            (after.boundCells - before.boundCells).forEach { add("switch off: ${it.value}") }
-            (before.boundCells - after.boundCells).forEach { add("switch on: ${it.value}") }
+            boundCells.added.forEach { add("switch off: ${it.value}") }
+            boundCells.removed.forEach { add("switch on: ${it.value}") }
         }
 
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(defaultSubtree = before)
+    override fun commit(state: SchedulerState): SchedulerState = apply(state, forward = true, exact = true)
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(defaultSubtree = after)
+    private fun apply(state: SchedulerState, forward: Boolean, exact: Boolean = false): SchedulerState {
+        val template = state.defaultSubtree
+        return state.copy(
+            defaultSubtree =
+                template.copy(
+                    tree = tree.applyTo(template.tree, forward, exact),
+                    expanded = expanded.applyTo(template.expanded, forward),
+                    boundCells = boundCells.applyTo(template.boundCells, forward),
+                ),
+        )
+    }
+
+    override fun undo(state: SchedulerState): SchedulerState = apply(state, forward = false)
+
+    override fun redo(state: SchedulerState): SchedulerState = apply(state, forward = true)
 }
 
 /**
@@ -4816,33 +4988,23 @@ internal data class DefaultSubtreeDelta(
  * tasks' records (before/after) so undo/redo touch nothing else.
  */
 internal data class RecordDelta(
-    val before: Map<TaskId, List<TaskTimeRange>>,
-    val after: Map<TaskId, List<TaskTimeRange>>,
+    val changes: RecordChanges,
 ) : Delta {
+    constructor(before: Map<TaskId, List<TaskTimeRange>>, after: Map<TaskId, List<TaskTimeRange>>) :
+        this(RecordChanges.of(before, after))
+
     override val label: String = "Record work"
 
     override val details: List<String>
-        get() = (before.keys + after.keys).distinct().mapNotNull { id ->
-            val b = before[id].orEmpty().size
-            val a = after[id].orEmpty().size
-            if (a != b) "${id.value}: $b → $a periods" else null
+        get() = changes.tasks.mapNotNull { id ->
+            val plus = changes.added[id].orEmpty().size
+            val minus = changes.removed[id].orEmpty().size
+            if (plus != minus) "${id.value}: +$plus −$minus periods" else null
         }
 
-    override fun undo(state: SchedulerState): SchedulerState = applyRecords(state, before)
+    override fun undo(state: SchedulerState): SchedulerState = changes.applyTo(state, forward = false)
 
-    override fun redo(state: SchedulerState): SchedulerState = applyRecords(state, after)
-
-    private fun applyRecords(
-        state: SchedulerState,
-        records: Map<TaskId, List<TaskTimeRange>>,
-    ): SchedulerState {
-        var tasks = state.tasks
-        for ((id, rec) in records) {
-            val task = tasks[id] ?: continue
-            tasks = tasks + (id to task.copy(record = rec))
-        }
-        return state.copy(tasks = tasks)
-    }
+    override fun redo(state: SchedulerState): SchedulerState = changes.applyTo(state, forward = true)
 }
 
 /**
@@ -4891,23 +5053,31 @@ internal data class SleepDelta(
  * [Delta.coalesceKey]).
  */
 internal data class AlarmsDelta(
-    val before: List<org.example.project.scheduler.model.AlarmEntry>,
-    val after: List<org.example.project.scheduler.model.AlarmEntry>,
+    val changes: EntryChanges<String, org.example.project.scheduler.model.AlarmEntry>,
     override val coalesceKey: String? = null,
 ) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.model.AlarmEntry>,
+        after: List<org.example.project.scheduler.model.AlarmEntry>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
     override val label: String
-        get() = listLabel(before.map { it.id }, after.map { it.id }, "alarm")
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "alarm")
 
     override val details: List<String>
-        get() = alarmDetails(before, after)
+        get() = alarmDetails(changes.before.values.toList(), changes.after.values.toList())
 
     override fun coalesceOnto(previous: Delta): Delta? =
-        if (previous is AlarmsDelta && previous.coalesceKey == coalesceKey) copy(before = previous.before)
+        if (previous is AlarmsDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
         else null
 
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(alarms = before)
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(alarms = changes.applyToList(state.alarms, forward = false) { it.id })
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(alarms = after)
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(alarms = changes.applyToList(state.alarms, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(alarms = changes.applyToList(state.alarms, forward = true, exact = true) { it.id })
 }
 
 /**
@@ -4920,23 +5090,31 @@ internal data class AlarmsDelta(
  * records is a run-state *transition*: those are not units at all (see [SchedulerIntent.StartTimer]).
  */
 internal data class TimersDelta(
-    val before: List<org.example.project.scheduler.model.TimerEntry>,
-    val after: List<org.example.project.scheduler.model.TimerEntry>,
+    val changes: EntryChanges<String, org.example.project.scheduler.model.TimerEntry>,
     override val coalesceKey: String? = null,
 ) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.model.TimerEntry>,
+        after: List<org.example.project.scheduler.model.TimerEntry>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
     override val label: String
-        get() = listLabel(before.map { it.id }, after.map { it.id }, "timer")
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "timer")
 
     override val details: List<String>
-        get() = timerDetails(before, after)
+        get() = timerDetails(changes.before.values.toList(), changes.after.values.toList())
 
     override fun coalesceOnto(previous: Delta): Delta? =
-        if (previous is TimersDelta && previous.coalesceKey == coalesceKey) copy(before = previous.before)
+        if (previous is TimersDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
         else null
 
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(timers = before)
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(timers = changes.applyToList(state.timers, forward = false) { it.id })
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(timers = after)
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(timers = changes.applyToList(state.timers, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(timers = changes.applyToList(state.timers, forward = true, exact = true) { it.id })
 }
 
 /**
@@ -5061,38 +5239,34 @@ private fun TreeSnapshot.cellHasContent(cellId: CellId): Boolean =
  * and the trailing sibling placeholder), not authored content — they are deduced from the populated
  * cells and re-derived on undo/redo, so they are not listed as part of the unit's delta.
  */
-private fun treeDiffLines(before: TreeSnapshot, after: TreeSnapshot): List<String> {
+private fun treeDiffLines(diff: TreeDiff): List<String> {
     val lines = mutableListOf<String>()
-    (after.cells.keys - before.cells.keys)
-        .filter { after.cellHasContent(it) }
-        .forEach { lines += "+ cell \"${after.cellTitle(it)}\"" }
-    (before.cells.keys - after.cells.keys)
-        .filter { before.cellHasContent(it) }
-        .forEach { lines += "− cell \"${before.cellTitle(it)}\"" }
-    (before.cells.keys intersect after.cells.keys).forEach { id ->
-        val bt = before.cellTitle(id)
-        val at = after.cellTitle(id)
-        if (bt != at) lines += "\"$bt\" → \"$at\""
-        val bw = before.cells.getValue(id).priorityWeights
-        val aw = after.cells.getValue(id).priorityWeights
-        if (bw != aw) lines += "weights \"$at\": $bw → $aw"
+    fun title(cells: Map<CellId, Cell>, tasks: Map<TaskId, Task>, id: CellId): String =
+        cells[id]?.taskId?.let { tasks[it]?.title }?.takeIf { it.isNotBlank() } ?: "∅"
+    val c = diff.cells
+    val t = diff.tasks
+    (c.after.keys - c.before.keys).map { title(c.after, t.after, it) }.filter { it != "∅" }.forEach { lines += "+ cell \"$it\"" }
+    (c.before.keys - c.after.keys).map { title(c.before, t.before, it) }.filter { it != "∅" }.forEach { lines += "− cell \"$it\"" }
+    (c.before.keys intersect c.after.keys).forEach { id ->
+        // A cell that now points at another task (a title typed into an empty cell creates one) reads as its title.
+        val bt = title(c.before, t.before, id)
+        val at = title(c.after, t.after, id)
+        if (c.before.getValue(id).taskId != c.after.getValue(id).taskId && bt != at) lines += "\"$bt\" → \"$at\""
+        val bw = c.before.getValue(id).priorityWeights
+        val aw = c.after.getValue(id).priorityWeights
+        if (bw != aw) lines += "weights \"${title(c.after, t.after, id)}\": $bw → $aw"
     }
-    (before.tasks.keys intersect after.tasks.keys).forEach { id ->
-        val b = before.tasks.getValue(id)
-        val a = after.tasks.getValue(id)
-        if (b.minimumMinutes != a.minimumMinutes) {
-            lines += "min \"${a.title}\": ${b.minimumMinutes} → ${a.minimumMinutes} min"
-        }
-        if (b.scheduleUnit != a.scheduleUnit) {
-            lines += "schedule unit \"${a.title}\": ${b.scheduleUnit.size} → ${a.scheduleUnit.size} step(s)"
-        }
-        if (b.text != a.text) {
-            lines += "text \"${a.title}\": ${b.text.length} → ${a.text.length} char(s)"
-        }
+    (t.before.keys intersect t.after.keys).forEach { id ->
+        val b = t.before.getValue(id)
+        val a = t.after.getValue(id)
+        if (b.title != a.title) lines += "\"${b.title.ifBlank { "∅" }}\" → \"${a.title.ifBlank { "∅" }}\""
+        if (b.minimumMinutes != a.minimumMinutes) lines += "min \"${a.title}\": ${b.minimumMinutes} → ${a.minimumMinutes} min"
+        if (b.scheduleUnit != a.scheduleUnit) lines += "schedule unit \"${a.title}\": ${b.scheduleUnit.size} → ${a.scheduleUnit.size} step(s)"
+        if (b.text != a.text) lines += "text \"${a.title}\": ${b.text.length} → ${a.text.length} char(s)"
     }
-    (before.lists.keys intersect after.lists.keys).forEach { id ->
-        val bc = before.lists.getValue(id).weightColumns
-        val ac = after.lists.getValue(id).weightColumns
+    (diff.lists.before.keys intersect diff.lists.after.keys).forEach { id ->
+        val bc = diff.lists.before.getValue(id).weightColumns
+        val ac = diff.lists.after.getValue(id).weightColumns
         if (bc != ac) lines += "columns: $bc → $ac"
     }
     return lines
@@ -5111,10 +5285,10 @@ private fun selectionDiffLines(before: SchedulerSelection, after: SchedulerSelec
 }
 
 /** Specifics of a panel-list change: added (+), removed (−) and modified (~) blocks, with title + time. */
-private fun panelDiffLines(before: List<TaskPanel>, after: List<TaskPanel>): List<String> {
+private fun panelDiffLines(changes: EntryChanges<String, TaskPanel>): List<String> {
     val lines = mutableListOf<String>()
-    val beforeById = before.associateBy { it.id }
-    val afterById = after.associateBy { it.id }
+    val beforeById = changes.before
+    val afterById = changes.after
     (afterById.keys - beforeById.keys).forEach { lines += "+ ${panelSummary(afterById.getValue(it))}" }
     (beforeById.keys - afterById.keys).forEach { lines += "− ${panelSummary(beforeById.getValue(it))}" }
     (beforeById.keys intersect afterById.keys).forEach { id ->

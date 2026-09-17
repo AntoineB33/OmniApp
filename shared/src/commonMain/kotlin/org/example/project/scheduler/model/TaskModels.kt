@@ -444,6 +444,49 @@ data class PanelPins(
     val distanceRefStartMillis: Long? = null,
 )
 
+/** From [fromMillis] on, the alternative schedule inside a panel is [taskId] (null: nobody else may run). */
+data class AlternativeSpan(val fromMillis: Long, val taskId: TaskId?)
+
+/**
+ * `docs/scheduler_score.md` § *The rules repeat*: the part of a set of rules that repeats forever. One
+ * repetition is [runs], back to back on the **schedulable clock** (a stretch nobody may run in is transparent to
+ * it, so a night or a break never shifts the pattern); the first repetition starts at the wall instant
+ * [anchorMillis]. Unrolling it over the environment gives the schedule for any later instant without searching.
+ *
+ * It holds only while nothing it did not see changes: [ruleStateHash] is the rule state it was found under, and
+ * [environmentHash] the multipliers of the uniform stretch it repeated over; unrolling refuses a stretch whose
+ * environment is not that one (a pre-placed task, a period that treats the tasks differently).
+ */
+data class ScheduleCycle(
+    val anchorMillis: Long,
+    val runs: List<CycleRun>,
+    val ruleStateHash: Int,
+    val environmentHash: Int,
+    /**
+     * True when the runs were seen repeating; false when the fill reached the limit on how far the rules are searched
+     * without that, and this is the closest approximate repetition — `docs/scheduler_score.md` § *Degradation*.
+     */
+    val exact: Boolean = true,
+) {
+    /** One repetition's schedulable length. */
+    val lengthMillis: Double get() = runs.sumOf { it.lengthMillis }
+}
+
+/**
+ * One run of a set of rules another device of the account returned (`docs/invariants/scheduler.md` § *One device
+ * plans*): the task, its wall-clock stretch, and the alternative schedule inside it.
+ */
+data class RulePlacement(
+    val taskId: TaskId,
+    val startMillis: Long,
+    val endMillis: Long,
+    val alternativeTaskId: TaskId?,
+    val alternativeSpans: List<AlternativeSpan> = emptyList(),
+)
+
+/** One run of a [ScheduleCycle]: who runs, for how much schedulable time, and the alternative meanwhile. */
+data class CycleRun(val taskId: TaskId, val lengthMillis: Double, val alternativeTaskId: TaskId?)
+
 data class TaskPanel(
     val id: String,
     val taskId: TaskId?,
@@ -561,14 +604,26 @@ data class TaskPanel(
      * a reminder tag — and on a stretch only one task was allowed in, where there is nobody to name and
      * "the same task again" would be no answer at all.
      *
-     * **Derived, never persisted and never synced** (CLAUDE.md § *State*): it is a function of the walk at
+     * **Derived, never persisted and never synced** (CLAUDE.md § *State*): it is a function of the search at
      * the instant the panel was placed, recomputed in full by every fill exactly as the panel itself is. The
-     * README's own use of it is PRD §7 "Switch task" — refuse the scheduled task and the fill's next pick IS
-     * this one, because [org.example.project.scheduler.domain.PlanWalk.alternative] and the refused pick's
-     * `avoidLast` are the same ordering over the same claims.
+     * requirements' own use of it is PRD §7 "Switch task" — refuse the scheduled task and the fill's first run
+     * is the best one among the others, which is how the alternative is named
+     * ([org.example.project.scheduler.domain.ScheduleOptimizer.Evaluation.alternativeTo]).
      */
     val alternativeTaskId: TaskId? = null,
+    /**
+     * `docs/scheduler_requirements.md` § *Alternative Schedules* asks for the alternative **for every $now
+     * line$**, and inside one panel the answer can change as the line moves through it. [alternativeTaskId] is
+     * the answer at the panel's start; each entry here is where a different answer takes over, in time order.
+     * Derived exactly like [alternativeTaskId]: never persisted, never synced.
+     */
+    val alternativeSpans: List<AlternativeSpan> = emptyList(),
 ) {
+    /** The alternative schedule at [millis] inside this panel (see [alternativeSpans]). */
+    fun alternativeAt(millis: Long): TaskId? {
+        val span = alternativeSpans.lastOrNull { it.fromMillis <= millis } ?: return alternativeTaskId
+        return span.taskId
+    }
     /**
      * The README kind this panel restricts the timeline with, or blank when it restricts nothing. The ONE
      * reading of a panel's kind: [periodKind] when it has one, else the kind its legacy flag stands for.
@@ -598,10 +653,9 @@ data class TaskPanel(
  * the now-line sitting on [taskId] at [atMillis], asked for *something else* to start there.
  *
  * It is expressed as a fact about the PAST rather than as a ban on the future, because that is the shape the
- * scheduling model already has: the walk never picks the same task twice in a row
- * ([org.example.project.scheduler.domain.PlanWalk.setLast]), so "the task the timeline just left off with" is
- * exactly the lever this needs, and the refusal costs the plan nothing else — [taskId] is free again from the
- * second slot on, with its virtual clock untouched. The one escape is the model's own: a task nobody can
+ * scheduling model already has: the fill's first run may not be [taskId] while anybody else may run
+ * (`refusedFirst`), and the refusal costs the plan nothing else — [taskId] is free again from the second run
+ * on, with its lag untouched. The one escape is the model's own: a task nobody can
  * replace (the sole candidate in the period) still runs, since the alternative is leaving the timeline empty.
  *
  * **Live only while it is still outstanding.** The refusal is honoured by every re-plan until some *other*
@@ -626,10 +680,9 @@ data class ForcedTaskSwitch(
  * [ForcedTaskSwitch] — the user named [taskId] at [atMillis] and the plan must start *that* task there.
  *
  * The two are deliberately the same shape, because they are the same lever read from the two ends: a refusal
- * says which task the walk must not pick at the cursor, a request says which one it must. Neither is a rule
- * change — [taskId] is charged for the slot exactly as if the walk had chosen it
- * ([org.example.project.scheduler.domain.PlanWalk.serve]), so it pays for the time in its own virtual clock
- * and the schedule after it is the same schedule the walk would have gone on with. It costs nothing to
+ * says which task the first run must not be, a request says which one it must be. Neither is a rule
+ * change — [taskId] is served for the run exactly as if the search had chosen it, so the time
+ * counts in its own lag and the schedule after it is the best continuation from there. It costs nothing to
  * anybody else either: only the FIRST slot of the fill is named, the rest is the ordinary walk.
  *
  * **Live only while it is still outstanding**, judged by exactly the predicate [ForcedTaskSwitch] uses: until

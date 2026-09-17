@@ -62,13 +62,17 @@ was rebuilt.
 These bite in code that does not look like it belongs to the subsystem that owns them. They are the short
 form; the file named after each one carries the whole rule and the reasons.
 
+- **What the server stores and serves is budgeted: a tenth of every Supabase free-tier quota, gated by
+  `ServerQuotaTest`.** The project went down on 2026-09-14 with its 500 MB database full of versions of one
+  document rewritten per edit. Never write a large row to change a small part of it, never keep rows that grow with
+  editing without a purge the test can read, and never publish a row table to Realtime. `server-quota.md`.
 - **Never add a timer-driven request, poll or heartbeat.** Everything is event-driven or boundary-driven: the
   server traffic budget (`pause-cue.md`), the unlock edge that clears "I'm away", the display resample
   (`display-hot-path.md`). A `while(true) { delay() }` that re-asks a question is almost always the wrong
   shape here.
 - **Time passing must never re-plan continuously.** Anything that wants to trigger a re-plan belongs in
   `SchedulerDomain.schedulingSignature` (or `requestReschedule`), never in a fresh dispatch site or a tick.
-  Two quantized exceptions exist and are named in `scheduler.md`.
+  Two bounded exceptions exist and are named in `scheduler.md`.
 - **Anything recomputed on every `nowMillis` tick must be bounded by the visible window, never O(total
   history)** — and what the calendar *composes* is bounded too. `display-hot-path.md`.
 - **One rule, one funnel.** Nearly every regression recorded in `docs/adr/` is a second copy of a rule that
@@ -103,14 +107,17 @@ re-derives something mark the state dirty or trigger a sync push.
 | Class | Contents | Rule |
 | --- | --- | --- |
 | **Authoritative** | task tree (task **resilience** included), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running** included), settings, the system-wide chord bindings, the **task relations** the user kept or struck off, the account's **categories** and their **rules**, the **pins** of both priority windows, Undo/Redo history units, manual record edits | persist + sync |
-| **Derived** | auto/screen-break/sleep panels, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks | persisted locally, **stripped from the wire**, never trigger a push on their own |
-| **Local-only view state** | focused window, tree selection, the "All tasks" window's own expansion/selection/edit session, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint, the refused-edit notice (`categoryRuleError`, not even persisted) | persist locally, **never sync** |
+| **Derived** | auto/screen-break/sleep panels, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks, the rules' repeating part (`scheduleCycle` — in memory only, not even persisted), the elected device's rules on the peers' broadcast channel (never stored, adopted as derived panels) | persisted locally, **stripped from the wire**, never trigger a push on their own |
+| **Local-only view state** | focused window, tree selection, the "All tasks" window's own expansion/selection/edit session, `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement, OS-sleep scan checkpoint, the device's work-offline choice, the refused-edit notice (`categoryRuleError`, not even persisted) | persist locally, **never sync** |
 
 - Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a
   pull by `withLocalViewStateFrom`.
 - Calendar zoom is Compose-only state — never persisted at all.
-- The one deliberate exception: the whole-state snapshot is replayable from history units, but history is
-  bounded (`MAX_HISTORY_UNITS`), so the snapshot stays authoritative.
+- The one deliberate exception: the state is replayable from history units, but history is bounded
+  (`MAX_HISTORY_UNITS`), so the entity rows stay authoritative.
+- Authoritative state syncs as **one row per entity** and each History Unit as **one row**; the units are shared by
+  every device, but Undo/Redo act only on this device's own (`sync-and-accounts.md` § *Sync by rows*,
+  `persistence.md`).
 
 ### Persisted-DB compatibility
 
@@ -133,14 +140,15 @@ where a change spans them (they cross-reference each other).
 
 | Read | Before touching | Mostly lives in |
 | --- | --- | --- |
-| `docs/invariants/scheduler.md` | the plan, the walk, claims/chunks, resilience, restrictive periods, what reaches the scheduler, when the plan is recomputed | `scheduler/domain/SchedulerPlan.kt`, `SchedulerDomain.kt`, `PeriodKinds.kt` |
+| `docs/invariants/scheduler.md` | the plan, the score and its search, resilience, restrictive periods, what reaches the scheduler, progressive calculation, when the plan is recomputed | `scheduler/domain/ScheduleScore.kt`, `ScheduleOptimizer.kt`, `ScheduleImprover.kt`, `ScheduleFill.kt`, `SchedulerDomain.kt`, `PeriodKinds.kt` |
 | `docs/invariants/screen-breaks.md` | the three dynamic periods, the `t_p` mode, the now-line sweep, every notification / voice cue, the Notifications switch | `scheduler/domain/DynamicPeriods.kt`, `scheduler/engine/` |
 | `docs/invariants/calendar.md` | the grid, layers, grey periods, hover bubbles, the now-line, panel menus, what may be banked as a record | `ui/CalendarUi.kt` |
-| `docs/invariants/display-hot-path.md` | anything on a per-tick or per-frame path, the resample delay, the schedule horizon | `ui/CalendarUi.kt`, `App.kt`, `scheduler/domain/SchedulerProgressive.kt` |
+| `docs/invariants/display-hot-path.md` | anything on a per-tick or per-frame path, the resample delay, the schedule horizon | `ui/CalendarUi.kt`, `App.kt`, `scheduler/engine/SchedulerEngine.kt` |
 | `docs/invariants/popups.md` | any pop-up window, transient or otherwise | `ui/PopupWindows.kt` |
 | `docs/invariants/priorities.md` | relative priority, the weight table, the task-relations list, categories and category rules | `scheduler/domain/RelativePriority.kt`, `CategoryRules.kt`, `TaskRelations.kt` |
 | `docs/invariants/task-tree.md` | the tree and its three drawings, sub-list ownership, the clipboard, find & replace, task colours, the "All tasks" window, the default sub-tree, task trees, the timeline blend | `scheduler/ui/TaskTreeView.kt`, `scheduler/state/`, `scheduler/domain/TaskColorSpace.kt` |
-| `docs/invariants/sync-and-accounts.md` | accounts, partitions, the reconcile, the three-way merge | `scheduler/sync/` |
+| `docs/invariants/sync-and-accounts.md` | accounts, partitions, the reconcile, sync by rows, the three-way merge | `scheduler/sync/` |
+| `docs/invariants/server-quota.md` | anything that sends, stores or publishes on Supabase: a table, a column, a request, a Realtime stream, a cron job | `supabase/`, `scheduler/sync/`, `jvmTest/.../quota/` |
 | `docs/invariants/pause-cue.md` | presence, the Edge Functions, the cron, the traffic budget | `supabase/`, `scheduler/sync/` |
 | `docs/invariants/persistence.md` | history units, the store, the SQLite driver and its pragmas | `scheduler/persistence/` |
 | `docs/invariants/alarms-and-timers.md` | alarms, timers, the arming loop and the ring sweep | `scheduler/domain/AlarmDomain.kt`, `TimerDomain.kt`, `ui/AlarmWindow.kt` |
@@ -157,6 +165,7 @@ where a change spans them (they cross-reference each other).
 | `account1-empty-and-open.bat` | remote-logout, empty (local + remote), launch as account 1 |
 | `account2-open.bat` / `account2-empty.bat` | launch as account 2 (data kept) / empty it |
 | `account3-deploy-windows.bat` | build + install the auto-start release, sign in as account 3 |
+| `account3-deploy-windows-offline.bat` | the same, but every launch starts working completely offline |
 | `account{1,2,3}-deploy-android.bat` | build/install the APK and launch signed in |
 | `*-fast-break*.bat` | the same, with screen breaks retimed for cue testing |
 | `deploy-supabase.bat` | migrations + both Edge Functions + `pause-cue-setup.sql` |

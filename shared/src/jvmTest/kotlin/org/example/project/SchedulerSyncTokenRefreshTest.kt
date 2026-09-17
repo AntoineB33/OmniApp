@@ -21,11 +21,16 @@ import org.example.project.scheduler.sync.SyncState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlinx.serialization.json.jsonArray
+import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.persistence.SchedulerStateCodec
+import org.example.project.scheduler.state.SchedulerState
 
 /**
  * Regression for the `400 refresh token not found` sync error (Android). Supabase rotates refresh tokens on
  * every use — the previous token is single-use and rejected afterwards. A dirty [SchedulerSyncEngine.reconcile]
- * issues *two* authenticated calls (`fetch` then `update`); when the access token has expired, both hit 401.
+ * issues several authenticated calls (the pull, then the push); when the access token has expired, both hit 401.
  * The old code refreshed each 401 with the same captured session, so the second refresh re-spent the token the
  * first had already rotated → 400. This asserts the reconcile now refreshes once and adopts the rotated token.
  */
@@ -33,7 +38,9 @@ class SchedulerSyncTokenRefreshTest {
     private val json = Json { ignoreUnknownKeys = true }
     private val config = SupabaseConfig("https://test.supabase.co", "anon-key")
 
-    private fun snap(tag: String) = PersistedSnapshot(statePayload = tag, history = emptyList(), pointers = emptyList())
+    /** A real state with one alarm named [tag]. */
+    private fun snap(tag: String) =
+        SchedulerStateCodec.encodeSnapshot(SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = tag, label = tag, timeOfDayMinutes = 450))))
 
     private class FakeMetaStore(private var meta: SyncMeta? = null) : SyncMetaStore {
         override fun loadSyncMeta(): SyncMeta? = meta
@@ -41,11 +48,12 @@ class SchedulerSyncTokenRefreshTest {
     }
 
     /**
-     * Stateful fake of GoTrue + the `scheduler_snapshot` row. [accessExpired] simulates the ~1h access-token
+     * Stateful fake of GoTrue + the entity rows ([entityWrites] counts the rows pushed). [accessExpired] simulates the ~1h access-token
      * lifetime; refresh tokens are strictly single-use ([consumedRefresh]), and re-spending one yields the same
      * `400 refresh token not found` Supabase returns. [refreshNotFoundCount] records any such re-spend.
      */
-    private class FakeBackend(var payload: String, var revision: Long) {
+    private class FakeBackend {
+        var entityWrites = 0
         var currentAccess = ""
         var currentRefresh = ""
         var accessExpired = false
@@ -104,29 +112,14 @@ class SchedulerSyncTokenRefreshTest {
                     !path.contains("/auth/v1") && (backend.accessExpired || bearer != backend.currentAccess) ->
                         respond("""{"message":"JWT expired"}""", HttpStatusCode.Unauthorized, jsonHeader)
 
-                    path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Get ->
-                        respond(
-                            """[{"payload":${json.encodeToString(backend.payload)},"revision":${backend.revision}}]""",
-                            HttpStatusCode.OK,
-                            jsonHeader,
-                        )
-
-                    path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Patch -> {
-                        val expected = request.url.parameters["revision"]?.removePrefix("eq.")?.toLong()
-                        if (backend.revision == expected) {
-                            backend.payload = json.parseToJsonElement(body).jsonObject["payload"]!!.jsonPrimitive.content
-                            backend.revision += 1
-                            respond(
-                                """[{"payload":${json.encodeToString(backend.payload)},"revision":${backend.revision}}]""",
-                                HttpStatusCode.OK,
-                                jsonHeader,
-                            )
-                        } else {
-                            respond("[]", HttpStatusCode.OK, jsonHeader)
-                        }
+                    path.endsWith("/scheduler_entity") && request.method == HttpMethod.Post -> {
+                        backend.entityWrites += json.parseToJsonElement(body).jsonArray.size
+                        respond("", HttpStatusCode.Created, jsonHeader)
                     }
 
-                    else -> respond("", HttpStatusCode.NotFound)
+                    request.method == HttpMethod.Get -> respond("[]", HttpStatusCode.OK, jsonHeader)
+
+                    else -> respond("", HttpStatusCode.Created, jsonHeader)
                 }
             }
         return RemoteSnapshotClient(config, HttpClient(engine))
@@ -134,8 +127,8 @@ class SchedulerSyncTokenRefreshTest {
 
     @Test
     fun dirty_reconcile_with_expired_access_token_refreshes_once_and_pushes() = runTest {
-        val backend = FakeBackend(payload = json.encodeToString(snap("OLD")), revision = 2)
-        val meta = FakeMetaStore(SyncMeta(deviceId = "d", lastKnownRevision = 2, dirty = true))
+        val backend = FakeBackend()
+        val meta = FakeMetaStore(SyncMeta(deviceId = "d", dirty = true))
         val sync = SchedulerSyncEngine(harness(backend), meta, json).apply { bind({ snap("NEW") }, {}) }
 
         sync.signIn("a@b.c", "pw")
@@ -145,8 +138,7 @@ class SchedulerSyncTokenRefreshTest {
         // The reconcile succeeded (no "refresh token not found") and pushed the dirty local snapshot.
         assertIs<SyncState.Idle>(sync.state.value)
         assertEquals(0, backend.refreshNotFoundCount)
-        assertEquals("NEW", json.decodeFromString<PersistedSnapshot>(backend.payload).statePayload)
-        assertEquals(3, backend.revision)
+        assertTrue(backend.entityWrites > 0, "the dirty rows were pushed")
         assertEquals(false, meta.loadSyncMeta()!!.dirty)
         // The rotated refresh token is persisted so the next run starts from a live token.
         assertEquals(backend.currentRefresh, meta.loadSyncMeta()!!.refreshToken)

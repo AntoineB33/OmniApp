@@ -19,8 +19,12 @@ Global rules that always apply: `CLAUDE.md`.
   that side's minimum and resilience throughout — only its **percentage** fades.
 - `datedTaskTrees` **flushes** the active tree first. Dated trees are in `schedulingSignature`; undated ones
   deliberately are not.
-- **The one sanctioned exception to "time never re-plans"** — and only because the cursor is **quantized**
-  (`TASK_TREE_BLEND_STEPS` = 100). Do not reintroduce an unquantized/per-tick form.
+- **The one sanctioned exception to "time never re-plans"** — and only because it is **boundary-driven**: inside a
+  transition the plan holds the exact rule state at the line and is re-made when the line reaches the start of a
+  run it placed (`SchedulerDomain.taskTreeBlendDecisionKey`, `SchedulerEngine.launchTaskTreeBlendReschedule`),
+  so a transition costs one fill per run it spans. The former 100-step cursor is gone: its steps did not line up
+  across two transitions of the same slope, which broke the requirements' two-scenario example. Do not
+  reintroduce a per-tick or a stepped form.
 
 ### The tree has ONE root, and it is a real cell
 

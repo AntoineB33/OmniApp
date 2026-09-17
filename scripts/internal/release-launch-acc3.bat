@@ -10,7 +10,9 @@ REM
 REM  The state dir is the dedicated release DB. The login credentials are
 REM  read from acc3.cred (written next to this file by the deploy script and
 REM  NOT committed) and exported as env vars the app reads on launch; the
-REM  packaged exe inherits this environment. After the first successful login
+REM  packaged exe inherits this environment. An OMNIAPP_START_OFFLINE=1 line in
+REM  acc3.cred (account3-deploy-windows-offline.bat writes it) starts the app
+REM  working completely offline. After the first successful login
 REM  the session is cached in the DB, so later auto-starts work even if
 REM  acc3.cred is removed.
 REM =====================================================================

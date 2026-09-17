@@ -13,9 +13,11 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.engine.PROGRESSIVE_FIRST_STAGE_MILLIS
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
@@ -114,7 +116,9 @@ class PlanOffTheFrameLoopTest {
 
     /**
      * The routing must not change WHAT is planned. Same account, same clock, same horizon: the plan the
-     * engine commits through its dispatcher is the plan the reducer computes on the spot.
+     * engine commits through its dispatcher is the plan the reducer computes on the spot — for the same
+     * progressive stages (`docs/scheduler_requirements.md` § *Progressive Calculation*): a re-plan to the first
+     * stage, then extensions to twice as far each time, up to $t_{goal}$.
      */
     @Test
     fun going_off_thread_does_not_change_the_plan() = runTest {
@@ -128,13 +132,23 @@ class PlanOffTheFrameLoopTest {
         advanceTimeBy(DEBOUNCE_MILLIS + 1)
         runCurrent()
 
-        val now = T0 + scheduler.currentTime
-        val direct =
-            SchedulerDomain.fillSchedule(
-                seeded,
-                now,
-                horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(now, null),
+        // The instant the watcher planned at — the end of its debounce, not the instant the test reads the clock:
+        // a stage's cap is relative to it, so a millisecond later is a different (if equally valid) sequence.
+        val now = T0 + DEBOUNCE_MILLIS
+        val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null)
+        var direct = seeded
+        var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
+        var first = true
+        while (true) {
+            val cap = (now + stage).takeIf { it < goal }
+            direct = SchedulerReducer.reduce(
+                direct,
+                if (first) SchedulerIntent.RefreshSchedule(now, cap) else SchedulerIntent.ExtendSchedule(now, cap),
             )
-        assertEquals(direct, vm.state.value.panels)
+            first = false
+            if (cap == null) break
+            stage *= 2
+        }
+        assertEquals(direct.panels, vm.state.value.panels)
     }
 }

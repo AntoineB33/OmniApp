@@ -195,45 +195,47 @@ drag carries it, because its slices are what hold the gesture.
 Tests: `RollingCalendarTest` — the safety property (the window never clips anything on screen, swept over every
 offset × zoom × viewport × row), the quantization bound, and that it actually culls.
 
-## The schedule horizon is $t_{goal}$, and the DISPLAYED DAY SPAN is one half of it
+## The schedule horizon is $t_{goal}$: the end of the displayed timeline, floored at ten minutes
 
-The engine does **not** systematically materialize 168 h, and since 2026-09-04 it does not follow the displayed
-span directly either: it fills to **$t_{goal}$**, the instant `docs/scheduler_requirements.md` §
-*Progressive Calculation* lets the scheduler stop at — *"The scheduler can have a time $t goal$ such as when
-definitive schedule is found for any t < $t goal$ the scheduler can stop."*
+The engine does **not** systematically materialize 168 h: it fills to **$t_{goal}$**, the instant
+`docs/scheduler_requirements.md` § *Progressive Calculation* lets the scheduler stop at — *"The scheduler can have
+a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop."*
 
-**$t_{goal}$ = `max(` end of the first day that does not appear in the calendar `,` end of the first day of the
-week after the current week `)`** (`SchedulerDomain.scheduleGoalEndMillis`).
+**$t_{goal}$ = the end of the timeline the calendar shows, or `now + 10 min` if that is further**
+(`SchedulerDomain.scheduleGoalEndMillis`, `SCHEDULE_GOAL_FLOOR_MILLIS`; user rule, 2026-09-16).
 
-The calendar half is **one day past the bottom of the grid**. Open the calendar on the current week and scroll
-down far enough to see the Monday of the next week, and the goal becomes the end of that next week's Tuesday —
-it follows the SCROLL, a day at a time, not the week the scroll happens to have landed in.
+> **History.** From 2026-09-04 to 2026-09-16 it was `max(` end of the first day that does not appear in the
+> calendar `,` end of the first day of the week after the current week `)`: one day past the grid, floored at a
+> weekly staircase so that the headless engine always held up to eight days of plan. The user replaced it with
+> the rule above: the scheduler covers what is shown, and with nothing shown only the next ten minutes, which is
+> all the headless task cue, the §17 wind-down cue and the schedule-unit deadlines read ahead of the line. The
+> §15 break windows the server is told are asked of the recurrence bars directly, never of `state.panels`, so
+> they never depended on the weekly floor. The weekly half also made every rule change on a closed calendar
+> plan a week — seconds of work on a large account — for a picture nobody was looking at.
 
-**There is no "focused week" any more** (2026-08-20): the calendar scrolls through the days ENDLESSLY, so the grid
-reports the span its scroll has landed on (`CalendarFloatingWindow(onVisibleDaysChanged = …)` → `App.kt`'s
-`visibleFirstDay` / `visibleDayCount` → `visibleSpanStartMillis` / `visibleSpanEndMillis`) and the calendar half
-of the goal is read off THAT — the day after the **last day displayed**. `visibleSpanEndMillis` is exclusive, so
-it already *is* the start of the first day that does not appear.
+**There is no "focused week"** (2026-08-20): the calendar scrolls through the days ENDLESSLY, so the grid reports
+the span its scroll has landed on (`CalendarFloatingWindow(onVisibleDaysChanged = …)` → `App.kt`'s
+`visibleFirstDay` / `visibleDayCount` → `visibleSpanStartMillis` / `visibleSpanEndMillis`), and the goal is read
+off THAT exclusive end.
 
 `App.kt` publishes the span to the engine (`engine.setCalendarHorizon(visibleSpanEndMillis)`, null when the
 calendar is closed), the engine feeds the reducer seam `SchedulerReducer.scheduleHorizonEndMillis`, and every §9
-refill fills to `SchedulerDomain.scheduleHorizonEndMillis(now, displayedEnd, tz)` = the goal, with a
-**cap on the CALENDAR half alone** at `now + SCHEDULE_HORIZON_MILLIS` (168 h).
+refill fills to `SchedulerDomain.scheduleHorizonEndMillis(now, displayedEnd)`:
 
-So:
+- **the floor is DOUBLED there.** The floor rolls with the line, so a plan that reached `now + 10 min` would be
+  short again one millisecond later, and the refill trigger — which rewrites the very `panels` it watches — would
+  fire at every tick: the 2026-07-28 hot loop again. A fill reaching `now + 20 min` comes due once the line has
+  moved ten minutes, while ten minutes of plan are still ahead of it;
+- **a calendar end past `now + SCHEDULE_HORIZON_MILLIS` (168 h) is capped there**, and beyond it that week is
+  still computed to the goal — for display, off the UI thread (below). The cap rolls too, so it keeps the
+  `HORIZON_REFILL_MARGIN_MILLIS` (1 h) of slack: a capped week is extended once an hour.
 
-- **the goal is a MAX, so the calendar can only ever push it further out** — scrolling back, or closing the
-  calendar, never shortens the plan below what the current week asks for, which is what the headless
-  notification/cue/deadline paths read;
-- **neither half moves with the CLOCK.** The current week's is an absolute staircase: it holds still for a whole
-  week and then steps a week forward, so a schedule that has reached it stays complete instead of falling short
-  again on every tick. The rolling `now + 24 h` horizon it replaces was what made the refill trigger fire the
-  instant a fill finished, which is the shape `HORIZON_REFILL_MARGIN_MILLIS` exists to damp. The calendar half
-  moves only on a scroll, which is an event the grid reports, not a tick;
-- **the current week's own goal is NEVER capped** — it is up to eight days out (a Monday's goal is the end of the
-  following Monday), and clipping it would leave the headless engine short of the instant the requirement names;
-- **168 h is a ceiling on the calendar half, not a target**, and beyond it that week is still computed to the goal
-  — for display, off the UI thread (below).
+**A fill cuts the previous plan's auto panels past its own horizon.** Until 2026-09-16 a panel starting past the
+horizon survived whatever it was. That was rarely visible while the goal was at least a week, but with the floor a
+fill that stops short of an older, longer plan is routine (close the calendar, change a rule), and the progressive
+first stage (1 h) is one too: the old panels past the cut answered rules the fill may have replaced, and when one
+happened to abut the new tail, the next extension read it as materialized (`firstFreeMoment`) and kept the old
+plan as definitive. Panels the fill does not own (pinned, hand-drawn, periods, reminders) still survive.
 
 Everything the fill projects is bounded with it — `fillSchedule` passes its own `horizon` to `screenBreakPanels`
 (it used to project a week of break panels whatever horizon it was filling). What is *drawn* is a different
@@ -242,14 +244,13 @@ question and stays bounded by the visible window (above): `App.kt`'s display sle
 
 ### The two engine loops that keep it honest
 
-**`launchHorizonReschedule`** re-evaluates `horizonRefillDueMillis(panels, now, horizonInForce)` **every poll**. An
-ABSOLUTE horizon's remaining span shrinks as `now` advances, so a target pinned once would fire early,
-refill to no effect, and — `panels` unchanged — park the collector for good. With the goal it fires when the
-staircase steps (once a week) rather than once a day; a scroll is `launchCalendarHorizonReschedule`'s job.
+**`launchHorizonReschedule`** re-evaluates `horizonRefillDueMillis(panels, now, displayedEnd)` on every pass and
+sleeps until that instant (never longer than one poll, so a scroll or a clock-speed change is noticed). It is due
+when the plan covers only one floor ahead of the line, or when the calendar shows further than the plan reaches.
+With the calendar closed it fires once per ten minutes.
 
-**`launchCalendarHorizonReschedule`** fires one refill when the scroll **grows** the goal — which, the calendar
-half being one day past the bottom of the grid, is now a day at a time rather than a week at a time. Scrolling
-back dispatches nothing: the goal is a MAX, so it does not shrink at all.
+**`launchCalendarHorizonReschedule`** fires one refill when the scroll reaches past the plan. Scrolling back
+dispatches nothing: what is materialized stays until the next fill.
 
 **Both dispatch `ExtendSchedule`, not `RefreshSchedule`** (ADR 0001 §9): a horizon that grew is not a rule change,
 so the plan already on screen is kept and only its tail is materialized.
@@ -258,15 +259,45 @@ so the plan already on screen is kept and only its tail is materialized.
 > the state unchanged, so this collector *parks* until something else moves `panels` (the next rule change) instead
 > of spinning — the opposite failure from the 2026-07-28 hot loop, and the safe one.
 
-Tests: `ScheduleHorizonTest`, `HorizonRefillRuleTest`.
+Tests: `ScheduleHorizonTest`, `HorizonRefillRuleTest`, `ScheduleCycleTest`,
+`SchedulerFillTest.a_re_plan_shorter_than_the_old_plan_drops_the_old_plan_beyond_it`.
 
-### Beyond the 168 h ceiling: compute for display, never store
+### Beyond the 168 h ceiling: unroll for display, never store
 
-When the goal reaches past the ceiling, `App.kt` computes the plan for DISPLAY from the now-line out to
-**the goal** — `SchedulerDomain.fillSchedule(state, now, horizonMillis = goalEndMillis)` (the horizon is a
-parameter whose default — the 168 h ceiling — is now only for tests and max-span callers). The goal is never
-nearer than the displayed span's end, so this reaches at least as far as what is on screen, and the requirement's
-$t_{goal}$ is computed whether or not it is allowed into `state.panels`.
+When the goal reaches past the ceiling, `App.kt` computes the plan for DISPLAY out to **the goal** —
+`SchedulerDomain.fillSchedule(state, now, horizonMillis = goalEndMillis, keepExistingUntilMillis = …)`, an
+**extension** of the materialized plan (the horizon parameter's default — the 168 h ceiling — is only for tests and
+max-span callers). The goal is never nearer than the displayed span's end, so this reaches at least as far as what
+is on screen.
+
+### The far week is the rules repeating (2026-09-16)
+
+The user's rule: *"The set of rules resulting from the scheduler can make a pattern that repeats to infinity. A
+limit should prevent the set of rules to become too heavy. When the user goes far into the future, it doesn't add
+much in memory as the displayed schedule only listens to the set of rules."* `docs/scheduler_score.md` §
+*The rules repeat* defines it; what the implementation learned on the way:
+
+- **Calendar days do not repeat; the schedulable clock does.** Measured on the requirements' example (A 30, B 15,
+  C 15 min, production breaks, a sleep schedule), no two consecutive days were alike — the 90-min rotation slides
+  30 min against a 15.5-h waking day — while the task-run sequence on the schedulable clock was exactly periodic
+  (5 runs), breaks or no breaks, because nights and breaks refuse everybody and are not on the clock. So the cycle
+  is a run sequence, and the wall-time picture is that sequence walked over the environment.
+- **Stage boundaries break the repetition.** The same account planned in progressive stages never repeated: each
+  extension resumes mid-run with a lookahead cut at the stage's end (a 17-min B). So detection only looks inside
+  one fill, and once a cycle is found every later extension unrolls it — which also makes the plan past that point
+  the same as one long fill.
+- **Compare task runs, not optimizer runs.** The alternative-schedule bisection splits a run at an instant that is
+  resolved only to a minute and moved between copies (56 s into A in one, into B in the next); the runs themselves
+  were identical.
+- **The horizon bends more than the last run.** On a 3-day fill the 4th run from the end was already off (C 18 min),
+  so detection slides its window back up to one period and eight more runs.
+- **Exact repetition is the exception on a real account.** Six equal tasks with minimums 45/30/20/60/15/25 min did
+  not repeat within 8 days (runs of 15, 18, 22 min for one task). That is what the limit is for: the search stops at
+  168 h, and a fill reaching it without a repetition repeats the window of its last runs whose shares come closest
+  to the targets. On that account the far weeks (days 10–30) stayed within ~3 points of each task's share, against
+  ~2 for a real search, and a 30-day view went from ~165 ms to ~40 ms. Rejected: searching further for an exact
+  period (it may not exist, and cost grows with it), and a day- or week-aligned repetition (it does not repeat,
+  above).
 
 It runs inside a `LaunchedEffect` keyed **only on the displayed span** (not `nowMillis`, so it doesn't rerun every
 tick), on `Dispatchers.Default`. So a distant day "simply takes time to display" behind a **"Calculating…"** header
@@ -348,7 +379,8 @@ sleeps on its answer instead of ticking.
   them still ahead of the line. That is a sound over-approximation *by construction* — it can name a boundary
   that turns out to change nothing, but it cannot miss one, because there is nothing in the model that is not
   made of those instants. Plus the next local midnight, which is the one boundary no panel carries (the day
-  rollover, and the $t_{goal}$ staircase that steps with it).
+  rollover; until 2026-09-16 also the $t_{goal}$ weekly staircase, since replaced by the calendar end and a
+  ten-minute floor).
 - **A bound sitting ON the line is a PIN, not a boundary.** This is the load-bearing distinction, not
   bookkeeping: mode 1 pushes an owed pose onto the line as the half-open `(t_p, t_p + d]`, so its start is
   literally `t_p + 1`, and a taken break is drawn to `t_p − 1`. Counted as boundaries they answer "one

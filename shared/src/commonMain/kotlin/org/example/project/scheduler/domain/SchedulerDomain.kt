@@ -14,6 +14,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.perf.Perf
 import org.example.project.scheduler.model.Cell
+import org.example.project.scheduler.model.AlternativeSpan
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
@@ -1120,30 +1121,35 @@ object SchedulerDomain {
     }
 
     /**
-     * How finely the blend is quantized for re-planning purposes: the transition is cut into this many
-     * steps, and the schedule is re-planned when the cursor crosses one.
+     * **The decision boundaries inside a task-tree transition** — the trigger the engine watches.
      *
-     * The plan is a step function of a continuously moving quantity, and something has to choose the step.
-     * 100 bounds the priority error at 1% (a share moves by at most the whole gap between the two trees
-     * across the transition, so by at most 1/100th of it per step) — below anything the fill's minimum-time
-     * granularity can express — while keeping re-plans rare: a two-month transition re-plans about every
-     * 14 hours, a one-day transition about every 14 minutes.
+     * `docs/scheduler_requirements.md` § *Rule State Evolution*: the rule state applied is the one at the
+     * now-line, so a plan made at `x` holds `R(x)` for its whole continuation, and a decision the line has not
+     * reached yet may be taken with another rule state by the time it is. So inside a transition the plan is
+     * re-made each time the line reaches the start of a run the plan placed: every decision the frozen past
+     * records is then taken with the rule state at its own instant, which is what makes two transitions with the
+     * same slope the same schedule while they overlap. It is boundary-driven, not a tick: the key changes only
+     * when the line crosses a run's start, and re-planning there keeps that start (the run's elapsed head is the
+     * frozen past), so a re-plan never moves the key it was triggered by.
+     *
+     * 0 whenever no tree is dated, and constant outside a transition except when the bracketing keyframe
+     * changes — the feature-off case must never dispatch anything.
      */
-    const val TASK_TREE_BLEND_STEPS: Int = 100
-
-    /**
-     * The quantized blend cursor at [nowMillis] — the trigger the engine watches. It changes only when the
-     * bracketing pair changes or the interpolation crosses a step, so it is a *coarse* function of time
-     * rather than a continuous one, and 0 whenever no tree is dated (the feature-off case, which must never
-     * dispatch anything).
-     */
-    fun taskTreeBlendStep(state: SchedulerState, nowMillis: Long): Int {
-        val blend = taskTreeBlendAt(state, nowMillis) ?: return 0
-        var result = blend.from.id.value.hashCode()
-        result = 31 * result + blend.to.id.value.hashCode()
-        result = 31 * result + (blend.fraction.coerceIn(0.0, 1.0) * TASK_TREE_BLEND_STEPS).toInt()
-        return result
+    fun taskTreeBlendDecisionKey(state: SchedulerState, nowMillis: Long): Long {
+        val blend = taskTreeBlendAt(state, nowMillis) ?: return 0L
+        val result = 31L * blend.from.id.value.hashCode() + blend.to.id.value.hashCode()
+        if (blend.isSingle) return result
+        val decided = state.panels.asSequence()
+            .filter { it.auto && it.taskId != null && it.startEpochMillis <= nowMillis }
+            .maxOfOrNull { it.startEpochMillis } ?: 0L
+        return 31L * result + decided
     }
+
+    /** The next run start the plan placed after [nowMillis] — where [taskTreeBlendDecisionKey] next moves. */
+    fun nextDecisionMillis(state: SchedulerState, nowMillis: Long): Long? =
+        state.panels.asSequence()
+            .filter { it.auto && it.taskId != null && it.startEpochMillis > nowMillis }
+            .minOfOrNull { it.startEpochMillis }
 
     // ----- PRD §9 Scheduler -------------------------------------------------------------------
 
@@ -1237,7 +1243,7 @@ object SchedulerDomain {
                 state.tasks[it]?.title?.isNotBlank() == true
         }
 
-    // The §9 pick is the cyclic proportional-share model ([fillSchedule] / [PlanWalk]); the §8 manual-add
+    // The §9 pick is the best-score continuation ([fillSchedule] / [ScheduleFill]); the §8 manual-add
     // pick is [manualAddTaskId]. The EDF-era helpers `edfPeriodMillis` / `nextTask` were deleted with that
     // fill — they scored a static period `T = m / p`, which no longer predicts anything the scheduler does.
 
@@ -1261,17 +1267,13 @@ object SchedulerDomain {
      *
      * The entry's whole job is to say *this task, from here*; **how long** is the scheduler's answer and must
      * not be pre-empted by the press. A second is the smallest span that is unambiguously a period and not a
-     * rounding artefact — three orders of magnitude above the planner's own
-     * [SchedulerPlanner.CHUNK_EPSILON_MILLIS], and far below anything the calendar can draw or the walk can
-     * be distorted by (it is charged to the task's clock like any service, so a span this size costs it
-     * nothing measurable).
+     * rounding artefact, and far below anything the calendar can draw or the score can be distorted by (it
+     * is served time like any other, so a span this size moves no lag measurably).
      *
      * What then makes the panel a *usable* length is the fill, not this: the request the same press records
-     * ([org.example.project.scheduler.model.ForcedTaskStart]) takes the first slot after the seed, and
-     * `PlanWalk.chunkMillis` floors that slot at the task's minimum — the README's soft *Minimum Execution
-     * Time* goal. Note that the seed itself is **not** extended by that rule: a pre-placed block is committed
-     * service the walk steps over (`fillSchedule`'s `futureBlocks`), never a chunk in progress, and the
-     * resume rule that continues an unfinished chunk reads the recorded PAST.
+     * ([org.example.project.scheduler.model.ForcedTaskStart]) makes the task the first run after the seed, and
+     * the seed and that run are ONE panel on the score's clock, so criterion 2 (`docs/scheduler_score.md`)
+     * charges its shortfall until it reaches the task's minimum — the soft *Minimum Execution Time* goal.
      */
     const val SWITCH_ENTRY_MILLIS: Long = 1_000L
 
@@ -1533,9 +1535,22 @@ object SchedulerDomain {
             }
             if (into >= 0) {
                 val keep = result[into]
+                // The alternative schedule is named for every position of the line: the fused panel keeps the
+                // head's answer and every later one where it changes.
+                val inForce = keep.alternativeSpans.lastOrNull()?.taskId ?: keep.alternativeTaskId
+                val joined =
+                    if (panel.startEpochMillis >= keep.endEpochMillis && panel.auto && keep.auto) {
+                        val head =
+                            if (panel.alternativeTaskId == inForce) emptyList()
+                            else listOf(AlternativeSpan(panel.startEpochMillis, panel.alternativeTaskId))
+                        keep.alternativeSpans + head + panel.alternativeSpans
+                    } else {
+                        keep.alternativeSpans
+                    }
                 result[into] = keep.copy(
                     endEpochMillis = maxOf(keep.endEpochMillis, panel.endEpochMillis),
                     auto = keep.auto && panel.auto,
+                    alternativeSpans = joined,
                 )
                 changed = true
             } else {
@@ -1801,165 +1816,114 @@ object SchedulerDomain {
      * $t_{goal}$ may pull the materialized fill** (168 hours). It is not the goal, and it is not a target — the
      * goal is [scheduleGoalEndMillis], and [scheduleHorizonEndMillis] is what the fill honours.
      *
-     * The current week's own goal is NEVER clipped by it (a Monday's goal is the end of the following Monday,
-     * eight days out): the headless engine must always hold the goal it would compute with no calendar open.
-     * What this bounds is the other half of the max — a week the user has scrolled to. Beyond it that week is
-     * still computed to the goal, but asynchronously and for display only (see [fillSchedule]'s `horizonMillis`
-     * and `App.kt`'s far-week `LaunchedEffect`), never materialized into `state.panels`.
+     * A calendar scrolled further out than this is still computed to its goal, but asynchronously and for
+     * display only (see [fillSchedule]'s `horizonMillis` and `App.kt`'s far-week `LaunchedEffect`), never
+     * materialized into `state.panels`.
      */
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
      * The **ceiling** on how far back [fillSchedule] reads the already-placed past (one week — the same span
-     * as the horizon ceiling). The span it actually reads is derived from the plan's own scale: one period
-     * for the virtual-clock seed and one influence reach for the field ([SchedulerPlanner.maxReachMillis]),
-     * past which an exclusion is felt no more. This ceiling only stops a pathological tree (a leaf with a
-     * near-zero share has a huge period) from making the fill cost total history — CLAUDE.md: hot-path
+     * as the horizon ceiling): the frozen past is replayed over it to give every task's lag at the line, and a
+     * deprivation inside it still raises a target share after it. A lag forgets over its task's own window, so
+     * a week is far past what any account's shares make relevant; the ceiling stops a pathological tree (a leaf
+     * with a near-zero share has a huge window) from making the fill cost total history — CLAUDE.md: hot-path
      * derivations scale with the screen, not with the whole record.
      */
     const val SCHEDULE_PAST_LOOKBACK_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
-     * PRD §9 Scheduling: the **floor** under the goal (24 hours) — how far the plan is materialized when the
-     * goal itself would somehow fall short of a day.
-     *
-     * The plan is not only a calendar drawing: the engine reads it headlessly for the §11/§13 task-switch
-     * notifications, the §15 wind-down cue and the schedule-unit deadlines, so the horizon can never collapse
-     * to zero. [scheduleGoalEndMillis] is already at least a day out for every position of the clock inside a
-     * week (a Sunday 23:59 goal is the end of the following Tuesday); this only guards the arithmetic against
-     * a DST-shortened week, and is what a caller with no time zone at all falls back on.
+     * PRD §15 display only: the floor under how far the calendar PROJECTS its forward bands (screen breaks,
+     * sleep) past the now-line (24 hours). It is not a scheduling horizon — the plan's goal is
+     * [scheduleGoalEndMillis], whose floor is [SCHEDULE_GOAL_FLOOR_MILLIS].
      */
     const val MIN_SCHEDULE_HORIZON_MILLIS: Long = 24L * 60 * 60 * 1000
 
     /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: the **floor under $t_{goal}$** (10 minutes).
+     * With no calendar open — or one showing nothing later than this — the scheduler only has to know what
+     * comes in the next ten minutes: that is all the headless §11/§13 task cue, the §17 wind-down cue and the
+     * schedule-unit deadlines read ahead of the line. The §15 break windows the server is told are asked of the
+     * recurrence bars directly, never of `state.panels`, so they do not depend on it.
+     */
+    const val SCHEDULE_GOAL_FLOOR_MILLIS: Long = 10L * 60 * 1000
+
+    /**
      * The **Monday** the week holding [date] starts on. The app is Monday-first everywhere — the side menu's
-     * month rail, the calendar's `weekAnchorDay` (which delegates here) and, now, $t_{goal}$ — and "which day
-     * a week starts on" is exactly the kind of rule that must exist once.
+     * month rail and the calendar's `weekAnchorDay` (which delegates here) — and "which day a week starts on"
+     * is exactly the kind of rule that must exist once.
      */
     fun weekStartDate(date: LocalDate): LocalDate =
         date.minus(DatePeriod(days = date.dayOfWeek.isoDayNumber - 1))
-
-    /**
-     * **The end of the first day of the week AFTER the week holding [date]** — the CURRENT-WEEK half of
-     * $t_{goal}$.
-     *
-     * The week after starts on `weekStart(date) + 7 days`; the END of that first day is the midnight closing
-     * it, i.e. `weekStart(date) + 8 days` at 00:00. Computed through the calendar, never as `+ 8 × 24 h`, so a
-     * DST change inside the span does not move it off midnight.
-     */
-    fun endOfFirstDayOfNextWeekMillis(date: LocalDate, timeZone: TimeZone): Long =
-        weekStartDate(date).plus(DatePeriod(days = 8)).atStartOfDayIn(timeZone).toEpochMilliseconds()
-
-    /**
-     * **The end of the day AFTER [date]** — the CALENDAR half of $t_{goal}$, given the last day the grid
-     * shows: the first day that does not appear is the one after it, and the goal is the midnight closing
-     * that day, i.e. `date + 2 days` at 00:00. Through the calendar, never `+ 48 h`, for the DST reason above.
-     */
-    fun endOfDayAfterMillis(date: LocalDate, timeZone: TimeZone): Long =
-        date.plus(DatePeriod(days = 2)).atStartOfDayIn(timeZone).toEpochMilliseconds()
 
     /**
      * `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_{goal}$ — the instant the scheduler
      * may stop at.** *"The scheduler can have a time $t goal$ such as when definitive schedule is found for
      * any t < $t goal$ the scheduler can stop."*
      *
-     * It is `max(` end of **the first day that does not appear in the calendar** `,` end of the first day of
-     * the week after **the current week** `)`.
+     * It is **the end of the timeline the calendar shows, or `now + `[SCHEDULE_GOAL_FLOOR_MILLIS] if that is
+     * further** (user rule, 2026-09-16). [displayedEndMillis] is the EXCLUSIVE end of the displayed day span
+     * (what `App.kt` publishes through
+     * [org.example.project.scheduler.engine.SchedulerEngine.setCalendarHorizon]); `null` — no calendar open —
+     * leaves the floor alone. A grid scrolled into the past shows nothing the plan has to reach, so the floor
+     * governs there too.
      *
-     * So the calendar half is **one day past the bottom of the grid**, and it moves with the SCROLL rather
-     * than with the week the scroll happens to be in: open the calendar on the current week and scroll down
-     * far enough to see the Monday of the next week, and the goal becomes the end of that next week's
-     * Tuesday.
-     *
-     * Three things it is, and each one is load-bearing:
-     * - **It is a MAX, so the calendar can only ever push it further out.** Scrolling back — or closing the
-     *   calendar altogether ([displayedEndMillis] `null`) — never shortens the schedule below what the current
-     *   week asks for, which is what the headless §11/§13/§15 paths read.
-     * - **The current-week half is an ABSOLUTE staircase.** It holds still for a whole week and then steps a
-     *   week forward, so a schedule that has reached it stays complete instead of falling a millisecond short
-     *   on every tick — the rolling `now + 24 h` horizon it replaces made [horizonRefillDueMillis] true again
-     *   the instant a fill finished, which is the self-retriggering shape HORIZON_REFILL_MARGIN_MILLIS exists
-     *   to damp. The calendar half moves only when the user scrolls, which is an event, not a tick.
-     * - **"The first day that does not appear" is read off the LAST day displayed**, so a scroll that reveals
-     *   one more day extends the goal by exactly that day — which is what makes "everything on screen is
-     *   scheduled, and a day past it" true however the grid is scrolled or zoomed.
-     *
-     * [displayedEndMillis] is the EXCLUSIVE end of the displayed day span (what `App.kt` publishes through
-     * [org.example.project.scheduler.engine.SchedulerEngine.setCalendarHorizon]), so the last day displayed is
-     * the one holding `displayedEndMillis - 1`.
+     * The floor ROLLS with the line, so a plan that has just reached it is short again a millisecond later.
+     * That is why a fill is not aimed at the goal itself but at [scheduleHorizonEndMillis], which carries
+     * another floor's worth of slack, and why [horizonRefillDueMillis] answers against the goal: the two
+     * together extend the plan once per [SCHEDULE_GOAL_FLOOR_MILLIS] rather than at every tick.
      */
-    fun scheduleGoalEndMillis(
-        nowMillis: Long,
-        displayedEndMillis: Long?,
-        timeZone: TimeZone = TimeZone.currentSystemDefault(),
-    ): Long {
-        fun dateOf(millis: Long): LocalDate =
-            Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone).date
-
-        val current = endOfFirstDayOfNextWeekMillis(dateOf(nowMillis), timeZone)
-        // A grid scrolled entirely into the past shows no day the plan has to reach, so it is clamped to the
-        // now-line — where its answer (the end of tomorrow) is never above the current week's own.
-        val shown =
-            displayedEndMillis?.let { endOfDayAfterMillis(dateOf(maxOf(it - 1, nowMillis)), timeZone) }
-                ?: current
-        return maxOf(current, shown)
-    }
+    fun scheduleGoalEndMillis(nowMillis: Long, displayedEndMillis: Long?): Long =
+        maxOf(displayedEndMillis ?: nowMillis, nowMillis + SCHEDULE_GOAL_FLOOR_MILLIS)
 
     /**
-     * PRD §9 Scheduling: the instant the auto fill materializes the work plan out to — **$t_{goal}$**
-     * ([scheduleGoalEndMillis]), with the one bound that keeps a far week out of the persisted state.
-     *
-     * The goal of the CURRENT week is always honoured, whatever the calendar is showing; a goal the calendar
-     * has pushed past `now + `[SCHEDULE_HORIZON_MILLIS] is capped here and computed for display only, off the
-     * UI thread, and never retained (`App.kt`'s far-week `LaunchedEffect`). The [MIN_SCHEDULE_HORIZON_MILLIS]
-     * floor is the arithmetic guard described on that constant.
+     * PRD §9 Scheduling: the instant a fill materializes the work plan out to — [scheduleGoalEndMillis] with
+     * two adjustments:
+     * - a calendar end past `now + `[SCHEDULE_HORIZON_MILLIS] is capped there (the far week is computed for
+     *   display only, off the UI thread, and never retained — `App.kt`'s far-week `LaunchedEffect`);
+     * - the rolling floor is DOUBLED, so a fill made at the floor is not due again until the line has moved a
+     *   whole [SCHEDULE_GOAL_FLOOR_MILLIS] ([horizonRefillDueMillis]).
      */
-    fun scheduleHorizonEndMillis(
-        nowMillis: Long,
-        displayedEndMillis: Long?,
-        timeZone: TimeZone = TimeZone.currentSystemDefault(),
-    ): Long {
-        val currentWeekGoal = scheduleGoalEndMillis(nowMillis, null, timeZone)
-        val goal = scheduleGoalEndMillis(nowMillis, displayedEndMillis, timeZone)
-        return maxOf(currentWeekGoal, minOf(goal, nowMillis + SCHEDULE_HORIZON_MILLIS))
-            .coerceAtLeast(nowMillis + MIN_SCHEDULE_HORIZON_MILLIS)
-    }
+    fun scheduleHorizonEndMillis(nowMillis: Long, displayedEndMillis: Long?): Long =
+        maxOf(
+            minOf(displayedEndMillis ?: nowMillis, nowMillis + SCHEDULE_HORIZON_MILLIS),
+            nowMillis + 2 * SCHEDULE_GOAL_FLOOR_MILLIS,
+        )
 
     /**
-     * PRD §9 calculation event #1: how far the materialized schedule may fall short of the horizon in force
-     * before the rolling-horizon refill is due (1 hour).
-     *
-     * The margin is what makes the trigger *satisfiable at all*. A fill materializes out to exactly the
-     * horizon, so the coverage it produces can never EXCEED it: without slack, "refill once coverage drops
-     * below the horizon" is already true the instant the fill finishes (the clock has moved on by then), and
-     * since the refill rewrites `panels` — which is what the engine watches to re-evaluate the trigger — it
-     * re-fires forever. See [horizonRefillDueMillis].
+     * PRD §9 calculation event #1: how far a CAPPED calendar goal (one past [SCHEDULE_HORIZON_MILLIS]) may
+     * fall short before it is extended (1 hour). The cap is `now + 168 h` and rolls, so without this slack the
+     * plan capped there would be short again the instant its fill finished and re-fire forever — the
+     * self-retriggering shape that kept the release app's window from ever presenting (2026-07-28).
      */
     const val HORIZON_REFILL_MARGIN_MILLIS: Long = 60L * 60 * 1000
 
     /**
-     * PRD §9 calculation event #1 (rolling horizon): the instant the auto fill is due to be re-run, i.e. when
-     * the schedule materialized in [panels] has less than `(horizonEndMillis - nowMillis) -
-     * HORIZON_REFILL_MARGIN_MILLIS` of coverage left ahead of [nowMillis].
+     * PRD §9 calculation event #1 (rolling horizon): the instant the plan materialized in [panels] stops
+     * covering what $t_{goal}$ requires — the engine extends it (to [scheduleHorizonEndMillis]) once `now`
+     * reaches this instant. A value at or before [nowMillis] means "due now".
      *
-     * [horizonEndMillis] is the horizon in force ([scheduleHorizonEndMillis]) — the caller passes the one it
-     * fills with, so a schedule that already reaches $t_{goal}$ is *not* considered short just because it
-     * stops before `now + 168h`. That is the whole point: a plan that has reached the instant the requirement
-     * lets the scheduler stop at must not keep re-filling the days after it. Since the goal is an ABSOLUTE
-     * staircase this stays false for a whole week and then turns true once, when the week rolls.
+     * Coverage is [firstFreeMoment] — the end of the contiguous chain of panels covering `now`. It is due:
+     * - when the coverage has only [SCHEDULE_GOAL_FLOOR_MILLIS] left ahead of the line — a fill reaches twice
+     *   that, so this turns true once per floor, never right after the fill;
+     * - when the calendar [displayedEndMillis] shows further than the coverage reaches — at once while the
+     *   shortfall is inside `now + `[SCHEDULE_HORIZON_MILLIS]` − `[HORIZON_REFILL_MARGIN_MILLIS], and past that
+     *   cap once the line has moved one margin on.
      *
-     * Coverage is measured by [firstFreeMoment] — the end of the contiguous chain of panels covering `now`.
-     * Because a fill reaches at most the horizon, this instant is in the FUTURE right after a successful fill
-     * (that is the property [org.example.project.scheduler.engine.SchedulerEngine] relies on to stop polling)
-     * and in the past whenever the schedule genuinely fell short — a gap opened by an edit, a horizon that has
-     * rolled, or the user navigating to a week further out than the fill covers.
+     * A calendar end the coverage already reaches is NOT due (the comparison is strict), so a plan that has
+     * reached the goal the requirement lets the scheduler stop at does not keep re-filling it.
      */
-    fun horizonRefillDueMillis(
-        panels: List<TaskPanel>,
-        nowMillis: Long,
-        horizonEndMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
-    ): Long =
-        firstFreeMoment(panels, nowMillis) - (horizonEndMillis - nowMillis) + HORIZON_REFILL_MARGIN_MILLIS
+    fun horizonRefillDueMillis(panels: List<TaskPanel>, nowMillis: Long, displayedEndMillis: Long?): Long {
+        val coverage = firstFreeMoment(panels, nowMillis)
+        val floorDue = coverage - SCHEDULE_GOAL_FLOOR_MILLIS
+        val calendarDue =
+            if (displayedEndMillis != null && displayedEndMillis > coverage) {
+                coverage - (SCHEDULE_HORIZON_MILLIS - HORIZON_REFILL_MARGIN_MILLIS)
+            } else {
+                Long.MAX_VALUE
+            }
+        return minOf(floorDue, calendarDue)
+    }
 
     /**
      * PRD §15: shortest account-wide pause worth drawing as an "Inactivity" band (90 s). Below this a
@@ -2429,7 +2393,7 @@ object SchedulerDomain {
      *
      * Hence the two terms. [bounds] is every instant the derived model is built out of, and the smallest one
      * still ahead of the line is the next boundary: the model cannot change before it (plus the next local
-     * midnight, which is the one boundary no panel carries — the day rollover and the $t_{goal}$ staircase).
+     * midnight, which is the one boundary no panel carries — the day rollover).
      * [millisPerPixel] is how long the line takes to cross one pixel at the zoom in force, and it applies only
      * when something IS pinned to the line ([bounds] holding the line itself, within [NOW_LINE_ANCHOR_SLACK] —
      * a dragged pose starts at `t_p + 1`): recomputing more often than that redraws a picture identical to the
@@ -3832,7 +3796,7 @@ object SchedulerDomain {
     /**
      * A task's resilience multiplier **at the now-line** — [taskResilienceIn] over [restrictiveKindsAt].
      *
-     * This is exactly the number the walk races on there ([PlanWalk] reads it through `weightsAt`), which is
+     * This is exactly the multiplier the score reads there ([ScoreModel]'s `μ_i`), which is
      * why the §7 task picker can colour its rows with it: a `0` row is a task the plan cannot place at this
      * instant however it is asked, and a fractional one is a task whose share is being scaled down while the
      * period lasts.
@@ -3856,12 +3820,12 @@ object SchedulerDomain {
 
     /**
      * PRD §7 **"Switch task"**: [switch] if the refusal it records is still **outstanding** at [nowMillis],
-     * else null — the value [fillSchedule] hands the walk as its `last`, so the refused task is not the one
-     * that starts here.
+     * else null — the value [fillSchedule] hands the search as `refusedFirst`, so the refused task is not the
+     * one that starts here.
      *
      * A refusal is outstanding until some **other** task has actually been served past the instant it was made.
-     * That is what granting it means, and reading it off [past] (the same recorded history the virtual clocks
-     * are seeded from) is what keeps CLAUDE.md's resume contract: a chain of re-plans over the refusal reaches
+     * That is what granting it means, and reading it off [past] (the same recorded history the frozen past
+     * is replayed from) is what keeps CLAUDE.md's resume contract: a chain of re-plans over the refusal reaches
      * the same schedule as one long plan, because each of them asks the history the same question rather than
      * carrying a flag the next one cannot reconstruct. A marker stamped in the future (a peer's clock ahead of
      * ours) is not yet live.
@@ -3886,7 +3850,7 @@ object SchedulerDomain {
      * the same event ends both. While the named task is still the one running since [ForcedTaskStart.atMillis]
      * the request is unanswered, so a re-plan in between (a rule change, the hourly staleness refresh) keeps
      * the user on it instead of quietly picking somebody else. Reading it off [past] — the same recorded
-     * history the virtual clocks are seeded from — is what keeps CLAUDE.md's resume contract. A marker stamped
+     * history the frozen past is replayed from — is what keeps CLAUDE.md's resume contract. A marker stamped
      * in the future (a peer's clock ahead of ours) is not yet live.
      */
     internal fun liveForcedStartTask(
@@ -4244,8 +4208,8 @@ object SchedulerDomain {
         if (pins.existence) pins else pins.copy(existence = true)
 
     /**
-     * PRD §9 Scheduling: regenerate the auto schedule with the **cyclic proportional-share** rules of
-     * `side-dev/README.md` — [SchedulerPlanner] / [PlanWalk], the Kotlin port of the reference `side-dev/scheduler_logic.py`.
+     * PRD §9 Scheduling: regenerate the auto schedule — **the continuation with the best score**
+     * (`docs/scheduler_score.md`), or as close to it as the budget allows.
      * Every **non-pinned** panel in the window `[now, horizonMillis]` is cut and replaced; the only panels
      * kept are the **fixed** ones (pinned + chore, [isSchedulerFixed]), any panel entirely **outside** the
      * window — already past (`end ≤ now`) or starting beyond the horizon — and, when this call is an
@@ -4257,30 +4221,23 @@ object SchedulerDomain {
      * continuity, §11).
      *
      * ### This function is a *driver*, not a second copy of the rules
-     * Every scheduling decision — which task, for how long, how an exclusion distorts the neighbourhood, how
-     * an abnormal imbalance is forgotten — lives in [PlanWalk], the single shared implementation that
-     * [SchedulerPlanner.plan] (the rule-list form of `side-dev/README.md`) also drives. What this function adds
-     * is the mapping from OmniApp's world onto the reference's two inputs, and the materialization of concrete
-     * [TaskPanel]s:
-     * - **pre-placed blocks** = the user's pinned/manual panels still ahead of `now`, plus (on an extension)
-     *   the kept head of the plan, plus the already-served **past** (records and past panels), which is what
-     *   seeds the virtual clocks ([SchedulerPlanner.replayClocks]). Only the blocks still AHEAD feed the influence field — the past is history, not a blockage to compensate around;
+     * Every scheduling decision — which task, for how long — is the score's ([ScoreModel]) and its search's
+     * ([ScheduleOptimizer], [ScheduleImprover]), reached through [ScheduleFill]. What this function adds is the
+     * mapping from OmniApp's world onto the score's inputs, and the materialization of concrete [TaskPanel]s:
+     * - **pre-placed tasks** = the user's pinned/manual panels, past and future;
+     * - **the frozen past** = the already-served records and past panels (plus, on an extension, the kept head of
+     *   the plan), replayed on the schedulable clock to give every task's lag and the run in progress at the line;
      * - **restrictive periods** = every panel that names a kind ([TaskPanel.restrictiveKind]), the §15 screen
      *   breaks included. A period is a start, an end and a **kind**, and who may run inside it is each task's
      *   **resilience** to that kind — a multiplier in `[0, 1]` on its priority percentage, `0` forbidding it
-     *   outright ([PeriodKinds]). Overlapping periods multiply, so the strictest still forbids. All three
-     *   screen breaks carry `no task allowed` end to end, so a task works through one exactly when it has
-     *   been given a non-zero resilience to that kind. The reference's rule that a task is a candidate only
-     *   while its minimum fits the gap is what enforces "never when its minimum time exceeds what is left of
-     *   the break", with no special case. A period that refuses everybody deprives everyone equally, so per
-     *   `side-dev/README.md` it creates **no** influence field — which is exactly why a look-away, which
-     *   recurs every 20 minutes forever, does not distort the plan around each of its occurrences.
+     *   outright ([PeriodKinds]). Overlapping periods multiply, so the strictest still forbids. A stretch nobody
+     *   may run in is not on the score's schedulable clock at all, so it neither separates a panel nor creates any
+     *   compensation — which is why a look-away, recurring every 20 minutes forever, does not distort the plan.
      *
-     * Because a fixed block owned by another task and a period that bans a task are the *same* deprivation
-     * (`side-dev/README.md`), both feed one influence field: a task kept out of the timeline gets a denser,
-     * **bounded** presence on both sides of the exclusion, decaying exponentially with the distance. That is
-     * what replaced the earlier debt-with-a-natural-bound model: a 17-hour block of A no longer buys B 17
-     * hours of catch-up, it buys it a logarithmic amount of compensation spread around the block.
+     * A fixed block owned by another task and a period that bans a task are the *same* deprivation: the task kept
+     * out gets a raised target share on both sides of it, decaying exponentially with the schedulable distance and
+     * bounded whatever the length of the exclusion — a 17-hour block of A buys B a bounded compensation, not 17
+     * hours of catch-up.
      *
      * PRD §15 Screen breaks: [SchedulerState.screenBreaks] are materialized as obstacle panels
      * ([screenBreakPanels]) and woven into the window as periods. They behave like a pinned obstacle with one
@@ -4314,17 +4271,17 @@ object SchedulerDomain {
         // a derive has retired, anything at all before a restart — still bars the breaks the README says it does.
         noScreenEvidence: List<TaskTimeRange> = emptyList(),
         // The instant to materialize the plan out to — **the horizon follows what is displayed**, never a
-        // fixed 168h. Live callers pass [scheduleHorizonEndMillis] of the focused week (the reducer, via
-        // `SchedulerReducer.scheduleHorizonEndMillis`), so staying on the current week computes only that
-        // week and no later day. A DISPLAY caller viewing a week past the 168h ceiling passes that week's end
+        // fixed 168h. Live callers pass [scheduleHorizonEndMillis] of the displayed span (the reducer, via
+        // `SchedulerReducer.scheduleHorizonEndMillis`), so a calendar showing today computes only up to its
+        // end, and a closed one twenty minutes. A DISPLAY caller viewing a week past the 168h ceiling passes that week's end
         // directly. The work is O(horizon); a distant week is meant to be filled off the UI thread (it "takes
         // time to display", never freezes), and nothing beyond the requested horizon is retained, so
         // navigating back simply refills the nearer window. The default is the ceiling, for tests and for any
         // caller that genuinely wants the maximum span.
         horizonMillis: Long = nowMillis + SCHEDULE_HORIZON_MILLIS,
         // PRD §9 / CLAUDE.md trigger rule: when non-null, this is an **extension**, not a re-plan — the auto
-        // panels already materialized before this instant are KEPT (the cursor walks over them, feeding the
-        // virtual clocks exactly as if it had just placed them) and only the tail past them is generated. The
+        // panels already materialized before this instant are KEPT (replayed as served time, exactly as if the
+        // fill had just placed them) and only the tail past them is generated. The
         // rolling-horizon / calendar-navigation refills use it so that merely *displaying* more days never
         // rewrites the plan the user is already looking at; only a change to the scheduling rules
         // ([schedulingSignature]) re-plans from `now` (null).
@@ -4340,6 +4297,13 @@ object SchedulerDomain {
         // ([SchedulerRunRules]). Only the two plan reductions in `SchedulerReducer` pass one — the display
         // fills leave it null, and nothing is described then, so this costs a null check on the hot path.
         rulesSink: ((SchedulerRunRules) -> Unit)? = null,
+        // `docs/scheduler_score.md` § *The rules repeat*: where the fill reports the repeating part of the rules it
+        // returned (null: they do not repeat). An EXTENSION of a state holding one unrolls it where it still holds.
+        cycleSink: ((org.example.project.scheduler.model.ScheduleCycle?) -> Unit)? = null,
+        // `docs/invariants/scheduler.md` § *One device plans*: the runs another device of the account placed for these
+        // rules, laid instead of searched (and [adoptedCycle], the repeating part past them). Null: search here.
+        adoptedPlacements: List<org.example.project.scheduler.model.RulePlacement>? = null,
+        adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
     ): List<TaskPanel> {
         var ruleState: List<String> = emptyList()
         // Only the fill itself is measured: describing it is a diagnostic the two plan reductions ask for,
@@ -4349,7 +4313,8 @@ object SchedulerDomain {
             Perf.measure("scheduler.fillSchedule") {
                 fillScheduleUninstrumented(
                     state, nowMillis, timeZone, liveRest, noScreenEvidence, horizonMillis,
-                    keepExistingUntilMillis, tpMode, if (rulesSink == null) null else ({ ruleState = it }),
+                    keepExistingUntilMillis, tpMode, if (rulesSink == null) null else ({ ruleState = it }), cycleSink,
+                    adoptedPlacements, adoptedCycle,
                 )
             }
         // The returned set of rules is read off what the fill RETURNED, here, rather than collected inside
@@ -4406,7 +4371,7 @@ object SchedulerDomain {
      * dynamic periods is a function of it ([DynamicPeriods]), so a rule list that did not say which mode it
      * was drawn at would not answer for any.
      *
-     * What is a rule here: the picks the walk made ([TaskPanel.auto]) and the dynamic restrictive periods it
+     * What is a rule here: the runs the search chose ([TaskPanel.auto]) and the dynamic restrictive periods it
      * placed ([TaskPanel.screenBreak]) — the two things this fill *decides*. A pre-placed block, a user-drawn
      * period, a sleep window and a reminder tag are the *starting timeline* the requirements name: input the
      * rules were computed against, already listed in the rule state or authored by hand, and repeating them
@@ -4474,11 +4439,15 @@ object SchedulerDomain {
         keepExistingUntilMillis: Long?,
         tpMode: Int,
         ruleStateSink: ((List<String>) -> Unit)? = null,
+        cycleSink: ((org.example.project.scheduler.model.ScheduleCycle?) -> Unit)? = null,
+        adoptedPlacements: List<org.example.project.scheduler.model.RulePlacement>? = null,
+        adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
         // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
-        // outside the window — already past (end ≤ now) or beyond the horizon (start > horizon). Screen-break
+        // outside the window — already past (end ≤ now) or, if the fill does not own it, beyond the horizon
+        // (start > horizon; an auto panel there is the previous plan's and is cut too). Screen-break
         // and schedule-DERIVED (`sleep/{day}`) sleep panels are always cut and regenerated fresh below, so
         // they never accumulate — but MATERIALIZED past-sleep panels (PRD §17, allocated id) are a recorded
         // fact and kept, like the materialized Inactivity panels. The §17 wind-down periods
@@ -4495,7 +4464,13 @@ object SchedulerDomain {
                     // `side-dev/README.md`: EVERY restrictive period is kept, whatever its kind — the two
                     // built-in ones and the account's own alike, read through the single [TaskPanel.restrictiveKind].
                     isSchedulerFixed(panel) || panel.chore || panel.isRestrictivePeriod ||
-                        panel.endEpochMillis <= nowMillis || panel.startEpochMillis > horizon ||
+                        panel.endEpochMillis <= nowMillis ||
+                        // Beyond the horizon only what the fill does NOT own survives. An AUTO panel there is
+                        // the previous plan's, laid under rules this fill may have replaced: kept, it sat in
+                        // the state as the old answer, and when it happened to abut the new tail the next
+                        // extension read it as materialized and kept it as definitive ([firstFreeMoment]).
+                        // With the ten-minute goal floor a fill that stops short of an older plan is routine.
+                        (panel.startEpochMillis > horizon && !panel.auto) ||
                         // An EXTENSION keeps the already-materialized head of the plan (see the parameter).
                         (keepExistingUntilMillis != null && panel.auto && panel.startEpochMillis < keepExistingUntilMillis)
             }
@@ -4505,8 +4480,8 @@ object SchedulerDomain {
                 // $now line$ increases."** A task panel the line is standing IN is cut by the branch above
                 // and the plan is regenerated from `now` — so without this its ELAPSED HEAD, work the app has
                 // already told the user it was doing, silently disappears from the timeline on every re-plan
-                // (and, because [pastPeriodsForTask] reads these same panels, from the clock replay that seeds
-                // the walk, which is the resume contract going with it). It is not banked as a record either:
+                // (and, because [pastPeriodsForTask] reads these same panels, from the frozen past the lags are
+                // replayed from). It is not banked as a record either:
                 // [org.example.project.scheduler.state.SchedulerReducer]'s advance banks a panel only once it
                 // has wholly elapsed, precisely so an in-progress one stays a panel.
                 //
@@ -4520,7 +4495,7 @@ object SchedulerDomain {
                 // The kept head is an ordinary AUTO panel from here on, however it started: the next advance
                 // banks it like any other, [mergeSameTaskPanels] fuses it back with the new panel when the
                 // re-plan picks the same task again (it must carry the same `auto`/`pinned` to fuse), it is
-                // behind the line so it is never a [futureBlocks] obstacle, and it is no longer something the
+                // behind the line so it is served history, never a pre-placed block, and it is no longer something the
                 // user placed — so the calendar stops drawing it as one ([isUserPlaced]).
                 !panel.chore && panel.taskId != null &&
                     panel.startEpochMillis < nowMillis && panel.endEpochMillis > nowMillis -> {
@@ -4552,9 +4527,8 @@ object SchedulerDomain {
         // minimum time, its screen flags and its records.
         val working = state.copy(panels = kept, tasks = blendedTaskAttributes(state, nowMillis))
 
-        // `side-dev/scheduler.py` resolves ties by (biggest share, then name); OmniApp's PRD §9 tie-break is
-        // (highest absolute priority, then title). [PlanWalk.pick] takes the first candidate on a tie, so
-        // handing it this order IS the tie-break.
+        // `docs/scheduler_score.md` § *Ties*: (highest absolute priority, then title). The search takes the first
+        // candidate on a tie, so handing it this order IS the tie-break.
         val tieBreak =
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { working.tasks[it]?.title.orEmpty() }
         val ordered = leaves.sortedWith(tieBreak)
@@ -4569,7 +4543,7 @@ object SchedulerDomain {
                     resilience = working.tasks[it]?.resilience.orEmpty(),
                 )
             }
-        val planner = SchedulerPlanner(planTasks)
+
         // PRD §6: hand the RULE STATE this fill read to whoever asked for it, spelled with the titles it
         // already has. What the fill answers with it is described from the returned panels, in [fillSchedule].
         ruleStateSink?.invoke(planTasks.map { describePlanRule(it, working.tasks[it.id]?.title.orEmpty()) })
@@ -4630,7 +4604,7 @@ object SchedulerDomain {
         // So the dragged instances are dropped from the environment the plan is built over. They are still
         // DRAWN, still cued and still re-anchor the recurrence bars (which is where they belong: the drag is
         // a statement about a break being OWED, not about the timeline being blocked); only [restrictions]
-        // loses them, so the walk runs straight through and the passing line leaves task panels behind it. A
+        // loses them, so the plan runs straight through and the passing line leaves task panels behind it. A
         // pose the user actually takes is a different object — a break the app CONDUCTED
         // (`RecordConductedBreak`), a pre-placed period nothing drags — so nothing is lost by refusing to
         // obstruct on one that never happened.
@@ -4673,486 +4647,174 @@ object SchedulerDomain {
             return (kept + sidePanels + sleepPanels + beforeBedPanels).sortedBy { it.startEpochMillis }
         }
 
-        // --- the RESTRICTIVE PERIODS (`side-dev/README.md` § *Restrictive Period*).
+        // --- the RESTRICTIVE PERIODS (`docs/scheduler_requirements.md` § *Restrictive Period*), past AND future:
+        // the score measures the frozen past against them and reads a deprivation's influence on both sides of it.
         //
-        // Every restriction on the timeline is one object now — a start, an end and a KIND — and every task's
-        // behaviour inside one is its own resilience to that kind ([Task.resilience]). So there is no longer a
-        // list of accepted sets to assemble per sort of band: the grey regions, the no-screen zones and the
-        // three dynamic periods all become periods of a kind, and the walk asks [PeriodKinds.multiplier].
+        // Every restriction on the timeline is one object — a start, an end and a KIND — and every task's behaviour
+        // inside one is its own resilience to that kind ([Task.resilience]). A stretch nobody may run in is simply
+        // not on the score's schedulable clock, which is what makes a break or a night suspend a run rather than
+        // cut it (PRD §15/§17) without a rule of its own.
         val periodPanels =
             kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels + obstructingSidePanels
         val restrictions =
             (
                 periodPanels.map { panel ->
-                    RestrictivePeriod(
-                        panel.startEpochMillis, panel.endEpochMillis, panel.restrictiveKind, panel.title,
-                    )
+                    RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, panel.restrictiveKind, panel.title)
                 } +
-                    // PRD §8: a computer-layer period overlapping a phone-layer one IS a no-screen period —
-                    // the layers' own definition, taken in the one place ([impliedNoScreenPeriods]) rather
-                    // than by giving the two one-sided kinds a scheduling rule of their own.
+                    // PRD §8: a computer-layer period overlapping a phone-layer one IS a no-screen period — the
+                    // layers' own definition, taken in the one place ([impliedNoScreenPeriods]).
                     impliedNoScreenPeriods(periodPanels)
-                ).mapNotNull { period ->
-                if (period.kind.isEmpty()) return@mapNotNull null
-                val from = maxOf(period.startMillis, nowMillis)
-                val to = period.endMillis
-                if (to <= from) null else period.copy(startMillis = from, endMillis = to)
-            } +
-                // Mode 2's cover, clipped into the half-open form the rest of the fill measures in. It is the
-                // one period whose end is CLOSED — the README covers `t_p` itself — so in discrete time it
-                // reaches `now + 1`, where every other period clipped to the line would collapse to nothing
-                // and be dropped. That single millisecond IS the rule: what runs at the line must be resilient
-                // to "no on-screen task". Everything the cover holds behind the line is already the frozen
-                // past, which the fill does not place.
-                listOfNotNull(
-                    awayCover?.let {
-                        RestrictivePeriod(nowMillis, nowMillis + 1L, it.kind, it.label)
-                    },
-                )
-        // The two regions the *display* and the record bank still ask about by name. They are derived from
-        // the periods rather than collected separately, so a user-defined kind that happens to refuse
-        // everybody behaves exactly like a hand-drawn inactivity period.
-        //
-        // PRD §17's "before bed" joins the grey ones here for the one reason grey is collected at all: a
-        // stretch nobody may run in SUSPENDS a chunk rather than cutting it, and is stepped over by "does the
-        // minimum fit?" (CLAUDE.md). The wind-down hour is exactly that — its default resilience turns every
-        // task away — so a run that meets it resumes after the night with its minimum intact, like one that
-        // meets a sleep window or a screen break. A task deliberately given a resilience to the kind is still
-        // placed inside it, which is the same escape a break already has.
-        val blockedRegions =
-            mergeOccupied(
-                restrictions
-                    .filter {
-                        // BOTH grey kinds. `no task allowed` was one kind doing two jobs, so a single name
-                        // here used to catch the sleep windows too; missing [PeriodKinds.SLEEP] would let the
-                        // plan schedule straight through the night.
-                        it.kind == PeriodKinds.INACTIVITY ||
-                            it.kind == PeriodKinds.SLEEP ||
-                            it.kind == PeriodKinds.BEFORE_BED
-                    }
-                    .map { TaskTimeRange(it.startMillis, it.endMillis) },
-            )
-        val noScreenRegions =
-            mergeOccupied(
-                restrictions.filter { it.kind == PeriodKinds.NO_SCREEN }
-                    .map { TaskTimeRange(it.startMillis, it.endMillis) },
-            )
-        // PRD §15: the screen-break regions — now ordinary [PeriodKinds.INACTIVITY] periods, kept as their own
-        // list only because a break SUSPENDS a chunk rather than cutting it.
-        val sideRegions =
-            mergeOccupied(obstructingSidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) })
-        // The regions that SUSPEND a chunk instead of cutting it: the §15 screen breaks and the §8 grey
-        // periods (a hand-added inactivity period, a §17 sleep window). PRD §17 says it in as many words — a
-        // task that meets a sleep window is "split and resumes at wake, not charged for the sleep time, like
-        // a screen break" — and it is the same rule for the same reason: the stretch belongs to NOBODY, so it
-        // costs the run nothing but time. A screen-zone edge is the other kind of boundary: somebody else may
-        // run past it, so it ends the run and PRD §9/§10 cut the minimum there.
-        val suspendRegions = mergeOccupied(sideRegions + blockedRegions)
-        val suspendStarts = suspendRegions.mapTo(HashSet()) { it.startEpochMillis }
-        fun covers(regions: List<TaskTimeRange>, t: Long): Boolean =
-            regions.any { it.startEpochMillis <= t && t < it.endEpochMillis }
+                ).filter { it.kind.isNotEmpty() && it.endMillis > it.startMillis } +
+                // Mode 2's cover. It is the one period whose end is CLOSED — the README covers `t_p` itself — so in
+                // discrete time it reaches `now + 1`: what runs at the line must be resilient to "no screen".
+                listOfNotNull(awayCover?.let { RestrictivePeriod(nowMillis, nowMillis + 1L, it.kind, it.label) })
 
-
-        // The periods cut [now, ∞) at every edge into maximal spans of a constant KIND SET; the LAST one is
-        // left open-ended, so a task banned from it is banned "forever" and the field gives it a ramp before
-        // the ban and no phantom ramp after the horizon.
-        val edges = buildList {
-            add(nowMillis)
-            for (r in restrictions) {
-                if (r.startMillis in (nowMillis + 1) until horizon) add(r.startMillis)
-                if (r.endMillis in (nowMillis + 1) until horizon) add(r.endMillis)
+        // --- where placement starts. An EXTENSION keeps the head already materialized: it is part of the
+        // continuation the rules gave, so it is replayed as served time, never re-planned and never treated as a
+        // pre-placed task (a pre-placed task deprives the others; the scheduler's own plan does not).
+        val keptHead =
+            if (keepExistingUntilMillis == null) emptyList()
+            else kept.filter {
+                it.auto && !it.pinned && !it.chore && it.taskId != null && it.id !in elapsedHeadIds &&
+                    it.endEpochMillis > nowMillis && it.startEpochMillis < keepExistingUntilMillis &&
+                    it.startEpochMillis <= horizon && !it.isRestrictivePeriod
             }
-        }.distinct().sorted()
-        val windows = edges.mapIndexed { i, start ->
-            val kinds = restrictions.filterTo(HashSet()) { it.covers(start) }.mapTo(HashSet()) { it.kind }
-            PlanWindow.of(start, edges.getOrNull(i + 1), kinds, planTasks)
-        }
-        // Per window: the effective weights, who may run there, and their locally renormalized shares. The
-        // walk asks for all three at every step and rebuilding them there would make the fill quadratic in
-        // the number of periods.
-        val weightsPer = windows.map { w -> planner.weightsAt(emptyList(), listOf(w), w.startMillis) }
-        val accepted =
-            windows.mapIndexed { i, w ->
-                // A zero-priority task is absent from the share model, so it is a candidate only where
-                // nothing with a real share is (the app's documented deviation from the reference).
-                planner.candidatesAt(weightsPer[i], planner.permittedAt(emptyList(), listOf(w), w.startMillis))
-                    .let { permitted -> ordered.filter { it in permitted } }
-            }
-        val localShares = weightsPer.mapIndexed { i, w -> planner.localSharesOf(w, accepted[i]) }
+        val startMillis = maxOf(nowMillis, keptHead.maxOfOrNull { it.endEpochMillis } ?: nowMillis).coerceAtMost(horizon)
+        val scoreFrom = nowMillis - SCHEDULE_PAST_LOOKBACK_MILLIS
 
-        // --- the pre-placed blocks. Ahead of the cursor: the user's fixed blocks and, on an extension, the
-        // kept head of the plan — both are committed service the cursor must walk OVER. Behind it: what has
-        // already been served, which seeds the virtual clocks and anchors the influence field.
-        val futureBlocks =
+        // --- the pre-placed tasks: the user's pinned panels, past and future.
+        val pinnedBlocks =
             kept.asSequence()
-                .filter { (isSchedulerFixed(it) || it.auto) && it.endEpochMillis > nowMillis && !it.chore }
-                .map { PlanBlock(it.taskId, maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) }
+                .filter { isSchedulerFixed(it) && !it.chore && !it.isRestrictivePeriod }
+                .filter { it.endEpochMillis > scoreFrom && it.startEpochMillis < horizon }
+                .map { PlanBlock(it.taskId, it.startEpochMillis, it.endEpochMillis) }
                 .filter { it.endMillis > it.startMillis }
                 .sortedBy { it.startMillis }
                 .toList()
-        // How far back the already-placed past is read. One period is all the seed needs
-        // ([SchedulerPlanner.replayClocks]); the field needs its own reach, past which an exclusion is felt no
-        // more. Bounded by [SCHEDULE_PAST_LOOKBACK_MILLIS] so the fill never costs total history.
-        val pastLookback =
-            maxOf(planner.minPeriodMillis, planner.maxReachMillis)
-                .coerceIn(MILLIS_PER_MINUTE.toDouble(), SCHEDULE_PAST_LOOKBACK_MILLIS.toDouble())
-                .roundToLong()
-        val pastAnchor = nowMillis - pastLookback
+
+        // --- the frozen past: what every task has been served, merged per task so a record and the auto panel
+        // that banked it count once, plus the kept head of an extension.
         val pastBlocks =
             ordered.flatMap { id ->
-                // Merged per task so a record and the auto panel that banked it are not counted twice.
                 mergeOccupied(pastPeriodsForTask(working, id, nowMillis))
-                    .map { PlanBlock(id, maxOf(it.startEpochMillis, pastAnchor), minOf(it.endEpochMillis, nowMillis)) }
+                    .map { PlanBlock(id, maxOf(it.startEpochMillis, scoreFrom), minOf(it.endEpochMillis, nowMillis)) }
                     .filter { it.endMillis > it.startMillis }
-            }.sortedBy { it.startMillis }
+            }
+        val history =
+            pastBlocks + keptHead
+                .map { PlanBlock(it.taskId, maxOf(it.startEpochMillis, nowMillis), minOf(it.endEpochMillis, startMillis)) }
+                .filter { it.endMillis > it.startMillis }
 
-        // `side-dev/scheduler_logic.py` `plan`: only obstacles still AHEAD bend the plan — what already
-        // happened is history, not a blockage the timeline has to be compensated around. The past reaches the
-        // walk through the CLOCKS, replayed the way the walk writes them (the forgetting included), which is
-        // what makes an extension continue the plan it is extending instead of re-deriving a different one.
-        planner.setField(futureBlocks, windows)
-        val lookbackWant = 2.0 * planner.minPeriodMillis
-        val replayStart =
-            maxOf(planner.lookbackStart(windows, nowMillis, lookbackWant), pastAnchor)
-                .coerceAtMost(nowMillis)
-        val walk = planner.walk(planner.replayClocks(pastBlocks, windows, nowMillis, replayStart))
-        // `_last_run`, NOT `_head`: a task that stopped and was not replaced never took a second turn, so the
-        // walk must not refuse the very task the timeline left off with (see [SchedulerPlanner.lastRun]).
-        //
-        // PRD §7 "Switch task": an outstanding refusal ([liveForcedSwitchTask]) takes that seat instead. The
-        // user asked for something else to start here, and "the task the timeline just left off with" is
-        // already the walk's word for a task it must not pick now — so the refusal needs no rule of its own,
-        // and inherits the right escape: a task nothing can replace still runs rather than the period being
-        // left empty. It costs the refused task nothing else — its clock is untouched, and from the second
-        // slot on it is an ordinary candidate again.
+        // PRD §7 "Switch task" and PRD §13 "start this task now" are the README's alternative schedule put to use:
+        // the refused task may not be the first run, the requested one must be. Both are about the line itself, so
+        // an extension (which starts past the kept head) carries neither.
         val refusedHere = liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
-        val runningAtLine = planner.lastRun(pastBlocks, nowMillis)
-        walk.setLast(refusedHere ?: runningAtLine)
+        val forcedStartTask = liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
 
-        // PRD §13 "start this task now": the mirror image of the refusal above — the user named the task the
-        // plan must place, so it takes the FIRST slot this fill picks rather than being kept out of it. It is
-        // consumed there and nowhere else: the walk is charged for the slot exactly as if it had chosen it,
-        // and everything after is the ordinary walk. A named task the current period will not have (a break,
-        // a no-screen zone, a minimum that does not fit before the next cutting edge) simply loses its turn
-        // here — the marker is not honoured by hunting for a later window, since "now" is the whole of what
-        // was asked; the request then dies the ordinary way, as soon as another task has been served past it.
-        var forcedStartTask = liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
+        // --- the rule state at the line, `R(now)` — exact inside a task-tree transition (the minimum in millis,
+        // not rounded to a minute), and held for the whole continuation.
+        val ruleState =
+            if (taskTreeBlendAt(state, nowMillis)?.isSingle == false) RuleStateTimeline(state).planTasksAt(nowMillis)
+            else planTasks
 
-        // `side-dev/scheduler.py` `Walk.run`: *"if head is not None and head[1] < minimum[head[0]] → pending"*
-        // — **the chunk the timeline is in the MIDDLE of resumes; it is not re-picked.** So `last` never gets
-        // to refuse it and the never-twice-in-a-row rule does not fire on a run that never ended, and the
-        // block the user is looking at ends up exactly one minimum long instead of one minimum PLUS whatever
-        // had already elapsed.
-        //
-        // This could not be seeded while the straddling panel's elapsed head was being thrown away (see the
-        // `kept` filter above): with nothing behind the line there was no run in progress to find, and PRD
-        // §10's continuous-effort credit shortened the fresh pick after the fact instead. That credit still
-        // answers for an effort the records alone carry; here it is simply never reached, so the two cannot
-        // both apply to one slot.
-        //
-        // [SchedulerPlanner.headRun] is the run at the end of the past and is not required to reach the line,
-        // so it is qualified by [SchedulerPlanner.lastRun], which is: a run that stopped an hour ago is
-        // history, not a chunk to resume. Both §7's refusal and §13's request are the user overriding what
-        // the plan would do at the line, so either of them drops the resume — otherwise the press would be
-        // silently swallowed by a chunk that happened to be unfinished.
-        val resumedHead =
-            planner.headRun(pastBlocks, nowMillis)
-                ?.takeIf { (id, _) ->
-                    id == runningAtLine && id != refusedHere &&
-                        (forcedStartTask == null || forcedStartTask == id)
-                }
-                ?.let { (id, served) ->
-                    val owed = (minimumMillisOf[id] ?: 0L) - served
-                    // Under a minute is the fill's own unplaceable crumb, not a chunk worth resuming.
-                    if (owed >= MILLIS_PER_MINUTE) id to owed else null
-                }
+        val filled =
+            ScheduleFill.run(
+                ScheduleFill.Input(
+                    startMillis = startMillis,
+                    horizonMillis = horizon,
+                    lookbackMillis = startMillis - scoreFrom,
+                    ruleState = ruleState,
+                    periods = restrictions,
+                    blocks = pinnedBlocks,
+                    history = history,
+                    forcedFirst = forcedStartTask.takeIf { startMillis == nowMillis },
+                    refusedFirst = refusedHere.takeIf { startMillis == nowMillis },
+                    cycle = adoptedCycle ?: state.scheduleCycle.takeIf { keepExistingUntilMillis != null },
+                    adopted = adoptedPlacements,
+                    // The limit on how far the rules are searched is the materialization ceiling: past it they repeat.
+                    repeatBeyondMillis = nowMillis + SCHEDULE_HORIZON_MILLIS,
+                ),
+            )
+        cycleSink?.invoke(filled.cycle)
+        val placements = filled.placements
 
-        val generated = mutableListOf<TaskPanel>()
-        var cursor = nowMillis
-        var index = 0
         var idCounter = 0
-        // PRD §15: the task whose chunk is mid-placement, split across a screen break, with the work it still
-        // owes. Carried across iterations so it resumes after the break rather than being re-picked mid-chunk.
-        var pending: Pair<TaskId, Long>? = resumedHead
         fun nextAutoId(): String {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
-        // `side-dev/README.md` § *Alternative Schedules*: every rule the scheduler makes also names **who runs
-        // from here instead**, and a rule of this fill is a panel — so the alternative is emitted with it,
-        // exactly as `side-dev/scheduler.py`'s `Walk._emit` carries `alt` beside the placement and as
-        // [SchedulerPlanner.runRange] hands it to its [SchedulerPlanner.PlacementCollector]. Keeping the two
-        // drivers in step (CLAUDE.md) means this driver names it too.
-        fun emit(taskId: TaskId, start: Long, end: Long, alternative: TaskId?) {
-            generated += TaskPanel(
-                id = nextAutoId(),
-                taskId = taskId,
-                title = working.tasks[taskId]?.title.orEmpty(),
-                startEpochMillis = start,
-                endEpochMillis = end,
-                pinned = false,
-                auto = true,
-                alternativeTaskId = alternative,
-            )
-        }
-        // The windows partition the timeline and the cursor only advances, so one monotonic index answers
-        // "which period are we in?" in amortized O(1) — the equivalent of [SchedulerPlanner.allowedAt] for a
-        // partition, without its per-step scan.
-        var windowIndex = 0
-        fun windowAt(t: Long): Int {
-            while (windowIndex + 1 < windows.size && windows[windowIndex + 1].startMillis <= t) windowIndex++
-            return windowIndex
-        }
-        // Bound the loop defensively: with positive spans this can't run away, but a degenerate zero
-        // span (only possible if minima are clamped to 0) would otherwise spin. The cap SCALES with the
-        // horizon span (~one chunk per 30 s) so a DISPLAY fill out to a distant focused week isn't clipped
-        // the way a fixed 168h-sized cap would be — bounded by the absolute [MAX_SCHEDULE_PANELS] ceiling.
-        val maxPanels = ((horizon - nowMillis) / 30_000L).coerceIn(1L, MAX_SCHEDULE_PANELS.toLong()).toInt()
-        // Set when the walk runs out of anything that could distort the schedule — the reference's phase-2
-        // condition. With screen breaks enabled the context never freezes inside the horizon, so it stays
-        // false and the whole fill is phase 1.
-        var frozen = false
-
-        // --- phase 1 (`side-dev/scheduler_logic.py`): the disturbed part of the timeline ---
-        while (cursor < horizon && index < maxPanels) {
-            val here = windowAt(cursor)
-            val allowedHere = accepted[here]
-            // `side-dev/scheduler.py`: the percentages the walk races on here are the EFFECTIVE ones — each
-            // task's share after its resilience to the kinds covering this span, renormalized over whoever is
-            // left. A task half-resilient to a period in force runs there, just less.
-            val weightsHere = weightsPer[here]
-            val sharesHere = localShares[here]
-            val period =
-                if (allowedHere.isNotEmpty()) planner.periodOf(allowedHere, sharesHere) else planner.minPeriodMillis
-
-            // A committed block cannot be moved: the cursor walks OVER it, and the walk charges the whole span
-            // to its task, so committed work counts exactly like auto-placed work.
-            val block = futureBlocks.firstOrNull { it.startMillis <= cursor && cursor < it.endMillis }
-            if (block != null) {
-                walk.serveWeighted(
-                    block.taskId,
-                    (block.endMillis - cursor).toDouble(),
-                    block.taskId?.let { weightsHere[it] ?: planner.share[it] ?: 0.0 } ?: 0.0,
+        val generated =
+            placements.map { p ->
+                TaskPanel(
+                    id = nextAutoId(),
+                    taskId = p.taskId,
+                    title = working.tasks[p.taskId]?.title.orEmpty(),
+                    startEpochMillis = p.startMillis,
+                    endEpochMillis = p.endMillis,
+                    pinned = false,
+                    auto = true,
+                    alternativeTaskId = p.alternative,
+                    alternativeSpans = p.alternativeSpans,
                 )
-                walk.relax(0.0, period, allowedHere) // no forgetting here: the block is not ours
-                cursor = block.endMillis
-                pending = null
-                continue
             }
-
-            // The next instant the context changes: the end of this period, or the next committed block.
-            val nextBlock = futureBlocks.asSequence().map { it.startMillis }.filter { it > cursor }.minOrNull()
-            val limit = listOfNotNull(windows[here].endMillis, nextBlock).minOrNull()?.takeIf { it < horizon }
-            val fieldEnd = planner.fieldEndMillis
-            if (limit == null && (fieldEnd == null || cursor >= fieldEnd)) {
-                frozen = true // nothing left to disturb → phase 2
-                break
-            }
-            val insideBreak = covers(sideRegions, cursor)
-            val insideSuspend = insideBreak || covers(blockedRegions, cursor)
-            if (pending != null && !insideSuspend && pending.first !in allowedHere) pending = null
-            val resume = if (insideSuspend) null else pending
-            // `side-dev/README.md`: who may run inside a period is its KIND and the task's resilience to it,
-            // and nothing else. The suspended task used to be excluded from its own break here — a rule that
-            // made sense while a break's accepted set was a shape ("off-screen work only", "break-doable
-            // only") and the task at hand was in it for the wrong reason. It cannot be right now: a task is
-            // in `allowedHere` inside a break only if it has DELIBERATELY been given a non-zero resilience to
-            // "no task allowed", which is precisely the statement "I can do this during a break".
-            val candidates = allowedHere
-
-            // `side-dev/README.md` § *No idling*: **"Anywhere that is not covered by restrictive periods which
-            // would prevent any task from being scheduled, the scheduler must schedule a task, for any $now
-            // line$ and $now line$ mode."** So the ONLY thing that empties a stretch is that nobody may run in
-            // it — the reference's `if not cand: emit(IDLE)`, and exactly what [SchedulerPlanner.runRange]
-            // does. There is no second reason, and there must not be one: the minimum execution time is a
-            // **soft** optimization goal (§ *Soft Minimum Execution Time* — *"another optimization goal"*),
-            // and a soft goal may not create idle time a hard constraint forbids.
-            //
-            // What used to be here were two extra reasons to idle, and both were divergences from
-            // [SchedulerPlanner.runRange] that CLAUDE.md's "keep the two drivers in step" did not sanction:
-            // a `_fits_from` filter that dropped every task whose minimum did not fit the room ahead, and a
-            // sub-minute `crumb` rule (with a `free_tail` stretch beside it). Both cited `scheduler_logic.py`,
-            // a reference file that no longer exists — the current `side-dev/scheduler.py` has neither, and
-            // clips the chunk at the next environment bound instead. Measured before the change: a 45-minute
-            // task and a pinned block twenty minutes out left `[now, now + 20 min)` empty with nothing
-            // restricting it at all.
-            //
-            // The soft goal is still served everywhere it can be: [PlanWalk.chunkMillis] floors a chunk at the
-            // task's minimum, so a slot is short only where the timeline itself is.
-            if (candidates.isEmpty()) {
-                // Nothing may occupy this stretch at all — a grey period, or a break nobody is resilient to.
-                // Idle time for every clock, and the run in progress is SUSPENDED rather than ended (the
-                // reference leaves `pending` standing here for exactly that reason).
-                if (limit == null) break
-                walk.idle()
-                cursor = limit
-                continue
-            }
-
-            // PRD §13 "start this task now" — asked once, at the first slot the fill actually places.
-            // A suspended chunk is never preempted (PRD §15 — it is mid-placement, not a fresh pick); at the
-            // FIRST pick, which is the only one this can be, there is none.
-            val forcedHere = forcedStartTask?.takeIf { resume == null && it in candidates }
-            forcedStartTask = null
-            val taskId = forcedHere ?: resume?.first ?: walk.pick(candidates, shares = sharesHere) ?: break
-            val boost = planner.boostAt(taskId, cursor)
-            var need =
-                resume?.second
-                    ?: walk.chunkMillis(taskId, candidates, boost, shares = sharesHere).roundToLong().coerceAtLeast(1L)
-            // PRD §10: a task whose continuous effort is still running at the now-line is scheduled for the
-            // REMAINDER of its minimum, not a fresh one, so the block it merges into is exactly one minimum
-            // long. Only the first chunk can have such an effort behind it, and only when the walk did not
-            // already decide to give the task MORE than its minimum (a catch-up must never be shortened).
-            if (resume == null && cursor == nowMillis && need <= (minimumMillisOf[taskId] ?: 0L)) {
-                need = (scheduledSpanMinutes(working, taskId, nowMillis) * MILLIS_PER_MINUTE).coerceAtLeast(1L)
-            }
-            val end =
-                minOf(
-                    SchedulerPlanner.advance(cursor, need, horizon),
-                    limit ?: Long.MAX_VALUE,
-                )
-            if (end <= cursor) break
-            // `side-dev/scheduler.py`: `alt = self._alternative(v, cand, name, p_local)` — read BEFORE the
-            // clocks are charged, so the alternative answers "who instead?" at the same instant, and against
-            // the same claims, as the pick it stands in for.
-            emit(taskId, cursor, end, walk.alternative(candidates, taskId, sharesHere))
-            val placed = end - cursor
-            // `side-dev/scheduler.py`: `v[name] += served / w[name]` — charged against the task's EFFECTIVE
-            // weight, its percentage after resilience, and at the PLAIN rate. The field lengthens the slot
-            // ([boost] above); it does not also discount what the slot costs, or the compensation would be
-            // paid twice over — which is the overcompensation the README rules out.
-            walk.serveWeighted(taskId, placed.toDouble(), weightsHere[taskId] ?: planner.share[taskId] ?: 0.0)
-            walk.relax(placed.toDouble(), period, allowedHere)
-            if (!insideSuspend) {
-                // PRD §15: only a screen break suspends a chunk. A fixed panel or a screen-zone edge
-                // truncates it instead (PRD §9/§10: the minimum IS cut there).
-                pending =
-                    if (placed < need && need - placed >= MILLIS_PER_MINUTE &&
-                        limit != null && limit in suspendStarts
-                    ) {
-                        taskId to (need - placed)
-                    } else {
-                        null // the chunk is satisfied, or what is left of it is an unplaceable crumb
-                    }
-            }
-            cursor = end
-            index++
-        }
-
-        // --- phase 2 (`side-dev/scheduler_logic.py`): the context is frozen forever, so settle what is still owed and then
-        // attach the analytic cycle — the "list of rules + repeat" of `side-dev/README.md` — unrolled out to the
-        // horizon. Its shares are exact by construction, unlike the greedy's asymptotic ones. With screen
-        // breaks enabled the context never freezes inside the horizon, so this simply never runs.
-        if (frozen && cursor < horizon && index < maxPanels) {
-            val hereIndex = windowAt(cursor)
-            val allowedHere = accepted[hereIndex]
-            val weightsHere = weightsPer[hereIndex]
-            val sharesHere = localShares[hereIndex]
-            if (allowedHere.isNotEmpty()) {
-                val period = planner.periodOf(allowedHere, sharesHere)
-                // `side-dev/scheduler.py` `Walk.run`'s `pending`, reaching phase 2 for the same reason §13's
-                // request does just below: a timeline nothing disturbs freezes before phase 1 places anything,
-                // and the chunk the line is in the MIDDLE of must not be dropped there. Charged like any other
-                // slot, so the settle and the cycle after it go on from the state the walk would have been in.
-                pending?.takeIf { it.first in allowedHere }?.let { (id, owed) ->
-                    val end = SchedulerPlanner.advance(cursor, owed, horizon)
-                    if (end > cursor) {
-                        emit(id, cursor, end, walk.alternative(allowedHere, id, sharesHere))
-                        walk.serveWeighted(id, (end - cursor).toDouble(), weightsHere[id] ?: 0.0)
-                        walk.relax((end - cursor).toDouble(), period, allowedHere)
-                        cursor = end
-                        index++
-                        // A §13 request naming the resumed task has just been answered by the resume itself.
-                        if (forcedStartTask == id) forcedStartTask = null
-                    }
-                }
-                pending = null
-                // PRD §13 "start this task now": the request is answered wherever the fill's first slot falls,
-                // and on a timeline nothing disturbs (no screen breaks, no fixed blocks) that is HERE — phase 1
-                // freezes before placing anything. Same act as there: the named task is emitted and charged
-                // like any other pick, so the settle below and the cycle after it (phased off the walk) go on
-                // from exactly the state the walk would have been in had it chosen the task itself.
-                forcedStartTask?.takeIf { it in allowedHere }?.let { forced ->
-                    val boost = planner.boostAt(forced, cursor)
-                    val need =
-                        walk.chunkMillis(forced, allowedHere, boost, shares = sharesHere)
-                            .roundToLong().coerceAtLeast(1L)
-                    val end = SchedulerPlanner.advance(cursor, need, horizon)
-                    if (end > cursor) {
-                        emit(forced, cursor, end, walk.alternative(allowedHere, forced, sharesHere))
-                        walk.serveWeighted(forced, (end - cursor).toDouble(), weightsHere[forced] ?: 0.0)
-                        walk.relax((end - cursor).toDouble(), period, allowedHere)
-                        cursor = end
-                        index++
-                    }
-                }
-                forcedStartTask = null
-                val settleEnd =
-                    SchedulerPlanner.advance(
-                        cursor, (SchedulerPlanner.SETTLE_PERIODS * period).roundToLong(), horizon,
-                    )
-                while (cursor < settleEnd && index < maxPanels && walk.spread(allowedHere) > period) {
-                    val name = walk.pick(allowedHere, shares = sharesHere) ?: break
-                    val boost = planner.boostAt(name, cursor)
-                    val need =
-                        walk.chunkMillis(name, allowedHere, boost, shares = sharesHere)
-                            .roundToLong().coerceAtLeast(1L)
-                    val end = SchedulerPlanner.advance(cursor, need, horizon)
-                    if (end <= cursor) break
-                    emit(name, cursor, end, walk.alternative(allowedHere, name, sharesHere))
-                    walk.serveWeighted(name, (end - cursor).toDouble(), weightsHere[name] ?: 0.0)
-                    walk.relax((end - cursor).toDouble(), period, allowedHere)
-                    cursor = end
-                    index++
-                }
-                // `side-dev/scheduler_logic.py` `_phase`: the cycle is attached in the phase the walk would have gone on
-                // with. A cycle built from a blank slate always opens with the same task, so opening there
-                // after a prefix that left another one starved hands the first task two slots in a row — one
-                // block of twice the minimum, the coarse scale the model exists to avoid.
-                val cycle =
-                    planner.phaseCycle(
-                        // `side-dev/README.md`: the steady state under a standing restrictive period is the
-                        // WEIGHTED one — a task half-resilient to a period in force keeps half its percentage
-                        // there, so the cycle the plan converges on is built on the effective shares.
-                        planner.steadyCycle(allowedHere, sharesHere)
-                            .let {
-                                if (it.size > SchedulerPlanner.MAX_RULES) planner.coarseCycle(allowedHere, sharesHere)
-                                else it
-                            }
-                            .filter { it.taskId != null && it.durationMillis > 0L },
-                        walk,
-                        allowedHere,
-                    )
-                // `side-dev/README.md` § *Alternative Schedules* under the analytic cycle: the cycle is a fixed
-                // rotation the walk has converged on, so "who runs from here instead" is simply **the next
-                // task the rotation reaches** — the same task the greedy's claims would name, said once for
-                // the whole repeat instead of recomputed per slot (the walk is not advanced here). Null where
-                // the rotation holds one task only, which is the cycle's way of saying there is nobody else.
-                fun cycleAlternative(at: Int): TaskId? {
-                    for (step in 1 until cycle.size) {
-                        val other = cycle[(at + step) % cycle.size].taskId
-                        if (other != null && other != cycle[at % cycle.size].taskId) return other
-                    }
-                    return null
-                }
-                var slotIndex = 0
-                while (cursor < horizon && index < maxPanels && cycle.isNotEmpty()) {
-                    val at = slotIndex++ % cycle.size
-                    val slot = cycle[at]
-                    val end = SchedulerPlanner.advance(cursor, slot.durationMillis, horizon)
-                    if (end <= cursor) break
-                    emit(slot.taskId!!, cursor, end, cycleAlternative(at))
-                    cursor = end
-                    index++
-                }
-            }
-        }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
         return (
             kept.filterNot { it.id in elapsedHeadIds } + sidePanels + sleepPanels + beforeBedPanels +
                 mergeSameTaskPanels(kept.filter { it.id in elapsedHeadIds } + generated)
             ).sortedBy { it.startEpochMillis }
+    }
+
+    /**
+     * The rule state `R(x)` along the task-tree timeline, as the score reads it: every leaf of the two keyframes
+     * around `x`, its priority, minimum execution time and resilience moving at a constant rate between them
+     * (`docs/scheduler_requirements.md` § *Rule State Evolution*) — the minimum in millis, not rounded to a
+     * minute. The keyframes' own readings are computed once per keyframe, since a transition asks at every
+     * decision.
+     */
+    private class RuleStateTimeline(val state: SchedulerState) {
+        private val priorities = HashMap<TaskTreeId, Map<TaskId, Double>>()
+        private val leaves = HashMap<TaskTreeId, List<TaskId>>()
+
+        private fun prioritiesOf(entry: TaskTreeEntry) = priorities.getOrPut(entry.id) { taskTreePriorities(state, entry) }
+
+        private fun leavesOf(entry: TaskTreeEntry) =
+            leaves.getOrPut(entry.id) { schedulableLeaves(state.applyTreeWithRecords(entry.tree)) }
+
+        fun titleOf(id: TaskId): String =
+            state.tasks[id]?.title?.takeIf { it.isNotBlank() }
+                ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[id]?.title?.takeIf { t -> t.isNotBlank() } }
+                ?: ""
+
+        fun planTasksAt(x: Long): List<PlanTask> {
+            val blend = taskTreeBlendAt(state, x) ?: return emptyList()
+            val f = if (blend.isSingle) 0.0 else blend.fraction.coerceIn(0.0, 1.0)
+            val pa = prioritiesOf(blend.from)
+            val pb = if (blend.isSingle) pa else prioritiesOf(blend.to)
+            val ids = if (blend.isSingle) leavesOf(blend.from) else (leavesOf(blend.from) + leavesOf(blend.to)).distinct()
+            val ta = blend.from.tree.tasks
+            val tb = blend.to.tree.tasks
+            val tasks = ids.map { id ->
+                // A task only one keyframe holds keeps that side's minimum and resilience; only its percentage fades.
+                val a = ta[id] ?: tb[id] ?: state.tasks[id]
+                val b = tb[id] ?: a
+                val minA = (a?.minimumMinutes ?: DEFAULT_MINIMUM_MINUTES).toDouble() * MILLIS_PER_MINUTE
+                val minB = (b?.minimumMinutes ?: DEFAULT_MINIMUM_MINUTES).toDouble() * MILLIS_PER_MINUTE
+                val ra = a?.resilience.orEmpty()
+                val rb = b?.resilience.orEmpty()
+                PlanTask(
+                    id = id,
+                    priority = (1.0 - f) * (pa[id] ?: 0.0) + f * (pb[id] ?: 0.0),
+                    minimumMillis = (minA + (minB - minA) * f).roundToLong(),
+                    resilience = (ra.keys + rb.keys).associateWith { kind ->
+                        val x0 = PeriodKinds.resilienceFor(ra, kind)
+                        val x1 = PeriodKinds.resilienceFor(rb, kind)
+                        PeriodKinds.clamp(x0 + (x1 - x0) * f)
+                    },
+                )
+            }
+            return tasks.sortedWith(compareByDescending<PlanTask> { it.priority }.thenBy { titleOf(it.id) })
+        }
     }
 
     /**
@@ -5170,10 +4832,10 @@ object SchedulerDomain {
      * "Switch task"): refuse the scheduled task at [millis] and the re-plan starts this one there.
      */
     fun alternativeTaskAt(panels: List<TaskPanel>, millis: Long): TaskId? {
-        val rules = panels.filter { it.auto && it.taskId != null && it.alternativeTaskId != null }
+        val rules = panels.filter { it.auto && it.taskId != null && (it.alternativeTaskId != null || it.alternativeSpans.isNotEmpty()) }
             .sortedBy { it.startEpochMillis }
         rules.firstOrNull { it.startEpochMillis <= millis && millis < it.endEpochMillis }
-            ?.let { return it.alternativeTaskId }
+            ?.let { return it.alternativeAt(millis) }
         return rules.firstOrNull { it.endEpochMillis > millis }?.alternativeTaskId
     }
 
@@ -5202,7 +4864,7 @@ object SchedulerDomain {
      * directly ([blendedTaskPriorities]), so editing one that is not on screen changes the plan exactly as
      * editing the live tree does. Undated trees are not: nothing reads them until they are selected, at
      * which point they *are* the live tree. Note this still leaves the plan a function of `now` through the
-     * blend cursor, which is the one thing the signature cannot express — see [taskTreeBlendStep].
+     * blend, which the signature cannot express — see [taskTreeBlendDecisionKey].
      */
     fun schedulingSignature(state: SchedulerState): Int {
         var result = if (state.automaticSchedule) 1 else 0
@@ -5220,7 +4882,7 @@ object SchedulerDomain {
             result = 31 * result + panel.startEpochMillis.hashCode()
             result = 31 * result + panel.endEpochMillis.hashCode()
             // The panel's KIND, not the two legacy flags: a period of `before bed` or of a kind the account
-            // defined restricts the walk exactly as the two named ones do, and read off the flags it was
+            // defined restricts the plan exactly as the two named ones do, and read off the flags it was
             // indistinguishable from a task panel — so re-kinding one re-plans nothing.
             result = 31 * result + panel.restrictiveKind.hashCode()
             result = 31 * result + (if (panel.pinned) 1 else 0)

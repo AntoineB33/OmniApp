@@ -2,23 +2,36 @@
 
 Active invariants. Reasoning and post-mortems: `docs/adr/`. Dated log: `CHANGELOG.md`.
 Global rules that always apply: `CLAUDE.md`.
+The requirements are `docs/scheduler_requirements.md` (user-owned — never edit it); the score its two optimization
+criteria are measured by is defined in `docs/scheduler_score.md`.
 
 ---
 
 ## Scheduler
 
-→ ADR 0001. The model is `side-dev/README.md`; `side-dev/scheduler.py` is the reference and
-`SchedulerPlan.kt` its port. `SchedulerDomain.fillSchedule` is a driver over that port.
+→ ADR 0001 §11. The requirements are `docs/scheduler_requirements.md`; their two optimization
+criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.fillSchedule` is a driver over it.
 
-- **`PlanWalk` is the ONLY copy of the scheduling rules.** `SchedulerPlanner.plan()` and `fillSchedule` are
-  both thin drivers over it. Keep them in step (the one sanctioned divergence is the atomic block, below).
-- **The pick is a function of the walk state at the cursor.** It cannot be answered by a point query — do not
-  reintroduce an EDF/deadline-style shortcut.
-- **A claim is the lag counted in the task's own slots**: `claim = (V − v)·p/m`. Do not simplify back to
-  `min v`.
-- **A chunk's scale is one ROUND**, `c = p·m_rival/(1 − p)`, floored at the task's minimum. The lift (boost)
-  and the cap (round) are asked **separately**.
-- **`last` is never picked twice in a row** unless it is the only candidate.
+- **The score is the ONLY copy of the scheduling rules.** `ScoreModel` (`ScheduleScore.kt`) evaluates it;
+  `ScheduleOptimizer` and `ScheduleImprover` search for its best continuation; `ScheduleFill` maps OmniApp's world
+  onto its inputs. Nothing else decides which task runs or for how long — a rule that wants to change the schedule
+  changes the score (and `docs/scheduler_score.md` with it), never a special case beside the search.
+- **Everything the score measures is on the SCHEDULABLE clock** — time at which at least one task may run. A
+  stretch nobody may run in (a night, a 20 s look-away) neither separates a panel, nor discounts, nor forgets, nor
+  creates any compensation. Do not reintroduce wall-time distances anywhere in it.
+- **A task's lag depends on its own service and its own target alone.** Both the optimizer's per-decision
+  baselines and the improver's per-task terms rest on it; a coupling between tasks' lags would silently make both
+  wrong.
+- **Criterion 2 costs from the first minute missed and is scaled by `τ_i`** (`ScoreModel.shortfallCost` =
+  `τ_i·s·(2M_i + s)`). A squared shortfall made the first minutes free and the improver trimmed a minute or two
+  off most panels; scaled by `M_i` alone it grew cheaper against the lag as tasks were added. Both regressions are
+  pinned by `ScheduleImproverTest`.
+- **The improver may only lower the score of the WHOLE continuation.** A move is kept only when `J` of the whole
+  continuation goes down; a search that judged each decision over its own window was tried and made `J` worse
+  (2026-09-16). It never touches a pre-placed run, never puts a task where it may not run, and never changes a
+  first run that §7 or §13 decided.
+- **Every budget is counted in steps, never in wall time**, so every device reaches the same rules from the same
+  inputs.
 - **BOTH switch chords lay an EPSILON ENTRY at the now-line and re-plan around it**
   (`SchedulerReducer.placeSwitchEntry`, `SchedulerDomain.SWITCH_ENTRY_MILLIS` = 1 s). It is an ordinary
   user-authored panel — `auto = false`, existence pin, built through the same two helpers the calendar's own
@@ -28,78 +41,55 @@ Global rules that always apply: `CLAUDE.md`.
   scheduler's answer. `Ctrl+Shift+Alt+T` names the task; `Ctrl+Shift+Alt+Z` names it as the **alternative**
   the last fill's rules already give (`alternativeTaskAt`, whose README use IS this press), falling back to
   re-planning with the refusal standing and reading the line when the panels carry no derived rules yet.
-- **The seed does NOT grow; the request that rides with it is what makes the panel a usable length.** Two
-  model facts, and both bite: a pre-placed block is committed service the walk steps OVER (`futureBlocks`),
-  and stepping over it sets the walk's `last` — so without a `ForcedTaskStart` the never-twice-in-a-row rule
-  refuses the very task just started and the starved one takes the slot an instant later
-  (`SwitchTaskEntryTest.the_seed_alone_would_hand_the_line_straight_back`). And the resume rule that
-  continues a chunk short of its minimum reads the recorded PAST (`headRun` over `pastBlocks`), which a
-  block at the line is not in. What makes the run long is the FIRST SLOT AFTER the seed, floored at the
-  task's minimum by `PlanWalk.chunkMillis` — the soft *Minimum Execution Time* goal, yielding as ever to
-  whatever the timeline restricts.
-- **PRD §7 "Switch task" IS that same `last`, not a ban.** The button (and `Ctrl+Shift+Alt+Z`) records a
-  `ForcedTaskSwitch(task, at)` and the fill hands it to `walk.setLast`, so the refused task keeps its clock and
-  its share and is an ordinary candidate again from the second slot — and a task nothing can replace still
-  runs. Do not give it a rule of its own, and do not put it in `schedulingSignature`: the press re-plans inside
-  its own reducer, or dropping the spent marker would fire a second, un-refused re-plan. It stays live until
-  **another task has actually been served past `at`** (`liveForcedSwitchTask`, read off the recorded past, so
-  the resume contract holds); the advance tick drops it then.
+- **The seed does NOT grow; the request that rides with it is what makes the panel a usable length.** Without a
+  `ForcedTaskStart` the seed is only a pre-placed block, and the best continuation after a block need not be the
+  same task. With it, the seed and the first run after it are ONE panel on the score's clock, so criterion 2
+  charges its shortfall until the task reaches its minimum — the soft *Minimum Execution Time* goal, yielding as
+  ever to whatever the timeline restricts.
+- **PRD §7 "Switch task" constrains the FIRST RUN, not the task.** The button (and `Ctrl+Shift+Alt+Z`) records a
+  `ForcedTaskSwitch(task, at)` and the fill hands it to the search as `refusedFirst`: the first run may not be
+  that task while anybody else may run, so the refused task keeps its lag and its share and is an ordinary
+  candidate again from the second run — and a task nothing can replace still runs. Do not give it a rule of its
+  own, and do not put it in `schedulingSignature`: the press re-plans inside its own reducer, or dropping the spent
+  marker would fire a second, un-refused re-plan. It stays live until **another task has actually been served past
+  `at`** (`liveForcedSwitchTask`, read off the recorded past); the advance tick drops it then.
 - **PRD §13 "start this task now" is the SAME lever from the other end.** The task cell's menu — and PRD §7's
   task picker (`Ctrl+Shift+Alt+T`, `shortcuts.md`), which is a second way of naming the task and not a second
-  lever — records a `ForcedTaskStart(task, at)` and the fill puts that task in the **first slot it places** —
-  charged like any other pick, so only that slot is the user's answer. Same liveness predicate as the refusal
+  lever — records a `ForcedTaskStart(task, at)` and the fill hands it to the search as `forcedFirst`: the **first run it
+  places** is that task — served like any other run, so only that run is the user's answer. Same liveness predicate as the refusal
   (`liveForcedStartTask`: outstanding until another task has been served past `at`), same reason it is not in
   `schedulingSignature`, same drop by the advance tick. Offered on a **placeable** task only — a leaf still in
   the tree, `SchedulerDomain.isPlaceableTask`, which is the one predicate the reducer and every menu raising
-  this intent ask; asking for a task clears an outstanding refusal *of that same task*. It is answered in
-  phase 1 **and** in phase 2 — a timeline nothing disturbs freezes before phase 1 places anything, and the
-  request must not vanish there.
-- **EVERY rule the fill makes also names WHO RUNS INSTEAD** (`TaskPanel.alternativeTaskId`,
-  `SchedulerDomain.alternativeTaskAt`). `side-dev/README.md` § *Alternative Schedules*: *"The returned set of
-  rules must also give for every $now line$ the task that must be scheduled if the task scheduled by the
-  scheduler can't be scheduled now."* A panel IS one of those rules, so the answer rides on it — read from
-  `PlanWalk.alternative` **before the clocks are charged** (the reference's `alt = self._alternative(v, cand,
-  name, p_local)`), so it answers at the same instant and against the same claims as the pick it stands in
-  for. `SchedulerPlanner.runRange` has always done this through its `PlacementCollector`; `fillSchedule` is
-  the other driver and must stay in step. Four things it is: **named at the run's START** (the merge keeps the
-  head's, which is the answer one uninterrupted plan would have given); **null where there is nobody** — a
-  stretch only one task was allowed in, "the same task again" being no answer at all; **derived, never
-  persisted and never synced**, recomputed in full by every fill exactly as the panel is; and answered in
-  **both** phases — phase 2's analytic cycle names *the next task the rotation reaches*, said once for the
-  whole repeat because the walk is not advanced through it.
-- **PRD §7's refusal IS the README's use of that answer**, not a second mechanism. *"A program would simply
-  read the rules, set this new task starting at $now line$, and run the scheduler again."* Refuse the
-  scheduled task and the fill's next pick is exactly the one the rules named, because
-  `pickNeediest(…, last = refused)` and `PlanWalk.alternative(…, chosen = refused)` are the same ordering over
-  the same claims. Do not let the two drift into two answers.
-- **The clock replay walks the past EDGE BY EDGE**, applying `relax` where the walk applies it. Its window is
-  two `minPeriod`s measured in **schedulable** time, never wall time.
-- **Only obstacles still AHEAD build the influence field.** The boost is capped (`maxBoost` = 6) and decays to
-  a finite range. An exclusion that refuses everybody, or one shorter than the deprived task's own minimum,
-  creates **no** field.
-- **Excluded tasks are translated as a group, never clamped individually** — clamping destroys their ranking.
-- **A window bounds only the tasks it turns away.** "Does the minimum fit?" counts instants the task may
-  actually run; an interval nobody may run in suspends, one somebody else may run in ends.
-- **A task about to start must be able to finish** before it would lengthen a rival's ban. A task already
-  running has no such choice.
-- **The resume contract:** a chain of re-plans is the SAME schedule as one long plan. Anything new the walk
-  carries must be reconstructible from the history, or this breaks silently.
+  this intent ask; asking for a task clears an outstanding refusal *of that same task*.
+- **EVERY rule the fill makes also names WHO RUNS INSTEAD** (`TaskPanel.alternativeTaskId` +
+  `alternativeSpans`, `SchedulerDomain.alternativeTaskAt`). `docs/scheduler_requirements.md` § *Alternative
+  Schedules*: *"The returned set of rules must also give for every $now line$ the task that must be scheduled if
+  the task scheduled by the scheduler can't be scheduled now."* The answer is the next-best first run of the
+  decision asked where the run starts (`ScheduleOptimizer.Evaluation.alternativeTo`), and where it changes inside
+  the run, the instant it changes (bisection to a minute, `alternativeSpans`) — named on the FINAL runs, after the
+  improver. Three more things it is: **null where there is nobody** — a stretch only one task was allowed in, "the
+  same task again" being no answer at all; **derived, never persisted and never synced**, recomputed in full by
+  every fill exactly as the panel is; and read at an instant, never per panel.
+- **PRD §7's refusal IS the requirements' use of that answer**, not a second mechanism. *"A program would simply
+  read the rules, set this new task starting at $now line$, and run the scheduler again."* Both come out of one
+  ranking of first runs (`Evaluation`): `choose(refused = …)` and `alternativeTo(…)`. Do not let the two drift
+  into two answers.
 - **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed pose with the
   line, and the plan under it was materialized at the last rule change: the answer is a display clip
   (`clipPlanForPinnedScreenBreak`), cutting what a break **refuses** — not what it covers.
 
 ### What reaches the scheduler
 
-Only two things: **pre-placed blocks** (pinned/manual panels ahead of `now`, the kept head on an extension,
-the served past) and **restrictive periods**. Nothing else, by any other route.
+Only three things: **pre-placed tasks** (pinned/manual panels), **the frozen past** (records, past panels, the
+kept head on an extension) and **restrictive periods**. Nothing else, by any other route.
 
 - **A pre-placed block is a block OWNED BY A TASK, and a period reaches the walk by its KIND** — the two
   slots are not interchangeable, and a panel must never take both. `isSchedulerFixed` (= `TaskPanel.pinned`)
   is what fills the first; `fillSchedule` keeps every `isRestrictivePeriod` panel whatever its pins, which is
   the second. So a hand-drawn period carries the calendar's **existence pin** (`pins.existence` —
   `calendar.md`) and **not** `pinned`: `SchedulerReducer.derivePinned`'s period-aware overload is the one
-  place that says so, and without it a dragged no-screen period would enter `futureBlocks` as a block owned
-  by nobody, on top of the period it already is.
+  place that says so, and without it a dragged no-screen period would enter the fill as a pre-placed block
+  owned by nobody, on top of the period it already is.
 - **A drag or a resize on the grid IS the existence pin** (`SchedulerDomain.pinsAfterHandPlacement`). The
   gesture is the user placing a block, and an unpinned block is not something the fill keeps — so without it
   the drag became a user-authored *unpinned* panel, exactly the shape the fill deletes, and the re-plan the
@@ -116,8 +106,7 @@ increases."*
   (`fillSchedule`'s `kept`). Cutting the whole panel is what shipped, and the head went nowhere: the advance
   banks a panel only once it has *wholly* elapsed (deliberately, so an in-progress one stays a panel), so work
   the app had told the user it was doing vanished from the timeline on every rule change — and, because
-  `pastPeriodsForTask` reads those same panels, from the clock replay that seeds the walk, taking the resume
-  contract with it.
+  `pastPeriodsForTask` reads those same panels, from the frozen past the lags are replayed from.
 - **WHOEVER PLACED IT.** The branch reads *a task panel the cut is about to take*, never *an auto panel*: the
   other panel the cut takes is one the user has just UNPINNED (`calendar.md`), and that is the
   one gesture whose whole purpose is to ask for a re-plan. Qualifying the head on `auto` deleted its elapsed
@@ -125,15 +114,12 @@ increases."*
 - **The head is an ordinary auto panel** from there on, however it started (`auto = true` on the kept copy):
   the next advance banks it, `mergeSameTaskPanels` fuses it back with the tail (so it is folded into the merge
   input, not appended beside it — and it has to carry the same `auto`/`pinned` to fuse at all), it is behind
-  the line so it is never a `futureBlocks` obstacle, and it is no longer something the user placed, so the
+  the line so it is served history, never a pre-placed block, and it is no longer something the user placed, so the
   calendar stops outlining it as one (`SchedulerDomain.isUserPlaced`).
-- **The chunk the line is in the middle of RESUMES; it is not re-picked** (`resumedHead` → `pending`, the
-  reference's `Walk.run` `if head is not None and head[1] < minimum[head[0]]`). Without it, restoring the head
-  makes `lastRun` refuse the very task that is running — "never twice in a row" firing on a run that never
-  ended — and the block ends up one minimum *plus* whatever had already elapsed. `headRun` is not required to
-  reach the line, so it is qualified by `lastRun`: a run that stopped an hour ago is history, not a chunk.
-  **Both §7's refusal and §13's request drop the resume**, or the press is swallowed by an unfinished chunk.
-  It is answered in phase 1 **and** phase 2, for the same reason `ForcedTaskStart` is.
+- **The run the line is in the middle of CONTINUES; it is not re-picked, and it has no rule of its own.** The head
+  is replayed as the run in progress (`ScoreCursor.run` / `runLen`), so a continuation that stops it short of its
+  minimum pays its shortfall (criterion 2). **Both §7's refusal and §13's request override it**, because they
+  decide the first run.
 - PRD §10's continuous-effort credit (`scheduledSpanMinutes`) still answers for an effort the **records** alone
   carry; a resume never reaches it, so the two can never both shorten one slot.
 
@@ -245,48 +231,118 @@ model exists to prevent.
   those flags on decode. **Ask through it, never through the four flags**: a period of a kind that has no
   flag — `before bed`, or one of the account's own — is a period too, and spelling the flags out said so only
   for the four that have one (that is why the reducer's `isTaskPanel` is `!panel.isRestrictivePeriod`).
-- The walk reads **`weightsAt`** — each task's percentage after resilience — and races on `localSharesOf`,
-  those weights renormalized over whoever may run. Service is charged against the **effective** weight
-  (`serveWeighted`, the reference's `v += served / w[name]`), which is what makes a multiplier mean "half the
-  percentage for as long as the period lasts" and not "the same alternation, one boundary later".
-- The influence field is **fractional**: a resilience of `0.4` deprives a task of `0.6` of its share there,
-  and the compensation owed is that fraction of a flat refusal's (`deprivationsOf`).
-- The **steady cycle inherits the effective shares** of the window it is attached to. Built on the nominal
-  ones it would answer 50/50 under a standing period that halves one side.
+- The score reads each task's **multiplier** `μ_i(t)` — the product of its resilience to every kind covering
+  `t` — and its local share is its priority times `μ_i` renormalized over whoever may run. That is what makes a
+  multiplier mean "this fraction of the percentage for as long as the period lasts".
+- A deprivation is **fractional**: a resilience of `0.4` deprives a task of `0.6` of its multiplier there, and the
+  compensation it buys is that fraction of a flat refusal's.
 - **NO IDLING is the hard constraint and the minimum time is the SOFT goal, and only one thing may empty a
-  stretch: that nobody may run in it.** `side-dev/README.md` § *No idling* — *"anywhere that is not covered by
-  restrictive periods which would prevent any task from being scheduled, the scheduler must schedule a task"* —
-  against § *Soft Minimum Execution Time*, which is *"another optimization goal"*. So a gap shorter than every
-  minimum is **worked**, and the panel there is simply short. `fillSchedule` idles exactly where
-  `SchedulerPlanner.runRange` and the reference do (`if not cand: emit(IDLE)`), and nowhere else. It carried
-  two extra reasons until 2026-09-03 — a `_fits_from` candidate filter and a sub-minute `crumb` rule with a
-  `free_tail` stretch beside it — both citing `scheduler_logic.py`, a reference file that no longer exists,
-  and both unsanctioned divergences from the other driver. Do not put either back: PRD §9 now states the
-  soft/hard split, and the chunk floor in `PlanWalk.chunkMillis` is what serves the soft goal.
+  stretch: that nobody may run in it.** `docs/scheduler_requirements.md` § *No idling* against § *Soft Minimum
+  Execution Time*, which is *"another optimization goal"*. A continuation that idles where a task may run is not a
+  candidate at all (`docs/scheduler_score.md`), so a gap shorter than every minimum is **worked**, and the panel
+  there is simply short and pays its shortfall. Do not put back a candidate filter on "does the minimum fit".
 - **The one panel shorter than a minute is at `t_p` itself**, and it is the README's: modes 1 and 2 push the swept
   period onto the line as the half-open `(t_p, t_p + d]`, so the line's own instant is uncovered and *"the
   passing of the $now line$ creates task panels not covered by the period"*.
-- A dynamic period and every grey period **suspend** a chunk rather than cutting it (PRD §15/§17), where a
-  screen-zone edge cuts it. That is about the chunk's REMAINDER, never about whether anything is placed.
+- A period nobody may run in (every dynamic period, every grey period) **suspends** a panel rather than cutting it
+  (PRD §15/§17) — it is not on the schedulable clock — where a stretch somebody ELSE may run in cuts it. That is
+  about the panel's length, never about whether anything is placed.
 
-### `plan()` is the reference; `fillSchedule` is the app
+### The best score, and what "as close as possible" means
 
-`SchedulerPlanner.plan()`'s phase 1 is a **literal port of `side-dev/scheduler.py`'s `Walk.run`** and is
-checked slot-for-slot against it (`SchedulerPlanTest`). Where the two must differ, the difference is named:
+→ `docs/scheduler_score.md` § *Degradation*.
 
-- **Zero-priority tasks stay last-resort candidates** (`permittedAt` / `candidatesAt`). The reference raises
-  when nothing has a positive priority; the app must still fill the calendar for an all-zero tree, and a
-  period may accept *only* a zero-priority task.
-- **`Fraction` → `Double` millis.** The reference keeps exact rationals; KMP has no rational type.
-- **`fillSchedule` keeps its own suspension rule for the app's dynamic periods** — a chunk suspends across a
-  break and resumes with its minimum intact, where the reference simply cuts a chunk at the next environment
-  edge. That is PRD §15, and it is the one place the driver is deliberately not the walk.
+- **Three passes over one score** (`ScheduleOptimizer.plan`): the rollout policy builds the continuation one
+  decision at a time; `ScheduleImprover` lowers `J` of the whole continuation within `DEFAULT_IMPROVE_BUDGET`
+  scored moves; the alternatives are named on the result. The improver can only move the plan closer to the best
+  score (`ScheduleImproverTest.the_improvement_never_worsens_the_score_and_keeps_every_constraint`).
+- **`ScheduleOptimizer.certify` is a checker, not a producer.** It enumerates every sequence of candidate runs and
+  certifies the best on small instances (`ScheduleScoreTest`); it does not finish within any budget on a real
+  account, so it never produces the rules.
+- **`Fraction` → `Double` millis**, with the tie tolerance of `docs/scheduler_score.md` § *Ties*.
+- **The two-scenario example of § *Rule state evolution* is a test**
+  (`TaskTreeTimelineTest.the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap`): inside a
+  transition the plan holds `R(x)` and is re-made at every run start the line reaches
+  (`SchedulerDomain.taskTreeBlendDecisionKey`).
 
-The resume contract is what the reference actually guarantees, and no more: a chain of links carrying the
-walk's own state is the single plan, placement for placement. Re-seeding from the DRAWN past (`_seed`, which
-is what the app must do — it re-plans from records, not from a live walk object) is an approximation, and the
-reference's own misses at the first slot after a period that admitted a strict subset re-opens. Do not assert
-more than that.
+### One device plans
+
+→ ADR 0015.
+
+- **A re-plan goes through `ScheduleCoordinator`, never straight to `dispatchProgressivePlan`**
+  (`SchedulerEngine.replan`). Every re-plan trigger — the rule-change watcher, the staleness bound, the `t_p` mode,
+  the task-tree boundary, the §7 switch turning on — funnels there. Extensions (the horizon rolling, the calendar
+  scrolling) stay local: they are cheap, and with a cycle they are an unroll.
+- **"Who is present" is asked when a re-plan is due, and at no other time.** No presence timer, no poll: the probe,
+  the one-second reply window and the ten-second rules deadline are one-shot waits after that event. Adding a
+  heartbeat to "know earlier" is the timer-driven traffic CLAUDE.md forbids, and it buys nothing the deadline does
+  not already guarantee.
+- **One decider per election.** The device that probes ranks the replies and announces; two probes for the same
+  rules crossing resolve to the smaller election id. Never let each device rank on its own — they would hear
+  different replies and elect different leaders.
+- **The ranking is `PeerCapability.rank`**: present, kind, speed bucket, device id. A value that changes from second
+  to second (CPU load) must not enter it, or the leader flaps between elections.
+- **A device with no rules after `RULES_DEADLINE_MILLIS` plans for itself**, and so does every device while the
+  channel is not joined. No device is ever left without a plan because of another device.
+- **Nobody else around, nothing sent** (`server-quota.md`). A device nobody is using plans for itself and tells no
+  one. A device that has heard from no other device since its last unanswered probe leads alone: no probe, no
+  announcement, no stages on the wire. A device announces itself (`RulesRequest`) when it becomes present AND
+  whenever its channel (re)connects, and a present device with no rules to hand answers with a `Reply`, so the
+  first re-plan after a device arrives is an election again. Whoever does not answer a probe is forgotten until
+  it speaks.
+- **A follower takes RUNS, never panels** (`AdoptScheduleRules` → `ScheduleFill.Input.adopted`): its own fill
+  regenerates its sleep windows, breaks and periods and lays the runs through its own environment, so a stretch this
+  device refuses is never given to a task. Rules are taken only for the follower's own `schedulingSignature`, and
+  only when newer (`nowMillis`, then stage) than what it last took or planned.
+- **The rules on the wire are derived and never stored**: a broadcast, not a row, and `AdoptScheduleRules` never
+  pushes (`syncsToServer`). The channel is `realtime:scheduler:<userId>`, **private** — its RLS is migration
+  20260916000000.
+- **The in-reducer presses stay local** (§7 switch, §13 start, sleep-schedule edit, record removal).
+
+### The rules repeat
+
+→ `docs/scheduler_score.md` § *The rules repeat*, ADR 0009 § *Beyond the 168 h ceiling*.
+
+- **A fill that settles returns a CYCLE** (`ScheduleFill.settle` → `SchedulerState.scheduleCycle`): the last of
+  three identical copies of its task runs, over an environment uniform to the end. Its runs are on the
+  **schedulable clock**, so a night or a break never shifts them. Compare **task runs**, never the raw
+  `ScheduleOptimizer.Run`s — the alternative-schedule bisection splits a run at an instant that differs from copy
+  to copy — and never compare calendar days: a 90-min rotation over a 15.5-h waking day repeats every 3 days in
+  wall time, and never across the boundaries of a staged plan.
+- **An EXTENSION unrolls the cycle instead of searching** (`ScheduleFill.unroll`), which is what makes the plan past
+  the detection point the same as one long fill (`ScheduleCycleTest`) and a far week a walk rather than an
+  optimization. It refuses — and the search runs — when the rule state is not the one the cycle was found under
+  (`ruleStateHash`), when the environment from the anchor on is not the uniform one (`environmentHash`, a
+  pre-placed task, a later edge), or on a re-plan (a forced start or refusal decides the first run).
+- **The limit is the materialization ceiling.** The search stops at `now + SCHEDULE_HORIZON_MILLIS`
+  (`ScheduleFill.Input.repeatBeyondMillis`); a fill reaching it without an exact repetition takes the closest
+  approximate one (`exact = false`). Below the limit only an exact repetition is ever returned.
+- **The cycle is derived and in memory only**: not in the codec, not in the sync fingerprint, not in
+  `schedulingSignature`. Every reducer fill replaces it with what that fill returned, so a re-plan never carries an
+  old one; a restart or a pull simply starts without one.
+
+### Progressive Calculation
+
+→ `docs/scheduler_requirements.md` § *Progressive Calculation*.
+
+- **$t_{goal}$ is the end of the timeline the calendar shows, or `now + 10 min` if further**
+  (`SchedulerDomain.scheduleGoalEndMillis`, user rule 2026-09-16). How the rolling floor is kept from
+  re-triggering itself, and the 168 h materialization ceiling, are in `display-hot-path.md`. A rule change with
+  the calendar closed therefore plans twenty minutes, and the horizon watcher extends it ten minutes at a time —
+  each extension keeps the head, so a run the line is in continues to its minimum across them.
+- **The engine fills in DOUBLING STAGES** (`SchedulerEngine.dispatchProgressivePlan`): a re-plan (or an
+  extension) to `PROGRESSIVE_FIRST_STAGE_MILLIS` (1 h) ahead, then `ExtendSchedule` to 2 h, 4 h, … up to
+  $t_{goal}$, each capped through the intents' `horizonCapMillis`. An extension keeps everything materialized, so
+  every published stage is **definitive** until a rule change
+  (`SchedulerFillTest.progressive_stages_never_rewrite_what_an_earlier_stage_made_definitive`).
+- **Why doubling:** a stage costs in proportion to its length, so stage `k` is published after about twice its own
+  cost — the 10-minutes-per-10-seconds pace holds on any device that fills an hour of schedule in under ~15 s,
+  whatever the size of the goal. A single fill to the goal would hold it only while the whole fill takes < 10 s
+  (60 tasks over 8 days: 5.4 s on the desktop, 2026-09-16).
+- **A newer request cancels the stages the older one has not reached**, and the horizon watchers stand aside while
+  a progressive fill is in flight (its own stages are not a gap).
+- The reducer's in-line re-plans (`ForceTaskSwitch`, `ForceTaskStart`, `SetSleepSchedule`, `RemoveRecordPeriod`)
+  still fill to the goal in one go: they answer a press synchronously.
 
 ### The rule state is the question; the set of rules is the answer
 
@@ -317,13 +373,14 @@ placed (`screenBreak`). Pre-placed blocks, user-drawn periods and sleep windows 
 - **Anything new that wants to re-plan belongs in the signature** (or in `requestReschedule`), not in a fresh
   dispatch site.
 - **Time passing must never re-plan continuously.** The advance tick only banks records; horizon growth and
-  calendar navigation dispatch `ExtendSchedule` (keeps the head, appends the tail).
-- Exactly two sanctioned quantized exceptions: the hourly **staleness bound**
-  (`SCHEDULE_STALENESS_MILLIS` = 1 h, a bound re-armed by `requestReschedule`, not a tick) and the **task-tree
-  blend cursor** (ADR 0008).
+  calendar navigation dispatch progressive `ExtendSchedule` stages (keep the head, append the tail).
+- Exactly two sanctioned exceptions, both bounded: the hourly **staleness bound**
+  (`SCHEDULE_STALENESS_MILLIS` = 1 h, a bound re-armed by `requestReschedule`, not a tick) and, inside a task-tree
+  transition only, a re-plan at every **run start the line reaches** (`taskTreeBlendDecisionKey`, ADR 0008) — one
+  fill per run the transition spans, nothing outside one.
 - The signature excludes records deliberately, so `RemoveRecordPeriod` refills inside its own reducer.
-- **The engine's re-plans are dispatched ASYNCHRONOUSLY** (`SchedulerEngine.dispatchPlan` →
-  `planDispatcher`): the fill is 25-80 ms and the engine's scope is the main thread on both hosts. The rule
+- **The engine's re-plans are dispatched ASYNCHRONOUSLY** (`SchedulerEngine.dispatchProgressivePlan` →
+  `runPlan` → `planDispatcher`): the fill is 25-80 ms and the engine's scope is the main thread on both hosts. The rule
   does not move — same intent, same reducer — but nothing may read the new plan straight off
   `vm.state.value` after asking for one. The in-reducer re-plans (`ForceTaskSwitch`, `ForceTaskStart`,
   `SetSleepSchedule`, `RemoveRecordPeriod`, the no-screen strip) stay synchronous: they answer a press.

@@ -37,7 +37,7 @@ Global rules that always apply: `CLAUDE.md`.
   band ending at it). So:
   - **The boundaries are the derived model's own bounds.** The model is built out of those instants, so it
     cannot change before the first one still ahead of the line — plus the next local midnight, the one
-    boundary no panel carries (the day rollover and the $t_{goal}$ staircase). Sleep until it.
+    boundary no panel carries (the day rollover). Sleep until it.
   - **A bound sitting ON the line is a PIN, never a boundary ahead of it** (`NOW_LINE_ANCHOR_SLACK`, 2 ms — a
     dragged pose starts at `t_p + 1`, a taken break is drawn to `t_p − 1`). Counting one as a boundary answers
     "one millisecond" and turns the sleep into a busy loop.
@@ -79,19 +79,26 @@ Global rules that always apply: `CLAUDE.md`.
   hit-testing, the contextual menu and the drag snap set all still see the whole day — a partner scrolled out
   of view must still narrow the block on screen. A block mid-gesture is exempt: its slices hold the gesture.
 - **Test against a large, realistic DB**, not just an emptied one — an empty account hides the cost entirely.
-- **The schedule horizon is $t_{goal}$** (`SchedulerDomain.scheduleGoalEndMillis`): **max(end of the first day
-  that does not appear in the calendar; end of the first day of the week after the current week)** —
-  `docs/scheduler_requirements.md` § *Progressive Calculation*, the instant the scheduler may stop at. The
-  calendar half is **one day past the bottom of the grid**, so it follows the SCROLL and not the week the scroll
-  is in: seeing the next week's Monday makes the goal the end of that week's Tuesday. Neither half moves with
-  the clock — the current week's is an absolute **staircase** that steps once a week, so a plan that reached it
-  stays complete instead of falling short on every tick; the calendar's moves only on a scroll, which is an
-  event. It is a **max**, so scrolling back never shortens it and a closed calendar still gets the current
-  week's. Only the CALENDAR half is capped (168 h, `scheduleHorizonEndMillis`) to keep a far week out of the
-  persisted state — the current week's own goal is up to eight days out and is never clipped. There is no
-  "focused week".
+- **The schedule horizon is $t_{goal}$** (`SchedulerDomain.scheduleGoalEndMillis`): **the end of the timeline
+  the calendar shows, or `now + 10 min` if that is further** (`SCHEDULE_GOAL_FLOOR_MILLIS`; user rule,
+  2026-09-16) — `docs/scheduler_requirements.md` § *Progressive Calculation*, the instant the scheduler may stop
+  at. It follows the SCROLL; a closed calendar leaves only the floor, which is all the headless task and
+  wind-down cues read ahead of the line (the break windows the server is told come from the recurrence bars,
+  not from `state.panels`). There is no "focused week".
+- **The floor ROLLS, so a fill never aims at the goal itself.** It fills to `scheduleHorizonEndMillis` — the
+  goal with the floor **doubled** and a calendar end capped at 168 h — and `horizonRefillDueMillis` comes due
+  when the plan covers only one floor ahead of the line. So a closed calendar costs one small extension per ten
+  minutes, never one per tick; the capped far week one per `HORIZON_REFILL_MARGIN_MILLIS`. A fill aimed at the
+  rolling instant itself is the 2026-07-28 self-retrigger (`HorizonRefillRuleTest`).
+- **A fill cuts the previous plan's auto panels past its own horizon too.** With the ten-minute floor a fill
+  that stops short of an older, longer plan is routine; the old panels answer rules the fill may have replaced,
+  and one abutting the new tail was read by the next extension as materialized and kept as definitive
+  (`SchedulerFillTest.a_re_plan_shorter_than_the_old_plan_drops_the_old_plan_beyond_it`).
 - Beyond the ceiling, the far fill runs off the UI thread keyed **only on the span** and is **never stored in
-  `state.panels`**.
+  `state.panels`**. It is an **extension** of the materialized plan (`keepExistingUntilMillis`), so where the rules
+  repeat (`state.scheduleCycle`, `scheduler.md` § *The rules repeat*) it unrolls them rather than searching — a
+  30-day view of a 6-task account went from ~165 ms to ~40 ms (2026-09-16, JVM test) — and past the 168 h limit it
+  never searches at all.
 - Horizon growth dispatches `ExtendSchedule`, not `RefreshSchedule`.
 - Day rows are `wrapContentHeight(Alignment.Top, unbounded = true).height(dayHeight)` — both halves
   load-bearing. `requiredHeight` silently centres the row and shows the wrong hours.

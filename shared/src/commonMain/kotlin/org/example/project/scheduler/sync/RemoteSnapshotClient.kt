@@ -53,6 +53,12 @@ data class RemoteSnapshot(val payload: String, val revision: Long, val writerDev
 class SupabaseException(val status: Int, message: String) : Exception("Supabase $status: $message")
 
 /**
+ * Raised instead of sending a request while the device works offline ([RemoteSnapshotClient.offline]): nothing left
+ * the device. `docs/invariants/sync-and-accounts.md` § *Working offline*.
+ */
+class WorkingOfflineException : IllegalStateException("working offline: the request was not sent")
+
+/**
  * One completed Supabase HTTP call — the raw material for the History window's **Supabase usage** column, a
  * per-device diagnostic of the account's draw-down on the Supabase **free-plan** limits. Every call this
  * client makes consumes egress **bandwidth** (request + response bytes); auth calls also count toward Monthly
@@ -105,6 +111,13 @@ class RemoteSnapshotClient(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * While true, EVERY request is refused before it leaves the device ([WorkingOfflineException]). This is the hard
+     * guarantee of working offline: the sync engine also stops asking, but no caller can get past this one.
+     */
+    @kotlin.concurrent.Volatile
+    var offline: Boolean = false
+
     // Every Supabase HTTP call this client makes (the only calls the app makes) is surfaced here so the History
     // window's local-only "Supabase usage" column can show the account's draw-down on the free-plan limits.
     // replay so the collector, wired slightly after construction by the ViewModel, still catches the launch's
@@ -123,6 +136,7 @@ class RemoteSnapshotClient(
         // One interception point over the whole client covers every endpoint below (auth + PostgREST), so the
         // usage log stays complete even as new calls are added. Reading Content-Length does not consume the body.
         http.plugin(HttpSend).intercept { request ->
+            if (offline) throw WorkingOfflineException()
             val requestBytes = (request.body as? OutgoingContent)?.contentLength ?: 0L
             val path = request.url.build().encodedPath
             val call = execute(request)
@@ -262,6 +276,99 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
         val updated = json.decodeFromString<List<SnapshotRow>>(response.bodyAsText())
         return updated.isNotEmpty()
+    }
+
+    // ---- Rows (migration 20260917000000, docs/invariants/sync-and-accounts.md § Sync by rows) ----
+
+    /**
+     * The account's entity rows written after [sinceRevision] (by another device, unless [excludeDeviceId] is null), oldest first, at most [limit] of
+     * them — call again from the last revision for the next page.
+     */
+    suspend fun fetchEntities(
+        session: SupabaseSession,
+        /** Leave out the rows this device wrote; null reads every device's rows. */
+        excludeDeviceId: String?,
+        sinceRevision: Long,
+        /** Only the live rows, no tombstones: the full read of a device that no longer trusts its cursor. */
+        liveOnly: Boolean = false,
+        limit: Int = PAGE,
+    ): List<EntityRow> {
+        val response =
+            http.get("${config.restUrl}/scheduler_entity") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("revision", "gt.$sinceRevision")
+                if (excludeDeviceId != null) url.parameters.append("device_id", "neq.$excludeDeviceId")
+                if (liveOnly) url.parameters.append("deleted", "is.false")
+                url.parameters.append("select", "kind,entity_id,payload,deleted,revision")
+                url.parameters.append("order", "revision.asc")
+                url.parameters.append("limit", limit.toString())
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString(response.bodyAsText())
+    }
+
+    /** Upserts entity rows (a deletion is a row with `deleted = true` and no payload); the answer is minimal. */
+    suspend fun upsertEntities(session: SupabaseSession, deviceId: String, rows: List<EntityWrite>) {
+        if (rows.isEmpty()) return
+        val response =
+            http.post("${config.restUrl}/scheduler_entity") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(rows.map { EntityUpsert(session.userId, it.kind, it.entityId, it.payload, it.payload == null, deviceId) }))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** The account's History Unit rows another device wrote after [sinceRevision], oldest first. */
+    suspend fun fetchHistoryUnits(session: SupabaseSession, deviceId: String, sinceRevision: Long, limit: Int = PAGE): List<HistoryUnitRow> {
+        val response =
+            http.get("${config.restUrl}/history_unit") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("revision", "gt.$sinceRevision")
+                url.parameters.append("device_id", "neq.$deviceId")
+                url.parameters.append("order", "revision.asc")
+                url.parameters.append("limit", limit.toString())
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString(response.bodyAsText())
+    }
+
+    /**
+     * Marks the redo branch this device discarded as dropped: its undone units of [category] older than its newest
+     * applied unit ([newestAppliedMillis]) — a new edit only ever drops the units undone before it. The delta is
+     * emptied; the other devices forget the unit on their next pull.
+     */
+    suspend fun dropHistoryBranch(session: SupabaseSession, deviceId: String, category: String, newestAppliedMillis: Long) {
+        val response =
+            http.patch("${config.restUrl}/history_unit") {
+                authHeaders(session)
+                header("Prefer", "return=minimal")
+                contentType(ContentType.Application.Json)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("device_id", "eq.$deviceId")
+                url.parameters.append("category", "eq.$category")
+                url.parameters.append("undone", "is.true")
+                url.parameters.append("dropped", "is.false")
+                url.parameters.append("time_millis", "lt.$newestAppliedMillis")
+                setBody("""{"dropped":true,"delta":""}""")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** Upserts this device's History Unit rows (a new unit, or one whose undone flag moved). */
+    suspend fun upsertHistoryUnits(session: SupabaseSession, rows: List<HistoryUnitRow>) {
+        if (rows.isEmpty()) return
+        val response =
+            http.post("${config.restUrl}/history_unit") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(rows.map { it.copy(userId = session.userId) }))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
     }
 
     /**
@@ -531,6 +638,9 @@ class RemoteSnapshotClient(
     private suspend fun HttpResponse.toException() = SupabaseException(status.value, bodyAsText())
 
     companion object {
+        /** Rows per page of a pull. */
+        const val PAGE: Int = 1000
+
         private fun defaultHttpClient(): HttpClient =
             HttpClient {
                 install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
@@ -695,4 +805,44 @@ private data class ActiveSessionRow(
     @SerialName("end_ms") val endMs: Long,
     @SerialName("updated_at") val updatedAt: Long,
     val kind: String = "",
+)
+
+/** One entity row as pulled. */
+@Serializable
+data class EntityRow(
+    val kind: String,
+    @SerialName("entity_id") val entityId: String,
+    val payload: String? = null,
+    val deleted: Boolean = false,
+    val revision: Long,
+)
+
+/** One entity row to write: [payload] null is a deletion. */
+data class EntityWrite(val kind: String, val entityId: String, val payload: String?)
+
+@Serializable
+private data class EntityUpsert(
+    @SerialName("user_id") val userId: String,
+    val kind: String,
+    @SerialName("entity_id") val entityId: String,
+    val payload: String?,
+    val deleted: Boolean,
+    @SerialName("device_id") val deviceId: String,
+)
+
+/** One History Unit row, both ways. [delta] is the unit's own row text (`SchedulerStateCodec.encodeUnit`). */
+@Serializable
+data class HistoryUnitRow(
+    @SerialName("user_id") val userId: String = "",
+    @SerialName("device_id") val deviceId: String,
+    val category: String,
+    @SerialName("device_seq") val deviceSeq: Long,
+    @SerialName("time_millis") val timeMillis: Long,
+    @SerialName("chrono_id") val chronoId: Long = 0,
+    val tainted: Boolean = false,
+    val undone: Boolean = false,
+    val dropped: Boolean = false,
+    @SerialName("unit_window") val window: String? = null,
+    val delta: String,
+    val revision: Long = 0,
 )

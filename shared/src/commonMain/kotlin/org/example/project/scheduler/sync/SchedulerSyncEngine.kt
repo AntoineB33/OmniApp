@@ -37,6 +37,12 @@ sealed interface SyncState {
 
     /** The last attempt failed (offline, auth, server). Local state is unaffected; sync retries later. */
     data class Error(val message: String) : SyncState
+
+    /**
+     * The user switched this device to work completely offline (`sync-and-accounts.md` § *Working offline*): nothing
+     * is sent or received, edits are kept and pushed once the device goes online again.
+     */
+    data object Offline : SyncState
 }
 
 /**
@@ -88,9 +94,43 @@ open class SchedulerSyncEngine(
     // remote `device_active_session` table (push this device's rows, pull the peers') so the calendar can
     // show which devices were open during past panels. Null (tests / store-less platforms) skips it.
     private val activeSessionStore: ActiveSessionStore? = null,
+    // The wall clock, read to know how long ago this device last pulled (see [FULL_PULL_AFTER_MILLIS]).
+    private val clock: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
+    // Where the user's "work offline" choice is kept; null (tests, the web store) starts online unless [startOffline].
+    private val networkModeStore: org.example.project.scheduler.persistence.NetworkModeStore? = null,
+    // This launch starts offline whatever was chosen last ([startOfflineRequested]).
+    startOffline: Boolean = false,
 ) : PauseCueGateway {
     private val mutex = Mutex()
     private var session: SupabaseSession? = null
+
+    private val _offline = MutableStateFlow(startOffline || networkModeStore?.loadOfflineChoice() == true)
+
+    /**
+     * `docs/invariants/sync-and-accounts.md` § *Working offline*: true while this device works completely offline.
+     * Every request is then refused by [RemoteSnapshotClient.offline], and the engine does not even ask: no
+     * reconcile, no guest account, no sign-in, no presence or break rows, no Realtime auth.
+     */
+    val offline: StateFlow<Boolean> = _offline.asStateFlow()
+
+    init {
+        client.offline = _offline.value
+    }
+
+    /**
+     * Switches this device offline or back online, and remembers the choice for the next launches. Going online does
+     * not reconcile by itself: the owner does (see `TaskSchedulerViewModel.setOffline`).
+     */
+    fun setOffline(value: Boolean) {
+        networkModeStore?.saveOfflineChoice(value)
+        client.offline = value
+        _offline.value = value
+        _state.value = if (value) SyncState.Offline else if (session != null) SyncState.Idle else SyncState.SignedOut
+        Diagnostics.log(if (value) "working offline: nothing is sent or received" else "back online")
+    }
+
+    // The session to use for a request, or null while signed out OR offline.
+    private fun onlineSession(): SupabaseSession? = session?.takeIf { !_offline.value }
 
     // Late-bound by the owner (the ViewModel) to break the engine<->ViewModel construction cycle:
     // [localSnapshot] reads the current state to push, [applyRemote] installs a pulled one.
@@ -104,7 +144,7 @@ open class SchedulerSyncEngine(
         this.applyRemote = applyRemote
     }
 
-    private val _state = MutableStateFlow<SyncState>(SyncState.SignedOut)
+    private val _state = MutableStateFlow<SyncState>(if (_offline.value) SyncState.Offline else SyncState.SignedOut)
     val state: StateFlow<SyncState> = _state.asStateFlow()
 
     /**
@@ -164,7 +204,7 @@ open class SchedulerSyncEngine(
         val m = meta()
         if (m.accessToken != null && m.refreshToken != null && m.userId != null) {
             session = SupabaseSession(m.accessToken, m.refreshToken, m.userId)
-            _state.value = SyncState.Idle
+            _state.value = if (_offline.value) SyncState.Offline else SyncState.Idle
             publishAccount()
             Diagnostics.log("restored persisted session (${m.email ?: "guest account"})")
         }
@@ -187,6 +227,7 @@ open class SchedulerSyncEngine(
      */
     suspend fun ensureAccount(): Boolean {
         if (session != null) return true
+        if (_offline.value) return false
         return try {
             authenticate(email = null) { client.signUpGuest() }
             true
@@ -211,6 +252,7 @@ open class SchedulerSyncEngine(
      * to it.)
      */
     suspend fun createAccount(email: String, password: String) {
+        if (_offline.value) throw WorkingOfflineException()
         val current = session
         if (current == null || !isGuest) {
             authenticate(email) { client.signUp(email, password) }
@@ -244,6 +286,7 @@ open class SchedulerSyncEngine(
         email: String?,
         call: suspend () -> SupabaseSession,
     ) = mutex.withLock {
+        if (_offline.value) throw WorkingOfflineException()
         _state.value = SyncState.Syncing
         try {
             val s = call()
@@ -278,7 +321,7 @@ open class SchedulerSyncEngine(
         val m = meta()
         metaStore.saveSyncMeta(m.copy(accessToken = null, refreshToken = null, userId = null, email = null))
         publishAccount()
-        _state.value = SyncState.SignedOut
+        _state.value = if (_offline.value) SyncState.Offline else SyncState.SignedOut
     }
 
     /** The user-initiated sign-out: drop the account, then land on a fresh guest account (PRD §5). */
@@ -301,6 +344,10 @@ open class SchedulerSyncEngine(
      */
     open suspend fun reconcile() {
         try {
+            if (_offline.value) {
+                _state.value = SyncState.Offline
+                return
+            }
             // PRD §5: the app is always connected to an account. A device that has none yet (first launch
             // while offline, or one whose guest creation failed) gets its guest account here, so every sync
             // moment doubles as the retry — and reconciling then proceeds normally against it.
@@ -348,100 +395,8 @@ open class SchedulerSyncEngine(
             signOut()
             return
         }
-        var m = meta()
-        val remote = withAuth(session) { client.fetch(it) }
+        rowReconcile(session)
 
-        // Lost-ACKNOWLEDGEMENT repair — must run BEFORE the LWW branches below, because it decides what the
-        // remote revision MEANS. A push is not atomic from this side: [RemoteSnapshotClient.update] PATCHes
-        // the row and then reads the response. The server can apply the write (revision N -> N+1) and the
-        // response never come back — a dropped connection, the machine suspending mid-request — in which case
-        // `update` throws, `runReconcile` unwinds, and this device never records the new baseline: it stays at
-        // N with `dirty` still set. The next reconcile then sees `remote.revision > lastKnownRevision`, reads
-        // it as a PEER's newer write, and takes the `pull` branch — applying THIS DEVICE'S OWN older push over
-        // everything the user edited since, silently. Observed on a single-device account: two task cells were
-        // deleted and reappeared seconds later.
-        //
-        // `writer_device_id` (migration 20260730000000) is what tells the two apart. The guard is deliberately
-        // narrow — exactly one revision ahead, still dirty, and stamped with OUR device id:
-        //  * exactly one ahead, because a lost ack can only ever be one: the retry PATCHes against the stale
-        //    `revision = eq.N` guard, matches no row, and falls into the ordinary pull;
-        //  * still dirty, because that is the only case where pulling would DESTROY something;
-        //  * our device id, because a peer's write at N+1 is a genuine conflict and LWW must still apply.
-        // Null writer (a row last written by an older client, or a project without the migration) reads as
-        // "unknown" and falls through to the existing behaviour.
-        if (remote != null && isOwnUnacknowledgedPush(remote, m)) {
-            Diagnostics.log(
-                "reconcile: remote revision ${remote.revision} is THIS device's own unacknowledged push — " +
-                    "adopting the revision instead of pulling it back over local changes",
-            )
-            // The content the server holds IS what we pushed, so it is also the new common ancestor.
-            m = m.copy(lastKnownRevision = remote.revision, baseSnapshot = remote.payload)
-            setMeta(m)
-        }
-
-        when {
-            // First device for this account: seed the remote from local.
-            remote == null -> {
-                val body = payload()
-                val ok = withAuth(session) { client.insert(it, body, m.deviceId) }
-                if (ok) {
-                    Diagnostics.log("reconcile: seeded remote snapshot (revision 1)")
-                    setMeta(m.copy(lastKnownRevision = 1, dirty = false, baseSnapshot = body))
-                } else {
-                    // Lost the race; another device inserted first — re-fetch and apply it.
-                    withAuth(session) { client.fetch(it) }?.let { pull(it) }
-                }
-            }
-            // Remote advanced past what we last saw AND we hold unpushed edits: both sides changed
-            // concurrently. Merge them over the recorded ancestor rather than picking a winner.
-            remote.revision > m.lastKnownRevision && m.dirty -> mergeAndPush(session, remote, m)
-            // Remote advanced and we have nothing pending: adopt it as-is.
-            remote.revision > m.lastKnownRevision -> pull(remote)
-            // `dirty` is set, but our authoritative projection is already byte-identical to the remote — a
-            // PHANTOM push. A transient DERIVED change (a time-passing reschedule/materialization that briefly
-            // perturbs the sync fingerprint before reverting to the same content) can leave `dirty` set with
-            // nothing real to send. Pushing it would advance the `revision` for no content change, forcing
-            // every peer through a conflict resolution over nothing. Back when that resolution was plain LWW
-            // it silently DROPPED the peer's genuine unpushed edit — an idle device once clobbered a
-            // concurrent sleep-schedule edit that way. The merge makes the damage far milder, but a revision
-            // that says nothing is still pure churn. Clear the flag and send nothing.
-            m.dirty && localMatchesRemote(remote) -> {
-                Diagnostics.log("reconcile: dirty but local == remote (revision ${m.lastKnownRevision}); skipping phantom push")
-                setMeta(m.copy(dirty = false, baseSnapshot = remote.payload))
-            }
-            // We have unpushed local changes and the remote is still where we left it: push them.
-            m.dirty -> {
-                val body = payload()
-                val ok = withAuth(session) { client.update(it, body, m.lastKnownRevision, m.deviceId) }
-                if (ok) {
-                    Diagnostics.log("reconcile: pushed local changes (revision ${m.lastKnownRevision + 1})")
-                    setMeta(
-                        meta().copy(
-                            lastKnownRevision = m.lastKnownRevision + 1,
-                            dirty = false,
-                            // What we just pushed is now the agreed content: it is the ancestor any later
-                            // concurrent edit must be merged over.
-                            baseSnapshot = body,
-                        ),
-                    )
-                } else {
-                    // The remote moved between fetch and patch. We still hold unpushed edits, so this is the
-                    // concurrent case again — merge against the newer revision rather than dropping them.
-                    withAuth(session) { client.fetch(it) }
-                        ?.let { newer -> mergeAndPush(session, newer, meta()) }
-                }
-            }
-            // In sync, nothing pending.
-            else -> Unit
-        }
-
-        // Active sessions ride the SAME reconcile as the snapshot — EVERY one of them (startup, an account
-        // change, the debounced auto-push, a Realtime poke or (re)subscribe, the button) — merged per-row
-        // rather than LWW: this device's rows are pushed and every peer's are pulled into the local store,
-        // so the calendar can label past panels with the devices that were open. Nothing else carries them
-        // (no timer, no presence beat), so peer activity is reconcile-bounded. Best-effort — a failure here
-        // never fails the snapshot reconcile (the rows simply ride the next one). Skipped entirely on the
-        // remote force-logout return above, which must push nothing.
         syncActiveSessions(session)
     }
 
@@ -450,7 +405,21 @@ open class SchedulerSyncEngine(
     // debug sim clock that leaped far ahead still syncs the window around what this device actually wrote.
     private companion object {
         const val ACTIVE_SESSION_SYNC_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1_000
+
+        /** Rows per write request. */
+        const val WRITE_BATCH: Int = 200
+
+        /**
+         * A device that last pulled longer ago than this reads the account's live rows in full: the server deletes a
+         * tombstone a week after it was written (`purge_scheduler_tombstones`), so an incremental pull could miss a
+         * deletion. A day short of that week, for clock skew and a purge running late.
+         */
+        const val FULL_PULL_AFTER_MILLIS: Long = 6L * 24 * 60 * 60 * 1_000
     }
+
+    // The own rows the last successful push wrote, for the account it wrote them to: pushing the same rows again is a
+    // request for nothing (`docs/invariants/server-quota.md`).
+    private var pushedSessions: Pair<String, List<org.example.project.scheduler.persistence.ActiveSessionRecord>>? = null
 
     private suspend fun syncActiveSessions(session: SupabaseSession) {
         val store = activeSessionStore ?: return
@@ -461,7 +430,10 @@ open class SchedulerSyncEngine(
             // Only rows recorded under this install's real device id are ours to push: rows written while
             // signed out ("local") or by the retired remote-activity adoption never leave the device.
             val own = all.filter { it.deviceId == ownId && it.endMillis >= since }
-            withAuth(session) { client.upsertActiveSessions(it, own) }
+            if (pushedSessions != (session.userId to own)) {
+                withAuth(session) { client.upsertActiveSessions(it, own) }
+                pushedSessions = session.userId to own
+            }
             val peers = withAuth(session) { client.fetchActiveSessions(it, since) }
                 .filter { it.deviceId != ownId }
             store.saveActiveSessions(peers)
@@ -469,117 +441,199 @@ open class SchedulerSyncEngine(
         }.onFailure { Diagnostics.log("reconcile: active-session merge failed (${it.message}); rows ride the next sync") }
     }
 
-    /**
-     * True when [remote] is this device's OWN push whose acknowledgement was lost in transit, rather than a
-     * peer's newer write — see the long note at the call site in [runReconcile] for why each clause is
-     * needed. Pulling such a revision would silently revert every local edit made since that push.
-     */
-    private fun isOwnUnacknowledgedPush(remote: RemoteSnapshot, m: SyncMeta): Boolean =
-        m.dirty &&
-            remote.revision == m.lastKnownRevision + 1 &&
-            remote.writerDeviceId != null &&
-            remote.writerDeviceId == m.deviceId
+    // ---- Sync by rows (docs/invariants/sync-and-accounts.md § Sync by rows, migration 20260917000000) ----------
 
     /**
-     * The concurrent-edit path: the remote advanced while this device held unpushed edits. Both sides' work is
-     * combined by [SnapshotMerge] against the ancestor in [SyncMeta.baseSnapshot], the result is applied
-     * locally, and it is then pushed **on top of the remote revision** — that push is what makes the peer (and
-     * every other device) end up with the same merged document instead of two halves.
-     *
-     * Falls back to the plain last-write-wins [pull] when a merge is impossible: no ancestor on record (a DB
-     * upgraded from schema v9, or an account this device has never completed a sync with) or a snapshot that
-     * will not decode. That is the pre-merge behaviour, so the fallback can only ever lose what it already
-     * lost — and it self-heals, since the pull records an ancestor for next time.
-     *
-     * A failed push leaves the merged state applied locally with `dirty` still set and the ancestor advanced
-     * to the remote we merged over, so the next reconcile merges again from there rather than re-merging work
-     * that is already in hand.
+     * What this device knows of the account's rows, kept in `account_sync.base_payload`: the payload the server's
+     * entity rows spell out as of [entityCursor] (the common ancestor of a three-way merge), the highest history
+     * revision pulled, and the newest unit change pushed. A base written by the whole-document sync decodes to the
+     * default — no ancestor — so the first reconcile after the upgrade uploads the account's rows.
      */
-    private suspend fun mergeAndPush(session: SupabaseSession, remote: RemoteSnapshot, m: SyncMeta) {
-        val base = m.baseSnapshot
-        if (base == null) {
-            Diagnostics.log(
-                "reconcile: remote revision ${remote.revision} conflicts with local edits but no merge base is " +
-                    "recorded for this account — falling back to the last-write-wins pull",
-            )
-            pull(remote)
-            return
-        }
-        val merged =
-            runCatching {
-                SnapshotMerge.merge(
-                    base = json.decodeFromString<PersistedSnapshot>(base),
-                    local = checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }(),
-                    remote = json.decodeFromString<PersistedSnapshot>(remote.payload),
-                )
-            }.getOrNull()
-        if (merged == null) {
-            Diagnostics.log(
-                "reconcile: could not merge revision ${remote.revision} with local edits (undecodable snapshot) " +
-                    "— falling back to the last-write-wins pull",
-            )
-            pull(remote)
-            return
-        }
-        Diagnostics.log("reconcile: MERGED local changes with remote revision ${remote.revision}")
-        checkNotNull(applyRemote) { "SchedulerSyncEngine.bind() not called" }(merged)
-        // The remote we merged over is the ancestor from here on, whether or not the push below lands.
-        setMeta(m.copy(lastKnownRevision = remote.revision, dirty = true, baseSnapshot = remote.payload))
-        _remoteApplied.tryEmit(Unit)
+    @kotlinx.serialization.Serializable
+    private data class RowBase(
+        val rows: String = "{}",
+        val entityCursor: Long = 0,
+        val historyCursor: Long = 0,
+        val historyPushedAt: Long = 0,
+        /** When this device last pulled the entity rows (wall clock). */
+        val pulledAtMillis: Long = 0,
+        /**
+         * The rows of a push that has not been acknowledged yet, as `[kind, id]`: its answer may have been lost after
+         * the server applied it, so the next reconcile writes each of them again as this device then holds it.
+         */
+        val pending: List<List<String>> = emptyList(),
+    )
 
-        // The local edits may have contributed nothing the remote does not already say — the `dirty` flag can
-        // be left set by a purely derived change (see the phantom-push guard in [runReconcile]). Advancing the
-        // revision for identical content is pure churn, so stop here; the merge already reset local state to
-        // the remote's content.
-        if (localMatchesRemote(remote)) {
-            Diagnostics.log("reconcile: the merge is identical to remote revision ${remote.revision}; nothing to push")
-            setMeta(meta().copy(dirty = false))
-            return
-        }
+    private fun rowBase(m: SyncMeta): RowBase =
+        m.baseSnapshot?.let { text -> runCatching { json.decodeFromString<RowBase>(text) }.getOrNull() } ?: RowBase()
 
-        // Push the merge. [payload] is re-read rather than reusing `merged` because applying it ran the state
-        // through the ViewModel's load normalization (seeded screen breaks, debug-tainted rollback), and what
-        // this device now HOLDS is what its peers must receive.
-        val body = payload()
-        val ok = withAuth(session) { client.update(it, body, remote.revision, m.deviceId) }
-        if (ok) {
-            Diagnostics.log("reconcile: pushed the merge (revision ${remote.revision + 1})")
-            setMeta(meta().copy(lastKnownRevision = remote.revision + 1, dirty = false, baseSnapshot = body))
-        } else {
-            Diagnostics.log("reconcile: the merge could not be pushed (remote moved again); retrying next sync")
-        }
+    private fun encodeBase(base: RowBase): String = json.encodeToString(RowBase.serializer(), base)
+
+    private fun localPayload(): String =
+        checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }().statePayload
+
+    /** The owner's units, per category, and the sink for the units another device has. Wired by the ViewModel. */
+    private var ownHistory: (() -> Map<String, List<org.example.project.scheduler.state.HistoryUnit>>)? = null
+    private var mergePeerHistory: ((Map<String, List<org.example.project.scheduler.state.HistoryUnit>>, Map<String, Set<Pair<String, Long>>>) -> Unit)? = null
+
+    /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: wire the history half of the sync — [own]
+     * reads every unit per category name, [mergePeer] takes the units another device has (and the redo branches it
+     * dropped) into the local history.
+     */
+    fun bindHistory(
+        own: () -> Map<String, List<org.example.project.scheduler.state.HistoryUnit>>,
+        mergePeer: (Map<String, List<org.example.project.scheduler.state.HistoryUnit>>, Map<String, Set<Pair<String, Long>>>) -> Unit,
+    ) {
+        ownHistory = own
+        mergePeerHistory = mergePeer
     }
 
-    private fun pull(remote: RemoteSnapshot) {
-        // Log the LWW casualty explicitly: `dirty` here means unpushed local edits are being dropped by the
-        // pull. Reached only when a three-way merge was impossible (no recorded ancestor / an undecodable
-        // snapshot) — see [mergeAndPush]. Without this line a silent revert leaves no trace at all in the
-        // diagnostics timeline, which is what made the "my deleted cells came back" report so hard to place.
-        val dropping = if (meta().dirty) " — DROPPING this device's unpushed local changes (whole-doc LWW)" else ""
-        Diagnostics.log("reconcile: pulled remote snapshot (revision ${remote.revision})$dropping")
-        val snapshot = json.decodeFromString<PersistedSnapshot>(remote.payload)
-        checkNotNull(applyRemote) { "SchedulerSyncEngine.bind() not called" }(snapshot)
-        // The pulled content is now the agreed one, so it is also the ancestor for the next divergence — which
-        // is how a device that had no base (upgraded DB, first sync) acquires one.
-        setMeta(meta().copy(lastKnownRevision = remote.revision, dirty = false, baseSnapshot = remote.payload))
-        _remoteApplied.tryEmit(Unit)
+    /**
+     * One reconcile by rows:
+     *
+     * 1. **Pull** the entity rows another device wrote since the cursor. When there are any, the account's state is
+     *    the base with them applied; a device with no edits of its own takes it as is, one with edits MERGES
+     *    (`SnapshotMerge` — the same three-way rules the document sync had).
+     * 2. **Push** every entity row that differs from what the server now holds, and a tombstone for every one the
+     *    device no longer has. An edit therefore writes the rows it touched, and nothing else.
+     * 3. **History**: push this device's units changed since the last push (and mark a discarded redo branch
+     *    dropped), pull the units other devices changed.
+     *
+     * Every write is an idempotent upsert keyed by the entity (or the unit), and a pull never returns this device's
+     * own rows, so a push whose answer was lost is simply written again — the lost-acknowledgement repair the
+     * document sync needed has nothing left to repair.
+     */
+    private suspend fun rowReconcile(session: SupabaseSession) {
+        val m = meta()
+        val me = m.deviceId
+        var base = rowBase(m)
+
+        val now = clock()
+        // A cursor older than the tombstones the server still keeps cannot be trusted to have seen every deletion.
+        val full = base.entityCursor > 0 && now - base.pulledAtMillis > FULL_PULL_AFTER_MILLIS
+        val pulled = ArrayList<EntityRow>()
+        var cursor = if (full) 0L else base.entityCursor
+        while (true) {
+            val page = withAuth(session) { client.fetchEntities(it, if (full) null else me, cursor, liveOnly = full) }
+            pulled += page
+            if (page.isEmpty()) break
+            cursor = page.maxOf { it.revision }
+            if (page.size < RemoteSnapshotClient.PAGE) break
+        }
+
+        val baseRows = EntityRows.split(base.rows)
+        var local = EntityRows.split(localPayload())
+        var serverRows = baseRows
+        if (full) cursor = maxOf(cursor, base.entityCursor)
+        if (pulled.isNotEmpty() || full) {
+            // A full read IS the server's rows; an incremental one is the base with what changed applied.
+            val remoteRows = if (full) LinkedHashMap() else LinkedHashMap(baseRows)
+            for (row in pulled) {
+                val key = EntityRows.Key(row.kind, row.entityId)
+                if (row.deleted || row.payload == null) remoteRows.remove(key) else remoteRows[key] = row.payload
+            }
+            val remotePayload = EntityRows.join(remoteRows)
+            val merged =
+                if (local == baseRows || baseRows.isEmpty() && !m.dirty) remotePayload
+                else SnapshotMerge.merge(snapshotOf(base.rows), snapshotOf(EntityRows.join(local)), snapshotOf(remotePayload))?.statePayload
+                    ?: remotePayload
+            if (EntityRows.split(merged) != local) {
+                applyRemote?.invoke(snapshotOf(merged))
+                _remoteApplied.tryEmit(Unit)
+                local = EntityRows.split(localPayload())
+            }
+            serverRows = remoteRows
+            base = base.copy(rows = remotePayload, entityCursor = cursor)
+            Diagnostics.log("reconcile: pulled ${pulled.size} entity row(s) up to revision $cursor${if (full) " (full read)" else ""}")
+        }
+
+        val changed = LinkedHashMap<EntityRows.Key, String?>()
+        for ((key, value) in local) if (serverRows[key] != value) changed[key] = value
+        for (key in serverRows.keys) if (key !in local) changed[key] = null
+        // A push whose answer never came may still have landed: whatever it wrote is written again, as it is now.
+        for (pending in base.pending) {
+            val key = EntityRows.Key(pending[0], pending[1])
+            if (key !in changed) changed[key] = local[key]
+        }
+        if (changed.isNotEmpty()) {
+            // Recorded BEFORE the request: if its answer is lost, the next reconcile knows what it may have written.
+            val pending = changed.keys.map { listOf(it.kind, it.id) }
+            setMeta(meta().copy(baseSnapshot = encodeBase(base.copy(pending = pending))))
+            val writes = changed.map { (key, value) -> EntityWrite(key.kind, key.id, value) }
+            for (batch in writes.chunked(WRITE_BATCH)) withAuth(session) { client.upsertEntities(it, me, batch) }
+            Diagnostics.log("reconcile: pushed ${writes.size} entity row(s)")
+        }
+        base = base.copy(rows = EntityRows.join(local), pulledAtMillis = now, pending = emptyList())
+
+        base = syncHistory(session, me, base)
+        setMeta(meta().copy(lastKnownRevision = base.entityCursor, dirty = false, baseSnapshot = encodeBase(base)))
     }
 
-    private fun payload(): String =
-        json.encodeToString(checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }())
+    private fun snapshotOf(payload: String) = PersistedSnapshot(payload, emptyList(), emptyList())
 
-    /**
-     * True when this device's authoritative projection already equals what the server holds, so a `dirty`
-     * flag has nothing real to push (see the phantom-push guard in [runReconcile]). Compares the decoded
-     * [PersistedSnapshot] VALUES — not the raw JSON — so a difference in field order or omitted defaults from
-     * another client's encoder cannot read as a change. Fails safe to `false` (any decode error ⇒ treat as
-     * different ⇒ push normally), so the guard can never suppress a genuine change.
-     */
-    private fun localMatchesRemote(remote: RemoteSnapshot): Boolean =
-        runCatching {
-            checkNotNull(localSnapshot) { "SchedulerSyncEngine.bind() not called" }() ==
-                json.decodeFromString<PersistedSnapshot>(remote.payload)
-        }.getOrDefault(false)
+    private suspend fun syncHistory(session: SupabaseSession, me: String, start: RowBase): RowBase {
+        val own = ownHistory ?: return start
+        var base = start
+        val units = own()
+        val changed =
+            units.flatMap { (category, list) ->
+                list.filter { it.ownedBy(me) && it.changedAtMillis > base.historyPushedAt }.map { category to it }
+            }
+        if (changed.isNotEmpty()) {
+            val rows =
+                changed.map { (category, unit) ->
+                    HistoryUnitRow(
+                        deviceId = me,
+                        category = category,
+                        deviceSeq = unit.deviceSeq,
+                        timeMillis = unit.timeMillis,
+                        chronoId = unit.chronoId,
+                        tainted = unit.debugTainted,
+                        undone = unit.undone,
+                        window = unit.window?.name,
+                        delta = org.example.project.scheduler.persistence.SchedulerStateCodec.encodeUnit(unit),
+                    )
+                }
+            for (batch in rows.chunked(WRITE_BATCH)) withAuth(session) { client.upsertHistoryUnits(it, batch) }
+            // A redo branch a new edit discarded: its rows are this device's undone units older than its newest
+            // applied one, which the local history no longer holds.
+            // Only a NEW unit can have discarded one, so only a category this push committed into is asked.
+            val committedInto = changed.filter { it.second.timeMillis > start.historyPushedAt }.map { it.first }.toSet()
+            for ((category, list) in units) {
+                if (category !in committedInto) continue
+                val newestApplied = list.filter { it.ownedBy(me) && !it.undone }.maxOfOrNull { it.timeMillis } ?: continue
+                withAuth(session) { client.dropHistoryBranch(it, me, category, newestApplied) }
+            }
+            base = base.copy(historyPushedAt = changed.maxOf { it.second.changedAtMillis })
+            Diagnostics.log("reconcile: pushed ${rows.size} history unit(s)")
+        }
+
+        val merge = mergePeerHistory ?: return base
+        var cursor = base.historyCursor
+        val peers = HashMap<String, MutableList<org.example.project.scheduler.state.HistoryUnit>>()
+        val dropped = HashMap<String, MutableSet<Pair<String, Long>>>()
+        while (true) {
+            val page = withAuth(session) { client.fetchHistoryUnits(it, me, cursor) }
+            for (row in page) {
+                if (row.dropped) {
+                    dropped.getOrPut(row.category) { HashSet() } += row.deviceId to row.deviceSeq
+                    continue
+                }
+                org.example.project.scheduler.persistence.SchedulerStateCodec.decodeUnit(
+                    row.timeMillis, row.chronoId, row.tainted, row.window, row.deviceId, row.deviceSeq, row.undone, row.delta,
+                )?.let { peers.getOrPut(row.category) { ArrayList() } += it }
+            }
+            if (page.isEmpty()) break
+            cursor = page.maxOf { it.revision }
+            if (page.size < RemoteSnapshotClient.PAGE) break
+        }
+        if (peers.isNotEmpty() || dropped.isNotEmpty()) {
+            merge(peers, dropped)
+            Diagnostics.log("reconcile: pulled ${peers.values.sumOf { it.size }} history unit(s), ${dropped.values.sumOf { it.size }} dropped")
+        }
+        return base.copy(historyCursor = cursor)
+    }
 
     private fun persistSession(s: SupabaseSession, email: String?) =
         setMeta(meta().copy(accessToken = s.accessToken, refreshToken = s.refreshToken, userId = s.userId, email = email))
@@ -655,29 +709,29 @@ open class SchedulerSyncEngine(
     // the Edge push can reach it. (The old presence / sleep-gap / derived-pause / next-cue-instant channels and
     // the Realtime-presence listener are retired; the `tick_pause_cues()` cron reads the device_heartbeat table.)
 
-    override val signedIn: Boolean get() = session != null
+    override val signedIn: Boolean get() = onlineSession() != null
 
     override val deviceId: String get() = meta().deviceId
 
     override val realtimeUrl: String get() = client.config.realtimeUrl
     override val realtimeApiKey: String get() = client.config.anonKey
 
-    override fun realtimeAuth(): Pair<String, String>? = session?.let { it.userId to it.accessToken }
+    override fun realtimeAuth(): Pair<String, String>? = onlineSession()?.let { it.userId to it.accessToken }
 
     override suspend fun refreshRealtimeAuth() {
-        val current = session ?: return
+        val current = onlineSession() ?: return
         // Uses the same serialized refresh as [withAuth] (adopts a token another caller already rotated), so
         // the single-use refresh token is never double-spent against a concurrent reconcile.
         runCatching { refreshSession(current) }
     }
 
     override suspend fun claimLastPhone() {
-        val current = session ?: return
+        val current = onlineSession() ?: return
         runCatching { withAuth(current) { client.claimLastPhone(it, meta().deviceId) } }
     }
 
     override suspend fun registerPushToken(kind: String, platform: String, token: String) {
-        val current = session ?: run {
+        val current = onlineSession() ?: run {
             Diagnostics.log("push token NOT registered ($platform): signed out")
             return
         }
@@ -687,12 +741,12 @@ open class SchedulerSyncEngine(
     }
 
     override suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?) {
-        val current = session ?: return
+        val current = onlineSession() ?: return
         runCatching { withAuth(current) { client.upsertAccountState(it, sleeping, wakeAtMillis) } }
     }
 
     override suspend fun publishPresence(state: PresenceState): Int? {
-        val current = session ?: return null
+        val current = onlineSession() ?: return null
         return runCatching {
             withAuth(current) { client.publishPresence(session = it, deviceId = meta().deviceId) }
         }.getOrNull()
@@ -702,7 +756,7 @@ open class SchedulerSyncEngine(
     // the publisher's retry loop is what keeps the server's copy from going stale. A signed-out device drops it
     // (there is no account to write for; the next change after sign-in republishes).
     override suspend fun publishNextBreak(state: NextBreakState) {
-        val current = session ?: return
+        val current = onlineSession() ?: return
         withAuth(current) {
             // The rule set first: it is what the mode-3 evaluation reads, and the two dues below are its own
             // projection. Both are sent under one caller so a retry re-sends the pair together.
@@ -716,7 +770,7 @@ open class SchedulerSyncEngine(
     }
 
     override suspend fun notifyScreenOff() {
-        val current = session ?: return
+        val current = onlineSession() ?: return
         runCatching { withAuth(current) { client.notifyScreenOff(it, meta().deviceId) } }
             .onSuccess { Diagnostics.log("screen off reported to pause-cue function") }
             .onFailure { Diagnostics.log("screen-off report FAILED: ${it.message}") }
@@ -726,14 +780,14 @@ open class SchedulerSyncEngine(
     // every sync moment, and a lost call costs at most one cue. A signed-out device answers "nobody is away",
     // which is what a device with no account to ask about should say.
     override suspend fun syncDeviceAway(away: Boolean?): Boolean {
-        val current = session ?: return false
+        val current = onlineSession() ?: return false
         return runCatching { withAuth(current) { client.syncDeviceAway(it, meta().deviceId, away) } }
             .onFailure { Diagnostics.log("away flag sync FAILED: ${it.message}") }
             .getOrDefault(false)
     }
 
     override suspend fun fetchAwaySpans(fromMillis: Long, toMillis: Long): List<TaskTimeRange> {
-        val current = session ?: return emptyList()
+        val current = onlineSession() ?: return emptyList()
         return runCatching { withAuth(current) { client.fetchAwaySpans(it, fromMillis, toMillis) } }
             .onFailure { Diagnostics.log("mode-3 span fetch FAILED: ${it.message}") }
             .getOrDefault(emptyList())

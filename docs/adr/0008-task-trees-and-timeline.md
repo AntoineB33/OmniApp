@@ -111,15 +111,24 @@ next instead of snapping over on the date.
 By the user's spec the plan genuinely IS a function of time here, so a plan computed once would be wrong from the
 next instant.
 
-`SchedulerEngine.launchTaskTreeBlendReschedule` samples `SchedulerDomain.taskTreeBlendStep` every
-`TASK_TREE_BLEND_POLL_MILLIS` (60 s) and dispatches `RefreshSchedule` only when the **quantized** cursor crosses a
-step. `TASK_TREE_BLEND_STEPS` = 100 bounds the priority error at 1 % and caps a whole transition at ~100 fills
-however long it lasts (a two-month one re-plans about every 14 h).
+**Since 2026-09-13 it is boundary-driven, not quantized.** `docs/scheduler_requirements.md` § *Rule state
+evolution* applies the rule state found at the now-line and changes every attribute at a constant rate, with an
+example: a 0→100 % ramp over 10 min and a 0→50 % ramp over 5 min must give the same schedule while they overlap. The
+100-step cursor could not honour it — its steps land at different instants on the two ramps. So a plan now holds the
+EXACT rule state at the line (`RuleStateTimeline.planTasksAt`, the minimum in millis), and
+`SchedulerEngine.launchTaskTreeBlendReschedule` re-plans when the line reaches the start of a run the plan placed
+(`SchedulerDomain.taskTreeBlendDecisionKey`, sleeping until `nextDecisionMillis`, bounded by
+`TASK_TREE_BLEND_POLL_MILLIS`). Every decision the frozen past records is then taken with the rule state at its own
+instant, and the two scenarios agree (`TaskTreeTimelineTest.the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap`).
 
-The step is a constant when nothing is dated, so an account that never opens the window never dispatches at all.
+A transition costs one fill per run it spans, and nothing at all outside one: the key is 0 when nothing is dated
+and constant outside a transition, so an account that never opens the window never dispatches.
+
+(Before: `taskTreeBlendStep` sampled every 60 s, `TASK_TREE_BLEND_STEPS` = 100, a fill per step — about one every
+14 h on a two-month transition. Removed.)
 
 What the original rule protects against — a *continuous* input churning the plan every tick — is handled by
-quantizing, not by refusing to fire. **Do NOT reintroduce an unquantized / per-tick form.**
+firing only at run starts, which the plan itself spaces. **Do NOT reintroduce a per-tick or a stepped form.**
 
 ### Deliberate disagreement
 

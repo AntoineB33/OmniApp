@@ -1,5 +1,7 @@
 package org.example.project
 
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -26,6 +28,13 @@ import org.example.project.scheduler.state.SchedulerState
  * honoured — and is dropped from the state — the moment another task has actually been served past it.
  */
 class ForcedTaskSwitchTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
 
     private val MIN = 60_000L
     private val T0 = 1_700_000_000_000L

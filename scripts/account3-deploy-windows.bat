@@ -18,6 +18,11 @@ REM
 REM  The release DB lives in %USERPROFILE%\.omniapp-release and is left
 REM  untouched by updates (only the app binaries + launcher are replaced).
 REM  Credentials come from scripts/accounts.env (gitignored).
+REM
+REM  Argument "offline" (what account3-deploy-windows-offline.bat passes): every
+REM  launch of the install starts working completely offline - no request, no
+REM  socket - until the in-app button brings it online for that session. A
+REM  deploy without the argument installs it online again.
 REM =====================================================================
 
 REM ----------------------------- CONFIG --------------------------------
@@ -28,6 +33,8 @@ set "EXE_NAME=%PACKAGE_NAME%.exe"
 REM ---------------------------------------------------------------------
 
 set "SCRIPT_DIR=%~dp0"
+set "START_OFFLINE="
+if /i "%~1"=="offline" set "START_OFFLINE=1"
 call "%SCRIPT_DIR%internal\load-accounts-env.bat" || exit /b 1
 if not defined ACC3_USER (echo [x] ACC3_USER/ACC3_PASS missing from accounts.env.& exit /b 1)
 
@@ -54,13 +61,18 @@ REM acc3.cred: read by release-launch-acc3.bat and exported to the app. Plaintex
 REM personal-machine only. Overwritten on each deploy.
 > "%INSTALL_ROOT%\acc3.cred" echo OMNIAPP_LOGIN_USER=%ACC3_USER%
 >>"%INSTALL_ROOT%\acc3.cred" echo OMNIAPP_LOGIN_PASS=%ACC3_PASS%
+if defined START_OFFLINE >>"%INSTALL_ROOT%\acc3.cred" echo OMNIAPP_START_OFFLINE=1
 powershell -NoProfile -Command "$wsh = New-Object -ComObject WScript.Shell; $lnk = $wsh.CreateShortcut((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\OmniApp.lnk')); $lnk.TargetPath = '%INSTALL_ROOT%\release-launch-acc3.bat'; $lnk.WorkingDirectory = '%INSTALL_ROOT%'; $lnk.WindowStyle = 7; $lnk.Save()"
 
 echo [5/6] Deploying binaries to %APP_DEST% (DB at %USERPROFILE%\.omniapp-release untouched)...
 robocopy "%APP_IMAGE%" "%APP_DEST%" /MIR /R:5 /W:2 /NJH /NJS /NFL /NDL >nul
 if errorlevel 8 (echo       [!] Some files were locked and may not have updated. Close the release app and re-run.)
 
-echo [6/6] Launching the updated release (auto-signs in as %ACC3_USER%)...
+if defined START_OFFLINE (
+  echo [6/6] Launching the updated release, WORKING OFFLINE ^(nothing is sent until you press the button^)...
+) else (
+  echo [6/6] Launching the updated release ^(auto-signs in as %ACC3_USER%^)...
+)
 call "%INSTALL_ROOT%\release-launch-acc3.bat"
 
 popd
@@ -69,4 +81,5 @@ echo Done.
 echo   Installed:  %INSTALL_ROOT%
 echo   Release DB: %USERPROFILE%\.omniapp-release
 echo   Startup:    Start Menu\Programs\Startup\OmniApp.lnk  ^(auto-login as %ACC3_USER%^)
+if defined START_OFFLINE echo   Network:    starts OFFLINE at every launch ^(redeploy with account3-deploy-windows.bat to undo^)
 endlocal

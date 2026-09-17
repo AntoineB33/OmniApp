@@ -16,3 +16,7 @@ actual fun startupLoginCredentials(): StartupLogin? {
             ?: System.getenv("OMNIAPP_LOGIN_PASS")?.takeIf { it.isNotBlank() }
     return if (user != null && pass != null) StartupLogin(user, pass) else null
 }
+
+actual fun startOfflineRequested(): Boolean =
+    (System.getProperty("omniapp.startOffline") ?: System.getenv("OMNIAPP_START_OFFLINE"))
+        ?.trim()?.lowercase() in setOf("1", "true", "yes")

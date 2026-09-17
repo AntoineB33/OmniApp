@@ -63,6 +63,13 @@ internal object RealtimePhoenix {
     fun isPostgresChange(text: String): Boolean = text.contains("\"event\":\"postgres_changes\"")
 
     /**
+     * `docs/invariants/server-quota.md`: the device whose write a `scheduler_head` change reports (its `device_id`
+     * column), or null when the frame names none. A device's own write reaches its own socket too; reconciling on
+     * that echo would be a whole round of requests for nothing, at every edit.
+     */
+    fun changeWriterDeviceId(text: String): String? = Regex("\"device_id\":\"([^\"]*)\"").find(text)?.groupValues?.get(1)
+
+    /**
      * True for the `system` frame confirming the postgres_changes subscription is LIVE and streaming
      * (`"message":"Subscribed to PostgreSQL","status":"ok"`), as opposed to the `phx_reply` that merely
      * acknowledges the channel join. This is the moment row changes start flowing — and therefore the moment
@@ -84,6 +91,63 @@ internal object RealtimePhoenix {
     fun isPostgresSubscriptionError(text: String): Boolean =
         text.contains("\"event\":\"system\"") && text.contains("\"extension\":\"postgres_changes\"") &&
             text.contains("\"status\":\"error\"")
+
+    // ----- the scheduler peers' broadcast channel (`docs/invariants/scheduler.md` § *One device plans*) ----------
+
+    /**
+     * The account's scheduler broadcast topic. **Private**: Realtime authorizes the join against `realtime.messages`
+     * RLS (migration 20260916000000), whose policies admit only `scheduler:<auth.uid()>` — a device of another account
+     * can neither read nor send on it.
+     */
+    fun schedulerBroadcastTopic(userId: String): String = "realtime:scheduler:$userId"
+
+    /** `phx_join` for the private broadcast channel: never hear our own messages, no presence. */
+    fun broadcastJoinFrame(topic: String, accessToken: String, ref: Long): String =
+        envelope(topic, "phx_join", ref, ref) {
+            putJsonObject("config") {
+                putJsonObject("broadcast") {
+                    put("ack", false)
+                    put("self", false)
+                }
+                putJsonObject("presence") { put("enabled", false) }
+                put("private", true)
+            }
+            put("access_token", accessToken)
+        }
+
+    /** The event name every scheduler peer message is broadcast under. */
+    const val SCHEDULER_EVENT: String = "scheduler"
+
+    /** One peer message, as the text of [PeerMessage.encode], broadcast on [topic]. */
+    fun broadcastFrame(topic: String, joinRef: Long, ref: Long, message: String): String =
+        envelope(topic, "broadcast", ref, joinRef) {
+            put("type", "broadcast")
+            put("event", SCHEDULER_EVENT)
+            putJsonObject("payload") { put("m", message) }
+        }
+
+    /** The peer message text a broadcast frame on [topic] carries, or null for any other frame. */
+    fun broadcastMessage(text: String, topic: String): String? {
+        if (!text.contains("\"broadcast\"")) return null
+        val root = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject }
+            .getOrNull() ?: return null
+        fun kotlinx.serialization.json.JsonElement?.str(): String? =
+            (this as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        if (root["event"].str() != "broadcast" || root["topic"].str() != topic) return null
+        val payload = root["payload"] as? kotlinx.serialization.json.JsonObject ?: return null
+        if (payload["event"].str() != SCHEDULER_EVENT) return null
+        return (payload["payload"] as? kotlinx.serialization.json.JsonObject)?.get("m").str()
+    }
+
+    /** The `phx_reply` accepting (true) or refusing (false) the join of [topic]; null for any other frame. */
+    fun joinReplyStatus(text: String, topic: String): Boolean? {
+        if (!text.contains("phx_reply") || !text.contains("\"$topic\"")) return null
+        return when {
+            text.contains("\"status\":\"ok\"") -> true
+            text.contains("\"status\":\"error\"") -> false
+            else -> null
+        }
+    }
 
     /** Phoenix keep-alive on the reserved `phoenix` topic (no join_ref). */
     fun heartbeatFrame(ref: Long): String = envelope("phoenix", "heartbeat", ref, null) {}

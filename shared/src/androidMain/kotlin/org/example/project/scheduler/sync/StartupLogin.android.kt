@@ -11,3 +11,5 @@ object AndroidStartupLogin {
 }
 
 actual fun startupLoginCredentials(): StartupLogin? = AndroidStartupLogin.creds
+
+actual fun startOfflineRequested(): Boolean = false

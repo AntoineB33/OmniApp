@@ -22,7 +22,7 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  */
 class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
     SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore,
-    SleepScanCheckpointStore, DeclaredAwayStore {
+    SleepScanCheckpointStore, DeclaredAwayStore, NetworkModeStore {
     private val queries = database.schedulerQueries
 
     /** The account whose partition [load]/[save] read and write: the signed-in user, else "unclaimed". */
@@ -361,6 +361,12 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
 
     override fun saveSleepScanCheckpoint(scannedThroughMillis: Long) {
         queries.upsertSleepScanCheckpoint(scannedThroughMillis)
+    }
+
+    override fun loadOfflineChoice(): Boolean? = queries.selectNetworkMode().executeAsOneOrNull()?.let { it != 0L }
+
+    override fun saveOfflineChoice(offline: Boolean) {
+        queries.upsertNetworkMode(if (offline) 1L else 0L)
     }
 
     companion object {

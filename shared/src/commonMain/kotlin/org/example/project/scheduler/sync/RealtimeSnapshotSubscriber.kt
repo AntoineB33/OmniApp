@@ -7,6 +7,13 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -33,7 +40,7 @@ interface SnapshotChangeSubscription {
 /**
  * Bidirectional-sync pull half (PRD §5): a hand-rolled Supabase **Realtime `postgres_changes`** subscriber over
  * a Ktor WebSocket (the project deliberately avoids the supabase-kt SDK — see [RemoteSnapshotClient]). While the
- * device is signed in it holds a Phoenix channel subscribed to changes on the account's `scheduler_snapshot`
+ * device is signed in it holds a Phoenix channel subscribed to changes on the account's `scheduler_head`
  * row; whenever the row changes on the server (another device pushed) it invokes [onRemoteChange], which pokes
  * a normal [SchedulerSyncEngine.reconcile]. It never applies the event payload directly — reconcile pulls
  * through the tested LWW path and its `revision` guard silently drops this device's own echo (the row change
@@ -64,14 +71,29 @@ class RealtimeSnapshotSubscriber(
     /** Forces a session-token refresh (via the sync engine's serialized path) when the join is rejected for an
      * expired/invalid JWT, after which [auth] returns the fresh token on reconnect. */
     private val refreshAuth: suspend () -> Unit = {},
+    /** This device's sync id: a change this device wrote itself is its own echo, and pokes nothing. */
+    private val ownDeviceId: () -> String? = { null },
     /** Invoked on every server-side change to the subscribed row — pokes a reconcile. Best-effort/idempotent. */
     private val onRemoteChange: suspend () -> Unit,
     private val httpClient: HttpClient = HttpClient { install(WebSockets) },
-) : SnapshotChangeSubscription {
+) : SnapshotChangeSubscription, SchedulerPeerChannel {
     // The account whose snapshot row we subscribe to (its userId), or null while signed out. [supervise] keys
     // the socket on this so an account switch drops the old subscription and a sign-out closes it entirely.
     private val account = MutableStateFlow<String?>(null)
     private var job: Job? = null
+
+    // `docs/invariants/scheduler.md` § *One device plans*: the account's private scheduler broadcast channel rides
+    // this same socket as a second Phoenix channel. [connected] is true only between its join being accepted and
+    // the socket closing.
+    private val _peersConnected = MutableStateFlow(false)
+    override val connected: StateFlow<Boolean> = _peersConnected.asStateFlow()
+    private val _peerMessages = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 64)
+    override val messages: SharedFlow<PeerMessage> = _peerMessages.asSharedFlow()
+    private val peerOutbox = Channel<PeerMessage>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    override fun send(message: PeerMessage) {
+        if (_peersConnected.value) peerOutbox.trySend(message)
+    }
 
     override fun setAccount(userId: String?) {
         account.value = userId
@@ -101,7 +123,7 @@ class RealtimeSnapshotSubscriber(
     }
 
     private suspend fun serve(userId: String, accessToken: String) {
-        val topic = RealtimePhoenix.postgresChangesTopic("db:scheduler_snapshot:$userId")
+        val topic = RealtimePhoenix.postgresChangesTopic("db:scheduler_head:$userId")
         httpClient.webSocket("$realtimeUrl?apikey=$apiKey&vsn=1.0.0") {
             val sendMutex = Mutex()
             var ref = 0L
@@ -112,12 +134,26 @@ class RealtimeSnapshotSubscriber(
                 topic = topic,
                 accessToken = accessToken,
                 schema = "public",
-                table = "scheduler_snapshot",
+                // The one-row-per-account head the entity rows bump (migration 20260917000000): one message per push.
+                table = "scheduler_head",
                 filter = "user_id=eq.$userId",
                 ref = joinRef,
             )
             sendMutex.withLock { send(Frame.Text(joinFrame)) }
             Diagnostics.log("realtime snapshot sent join: ${joinFrame.replace(accessToken, "<token>").take(400)}")
+
+            // The scheduler peers' private broadcast channel, on the same socket.
+            val peerTopic = RealtimePhoenix.schedulerBroadcastTopic(userId)
+            val peerJoinRef = sendMutex.withLock { ++ref }
+            sendMutex.withLock { send(Frame.Text(RealtimePhoenix.broadcastJoinFrame(peerTopic, accessToken, peerJoinRef))) }
+            // Drop whatever was queued for a previous connection: a peer message is about the moment it was sent.
+            while (peerOutbox.tryReceive().isSuccess) Unit
+            val peerSender = launch {
+                for (message in peerOutbox) {
+                    val text = PeerMessage.encode(message)
+                    emit { RealtimePhoenix.broadcastFrame(peerTopic, peerJoinRef, it, text) }
+                }
+            }
 
             val heartbeat = launch {
                 while (isActive) {
@@ -134,6 +170,25 @@ class RealtimeSnapshotSubscriber(
                         logged++
                         Diagnostics.log("realtime snapshot recv: ${text.take(600)}")
                     }
+                    RealtimePhoenix.broadcastMessage(text, peerTopic)?.let { body ->
+                        PeerMessage.decode(body)?.let { _peerMessages.tryEmit(it) }
+                        continue
+                    }
+                    when (RealtimePhoenix.joinReplyStatus(text, peerTopic)) {
+                        true -> {
+                            if (!_peersConnected.value) Diagnostics.log("realtime scheduler peers: channel joined")
+                            _peersConnected.value = true
+                            continue
+                        }
+                        false -> {
+                            // Most likely migration 20260916000000 (the channel's RLS) is not applied: the snapshot
+                            // subscription goes on, and every device simply plans for itself.
+                            Diagnostics.log("realtime scheduler peers: join REFUSED — planning stays local: ${text.take(300)}")
+                            _peersConnected.value = false
+                            continue
+                        }
+                        null -> Unit
+                    }
                     if (isAuthRejection(text)) {
                         Diagnostics.log("realtime snapshot join rejected for auth — refreshing token + reconnecting")
                         refreshAuth()
@@ -147,7 +202,7 @@ class RealtimeSnapshotSubscriber(
                         // back off and reconnect so it self-heals once the publication is fixed — without hammering.
                         Diagnostics.log(
                             "realtime snapshot subscription REJECTED by server (postgres_changes not enabled — is " +
-                                "migration 20260722000000_realtime_scheduler_snapshot applied / scheduler_snapshot in " +
+                                "migration 20260917000000_entity_and_history_rows applied / scheduler_head in " +
                                 "the supabase_realtime publication?): ${text.take(300)}",
                         )
                         delay(SUBSCRIPTION_ERROR_RETRY_MILLIS)
@@ -169,6 +224,8 @@ class RealtimeSnapshotSubscriber(
                             .onFailure { Diagnostics.log("realtime snapshot catch-up reconcile failed: ${it.message}") }
                     }
                     if (RealtimePhoenix.isPostgresChange(text)) {
+                        val writer = RealtimePhoenix.changeWriterDeviceId(text)
+                        if (writer != null && writer == ownDeviceId()) continue
                         Diagnostics.log("realtime snapshot: remote change — poking reconcile")
                         runCatching { onRemoteChange() }
                             .onFailure { Diagnostics.log("realtime snapshot reconcile poke failed: ${it.message}") }
@@ -176,6 +233,8 @@ class RealtimeSnapshotSubscriber(
                 }
                 Diagnostics.log("realtime snapshot incoming stream closed")
             } finally {
+                _peersConnected.value = false
+                peerSender.cancel()
                 heartbeat.cancel()
             }
         }

@@ -3,6 +3,7 @@ Invariants for this directory. Paths are from the repo root; global rules are in
 **Read before editing anything here:**
 
 - `docs/invariants/sync-and-accounts.md`
+- `docs/invariants/server-quota.md`
 - `docs/invariants/pause-cue.md`
 - `docs/invariants/persistence.md`
 

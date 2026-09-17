@@ -95,10 +95,10 @@ class ActiveSessionSyncTest {
                             jsonHeader,
                         )
 
-                    path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Get ->
+                    (path.endsWith("/scheduler_entity") || path.endsWith("/history_unit")) && request.method == HttpMethod.Get ->
                         respond("[]", HttpStatusCode.OK, jsonHeader)
 
-                    path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Post ->
+                    path.endsWith("/scheduler_entity") || path.endsWith("/history_unit") ->
                         respond("", HttpStatusCode.Created, jsonHeader)
 
                     path.endsWith("/device_active_session") && request.method == HttpMethod.Post -> {
@@ -121,7 +121,7 @@ class ActiveSessionSyncTest {
     }
 
     private fun snap() =
-        org.example.project.scheduler.persistence.PersistedSnapshot("s", emptyList(), emptyList())
+        org.example.project.scheduler.persistence.SchedulerStateCodec.encodeSnapshot(org.example.project.scheduler.state.SchedulerState.empty())
 
     @Test
     fun reconcile_pushes_only_own_rows_and_pulls_peers_into_the_store() = runTest {

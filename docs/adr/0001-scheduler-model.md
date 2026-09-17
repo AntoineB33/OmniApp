@@ -1,6 +1,8 @@
-# ADR 0001 — The scheduler is a cyclic proportional-share model
+# ADR 0001 — The scheduler model
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Scheduler*.
+**Status:** §1–§9 describe the cyclic proportional-share walk, **replaced on 2026-09-13/16 by the score-based
+scheduler of §11**; they are kept as the record of what it was and why it went. §10 still stands. **Invariant
+summary:** `docs/invariants/scheduler.md`.
 
 ## Where the rules live
 
@@ -595,8 +597,8 @@ ported answer waiting for a driver — before wiring it, give it the same slot-f
 `docs/scheduler_requirements.md` § *Progressive Calculation* — *"The scheduler can have a time $t goal$
 such as when definitive schedule is found for any t < $t goal$ the scheduler can stop"* — is the one
 clause of that section a horizon can answer, and the app's horizon **is** that goal:
-`SchedulerDomain.scheduleGoalEndMillis` = **max(end of the first day that does not appear in the
-calendar, end of the first day of the week after the current week)**, honoured by every fill through
+`SchedulerDomain.scheduleGoalEndMillis` = **the end of the timeline the calendar shows, or `now + 10 min`
+if further** (since 2026-09-16; before that, a day past the grid floored at a weekly staircase), honoured by every fill through
 `scheduleHorizonEndMillis` (ADR 0009). `ProgressiveSchedule.settle` stops at the same thing
 (`goalMillis` / `isSettled`), so a driver that wires it later inherits the stop rather than inventing a
 second one. The rest of the clause — the ten-minutes-per-ten-seconds pace and the front that is never
@@ -720,3 +722,57 @@ for reasons that are about the specification rather than about taste.
 The proposal's one accurate observation is that the README's *Progressive Calculation* and *Alternative
 Schedules* clauses want a rule list that improves under a budget. That is `SchedulerProgressive.kt`
 (§8) — already written, in the model the rest of the scheduler is in.
+
+## 11. 2026-09-13 onwards: the best score, defined and searched for
+
+### Why the walk went
+
+`docs/scheduler_requirements.md` asks for *"the best possible score for the two optimization criteria"* and
+accepts one degradation only: getting as close to it as the time allows. It never defines the score. The walk
+(§1–§9) was a constructive heuristic with design constants (`maxBoost`, `fieldFloor`, `tau`) that no definition
+produced, so neither "best" nor "as close as possible" could be checked, and several clauses were admitted gaps:
+the progressive calculation was not wired into the app, the rule-state blend was quantized (so the requirements'
+two-scenario example could fail), and the alternative was named once per panel rather than for every position of
+the line.
+
+### What replaced it
+
+1. **The score is written down** — `docs/scheduler_score.md` (kept out of the user's requirements file, which
+   is theirs). Criterion 1 is the discounted squared lag of every task against a target share that carries the
+   resilience and a bounded, exponentially decaying compensation; criterion 2 charges every panel short of its
+   minimum. Both are measured on the **schedulable clock**, so a stretch nobody may run in is transparent. The
+   rules at a now-line position are the first instant of the best continuation from there.
+2. **One evaluator** — `ScoreModel` (`ScheduleScore.kt`). Every search asks it, so what is minimized and what is
+   defined cannot drift.
+3. **The search, in three passes** — `ScheduleOptimizer.plan`: a rollout policy with a two-run lookahead builds
+   the continuation; `ScheduleImprover` lowers the score of the WHOLE continuation (shift a boundary, swap two
+   runs, reassign a run) and keeps a move only when the total goes down; the alternatives are named on the result.
+   `certify` (branch and bound over the candidate lengths) certifies the best continuation on small instances and
+   checks the passes; it is out of reach on a real account.
+4. **The driver** — `ScheduleFill` maps OmniApp's world (pre-placed tasks, the frozen past, every restrictive
+   period) onto the score and back into panels.
+5. **The rule-state blend is exact**: inside a transition the plan holds `R(x)` and is re-made at every run start
+   the line reaches (`taskTreeBlendDecisionKey`), which is what makes the two-scenario example hold (a test).
+6. **Progressive calculation** — the engine fills in doubling stages (1 h, 2 h, 4 h, … to $t_{goal}$), each an
+   extension that keeps what the previous stage published (`dispatchProgressivePlan`).
+
+### Tried and rejected on the way (2026-09-16)
+
+- **A per-decision branch and bound over a short window.** It was never able to finish within 20 000 steps per
+  decision even for three tasks, cost 13–42 s for one day, and made the score of the whole continuation WORSE
+  (2.714e18 → 2.749e18 on three tasks): what is best for a window can cost more over the continuation. The
+  whole-continuation improver replaced it: monotone by construction, 0.1–2 s for a day.
+- **A squared shortfall, `s²·M_i`.** With the improver in place it shaved a minute or two off most panels (25 of
+  40 short on three tasks): a square makes the first minutes missed free. Scaled by `M_i` alone it also grew
+  cheaper against the lag as tasks were added (criterion 1 forgets over `τ_i = M_i/π_i`). The charge is now
+  `τ_i·s·(2M_i + s)` — what raising a lag of `M_i` to `M_i + s` costs — and short panels went back to one.
+- **A single fill to the goal.** It meets the 10-minutes-per-10-seconds pace only while the whole fill takes under
+  10 s; 60 tasks over 8 days take 5.4 s on the desktop, so a phone would not. Doubling stages hold the pace for
+  any device that fills an hour of schedule in under ~15 s.
+
+### What §10 still says
+
+Every reason in §10 still holds against a general solver — the return type, determinism across devices, commonMain,
+re-solving on a clock — and none is violated here: the search is deterministic (budgets in steps), commonMain, and
+runs on the rule-change / extension triggers of §9, not on a clock. What §10 got wrong is its item 2: without a
+defined score, "the walk reaches the shares constructively" said nothing about reaching the best score.

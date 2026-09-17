@@ -55,3 +55,35 @@ is what the append it replaces would have cost anyway, and the list does not gro
 
 ---
 
+
+### A History Unit is what changed
+
+→ ADR 0016. **A unit stores the diff of its edit, never the state before and after it.** A whole-tree unit was
+396 KB on the release account (80 MB of history), and it is what made the synced document too big to write.
+
+- The deltas carry `EntryChanges` / `TreeDiff` / `SetChanges` / `RecordChanges` (`state/HistoryDiff.kt`): for each
+  entry the edit touched, its value before and after (null = absent). Typing one character into a title is a unit of
+  a few hundred bytes; `HistoryUnitSizeTest` holds every everyday unit under **2 KB**.
+- **Committing applies the diff exactly** (`Delta.commit`); **undo and redo apply it three-way, field by field**
+  (`resolve`): a field still as the unit left it is moved back, a field another device changed since is left alone,
+  a list is rebased by membership (`rebaseIds`). Undoing a unit must never take back a change it did not make.
+- Counters never go down on undo; records are stripped from a tree diff unless the edit was about records.
+- **A unit an older build wrote as whole snapshots still loads and undoes**, and is rewritten small the next time it
+  is saved (`HistoryUnitSizeTest`; a row over `LEGACY_UNIT_CHARS` is re-encoded rather than memoized). The codec is
+  compact JSON — no pretty printing.
+
+### One history, per-device undo
+
+→ ADR 0016. User rule, 2026-09-17: *"all history units must be synced. All devices have the same history database,
+by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history units associated to this device."*
+
+- **Every unit records its device** (`HistoryUnit.deviceId`), a per-device key (`deviceSeq` = time × 1000 + chrono),
+  whether it is `undone`, and when that last changed (`changedAtMillis`). They ride the unit's row JSON as extra
+  top-level keys, so the local table needed no migration.
+- **Undo takes this device's newest applied unit; redo its oldest undone one.** Other devices' units are skipped,
+  never undone, and never block. The category pointer is this device's newest applied unit.
+- **A new edit discards only this device's undone units** — the other devices' redo branches stay theirs.
+- **A unit with no device (written before this rule) is claimed by the device that loads it**, its `undone` read
+  off the old pointer.
+- Every unit syncs as a `history_unit` row (`sync-and-accounts.md` § *Sync by rows*); a peer's units are merged in
+  by `MergePeerHistory`, which never touches this device's own.

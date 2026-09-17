@@ -47,6 +47,7 @@ fun SyncStatusChip(
             SyncState.Idle -> if (account?.isGuest != false) "☁ Guest" else "☁ Synced"
             SyncState.Syncing -> "☁ Syncing…"
             is SyncState.Error -> "☁ Sync error"
+            SyncState.Offline -> "✈ Offline"
         }
     Surface(
         onClick = onClick,
@@ -58,6 +59,32 @@ fun SyncStatusChip(
             label,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+        )
+    }
+}
+
+/**
+ * The "work offline" button (`docs/invariants/sync-and-accounts.md` § *Working offline*), next to the sync chip. It
+ * names what pressing it does: **Work offline** cuts this device off the server (nothing sent, nothing received,
+ * edits kept for later); **Go online** reconnects and pushes what was done meanwhile.
+ */
+@Composable
+fun WorkOfflineButton(
+    offline: Boolean,
+    onSetOffline: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = { onSetOffline(!offline) },
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = if (offline) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(
+            if (offline) "Go online" else "Work offline",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (offline) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
     }
@@ -84,7 +111,30 @@ fun SignInDialog(
     onFetch: (() -> Unit)? = null,
     // The active account; null while the guest account could not be created yet (offline first launch).
     account: AccountInfo? = null,
+    // Working offline: the account actions need the server, so the dialog only offers to go back online.
+    offline: Boolean = false,
+    onSetOffline: ((Boolean) -> Unit)? = null,
 ) {
+    if (offline) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Working offline") },
+            text = {
+                Text(
+                    "Nothing is sent to or received from the server on this device" +
+                        (account?.email?.let { " (account $it)" } ?: "") + ". Everything you do is kept here and " +
+                        "synced with your other devices when you go online.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                if (onSetOffline != null) Button(onClick = { onSetOffline(false); onDismiss() }) { Text("Go online") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        )
+        return
+    }
     // A device with no account yet behaves like the guest case: the same form claims the account it gets.
     val guest = account?.isGuest != false
     var email by remember { mutableStateOf("") }

@@ -242,20 +242,27 @@ class TaskTreeTimelineTest {
     }
 
     @Test
-    fun the_blend_step_is_quantized_so_time_alone_replans_a_bounded_number_of_times() {
-        val s = twoKeyframes()
-        val steps = (0..10_000).map { SchedulerDomain.taskTreeBlendStep(s, t0 + it * (10L * day / 10_000)) }
-        val changes = steps.zipWithNext().count { (a, b) -> a != b }
-        assertTrue(
-            changes <= SchedulerDomain.TASK_TREE_BLEND_STEPS + 1,
-            "a whole transition must cost at most one fill per step, got $changes",
-        )
-        assertTrue(changes > 1, "the blend must actually move the trigger, got $changes")
-        // With no dated tree the step is constant, so an account that never uses the timeline never fires.
+    fun inside_a_transition_the_plan_is_remade_only_where_the_line_reaches_a_decision() {
+        val s0 = twoKeyframes()
+        val now = t0 + day
+        val s = s0.copy(panels = SchedulerDomain.fillSchedule(s0, now, horizonMillis = now + day))
+        val starts = s.panels.filter { it.auto && it.taskId != null }.map { it.startEpochMillis }.sorted()
+        assertTrue(starts.size > 2, "the fixture must place several runs")
+        val samples = (0..2_000).map { now + it * (12L * 60 * 60 * 1000 / 2_000) }
+        val keys = samples.map { SchedulerDomain.taskTreeBlendDecisionKey(s, it) }
+        val changes = samples.zip(keys).zipWithNext().filter { (x, y) -> x.second != y.second }
+        assertTrue(changes.isNotEmpty(), "the transition must move the trigger")
+        for ((x, y) in changes) {
+            assertTrue(
+                starts.any { it in (x.first + 1)..y.first },
+                "the key moved between two samples no run starts between",
+            )
+        }
+        // With no dated tree the key is constant, so an account that never uses the timeline never fires.
         val plain = SchedulerReducer.reduce(stateWithTasks("A"), SchedulerIntent.CreateTaskTree("Only"))
         assertEquals(
-            SchedulerDomain.taskTreeBlendStep(plain, t0),
-            SchedulerDomain.taskTreeBlendStep(plain, t0 + 900 * day),
+            SchedulerDomain.taskTreeBlendDecisionKey(plain, t0),
+            SchedulerDomain.taskTreeBlendDecisionKey(plain, t0 + 900 * day),
         )
     }
 
@@ -471,8 +478,7 @@ class TaskTreeTimelineTest {
      * so they must be the same plan there — the transition's *span* may not leak into the numbers, only its
      * slope. That is exactly what a linear interpolation buys, and it is what would break the instant the
      * blend acquired an easing curve, a per-span normalization, or a fraction quantized into the value
-     * rather than only into the re-plan trigger ([TASK_TREE_BLEND_STEPS], which the fixed sampling below
-     * deliberately does not exercise).
+     * rather than into the re-plan trigger.
      *
      * "Start" holds B alone; the second keyframe hands A `endPercent` of the share, `spanMinutes` later.
      * With 100 % / 10 min and 50 % / 5 min, A rises at 10 %/min in both.
@@ -492,12 +498,20 @@ class TaskTreeTimelineTest {
         return dated(s, "End", t0 + spanMinutes * minute)
     }
 
-    /** The plan as a comparable value: what ran, when, under what title. */
-    private fun planAt(state: SchedulerState, now: Long, horizon: Long): List<String> =
-        SchedulerDomain.fillSchedule(state, now, horizonMillis = now + horizon)
-            .filter { it.taskId != null }
+    /**
+     * The plan as a comparable value: what runs, when, under what title, and the alternative schedule at every
+     * minute — clipped to [untilMillis], since the requirement's guarantee is about the schedule up to a bound.
+     */
+    private fun planAt(state: SchedulerState, now: Long, horizon: Long, untilMillis: Long = now + horizon): List<String> {
+        val panels = SchedulerDomain.fillSchedule(state, now, horizonMillis = now + horizon)
+            .filter { it.taskId != null && it.startEpochMillis < untilMillis }
             .sortedBy { it.startEpochMillis }
-            .map { "${it.title}@${it.startEpochMillis}-${it.endEpochMillis}" }
+        val runs = panels.map { "${it.title}@${it.startEpochMillis}-${minOf(it.endEpochMillis, untilMillis)}" }
+        val alternatives = (now until untilMillis step 60_000L).map { t ->
+            "alt@$t=${SchedulerDomain.alternativeTaskAt(panels, t)?.value}"
+        }
+        return runs + alternatives
+    }
 
     @Test
     fun two_transitions_with_the_same_slope_are_the_same_rule_state_while_they_overlap() {
@@ -547,11 +561,13 @@ class TaskTreeTimelineTest {
         val fast = rampScenario(endPercent = 50, spanMinutes = 5)
         val horizon = 6 * 60 * minute
 
-        for (halfMinute in 0..10) {
+        // `docs/scheduler_requirements.md`: "the resulting set of rules on both scenarios gives the same schedule
+        // and alternative schedule up to t1+5min" — for every position of the now-line before that bound.
+        for (halfMinute in 0..9) {
             val now = t0 + halfMinute * minute / 2
             assertEquals(
-                planAt(slow, now, horizon),
-                planAt(fast, now, horizon),
+                planAt(slow, now, horizon, untilMillis = t0 + 5 * minute),
+                planAt(fast, now, horizon, untilMillis = t0 + 5 * minute),
                 "the plan at ${halfMinute / 2.0} min past t1",
             )
         }

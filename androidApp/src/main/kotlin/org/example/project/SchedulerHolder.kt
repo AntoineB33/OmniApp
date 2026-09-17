@@ -61,7 +61,12 @@ object SchedulerHolder {
         SchedulerReducer.clock = SystemAppClock
         val store = createDefaultSchedulerStore()
         val syncEngine = (store as? SyncMetaStore)?.let {
-            SchedulerSyncEngine(RemoteSnapshotClient(), it, activeSessionStore = store as? ActiveSessionStore)
+            SchedulerSyncEngine(
+                RemoteSnapshotClient(),
+                it,
+                activeSessionStore = store as? ActiveSessionStore,
+                networkModeStore = store as? org.example.project.scheduler.persistence.NetworkModeStore,
+            )
         }
         val vm = TaskSchedulerViewModel(store = store, syncEngine = syncEngine)
         val appContext = context.applicationContext
@@ -87,6 +92,8 @@ object SchedulerHolder {
                 declaredAwayStore = store as? DeclaredAwayStore,
                 activeSessionStore = store as? ActiveSessionStore,
                 pauseCue = vm.pauseCue,
+                // `docs/invariants/scheduler.md` § *One device plans*: the account's broadcast channel.
+                schedulerPeers = vm.schedulerPeers,
                 // PRD §15: deliver the pause-end cue as an OS-scheduled alarm (fires even if the app was
                 // killed). This replaces the in-app cue on Android, so pass localPauseCueDelivery = true to
                 // avoid a double-speak.

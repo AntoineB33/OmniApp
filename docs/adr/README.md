@@ -9,7 +9,7 @@ migration history.
 
 | # | Record | Covers |
 | --- | --- | --- |
-| [0001](0001-scheduler-model.md) | The scheduler is a cyclic proportional-share model | claims, chunk scale, the resilience model, influence field, atomic block, resume contract, re-plan triggers |
+| [0001](0001-scheduler-model.md) | The scheduler model | the walk it was (§1–§9), why not a solver (§10), and the score-based scheduler that replaced the walk (§11: the score, its search, progressive stages) |
 | [0002](0002-calendar-layers-and-grey.md) | The calendar's two layers, and what GREY means | OS lock history as the layer source, assumed-unlocked default, derived grey bands, a panel's jump to its task |
 | [0003](0003-screen-breaks.md) | Screen breaks: the three dynamic restrictive periods | one kind end to end, the three recurrence bars, rest stretches, the derived anchors, the two `t_p` modes |
 | [0004](0004-relative-priority.md) | Relative priority (PRD §5) | the model, percentage-scaling solve, pin semantics, the task-relations list, categories and the rules that hold a share |
@@ -23,6 +23,8 @@ migration history.
 | [0012](0012-clipboard-format.md) | The clipboard text is readable | what a copy carries, the prose format, the resilience attribute, paste strictness, the deep-copy depth window |
 | [0013](0013-task-colours.md) | Task colours: the leaves own the circle | maximal spread for the childless tasks, depth-first order, a parent in its own arc, ties settled toward the previous answer |
 | [0014](0014-window-frame.md) | One window frame, and nothing that vanishes on a click | the end of the two sorts, the head's five buttons, fill/maximize algebra, the three resizable edges, the reduce bar, focus-based keyboard ownership |
+| [0015](0015-one-device-plans.md) | One device plans, and the others take its rules | the election on a re-plan, the ranking, adopting a peer's runs, the deadline, why not a server probe or CPU load |
+| [0016](0016-sync-by-rows-and-the-server-quota.md) | Sync by rows, history as diffs, and the server-quota test | the 2026-09-14 outage, rows per entity, tombstone life, per-device undo, what the quota test measures |
 
 ## Related docs
 

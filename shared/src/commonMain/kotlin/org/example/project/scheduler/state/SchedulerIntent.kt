@@ -682,6 +682,12 @@ sealed interface SchedulerIntent {
      */
     data class RefreshSchedule(
         val nowMillis: Long,
+        /**
+         * `docs/scheduler_requirements.md` § *Progressive Calculation*: materialize no further than this instant
+         * (still never past $t_{goal}$). The engine fills in doubling stages so the definitive schedule grows at the
+         * required pace whatever a whole fill costs on this device; `null` fills to $t_{goal}$ in one go.
+         */
+        val horizonCapMillis: Long? = null,
     ) : SchedulerIntent
 
     /**
@@ -699,6 +705,28 @@ sealed interface SchedulerIntent {
      */
     data class ExtendSchedule(
         val nowMillis: Long,
+        /**
+         * `docs/scheduler_requirements.md` § *Progressive Calculation*: materialize no further than this instant
+         * (still never past $t_{goal}$). The engine fills in doubling stages so the definitive schedule grows at the
+         * required pace whatever a whole fill costs on this device; `null` fills to $t_{goal}$ in one go.
+         */
+        val horizonCapMillis: Long? = null,
+    ) : SchedulerIntent
+
+    /**
+     * `docs/invariants/scheduler.md` § *One device plans*: re-plan at [nowMillis] by taking the set of rules the
+     * account's elected device returned instead of searching — its [placements] out to [horizonMillis], and the
+     * repeating part past them ([cycle]). Everything else a re-plan does still happens here (the advance, this
+     * device's own sleep windows, breaks and periods, the elapsed head), and the placements are laid through this
+     * device's own environment, so a stretch nobody may run in here is never given to a task.
+     *
+     * Derived state only, like [RefreshSchedule]: never a syncable change, never a History Unit.
+     */
+    data class AdoptScheduleRules(
+        val nowMillis: Long,
+        val placements: List<org.example.project.scheduler.model.RulePlacement>,
+        val cycle: org.example.project.scheduler.model.ScheduleCycle?,
+        val horizonMillis: Long,
     ) : SchedulerIntent
 
     /**
@@ -1229,6 +1257,17 @@ sealed interface SchedulerIntent {
      * per-device); a rolling tail capped at
      * [org.example.project.scheduler.state.SchedulerState.MAX_SUPABASE_USAGE_LOG].
      */
+    /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: take in the History Units another device of
+     * the account made or changed ([units], per category name) and forget the redo branches it discarded
+     * ([dropped], identities per category name). Nothing is applied to the state — their changes arrive with the
+     * state's own rows. Not a History Unit, never a syncable change.
+     */
+    data class MergePeerHistory(
+        val units: Map<String, List<HistoryUnit>>,
+        val dropped: Map<String, Set<Pair<String, Long>>> = emptyMap(),
+    ) : SchedulerIntent
+
     data class RecordSupabaseUsage(
         val resource: String,
         val operation: String,

@@ -59,6 +59,13 @@ $$;
 -- mangles a native-command argument that embeds one — the SQL is then silently TRUNCATED, so the tail
 -- statements never run while the command still reports success. apply-pause-cue-setup.ps1 hard-fails on a
 -- double quote for that reason. Use backticks or single quotes when quoting in a comment.
+-- pg_cron logs every run in cron.job_run_details and never purges it: at one tick a minute that is 525,600 rows a
+-- year, about 120 MB -- a quarter of the free tier database on its own (docs/invariants/server-quota.md). Keep a
+-- day of it. Scheduled BEFORE the tick below, which stays the last statement this file runs.
+select cron.schedule('purge-cron-run-log', '17 3 * * *', $$ delete from cron.job_run_details where end_time < now() - interval '1 day' $$);
+-- Entity tombstones older than a week (migration 20260917000000): every rename writes one, and a device that has not
+-- pulled for six days reads the account's live rows in full instead of trusting them.
+select cron.schedule('purge-scheduler-tombstones', '23 3 * * *', $$ select public.purge_scheduler_tombstones() $$);
 -- cron.schedule upserts by jobname, so re-running is safe; to change `t_b`, edit the schedule here and re-run
 -- scripts/deploy-supabase.bat. (`t_a` and the break lengths/messages are per-account rows changed over HTTP —
 -- see docs/PAUSE_CUE_DELIVERY.md — no redeploy needed.)

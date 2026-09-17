@@ -214,7 +214,25 @@ data class HistoryUnit(
      * the same side of the gesture its timestamp and its `before` state come from.
      */
     val window: HistoryWindow? = null,
+    /**
+     * `docs/invariants/persistence.md` § *One history, per-device undo*: the device that made the change. Every
+     * device of the account holds the same history, and Ctrl+Z / Ctrl+Y / Alt+arrows only ever walk the units of
+     * the device they are pressed on. `""` is a unit written before units had an owner; the device that loads it
+     * claims it ([SchedulerReducer.claimUnownedUnits]).
+     */
+    val deviceId: String = "",
+    /** This unit's number among its device's units of the category — its identity across devices. */
+    val deviceSeq: Long = 0,
+    /** True when its device has undone it (it is still redoable there). */
+    val undone: Boolean = false,
+    /**
+     * The last instant this device changed the unit — committed it, merged a keystroke into it, undid or redid it.
+     * A sync pushes the units changed since its last push; `0` is a unit nothing has touched since it was loaded.
+     */
+    val changedAtMillis: Long = 0,
 ) {
+    /** Whether [device] may undo or redo this unit. */
+    fun ownedBy(device: String): Boolean = deviceId == device || deviceId.isEmpty()
     /**
      * The serialized form of [delta] plus its digest, computed at most ONCE per unit
      * (`SchedulerStateCodec.encodedDeltaOf`, which is the only reader and the only writer).
@@ -324,6 +342,9 @@ data class SchedulerRunEntry(
 
         /** The horizon grew: the plan already ahead of the line is KEPT and only its tail is materialized. */
         Extension("Horizon extension"),
+
+        /** Another device of the account planned: its rules were taken in instead of searched. */
+        Adopted("Rules adopted from a peer"),
     }
 
     companion object {
@@ -374,6 +395,13 @@ sealed interface Delta {
 
     fun undo(state: SchedulerState): SchedulerState
     fun redo(state: SchedulerState): SchedulerState
+
+    /**
+     * The change applied the moment it is made. [undo] and [redo] run later, against a state other devices may have
+     * changed since, so they apply three-way (`docs/invariants/persistence.md` § *One history, per-device undo*); a
+     * commit applies onto the very state the change was computed from, so it sets its values exactly.
+     */
+    fun commit(state: SchedulerState): SchedulerState = redo(state)
 }
 
 /** Tree + title index fields affected by structural / edit mutations. */
@@ -555,6 +583,15 @@ data class SchedulerState(
      * automatic scheduling run (PRD §9) is derived from the state and is NOT recorded in any history.
      */
     val panels: List<TaskPanel> = emptyList(),
+    /**
+     * `docs/scheduler_score.md` § *The rules repeat*: **the repeating part of the set of rules** the last fill
+     * returned, when its continuation settled into a repeating run sequence — the rules past the materialized
+     * [panels] are this cycle, unrolled on the schedulable clock over the environment
+     * ([org.example.project.scheduler.domain.ScheduleFill.unroll]). Derived and **in memory only**: never
+     * persisted, never synced, never in `schedulingSignature`; a restart or a pull simply starts without one
+     * and the next fill finds it again.
+     */
+    val scheduleCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
     /** Monotonic suffix for `panel/{n}` ids; never reused, so undo need not roll it back. */
     val nextPanelCounter: Int = 0,
     /**
@@ -983,6 +1020,9 @@ data class SchedulerState(
      */
     private fun keepingRoot(next: SchedulerState): SchedulerState =
         if (SchedulerDomain.rootCellId(this) == null) next else SchedulerDomain.withRoot(next)
+
+    /** [keepingRoot], for a change applied in place ([TreeDiff.applyTo]) rather than as a whole-tree swap. */
+    internal fun keepingRootOf(next: SchedulerState): SchedulerState = keepingRoot(next)
 
     /**
      * The live tree **with the tasks' records kept** — what a [TaskTreeEntry] stores. [captureTree] strips

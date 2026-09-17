@@ -1,6 +1,8 @@
 package org.example.project
 
 import org.example.project.scheduler.domain.PeriodKinds
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -36,6 +38,13 @@ import org.example.project.ui.PlacedRecord
  *    the request the very next pick would refuse the task just started. The last test below pins that.
  */
 class SwitchTaskEntryTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
 
     private val MIN = 60_000L
     private val HOUR = 60 * MIN
@@ -195,7 +204,8 @@ class SwitchTaskEntryTest {
     fun the_task_carries_on_past_the_seed_for_at_least_its_minimum() {
         // The length of the run is the SCHEDULER's answer, not the press's: the seed says only "this task,
         // from here". With nothing restricting the timeline, the soft minimum-execution-time goal
-        // (`PlanWalk.chunkMillis` floors a chunk at the task's minimum) makes that run a usable block.
+        // (criterion 2 of `docs/scheduler_score.md` charges a panel short of its minimum) makes that run a
+        // usable block.
         val (s0, ids) = stateWithTasks("A", "B")
         val (_, b) = ids
         val minimum = s0.tasks.getValue(b).minimumMinutes * MIN
@@ -217,12 +227,11 @@ class SwitchTaskEntryTest {
     }
 
     @Test
-    fun the_seed_alone_would_hand_the_line_straight_back() {
-        // Why the request rides with the seed. A pre-placed block is committed service the walk steps OVER
-        // (`fillSchedule`'s `futureBlocks`): stepping over it charges the task AND sets the walk's `last`, so
-        // the never-twice-in-a-row rule refuses the very task just started, and the starved one takes the
-        // slot a second later. The resume rule that continues an unfinished chunk cannot save it either — it
-        // reads the recorded PAST, and a block at the line is not in it.
+    fun the_seed_alone_is_continued_by_its_own_task() {
+        // `docs/scheduler_score.md`, criterion 2: a one-second pre-placed run is
+        // short of its minimum by nearly all of it, and the panel it starts ends only when schedulable time goes
+        // to another task — so the continuation keeps the seed's task rather than handing the line straight
+        // back (which is what the previous scheduler's never-twice-in-a-row rule did).
         val (s0, ids) = stateWithTasks("A", "B")
         val (a, b) = ids
         val seed = TaskPanel(
@@ -241,7 +250,8 @@ class SwitchTaskEntryTest {
             filled.filter { it.auto && it.startEpochMillis >= T0 + SchedulerDomain.SWITCH_ENTRY_MILLIS }
                 .minByOrNull { it.startEpochMillis },
         )
-        assertEquals(a, next.taskId, "the seed grew on its own — this test's premise is stale")
+        assertEquals(b, next.taskId, "the seed's task must continue it")
+        assertTrue(a != next.taskId)
     }
 
     @Test

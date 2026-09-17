@@ -5,8 +5,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.domain.SchedulerPlanner
-import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -15,11 +13,10 @@ import org.example.project.scheduler.state.SchedulerState
  * `docs/scheduler_requirements.md` § *No idling* and § *Priority, Granularity and Compensation*, on the tree
  * that breaks the arithmetic behind both.
  *
- * The plan's whole scale is `periodOf = max(mᵢ / pᵢ)`, and nothing bounds a priority percentage from below.
- * One leaf with a near-zero share therefore makes the minimal period astronomically large, `coarseCycle`'s
- * slot `pᵢ · period` saturate at `Long.MAX_VALUE`, and every `cursor + span` that follows wrap round to a
- * NEGATIVE instant — which the `end <= cursor` guard reads as "this slot places nothing", stopping the
- * materialization dead and leaving the rest of the horizon EMPTY.
+ * Nothing bounds a priority percentage from below, so one leaf with a near-zero share makes its own window
+ * `τ = M / π` (and the score's discount horizon `Θ`) astronomically large. The previous scheduler's arithmetic
+ * saturated on it and left the rest of the horizon EMPTY; the score must stay finite and the fill must still
+ * cover the horizon.
  *
  * Found on the release account, where the relative-priority solver had written a stored weight of `4.99e42`
  * (see [RelativePriorityWeightBoundTest]): the minimal period was `9e42` hours and every fill left the
@@ -45,23 +42,6 @@ class DegeneratePlanScaleTest {
     }
 
     @Test
-    fun the_minimal_period_really_does_explode() {
-        val now = 1_700_000_000_000L
-        val tasks = SchedulerDomain.planTasksOf(degenerateState(), now)
-        val planner = SchedulerPlanner(tasks)
-        assertTrue(
-            planner.minPeriodMillis > 1e20,
-            "the premise of this test: minPeriod = max(m/p) = ${planner.minPeriodMillis}",
-        )
-        // ...and the analytic cycle it feeds hands out a slot that has saturated.
-        val allowed = tasks.map { it.id }
-        assertTrue(
-            planner.coarseCycle(allowed).any { it.durationMillis == SchedulerPlanner.FOREVER },
-            "a slot of p*period saturates at Long.MAX_VALUE",
-        )
-    }
-
-    @Test
     fun a_saturated_slot_still_fills_the_horizon() {
         val now = 1_700_000_000_000L
         val horizon = now + 24 * HOUR
@@ -80,16 +60,5 @@ class DegeneratePlanScaleTest {
             reach = maxOf(reach, end)
         }
         assertEquals(horizon, reach, "the fill must reach the horizon it was asked for")
-    }
-
-    @Test
-    fun advance_never_wraps_round() {
-        val cursor = 1_700_000_000_000L
-        val bound = cursor + 24 * HOUR
-        assertEquals(bound, SchedulerPlanner.advance(cursor, SchedulerPlanner.FOREVER, bound))
-        assertEquals(bound, SchedulerPlanner.advance(cursor, 24 * HOUR, bound))
-        assertEquals(cursor + HOUR, SchedulerPlanner.advance(cursor, HOUR, bound))
-        // Already at (or past) the bound: never go backwards.
-        assertEquals(bound, SchedulerPlanner.advance(bound, HOUR, bound))
     }
 }

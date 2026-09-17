@@ -1,0 +1,11 @@
+-- Schema v13 -> v14: the user's choice to work completely offline on this device.
+--
+-- Added 2026-09-17, while the Supabase project was down with its free-tier database full: the user wants a button
+-- that stops every request, and an account-3 desktop install that starts offline. The choice is DEVICE-level and
+-- LOCAL-ONLY (never synced, never a History Unit), one row with id always 0, kept out of sync_meta whose whole-row
+-- writes would reset it. No row means the user never chose.
+
+CREATE TABLE network_mode (
+    id INTEGER NOT NULL PRIMARY KEY,
+    offline INTEGER NOT NULL
+);

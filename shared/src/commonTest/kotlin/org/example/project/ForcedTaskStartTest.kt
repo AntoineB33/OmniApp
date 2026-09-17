@@ -1,5 +1,7 @@
 package org.example.project
 
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -29,6 +31,13 @@ import org.example.project.time.AppClock
  * moment the plan has genuinely moved on to another task.
  */
 class ForcedTaskStartTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
 
     private val MIN = 60_000L
     private val T0 = 1_700_000_000_000L

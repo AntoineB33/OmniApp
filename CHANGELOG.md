@@ -11,6 +11,176 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The score's cell walk could loop forever — 2026-09-17
+
+`shared`: `ScoreModel.advance` (`ScheduleScore.kt`). Test: `ScoreAdvanceTerminatesTest` (new; hangs on the old loop).
+**Client only — an app rebuild (`account3-deploy-windows-offline.bat` / `account{1,2,3}-*deploy*.bat`).**
+
+The first release build of the score-based scheduler never drew a window: the EDT (in the retroactive no-screen
+strip's fill) and two workers each spent minutes in `ScoreModel.advance` replaying the week of history. The cell
+index was re-derived with `floor((u − pieceStart) / cellLen)` from a `u` that had just landed on a cell end; at real
+epoch offsets that rounds back into the same cell about a quarter of the time, so `u` never advanced. The index is now
+derived once and stepped. `ScheduleScoreTest` builds models from 0 in whole hours, where that arithmetic is exact —
+the bug only exists at real timestamps, and only a launch against the real DB showed it.
+
+### Working offline — 2026-09-17
+
+→ `docs/invariants/sync-and-accounts.md` § *Working offline* (new), `CLAUDE.md` state table. `shared`:
+`persistence/NetworkMode.kt` (new, `NetworkModeStore`), `SqlDelightSchedulerStore`, `RemoteSnapshotClient.offline` +
+`WorkingOfflineException`, `SchedulerSyncEngine.offline` / `setOffline` / `startOffline`,
+`TaskSchedulerViewModel.offline` / `setOffline` / `connect`, `SyncUi.WorkOfflineButton`, `startOfflineRequested`
+(all platforms); SQLite migration **`13.sqm`** (`network_mode`). `desktopApp` forwards `-Pomniapp.startOffline`;
+new script **`account3-deploy-windows-offline.bat`** (`account3-deploy-windows.bat offline` writes
+`OMNIAPP_START_OFFLINE=1` into `acc3.cred`, which `release-launch-acc3.bat` exports). Tests: `OfflineModeTest` (new, 4),
+`SchedulerStoreTest.upgrades_pre_network_mode_v13_db_and_preserves_data`. **Client only — an app rebuild
+(`account3-deploy-windows-offline.bat` for the offline-starting install, `account{1,2,3}-*deploy*.bat` elsewhere); no
+Supabase deploy.**
+
+Asked for while the Supabase project was down: a button that stops every request, and an account-3 desktop install
+that starts offline.
+
+### Sync by rows, history as diffs, and the server-quota test — 2026-09-17
+
+→ ADR 0016 (new, with the outage post-mortem), `docs/invariants/server-quota.md` (new), `sync-and-accounts.md`
+§ *Sync by rows*, `persistence.md` § *A History Unit is what changed* / § *One history, per-device undo*,
+`scheduler.md` § *One device plans*, `CLAUDE.md`. `shared`: `state/HistoryDiff.kt` (new) and the diff-based deltas in
+`SchedulerReducer` (`Delta.commit`, three-way undo/redo, per-device undo/redo, `claimUnownedUnits`,
+`MergePeerHistory`); `HistoryUnit.deviceId/deviceSeq/undone/changedAtMillis`; `SchedulerStateCodec` (compact JSON,
+diff deltas, unit owner keys, `encodeUnit`/`decodeUnit`, legacy units re-encoded); `sync/EntityRows.kt` (new);
+`RemoteSnapshotClient` entity/history row calls; `SchedulerSyncEngine.rowReconcile` (pull by revision, merge, push
+diffs + tombstones, `RowBase.pending`, full read after six days, history push/pull; the document sync and its
+lost-ack repair removed; unchanged active sessions not re-pushed); `RealtimeSnapshotSubscriber` on `scheduler_head`,
+ignoring its own writes (`RealtimePhoenix.changeWriterDeviceId`); `ScheduleCoordinator` silent when alone or not
+present, announcing itself on (re)connect; `CalendarUi` history entry reads `undone`. Supabase: migration
+**`20260917000000_entity_and_history_rows.sql`** (`scheduler_entity`, `history_unit` + trim, `scheduler_head`
+published, revision sequence, `purge_scheduler_tombstones`; `scheduler_snapshot` truncated, read-only, unpublished)
+and **`pause-cue-setup.sql`** (daily purges of `cron.job_run_details` older than a day and of week-old tombstones).
+Tests: `ServerQuotaTest` + `FakeSupabase` + `QuotaScenario` + `FreeTierQuota` (new), `RowSyncTest` (new, 7),
+`HistoryUnitSizeTest` (new), `HistoryPerDeviceTest` (new); `SchedulerSyncEngineTest` keeps its account tests (its
+whole-document tests are replaced by `RowSyncTest`); `ActiveSessionSyncTest`, `SchedulerSyncTokenRefreshTest`,
+`SyncPayloadTest`, `ScheduleCoordinatorTest`, `DefaultSubtreeTest`, `CategoryRulesTest` adapted.
+**Both surfaces, once the project is back: `deploy-supabase.bat` (migrations 20260916000000 and 20260917000000, then
+`pause-cue-setup.sql`), and an app rebuild on every device.** An older build keeps running but can no longer push.
+**Not deployed; the Supabase project is still down.**
+
+Asked for: *"I want an app that passes tests that checks that it doesn't even nearly exceed quota once it will use a
+real server"*, with 10 % of each limit as the margin, rows per entity, and *"all history unit must be synced […] ctrl+z,
+ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history units associated to this device"*.
+
+- Measured before: 302 MB/year of database, 107 GB/month of egress. After: 33 MB (budget 50), 497 MB (512),
+  178 000 Realtime messages/month (200 000), largest message under 1 KB, 6 connections, 2 700 Edge invocations.
+- The heavy scenario adds a calendar block every 20 minutes (every 3 would be 73 000 a year per account).
+
+### One device plans, the others take its rules — 2026-09-16
+
+→ ADR 0015 (new), `docs/invariants/scheduler.md` § *One device plans* (new), `sync-and-accounts.md`, `CLAUDE.md`
+state table. `shared` (`engine/ScheduleCoordinator.kt`, `sync/SchedulerPeerProtocol.kt` — new;
+`sync/RealtimePhoenix.kt` broadcast frames; `RealtimeSnapshotSubscriber` implements `SchedulerPeerChannel` on the same
+socket; `SchedulerEngine` `schedulerPeers` param, `replan()` funnel, stage publishing, `adoptRules`, the became-present
+edge; `SchedulerIntent.AdoptScheduleRules` + reducer; `ScheduleFill.Input.adopted`; `model.RulePlacement`;
+`SchedulerRunEntry.Kind.Adopted`; `TaskSchedulerViewModel.schedulerPeers`; `App.kt`, `androidApp` `SchedulerHolder`).
+Supabase: migration **`20260916000000_scheduler_peer_broadcast.sql`** (RLS on `realtime.messages` for the private
+topic `scheduler:<uid>`; no table). Tests: `ScheduleCoordinatorTest` (new, 11), `SchedulerPeerProtocolTest` (new, 5).
+**Both surfaces: `deploy-supabase.bat` for the migration, and an app rebuild (`account{1,2,3}-*deploy*.bat`) on every
+device.** Without the migration the channel join is refused and every device keeps planning locally. **Live path
+unverified.**
+
+Asked for: *"it must determine which one must run the scheduler engine […] each time the scheduler returns a better
+set of rules, the websocket notifies it and every device gets the set of rules"*, and, for a dead leader, *"the
+server asks if each device is still present at the same time as pushing the update data"*. (Piece 3 of 3.)
+
+- **Who is present is asked when a re-plan is due**, by the device that asks for it (Supabase cannot hold a
+  server-to-device question open), over a private broadcast channel on the existing Realtime socket: probe, replies
+  within 1 s, one decider announces the leader.
+- **Ranking**: in use, kind of device, measured plan speed (power-of-two buckets), device id — not CPU load.
+- **The leader broadcasts every progressive stage**; followers take the RUNS in and lay them through their own
+  environment (`AdoptScheduleRules`), skipping only the search.
+- **No rules within 10 s ⇒ plan locally**; channel down ⇒ plan locally at once. A device becoming present asks the
+  last leader for the rules in force.
+- Known limits (ADR 0015): the leader plans with its own live observations; the in-reducer presses stay local; a
+  published set is capped at 2 000 runs.
+
+### The rules repeat: a cycle on the schedulable clock, a 168 h search limit — 2026-09-16
+
+→ `docs/scheduler_score.md` § *The rules repeat* (new), ADR 0009 § *Beyond the 168 h ceiling*,
+`docs/invariants/scheduler.md` § *The rules repeat* (new), `display-hot-path.md`, `CLAUDE.md` state table. `shared`
+(`ScheduleFill.kt`: `settle`, `unroll`, `Input.cycle` / `repeatBeyondMillis`, `Result`; `model/TaskModels.kt`:
+`ScheduleCycle`, `CycleRun`; `SchedulerState.scheduleCycle`; `SchedulerDomain.fillSchedule`'s `cycleSink`; the five
+reducer fills; `App.kt`'s far-week fill is now an extension). Tests: `ScheduleCycleTest` (new, 9). **Client only —
+an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no SQLite migration, no persisted-shape change**
+(the cycle is in memory only).
+
+Asked for: *"The set of rules resulting from the scheduler can make a pattern that repeats to infinity. A limit
+should prevent the set of rules to become too heavy."* (Piece 2 of 3.)
+
+- **What repeats is the run sequence on the schedulable clock**, not a calendar day (measured: no two days alike on
+  the requirements' own example, while its 5-run rotation repeats exactly). Three identical copies over a uniform
+  environment make a cycle; the horizon-bent tail of the fill is replaced by it.
+- **Extensions unroll the cycle** instead of searching, so the plan past detection equals one long fill, and a far
+  week is a walk. Refused (and searched) under another rule state, over a pre-placed task or a period that treats
+  tasks differently.
+- **The search stops at now + 168 h.** A fill reaching it without an exact repetition repeats the window of its last
+  runs closest to the target shares (`exact = false`) — the common case on a real account: six tasks with
+  minimums 45/30/20/60/15/25 min never repeat within 8 days. Days 10–30 stayed within ~3 points of every share; a
+  30-day view went from ~165 ms to ~40 ms.
+
+### $t_{goal}$ = the calendar's end, floored at now + 10 min; a fill drops the old plan past its end — 2026-09-16
+
+→ ADR 0009 § *The schedule horizon is $t_{goal}$*, `docs/invariants/display-hot-path.md`, `scheduler.md`.
+`shared` (`SchedulerDomain.kt`: `scheduleGoalEndMillis`, `scheduleHorizonEndMillis`, `horizonRefillDueMillis`,
+new `SCHEDULE_GOAL_FLOOR_MILLIS`, `fillSchedule`'s cut; `endOfFirstDayOfNextWeekMillis` / `endOfDayAfterMillis`
+deleted; `SchedulerEngine.kt` horizon watchers; `App.kt`). Tests: `ScheduleHorizonTest`, `HorizonRefillRuleTest`
+rewritten; `SchedulerFillTest` +1; `CalendarHorizonFixture` (new) gives the switch/sync/concurrency tests the open
+calendar they assumed. **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no
+SQLite migration, no persisted-shape change.**
+
+Asked for: *"the scheduler creates sets of rules until it definitely covers all the end of the timeline shown in
+the calendar (or 10 minutes after now if the end is less than that)."* (Piece 1 of 3; the repeating rule pattern
+and the multi-device scheduler leader follow.)
+
+- **The goal** was `max(one day past the grid, end of the first day of next week)`, floored at 24 h. It is now the
+  displayed end or `now + 10 min`. A closed calendar plans twenty minutes and is extended every ten.
+- **The floor rolls**, so fills aim at twice it and the refill is due at one floor of coverage left — aiming at the
+  rolling instant itself is the 2026-07-28 hot loop. The horizon watcher now sleeps until the due instant (capped
+  at one poll) instead of polling blind.
+- **Bug fixed on the way:** a fill kept the previous plan's AUTO panels past its own horizon. A progressive first
+  stage (1 h) left the old week in place, and when an old panel abutted the new tail the next extension kept the
+  old rules' plan as definitive. Now only panels the fill does not own survive past its horizon.
+
+### The scheduler optimizes a defined score; progressive stages; exact rule-state blend — 2026-09-13 → 2026-09-16
+
+→ ADR 0001 §11, ADR 0008, `docs/scheduler_score.md` (new). `shared` (`scheduler/domain/ScheduleScore.kt`,
+`ScheduleOptimizer.kt`, `ScheduleImprover.kt`, `ScheduleFill.kt` — all new; `SchedulerPlan.kt` reduced to the input
+types; `SchedulerProgressive.kt` deleted; `SchedulerDomain.kt`, `model/TaskModels.kt`,
+`state/SchedulerIntent.kt` + `SchedulerReducer.kt`, `engine/SchedulerEngine.kt`); `docs/invariants/scheduler.md`,
+`task-tree.md`, `screen-breaks.md`, `CLAUDE.md`. Tests: `ScheduleScoreTest` (new), `ScheduleImproverTest` (new, 4),
+`SchedulerFillTest` (new, +1 progressive), `SchedulerPlanTest` deleted with the walk, `PlanOffTheFrameLoopTest`,
+`TaskTreeTimelineTest`, `SchedulerSchedulerTest`, `SwitchTaskEntryTest`, `DegeneratePlanScaleTest` updated.
+**Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no SQLite migration, no
+persisted-shape change** (`TaskPanel.alternativeSpans` is derived, never persisted or synced; the intents'
+`horizonCapMillis` is not stored).
+
+Asked for (2026-09-13): *"The requirements only says to achieve 'best possible score' for its two optimization
+goals, but doesn't define it. […] So define it and satisfy the requirements. No shortcut that violates the
+requirements […] are allowed."*
+
+- **The score is defined** in `docs/scheduler_score.md` — first written into `docs/scheduler_requirements.md`, and
+  moved out on the user's request (that file is theirs). Criterion 1: discounted squared lag against a target share
+  carrying resilience and a bounded, exponentially decaying compensation. Criterion 2: every panel short of its
+  minimum, `τ_i·s·(2M_i + s)`. All on the schedulable clock.
+- **The walk (virtual clocks, claims, chunk rounds, influence field) is gone.** `ScheduleOptimizer.plan` builds the
+  continuation with a rollout policy, `ScheduleImprover` lowers the score of the whole continuation (monotone by
+  construction), and the alternative is named on the final runs, for every position of the line
+  (`alternativeSpans`).
+- **Progressive Calculation is enforced**: the engine fills in doubling stages (1 h, 2 h, 4 h, … to $t_{goal}$),
+  each an extension of the last, instead of one fill to the goal.
+- **The rule-state blend is exact**: the 100-step cursor is gone; inside a transition the plan re-makes itself at
+  every run start the line reaches, and the two-scenario example is a test.
+- **Rejected on the way** (ADR 0001 §11): a per-decision branch and bound (worse whole score, 13–42 s a day); a
+  squared shortfall (the improver shaved most panels below their minimum).
+- **Measured** (desktop): 13-task realistic account 94 ms for 168 h (`PerfBenchmarkTest`); 30 tasks 80 ms a day /
+  1.4 s for 8 days; 60 tasks 0.2 s / 5.4 s.
+
 ### History rows get an info button; a notification's window replays its voice — 2026-09-13
 
 → PRD §6. `shared` (`ui/CalendarUi.kt`, `scheduler/state/SchedulerState.kt` + `SchedulerIntent.kt` +

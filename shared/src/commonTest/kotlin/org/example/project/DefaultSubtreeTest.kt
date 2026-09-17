@@ -489,7 +489,14 @@ class DefaultSubtreeTest {
             "one gesture in the window is one Main unit, however many inner reductions it took",
         )
         val undone = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
-        assertEquals(before, undone.defaultSubtree, "Ctrl+Z takes the whole gesture back")
+        // Undo never hands an id back (`TreeDiff.applyTo`): the counters stay where the gesture left them.
+        val u = undone.defaultSubtree
+        assertEquals(
+            before.copy(tree = before.tree.copy(nextTaskCounter = u.tree.nextTaskCounter, nextCellCounter = u.tree.nextCellCounter)),
+            u,
+            "Ctrl+Z takes the whole gesture back",
+        )
+        assertTrue(u.tree.nextTaskCounter >= before.tree.nextTaskCounter && u.tree.nextCellCounter >= before.tree.nextCellCounter)
     }
 
     // ---- the §13 contextual menu (the reason the window is the tree) ---------------------------
@@ -906,7 +913,12 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
         assertEquals(emptyList(), childTitles(s, cellA), "one Ctrl+Z takes the whole set back")
         assertEquals(emptyList(), childTitles(s, cellB))
-        assertEquals(beforeAdd.captureTree(), s.captureTree())
+        // Undo never hands an id back (`TreeDiff.applyTo`): everything but the id counters is as it was.
+        val undoneTree = s.captureTree()
+        assertEquals(
+            beforeAdd.captureTree().copy(nextTaskCounter = undoneTree.nextTaskCounter, nextCellCounter = undoneTree.nextCellCounter),
+            undoneTree,
+        )
     }
 
     @Test

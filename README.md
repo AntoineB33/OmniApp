@@ -206,6 +206,7 @@ Each account uses its **own isolated state dir** (a separate local SQLite databa
 - **`account1-empty-open-fast-break.bat`** — the same idea with **all three** breaks independently retimable (nine editable `set` lines at the top of the file).
 - **`account1-deploy-android.bat`** / **`account2-deploy-android.bat`** — build a **debug** APK, wipe the phone's local app data (uninstall + reinstall over adb, not `pm clear`, which some OEM ROMs deny), and launch it auto-signed-in. Remote data is preserved.
 - **`account3-deploy-windows.bat`** — build a self-contained release app image, install it outside the project tree, register it to start at Windows login, and auto-sign-in as account 3 against the release DB (left untouched by updates). Time simulation is off in this build.
+- **`account3-deploy-windows-offline.bat`** — the same deploy, but every launch of the install starts working completely offline (no request, no socket) until the in-app button brings it online.
 - **`account3-deploy-android.bat`** — build, sign, install and launch the release APK auto-signed-in as account 3 (a BootReceiver keeps the scheduler running across reboots).
 - **`deploy-supabase.bat`** — apply `supabase/migrations/`, deploy **both** pause-cue Edge Functions, and run `supabase/pause-cue-setup.sql`. Idempotent; re-run after any schema edit.
 - **`collect-diagnostics.bat [stateDir]`** — print the merged cross-device diagnostics timeline (script markers + desktop log + Android log pulled over adb). The first tool to reach for on a calendar or sync anomaly.

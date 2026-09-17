@@ -30,3 +30,13 @@ fun usernameToEmail(username: String): String =
  * - Other platforms have no script-driven launch and always return `null`.
  */
 expect fun startupLoginCredentials(): StartupLogin?
+
+/**
+ * `docs/invariants/sync-and-accounts.md` § *Working offline*: true when this launch must START offline whatever the
+ * user chose last time — an install whose launcher asks for it (`scripts/account3-deploy-windows-offline.bat`).
+ * The user can still go online from the app for the rest of that run.
+ *
+ * - Desktop reads the `omniapp.startOffline` JVM property or the `OMNIAPP_START_OFFLINE` env var (`1`/`true`).
+ * - Other platforms have no such launch and return false.
+ */
+expect fun startOfflineRequested(): Boolean

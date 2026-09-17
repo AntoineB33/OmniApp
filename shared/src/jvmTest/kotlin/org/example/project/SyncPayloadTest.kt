@@ -1,5 +1,8 @@
 package org.example.project
 
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import org.example.project.scheduler.sync.EntityRows
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -29,6 +32,8 @@ import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.sync.SupabaseConfig
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -44,6 +49,14 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyncPayloadTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
+
     private val json = Json { ignoreUnknownKeys = true }
     private val config = SupabaseConfig("https://test.supabase.co", "anon-key")
 
@@ -57,9 +70,9 @@ class SyncPayloadTest {
         override fun saveSyncMeta(meta: SyncMeta) { this.meta = meta }
     }
 
-    /** Captures the payload of the first snapshot INSERT the client sends; everything else is minimal. */
+    /** Captures the entity rows the client pushes; everything else is minimal. */
     private class CapturingServer {
-        var insertedPayload: String? = null
+        val rows = LinkedHashMap<EntityRows.Key, String>()
     }
 
     private fun client(server: CapturingServer): RemoteSnapshotClient {
@@ -74,15 +87,17 @@ class SyncPayloadTest {
                         jsonHeader,
                     )
                 path.endsWith("/account_logout") -> respond("[]", HttpStatusCode.OK, jsonHeader)
-                path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Get ->
-                    respond("[]", HttpStatusCode.OK, jsonHeader)
-                path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Post -> {
+                path.endsWith("/scheduler_entity") && request.method == HttpMethod.Post -> {
                     val body = (request.body as? TextContent)?.text ?: ""
-                    server.insertedPayload =
-                        json.parseToJsonElement(body).jsonObject["payload"]!!.jsonPrimitive.content
+                    for (row in json.parseToJsonElement(body).jsonArray) {
+                        val o = row.jsonObject
+                        val key = EntityRows.Key(o["kind"]!!.jsonPrimitive.content, o["entity_id"]!!.jsonPrimitive.content)
+                        o["payload"]?.jsonPrimitive?.contentOrNull?.let { server.rows[key] = it }
+                    }
                     respond("", HttpStatusCode.Created, jsonHeader)
                 }
-                else -> respond("", HttpStatusCode.NotFound)
+                request.method == HttpMethod.Get -> respond("[]", HttpStatusCode.OK, jsonHeader)
+                else -> respond("", HttpStatusCode.Created, jsonHeader)
             }
         }
         return RemoteSnapshotClient(config, HttpClient(engine))
@@ -125,8 +140,8 @@ class SyncPayloadTest {
             )
             sync.reconcile()
 
-            val payload = assertNotNull(server.insertedPayload, "the reconcile seeded the empty remote")
-            val snapshot = json.decodeFromString<PersistedSnapshot>(payload)
+            assertTrue(server.rows.isNotEmpty(), "the reconcile seeded the empty remote")
+            val snapshot = PersistedSnapshot(EntityRows.join(server.rows), emptyList(), emptyList())
             val pushed = assertNotNull(SchedulerStateCodec.decodeSnapshot(snapshot), "the wire payload decodes")
 
             // Derived panels are stripped; the authoritative pinned panel survives.

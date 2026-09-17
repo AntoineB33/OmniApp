@@ -595,7 +595,7 @@ class CategoryRulesTest {
 
         // The PREVIOUS shape, byte for byte: a rule named a task and knew nothing of cells.
         val previous = SchedulerStateCodec.encode(s).replace(
-            Regex("\"scopeCellId\": \"[^\"]*\",\\s*"),
+            Regex("\"scopeCellId\":\\s*\"[^\"]*\",\\s*"),
             "",
         )
         assertTrue(previous.contains("\"scopeTaskId\""), "the older shape is what is being loaded:\n$previous")
@@ -616,7 +616,7 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.33))
 
         val previous = SchedulerStateCodec.encode(s).replace(
-            Regex("\"scopeCellId\": \"[^\"]*\",\\s*"),
+            Regex("\"scopeCellId\":\\s*\"[^\"]*\",\\s*"),
             "",
         )
         val decoded = SchedulerStateCodec.decode(previous)

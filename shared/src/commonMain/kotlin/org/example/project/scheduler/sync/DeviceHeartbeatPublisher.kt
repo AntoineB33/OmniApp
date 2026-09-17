@@ -51,7 +51,7 @@ data class NextBreakState(
      * The scheduler returns a set of rules and nothing else, and this is that set as far as the server is
      * concerned. In **mode 3** nothing drags a pose, so where the scheduler placed it is where it happens, and
      * the server's whole question — *is the now-line inside a 5- or 15-minute break?* — is a comparison against
-     * these windows. It never places one, and nothing here lets it: `PlanWalk` stays the only copy of the
+     * these windows. It never places one, and nothing here lets it: `ScheduleFill` stays the only copy of the
      * scheduling rules.
      *
      * The two dues above are a **projection of this same list** (the client reads both out of one placement

@@ -63,6 +63,13 @@ Empty account 2 (local + remote); does not relaunch.
 Build the release app image, install it outside the tree, register it to auto-start at Windows login, and
 auto-sign-in as account 3. Release DB `~/.omniapp-release`, left untouched by updates.
 
+### `account3-deploy-windows-offline.bat`
+
+The same deploy, but the install **works completely offline by default**: `acc3.cred` gets `OMNIAPP_START_OFFLINE=1`,
+so every launch — the Windows auto-start included — sends no request and opens no socket
+(`docs/invariants/sync-and-accounts.md` § *Working offline*). The in-app button goes online for that session; the
+next launch is offline again. Running `account3-deploy-windows.bat` installs it online again.
+
 ### `account3-deploy-android.bat`
 
 Build/sign/install the release APK and launch it auto-signed-in as account 3. `BootReceiver` keeps the scheduler

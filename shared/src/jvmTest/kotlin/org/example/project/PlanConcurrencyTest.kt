@@ -3,7 +3,10 @@ package org.example.project
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -22,6 +25,13 @@ import kotlin.test.assertTrue
  * These tests run REAL threads — the race is the subject, so a virtual-time scheduler cannot pin it.
  */
 class PlanConcurrencyTest {
+
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    @BeforeTest
+    fun showTheCalendar() = CalendarHorizonFixture.show()
+
+    @AfterTest
+    fun closeTheCalendar() = CalendarHorizonFixture.close()
 
     private val now = 1_760_000_000_000L
 
@@ -102,7 +112,7 @@ class PlanConcurrencyTest {
             SchedulerDomain.fillSchedule(
                 vm.state.value,
                 now,
-                horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(now, null),
+                horizonMillis = SchedulerReducer.scheduleHorizonEndMillis(now),
             )
         assertEquals(expected, vm.state.value.panels)
     }

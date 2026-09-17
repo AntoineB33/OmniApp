@@ -51,12 +51,11 @@ object RelativePriorityDomain {
      * bracket, so the cell's stored weight was multiplied by up to `2^60` — and, because [setCellShare]
      * scales the weight it already has, every further impossible ask multiplied it again.
      *
-     * That is not a cosmetic overflow. It reaches the scheduler through the priority percentages, and
-     * `SchedulerPlanner`'s whole scale is `max(mᵢ / pᵢ)`: on the release account one weight had reached
-     * `4.99e42`, which put its sibling's absolute priority at `8.4e-44`, the minimal period at `9e42` HOURS
-     * and the influence field's decay length far past any horizon the app plans — so the compensation the
-     * requirements ask to decay with distance no longer decayed at all, and the analytic cycle's slots
-     * saturated at `Long.MAX_VALUE` (see `SchedulerPlanner.advance`).
+     * That is not a cosmetic overflow. It reaches the scheduler through the priority percentages, and the
+     * score's windows are `τᵢ = mᵢ / pᵢ` (`docs/scheduler_score.md`): on the release account one weight had
+     * reached `4.99e42`, which put its sibling's absolute priority at `8.4e-44` and its window at `9e42` HOURS —
+     * far past any horizon the app plans, so the compensation the requirements ask to decay with distance no
+     * longer decayed at all.
      *
      * Capping the ratio caps the reachable share at [MAX_SHARE], which is what it was capped at anyway.
      */
@@ -433,7 +432,7 @@ object RelativePriorityDomain {
      * The largest term [shiftChainsShare] may add: the one leaving a moved cell carrying
      * [MAX_WEIGHT_RATIO] times the largest weight it competes with. [maxScaleFor]'s bound and [maxScaleFor]'s
      * reason — an unreachable target must not leave the bisection returning the top of a bracket that was
-     * doubled sixty times, because that weight reaches `SchedulerPlanner`'s `max(mᵢ / pᵢ)` scale.
+     * doubled sixty times, because that weight reaches the score's `mᵢ / pᵢ` windows.
      */
     private fun maxShiftFor(state: SchedulerState, cells: List<CellId>): Double {
         var rivals = 1.0
