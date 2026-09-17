@@ -514,6 +514,32 @@ class TaskTreeTimelineTest {
     }
 
     @Test
+    fun a_run_the_moving_rule_state_turns_against_ends_where_it_does() {
+        // `docs/scheduler_requirements.md` § *Rule State Evolution*: the rule state applied is the one found at the
+        // now-line. Over ten hours A rises from 0 % to 100 % and B falls from 100 % to 0 %: at the start of the
+        // transition B is the best first run, and somewhere inside what R(start) would give B the rule state in force
+        // there hands the line to A. The fill ends B's run there, and the next run starts on the instant.
+        val minute = 60_000L
+        val s = rampScenario(endPercent = 100, spanMinutes = 600)
+        val horizon = 6 * 60 * minute
+        val panels = SchedulerDomain.fillSchedule(s, t0, horizonMillis = t0 + horizon)
+            .filter { it.taskId != null && !it.isRestrictivePeriod }
+            .sortedBy { it.startEpochMillis }
+        val first = panels.first()
+        assertEquals("B", first.title, "B leads while it holds nearly all the priority")
+        assertTrue(first.endEpochMillis < t0 + horizon, "B's first run ends inside the stage")
+        val next = panels[1]
+        assertEquals(first.endEpochMillis, next.startEpochMillis, "the next run starts on the instant the first one ends")
+
+        // At the cut, with B's run as the frozen past, the rules in force there do not hand the line back to B.
+        val cut = first.endEpochMillis
+        val atCut = SchedulerDomain.fillSchedule(s.copy(panels = listOf(first)), cut, horizonMillis = cut + horizon)
+            .filter { it.taskId != null && !it.isRestrictivePeriod && it.startEpochMillis >= cut }
+            .minBy { it.startEpochMillis }
+        assertEquals("A", atCut.title, "the rule state at the cut prefers A")
+    }
+
+    @Test
     fun two_transitions_with_the_same_slope_are_the_same_rule_state_while_they_overlap() {
         val minute = 60_000L
         val slow = rampScenario(endPercent = 100, spanMinutes = 10) // A: 0 → 100 % over 10 min

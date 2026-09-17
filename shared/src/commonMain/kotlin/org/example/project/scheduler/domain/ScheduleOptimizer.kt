@@ -8,24 +8,27 @@ import kotlin.math.abs
  * The score ([ScoreModel]) says what "best" means; this class finds it, or gets as close as the budget allows —
  * the one degradation the requirements accept.
  *
- * ### Three passes, one score ([plan])
+ * ### The passes, one score ([plan])
  * 1. **The rollout policy** builds the continuation one decision at a time ([evaluate]). It tries every candidate
  *    task with every candidate length, looks [lookaheadDepth] runs deep over the most promising of them, continues
  *    every trial with a simple base policy to a common window, and keeps the trial whose score is lowest. Comparing
  *    every trial over the SAME window is what keeps a short run from looking cheaper merely because it covers less
  *    time; the window is closed with each lag's [ScoreModel.lowerBound].
- * 2. **The whole-continuation improvement** ([ScheduleImprover]) then lowers the score of the continuation as a
+ * 2. **The seeds compete.** Every continuation handed in as a seed — the plan this one replaces, another device's
+ *    plan for the same rules — is checked against every hard constraint, completed by the rollout policy where it
+ *    stops short, and scored; the lowest score of all of them and of pass 1 goes on. A re-plan therefore never
+ *    returns a continuation worse than one it was shown.
+ * 3. **The whole-continuation improvement** ([ScheduleImprover]) then lowers the score of the continuation as a
  *    whole, within [improveBudget] scored moves. A decision that is best for its own window can still cost more
  *    over the continuation, and only this pass judges by the number the definition minimizes.
- * 3. **The alternatives** are named for every run of the result.
+ * 4. **While the [SearchBudget] lasts** (`docs/scheduler_requirements.md` § *Strict requirements*: the best score
+ *    must be reached when it is reachable in the time): the exhaustive search ([certify]) started from the best
+ *    continuation so far — when it finishes, nothing over the candidate lengths scores better and [Plan.certified]
+ *    says so — and, when it does not, the platform's [ExternalScheduleSolver] with the time that is left.
+ * 5. **The alternatives** are named for every run of the result.
  *
- * **The exhaustive search** ([certify]) enumerates every sequence of candidate runs to a horizon, prunes with the
- * lower bound, and starts from [plan]'s own continuation as the incumbent. When it finishes inside [searchBudget],
- * nothing over the candidate lengths scores better than what it returns, and [Plan.certified] says so. It is out
- * of reach on a real account, so it checks the passes above on small cases rather than producing the rules.
- *
- * Every pass is deterministic, and every budget is counted in steps rather than wall time, so the same inputs give
- * the same rules on every device (`docs/scheduler_score.md` § *Degradation*).
+ * Passes 1–3 are bounded in steps; pass 4 is bounded in wall time. Nothing requires two devices to reach the same
+ * rules (user rule, 2026-09-17): when they differ, the score decides between them.
  *
  * ### Why a trial costs only the tasks it serves
  * A task's lag depends on its own service and its own target alone. Between two trials from the same instant, a
@@ -38,21 +41,28 @@ import kotlin.math.abs
  */
 class ScheduleOptimizer(
     val model: ScoreModel,
-    /** Steps the exhaustive search ([certify]) may take before it returns the best continuation found. */
+    /** Steps the exhaustive search ([certify]) may take when it is given no wall-time [SearchBudget]. */
     val searchBudget: Int = DEFAULT_SEARCH_BUDGET,
     /** How many runs deep the rollout policy looks before handing over to the base policy. */
     val lookaheadDepth: Int = DEFAULT_LOOKAHEAD_DEPTH,
     /** Moves [ScheduleImprover] may score on the whole continuation; 0 keeps the rollout policy's plan. */
     val improveBudget: Int = DEFAULT_IMPROVE_BUDGET,
+    /** The platform's own solver, asked while the [SearchBudget] lasts (null: none). */
+    val solver: ExternalScheduleSolver? = null,
 ) {
     /** One run of the continuation on the schedulable clock, with the alternative in force from [fromU]. */
     data class Run(val task: Int, val fromU: Double, val toU: Double, val alternative: Int)
 
-    class Plan(val runs: List<Run>, val cost: Double, val certified: Boolean)
+    class Plan(
+        val runs: List<Run>,
+        val cost: Double,
+        val certified: Boolean,
+        val report: SearchReport = SearchReport(certified = certified),
+    )
 
     private val maxMinimum: Double = (model.minimum.maxOrNull() ?: 0.0).coerceAtLeast(ScoreModel.MIN_WINDOW_MILLIS)
 
-    /** The window every trial is compared over: the longest minimum, twice. */
+    /** The window every trial is compared over: the longest minimum, four times. */
     val windowMillis: Double = 4.0 * maxMinimum
 
     // ----- candidate runs --------------------------------------------------------------------------
@@ -272,10 +282,10 @@ class ScheduleOptimizer(
 
     /**
      * The continuation from [start] to [untilU], with the alternative named for every position of the now-line
-     * inside each run. Three passes over one score:
-     * 1. the rollout policy builds it one decision at a time ([construct]);
-     * 2. [ScheduleImprover] lowers the score of the WHOLE continuation, within [improveBudget] scored moves;
-     * 3. every run of the result is given its alternative ([annotate]).
+     * inside each run — the passes of the class comment, in order.
+     *
+     * [seeds] are continuations to compete with the rollout policy's (pass 2), each on this model's schedulable
+     * clock from [start]; [budget] is the wall time passes 4 may spend.
      */
     fun plan(
         start: ScoreCursor,
@@ -283,20 +293,80 @@ class ScheduleOptimizer(
         forcedFirst: Int = -1,
         refusedFirst: Int = -1,
         alternatives: Boolean = true,
+        seeds: List<List<Run>> = emptyList(),
+        budget: SearchBudget = SearchBudget.NONE,
     ): Plan {
+        val pinFirst = forcedFirst >= 0 || refusedFirst >= 0
         val built = construct(start, untilU, forcedFirst, refusedFirst)
-        val runs =
-            if (improveBudget <= 0 || built.isEmpty()) built
-            else ScheduleImprover(model, start, untilU, forcedFirst >= 0 || refusedFirst >= 0, improveBudget).improve(built)
+        var runs = built
+        var cost = score(start, runs)
+        for (seed in seeds) {
+            val completed = complete(start, seed, untilU, forcedFirst, refusedFirst, built) ?: continue
+            val c = score(start, completed)
+            if (better(c, cost)) {
+                runs = completed
+                cost = c
+            }
+        }
+        runs = improve(start, runs, untilU, pinFirst)
+        cost = score(start, runs)
+
+        var certified = false
+        var solverImproved = false
+        val extraGranted = !budget.expired()
+        val searchStart = kotlin.time.TimeSource.Monotonic.markNow()
+        if (extraGranted && runs.isNotEmpty()) {
+            // The exhaustive search first: where it finishes, nothing over the candidate lengths is better and the
+            // solver has nothing left to find. It keeps a share of the time back for the solver when it does not.
+            val external = solver
+            val exactBudget = if (external == null) budget else budget.share(budget.remainingMillis() * EXACT_SHARE_PERCENT / 100)
+            val exact = certify(start, untilU, forcedFirst, refusedFirst, incumbent = runs, budget = exactBudget)
+            if (better(exact.cost, cost)) {
+                runs = exact.runs
+                cost = exact.cost
+            }
+            certified = exact.certified
+            if (!certified && external != null && !budget.expired()) {
+                val proposed = runCatching { external.improve(model, start, untilU, runs, pinFirst, budget) }.getOrNull()
+                val checked = proposed?.let { accepted(start, it, untilU, forcedFirst, refusedFirst, runs.firstOrNull()) }
+                if (checked != null) {
+                    val polished = improve(start, checked, untilU, pinFirst)
+                    val c = score(start, polished)
+                    if (better(c, cost)) {
+                        runs = polished
+                        cost = c
+                        solverImproved = true
+                    }
+                }
+            }
+        }
         val named = if (alternatives) annotate(start, runs, untilU) else runs
-        return Plan(coalesce(named), score(start, runs), certified = false)
+        val report = SearchReport(
+            certified = certified,
+            solverImproved = solverImproved,
+            exhausted = extraGranted && !certified,
+            searchMillis = if (extraGranted) searchStart.elapsedNow().inWholeMilliseconds else 0L,
+        )
+        return Plan(coalesce(named), cost, certified, report)
     }
 
+    private fun improve(start: ScoreCursor, runs: List<Run>, untilU: Double, pinFirst: Boolean): List<Run> =
+        if (improveBudget <= 0 || runs.isEmpty()) runs
+        else ScheduleImprover(model, start, untilU, pinFirst, improveBudget).improve(runs)
+
     /** Pass 1: the rollout policy's continuation, one run per decision, pre-placed runs kept apart. */
-    private fun construct(start: ScoreCursor, untilU: Double, forcedFirst: Int, refusedFirst: Int): List<Run> {
+    private fun construct(
+        start: ScoreCursor,
+        untilU: Double,
+        forcedFirst: Int,
+        refusedFirst: Int,
+        prefix: List<Run> = emptyList(),
+        firstDecided: Boolean = false,
+    ): List<Run> {
         val cursor = start.copy()
-        val runs = ArrayList<Run>()
-        var first = true
+        val runs = ArrayList<Run>(prefix)
+        for (r in prefix) model.serve(cursor, r.task, r.toU)
+        var first = !firstDecided
         var guard = 0
         while (cursor.u < untilU - ScoreModel.EPS && guard++ < MAX_PLAN_STEPS) {
             val eval = evaluate(cursor, untilU) ?: break
@@ -320,10 +390,111 @@ class ScheduleOptimizer(
     }
 
     /**
-     * Pass 3: § *Alternative Schedules* for every run of [runs]. The alternative at a run's start is the next-best
+     * The longest prefix of [runs] that is a legal continuation from [start] — every run starts where the previous
+     * one ended, is a task that may run over all of it, never enters another task's pre-placed block, and the first
+     * free run honours §13's [forcedFirst] and §7's [refusedFirst] — with the pre-placed blocks the environment
+     * holds laid in between. Null when the first free run breaks §7/§13 (then the whole continuation is unusable).
+     * The second value says whether a free run has been decided.
+     */
+    private fun legalPrefix(
+        start: ScoreCursor,
+        runs: List<Run>,
+        untilU: Double,
+        forcedFirst: Int,
+        refusedFirst: Int,
+    ): Pair<List<Run>, Boolean>? {
+        val out = ArrayList<Run>()
+        var u = start.u
+        val sorted = runs.filter { it.task >= 0 && it.toU > u + ScoreModel.EPS }.sortedBy { it.fromU }
+        var idx = 0
+        var decided = false
+        var guard = 0
+        while (u < untilU - ScoreModel.EPS && guard++ < MAX_PLAN_STEPS) {
+            val fixed = model.fixedAt(u)
+            if (fixed >= 0) {
+                val e = minOf(untilU, model.fixedEnd(u))
+                if (e <= u + ScoreModel.EPS) break
+                out += Run(fixed, u, e, -1)
+                u = e
+                continue
+            }
+            while (idx < sorted.size && sorted[idx].toU <= u + ScoreModel.EPS) idx++
+            val r = sorted.getOrNull(idx) ?: break
+            if (r.fromU > u + ScoreModel.EPS) break
+            val task = r.task
+            if (!model.permitted(task, u)) break
+            if (!decided) {
+                val candidates = model.candidatesAt(u)
+                if (forcedFirst >= 0 && forcedFirst in candidates && task != forcedFirst) return null
+                if (refusedFirst >= 0 && task == refusedFirst && candidates.size > 1) return null
+            }
+            val e = minOf(r.toU, untilU, model.runLimit(task, u), model.nextFixedStart(u))
+            if (e <= u + ScoreModel.EPS) break
+            out += Run(task, u, e, -1)
+            decided = true
+            u = e
+        }
+        return out to decided
+    }
+
+    /**
+     * Pass 2: [seed] cut to its legal prefix and completed by what pass 1 built from the same instant on ([built],
+     * cut where the prefix ends — a run cut short is still a task that may run over what is left of it); null when
+     * it is unusable. Completing with a second rollout doubled what every re-plan costs, for a tail the improver
+     * re-shapes anyway.
+     */
+    private fun complete(
+        start: ScoreCursor,
+        seed: List<Run>,
+        untilU: Double,
+        forcedFirst: Int,
+        refusedFirst: Int,
+        built: List<Run>,
+    ): List<Run>? {
+        val (prefix, decided) = legalPrefix(start, seed, untilU, forcedFirst, refusedFirst) ?: return null
+        if (prefix.isEmpty()) return null
+        val end = prefix.last().toU
+        if (end >= untilU - ScoreModel.EPS) return prefix
+        val tail = built.mapNotNull { r ->
+            if (r.toU <= end + ScoreModel.EPS) null else r.copy(fromU = maxOf(r.fromU, end))
+        }
+        // The tail must start where the prefix ends; a pre-placed run the prefix stopped inside is laid again whole.
+        if (tail.isEmpty() || abs(tail.first().fromU - end) > ScoreModel.EPS) {
+            return construct(start, untilU, forcedFirst, refusedFirst, prefix = prefix, firstDecided = decided)
+        }
+        return prefix + tail
+    }
+
+    /**
+     * An external solver's continuation, kept only when ALL of it is legal and it reaches [untilU] (a solver answer is
+     * never completed or cut: it is either a whole continuation or nothing), and — when §7/§13 decided the first run
+     * ([pinned]) — it keeps that run's task.
+     */
+    private fun accepted(
+        start: ScoreCursor,
+        proposed: List<Run>,
+        untilU: Double,
+        forcedFirst: Int,
+        refusedFirst: Int,
+        pinned: Run?,
+    ): List<Run>? {
+        val (prefix, _) = legalPrefix(start, proposed, untilU, forcedFirst, refusedFirst) ?: return null
+        if (prefix.isEmpty() || prefix.last().toU < untilU - ScoreModel.EPS) return null
+        if ((forcedFirst >= 0 || refusedFirst >= 0) && pinned != null) {
+            val firstFree = prefix.firstOrNull { model.fixedAt(it.fromU) < 0 } ?: return null
+            val pinnedFree = if (model.fixedAt(pinned.fromU) < 0) pinned.task else -1
+            if (pinnedFree >= 0 && firstFree.task != pinnedFree) return null
+        }
+        return prefix
+    }
+
+    /**
+     * Pass 5: § *Alternative Schedules* for every run of [runs]. The alternative at a run's start is the next-best
      * first run of the decision asked where it starts; the one at its end is read off the decision asked where it
-     * stops. Where the two differ, the instant the answer changes is found by bisection, to
-     * [ALTERNATIVE_RESOLUTION_MILLIS]. A pre-placed run names none.
+     * stops. Where the two differ, the instant the answer changes is found by bisection to
+     * [ALTERNATIVE_RESOLUTION_MILLIS]; the probes look one run deep (as deep as the decisions, a week's fill cost
+     * nearly twice as much), while the answers at the run's two ends are the full decisions'. A pre-placed run names
+     * none.
      */
     private fun annotate(start: ScoreCursor, runs: List<Run>, untilU: Double): List<Run> {
         val cursor = start.copy()
@@ -359,25 +530,21 @@ class ScheduleOptimizer(
         private fun alternativeAt(v: Double): Int {
             val c = before.copy()
             if (v > from) model.serve(c, task, v)
-            // Only the ranking of the OTHER tasks' first runs is asked here, one level deep.
             val eval = evaluate(c, untilU, depth = 1) ?: return -1
             return if (eval.fixed >= 0) -1 else eval.alternativeTo(task)
         }
 
         fun close(altAtEnd: Int, alternatives: Boolean, atHorizon: Boolean = false): List<Run> {
             if (!alternatives) return listOf(Run(task, from, to, -1))
-            // At the horizon nothing follows to ask; the start's answer stands for the rest of the run.
-            val end = if (atHorizon) altAtStart else altAtEnd
+            // At the end of the search nothing follows to ask; the probe at the run's last resolvable instant answers.
+            val end = if (atHorizon) alternativeAt(maxOf(from, to - ALTERNATIVE_RESOLUTION_MILLIS)) else altAtEnd
             if (end == altAtStart || to - from <= ALTERNATIVE_RESOLUTION_MILLIS) return listOf(Run(task, from, to, altAtStart))
-            // The probes are one level deep, so the instant is found where THEIR answer leaves the one they give at
-            // the start; the two ends keep the full decisions' answers.
-            val probeAtStart = alternativeAt(from)
             var lo = from
             var hi = to
             var guard = 0
-            while (hi - lo > ALTERNATIVE_RESOLUTION_MILLIS && guard++ < 40) {
+            while (hi - lo > ALTERNATIVE_RESOLUTION_MILLIS && guard++ < 60) {
                 val mid = (lo + hi) / 2.0
-                if (alternativeAt(mid) == probeAtStart) lo = mid else hi = mid
+                if (alternativeAt(mid) == altAtStart) lo = mid else hi = mid
             }
             return listOf(Run(task, from, hi, altAtStart), Run(task, hi, to, end))
         }
@@ -386,15 +553,24 @@ class ScheduleOptimizer(
     // ----- the exhaustive search -------------------------------------------------------------------
 
     /**
-     * Every sequence of candidate runs from [start] to [untilU], pruned by the lower bound, started from the rollout
-     * policy's continuation. [Plan.certified] is true when the search finished inside [searchBudget]: nothing over the
-     * candidate lengths scores better than what it returns.
+     * Every sequence of candidate runs from [start] to [untilU], pruned by the lower bound, started from [incumbent]
+     * (the rollout policy's plan when none is given). [Plan.certified] is true when the search finished: nothing over
+     * the candidate lengths scores better than what it returns. It stops at [budget] when one is given, else after
+     * [searchBudget] steps.
      */
-    fun certify(start: ScoreCursor, untilU: Double, forcedFirst: Int = -1, refusedFirst: Int = -1): Plan {
-        val incumbent = plan(start, untilU, forcedFirst, refusedFirst, alternatives = false)
-        var bestCost = incumbent.cost
-        var bestRuns: List<Run> = incumbent.runs
-        var steps = 0
+    fun certify(
+        start: ScoreCursor,
+        untilU: Double,
+        forcedFirst: Int = -1,
+        refusedFirst: Int = -1,
+        incumbent: List<Run>? = null,
+        budget: SearchBudget = SearchBudget.NONE,
+    ): Plan {
+        val initial = incumbent ?: plan(start, untilU, forcedFirst, refusedFirst, alternatives = false).runs
+        var bestCost = score(start, initial)
+        var bestRuns: List<Run> = initial
+        val timed = !budget.expired()
+        var steps = 0L
         var exhausted = false
         val path = ArrayList<Run>()
 
@@ -409,7 +585,8 @@ class ScheduleOptimizer(
                 }
                 return
             }
-            if (++steps > searchBudget) {
+            steps++
+            if (if (timed) steps % CLOCK_CHECK_STEPS == 0L && budget.expired() else steps > searchBudget) {
                 exhausted = true
                 return
             }
@@ -418,9 +595,10 @@ class ScheduleOptimizer(
             if (settled.cost + model.lowerBound(settled, untilU) >= bestCost * (1.0 - TIE)) return
             val fixed = model.fixedAt(c.u)
             val options = if (fixed >= 0) listOf(fixed) else model.candidatesAt(c.u)
+            val forcedHere = first && fixed < 0 && forcedFirst >= 0 && forcedFirst in options
             for (j in options) {
-                if (first && forcedFirst >= 0 && j != forcedFirst && fixed < 0) continue
-                if (first && refusedFirst >= 0 && j == refusedFirst && options.size > 1) continue
+                if (forcedHere && j != forcedFirst) continue
+                if (first && fixed < 0 && refusedFirst >= 0 && j == refusedFirst && options.size > 1) continue
                 val lengths = if (fixed >= 0) doubleArrayOf(minOf(untilU, model.fixedEnd(c.u)) - c.u)
                 else lengthsFor(c, j, untilU)
                 for (d in lengths) {
@@ -428,7 +606,8 @@ class ScheduleOptimizer(
                     val from = c.u
                     model.serve(next, j, from + d)
                     path += Run(j, from, from + d, -1)
-                    dfs(next, false)
+                    // A pre-placed run decides nothing: the first FREE run is still to come.
+                    dfs(next, first && fixed >= 0)
                     path.removeAt(path.size - 1)
                     if (exhausted) return
                 }
@@ -454,9 +633,21 @@ class ScheduleOptimizer(
         const val BEAM: Int = 4
         const val TIE: Double = 1e-9
         const val SAME_LENGTH_MILLIS: Double = 1_000.0
-        const val ALTERNATIVE_RESOLUTION_MILLIS: Double = 60_000.0
+        /** How finely the instant an alternative changes inside a run is located. */
+        const val ALTERNATIVE_RESOLUTION_MILLIS: Double = 1_000.0
         private const val MAX_ROLLOUT_STEPS = 10_000
         private const val MAX_PLAN_STEPS = 100_000
+        private const val CLOCK_CHECK_STEPS = 64L
+        /** The share of the extra time the exhaustive search may use when a platform solver waits behind it. */
+        private const val EXACT_SHARE_PERCENT = 60L
+
+        /**
+         * How far past the instant it materializes a fill searches (`docs/invariants/scheduler.md` § *Progressive
+         * Calculation*): one decision window, so the runs published at a stage's end are decided with the same view
+         * ahead as any other — never bent by where that stage happened to stop.
+         */
+        fun searchMarginMillis(tasks: List<PlanTask>): Long =
+            (4L * maxOf(tasks.maxOfOrNull { it.minimumMillis } ?: 0L, ScoreModel.MIN_WINDOW_MILLIS.toLong()))
 
         /** Strictly better beyond the tie tolerance (`docs/scheduler_score.md` § *Ties*). */
         fun better(a: Double, b: Double): Boolean {

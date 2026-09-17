@@ -90,28 +90,48 @@ requirement: it only fixes what "best" means. Every § below names a section of 
 * **The schedule the rules give** at a $now line$ position is the first instant of the best continuation at that
   position. Where the rule state or the environment depends on the $now line$ (a transition between rule states,
   a dragged period, mode 2 and 3 covering the $now line$), the schedule is the path of those first instants as
-  the $now line$ moves.
+  the $now line$ moves. Inside a transition between rule states, a run the continuation under $R(x_0)$ gives is
+  ended at the first position $x$ of the $now line$ (located to one second) where the best first run under $R(x)$,
+  with the run so far as the frozen past, is another task; the rules are made again from there.
 * **The alternative schedule** at $(x, m)$ is the first task of the best continuation among those that do not
   start with $\sigma(x)$.
 * **Ties.** Two continuations whose scores differ by less than $10^{-9}$ relative are tied, and the tie is broken
   by the task order: higher priority first, then title.
 * **Degradation.** When the best score is not reached within the compute budget, the scheduler returns the best
-  continuation it found. The budget is counted in steps, not in wall time, so the same inputs give the same rules
-  on every device. The search has three passes over this one score:
+  continuation it found. Nothing requires two devices to reach the same rules from the same inputs: where they
+  differ, the one with the better score is kept (`docs/invariants/scheduler.md` § *One device plans*). The search
+  has these passes over this one score:
   1. a **rollout policy** builds the continuation one decision at a time: every candidate task with every
      candidate length, looked into two runs deep, each trial completed by a simple base policy over a common
      window and closed with a lower bound of every lag;
-  2. a **whole-continuation improvement** then shifts boundaries between neighbouring runs, swaps neighbouring
+  2. **seeds compete**: the continuation the re-plan replaces, and another device's continuation for the same
+     rules, are cut to their longest prefix that still keeps every hard constraint, completed by the rollout
+     policy, re-scored under the rule state and environment in force, and kept when they score lower — so a
+     re-plan never returns a continuation worse than one it was shown;
+  3. a **whole-continuation improvement** then shifts boundaries between neighbouring runs, swaps neighbouring
      runs and reassigns runs to other permitted tasks, keeping a change only when it lowers $J$ of the WHOLE
      continuation. It can therefore only move the result closer to the best score, never away from it. (A search
      that judged each decision over its own window was tried and rejected: it made $J$ worse, because what is
      best for a window can cost more over the continuation.)
-  3. the **alternative** of every run is the next-best first run of the decision asked where the run starts,
-     and where the answer changes inside the run, the instant it changes.
+  4. **while wall time is left** — the time the § *Progressive Calculation* pace leaves a stage — an exhaustive
+     branch-and-bound over the candidate lengths, started from the best continuation so far. When it finishes, the
+     continuation is **certified**: nothing over the candidate lengths scores lower. This is what "if the best
+     possible score is reachable within the required time … it must be reached" is answered with: the time is
+     spent reaching it, and the result says whether it was. When it does not finish, the platform's own solver (the
+     desktop's mixed-integer program over windows of the continuation) gets what is left, and anything it returns
+     is re-scored here and kept only when $J$ goes down;
+  5. the **alternative** of every run is the next-best first run of the decision asked where the run starts,
+     and where the answer changes inside the run, the instant it changes, located to one second (the probes
+     that locate it look one run deep; the answers at the run's two ends are the full decisions').
 
-  An exhaustive branch-and-bound over the candidate lengths exists and certifies the best continuation on small
-  instances; it is not reachable within the budget on a real account, so it is used to check the passes above,
-  not to produce the rules.
+  Passes 1–3 are bounded in steps and always run; pass 4 is bounded in wall time and runs only when a fill is
+  given time. The candidate lengths bound what "certified" claims: a continuation whose runs have other lengths
+  is not examined, which is the one approximation a certified result still carries.
+
+* **The search looks past what it materializes.** A fill searches one decision window (four times the longest
+  minimum execution time) past the instant it materializes to, with the environment built that far, and emits only
+  up to that instant. The runs at the end of a progressive stage are therefore decided with the same view ahead as
+  any other, and the extension that keeps them as definitive keeps runs the stage's end did not bend.
 
 ## The rules repeat
 

@@ -70,9 +70,15 @@ form; the file named after each one carries the whole rule and the reasons.
   server traffic budget (`pause-cue.md`), the unlock edge that clears "I'm away", the display resample
   (`display-hot-path.md`). A `while(true) { delay() }` that re-asks a question is almost always the wrong
   shape here.
-- **Time passing must never re-plan continuously.** Anything that wants to trigger a re-plan belongs in
-  `SchedulerDomain.schedulingSignature` (or `requestReschedule`), never in a fresh dispatch site or a tick.
-  Two bounded exceptions exist and are named in `scheduler.md`.
+- **Time passing must never re-plan.** Anything that wants to trigger a re-plan belongs in
+  `SchedulerDomain.schedulingSignature` (or `requestReschedule`), never in a fresh dispatch site or a tick. A re-plan
+  of unchanged rules rewrites a schedule the progressive calculation already made definitive — the hourly
+  "staleness bound" did exactly that and was removed (2026-09-17). One bounded exception exists and is named in
+  `scheduler.md`.
+- **The scheduler's answer need not be the same on two devices; the score decides.** Budgets may be wall time, a
+  platform may bring its own solver (the desktop's OR-Tools MIP), and plans made apart compete on the score under the
+  rules in force now. Never refuse a solver or a budget "because every device must reach the same rules".
+  `scheduler.md` § *The best score*, § *One device plans*.
 - **Anything recomputed on every `nowMillis` tick must be bounded by the visible window, never O(total
   history)** — and what the calendar *composes* is bounded too. `display-hot-path.md`.
 - **One rule, one funnel.** Nearly every regression recorded in `docs/adr/` is a second copy of a rule that
@@ -140,7 +146,7 @@ where a change spans them (they cross-reference each other).
 
 | Read | Before touching | Mostly lives in |
 | --- | --- | --- |
-| `docs/invariants/scheduler.md` | the plan, the score and its search, resilience, restrictive periods, what reaches the scheduler, progressive calculation, when the plan is recomputed | `scheduler/domain/ScheduleScore.kt`, `ScheduleOptimizer.kt`, `ScheduleImprover.kt`, `ScheduleFill.kt`, `SchedulerDomain.kt`, `PeriodKinds.kt` |
+| `docs/invariants/scheduler.md` | the plan, the score and its search, resilience, restrictive periods, what reaches the scheduler, progressive calculation, when the plan is recomputed | `scheduler/domain/ScheduleScore.kt`, `ScheduleOptimizer.kt`, `ScheduleImprover.kt`, `ScheduleSearch.kt`, `ScheduleFill.kt`, `SchedulerDomain.kt`, `PeriodKinds.kt`, `jvmMain/.../MipScheduleSolver.kt` |
 | `docs/invariants/screen-breaks.md` | the three dynamic periods, the `t_p` mode, the now-line sweep, every notification / voice cue, the Notifications switch | `scheduler/domain/DynamicPeriods.kt`, `scheduler/engine/` |
 | `docs/invariants/calendar.md` | the grid, layers, grey periods, hover bubbles, the now-line, panel menus, what may be banked as a record | `ui/CalendarUi.kt` |
 | `docs/invariants/display-hot-path.md` | anything on a per-tick or per-frame path, the resample delay, the schedule horizon | `ui/CalendarUi.kt`, `App.kt`, `scheduler/engine/SchedulerEngine.kt` |

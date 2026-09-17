@@ -87,6 +87,8 @@ object SchedulerHolder {
                 // The service scope is Dispatchers.Main (see [scope]); the fill inside a re-plan is the one
                 // thing on this engine too expensive to run there. See SchedulerEngine.planDispatcher.
                 planDispatcher = Dispatchers.Default,
+                // Spend what the progressive pace leaves on reaching the best score (SchedulerEngine.planSearch).
+                planSearch = true,
                 sleepGapStore = store as? DeviceSleepGapStore,
                 sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                 declaredAwayStore = store as? DeclaredAwayStore,

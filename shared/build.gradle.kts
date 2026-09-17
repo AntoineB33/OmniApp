@@ -90,6 +90,11 @@ kotlin {
             implementation(libs.ktor.client.cio)
             // PRD §15: desktop event-based session lock/unlock detection (Windows WTSRegisterSessionNotification).
             implementation(libs.jna.platform)
+            // `docs/invariants/scheduler.md` § *The best score*: the desktop's own solver (OR-Tools SCIP), asked while a
+            // fill's wall-time budget lasts. Only the Windows native library is shipped — the deployed desktop is
+            // Windows; elsewhere the loader fails and the scheduler runs without a platform solver.
+            implementation(libs.ortools.java.get().toString()) { exclude(group = "com.google.ortools") }
+            implementation(libs.ortools.win32)
         }
         jvmTest.dependencies {
             implementation(libs.kotlin.test)

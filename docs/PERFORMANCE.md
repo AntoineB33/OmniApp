@@ -103,7 +103,10 @@ performance problem when multiplied by a rate and landed on a thread that owes s
 why the overlay ranks by ms **per second** and this does not. Two rows illustrate the difference:
 
 - `fillSchedule` is the most expensive thing in the app (25-80 ms, growing with the task count) and it is
-  allowed to be: it runs on a debounced rule change, an hourly bound, and a horizon roll — never on a tick.
+  allowed to be: it runs on a debounced rule change and a horizon roll — never on a tick. A progressive stage
+  may also spend up to `PROGRESSIVE_STAGE_SEARCH_MILLIS` on a background dispatcher reaching the best score
+  (`docs/invariants/scheduler.md` § *Progressive Calculation*): that time is granted, not a cost to diagnose — the
+  History window's scheduler row says how much of it a fill used (`SchedulerRunEntry.search`).
   It earned a fix anyway, because until 2026-09-06 it ran on the frame loop.
 - `encodeSnapshot` runs on every save, i.e. on the 400 ms typing debounce — but on `Dispatchers.Default`,
   never on the UI thread, and the history it walks is memoized per unit (`SchedulerStateCodec.encodedDeltaOf`),

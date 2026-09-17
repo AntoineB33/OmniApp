@@ -13,6 +13,7 @@ composeMultiplatform = "1.11.0"
 firebaseBom = "33.7.0"
 googleServices = "4.5.0"
 jna = "5.14.0"
+ortools = "9.15.6755"
 junit = "4.13.2"
 kotlin = "2.3.21"
 kotlin-wrappers = "2026.5.3"
@@ -63,6 +64,8 @@ ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+ortools-java = { module = "com.google.ortools:ortools-java", version.ref = "ortools" }
+ortools-win32 = { module = "com.google.ortools:ortools-win32-x86-64", version.ref = "ortools" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

@@ -49,19 +49,42 @@ to them."*
   a copy of the leader's would overwrite this device's own observations (its live pause, what it saw unlocked).
   Sending the runs and laying them through the follower's own environment keeps one derivation of each.
 
+## The best score wins (2026-09-17)
+
+> There is no need to guarantee that the result of the scheduler engine is deterministic. If two devices offline on
+> the same account get changes from the user, they can differ in the resulting set of rules. As soon as they connect
+> to the server again, they choose one schedule, the one with the best score.
+
+Two scores computed by two devices under their own pre-merge rule states are not comparable (a copy of the account
+with thirty tasks scores worse than one with three whatever the schedules), so the user chose to compare the two plans
+under the MERGED rules, and to leave the edit merge as it is (`sync-and-accounts.md` § *Conflicts are MERGED*).
+
+- **Every re-plan's search competes with seeds** (`docs/scheduler_score.md` § *Degradation*): the plan it replaces,
+  and any plan handed to it. A seed is re-scored under the rule state and environment of THIS fill, cut where it
+  breaks a hard constraint, and kept only when it scores lower.
+- **A plan made alone is handed to the next leader** (`PeerMessage.Counter`): a device whose plan was made with nobody
+  told — offline, alone on the channel, past a deadline — answers the first rules of the next election with it, once.
+  The leader re-plans with it as a seed and publishes the result; every device takes it in. A device that only took
+  rules in never counters, so the exchange cannot bounce.
+- **Why the leader decides, not each device.** Each device scoring both plans under its own environment (its own
+  breaks, its own live pause) could reach opposite verdicts and publish at each other forever. One decider per
+  election is the rule this ADR already rests on.
+- **What it costs.** One broadcast per device that planned alone, per election, and one extra re-plan on the leader —
+  at the moment the devices meet again, which is a rule change anyway.
+
 ## Known limits
 
 - **The leader plans with its own observations.** The live pause, the no-screen evidence and the `t_p` mode near
   the line are the leader's. The follower never runs a task through a stretch its OWN environment refuses, but a
   stretch only the leader refused is left without a run on the follower until its next extension.
 - **The presses stay local.** §7 "Switch task", §13 "start this task now", a sleep-schedule edit and a record
-  removal re-plan synchronously inside the reducer on the device pressed, as before; the other devices learn of the
-  press only if it changed their rule state.
+  removal re-plan synchronously inside the reducer on the device pressed (a first progressive stage since
+  2026-09-17); the other devices learn of the press only if it changed their rule state.
 - **Realtime broadcast has a message size limit.** A published set carries at most 2 000 runs; a longer plan is
   published only as far as it fits, and the followers extend the rest themselves.
 - **The live path is unverified.** Before relying on it: apply migration 20260916000000 (`deploy-supabase.bat`),
   run two devices of one account, and check `Diagnostics.log` for "scheduler peers: channel joined", the election
   line and "adopting … runs".
 
-Tests: `ScheduleCoordinatorTest` (the election over an in-memory bus), `SchedulerPeerProtocolTest` (the wire, and
-what a follower lays).
+Tests: `ScheduleCoordinatorTest` (the election over an in-memory bus, and the plan made alone competing once),
+`SchedulerPeerProtocolTest` (the wire, and what a follower lays).

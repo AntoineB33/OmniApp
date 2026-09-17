@@ -35,6 +35,8 @@ import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlternativeSpan
+import org.example.project.scheduler.sync.PeerPlacement
+import kotlin.concurrent.Volatile
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.RulePlacement
 import org.example.project.scheduler.model.TimerEntry
@@ -107,15 +109,6 @@ private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 // is meant to reach the next fill sooner, not to change how many fills a burst produces.
 private const val RESCHEDULE_DEBOUNCE_MILLIS: Long = 1_000
 
-// PRD §9: the STALENESS bound on the plan — the longest the schedule may go without being re-planned. The
-// rule-change watcher above answers "the inputs changed"; this answers "the plan has simply been standing
-// for too long", so a session where nobody edits anything still re-plans hourly instead of serving a plan
-// laid down against a now-line an arbitrary distance behind. It is not a tick: the timer is reset by EVERY
-// re-plan ([markRescheduled]), so an account being edited never reaches it, and a quiet one costs exactly
-// one fill per hour. Sim time like every other engine duration — an accelerated clock reaches the next
-// re-plan sooner rather than re-planning the same hour more often.
-internal const val SCHEDULE_STALENESS_MILLIS: Long = 60L * 60 * 1_000
-
 // The longest the task-tree timeline's decision-boundary watch sleeps (see [launchTaskTreeBlendReschedule]).
 // Not a re-plan cadence: a fill happens only when the line crosses the start of a run inside a transition, and
 // the watch sleeps until that start; this only bounds how late a start the plan has since moved is noticed.
@@ -124,7 +117,22 @@ private const val TASK_TREE_BLEND_POLL_MILLIS: Long = 60_000
 
 // `docs/scheduler_requirements.md` § *Progressive Calculation*: the first stage of a progressive fill
 // ([SchedulerEngine.dispatchProgressivePlan]); every next stage reaches twice as far, up to $t_goal$.
-internal const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = 60L * 60 * 1_000
+internal const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS
+
+// `docs/scheduler_requirements.md` § *Progressive Calculation*: "if the definitive schedule is found for any t < t1,
+// then 10 seconds later [it] must be found for any t < t1 + 10 minutes". Every stage extends by at least an hour, so
+// each must be published within this of the previous one.
+internal const val PROGRESSIVE_PACE_MILLIS: Long = 10_000
+
+// What a stage keeps back from the pace for everything but the search (the fill's own passes, the dispatch, a
+// device slower than its last measurement).
+private const val PROGRESSIVE_PACE_MARGIN_MILLIS: Long = 3_000
+
+// The longest a stage searches for the best score, whatever the pace would allow.
+internal const val PROGRESSIVE_STAGE_SEARCH_MILLIS: Long = 5_000
+
+// What a stage's own passes are assumed to cost before this device has measured one.
+private const val UNMEASURED_STAGE_COST_MILLIS: Long = 1_000
 
 // `docs/invariants/scheduler.md` § *One device plans*: the most runs one published set of rules carries (a week of
 // 15-min runs is ~450), so a message stays well inside Realtime's broadcast size limit.
@@ -338,6 +346,13 @@ class SchedulerEngine(
      * their ordering changes; the two production hosts pass [Dispatchers.Default].
      */
     private val planDispatcher: CoroutineDispatcher? = null,
+    /**
+     * `docs/scheduler_score.md` § *Degradation*: whether the engine's re-plans spend the time the progressive pace
+     * leaves each stage on REACHING the best score (the exhaustive search, the desktop's solver). Wall time, so the
+     * default is off: tests reduce on a virtual clock and would otherwise wait on a real one. Both production hosts
+     * pass `true`.
+     */
+    private val planSearch: Boolean = false,
     private val tz: TimeZone = TimeZone.currentSystemDefault(),
     // PRD §15: what kind of device this is — only the phone speaks the "pause finished" cue. Injectable for tests.
     private val deviceKind: DeviceKind = currentDeviceKind(),
@@ -589,16 +604,11 @@ class SchedulerEngine(
     // into a single reschedule fired when the switch is turned back on.
     private var pendingReschedule = false
 
-    // PRD §9: the clock instant of the last RE-PLAN this engine asked for — what [launchStaleReschedule]
-    // measures the [SCHEDULE_STALENESS_MILLIS] bound against, so any re-plan (a rule change, a blend step,
-    // the deferred one the §7 switch releases, the manual look-away re-anchor) postpones the next stale
-    // refill by a full hour. Stamped even when the §7 switch is OFF and the re-plan is only *deferred*:
-    // the deferred one is coalesced and fires on the switch, so re-arming the timer there is what keeps
-    // this loop from spinning on a request it cannot dispatch. Null until the first re-plan; deliberately
-    // NOT stamped by an ExtendSchedule, which materializes the tail without re-planning the head.
-    // `internal` so the rule's test can read the timer directly: a re-plan of an unchanged account is a
-    // deliberate no-op (the same inputs at a later `now` yield the same continuation, so `panels` is
-    // untouched and nothing is saved), which leaves this stamp as the only observable of the trigger.
+    // PRD §9: the clock instant of the last RE-PLAN this engine asked for (a rule change, a `t_p` mode change, a
+    // blend step, the deferred one the §7 switch releases, the manual look-away re-anchor, an adoption). Stamped
+    // even when the §7 switch is OFF and the re-plan is only *deferred*. Null until the first re-plan; deliberately
+    // NOT stamped by an ExtendSchedule, which materializes the tail without re-planning the head. `internal` so
+    // `ScheduleStalenessRuleTest` can assert that time passing alone never re-plans.
     internal var lastRescheduleMillis: Long? = null
         private set
 
@@ -700,11 +710,13 @@ class SchedulerEngine(
         // PRD §9 / `docs/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
         // plan out to $t_{goal}$ — the end of the timeline the calendar shows, or `now + 10 min` if further.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
+        // `docs/invariants/scheduler.md` § *Progressive Calculation*: what the search of each stage did, so a stage
+        // that could not reach the best score stops the next ones from paying for the same attempt.
+        SchedulerReducer.planSearchSink = { report, _ -> lastPlanSearch = report }
         launchNoScreenEvidenceScan()
         launchRetroactiveNoScreenStrip()
         launchAdvanceTick()
         launchRuleChangeReschedule()
-        launchStaleReschedule()
         launchTaskTreeBlendReschedule()
         launchHorizonReschedule()
         launchCalendarHorizonReschedule()
@@ -1058,9 +1070,9 @@ class SchedulerEngine(
     private fun dispatchScheduleAdvance(now: Long) {
         val current = vm.state.value
         // Time passing only ADVANCES the plan (banking the records of panels that elapsed) — it never
-        // re-plans. The scheduler itself runs on a rule change ([launchRuleChangeReschedule]) or, at most
-        // once an hour, on the staleness bound ([launchStaleReschedule]); the rolling horizon only extends
-        // the plan's tail ([SchedulerIntent.ExtendSchedule]).
+        // re-plans. The scheduler itself runs on a rule change ([launchRuleChangeReschedule]), a `t_p` mode
+        // change, or a decision boundary inside a task-tree transition; the rolling horizon only extends the
+        // plan's tail ([SchedulerIntent.ExtendSchedule]).
         //
         // This used to fire a full RefreshSchedule on every tick where a rest pose was overdue or a live
         // pause moved the screen-break grid, i.e. continuously while the user was away — churning the whole
@@ -1765,8 +1777,9 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §9 calculation event #2 — **a CHANGE re-plans the schedule.** (The only other thing that does is
-     * the hourly staleness bound, [launchStaleReschedule]; time passing still re-plans nothing.)
+     * PRD §9 calculation event #2 — **a CHANGE re-plans the schedule.** Time passing re-plans nothing: a re-plan
+     * of unchanged rules could only rewrite a schedule `docs/scheduler_requirements.md` § *Progressive Calculation*
+     * has already made definitive (the hourly staleness bound that did exactly that was removed 2026-09-17).
      *
      * The scheduler runs when someone CHANGED a rule it depends on: this user editing the
      * task tree / priorities / minimum times, pinning or moving a calendar block, editing the sleep or
@@ -1789,8 +1802,8 @@ class SchedulerEngine(
 
     /**
      * The single way this engine asks for a **re-plan**: dispatch it, or (§7 switch off) defer it — and in
-     * either case re-arm the staleness timer [launchStaleReschedule] watches. Every re-plan path goes
-     * through here so "the last scheduling" means one thing, whichever event triggered it.
+     * either case stamp [lastRescheduleMillis]. Every re-plan path goes through here so "the last scheduling"
+     * means one thing, whichever event triggered it.
      */
     private fun requestReschedule(now: Long = clock.nowMillis()) {
         lastRescheduleMillis = now
@@ -1811,6 +1824,23 @@ class SchedulerEngine(
     /** The progressive fill in flight ([dispatchProgressivePlan]), so a newer one replaces it. */
     private var progressivePlan: Job? = null
 
+    /** What the search of the last plan reduction did ([SchedulerReducer.planSearchSink]). */
+    @Volatile
+    private var lastPlanSearch: org.example.project.scheduler.domain.SearchReport? = null
+
+    /**
+     * `docs/scheduler_score.md` § *Degradation*: the search time a stage covering [spanMillis] may spend — what the
+     * pace leaves after this device's measured cost of the stage's own passes, capped. The pace is the requirement's
+     * (a stage published at most [PROGRESSIVE_PACE_MILLIS] after the previous one); within it the time goes to reaching
+     * the best score rather than being left unused.
+     */
+    private fun stageSearchMillis(spanMillis: Long): Long {
+        val predicted =
+            if (planHoursPerSecond <= 0.0) UNMEASURED_STAGE_COST_MILLIS
+            else (spanMillis / 3_600_000.0 / planHoursPerSecond * 1000.0).toLong()
+        return (PROGRESSIVE_PACE_MILLIS - PROGRESSIVE_PACE_MARGIN_MILLIS - predicted).coerceIn(0L, PROGRESSIVE_STAGE_SEARCH_MILLIS)
+    }
+
     /**
      * `docs/scheduler_requirements.md` § *Progressive Calculation*: **fill in doubling stages.** *"If the
      * definitive schedule is found for any t < t1, then 10 seconds later the definitive schedule must be found for
@@ -1824,24 +1854,37 @@ class SchedulerEngine(
      * twice its own cost: the pace holds for any device that fills an hour of schedule in under ~15 s, whatever the
      * size of the goal. A newer request cancels the stages this one has not reached.
      */
-    private fun dispatchProgressivePlan(replan: Boolean, lead: ScheduleCoordinator.Lead? = null) {
+    private fun dispatchProgressivePlan(
+        replan: Boolean,
+        lead: ScheduleCoordinator.Lead? = null,
+        seeds: List<List<RulePlacement>> = emptyList(),
+    ) {
         progressivePlan?.cancel()
         progressivePlan = scope.launch {
             var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
             var first = true
             var index = 0
             var reached = clock.nowMillis()
+            // A stage whose search ran out of time without certifying the best (and without the solver finding
+            // anything) tells the bigger stages after it that they cannot either: they stop paying for it.
+            var searchUseful = planSearch
             while (true) {
                 val now = clock.nowMillis()
                 val goal = scheduleHorizonEndMillis(now)
                 val cap = now + stage
                 val capOrNull = cap.takeIf { it < goal }
+                val span = (capOrNull ?: goal) - if (first) now else reached
+                val searchMillis = if (searchUseful) stageSearchMillis(span) else 0L
                 val intent =
-                    if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull)
-                    else SchedulerIntent.ExtendSchedule(now, capOrNull)
+                    if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds)
+                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis)
+                lastPlanSearch = null
                 val mark = TimeSource.Monotonic.markNow()
                 runPlan(intent)
-                notePlanRate(((capOrNull ?: goal) - if (first) now else reached), mark.elapsedNow().inWholeMilliseconds)
+                val search = lastPlanSearch
+                if (search != null && search.exhausted && !search.solverImproved) searchUseful = false
+                // The device's speed is what its OWN passes cost: the search spends whatever it was granted.
+                notePlanRate(span, mark.elapsedNow().inWholeMilliseconds - (search?.searchMillis ?: 0L))
                 reached = capOrNull ?: goal
                 // `docs/invariants/scheduler.md` § *One device plans*: every stage the elected device publishes is a
                 // set of rules the others take in — each one containing the last.
@@ -1902,20 +1945,37 @@ class SchedulerEngine(
                 currentRules = { election -> rulesMessage(election, 0) },
                 newElectionId = { "${gateway.deviceId}:${Random.nextLong().toULong().toString(36)}" },
                 elapsed = { monotonic.elapsedNow().inWholeMilliseconds },
+                ownPlan = { futurePlacements(vm.state.value, clock.nowMillis()) },
+                replanWithSeeds = { lead, placements ->
+                    peerDisplayedEndMillis = lead.displayedEndMillis
+                    dispatchProgressivePlan(
+                        replan = true,
+                        lead = lead,
+                        seeds = listOf(placements.map { p ->
+                            RulePlacement(
+                                TaskId(p.task), p.start, p.end, p.alternative?.let(::TaskId),
+                                p.spans.map { AlternativeSpan(it.from, it.task?.let(::TaskId)) },
+                            )
+                        }),
+                    )
+                },
             ).also { it.start() }
     }
+
+    /** The runs of the plan [state] holds from [now] on, as the wire carries them (at most [MAX_PUBLISHED_PLACEMENTS]). */
+    private fun futurePlacements(state: SchedulerState, now: Long): List<PeerPlacement> =
+        state.panels.asSequence()
+            .filter { it.auto && !it.pinned && !it.chore && it.taskId != null && !it.isRestrictivePeriod && it.endEpochMillis > now }
+            .sortedBy { it.startEpochMillis }
+            .take(MAX_PUBLISHED_PLACEMENTS)
+            .map { PeerMessage.placementOf(it.taskId!!, it.startEpochMillis, it.endEpochMillis, it.alternativeTaskId, it.alternativeSpans) }
+            .toList()
 
     /** The rules this device's plan returns right now, as the leader of [election] publishes them. */
     private fun rulesMessage(election: String, stage: Int): PeerMessage.Rules {
         val state = vm.state.value
         val now = clock.nowMillis()
-        val placements =
-            state.panels.asSequence()
-                .filter { it.auto && !it.pinned && !it.chore && it.taskId != null && !it.isRestrictivePeriod && it.endEpochMillis > now }
-                .sortedBy { it.startEpochMillis }
-                .take(MAX_PUBLISHED_PLACEMENTS)
-                .map { PeerMessage.placementOf(it.taskId!!, it.startEpochMillis, it.endEpochMillis, it.alternativeTaskId, it.alternativeSpans) }
-                .toList()
+        val placements = futurePlacements(state, now)
         val materialized = SchedulerDomain.firstFreeMoment(state.panels, now)
         // A plan too big for one message is published only as far as it fits; the followers extend the rest.
         val horizon = if (placements.size < MAX_PUBLISHED_PLACEMENTS) materialized else minOf(materialized, placements.last().end)
@@ -2182,20 +2242,6 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §9 calculation event #3 — the plan's **staleness bound**: re-plan when the last one was asked for
-     * [SCHEDULE_STALENESS_MILLIS] ago or more.
-     *
-     * This is not a re-plan tick, and it is not a second reading of "time passing re-plans": the timer is
-     * reset by every re-plan ([requestReschedule]), so a session where the user is actually editing never
-     * reaches it, and an untouched one costs exactly one fill per hour. What it buys is that a plan is never
-     * served indefinitely against a now-line that has since moved arbitrarily far — the inputs the signature
-     * cannot see (the banked records the advance has been writing all along, this device's live rest gap, a
-     * horizon that rolled) get folded in at a bounded cadence instead of waiting for the user's next edit.
-     *
-     * Polled rather than slept-to-the-instant, like [launchHorizonReschedule], so a clock leap or a speed
-     * change is noticed within one poll instead of after a full hour of real time.
-     */
-    /**
      * PRD §9/§12: read the stretches the devices say nobody was at a screen for over `[since, until]`.
      *
      * Only THIS device can be asked — there is no channel carrying a peer's lock history — so the other kind
@@ -2321,24 +2367,12 @@ class SchedulerEngine(
         }
     }
 
-    private fun launchStaleReschedule() = scope.launch {
-        fun pollInterval(): Long = if (timeAccelerated()) ADVANCE_TICK_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD
-        // Nothing has re-planned yet at start-up; the rule-change watcher's first emission is about to, so
-        // start the hour from here rather than firing an immediate duplicate fill.
-        lastRescheduleMillis = clock.nowMillis()
-        while (true) {
-            val last = lastRescheduleMillis ?: clock.nowMillis()
-            if (clock.nowMillis() - last >= SCHEDULE_STALENESS_MILLIS) requestReschedule()
-            else tickDelay(pollInterval())
-        }
-    }
-
     /**
      * The task-tree timeline's re-plan: refill when the now-line reaches a DECISION BOUNDARY inside a transition
      * between two dated task trees ([SchedulerDomain.taskTreeBlendDecisionKey]).
      *
-     * With [launchStaleReschedule] this is one of the two deliberate exceptions to "time passing must never
-     * re-plan" — and the only one where the plan's CONTENT is a function of time: `docs/scheduler_requirements.md`
+     * This is the one deliberate exception to "time passing must never re-plan" — the plan's CONTENT is a
+     * function of time here: `docs/scheduler_requirements.md`
      * § *Rule State Evolution* applies the rule state found at the now-line, so a decision must be taken with the
      * rule state at the instant the line reaches it. It is boundary-driven rather than a tick: the key moves only
      * when the line crosses the start of a run the plan placed, so a transition costs one fill per run it spans,

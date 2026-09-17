@@ -9,7 +9,7 @@ migration history.
 
 | # | Record | Covers |
 | --- | --- | --- |
-| [0001](0001-scheduler-model.md) | The scheduler model | the walk it was (§1–§9), why not a solver (§10), and the score-based scheduler that replaced the walk (§11: the score, its search, progressive stages) |
+| [0001](0001-scheduler-model.md) | The scheduler model | the walk it was (§1–§9), why not a solver (§10), the score-based scheduler that replaced the walk (§11: the score, its search, progressive stages), and reaching the best score when it is reachable (§12: wall-time search, seeds, the desktop MIP measured, the best score wins between devices) |
 | [0002](0002-calendar-layers-and-grey.md) | The calendar's two layers, and what GREY means | OS lock history as the layer source, assumed-unlocked default, derived grey bands, a panel's jump to its task |
 | [0003](0003-screen-breaks.md) | Screen breaks: the three dynamic restrictive periods | one kind end to end, the three recurrence bars, rest stretches, the derived anchors, the two `t_p` modes |
 | [0004](0004-relative-priority.md) | Relative priority (PRD §5) | the model, percentage-scaling solve, pin semantics, the task-relations list, categories and the rules that hold a share |

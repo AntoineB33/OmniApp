@@ -29,6 +29,11 @@ import org.example.project.scheduler.sync.SchedulerPeerChannel
  *    ([PeerMessage.Rules]); every other device adopts the newest rules for its own rule state.
  * 4. A device still without rules [rulesDeadlineMillis] after the announcement **plans for itself**: a leader that
  *    was killed, lost its network or was suspended costs one deadline, never a device with no plan.
+ * 5. **The best score wins.** Plans made apart need not agree (nothing requires two devices to reach the same rules).
+ *    A device whose plan was made ALONE — offline, with nobody around, or past a deadline — answers the first rules
+ *    of a new election with that plan ([PeerMessage.Counter]); the leader re-plans with it competing on the score under
+ *    the rules in force now ([replanWithSeeds]) and publishes whichever continuation scores best, and every device
+ *    takes that in. One counter per election, from a plan made alone: it cannot bounce.
  *
  * **Nobody else around, nothing sent** (`docs/invariants/server-quota.md`): a device that has heard from no other device
  * since its last probe went unanswered leads alone, without a probe, an announcement or its stages on the wire. A
@@ -57,6 +62,10 @@ class ScheduleCoordinator(
     private val newElectionId: () -> String,
     /** A monotonic clock in millis (never the app clock, which a debug simulation accelerates). */
     private val elapsed: () -> Long,
+    /** The future runs of the plan this device holds right now, for a [PeerMessage.Counter]. */
+    private val ownPlan: () -> List<org.example.project.scheduler.sync.PeerPlacement> = { emptyList() },
+    /** As the elected [Lead], re-plan with another device's plan competing on the score. */
+    private val replanWithSeeds: (Lead, List<org.example.project.scheduler.sync.PeerPlacement>) -> Unit = { _, _ -> },
     private val probeWindowMillis: Long = PROBE_WINDOW_MILLIS,
     private val rulesDeadlineMillis: Long = RULES_DEADLINE_MILLIS,
 ) {
@@ -93,6 +102,9 @@ class ScheduleCoordinator(
     // The other devices heard on the channel since the last probe nobody answered: an election is held only when this is
     // not empty.
     private val peers = LinkedHashSet<String>()
+
+    // The elections this device has already answered with its own plan (at most one counter each).
+    private val countered = LinkedHashSet<String>()
 
     fun start() {
         if (started) return
@@ -155,8 +167,10 @@ class ScheduleCoordinator(
 
     /** The elected device publishes one stage of its plan. */
     fun publish(rules: PeerMessage.Rules) {
-        lastTaken = rules
-        if (channel.connected.value && peers.isNotEmpty()) channel.send(rules)
+        val sent = channel.connected.value && peers.isNotEmpty()
+        // A plan nobody else was told about is a plan made ALONE, exactly as [notePlannedLocally] records one.
+        lastTaken = if (sent) rules else rules.copy(election = "")
+        if (sent) channel.send(rules)
     }
 
     /** The rules this device's plan answers were just made HERE (a local plan): later rules must be newer. */
@@ -233,6 +247,7 @@ class ScheduleCoordinator(
                 announced(election)
             }
             is PeerMessage.Rules -> onRules(message)
+            is PeerMessage.Counter -> onCounter(message)
             is PeerMessage.RulesRequest -> {
                 val rules = lastLed?.takeIf { it.signature == message.signature && signature.value == message.signature }?.let { currentRules(it.id) }
                 if (rules != null) {
@@ -276,8 +291,33 @@ class ScheduleCoordinator(
     private fun takeIfNewer(rules: PeerMessage.Rules) {
         val last = lastTaken
         if (last != null && last.signature == rules.signature && !newer(rules, last)) return
+        offerCounter(rules, last)
         lastTaken = rules
         adopt(rules)
+    }
+
+    /**
+     * Step 5: the first rules of [rules]'s election reach a device whose plan was made alone ([last] is a local plan,
+     * [notePlannedLocally]) — hand that plan to the leader before taking the rules in, so the two compete on the score.
+     */
+    private fun offerCounter(rules: PeerMessage.Rules, last: PeerMessage.Rules?) {
+        if (rules.election.isEmpty() || rules.from == deviceId) return
+        if (last == null || last.from != deviceId || last.election.isNotEmpty()) return
+        if (!channel.connected.value || rules.election in countered) return
+        val plan = ownPlan()
+        if (plan.isEmpty()) return
+        countered += rules.election
+        while (countered.size > MAX_HEARD) countered.remove(countered.first())
+        Diagnostics.log("scheduler peers: countering ${rules.election} with ${plan.size} runs planned alone")
+        channel.send(PeerMessage.Counter(deviceId, rules.election, rules.signature, plan))
+    }
+
+    /** Step 5, on the leader: another device's plan for the election this device leads competes with its own. */
+    private fun onCounter(counter: PeerMessage.Counter) {
+        val led = lastLed ?: return
+        if (led.id != counter.election || led.signature != counter.signature || signature.value != counter.signature) return
+        Diagnostics.log("scheduler peers: re-planning ${led.id} with ${counter.placements.size} runs from ${counter.from}")
+        replanWithSeeds(Lead(led.id, led.signature, led.displayedEndMillis), counter.placements)
     }
 
     private fun newer(a: PeerMessage.Rules, b: PeerMessage.Rules): Boolean =

@@ -776,3 +776,76 @@ Every reason in §10 still holds against a general solver — the return type, d
 re-solving on a clock — and none is violated here: the search is deterministic (budgets in steps), commonMain, and
 runs on the rule-change / extension triggers of §9, not on a clock. What §10 got wrong is its item 2: without a
 defined score, "the walk reaches the shares constructively" said nothing about reaching the best score.
+
+> **Superseded in part by §12 (2026-09-17):** determinism across devices (§10 item 4) is no longer a requirement, and
+> commonMain is no longer where every pass must live (§10 item 6): a platform may bring its own solver.
+
+## 12. 2026-09-17: reaching the best score when it is reachable, and the best score wins between devices
+
+### The question
+
+Asked whether a proposal from another assistant — Model Predictive Control over a Mixed-Integer Program, a hybrid
+automaton for the `t_p` modes, the exponential decay as penalty weights — "strictly satisfies"
+`docs/scheduler_requirements.md`. The architecture already was receding-horizon planning over a written-down score
+(§11); the audit found where the project did NOT strictly satisfy the requirements, and the user added two rules:
+
+> There is no need to guarantee that the result of the scheduler engine is deterministic. If two devices offline on
+> the same account get changes from the user, they can differ in the resulting set of rules. As soon as they connect
+> to the server again, they choose one schedule, the one with the best score. […] If MIP is better, then it must be
+> used when available (when one of the app instances is a desktop app).
+
+Asked how two scores computed under two different pre-merge rule states can be compared (they cannot: an account copy
+with thirty tasks always scores worse than one with three), the user chose to score both plans under the MERGED rules
+and leave the edit merge unchanged.
+
+### The gaps, and what closed each
+
+| Gap against the requirements | Fix |
+| --- | --- |
+| *"If the best possible score is reachable within the required time … it must be reached"* — nothing ever tried: budgets were steps, `certify` only ran in tests | A fill is given WALL time (`SearchBudget`): the exhaustive search runs from the best continuation so far and, when it finishes, the result is **certified** (`SearchReport`, on the History row). The engine grants each progressive stage what the 10-second pace leaves (`stageSearchMillis`) and stops granting it once a stage could not finish. |
+| The hourly staleness re-plan rewrote a schedule already published as definitive, with no rule change | Removed. Time passing never re-plans; only the task-tree transition's run starts remain (they ARE the rules' parameterization by the line). |
+| A progressive stage's last runs were shaped by where the stage stopped, then kept as definitive by the extension | A fill searches one decision window past its horizon, over the environment built that far, and emits only to the horizon. |
+| The reducer's in-line re-plans filled to $t_{goal}$ in one go — no pace, UI thread held | They are a first stage (1 h, 250 ms of search) and the horizon watcher extends them. |
+| Alternatives bisected to a minute with one-level probes | To a second. (Probes as deep as the decision were tried: a week's fill went from 103 to 182 ms in `PerfBenchmarkTest`, so the probes stay one run deep.) |
+| Inside a rule-state transition a run kept the rule state of its first instant | The first free run is cut where the best first run under `R(x)` changes (probes + bisection to a second). |
+| Two devices' plans could differ with nothing choosing between them | Seeds: every re-plan's search competes with the plan it replaces; a device that planned alone hands its plan to the next leader (`PeerMessage.Counter`), which re-plans with it as a seed under the merged rules. |
+
+### Is MIP better? Measured
+
+The desktop now has `MipScheduleSolver`: OR-Tools SCIP over windows of the continuation (large-neighbourhood search),
+criterion 1 as the exact per-slot quadratic bounded by tangent cuts, criterion 2 as set partitioning over runs with
+their exact shortfall, the rest of the continuation held fixed with its cost an exact quadratic in the lag the window
+leaves. Every answer is re-scored by `ScoreModel`. Measured on the desktop (2026-09-17), each case with a 20-minute ban
+on the first task, against the step-bounded passes (rollout + improver) and the exhaustive search given wall time:
+
+| Case | rollout + improver | + MIP (20–30 s) | exhaustive search |
+| --- | --- | --- | --- |
+| 2 tasks, 4 h | 2.5843e17 | 2.5348e17 | **2.5344e17**, certified in 0.16 s |
+| 3 tasks, 4 h | 1.0095e18 | 1.0002e18 | **0.9975e18**, certified in 0.6 s |
+| 4 tasks, 3 h | 1.9529e18 | no gain | same, certified in 0.7 s (already the best) |
+| 5 tasks, 90 min | 3.4803e18 | no gain | **3.3909e18**, certified in 0.9 s |
+| 5 tasks, 2 h | 4.9133e18 | no gain | **3.8743e18**, certified in 4.5 s |
+| 5 tasks, 8 h | 6.3739e18 | no gain | not finished in 20 s |
+
+Two conclusions. **The exhaustive search given wall time is what reaches the best score** — and the step-bounded
+passes were as much as 27 % above it on a two-hour horizon, which is the whole case for granting the time. **The MIP
+is not better**: it gains only on the smallest cases, which the exhaustive search certifies faster, and finds nothing
+on the larger ones within seconds per window (its relaxation — tangent cuts under a squared lag, binary runs — gives
+SCIP weak bounds; a first formulation with run-length big-M constraints proved nothing within a window's time limit
+and was replaced by set partitioning). Per the user's rule it is kept where it can only help: on the desktop, after
+the exhaustive search, with the time the exhaustive search did not use, and never trusted.
+
+### Tried on the way
+
+- **MIP before the exhaustive search**, sharing the time: it spent the seconds the exhaustive search needed to certify
+  the small cases. Reordered.
+- **Windows snapped to run boundaries**: a monolithic incumbent made the window the whole monolith. Windows are cut at
+  fixed spans, and a run crossing an edge joins across it.
+- **A partial hint** (the run variables only): SCIP often did not even recover the incumbent. The hint sets every
+  binary.
+- **Completing a truncated seed with a second rollout**, and **resolving the platform solver on every fill**: the
+  first doubled a re-plan's cost, the second made the first fill in the process load OR-Tools' native library (~1 s,
+  `PerfBenchmarkTest`'s worst fill 145 → 1 076 ms) — on the UI thread, for a display fill. A seed is completed with the
+  fresh plan's own tail, and the solver is resolved only for a fill given search time. The fill is back at its
+  baseline (week 103 → 97 ms, worst 145 → 143 ms).
+

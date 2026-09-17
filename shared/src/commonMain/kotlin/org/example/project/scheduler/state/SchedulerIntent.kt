@@ -688,6 +688,16 @@ sealed interface SchedulerIntent {
          * required pace whatever a whole fill costs on this device; `null` fills to $t_{goal}$ in one go.
          */
         val horizonCapMillis: Long? = null,
+        /**
+         * `docs/scheduler_score.md` § *Degradation*: the wall time this fill may spend past its step-bounded passes
+         * reaching the best score (the exhaustive search, the desktop's solver). 0: none.
+         */
+        val searchMillis: Long = 0,
+        /**
+         * `docs/invariants/scheduler.md` § *One device plans*: other devices' continuations for these rules, which
+         * compete with this fill's own search on the score.
+         */
+        val seeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
     ) : SchedulerIntent
 
     /**
@@ -698,8 +708,8 @@ sealed interface SchedulerIntent {
      * Neither is a change to the scheduling *rules*, so the plan the user is already looking at must not be
      * rewritten: the auto panels ahead of the now-line are kept and only the tail past them is generated
      * ([SchedulerDomain.fillSchedule]'s `keepExistingUntilMillis`). Re-planning from `now` happens only on a
-     * [RefreshSchedule], which the engine fires when [SchedulerDomain.schedulingSignature] moves — or, at
-     * most once an hour, when the plan has simply gone that long without being re-planned.
+     * [RefreshSchedule], which the engine fires when [SchedulerDomain.schedulingSignature] moves (or when the
+     * `t_p` mode changes, or at a decision boundary inside a task-tree transition) — never because time passed.
      *
      * Derived state only (like [AdvanceSchedule]): never a syncable change, never a History Unit.
      */
@@ -711,6 +721,8 @@ sealed interface SchedulerIntent {
          * required pace whatever a whole fill costs on this device; `null` fills to $t_{goal}$ in one go.
          */
         val horizonCapMillis: Long? = null,
+        /** As [RefreshSchedule.searchMillis], for the tail this extension searches. */
+        val searchMillis: Long = 0,
     ) : SchedulerIntent
 
     /**

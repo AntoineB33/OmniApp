@@ -320,6 +320,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // drop four frames every time a rule change settled; that one job goes to a background
                     // dispatcher (see SchedulerEngine.planDispatcher).
                     planDispatcher = Dispatchers.Default,
+                    // `docs/scheduler_score.md` § *Degradation*: spend what the progressive pace leaves on reaching
+                    // the best score (SchedulerEngine.planSearch).
+                    planSearch = true,
                     tz = tz,
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepScanCheckpoint = store as? SleepScanCheckpointStore,

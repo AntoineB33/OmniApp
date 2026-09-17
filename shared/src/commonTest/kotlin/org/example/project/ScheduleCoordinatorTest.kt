@@ -64,6 +64,8 @@ class ScheduleCoordinatorTest {
         val signature = MutableStateFlow(signature)
         val plans = ArrayList<ScheduleCoordinator.Lead?>()
         val adopted = ArrayList<PeerMessage.Rules>()
+        /** The other devices' plans this device re-planned with, as the leader. */
+        val seeded = ArrayList<List<org.example.project.scheduler.sync.PeerPlacement>>()
         private var elections = 0
         private var stamp = 0L
 
@@ -80,11 +82,17 @@ class ScheduleCoordinatorTest {
                 planLocally = { lead ->
                     plans += lead
                     if (lead != null && publishes) coordinatorRef().publish(rules(lead.election))
+                    if (lead == null) coordinatorRef().notePlannedLocally(this.signature.value, test.testScheduler.currentTime)
                 },
                 adopt = { adopted += it },
                 currentRules = { election -> rules(election) },
                 newElectionId = { "$id-${elections++}" },
                 elapsed = { test.testScheduler.currentTime },
+                ownPlan = { listOf(org.example.project.scheduler.sync.PeerPlacement("task-of-$id", 0L, 60_000L)) },
+                replanWithSeeds = { lead, placements ->
+                    seeded += placements
+                    if (publishes) coordinatorRef().publish(rules(lead.election))
+                },
             ).also { it.start() }
 
         private fun coordinatorRef() = coordinator
@@ -261,6 +269,60 @@ class ScheduleCoordinatorTest {
         runCurrent()
         assertTrue(p.adopted.all { it.from == "desktop" })
         assertNull(p.plans.firstOrNull())
+    }
+
+    @Test
+    fun a_plan_made_alone_competes_with_the_leaders_on_the_score_once() = runTest {
+        val bus = Bus()
+        val p = Device("phone", this, backgroundScope, bus, phone)
+        val d = Device("desktop", this, backgroundScope, bus, desktop)
+        runCurrent()
+        // The phone was offline and planned by itself.
+        p.peer.connected.value = false
+        runCurrent()
+        p.coordinator.requestPlan()
+        assertEquals(listOf<ScheduleCoordinator.Lead?>(null), p.plans)
+        // It reconnects; the merge moved both devices to the same new rules, and the desktop is elected.
+        p.peer.connected.value = true
+        runCurrent()
+        p.signature.value = 2
+        d.signature.value = 2
+        runCurrent()
+        d.coordinator.requestPlan()
+        runCurrent()
+        advanceTimeBy(window + 1)
+        runCurrent()
+        assertNotNull(d.plans.single(), "the desktop leads")
+        // The phone hands the leader the plan it made alone, and the leader re-plans with it competing.
+        val counters = bus.sent.filterIsInstance<PeerMessage.Counter>()
+        assertEquals(listOf("phone"), counters.map { it.from })
+        assertEquals(listOf("task-of-phone"), d.seeded.single().map { it.task })
+        // The leader's new rules are taken in, and the phone does not answer them again: it cannot bounce.
+        assertTrue(p.adopted.size >= 2, "the phone took the re-planned rules in: ${p.adopted.map { it.stage }}")
+        advanceTimeBy(deadline + window)
+        runCurrent()
+        assertEquals(1, bus.sent.count { it is PeerMessage.Counter })
+        assertEquals(1, d.seeded.size)
+    }
+
+    @Test
+    fun a_device_that_only_took_rules_in_never_counters() = runTest {
+        val bus = Bus()
+        val p = Device("phone", this, backgroundScope, bus, phone)
+        val d = Device("desktop", this, backgroundScope, bus, desktop)
+        runCurrent()
+        for (sig in 2..3) {
+            p.signature.value = sig
+            d.signature.value = sig
+            runCurrent()
+            p.coordinator.requestPlan()
+            runCurrent()
+            advanceTimeBy(window + 1)
+            runCurrent()
+        }
+        assertEquals(2, p.adopted.size)
+        assertTrue(bus.sent.none { it is PeerMessage.Counter })
+        assertTrue(d.seeded.isEmpty())
     }
 
     @Test

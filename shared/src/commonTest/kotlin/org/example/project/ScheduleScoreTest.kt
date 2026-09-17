@@ -9,6 +9,7 @@ import org.example.project.scheduler.domain.PlanTask
 import org.example.project.scheduler.domain.PlanWindow
 import org.example.project.scheduler.domain.ScheduleOptimizer
 import org.example.project.scheduler.domain.ScoreModel
+import org.example.project.scheduler.domain.SearchBudget
 import org.example.project.scheduler.model.TaskId
 
 /**
@@ -174,6 +175,51 @@ class ScheduleScoreTest {
         assertEquals(best.cost, opt.score(start, best.runs), 1e-6 * best.cost)
         // The pre-placed block is kept.
         assertTrue(best.runs.any { it.task == 0 && it.fromU <= 50.0 * MIN + 1e-3 && it.toU >= 70.0 * MIN - 1e-3 })
+    }
+
+    @Test
+    fun a_seed_that_scores_better_than_the_search_is_what_the_plan_returns() {
+        // `docs/scheduler_score.md` § *Degradation*: the plan a re-plan replaces, or another device's plan for the
+        // same rules, competes on the score — a re-plan never returns a continuation worse than one it was shown.
+        val tasks = listOf(task("A", 0.6, 20), task("B", 0.4, 20))
+        val m = model(tasks, 6, blocks = listOf(PlanBlock(TaskId("A"), 50 * MIN, 70 * MIN)))
+        val until = 2.0 * HOUR
+        val best = ScheduleOptimizer(m, searchBudget = 2_000_000).certify(m.cursor(), until)
+        assertTrue(best.certified)
+        val seeded = ScheduleOptimizer(m).plan(m.cursor(), until, alternatives = false, seeds = listOf(best.runs))
+        assertTrue(seeded.cost <= best.cost * (1 + 1e-9), "the seed's score is reached: ${seeded.cost} vs ${best.cost}")
+    }
+
+    @Test
+    fun a_seed_that_breaks_a_hard_constraint_is_cut_where_it_breaks_it() {
+        // A seed laid under other rules: A over a stretch A may no longer run in. What is kept of it stops there and
+        // the rest is searched, so the plan never puts a task where it may not run.
+        val tasks = listOf(task("A", 0.5, 20), task("B", 0.5, 20))
+        val ban = PlanWindow(HOUR, 2 * HOUR, mapOf(TaskId("A") to 0.0))
+        val m = model(tasks, 6, windows = listOf(ban))
+        val until = 3.0 * HOUR
+        val stale = listOf(ScheduleOptimizer.Run(0, 0.0, until, -1))
+        val plan = ScheduleOptimizer(m).plan(m.cursor(), until, alternatives = false, seeds = listOf(stale))
+        assertTrue(plan.runs.none { it.task == 0 && it.fromU < 2.0 * HOUR && it.toU > HOUR + 1e-3 }, "A never runs inside its ban")
+        var u = 0.0
+        for (r in plan.runs.sortedBy { it.fromU }) {
+            assertEquals(u, r.fromU, 1e-3, "no idling")
+            u = r.toU
+        }
+        assertEquals(until, u, 1e-3)
+    }
+
+    @Test
+    fun with_the_time_to_finish_the_plan_is_the_certified_best() {
+        val tasks = listOf(task("A", 0.6, 20), task("B", 0.4, 20))
+        val m = model(tasks, 6, blocks = listOf(PlanBlock(TaskId("A"), 50 * MIN, 70 * MIN)))
+        val until = 2.0 * HOUR
+        val best = ScheduleOptimizer(m, searchBudget = 2_000_000).certify(m.cursor(), until)
+        val plan = ScheduleOptimizer(m).plan(m.cursor(), until, alternatives = false, budget = SearchBudget.of(20_000))
+        assertTrue(plan.certified, "${plan.report}")
+        assertTrue(plan.cost <= best.cost * (1 + 1e-9), "${plan.cost} vs ${best.cost}")
+        val untimed = ScheduleOptimizer(m).plan(m.cursor(), until, alternatives = false)
+        assertTrue(!untimed.certified && !untimed.report.exhausted, "no time granted, nothing claimed: ${untimed.report}")
     }
 
     @Test

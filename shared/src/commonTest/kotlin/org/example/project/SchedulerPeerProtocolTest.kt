@@ -43,6 +43,10 @@ class SchedulerPeerProtocolTest {
                     PeerCycle(NOW, listOf(org.example.project.scheduler.sync.PeerCycleRun("t/1", 900_000.0, "t/2")), 1, 2, exact = false),
                 ),
                 PeerMessage.RulesRequest("phone", 7),
+                PeerMessage.Counter(
+                    "phone", "desk-1", 7,
+                    listOf(PeerMessage.placementOf(org.example.project.scheduler.model.TaskId("t/2"), NOW, NOW + 20 * MIN, null, emptyList())),
+                ),
             )
         for (m in messages) assertEquals(m, PeerMessage.decode(PeerMessage.encode(m)))
         assertNull(PeerMessage.decode("""{"type":"from_a_newer_build","from":"x"}"""), "an unknown message is ignored")

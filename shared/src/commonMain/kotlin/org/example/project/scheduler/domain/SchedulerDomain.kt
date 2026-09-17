@@ -1823,6 +1823,19 @@ object SchedulerDomain {
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: how far the first stage of a progressive fill
+     * reaches; every next stage reaches twice as far, up to $t_{goal}$ (`SchedulerEngine.dispatchProgressivePlan`, and
+     * the in-reducer re-plans that answer a press).
+     */
+    const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = 60L * 60 * 1_000
+
+    /**
+     * The search time a re-plan made inside a reducer to answer a press may spend reaching the best score. Short: the
+     * press waits for it on the thread that dispatched it.
+     */
+    const val INLINE_REPLAN_SEARCH_MILLIS: Long = 250
+
+    /**
      * The **ceiling** on how far back [fillSchedule] reads the already-placed past (one week — the same span
      * as the horizon ceiling): the frozen past is replayed over it to give every task's lag at the line, and a
      * deprivation inside it still raises a target share after it. A lag forgets over its task's own window, so
@@ -4304,6 +4317,15 @@ object SchedulerDomain {
         // rules, laid instead of searched (and [adoptedCycle], the repeating part past them). Null: search here.
         adoptedPlacements: List<org.example.project.scheduler.model.RulePlacement>? = null,
         adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
+        // `docs/scheduler_score.md` § *Degradation*: the wall time this fill may spend past its step-bounded passes —
+        // the exhaustive search that certifies the best continuation, and the platform's solver. NONE for every fill
+        // that answers a display or a press.
+        searchBudget: SearchBudget = SearchBudget.NONE,
+        // Other devices' continuations for these rules, to compete on the score with this fill's own search
+        // (`docs/invariants/scheduler.md` § *One device plans*). The plan this re-plan replaces always competes.
+        extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
+        // What the extra passes did, and the score of the searched continuation (null: nothing was searched).
+        searchSink: ((SearchReport, Double?) -> Unit)? = null,
     ): List<TaskPanel> {
         var ruleState: List<String> = emptyList()
         // Only the fill itself is measured: describing it is a diagnostic the two plan reductions ask for,
@@ -4314,7 +4336,7 @@ object SchedulerDomain {
                 fillScheduleUninstrumented(
                     state, nowMillis, timeZone, liveRest, noScreenEvidence, horizonMillis,
                     keepExistingUntilMillis, tpMode, if (rulesSink == null) null else ({ ruleState = it }), cycleSink,
-                    adoptedPlacements, adoptedCycle,
+                    adoptedPlacements, adoptedCycle, searchBudget, extraSeeds, searchSink,
                 )
             }
         // The returned set of rules is read off what the fill RETURNED, here, rather than collected inside
@@ -4442,6 +4464,9 @@ object SchedulerDomain {
         cycleSink: ((org.example.project.scheduler.model.ScheduleCycle?) -> Unit)? = null,
         adoptedPlacements: List<org.example.project.scheduler.model.RulePlacement>? = null,
         adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
+        searchBudget: SearchBudget = SearchBudget.NONE,
+        extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
+        searchSink: ((SearchReport, Double?) -> Unit)? = null,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
@@ -4509,12 +4534,19 @@ object SchedulerDomain {
         // The user's sleep windows. PRD §8: a sleep window IS an inactivity period — one labelled "Sleep" —
         // so, like every grey period, it is a period accepting NOBODY (see [blockedRegions] below). It is
         // still not an occupancy *obstacle*: a chunk crossing one suspends and resumes on the far side.
-        val sleepPanels = sleepPanels(state.sleep, nowMillis, horizon, timeZone)
+        // The search looks one decision window past the horizon (`docs/invariants/scheduler.md` § *Progressive
+        // Calculation*), so the environment is built that far; what is emitted still stops at the horizon.
+        val searchEnd = horizon + ScheduleOptimizer.searchMarginMillis(
+            state.tasks.values.map { PlanTask(it.id, 0.0, it.minimumMinutes.toLong() * MILLIS_PER_MINUTE) },
+        )
+        val envSleepPanels = sleepPanels(state.sleep, nowMillis, searchEnd, timeZone)
+        val sleepPanels = envSleepPanels.filter { it.startEpochMillis < horizon }
         // PRD §17 wind-down: **the hour before bed is covered by the period "before bed"**. It is an ordinary
         // restrictive period of its own kind ([PeriodKinds.BEFORE_BED]) — the hour stays empty because every
         // task's default resilience to that kind is `0`, and a task given a value above zero works through it.
         // Derived from the same schedule the sleep windows are, and regenerated with them.
-        val beforeBedPanels = beforeBedPanels(state.sleep, nowMillis, horizon, timeZone)
+        val envBeforeBedPanels = beforeBedPanels(state.sleep, nowMillis, searchEnd, timeZone)
+        val beforeBedPanels = envBeforeBedPanels.filter { it.startEpochMillis < horizon }
         // The task-tree timeline: while `now` sits between two dated trees the scheduler follows the two
         // trees' BLENDED priorities over the UNION of their leaves, not the live tree's own — so the plan
         // transforms continuously from one arrangement into the next. With no dated tree these collapse to
@@ -4559,7 +4591,7 @@ object SchedulerDomain {
         // Bounded by THIS fill's [horizon], not by the fixed 168h default: a fill for a short horizon must
         // not project a week of breaks it will then carry in `panels`, and a DISPLAY fill for a far week
         // must project across it.
-        val standingPeriodPanels = kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels
+        val standingPeriodPanels = kept.filter { it.isRestrictivePeriod } + envSleepPanels + envBeforeBedPanels
         val dynamicBase =
             standingPeriodPanels.mapNotNull { panel ->
                 val kind = panel.restrictiveKind
@@ -4576,16 +4608,17 @@ object SchedulerDomain {
                 .map { PlanBlock(it.taskId, it.startEpochMillis, it.endEpochMillis) }
                 .filter { it.endMillis > it.startMillis }
                 .toList()
-        val sidePanels =
+        val envSidePanels =
             screenBreakPanels(
                 screenBreaks = state.screenBreaks,
                 nowMillis = nowMillis,
-                horizonMillis = horizon,
+                horizonMillis = searchEnd,
                 basePeriods = dynamicBase,
                 blocks = dynamicBlocks,
                 tasks = planTasks,
                 mode = tpMode,
             )
+        val sidePanels = envSidePanels.filter { it.startEpochMillis < horizon }
         // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**, and § *No idling*: **a period
         // the line is DRAGGING obstructs nothing** ([isDraggedScreenBreak]).
         //
@@ -4614,8 +4647,8 @@ object SchedulerDomain {
         // line and really happens. The filter is written as a mode-1 test rather than as "drop the dragged
         // ones" so it stays true if a later mode ever drags again.
         val obstructingSidePanels =
-            if (tpMode == DynamicPeriods.MODE_AT_SCREEN) sidePanels.filterNot { isDraggedScreenBreak(it) }
-            else sidePanels
+            if (tpMode == DynamicPeriods.MODE_AT_SCREEN) envSidePanels.filterNot { isDraggedScreenBreak(it) }
+            else envSidePanels
         // `side-dev/README.md` § *$t_p$ 3 modes*, **mode 2**: *"$now line$ must be covered by the period 'no
         // on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min period
         // and $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
@@ -4635,7 +4668,7 @@ object SchedulerDomain {
             DynamicPeriods.awayCover(
                 base = DynamicPeriods.Base(dynamicBase, dynamicBlocks, planTasks),
                 placed =
-                    sidePanels.mapNotNull { panel ->
+                    envSidePanels.mapNotNull { panel ->
                         val kind = panel.restrictiveKind
                         if (kind.isEmpty()) null
                         else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
@@ -4655,7 +4688,7 @@ object SchedulerDomain {
         // not on the score's schedulable clock, which is what makes a break or a night suspend a run rather than
         // cut it (PRD §15/§17) without a rule of its own.
         val periodPanels =
-            kept.filter { it.isRestrictivePeriod } + sleepPanels + beforeBedPanels + obstructingSidePanels
+            kept.filter { it.isRestrictivePeriod } + envSleepPanels + envBeforeBedPanels + obstructingSidePanels
         val restrictions =
             (
                 periodPanels.map { panel ->
@@ -4686,7 +4719,7 @@ object SchedulerDomain {
         val pinnedBlocks =
             kept.asSequence()
                 .filter { isSchedulerFixed(it) && !it.chore && !it.isRestrictivePeriod }
-                .filter { it.endEpochMillis > scoreFrom && it.startEpochMillis < horizon }
+                .filter { it.endEpochMillis > scoreFrom && it.startEpochMillis < searchEnd }
                 .map { PlanBlock(it.taskId, it.startEpochMillis, it.endEpochMillis) }
                 .filter { it.endMillis > it.startMillis }
                 .sortedBy { it.startMillis }
@@ -4713,9 +4746,27 @@ object SchedulerDomain {
 
         // --- the rule state at the line, `R(now)` — exact inside a task-tree transition (the minimum in millis,
         // not rounded to a minute), and held for the whole continuation.
-        val ruleState =
-            if (taskTreeBlendAt(state, nowMillis)?.isSingle == false) RuleStateTimeline(state).planTasksAt(nowMillis)
-            else planTasks
+        val inTransition = taskTreeBlendAt(state, nowMillis)?.isSingle == false
+        // The rule state MOVES over this fill when the transitions (first keyframe to last) overlap what it searches —
+        // at a transition's very first instant the blend still reads as a single tree, and from the next millisecond
+        // it does not.
+        val dated = if (inTransition) emptyList() else datedTaskTrees(state)
+        val moving = inTransition ||
+            (dated.size >= 2 && (dated.first().dateMillis ?: Long.MAX_VALUE) < searchEnd && (dated.last().dateMillis ?: Long.MIN_VALUE) > nowMillis)
+        val timeline = if (moving) RuleStateTimeline(state) else null
+        val ruleState = if (inTransition) timeline!!.planTasksAt(nowMillis) else planTasks
+
+        // `docs/scheduler_score.md` § *Degradation*: the plan this re-plan replaces competes with the search, re-scored
+        // under the rules in force now — so a re-plan never returns a continuation worse than the one on screen. An
+        // extension keeps its head and has nothing of its own to compete with.
+        val previousPlan =
+            if (keepExistingUntilMillis != null || adoptedPlacements != null) emptyList()
+            else state.panels.asSequence()
+                .filter { it.auto && !it.pinned && !it.chore && it.taskId != null && !it.isRestrictivePeriod && it.endEpochMillis > nowMillis }
+                .sortedBy { it.startEpochMillis }
+                .map { org.example.project.scheduler.model.RulePlacement(it.taskId!!, it.startEpochMillis, it.endEpochMillis, it.alternativeTaskId, it.alternativeSpans) }
+                .toList()
+        val seeds = (listOf(previousPlan) + extraSeeds).filter { it.isNotEmpty() }
 
         val filled =
             ScheduleFill.run(
@@ -4733,9 +4784,14 @@ object SchedulerDomain {
                     adopted = adoptedPlacements,
                     // The limit on how far the rules are searched is the materialization ceiling: past it they repeat.
                     repeatBeyondMillis = nowMillis + SCHEDULE_HORIZON_MILLIS,
+                    searchUntilMillis = searchEnd,
+                    seeds = seeds,
+                    budget = searchBudget,
+                    ruleStateAt = timeline?.let { t -> { x: Long -> t.planTasksAt(x) } },
                 ),
             )
         cycleSink?.invoke(filled.cycle)
+        searchSink?.invoke(filled.report, filled.cost)
         val placements = filled.placements
 
         var idCounter = 0

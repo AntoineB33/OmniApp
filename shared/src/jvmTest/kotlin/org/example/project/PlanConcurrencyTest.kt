@@ -92,7 +92,7 @@ class PlanConcurrencyTest {
     /**
      * The other half of the same guard: the re-plan is not LOST either. Losing the race must cost a
      * re-derivation, not the intent — a dropped `RefreshSchedule` leaves the calendar showing a plan that
-     * no longer matches the tree, and nothing re-fires until the hourly staleness bound.
+     * no longer matches the tree, and nothing re-fires until the next rule change.
      */
     @Test
     fun the_re_plan_is_re_derived_rather_than_dropped_when_it_loses_the_race() {
@@ -107,10 +107,12 @@ class PlanConcurrencyTest {
         planner.join()
 
         // The committed plan is the one the reducer computes from the state that WON the race — i.e. the
-        // plan was re-derived against the edit, not against the snapshot it started from.
+        // plan was re-derived against the edit, not against the snapshot it started from. That state held no
+        // plan yet: a state holding one hands it to the fill as a seed that competes on the score
+        // (`docs/scheduler_score.md` § *Degradation*), so the plan is recomputed from the panels the race saw.
         val expected =
             SchedulerDomain.fillSchedule(
-                vm.state.value,
+                vm.state.value.copy(panels = emptyList(), scheduleCycle = null),
                 now,
                 horizonMillis = SchedulerReducer.scheduleHorizonEndMillis(now),
             )

@@ -30,8 +30,10 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   continuation goes down; a search that judged each decision over its own window was tried and made `J` worse
   (2026-09-16). It never touches a pre-placed run, never puts a task where it may not run, and never changes a
   first run that §7 or §13 decided.
-- **Every budget is counted in steps, never in wall time**, so every device reaches the same rules from the same
-  inputs.
+- **Nothing requires two devices to reach the same rules** (user rule, 2026-09-17). The step-bounded passes
+  (rollout, seeds, improver) always run; what a fill is given WALL TIME for is reaching the best score (§ *The best
+  score* below). Where two devices' plans differ, the score decides (§ *One device plans*). Do not reintroduce
+  "every device must land on the same answer" as a reason to refuse a solver or a wall-time budget.
 - **BOTH switch chords lay an EPSILON ENTRY at the now-line and re-plan around it**
   (`SchedulerReducer.placeSwitchEntry`, `SchedulerDomain.SWITCH_ENTRY_MILLIS` = 1 s). It is an ordinary
   user-authored panel — `auto = false`, existence pin, built through the same two helpers the calendar's own
@@ -66,7 +68,8 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   Schedules*: *"The returned set of rules must also give for every $now line$ the task that must be scheduled if
   the task scheduled by the scheduler can't be scheduled now."* The answer is the next-best first run of the
   decision asked where the run starts (`ScheduleOptimizer.Evaluation.alternativeTo`), and where it changes inside
-  the run, the instant it changes (bisection to a minute, `alternativeSpans`) — named on the FINAL runs, after the
+  the run, the instant it changes (bisection to a second, `alternativeSpans`; the probes look one run deep — probes
+  as deep as the decision nearly doubled a week's fill, 103 → 182 ms in `PerfBenchmarkTest`) — named on the FINAL runs, after the
   improver. Three more things it is: **null where there is nobody** — a stretch only one task was allowed in, "the
   same task again" being no answer at all; **derived, never persisted and never synced**, recomputed in full by
   every fill exactly as the panel is; and read at an instant, never per panel.
@@ -250,27 +253,48 @@ model exists to prevent.
 
 ### The best score, and what "as close as possible" means
 
-→ `docs/scheduler_score.md` § *Degradation*.
+→ `docs/scheduler_score.md` § *Degradation*, ADR 0001 § 12.
 
-- **Three passes over one score** (`ScheduleOptimizer.plan`): the rollout policy builds the continuation one
-  decision at a time; `ScheduleImprover` lowers `J` of the whole continuation within `DEFAULT_IMPROVE_BUDGET`
-  scored moves; the alternatives are named on the result. The improver can only move the plan closer to the best
-  score (`ScheduleImproverTest.the_improvement_never_worsens_the_score_and_keeps_every_constraint`).
-- **`ScheduleOptimizer.certify` is a checker, not a producer.** It enumerates every sequence of candidate runs and
-  certifies the best on small instances (`ScheduleScoreTest`); it does not finish within any budget on a real
-  account, so it never produces the rules.
+- **The passes over one score** (`ScheduleOptimizer.plan`): the rollout policy builds the continuation one decision
+  at a time; the **seeds** compete (the plan being replaced, another device's plan — each cut to its legal prefix,
+  completed, re-scored); `ScheduleImprover` lowers `J` of the whole continuation within `DEFAULT_IMPROVE_BUDGET`
+  scored moves; then, **only while the fill's `SearchBudget` lasts**, the exhaustive search and the platform solver;
+  the alternatives are named on the result. No pass can move the plan away from the best score
+  (`ScheduleImproverTest.the_improvement_never_worsens_the_score_and_keeps_every_constraint`,
+  `ScheduleScoreTest.a_seed_that_scores_better_than_the_search_is_what_the_plan_returns`).
+- **"If the best score is reachable in the time, it must be reached" is answered by `ScheduleOptimizer.certify`
+  given wall time.** It starts from the best continuation so far and, when it finishes, the plan is **certified**
+  (`Plan.certified`, `SearchReport`, shown on the History window's scheduler row as `SchedulerRunEntry.search`). On a
+  real account it usually does not finish; the result is then the best found, and says so (`exhausted`).
+- **The platform solver is resolved only for a fill given search time** (`ScheduleFill.run`): on the desktop that
+  loads OR-Tools' native library, about a second once, which a display fill on the UI thread must never pay.
+- **The platform solver runs only where the exhaustive search did not finish, and is never trusted.**
+  `ExternalScheduleSolver` (desktop: `MipScheduleSolver`, OR-Tools SCIP over windows of the continuation) returns a
+  continuation that `accepted` checks against every hard constraint and `score` re-scores over the whole
+  continuation; it is kept only when `J` goes down. Measured 2026-09-17 (ADR 0001 § 12): it improves on the
+  step-bounded passes only on small cases, where the exhaustive search finishes first anyway — keep it behind the
+  exhaustive search, never in front of it.
+- **The search never trusts a seed either.** A seed is a statement about OTHER rules or another environment: its
+  prefix that breaks a hard constraint is cut (`legalPrefix`), and a seed whose first free run breaks §7/§13 is
+  dropped whole.
 - **`Fraction` → `Double` millis**, with the tie tolerance of `docs/scheduler_score.md` § *Ties*.
 - **The two-scenario example of § *Rule state evolution* is a test**
   (`TaskTreeTimelineTest.the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap`): inside a
   transition the plan holds `R(x)` and is re-made at every run start the line reaches
   (`SchedulerDomain.taskTreeBlendDecisionKey`).
+- **A run the moving rule state turns against ends where it does** (`ScheduleFill.Input.ruleStateAt`,
+  `TaskTreeTimelineTest.a_run_the_moving_rule_state_turns_against_ends_where_it_does`). The first free run is probed at
+  evenly spaced positions of the line and bisected to a second: where the best first run under `R(x)`, with the run
+  so far as the frozen past, is another task, the run is cut and the next run starts there — a run start, so the
+  engine re-plans on reaching it. Re-planning at run starts alone left a whole run under the rule state of its
+  first instant.
 
 ### One device plans
 
 → ADR 0015.
 
 - **A re-plan goes through `ScheduleCoordinator`, never straight to `dispatchProgressivePlan`**
-  (`SchedulerEngine.replan`). Every re-plan trigger — the rule-change watcher, the staleness bound, the `t_p` mode,
+  (`SchedulerEngine.replan`). Every re-plan trigger — the rule-change watcher, the `t_p` mode,
   the task-tree boundary, the §7 switch turning on — funnels there. Extensions (the horizon rolling, the calendar
   scrolling) stay local: they are cheap, and with a cycle they are an unroll.
 - **"Who is present" is asked when a re-plan is due, and at no other time.** No presence timer, no poll: the probe,
@@ -284,6 +308,14 @@ model exists to prevent.
   to second (CPU load) must not enter it, or the leader flaps between elections.
 - **A device with no rules after `RULES_DEADLINE_MILLIS` plans for itself**, and so does every device while the
   channel is not joined. No device is ever left without a plan because of another device.
+- **The best score wins.** Plans made apart (offline, alone, past a deadline) need not agree. A device whose plan was
+  made ALONE (`notePlannedLocally`, or `publish` with nobody to send to) answers the first rules of the next
+  election with that plan (`PeerMessage.Counter`, once per election); the leader re-plans with it as a seed
+  (`replanWithSeeds` → `RefreshSchedule.seeds`), so the two compete on the score under the rules in force NOW —
+  after the merge, never each under its own pre-merge rules, whose scores are not comparable — and publishes the
+  result, which every device takes in. A device that only took rules in never counters, so it cannot bounce
+  (`ScheduleCoordinatorTest.a_plan_made_alone_competes_with_the_leaders_on_the_score_once`). The database merge is
+  unchanged by this: which schedule won says nothing about whose EDITS win (`sync-and-accounts.md`).
 - **Nobody else around, nothing sent** (`server-quota.md`). A device nobody is using plans for itself and tells no
   one. A device that has heard from no other device since its last unanswered probe leads alone: no probe, no
   announcement, no stages on the wire. A device announces itself (`RulesRequest`) when it becomes present AND
@@ -341,8 +373,21 @@ model exists to prevent.
   (60 tasks over 8 days: 5.4 s on the desktop, 2026-09-16).
 - **A newer request cancels the stages the older one has not reached**, and the horizon watchers stand aside while
   a progressive fill is in flight (its own stages are not a gap).
-- The reducer's in-line re-plans (`ForceTaskSwitch`, `ForceTaskStart`, `SetSleepSchedule`, `RemoveRecordPeriod`)
-  still fill to the goal in one go: they answer a press synchronously.
+- **A stage spends the pace it is not using on reaching the best score** (`SchedulerEngine.stageSearchMillis`): the
+  requirement's pace is a stage within `PROGRESSIVE_PACE_MILLIS` (10 s) of the previous one, so a stage's search gets
+  that minus `PROGRESSIVE_PACE_MARGIN_MILLIS` minus this device's measured cost of the stage's own passes, capped at
+  `PROGRESSIVE_STAGE_SEARCH_MILLIS`. A stage whose search ran out without certifying (and without the solver finding
+  anything) stops the later, larger stages of the same fill from searching: they could not finish either. The
+  device's measured speed (`planHoursPerSecond`, which ranks it in elections) excludes the search time. Tests reduce
+  on a virtual clock, so `SchedulerEngine.planSearch` is off unless a host turns it on (both do).
+- **A stage searches one decision window past its horizon** (`ScheduleOptimizer.searchMarginMillis`,
+  `ScheduleFill.Input.searchUntilMillis`) with the environment built that far, and emits only up to the horizon
+  (`ProgressiveStageBoundaryTest`). The extension that keeps a stage's end as definitive keeps runs the stage's end
+  did not bend.
+- **The reducer's in-line re-plans are a first stage too** (`SchedulerReducer.reduceInlineReplan` for `ForceTaskSwitch`
+  / `ForceTaskStart`, the same cap for `SetSleepSchedule`, `RemoveRecordPeriod` and the no-screen strip):
+  `PROGRESSIVE_FIRST_STAGE_MILLIS` ahead with `INLINE_REPLAN_SEARCH_MILLIS` of search, and the horizon watcher extends
+  them in doubling stages. They answer a press synchronously, so they may not hold the thread for a whole fill.
 
 ### The rule state is the question; the set of rules is the answer
 
@@ -372,12 +417,13 @@ placed (`screenBreak`). Pre-placed blocks, user-drawn periods and sleep windows 
   `RefreshSchedule`.
 - **Anything new that wants to re-plan belongs in the signature** (or in `requestReschedule`), not in a fresh
   dispatch site.
-- **Time passing must never re-plan continuously.** The advance tick only banks records; horizon growth and
-  calendar navigation dispatch progressive `ExtendSchedule` stages (keep the head, append the tail).
-- Exactly two sanctioned exceptions, both bounded: the hourly **staleness bound**
-  (`SCHEDULE_STALENESS_MILLIS` = 1 h, a bound re-armed by `requestReschedule`, not a tick) and, inside a task-tree
-  transition only, a re-plan at every **run start the line reaches** (`taskTreeBlendDecisionKey`, ADR 0008) — one
-  fill per run the transition spans, nothing outside one.
+- **Time passing must never re-plan.** The advance tick only banks records; horizon growth and calendar navigation
+  dispatch progressive `ExtendSchedule` stages (keep the head, append the tail). A re-plan of rules that did not
+  change can only rewrite a schedule § *Progressive Calculation* has made definitive — which is why the hourly
+  "staleness bound" that did exactly that was removed (2026-09-17, `ScheduleStalenessRuleTest` now pins its absence).
+- Exactly one sanctioned exception, bounded: inside a task-tree transition only, a re-plan at every **run start the
+  line reaches** (`taskTreeBlendDecisionKey`, ADR 0008) — one fill per run the transition spans, nothing outside one.
+  That is the rules being parameterized by the line, not the plan going stale.
 - The signature excludes records deliberately, so `RemoveRecordPeriod` refills inside its own reducer.
 - **The engine's re-plans are dispatched ASYNCHRONOUSLY** (`SchedulerEngine.dispatchProgressivePlan` →
   `runPlan` → `planDispatcher`): the fill is 25-80 ms and the engine's scope is the main thread on both hosts. The rule

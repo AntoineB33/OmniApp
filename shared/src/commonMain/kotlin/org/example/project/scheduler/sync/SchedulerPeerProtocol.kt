@@ -153,6 +153,20 @@ sealed class PeerMessage {
         val cycle: PeerCycle? = null,
     ) : PeerMessage()
 
+    /**
+     * `docs/invariants/scheduler.md` § *One device plans*, **the best score wins**: a device that planned [signature]'s
+     * predecessor ALONE (offline, or with nobody else around) hands the leader of [election] the plan it holds, so the
+     * two plans compete on the score under the rules in force now. Sent at most once per election.
+     */
+    @Serializable
+    @SerialName("counter")
+    data class Counter(
+        override val from: String,
+        val election: String,
+        val signature: Int,
+        val placements: List<PeerPlacement>,
+    ) : PeerMessage()
+
     /** A device that has just become present asks the last leader for the rules in force for [signature]. */
     @Serializable
     @SerialName("rules_request")

@@ -63,6 +63,29 @@ class SchedulerRunLogTest {
     }
 
     @Test
+    fun a_re_plan_given_the_time_reaches_and_reports_the_certified_best() {
+        // `docs/scheduler_requirements.md` § *Strict requirements*: "if the best possible score is reachable within
+        // the required time and acceptable computer power, it must be reached" — on a case this small the
+        // exhaustive search finishes inside the time a stage is given, and the run says the result is the best.
+        collect()
+        var s = SchedulerState.empty()
+        val cells = s.lists[s.rootListId]!!.cellIds
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cells[0], "Deep work"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[1], "Email"))
+        runs.clear()
+
+        SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(0L, horizonCapMillis = 30 * 60_000L, searchMillis = 20_000))
+
+        val run = runs.single()
+        assertTrue(run.search?.certified == true, "the search finished and certified the plan: ${run.search}")
+        assertTrue(run.score != null)
+        // Without the time, nothing past the step-bounded passes runs, and nothing is claimed.
+        runs.clear()
+        SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(0L, horizonCapMillis = 30 * 60_000L))
+        assertEquals(false, runs.single().search?.certified)
+    }
+
+    @Test
     fun a_horizon_extension_is_reported_as_the_other_event() {
         // PRD §9: growing the horizon is NOT a change to the scheduling rules, and the row has to say so —
         // otherwise a user reading the log cannot tell a re-plan from a materialization of the same plan.

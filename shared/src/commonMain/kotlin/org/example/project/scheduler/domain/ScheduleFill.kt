@@ -1,5 +1,6 @@
 package org.example.project.scheduler.domain
 
+import kotlin.math.abs
 import org.example.project.scheduler.model.AlternativeSpan
 import org.example.project.scheduler.model.CycleRun
 import org.example.project.scheduler.model.RulePlacement
@@ -22,8 +23,14 @@ import org.example.project.scheduler.model.TaskId
  * ### The rule state
  * The rules at a position `x` of the line are computed with `R(x)`, held for the whole continuation — the reading
  * under which the requirements' two-scenario example holds. Inside a transition the engine re-plans at every
- * decision boundary the line reaches ([SchedulerDomain.taskTreeBlendDecisionKey]), so every decision the frozen
- * past records was taken with the rule state at its own instant.
+ * decision boundary the line reaches ([SchedulerDomain.taskTreeBlendDecisionKey]), and the fill ends the first run
+ * where `R` has moved far enough for the best first run to change ([Input.ruleStateAt]) — so every decision the
+ * frozen past records was taken with the rule state at its own instant, a switch inside a run included.
+ *
+ * ### The search looks past what it materializes
+ * [Input.searchUntilMillis] reaches past [Input.horizonMillis]: the runs are searched that far and emitted only up
+ * to the horizon, so a progressive stage's last runs are not bent by where the stage stopped — and the next
+ * extension keeps them as definitive.
  */
 internal object ScheduleFill {
 
@@ -63,7 +70,32 @@ internal object ScheduleFill {
          * the horizon, and [cycle] is returned as the repeating part.
          */
         val adopted: List<RulePlacement>? = null,
+        /**
+         * How far the search looks (at least [horizonMillis]); nothing past [horizonMillis] is emitted. [periods] and
+         * [blocks] must describe the environment up to it.
+         */
+        val searchUntilMillis: Long? = null,
+        /**
+         * Continuations to compete with the search (`docs/scheduler_score.md` § *Degradation*): the plan this fill
+         * replaces, another device's plan for the same rules. Each is re-scored under THIS rule state and
+         * environment and kept only if it scores better.
+         */
+        val seeds: List<List<RulePlacement>> = emptyList(),
+        /** Wall time the search may spend past its step-bounded passes (the exhaustive search, the platform solver). */
+        val budget: SearchBudget = SearchBudget.NONE,
+        /**
+         * `docs/scheduler_requirements.md` § *Rule State Evolution*: `R(x)` at another position of the line, when the
+         * rule state is moving (a task-tree transition). Null outside one. When given, the first free run is ended at
+         * the first instant (to [RULE_SWITCH_RESOLUTION_MILLIS]) where the best first run under `R` there is another.
+         */
+        val ruleStateAt: ((Long) -> List<PlanTask>)? = null,
     )
+
+    /** How finely the instant a moving rule state changes the first run is located. */
+    const val RULE_SWITCH_RESOLUTION_MILLIS: Long = 1_000
+
+    /** How many evenly spaced positions of the line a first run is probed at before the bisection. */
+    private const val RULE_SWITCH_PROBES: Int = 32
 
     /** How far a peer's first run may start after the line and still be taken as starting on it (clock skew). */
     const val ADOPT_SKEW_MILLIS: Long = 60_000
@@ -109,13 +141,22 @@ internal object ScheduleFill {
         val alternativeSpans: List<AlternativeSpan>,
     )
 
-    /** What a fill returns: the placements, and the repeating part of the rules when they repeat. */
-    class Result(val placements: List<Placement>, val cycle: ScheduleCycle?)
+    /**
+     * What a fill returns: the placements, the repeating part of the rules when they repeat, what the extra passes
+     * did ([report]) and the score of the continuation that was searched ([cost], null when nothing was searched).
+     */
+    class Result(
+        val placements: List<Placement>,
+        val cycle: ScheduleCycle?,
+        val report: SearchReport = SearchReport(),
+        val cost: Double? = null,
+    )
 
     fun run(input: Input): Result {
         val from = input.startMillis - input.lookbackMillis
-        val to = input.horizonMillis
-        if (to <= input.startMillis) return Result(emptyList(), input.cycle)
+        val emitEnd = input.horizonMillis
+        val to = maxOf(emitEnd, input.searchUntilMillis ?: emitEnd)
+        if (emitEnd <= input.startMillis) return Result(emptyList(), input.cycle)
         val raw = ArrayList<Triple<TaskId, Pair<Long, Long>, TaskId?>>()
         val tasks = input.ruleState
         if (tasks.isEmpty()) return Result(emptyList(), null)
@@ -124,7 +165,7 @@ internal object ScheduleFill {
         // `docs/invariants/scheduler.md` § *One device plans*: another device of the account searched; lay its runs.
         input.adopted?.let { adopted ->
             val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to)
-            layAdopted(model, adopted, input.startMillis, to, raw)
+            layAdopted(model, adopted, input.startMillis, emitEnd, raw)
             return Result(group(raw), input.cycle)
         }
 
@@ -135,9 +176,9 @@ internal object ScheduleFill {
         ) {
             val modelFrom = minOf(from, cycle.anchorMillis)
             val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, modelFrom, to), modelFrom, to)
-            val unrolled = unroll(model, cycle, model.uAt(input.startMillis))
+            val unrolled = unroll(model, cycle, model.uAt(input.startMillis), model.uAt(emitEnd))
             if (unrolled != null) {
-                emit(model, unrolled.first, raw)
+                emit(model, unrolled.first, raw, model.uAt(emitEnd))
                 return Result(group(raw), unrolled.second)
             }
         }
@@ -149,16 +190,139 @@ internal object ScheduleFill {
         // Past the limit the rules may not grow: the search stops there, and what lies beyond is the repetition —
         // exact when the runs repeat, the closest approximate one when they do not.
         val limit = input.repeatBeyondMillis
-        val approximate = limit != null && to >= limit
+        val approximate = limit != null && emitEnd >= limit
         val searchUntil = if (approximate) model.uAt(limit!!) else model.uEnd
-        val plan = ScheduleOptimizer(model).plan(cursor, searchUntil, forcedFirst = forcedFirst, refusedFirst = refusedFirst)
-        var settled = settle(model, plan.runs, ruleStateHash, approximate)
+        val emitU = model.uAt(emitEnd)
+        val seeds = input.seeds.map { seedRuns(model, it, input.startMillis) }.filter { it.isNotEmpty() }
+        // The platform solver is resolved only for a fill given search time: on the desktop, resolving it loads
+        // OR-Tools' native library (~1 s once), which a display fill on the UI thread must never pay.
+        val optimizer = ScheduleOptimizer(model, solver = if (input.budget.expired()) null else platformScheduleSolver())
+        var plan = optimizer.plan(cursor, searchUntil, forcedFirst, refusedFirst, seeds = seeds, budget = input.budget)
+        var settled = settle(model, plan.runs, ruleStateHash, approximate, emitU)
         if (settled.second == null && searchUntil < model.uEnd - ScoreModel.EPS) {
             // Nothing repeats here (the environment ahead is not uniform): the search has to reach the horizon itself.
-            settled = ScheduleOptimizer(model).plan(cursor, model.uEnd, forcedFirst = forcedFirst, refusedFirst = refusedFirst).runs to null
+            plan = optimizer.plan(cursor, model.uEnd, forcedFirst, refusedFirst, seeds = seeds + listOf(plan.runs), budget = input.budget)
+            settled = plan.runs to null
         }
-        emit(model, settled.first, raw)
-        return Result(group(raw), settled.second)
+        val moving = input.ruleStateAt
+        if (moving != null && forcedFirst < 0 && refusedFirst < 0) {
+            val switch = ruleStateSwitch(input, model, settled.first, emitEnd, moving)
+            if (switch != null) {
+                val (cut, head) = switch
+                emit(model, head, raw, emitU)
+                val ended = head.last { model.fixedAt(it.fromU) < 0 }.task
+                val headHistory = head.flatMap { r ->
+                    model.wallIntervals(r.fromU, r.toU).map { PlanBlock(model.taskId(r.task), it.startMillis, it.endMillis) }
+                }
+                // From the cut on, the rules are the ones in force THERE: a fill from the cut under R(cut), with the run
+                // just ended as the frozen past and refused as the first run — which is what the switch found.
+                val tail = run(
+                    Input(
+                        startMillis = cut,
+                        horizonMillis = input.horizonMillis,
+                        lookbackMillis = input.lookbackMillis + (cut - input.startMillis),
+                        ruleState = moving(cut),
+                        periods = input.periods,
+                        blocks = input.blocks,
+                        history = input.history + headHistory,
+                        refusedFirst = model.taskId(ended),
+                        repeatBeyondMillis = input.repeatBeyondMillis,
+                        searchUntilMillis = input.searchUntilMillis,
+                        seeds = input.seeds,
+                        budget = input.budget,
+                    ),
+                )
+                return Result(group(raw) + tail.placements, null, plan.report, plan.cost)
+            }
+        }
+        emit(model, settled.first, raw, emitU)
+        return Result(group(raw), settled.second, plan.report, plan.cost)
+    }
+
+    /** A seed's placements as runs on [model]'s clock from [startMillis]; tasks the model does not know are dropped. */
+    private fun seedRuns(model: ScoreModel, placements: List<RulePlacement>, startMillis: Long): List<ScheduleOptimizer.Run> =
+        placements.asSequence()
+            .filter { it.endMillis > startMillis }
+            .mapNotNull { p ->
+                val task = model.indexOf[p.taskId] ?: return@mapNotNull null
+                val a = model.uAt(maxOf(p.startMillis, startMillis))
+                val b = model.uAt(p.endMillis)
+                if (b <= a + ScoreModel.EPS) null else ScheduleOptimizer.Run(task, a, b, -1)
+            }
+            .sortedBy { it.fromU }
+            .toList()
+
+    /**
+     * `docs/scheduler_requirements.md` § *Rule State Evolution*: *"When $now line$ is between two rule states, the
+     * rule state being applied is the one found at this moment in the transition."* The runs were searched under
+     * `R(start)`; as the line moves through the FIRST free run, `R` moves with it, and where the best first run under
+     * `R(x)` — the run so far being the frozen past — is no longer this task, the rules switch there.
+     *
+     * The earliest such `x` (probed at [RULE_SWITCH_PROBES] positions of the emitted run, then bisected to
+     * [RULE_SWITCH_RESOLUTION_MILLIS]) and the runs up to it, or null when the run is never turned against. What follows
+     * the cut is planned under `R(cut)` by the caller; the engine re-plans again when the line reaches it, a run start
+     * like any other ([SchedulerDomain.taskTreeBlendDecisionKey]).
+     */
+    private fun ruleStateSwitch(
+        input: Input,
+        model: ScoreModel,
+        runs: List<ScheduleOptimizer.Run>,
+        emitEnd: Long,
+        ruleStateAt: (Long) -> List<PlanTask>,
+    ): Pair<Long, List<ScheduleOptimizer.Run>>? {
+        val firstIndex = runs.indexOfFirst { model.fixedAt(it.fromU) < 0 }
+        if (firstIndex < 0) return null
+        // The whole task run (consecutive pieces of one task), bounded by what is emitted.
+        var lastIndex = firstIndex
+        while (lastIndex + 1 < runs.size && runs[lastIndex + 1].task == runs[firstIndex].task &&
+            abs(runs[lastIndex + 1].fromU - runs[lastIndex].toU) <= ScoreModel.EPS && model.fixedAt(runs[lastIndex + 1].fromU) < 0
+        ) lastIndex++
+        val first = runs[firstIndex]
+        val taskId = model.taskId(first.task)
+        val runStart = model.wallStartAt(first.fromU)
+        val runEnd = minOf(model.wallEndAt(runs[lastIndex].toU), emitEnd)
+        if (runEnd - runStart <= RULE_SWITCH_RESOLUTION_MILLIS) return null
+        val prefixHistory = runs.subList(0, firstIndex).flatMap { r ->
+            model.wallIntervals(r.fromU, r.toU).map { PlanBlock(model.taskId(r.task), it.startMillis, it.endMillis) }
+        }
+
+        // Does the best first run at wall instant [x], under R(x), leave [taskId]?
+        fun switchesAt(x: Long): Boolean {
+            val tasks = ruleStateAt(x)
+            val idx = tasks.indexOfFirst { it.id == taskId }
+            if (idx < 0) return true
+            val probe = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, model.fromMillis, model.toMillis), model.fromMillis, model.toMillis)
+            val at = replay(probe, input.history + prefixHistory + PlanBlock(taskId, runStart, x), x)
+            if (!probe.permitted(idx, at.u)) return true
+            val eval = ScheduleOptimizer(probe).evaluate(at, probe.uEnd) ?: return false
+            if (eval.fixed >= 0) return false
+            val k = eval.choose()
+            return k >= 0 && eval.candidates[k] != idx
+        }
+
+        val step = maxOf(RULE_SWITCH_RESOLUTION_MILLIS, (runEnd - runStart) / RULE_SWITCH_PROBES)
+        var lo = runStart
+        var hi: Long? = null
+        var x = runStart + step
+        while (x < runEnd) {
+            if (switchesAt(x)) {
+                hi = x
+                break
+            }
+            lo = x
+            x += step
+        }
+        var cut = hi ?: return null
+        while (cut - lo > RULE_SWITCH_RESOLUTION_MILLIS) {
+            val mid = lo + (cut - lo) / 2
+            if (switchesAt(mid)) cut = mid else lo = mid
+        }
+        val cutU = model.uAt(cut)
+        if (cutU <= first.fromU + ScoreModel.EPS) return null
+        val head = runs.subList(0, lastIndex + 1).mapNotNull { r ->
+            if (r.fromU >= cutU - ScoreModel.EPS) null else r.copy(toU = minOf(r.toU, cutU))
+        }
+        return cut to head
     }
 
     // ----- `docs/scheduler_score.md` § *The rules repeat* ----------------------------------------------
@@ -221,6 +385,7 @@ internal object ScheduleFill {
         runs: List<ScheduleOptimizer.Run>,
         ruleStateHash: Int,
         approximate: Boolean,
+        emitU: Double,
     ): Pair<List<ScheduleOptimizer.Run>, ScheduleCycle?> {
         val groups = taskRuns(runs)
         // The first run is the line's own decision (a forced start, a run in progress) and the last ones see the
@@ -236,11 +401,11 @@ internal object ScheduleFill {
                     kotlin.math.abs(a.fromU - groups[i - 1].toU) <= ScoreModel.EPS
             }
             val end = (last downTo maxOf(1 + CYCLE_COPIES * p, last - p - HORIZON_SLACK_RUNS)).firstOrNull { repeatsUntil(it) } ?: continue
-            return repeatCopy(model, runs, groups, end - CYCLE_COPIES * p, end - p, end, ruleStateHash, exact = true) ?: (runs to null)
+            return repeatCopy(model, runs, groups, end - CYCLE_COPIES * p, end - p, end, ruleStateHash, exact = true, emitU) ?: (runs to null)
         }
         if (!approximate) return runs to null
         val window = approximateCopy(model, groups, last - HORIZON_SLACK_RUNS) ?: return runs to null
-        return repeatCopy(model, runs, groups, window.first, window.first, window.last + 1, ruleStateHash, exact = false) ?: (runs to null)
+        return repeatCopy(model, runs, groups, window.first, window.first, window.last + 1, ruleStateHash, exact = false, emitU) ?: (runs to null)
     }
 
     /**
@@ -257,14 +422,20 @@ internal object ScheduleFill {
         end: Int,
         ruleStateHash: Int,
         exact: Boolean,
+        emitU: Double,
     ): Pair<List<ScheduleOptimizer.Run>, ScheduleCycle>? {
         val piece = uniformPieceToEnd(model, groups[uniformFrom].fromU)
         if (piece < 0 || model.pieceUStart[piece] > groups[uniformFrom].fromU + ScoreModel.EPS) return null
         val copy = runs.subList(groups[copyFrom].from, groups[end - 1].to)
         if (copy.any { it.task < 0 || !model.permitted(it.task, model.pieceUStart[piece]) }) return null
+        // The anchor must be a repetition that starts before what is emitted ends, so the next extension (which
+        // starts there) can unroll it; the search's margin past the horizon may have found the copy beyond it.
+        val copyLength = copy.last().toU - copy[0].fromU
+        var anchorU = copy[0].fromU
+        while (anchorU > emitU + ScoreModel.EPS && anchorU - copyLength >= model.pieceUStart[piece] - ScoreModel.EPS) anchorU -= copyLength
         val cycle =
             ScheduleCycle(
-                anchorMillis = model.wallStartAt(copy[0].fromU),
+                anchorMillis = model.wallStartAt(anchorU),
                 runs = copy.map { r ->
                     CycleRun(model.taskId(r.task), r.toU - r.fromU, if (r.alternative >= 0) model.taskId(r.alternative) else null)
                 },
@@ -319,7 +490,7 @@ internal object ScheduleFill {
      * starting inside them — or null when it no longer holds here: its tasks are gone, its anchor is outside the
      * model, or the environment from the anchor on is not the uniform one it repeated over.
      */
-    fun unroll(model: ScoreModel, cycle: ScheduleCycle, fromU: Double): Pair<List<ScheduleOptimizer.Run>, ScheduleCycle>? {
+    fun unroll(model: ScoreModel, cycle: ScheduleCycle, fromU: Double, emitU: Double = model.uEnd): Pair<List<ScheduleOptimizer.Run>, ScheduleCycle>? {
         if (cycle.runs.isEmpty() || cycle.lengthMillis <= ScoreModel.EPS) return null
         if (cycle.anchorMillis < model.fromMillis || cycle.anchorMillis >= model.toMillis) return null
         val tasks = cycle.runs.map { model.indexOf[it.taskId] ?: return null }
@@ -329,12 +500,13 @@ internal object ScheduleFill {
         if (piece < 0 || model.pieceMult[piece].contentHashCode() != cycle.environmentHash) return null
         if (tasks.any { !model.permitted(it, anchorU) }) return null
         val runs = unrollRuns(model, cycle, tasks, alternatives, anchorU, fromU)
-        // Rebase onto the last whole repetition that starts before the model's end, so the next unroll walks no
-        // further than one extension.
+        // Rebase onto the last whole repetition that starts before what is emitted ends, so the next unroll (an
+        // extension starting there) walks no further than one extension.
         val length = cycle.lengthMillis
-        val reps = kotlin.math.floor((model.uEnd - anchorU) / length).toLong().coerceAtLeast(0L)
+        val end = minOf(emitU, model.uEnd)
+        val reps = kotlin.math.floor((end - anchorU) / length).toLong().coerceAtLeast(0L)
         val lastStart = anchorU + reps * length
-        val rebased = if (lastStart < model.uEnd - ScoreModel.EPS && reps > 0) cycle.copy(anchorMillis = model.wallStartAt(lastStart)) else cycle
+        val rebased = if (lastStart < end - ScoreModel.EPS && reps > 0) cycle.copy(anchorMillis = model.wallStartAt(lastStart)) else cycle
         return runs to rebased
     }
 
@@ -364,12 +536,18 @@ internal object ScheduleFill {
         return out
     }
 
-    /** The placements of [runs]: their wall stretches outside pre-placed tasks, each with its alternative. */
-    private fun emit(model: ScoreModel, runs: List<ScheduleOptimizer.Run>, out: MutableList<Triple<TaskId, Pair<Long, Long>, TaskId?>>) {
+    /** The placements of [runs] up to [untilU]: their wall stretches outside pre-placed tasks, each with its alternative. */
+    private fun emit(
+        model: ScoreModel,
+        runs: List<ScheduleOptimizer.Run>,
+        out: MutableList<Triple<TaskId, Pair<Long, Long>, TaskId?>>,
+        untilU: Double = model.uEnd,
+    ) {
         for (r in runs) {
+            if (r.fromU >= untilU - ScoreModel.EPS) break
             val id = model.taskId(r.task)
             val alt = if (r.alternative >= 0) model.taskId(r.alternative) else null
-            for (w in model.wallIntervals(r.fromU, r.toU)) {
+            for (w in model.wallIntervals(r.fromU, minOf(r.toU, untilU))) {
                 if (w.fixed) continue
                 out += Triple(id, w.startMillis to w.endMillis, alt)
             }

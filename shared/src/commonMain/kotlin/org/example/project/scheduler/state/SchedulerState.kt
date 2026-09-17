@@ -334,6 +334,13 @@ data class SchedulerRunEntry(
     val nowMillis: Long = timeMillis,
     /** The now-line mode the rules are parameterized by (see `DynamicPeriods.MODE_*`). */
     val tpMode: Int = DynamicPeriods.MODE_AT_SCREEN,
+    /**
+     * `docs/scheduler_score.md` § *Degradation*: what the search past its step-bounded passes did — above all
+     * whether the continuation is CERTIFIED the best over the candidate lengths. Null when nothing was searched.
+     */
+    val search: org.example.project.scheduler.domain.SearchReport? = null,
+    /** The score of the searched continuation (`docs/scheduler_score.md`), null when nothing was searched. */
+    val score: Double? = null,
 ) {
     /** Which of PRD §9's two plan events produced this row. */
     enum class Kind(val label: String) {

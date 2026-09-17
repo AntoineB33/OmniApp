@@ -405,6 +405,18 @@ class ScoreModel(
         return if (p < pieceCount) pieceUStart[p] else uEnd
     }
 
+    /** Where the first pre-placed piece strictly after the piece holding [u] starts, or [uEnd]. */
+    fun nextFixedStart(u: Double): Double {
+        var p = pieceAt(u)
+        if (p < 0) return uEnd
+        p++
+        while (p < pieceCount) {
+            if (pieceFixed[p] >= 0) return pieceUStart[p]
+            p++
+        }
+        return uEnd
+    }
+
     /** The next instant after [u] at which the environment changes, or [uEnd]. */
     fun nextEdge(u: Double): Double {
         val p = pieceAt(u)

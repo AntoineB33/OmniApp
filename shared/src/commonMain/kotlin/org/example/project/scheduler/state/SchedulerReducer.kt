@@ -8,6 +8,9 @@ import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
+import org.example.project.scheduler.domain.SearchBudget
+import org.example.project.scheduler.domain.SearchReport
+import org.example.project.scheduler.model.RulePlacement
 import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
@@ -93,6 +96,13 @@ object SchedulerReducer {
      * sink asks for them.
      */
     var recordSchedulerRun: (SchedulerRunEntry) -> Unit = {}
+
+    /**
+     * `docs/invariants/scheduler.md` § *Progressive Calculation*: what the search of the last plan reduction did
+     * ([SearchReport]) and the score it reached — read by the engine to stop granting search time a stage cannot use,
+     * and to publish the score beside the rules (§ *One device plans*). An output seam, like [recordSchedulerRun].
+     */
+    var planSearchSink: (SearchReport, Double?) -> Unit = { _, _ -> }
 
     /**
      * The device's live ongoing/held pause ([SchedulerDomain.liveRestGap]), folded into screen-break
@@ -384,8 +394,10 @@ object SchedulerReducer {
             is SchedulerIntent.SetScreenBreaks ->
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
-            is SchedulerIntent.RefreshSchedule -> reduceRefreshSchedule(state, intent.nowMillis, intent.horizonCapMillis)
-            is SchedulerIntent.ExtendSchedule -> reduceExtendSchedule(state, intent.nowMillis, intent.horizonCapMillis)
+            is SchedulerIntent.RefreshSchedule ->
+                reduceRefreshSchedule(state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.seeds)
+            is SchedulerIntent.ExtendSchedule ->
+                reduceExtendSchedule(state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis)
             is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
@@ -2157,13 +2169,21 @@ object SchedulerReducer {
      * walk only the user changes and the schedule re-derives from whatever state they land on. A no-op
      * tick returns the same instance.
      */
-    private fun reduceRefreshSchedule(state: SchedulerState, nowMillis: Long, horizonCapMillis: Long? = null): SchedulerState {
+    private fun reduceRefreshSchedule(
+        state: SchedulerState,
+        nowMillis: Long,
+        horizonCapMillis: Long? = null,
+        searchMillis: Long = 0,
+        seeds: List<List<RulePlacement>> = emptyList(),
+    ): SchedulerState {
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val horizon = cappedHorizon(nowMillis, horizonCapMillis)
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
         var cycle: ScheduleCycle? = null
+        var search: SearchReport? = null
+        var score: Double? = null
         val filled =
             SchedulerDomain.fillSchedule(
                 advanced,
@@ -2174,13 +2194,34 @@ object SchedulerReducer {
                 horizonMillis = horizon,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
+                searchBudget = SearchBudget.of(searchMillis),
+                extraSeeds = seeds,
+                searchSink = { report, cost ->
+                    search = report
+                    score = cost
+                },
             )
         val result =
             if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
             else advanced.copy(panels = filled, scheduleCycle = cycle)
-        recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules)
+        recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
+
+    /**
+     * `docs/invariants/scheduler.md` § *Progressive Calculation*: a re-plan made INSIDE a reducer, to answer a press,
+     * is the first stage of a progressive fill like any other — [SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS]
+     * ahead, with a short search — and the engine's horizon watcher extends it from there in doubling stages. Filling
+     * to $t_{goal}$ in one go here held the UI thread for the whole fill and published nothing definitive until it
+     * was done.
+     */
+    private fun reduceInlineReplan(state: SchedulerState, nowMillis: Long): SchedulerState =
+        reduceRefreshSchedule(
+            state,
+            nowMillis,
+            horizonCapMillis = nowMillis + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS,
+            searchMillis = SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS,
+        )
 
     /**
      * `docs/invariants/scheduler.md` § *One device plans*: a re-plan whose runs come from the account's elected
@@ -2236,7 +2277,10 @@ object SchedulerReducer {
         horizonMillis: Long,
         result: SchedulerState,
         rules: SchedulerRunRules,
+        search: SearchReport? = null,
+        score: Double? = null,
     ) {
+        if (search != null) planSearchSink(search, score)
         recordSchedulerRun(
             SchedulerRunEntry(
                 timeMillis = clock.nowMillis(),
@@ -2247,6 +2291,8 @@ object SchedulerReducer {
                 rules = rules.rules,
                 nowMillis = nowMillis,
                 tpMode = mode,
+                search = search,
+                score = score,
             ),
         )
     }
@@ -2273,15 +2319,15 @@ object SchedulerReducer {
         // just loaded carry no derived rules yet — the same answer is arrived at the slow way, by re-planning
         // with the refusal standing and reading what the fill put at the line.
         val named = SchedulerDomain.alternativeTaskAt(state.panels, nowMillis)
-        val replanned = if (named == null) reduceRefreshSchedule(refused, nowMillis) else null
+        val replanned = if (named == null) reduceInlineReplan(refused, nowMillis) else null
         val replacement =
             (named ?: replanned?.let { SchedulerDomain.taskAtNowLine(it, nowMillis) })
                 ?.takeIf { it != taskId && SchedulerDomain.isPlaceableTask(state, it) }
         // Nobody to hand it to (the sole candidate in the period still runs — the walk's own escape): there
         // is no task the user has switched TO, so there is nothing to state and the press is the refusal
         // alone, exactly as before.
-        val replacementTask = replacement ?: return replanned ?: reduceRefreshSchedule(refused, nowMillis)
-        return reduceRefreshSchedule(startTaskNow(refused, replacementTask, nowMillis), nowMillis)
+        val replacementTask = replacement ?: return replanned ?: reduceInlineReplan(refused, nowMillis)
+        return reduceInlineReplan(startTaskNow(refused, replacementTask, nowMillis), nowMillis)
     }
 
     /**
@@ -2376,7 +2422,7 @@ object SchedulerReducer {
     private fun reduceForceTaskStart(state: SchedulerState, taskId: TaskId): SchedulerState {
         if (!SchedulerDomain.isPlaceableTask(state, taskId)) return state
         val now = clock.nowMillis()
-        return reduceRefreshSchedule(startTaskNow(state, taskId, now), now)
+        return reduceInlineReplan(startTaskNow(state, taskId, now), now)
     }
 
     /** $t_{goal}$, or a progressive stage's cap when that comes first (never before the now-line). */
@@ -2392,7 +2438,12 @@ object SchedulerReducer {
      * grew (time passing, or the calendar navigating to a further week) is not a change to the scheduling
      * rules and must not rewrite what the user is looking at. A no-op tick returns the same instance.
      */
-    private fun reduceExtendSchedule(state: SchedulerState, nowMillis: Long, horizonCapMillis: Long? = null): SchedulerState {
+    private fun reduceExtendSchedule(
+        state: SchedulerState,
+        nowMillis: Long,
+        horizonCapMillis: Long? = null,
+        searchMillis: Long = 0,
+    ): SchedulerState {
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val materializedUntil = SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis)
@@ -2400,6 +2451,8 @@ object SchedulerReducer {
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
         var cycle: ScheduleCycle? = null
+        var search: SearchReport? = null
+        var score: Double? = null
         val filled =
             SchedulerDomain.fillSchedule(
                 advanced,
@@ -2411,11 +2464,16 @@ object SchedulerReducer {
                 keepExistingUntilMillis = materializedUntil,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
+                searchBudget = SearchBudget.of(searchMillis),
+                searchSink = { report, cost ->
+                    search = report
+                    score = cost
+                },
             )
         val result =
             if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
             else advanced.copy(panels = filled, scheduleCycle = cycle)
-        recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules)
+        recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
 
@@ -2447,8 +2505,9 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 tpMode = tpMode(),
-                horizonMillis = scheduleHorizonEndMillis(now),
+                horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
+                searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
             )
         return committed.copy(panels = filled, scheduleCycle = cycle)
     }
@@ -2480,8 +2539,9 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 tpMode = tpMode(),
-                horizonMillis = scheduleHorizonEndMillis(now),
+                horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
+                searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
             )
         return updated.copy(panels = filled, scheduleCycle = cycle)
     }
@@ -2562,8 +2622,9 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 tpMode = tpMode(),
-                horizonMillis = scheduleHorizonEndMillis(now),
+                horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
+                searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
             )
         return stripped.copy(panels = filled, scheduleCycle = cycle)
     }

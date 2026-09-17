@@ -53,7 +53,8 @@ block every 20, a minimum-time change every 10. The account is the release accou
   own echo is a whole round of requests at every edit.
 - **The scheduler peers' channel is silent when nobody else is there** (`scheduler.md` § *One device plans*): a
   device nobody is using plans for itself without a word, and a device that has heard from no other one since its
-  last unanswered probe leads alone without probing.
+  last unanswered probe leads alone without probing. A device hands its plan to a leader (`PeerMessage.Counter`) at
+  most ONCE per election and only when that plan was made alone — never as a reply to every set of rules.
 - **An unchanged value is not re-sent**: the active-session push is skipped when this device's own rows are those it
   last pushed.
 - **No timer-driven request** (`CLAUDE.md`). The presence tick (`t_a`) is the pause cue's own, bounded, exception.

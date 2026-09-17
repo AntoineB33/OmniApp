@@ -11,6 +11,40 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Reaching the best score when it is reachable, and the best score wins between devices — 2026-09-17
+
+→ ADR 0001 § 12 (new), ADR 0015 § *The best score wins* (new), `docs/scheduler_score.md` § *Degradation* and § *The
+score*, `docs/invariants/scheduler.md` (§ *The best score*, § *One device plans*, § *Progressive Calculation*, § *When
+the plan is recomputed*), `server-quota.md`, `CLAUDE.md`. `shared`: `domain/ScheduleSearch.kt` (new: `SearchBudget`,
+`SearchReport`, `ExternalScheduleSolver`, `platformScheduleSolver`), `ScheduleOptimizer` (seeds, wall-time exhaustive
+search, solver pass, `legalPrefix`/`accepted`, alternatives to 1 s, `searchMarginMillis`), `ScoreModel.nextFixedStart`,
+`ScheduleFill` (`searchUntilMillis`, `seeds`, `budget`, `ruleStateAt` + `ruleStateSwitch`), `SchedulerDomain.fillSchedule`
+(`searchBudget`, `extraSeeds`, `searchSink`, environment past the horizon, the plan being replaced as a seed,
+`PROGRESSIVE_FIRST_STAGE_MILLIS`, `INLINE_REPLAN_SEARCH_MILLIS`), `SchedulerIntent.RefreshSchedule/ExtendSchedule`
+(`searchMillis`, `seeds`), `SchedulerRunEntry.search/score`, `SchedulerReducer` (`planSearchSink`, `reduceInlineReplan`,
+in-reducer fills capped to a first stage), `SchedulerEngine` (`planSearch`, `stageSearchMillis`, the staleness bound
+**removed**, counter wiring), `ScheduleCoordinator` (`ownPlan`, `replanWithSeeds`, `PeerMessage.Counter`); jvmMain
+`MipScheduleSolver.kt` + `ScheduleSolver.jvm.kt` (OR-Tools 9.15 SCIP, Windows native only); null actuals on Android,
+iOS, JS, Wasm; `App.kt` / `SchedulerHolder` pass `planSearch = true`. Build: `ortools-java` (natives excluded) +
+`ortools-win32-x86-64` in `shared` jvmMain. Tests: `MipScheduleSolverTest` (new, 5), `ProgressiveStageBoundaryTest`
+(new, 2), `ScheduleScoreTest` (+3), `SchedulerRunLogTest` (+1), `TaskTreeTimelineTest` (+1), `ScheduleCoordinatorTest`
+(+2), `SchedulerPeerProtocolTest` (the counter on the wire), `ScheduleStalenessRuleTest` (rewritten: time never
+re-plans), `PlanConcurrencyTest` (expected plan computed from the pre-plan state). **Client only — an app rebuild
+(`account{1,2,3}-*deploy*.bat`); no Supabase deploy** (the counter rides the existing private broadcast channel).
+
+An audit of whether the scheduler strictly satisfies `docs/scheduler_requirements.md`, and the user's rule that its
+answer need not be deterministic across devices: the best score wins, and a MIP must be used where it is better.
+- "The best score must be reached when reachable in the time" was never attempted: the exhaustive search now runs on
+  the wall time each progressive stage's pace leaves, and certifies the result when it finishes.
+- The hourly staleness re-plan rewrote definitive schedules with no rule change: removed.
+- A stage's last runs were bent by where it stopped: a fill now searches a decision window past its horizon.
+- In-reducer re-plans filled a week on the UI thread: now a first stage the engine extends.
+- Alternatives were located to a minute with shallow probes; a run inside a rule-state transition kept its first
+  instant's rules: both fixed.
+- Plans made apart now compete on the score under the merged rules (seeds + `PeerMessage.Counter`).
+- The desktop MIP was built and measured: it is NOT better than the exhaustive search given wall time (which found
+  plans up to 27 % better than the step-bounded passes); it is kept behind it, with the time it leaves.
+
 ### The score's cell walk could loop forever — 2026-09-17
 
 `shared`: `ScoreModel.advance` (`ScheduleScore.kt`). Test: `ScoreAdvanceTerminatesTest` (new; hangs on the old loop).
