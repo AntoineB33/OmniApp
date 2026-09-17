@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.domain.TaskRelationsDomain
@@ -88,6 +89,11 @@ fun TaskRelationsWindow(
             TaskRelationsDomain.rows(state)
         }
 
+    // Both halves of a pair are NAMED, so both are drawn in their own colour ([TaskTitleLabel]). The row
+    // reads `a › b`, and the tint is what lets the eye match either end against the tree and the calendar
+    // without reading the word.
+    val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
+
     AppWindowFrame(
         title = "Task relations",
         state = frame,
@@ -136,6 +142,8 @@ fun TaskRelationsWindow(
                 inSection.forEach { row ->
                     TaskRelationRow(
                         row = row,
+                        taskColor = taskColors[row.key.taskId],
+                        targetColor = taskColors[row.key.relativeTo],
                         onKeep = {
                             onIntent(
                                 SchedulerIntent.KeepTaskRelation(row.key.taskId, row.key.relativeTo),
@@ -201,6 +209,9 @@ private fun sectionSubtitle(section: TaskRelationsDomain.Section): String = when
 @Composable
 private fun TaskRelationRow(
     row: TaskRelationsDomain.Row,
+    /** Each half in its own task's colour — see [TaskTitleLabel]. Null where that end is `root` or gone. */
+    taskColor: Color?,
+    targetColor: Color?,
     onKeep: () -> Unit,
     onDrop: () -> Unit,
 ) {
@@ -210,12 +221,11 @@ private fun TaskRelationRow(
     ) {
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = row.taskTitle,
+                TaskTitleLabel(
+                    label = row.taskTitle,
+                    taskColor = taskColor,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    textColor = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 Text(
@@ -223,12 +233,11 @@ private fun TaskRelationRow(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
-                    text = row.targetTitle,
+                TaskTitleLabel(
+                    label = row.targetTitle,
+                    taskColor = targetColor,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    textColor = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false),
                 )
             }

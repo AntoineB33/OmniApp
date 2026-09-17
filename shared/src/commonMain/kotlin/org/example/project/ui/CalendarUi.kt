@@ -978,7 +978,7 @@ fun periodSegments(periods: List<PlacedRecord>): List<PeriodSegment> {
  * box; the chooser is what tells them apart again.
  */
 fun periodSegmentLabel(segment: PeriodSegment): String =
-    segment.records.joinToString(", ") { it.title.ifBlank { "(untitled)" } }
+    segment.records.joinToString(", ") { it.title.ifBlank { SchedulerDomain.UNTITLED_LABEL } }
 
 /**
  * PRD §8: the outline a [PeriodSegment] wears — **the strongest hand among the periods in force**, in the
@@ -3184,6 +3184,15 @@ fun CalendarFloatingWindow(
      */
     taskColors: Map<TaskId, Color> = emptyMap(),
     /**
+     * The SHEET reading of the same hues — the pale tint the task tree's cells wear. The calendar draws its
+     * panels in [taskColors] (accent, on the timeline), but the surfaces it opens ON TOP of the grid are
+     * ordinary light ones, and a label there is tinted like every other place a task is named
+     * ([TaskTitleLabel]). Which reading to use follows the surface's own background, and that is the one
+     * thing a caller configures.
+     */
+    taskSheetColors: Map<TaskId, Color> = emptyMap(),
+
+    /**
      * PRD §9/§17: true while the work plan for a focused future week beyond the near horizon is still being
      * computed off the UI thread. Surfaces a "Calculating…" hint so the (necessarily slower) distant-week
      * fill reads as "loading", never as a frozen calendar.
@@ -3408,6 +3417,7 @@ fun CalendarFloatingWindow(
                 nowExactMillis = nowExactMillis,
                 records = records,
                 taskColors = taskColors,
+                taskSheetColors = taskSheetColors,
                 zoomActions = zoomActions,
                 ctrlHeld = ctrlHeld,
                 onAddAt = onAddAt,
@@ -3714,6 +3724,12 @@ private fun WeekView(
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
      */
     taskColors: Map<TaskId, Color>,
+    /**
+     * The SHEET reading of the same hues, for the surfaces this grid opens ON TOP of itself (the phone's
+     * touch menu) — an ordinary light background, where the accent tint above would be far too heavy. See
+     * [TaskTitleLabel]: which reading to use follows the surface, and it is the one thing a caller picks.
+     */
+    taskSheetColors: Map<TaskId, Color>,
     zoomActions: CalendarZoomActions,
     ctrlHeld: Boolean,
     onAddAt: (Long) -> Unit,
@@ -4314,6 +4330,7 @@ private fun WeekView(
                                     compositionNowMillis = compositionNowMillis,
                                     sampledRecords = recordsPerDay[day].orEmpty(),
                                     taskColors = taskColors,
+                                    taskSheetColors = taskSheetColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
                                     // The badge below is drawn for every row but the top one.
                                     showsDayDate = row > 0,
@@ -4393,7 +4410,7 @@ private fun WeekView(
             )
         }
         // PRD §8 hover title bubble, drawn above all columns; non-interactive so the cursor passes through.
-        titleHover?.let { CalendarTitleBubble(it.sections, it.pos) }
+        titleHover?.let { CalendarTitleBubble(it.sections, it.pos, taskColors) }
         }
     }
 }
@@ -4503,6 +4520,14 @@ private fun DayColumn(
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
      */
     taskColors: Map<TaskId, Color>,
+    /**
+     * The SHEET reading of the same hues — the pale tint the task tree's cells wear. The calendar draws its
+     * panels in [taskColors] (accent, on the timeline), but the surfaces it opens ON TOP of the grid are
+     * ordinary light ones, and a label there is tinted like every other place a task is named
+     * ([TaskTitleLabel]). Which reading to use follows the surface's own background, and that is the one
+     * thing a caller configures.
+     */
+    taskSheetColors: Map<TaskId, Color>,
     onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditChoice: (CalendarEditChoice) -> Unit,
@@ -5081,8 +5106,12 @@ private fun DayColumn(
             // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble.
             if (menuFromTouch && topMost != null) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    Text(
-                        text = topMost.title.ifEmpty { "(untitled)" },
+                    // PRD §8 (phone): this is the bubble's stand-in, so it names the task the same way —
+                    // in the task's own colour ([TaskTitleLabel]). The menu sits on an ordinary light
+                    // surface, so it takes the SHEET reading, not the bubble's accent one.
+                    TaskTitleLabel(
+                        label = SchedulerDomain.taskTitleLabel(topMost.title),
+                        taskColor = topMost.taskId?.let { taskSheetColors[it] },
                         style = MaterialTheme.typography.labelMedium,
                     )
                     Text(
@@ -6046,6 +6075,12 @@ data class CalendarBubbleSection(
      * for a section with no time range of its own.
      */
     val times: String? = null,
+    /**
+     * The task this section NAMES, so the bubble can write it in that task's colour like every other place
+     * one is named ([TaskTitleLabel]). Null for a section that names no task — a break, a grey period, an
+     * alarm, a reminder.
+     */
+    val taskId: TaskId? = null,
 ) {
     /** What a section is about. Equal [rank]s are deliberate ties (see [orderedBubbleSections]). */
     enum class Kind(val rank: Int) {
@@ -6264,7 +6299,7 @@ private fun panelBubbleSection(r: PlacedRecord, tz: TimeZone, times: String? = n
             r.inactivity -> CalendarBubbleSection.Kind.Inactivity
             else -> CalendarBubbleSection.Kind.Task
         }
-    return CalendarBubbleSection(kind, underHoverTitle(r), times ?: placedTimeRange(r, tz))
+    return CalendarBubbleSection(kind, underHoverTitle(r), times ?: placedTimeRange(r, tz), r.taskId)
 }
 
 /** PRD §8/§12: a placed element's true (un-clipped) start–end line; an open-ended start shows "∞". */
@@ -6358,7 +6393,16 @@ internal fun Modifier.onPointerEventCompat(
  * thin divider separates one from the next.
  */
 @Composable
-private fun CalendarTitleBubble(sections: List<CalendarBubbleSection>, pos: Offset) {
+private fun CalendarTitleBubble(
+    sections: List<CalendarBubbleSection>,
+    pos: Offset,
+    /**
+     * The ACCENT reading of the task hues, not the sheet one every other surface uses: this bubble is drawn
+     * on `inverseSurface`, where a pale tint is invisible. Which reading to pass is the one thing a caller
+     * of [TaskTitleLabel] configures, and it follows the surface's own background.
+     */
+    taskColors: Map<TaskId, Color>,
+) {
     if (sections.isEmpty()) return
     val yOffsetPx = with(LocalDensity.current) { 16.dp.roundToPx() }
     Column(
@@ -6375,9 +6419,10 @@ private fun CalendarTitleBubble(sections: List<CalendarBubbleSection>, pos: Offs
                     color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.3f),
                 )
             }
-            Text(
-                text = section.title.ifEmpty { "(untitled)" },
-                color = MaterialTheme.colorScheme.inverseOnSurface,
+            TaskTitleLabel(
+                label = SchedulerDomain.taskTitleLabel(section.title),
+                taskColor = section.taskId?.let { taskColors[it] },
+                textColor = MaterialTheme.colorScheme.inverseOnSurface,
                 style = MaterialTheme.typography.labelMedium,
             )
             if (section.times != null) {
@@ -7249,7 +7294,7 @@ private fun CalendarBlockBody(
     ) {
         if (showTitle) {
             Text(
-                text = title.ifEmpty { "(untitled)" },
+                text = SchedulerDomain.taskTitleLabel(title),
                 style = MaterialTheme.typography.labelSmall,
                 color = titleColor,
                 overflow = TextOverflow.Ellipsis,
@@ -8357,6 +8402,7 @@ private fun EditMenuRow(
     focusPreserving: Boolean = false,
     actions: EditMenuRowActions? = null,
     color: Color? = null,
+    taskColor: Color? = null,
     onClick: () -> Unit,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
@@ -8372,6 +8418,13 @@ private fun EditMenuRow(
                 // Inside the click modifier, so a secondary press is answered — and consumed — on the Main
                 // pass before the pick handler wrapping it ever sees it.
                 .then(contextMenuModifier(actions != null) { menuOpen = true })
+                // A row that names a task is drawn in that task's colour, like the task tree's own cell
+                // ([TaskTitleLabel] — this is the block form, the row IS the task). Under the outline
+                // below, which says something else entirely and has to stay readable on top of it.
+                .then(
+                    if (taskColor != null) Modifier.background(taskColor, RoundedCornerShape(4.dp))
+                    else Modifier
+                )
                 // Selected rows are marked with an obvious outline rather than a (subtle) purple font.
                 .then(
                     if (selected)
@@ -8427,6 +8480,12 @@ data class EditMenuItem(
      * Never a decoration: a coloured row here is a row that behaves differently if it is taken.
      */
     val color: Color? = null,
+    /**
+     * The task this row NAMES, in that task's own colour ([TaskTitleLabel]) — null for a row that names no
+     * task (a title suggestion, a "New task" row, a reminder, a category). It is a background, so it never
+     * competes with [color] above: one says which task, the other what is true of it here.
+     */
+    val taskColor: Color? = null,
     val onClick: () -> Unit,
 )
 
@@ -8537,6 +8596,7 @@ private fun EditMenuSectionRow(row: EditMenuItem, focusPreserving: Boolean) {
         focusPreserving = focusPreserving,
         actions = row.actions,
         color = row.color,
+        taskColor = row.taskColor,
         onClick = row.onClick,
     )
 }

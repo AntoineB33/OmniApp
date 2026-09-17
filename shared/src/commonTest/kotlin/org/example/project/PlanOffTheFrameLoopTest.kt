@@ -132,22 +132,36 @@ class PlanOffTheFrameLoopTest {
         advanceTimeBy(DEBOUNCE_MILLIS + 1)
         runCurrent()
 
-        // The instant the watcher planned at — the end of its debounce, not the instant the test reads the clock:
-        // a stage's cap is relative to it, so a millisecond later is a different (if equally valid) sequence.
-        val now = T0 + DEBOUNCE_MILLIS
-        val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null)
+        // The instants the stages planned at, and they are TWO. The throttle is leading-scheduled, so the
+        // re-plan is timed from the FIRST edit and the first stage runs at the edit's own instant; every stage
+        // after it runs once the debounce has elapsed. A stage's cap is relative to its own `now` — and so now
+        // is the plan itself, since a period the line has RETRACTED gives up exactly `[now, its end)`
+        // (`docs/scheduler_requirements.md` § *mode 1*), so a run inside a §17 window starts at the line.
+        // Asked with one instant for both, this compared two fills made a second apart and only passed while
+        // nothing in the plan depended on where the line was: the panels agreed and the last stage's horizon
+        // was a second out.
         var direct = seeded
-        var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
-        var first = true
-        while (true) {
-            val cap = (now + stage).takeIf { it < goal }
-            direct = SchedulerReducer.reduce(
-                direct,
-                if (first) SchedulerIntent.RefreshSchedule(now, cap) else SchedulerIntent.ExtendSchedule(now, cap),
-            )
-            first = false
-            if (cap == null) break
-            stage *= 2
+        // TWO re-plans, at the two instants the engine made them: the one the edit itself triggers, and the
+        // throttled one at the end of the debounce — which KEEPS the elapsed head of the first (a panel
+        // straddling the line is truncated to it and merged with the new run, PRD §9). A single pass at a
+        // single instant was what this compared against, and it only matched while nothing in the plan
+        // depended on where the line was: a period the line has RETRACTED gives up exactly `[now, its end)`
+        // (`docs/scheduler_requirements.md` § *mode 1*), so inside a §17 window the run starts at the line and
+        // the second's difference between the two instants became a second's difference in the plan.
+        for (now in listOf(T0, T0 + DEBOUNCE_MILLIS)) {
+            val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null)
+            var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
+            var first = true
+            while (true) {
+                val cap = (now + stage).takeIf { it < goal }
+                direct = SchedulerReducer.reduce(
+                    direct,
+                    if (first) SchedulerIntent.RefreshSchedule(now, cap) else SchedulerIntent.ExtendSchedule(now, cap),
+                )
+                first = false
+                if (cap == null) break
+                stage *= 2
+            }
         }
         assertEquals(direct.panels, vm.state.value.panels)
     }

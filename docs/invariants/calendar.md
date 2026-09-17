@@ -228,8 +228,10 @@ Global rules that always apply: `CLAUDE.md`.
     anchor, like every other derivation; only the placement is exact).
 - **"NOTHING IS PLACED HERE" IS A STATEMENT ABOUT THE SCHEDULER, AND IT HAS NO PAINT** — it covers an
   inactivity period, a sleep window, the §17 **"Before bed" hour** (`before bed`, whose default resilience is
-  `0` like theirs — and which is always ALSO a no-screen period, so both layer hatches are painted across its
-  orange box: `PeriodKinds.impliedKind`, read through `assertedLayerRanges` like any drawn layer), and **all three screen breaks end to end** (they are `no task allowed`; there is no closed
+  `0` like theirs — and which is always ALSO a no-screen period, as **a sleep window is too** since
+  2026-09-18, so both layer hatches are painted across the orange boxes of each and, the hour abutting the
+  window it runs into, across the pair as one stretch: `PeriodKinds.impliedKind`, read through
+  `assertedLayerRanges` like any drawn layer), and **all three screen breaks end to end** (they are `no task allowed`; there is no closed
   head and no hollow tail any more). It is not a screen classification: it refuses off-screen tasks too.
   "Refuses" means the task's resilience to the covering kind is `0`, so a task given a non-zero one may work
   through a break — the only thing that is ever placed there. The calendar draws every one of them the same

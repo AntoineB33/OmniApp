@@ -150,6 +150,7 @@ import org.example.project.ui.isModifierKey
 import org.example.project.ui.taskCellOutline
 import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.TaskPalette
+import org.example.project.ui.TaskTitleLabel
 import org.example.project.ui.TaskHueMemo
 import org.example.project.ui.rememberTaskHues
 import org.example.project.ui.transientMenuDismissal
@@ -948,6 +949,13 @@ internal fun EditModeMenus(
             emptyList()
         }
 
+    // An id row NAMES a task, so it is drawn in that task's colour like every other place one is named
+    // ([org.example.project.ui.TaskTitleLabel]). Off `namingSource` and not `state`, for the reason the
+    // label itself is: in the template and the "All tasks" window the rows name the ACCOUNT's tasks, and a
+    // colour solved over the projection would be a second answer for the task the tree already colours.
+    val menuTaskColors =
+        TaskPalette.sheetColors(rememberTaskHues(namingSource, TaskHueMemo.account))
+
     val modeOptions = cellEditModeOptions(state, cellId, hideModeSelector, onIntent, onModePicked)
     // The Tasks menu is worth showing only beyond the lone "New task" row (the reminders manager applies the
     // same rule to its "New Reminder" row).
@@ -974,6 +982,7 @@ internal fun EditModeMenus(
                 EditMenuItem(
                     label = entry.label,
                     selected = index == selectedIndex,
+                    taskColor = entry.taskId?.let { menuTaskColors[it] },
                     actions = EditMenuRowActions(
                         onGoToTask = occurrence?.let { found ->
                             { onIntent(SchedulerIntent.RevealCell(found.cellId, found.ancestors)) }
@@ -2011,6 +2020,10 @@ internal fun PriorityWeightWindow(
                 val chartRows = tableRows.filter { it.taskId != null }
                 PriorityChart(
                     titles = chartRows.map { it.title },
+                    // The legend still names tasks, so it still tints them ([TaskTitleLabel]); only the
+                    // SWATCH beside each name is the slice's colour and not the task's — see the note on
+                    // [PriorityChart] for why the slices cannot be the tasks' own colours.
+                    taskColors = chartRows.map { row -> row.taskId?.let { taskColors[it] } },
                     // PRD §5: each row's share of THIS sub-list — the number the table on the left sets —
                     // rather than the task's absolute priority (its share of the whole tree).
                     fractions = chartRows.map { row ->
@@ -2216,14 +2229,14 @@ internal fun RelativePriorityWindow(
 }
 
 /** The window's title quotes the task, and a task with no title reads as the tree's own placeholder. */
-private fun quoted(title: String): String = "\"" + title.ifBlank { "(untitled)" } + "\""
+private fun quoted(title: String): String = "\"" + SchedulerDomain.taskTitleLabel(title) + "\""
 
 /** The drop-down's label for a `t_r` choice: the conceptual root is named, every other task is its title. */
 private fun relativeToLabel(state: SchedulerState, taskId: TaskId): String =
     if (taskId == WellKnownIds.ROOT_TASK) {
         "root"
     } else {
-        state.tasks[taskId]?.title.orEmpty().ifBlank { "(untitled)" }
+        SchedulerDomain.taskTitleLabel(state, taskId)
     }
 
 /**
@@ -2407,6 +2420,18 @@ private fun priorityChartColor(index: Int, count: Int): Color {
 @Composable
 private fun PriorityChart(
     titles: List<String>,
+    /**
+     * Each task's own colour, behind its name in the legend — the app's one rule for a named task
+     * ([org.example.project.ui.TaskTitleLabel]).
+     *
+     * The **slices** are the one place that rule does not reach, and deliberately: a slice's colour has to
+     * separate it from the slice beside it, and the tasks' own colours cannot do that here. ADR 0013 spreads
+     * the childless tasks around the circle in the tree's depth-first order, so the leaves of ONE sub-list —
+     * exactly what this chart draws — are a contiguous run of neighbouring hues. Keyed by the task, a pie of
+     * one sub-list would be a single smear. So the swatch answers "which slice" and the tint behind the name
+     * answers "which task", which are two questions the legend has to answer at once.
+     */
+    taskColors: List<Color?>,
     fractions: List<Double>,
     modifier: Modifier = Modifier,
 ) {
@@ -2456,11 +2481,9 @@ private fun PriorityChart(
                             .background(priorityChartColor(i, titles.size), RoundedCornerShape(2.dp)),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = title.ifEmpty { "(untitled)" },
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    TaskTitleLabel(
+                        label = SchedulerDomain.taskTitleLabel(title),
+                        taskColor = taskColors.getOrNull(i),
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(6.dp))
@@ -3559,6 +3582,8 @@ internal fun TaskEditWindow(
 internal fun PeriodKindEditWindow(
     kind: String,
     rows: List<SchedulerDomain.PeriodKindTaskRow>,
+    /** Each row NAMES a task, so each is drawn in that task's colour ([org.example.project.ui.TaskTitleLabel]). */
+    taskColors: Map<TaskId, Color>,
     /** False for the two built-in kinds — the README names them, so the account cannot drop them. */
     canDelete: Boolean,
     onSetResilience: (List<TaskId>, Double) -> Unit,
@@ -3655,9 +3680,9 @@ internal fun PeriodKindEditWindow(
                                 selected = if (on) checked + row.taskId else checked - row.taskId
                             },
                         )
-                        Text(
-                            text = row.title.ifBlank { "(untitled)" },
-                            style = MaterialTheme.typography.bodySmall,
+                        TaskTitleLabel(
+                            label = SchedulerDomain.taskTitleLabel(row.title),
+                            taskColor = taskColors[row.taskId],
                             modifier = Modifier.weight(1f),
                         )
                         // The row's own field. It goes through the same bulk intent with a one-element list,
@@ -3914,7 +3939,7 @@ private fun DeepCopyPathRow(path: List<String>) {
             Text(
                 text =
                     if (path.isEmpty()) "—"
-                    else path.joinToString("  ›  ") { it.ifBlank { "(untitled)" } },
+                    else path.joinToString("  ›  ") { SchedulerDomain.taskTitleLabel(it) },
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 softWrap = false,

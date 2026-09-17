@@ -75,7 +75,11 @@ class BeforeBedPeriodTest {
         // bars read the implied period rather than a second answer off the kind.
         assertFalse(PeriodKinds.isLayerKind(PeriodKinds.BEFORE_BED))
         assertFalse(PeriodKinds.coversNoScreen(PeriodKinds.BEFORE_BED))
-        listOf(PeriodKinds.NO_SCREEN, PeriodKinds.INACTIVITY, PeriodKinds.SLEEP, "deep focus").forEach {
+        // `sleep` implies it too (2026-09-18): a night is the plainest stretch there is of nobody being at a
+        // screen, and the hour of wind-down leading into it already said so. `inactivity` and an account's own
+        // kind do NOT — they say the timeline is empty there, which is a different fact.
+        assertEquals(PeriodKinds.NO_SCREEN, PeriodKinds.impliedKind(PeriodKinds.SLEEP))
+        listOf(PeriodKinds.NO_SCREEN, PeriodKinds.INACTIVITY, "deep focus").forEach {
             assertEquals(null, PeriodKinds.impliedKind(it), it)
         }
     }
@@ -89,11 +93,26 @@ class BeforeBedPeriodTest {
         val windDowns = panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }
         assertTrue(windDowns.isNotEmpty())
         val spans = windDowns.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }.sortedBy { it.startEpochMillis }
+        // The hour runs straight into the §17 window it is measured back from, and a sleep window implies a
+        // no-screen period of its own (2026-09-18), so the hatch over the pair is ONE stretch per night —
+        // wind-down start to wake — not the hour alone. Two abutting statements of "nobody is at a screen"
+        // are one statement, which is the same merge every other layer reading takes.
+        val sleeps = panels.filter { it.restrictiveKind == PeriodKinds.SLEEP }
+            .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        assertTrue(sleeps.isNotEmpty(), "the fixture sleeps")
+        val hatched = SchedulerDomain.mergeOccupied(spans + sleeps)
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
-            assertEquals(spans, SchedulerDomain.assertedLayerRanges(panels, layer), "$layer hatch")
+            assertEquals(hatched, SchedulerDomain.assertedLayerRanges(panels, layer), "$layer hatch")
+        }
+        // …and each night's hatch really does start at the wind-down hour rather than at bedtime.
+        spans.forEach { hour ->
+            assertTrue(
+                hatched.any { it.startEpochMillis == hour.startEpochMillis && it.endEpochMillis > hour.endEpochMillis },
+                "the hour at ${hour.startEpochMillis} must open a stretch that outlasts it: $hatched",
+            )
         }
         val implied = SchedulerDomain.impliedNoScreenPeriods(panels)
-        assertEquals(spans, implied.map { TaskTimeRange(it.startMillis, it.endMillis) }.sortedBy { it.startEpochMillis })
+        assertEquals(hatched, implied.map { TaskTimeRange(it.startMillis, it.endMillis) }.sortedBy { it.startEpochMillis })
         assertTrue(implied.all { it.kind == PeriodKinds.NO_SCREEN })
         // restrictivePeriodsOf (the display's and the cue's environment) carries both kinds over the hour.
         val periods = SchedulerDomain.restrictivePeriodsOf(windDowns)

@@ -205,17 +205,13 @@ object TaskRelationsDomain {
     private fun exists(state: SchedulerState, taskId: TaskId): Boolean =
         taskId == WellKnownIds.ROOT_TASK || state.tasks[taskId]?.title?.isNotBlank() == true
 
-    /** How a pair's two halves are named — the same two answers the relative-priority window prints. */
+    /** How a pair's two halves are named — [SchedulerDomain.taskTitleLabel], as everywhere else. */
     fun label(state: SchedulerState, taskId: TaskId): String =
-        if (taskId == WellKnownIds.ROOT_TASK) {
-            ROOT_LABEL
-        } else {
-            state.tasks[taskId]?.title.orEmpty().ifBlank { UNTITLED_LABEL }
-        }
+        SchedulerDomain.taskTitleLabel(state, taskId)
 
     /** The relative-priority drop-down's own name for the root list. */
-    const val ROOT_LABEL: String = "root"
+    val ROOT_LABEL: String get() = SchedulerDomain.ROOT_LABEL
 
     /** The tree's own placeholder for a cell whose task has no title. */
-    const val UNTITLED_LABEL: String = "(untitled)"
+    val UNTITLED_LABEL: String get() = SchedulerDomain.UNTITLED_LABEL
 }

@@ -2292,6 +2292,91 @@ object SchedulerDomain {
         }
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: *"$now line$ must not be covered by
+     * the period 'no on-screen task'. This means that if it reaches one of those periods, the passing of the
+     * $now line$ line creates task panels not covered by the period."* — **the spans those periods give up at
+     * the line**, and the ONE place the clause is read for the fill.
+     *
+     * Mode 1 is *a device of the account is unlocked*, so the user is demonstrably at a screen; a period that
+     * says nobody is ([PeriodKinds.isOrImpliesNoScreen]) cannot be covering the line, and what it gives up is
+     * everything from the line to its own end. Two halves, and both are the requirements':
+     * - the span reaches **forward to the period's end**, not one millisecond, because the plan has to be
+     *   computed over the retracted timeline — the rules it returns are *"task A from 00:40 to $now line$,
+     *   until 01:25"*, and naming 01:25 means searching past the line. Only the stretch the line has actually
+     *   SWEPT is materialized (`fillScheduleUninstrumented` clips the placements back to `now + 1`), so the
+     *   band ahead of the line is untouched and a lock at 01:00 flips the mode with nothing to undo;
+     * - it is empty in **modes 2 and 3**, whose clause is the opposite one — the line must BE covered — which
+     *   is why `DynamicPeriods.awayCover` exists and why nothing here may fire in them.
+     *
+     * This is PRD §17's *"carved by activity"* rule, **for the scheduler and not only for the band**. That
+     * carve ([carveSleepPanels]) shipped display-only, in as many words, so a night worked through showed the
+     * Sleep band retracting to the now-line while the fill went on treating the whole window as an obstacle:
+     * the line sat in a stretch with no band and no task at all, which is § *No idling* and mode 1 broken
+     * together (account 3, 00:43 on 2026-09-18, awake since 00:40 inside a 23:15→07:45 window). It is the same
+     * shape as the dragged pose fixed 2026-09-05 ([isDraggedScreenBreak]) — a period that in mode 1 cannot be
+     * happening still obstructing the fill — and it is answered the same way.
+     */
+    fun retractedAtLineSpans(
+        periods: List<RestrictivePeriod>,
+        nowMillis: Long,
+        tpMode: Int,
+    ): List<TaskTimeRange> {
+        if (tpMode != DynamicPeriods.MODE_AT_SCREEN) return emptyList()
+        return mergeOccupied(
+            periods.filter { retractsAtLine(it.kind) && it.covers(nowMillis) && it.endMillis > nowMillis }
+                .map { TaskTimeRange(nowMillis, it.endMillis) },
+        )
+    }
+
+    /**
+     * Whether a period of [kind] **gives its remainder up at a mode-1 line** — the one predicate
+     * [retractedAtLineSpans] and [retractAtLine] are both written against, so the span a period contributes
+     * and the span it loses can never be two different sets.
+     *
+     * Two kinds do, and for the two halves of the same requirement:
+     * - a **[PeriodKinds.NO_SCREEN]** period is the one the clause names in as many words (*"$now line$ must
+     *   not be covered by the period 'no on-screen task'"*), the implied one a §17 window or a wind-down hour
+     *   carries included ([impliedNoScreenPeriods]) — which is how an ON-SCREEN task becomes placeable at a
+     *   line the user is demonstrably sitting at;
+     * - a period **nobody may ever be let through** (`!`[PeriodKinds.isResilienceEditable]) and that says
+     *   something about screens: `sleep`. There is no other way for the clause to hold inside one — no
+     *   resilience can be written against it, so if the window itself stayed the line would go on being
+     *   covered by a period admitting nobody and no task could appear however awake the user is.
+     *
+     * **`before bed` keeps its own hour**, and that is the same test answering the other way rather than an
+     * exception: its resilience IS editable, so PRD §17's *"a task the user gives a value above 0 works
+     * through the wind-down"* is the sanctioned way anything runs there, and § *No idling*'s own clause
+     * (*"not covered by restrictive periods which would PREVENT ANY TASK from being scheduled"*) is satisfied
+     * while nobody has been given one. Retracting it too would quietly delete the wind-down, the hour the user
+     * is meant to stop working in being exactly an hour they are at a screen for. Only the no-screen period it
+     * implies lifts, which is what lets a task the user DID let through be an on-screen one.
+     *
+     * `inactivity` and every kind the ACCOUNT defined are outside both clauses — they say the timeline is
+     * empty, not that nobody is at a screen ([PeriodKinds.isOrImpliesNoScreen]) — so a restriction the user
+     * drew is never retracted out from under them.
+     */
+    private fun retractsAtLine(kind: String): Boolean =
+        kind == PeriodKinds.NO_SCREEN ||
+            (PeriodKinds.isOrImpliesNoScreen(kind) && !PeriodKinds.isResilienceEditable(kind))
+
+    /**
+     * [retractedAtLineSpans] applied: the periods that **give their remainder up** ([retractsAtLine], where
+     * the whole rule and its reasons live) with those spans taken out of them. Every other period is returned
+     * untouched — including the `before bed` hour whose own implied no-screen period contributed a span.
+     */
+    fun retractAtLine(periods: List<RestrictivePeriod>, retracted: List<TaskTimeRange>): List<RestrictivePeriod> {
+        if (retracted.isEmpty()) return periods
+        return periods.flatMap { period ->
+            if (!retractsAtLine(period.kind)) {
+                listOf(period)
+            } else {
+                subtractRegions(listOf(TaskTimeRange(period.startMillis, period.endMillis)), retracted)
+                    .map { period.copy(startMillis = it.startEpochMillis, endMillis = it.endEpochMillis) }
+            }
+        }
+    }
+
     fun observedNoScreenPeriods(regions: List<TaskTimeRange>): List<RestrictivePeriod> =
         regions.mapNotNull { region ->
             if (region.endEpochMillis <= region.startEpochMillis) {
@@ -3378,6 +3463,65 @@ object SchedulerDomain {
                 // Every refusing region starts at/after the now-line, so a straddling panel keeps its elapsed
                 // head (that time really was worked) and what survives resumes under a distinct id.
                 else -> panel.minus(refusedRegions(panel.taskId))
+            }
+        }
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**): the work plan as it must be
+     * **displayed** while the line sits inside a period that has given its remainder up
+     * ([retractedAtLineSpans]) — a §17 sleep window the user is still awake in, or the no-screen period a
+     * wind-down hour implies.
+     *
+     * The requirement is *"the PASSING of the $now line$ line creates task panels not covered by the period"*,
+     * and a passing reaches exactly as far as the line has gone. So the plan is searched AND materialized
+     * across the whole retracted span — it has to name which task holds and until when (*"task A from 00:40 to
+     * $now line$, until 01:25"*), and the fill runs at a rule change rather than on time passing (CLAUDE.md),
+     * so a plan stopping at the line would leave the stretch between two fills with no panel to be swept into
+     * — and what is still AHEAD of the line is cut here instead. The user will still go to bed: the Sleep band
+     * ahead stays whole, and a lock at 01:00 flips the mode with nothing to undo.
+     *
+     * **Forward only**, for the same reason [clipPlanForPinnedScreenBreak] is: the elapsed head of a
+     * straddling panel is the requirements' own *"task panels in its passing"*, and a cut reaching behind the
+     * line would put the empty stretch straight back (§ *No idling*). Behind the line the band itself is
+     * already gone — PRD §17's *"carved by activity"* rule ([carveSleepPanels]) opens exactly the hole this
+     * work fills, off the same account activity that makes the mode 1.
+     *
+     * Only [isRegeneratedPanel] panels are cut, and never a restrictive period: a pinned or manual block is a
+     * pre-placed block no period may move, and a period is what the cut is made OF.
+     *
+     * [periodPanels] is what is still DRAWN AS A BAND ahead of the line — the §17 sleep windows — and that is
+     * the whole of what may be hidden behind: a wind-down hour's implied no-screen period has no band of its
+     * own, so a task the user let through §17's *"a value above 0"* goes on being drawn through the hour. The
+     * filter here ([retractsAtLine], inside [retractedAtLineSpans]) says the same thing from the other end.
+     */
+    fun clipPlanForRetractedPeriod(
+        panels: List<TaskPanel>,
+        periodPanels: List<TaskPanel>,
+        nowMillis: Long,
+        tpMode: Int,
+    ): List<TaskPanel> {
+        val retracted =
+            retractedAtLineSpans(
+                periodPanels.mapNotNull { panel ->
+                    val kind = panel.restrictiveKind
+                    if (kind.isEmpty()) null
+                    else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
+                },
+                nowMillis,
+                tpMode,
+            )
+        val cuts =
+            retracted.mapNotNull { span ->
+                val from = maxOf(span.startEpochMillis, nowMillis + 1L)
+                if (span.endEpochMillis > from) TaskTimeRange(from, span.endEpochMillis) else null
+            }
+        if (cuts.isEmpty()) return panels
+        return panels.flatMap { panel ->
+            when {
+                !isRegeneratedPanel(panel) || panel.isRestrictivePeriod -> listOf(panel)
+                panel.endEpochMillis <= nowMillis -> listOf(panel)
+                else -> panel.minus(cuts)
             }
         }
     }
@@ -4706,7 +4850,7 @@ object SchedulerDomain {
         // cut it (PRD §15/§17) without a rule of its own.
         val periodPanels =
             kept.filter { it.isRestrictivePeriod } + envSleepPanels + envBeforeBedPanels + obstructingSidePanels
-        val restrictions =
+        val standingRestrictions =
             (
                 periodPanels.map { panel ->
                     RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, panel.restrictiveKind, panel.title)
@@ -4714,7 +4858,16 @@ object SchedulerDomain {
                     // PRD §8: a computer-layer period overlapping a phone-layer one IS a no-screen period — the
                     // layers' own definition, taken in the one place ([impliedNoScreenPeriods]).
                     impliedNoScreenPeriods(periodPanels)
-                ).filter { it.kind.isNotEmpty() && it.endMillis > it.startMillis } +
+                ).filter { it.kind.isNotEmpty() && it.endMillis > it.startMillis }
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: the line is at a screen, so a
+        // period saying nobody is does not cover it — it gives up everything from the line to its own end
+        // ([retractedAtLineSpans] / [retractAtLine], where the whole rule and its reasons live). The plan is
+        // searched over the retracted timeline so it can name which task holds and until when; only the
+        // stretch the line has SWEPT is materialized ([retractedSpans] again, at the placements below), which
+        // is what leaves the band ahead of the line exactly as it was.
+        val retractedSpans = retractedAtLineSpans(standingRestrictions, nowMillis, tpMode)
+        val restrictions =
+            retractAtLine(standingRestrictions, retractedSpans) +
                 // Mode 2's cover. It is the one period whose end is CLOSED — the README covers `t_p` itself — so in
                 // discrete time it reaches `now + 1`: what runs at the line must be resilient to "no screen".
                 listOfNotNull(awayCover?.let { RestrictivePeriod(nowMillis, nowMillis + 1L, it.kind, it.label) })
@@ -4816,6 +4969,13 @@ object SchedulerDomain {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
+        // The plan IS materialized across a retracted period ([retractedAtLineSpans]) and hidden ahead of the
+        // line on the DISPLAY side ([clipPlanForRetractedPeriod]), exactly as the plan under a pinned screen
+        // break is ([clipPlanForPinnedScreenBreak]). Clipping it here instead leaves nothing for the line to
+        // sweep INTO: the fill runs at a rule change and not on time passing (CLAUDE.md), so between two fills
+        // the line would advance over a stretch no panel was ever laid in and the calendar would draw the
+        // §17 carve's hole as a growing Inactivity band — the very anomaly this answers, moved three minutes
+        // to the right.
         val generated =
             placements.map { p ->
                 TaskPanel(
@@ -5886,6 +6046,37 @@ object SchedulerDomain {
             .filter { it != input }
             .filter { q.isBlank() || it.contains(q, ignoreCase = true) }
     }
+
+    /**
+     * **How a task is NAMED, wherever one is named.** The one answer to "what do I print for this task?",
+     * so a blank title cannot read as `(untitled)` on one surface and as nothing at all on the next.
+     *
+     * A blank title is not an anomaly: emptying a cell *deletes* by blanking its task's title
+     * (`docs/invariants/task-tree.md`), and a blanked task stays alive for as long as a panel or a record
+     * still points at it — so every surface that can name a task can be handed one of these.
+     *
+     * The companion rule is that a named task is **drawn in its own colour**
+     * ([org.example.project.ui.TaskTitleLabel], ADR 0013): the string and the tint are asked together at
+     * every site, which is why they are two functions and not two conventions.
+     */
+    fun taskTitleLabel(title: String?): String = title.orEmpty().ifBlank { UNTITLED_LABEL }
+
+    /**
+     * The same answer for a task the state holds. The tree's root is the one task with a name of its own
+     * ([ROOT_LABEL]) — it stands for the whole tree and the user never wrote its title.
+     */
+    fun taskTitleLabel(state: SchedulerState, taskId: TaskId?): String =
+        when (taskId) {
+            null -> UNTITLED_LABEL
+            WellKnownIds.ROOT_TASK -> ROOT_LABEL
+            else -> taskTitleLabel(state.tasks[taskId]?.title)
+        }
+
+    /** The tree's own placeholder for a task with no title. */
+    const val UNTITLED_LABEL: String = "(untitled)"
+
+    /** What the root is called where it is named at all — the relative-priority and category scope menus. */
+    const val ROOT_LABEL: String = "root"
 
     /** PRD §14: the reminder id of the first known reminder with this exact [title], if any. */
     fun reminderIdForTitle(state: SchedulerState, title: String): String? =

@@ -6,6 +6,27 @@
 the only place a hue becomes something to paint with. The tree's cell and the calendar's panel read the same
 hue for a task — a second derivation is how the two surfaces start disagreeing about what colour a task is.
 
+## Where a task colour is worn
+
+**Everywhere the app names a task.** `SchedulerDomain.taskTitleLabel` answers what to print and
+`ui/TaskTitleLabel.kt` answers how to paint it, and between them there is no surface left that writes a task's
+title in plain text. This was not true until 2026-09-18: the tree and the calendar obeyed the rule, and the
+hover bubble, the task picker, the Change Task menu, the task-relations window, the resilience dialog and the
+pie legend each printed a bare string — nine sites, six different spellings of `(untitled)`.
+
+The rule is universal because the tint is a **background**. The text colour stays free for what a particular
+surface has to say about the row it is on, which is what the task picker needs (red = the plan cannot place
+this task now, orange = its share is being scaled). Two facts, two channels, no contention.
+
+What a caller configures is **which reading of the hue**, and that follows the surface's own background:
+`sheet` on light, `accent` on dark. It is the split [TaskPalette] already had, and it is the whole of the
+configuration — the alternative was a `TaskTitle(...)` composable with a knob per call site, which is a config
+object wearing a funnel's name.
+
+**One exception, and it is about the pie and not about the name.** The priority-weight window's chart draws
+one sub-list's leaves, and rule 2 below puts those in a contiguous arc of the circle — so a pie keyed by task
+colour is a smear. Its swatch keeps a chart colour; its legend's name is tinted like every other name.
+
 ## What a task colour is for
 
 Two things, and they pull in opposite directions:

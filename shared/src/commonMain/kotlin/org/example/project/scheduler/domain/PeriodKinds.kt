@@ -175,16 +175,43 @@ object PeriodKinds {
     fun defaultResilience(kind: String): Double = if (isLayerKind(kind)) 1.0 else 0.0
 
     /**
-     * PRD §17: **the kind a period of [kind] is ALSO a period of, over the same span** — `null` for every kind
-     * but [BEFORE_BED], which implies [NO_SCREEN]: *"every time there is a 'before bed' restrictive period,
-     * there is also a 'no screen' period"*.
+     * PRD §17: **the kind a period of [kind] is ALSO a period of, over the same span** — [NO_SCREEN] for
+     * [BEFORE_BED] (*"every time there is a 'before bed' restrictive period, there is also a 'no screen'
+     * period"*) and for [SLEEP], `null` for every other kind.
+     *
+     * **[SLEEP] implies it for the same reason and was missing until 2026-09-18**: a night is the plainest
+     * stretch there is of nobody being at a screen, and the hour of wind-down that leads into it already said
+     * so. Left out, a §17 window asserted no layer at all — so it carried no hatch, no no-screen period
+     * reached the scheduler or the record bank over it, and a sleep band the app drew over a stretch with no
+     * other evidence (a cold start across it: the process is down, so no swept-stretch cover is noted and the
+     * OS lock scan has no span either) stood there as the one grey kind that says nothing about screens. It
+     * is also what makes § *mode 1*'s clause reach a sleep window at all
+     * ([SchedulerDomain.retractedAtLineSpans]).
      *
      * An implication, not a second panel: nothing lays a companion period, so there is nothing to drift from
-     * the wind-down hour, to edit apart from it or to sync. [assertedLayers] folds the implied kind's layers
-     * in, and every reader of "which layers does this stretch carry" — the hatch, the no-screen intersection
-     * ([SchedulerDomain.impliedNoScreenPeriods]), the record bank — answers for it from there.
+     * the window (or the wind-down hour), to edit apart from it or to sync. [assertedLayers] folds the implied
+     * kind's layers in, and every reader of "which layers does this stretch carry" — the hatch, the no-screen
+     * intersection ([SchedulerDomain.impliedNoScreenPeriods]), the record bank — answers for it from there.
+     *
+     * It does NOT make either kind a layer kind ([isLayerKind] reads [ownLayers]), so [defaultResilience] is
+     * untouched: `sleep` and `before bed` go on turning everybody away by their own names, and the implied
+     * no-screen period is the separate statement that nobody is at a screen there.
      */
-    fun impliedKind(kind: String): String? = if (kind == BEFORE_BED) NO_SCREEN else null
+    fun impliedKind(kind: String): String? = if (kind == BEFORE_BED || kind == SLEEP) NO_SCREEN else null
+
+    /**
+     * Whether a period of [kind] is, or implies ([impliedKind]), a [NO_SCREEN] period — **the one predicate
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* is written against**: *"Mode 1: $now line$ must
+     * not be covered by the period 'no on-screen task'"*, and *"Mode 2 & 3: $now line$ must be covered"* by
+     * one.
+     *
+     * Deliberately NOT [coversNoScreen], which is the bars' question (*is this stretch a rest*) and answers
+     * true for [INACTIVITY] as well, because a period that turns everybody away turns the on-screen tasks away
+     * a fortiori. The modes ask the other question — *does this stretch SAY nobody is at a screen* — and a grey
+     * stretch the user drew to say nothing happened says nothing of the sort. The difference is what keeps
+     * mode 1 from retracting a hand-drawn `inactivity` period out from under the line.
+     */
+    fun isOrImpliesNoScreen(kind: String): Boolean = kind == NO_SCREEN || impliedKind(kind) == NO_SCREEN
 
     /**
      * Whether [kind] is, **by its own name**, a sentence about the calendar LAYERS — [NO_SCREEN] and the two

@@ -11,6 +11,66 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A sleep window implies a no-screen period, and a mode-1 line retracts it — 2026-09-18
+
+→ `docs/scheduler_requirements.md` § *$now line$ 3 modes* (mode 1) + § *No idling*, PRD §17 (both its
+*Scheduler avoidance* and *Carved by activity* bullets amended), `docs/invariants/scheduler.md` § *A mode-1
+line retracts the period that says nobody is at a screen*.
+
+Two halves of one report from account 3 (00:43 on 2026-09-18, awake inside a 23:15→07:45 window):
+
+1. **`PeriodKinds.impliedKind(sleep) = no screen`.** A §17 window asserted no calendar layer at all, so it
+   carried no hatch and no no-screen period reached the scheduler or the record bank over it — while the
+   wind-down hour leading into it always had. A night with no other evidence (a cold start across it: the
+   process is down, so nothing notes the swept stretch and the OS lock scan has no span either) therefore
+   stood as the one grey kind that says nothing about screens.
+2. **A period covering the line that is or implies `no screen` gives up `[now, its end)` in mode 1**
+   (`SchedulerDomain.retractedAtLineSpans` / `retractAtLine` / `retractsAtLine`, read once in
+   `fillScheduleUninstrumented`). PRD §17's *"carved by activity"* rule shipped **display-only**, so a night
+   worked through showed the Sleep band retracting to the now-line while the fill went on treating the whole
+   window as an obstacle admitting nobody: the line sat in a stretch with no band and no task at all. Same
+   shape as the dragged pose fixed 2026-09-05, same answer. `sleep` retracts wholly (no resilience can ever
+   be written against it, so nothing else could satisfy the clause); `before bed` keeps its hour and lifts
+   only its implied no-screen period, or the wind-down would be deleted outright; `inactivity` and the
+   account's own kinds are outside the clause and never retract.
+
+The plan is searched **and materialized** across the retracted span — it must name which task holds and until
+when, and the fill runs at a rule change rather than on time passing, so the line needs panels to be swept
+into between two fills. What is still ahead of the line is hidden by a display clip
+(`SchedulerDomain.clipPlanForRetractedPeriod`, beside `clipPlanForPinnedScreenBreak` in `App.kt`), forward
+only, so the band ahead stays whole and the swept stretch reads as *"task A from 00:40 to $now line$"*.
+
+Tests: new `SleepWindowNoIdlingTest` (11). `BeforeBedPeriodTest` updated — the hatch over a wind-down hour and
+the window it runs into is now ONE stretch per night. `PlanOffTheFrameLoopTest` updated: it compared a single
+fill against the engine's two (the edit's own and the throttled one), which only matched while nothing in the
+plan depended on where the line was. No deploy needed for the tests; the fix needs a **client rebuild**
+(`account3-deploy-windows.bat`) — no Supabase change.
+
+### A task is named the same way everywhere — 2026-09-18
+
+→ `docs/invariants/task-tree.md` § *Task colours*, ADR 0013 § *Where a task colour is worn*. `shared`:
+`SchedulerDomain.taskTitleLabel` (+ `UNTITLED_LABEL` / `ROOT_LABEL` moved there, `TaskRelationsDomain` and
+`CategoryRules.scopeLabel` now delegate); new `ui/TaskTitleLabel.kt`; `EditMenuItem`/`EditMenuRow` take a
+`taskColor`; `CalendarBubbleSection` carries its `taskId`; `taskSheetColors` threaded `App.kt` →
+`CalendarUi` → `WeekView` → `DayColumn`; `PeriodKindEditWindow` and `PriorityChart` take a colour map. Tests:
+`TaskTitleLabelTest` (new, 6). **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase
+deploy.** No persisted or synced state changed — colours are derived and were never on the wire.
+
+Thirteen sites printed a task's title and each held its own copy of the rule: six spellings of `(untitled)`
+(`UNTITLED_LABEL`, `.ifBlank {}`, `.ifEmpty {}`, `.orEmpty().ifBlank {}`), and nine of them dropped the task's
+colour altogether — the hover bubble, the phone touch menu, the task picker's list and its id rows, the
+Change Task menu, both ends of a task-relations pair, the resilience dialog and the pie legend. The tree and
+the calendar had obeyed ADR 0013 from the start, so the rule read as "the tree and the calendar" rather than
+as what it is: wherever the app names a task, it names it in that task's colour.
+
+What made it a funnel rather than a config object is that the tint is a **background**. The foreground stays
+free, so the task picker keeps saying in red that the now-line's periods forbid a task while the background
+still says which task it is — the objection that killed an earlier attempt at this, and it was wrong. The one
+genuine specificity left is which reading of the hue a surface needs (`sheet` on light, `accent` on the
+bubble's `inverseSurface`), which is the split `TaskPalette` already had. The one exception is the pie
+legend's swatch: rule 2 of ADR 0013 puts one sub-list's leaves in a contiguous arc, so slices keyed by task
+colour would be a smear — the swatch stays a chart colour, the name beside it is tinted like every other name.
+
 ### Emptying a bound template row empties the ROW — 2026-09-17
 
 → `docs/invariants/task-tree.md` § *The default sub-tree*. `shared`: `SchedulerReducer.applySetCellTitle`

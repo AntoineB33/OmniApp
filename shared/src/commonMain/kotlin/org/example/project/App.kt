@@ -1009,11 +1009,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
             val displayWorkPlanPanels =
                 Perf.measure("display.clipPlanForBreak") {
-                SchedulerDomain.clipPlanForPinnedScreenBreak(
-                    workPlanPanels, displaySidePanels, nowMillis,
-                    // The break shapes + the task attributes, so only what a break REFUSES is cut: a pose's open
-                    // period keeps the off-screen work it accepts, which is the part the band draws hollow.
-                    schedulerState.screenBreaks, schedulerState.tasks,
+                // `docs/scheduler_requirements.md` § *mode 1*: the same sliding-period regime for a period the
+                // LINE has retracted — a §17 window the user is still awake in. The plan runs across it (it
+                // must say which task holds and until when, and the line has to have something to be swept
+                // into between two fills); what is still ahead of the line is hidden here, so the Sleep band
+                // ahead stays whole while the stretch behind it — where §17's own activity carve has already
+                // opened the band — reads as the task panels the passing created.
+                SchedulerDomain.clipPlanForRetractedPeriod(
+                    SchedulerDomain.clipPlanForPinnedScreenBreak(
+                        workPlanPanels, displaySidePanels, nowMillis,
+                        // The break shapes + the task attributes, so only what a break REFUSES is cut: a pose's open
+                        // period keeps the off-screen work it accepts, which is the part the band draws hollow.
+                        schedulerState.screenBreaks, schedulerState.tasks,
+                    ),
+                    displaySleepPanels,
+                    nowMillis,
+                    tpMode,
                 )
                 }
 
@@ -1483,6 +1494,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // identical map, not two derivations of it) and carries the debounce.
         val taskHues = rememberTaskHues(schedulerState)
         val taskPanelColors = remember(taskHues) { TaskPalette.accentColors(taskHues) }
+        // The same hues read the other way, for the windows that NAME a task on an ordinary light surface
+        // rather than drawing it on the timeline ([org.example.project.ui.TaskTitleLabel]).
+        val taskSheetColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
         // PRD §8 edit window: the calendar block currently being edited (null = closed).
         var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
         // PRD §14: the reminder tag the "edit…" chooser's `reminder` row is open on (null = none). A tag had
@@ -1798,6 +1812,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             PeriodKindEditWindow(
                                 kind = kind,
                                 rows = SchedulerDomain.periodKindTaskRows(popupState, kind),
+                                taskColors = taskSheetColors,
                                 // The two kinds the README names are the account's whether it likes it
                                 // or not; only a kind the user defined can be dropped.
                                 canDelete = PeriodKinds.isUserDefined(kind),
@@ -1908,6 +1923,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 .align(Alignment.Center),
                             records = calendarRecords,
                             taskColors = taskPanelColors,
+                            taskSheetColors = taskSheetColors,
                             // PRD §9/§17: a future week beyond the near horizon is still computing its plan
                             // off the UI thread — surface a "Calculating…" hint instead of a frozen window.
                             calculating = farWeekCalculating,

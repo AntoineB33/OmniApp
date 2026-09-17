@@ -229,11 +229,10 @@ object CategoryRules {
      * window asks for a cell: two occurrences of one task, and two tasks sharing a title, both read the same.
      */
     fun scopeLabel(state: SchedulerState, scope: CellId?): String {
-        if (scope == null) return TaskRelationsDomain.ROOT_LABEL
+        if (scope == null) return SchedulerDomain.ROOT_LABEL
         val path = RelativePriorityDomain.ancestorCells(state, scope) + scope
         return path.joinToString(" / ") { cellId ->
-            val title = state.cells[cellId]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
-            title.ifBlank { TaskRelationsDomain.UNTITLED_LABEL }
+            SchedulerDomain.taskTitleLabel(state.cells[cellId]?.taskId?.let { state.tasks[it]?.title })
         }
     }
 
@@ -465,7 +464,7 @@ object CategoryRules {
      */
     fun scopeEntries(state: SchedulerState, input: String): List<ScopeEntry> {
         val typed = input.trim()
-        val rows = mutableListOf(ScopeEntry(null, TaskRelationsDomain.ROOT_LABEL))
+        val rows = mutableListOf(ScopeEntry(null, SchedulerDomain.ROOT_LABEL))
         val guard = HashSet<CellListId>()
 
         fun walk(listId: CellListId, prefix: String) {

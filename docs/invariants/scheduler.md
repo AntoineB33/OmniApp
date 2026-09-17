@@ -189,6 +189,38 @@ model exists to prevent.
   period of one written without it decoded as a block of **work**. A payload that predates the field decodes
   to blank and `restrictiveKind` heals it out of the flags exactly as before. It is in `schedulingSignature`
   too, in place of the two flags: read off those, re-kinding a period re-planned nothing.
+- **A MODE-1 LINE RETRACTS THE PERIOD THAT SAYS NOBODY IS AT A SCREEN** (`SchedulerDomain.retractedAtLineSpans`
+  / `retractAtLine`, gated by the one predicate `retractsAtLine`; read in `fillScheduleUninstrumented` and
+  nowhere else). Mode 1 is *a device of the account is unlocked*, and the requirements' clause is flat —
+  *"$now line$ must not be covered by the period 'no on-screen task'. This means that if it reaches one of
+  those periods, the passing of the $now line$ line creates task panels not covered by the period."* So a
+  covering period that **is or implies `no screen`** (`PeriodKinds.isOrImpliesNoScreen`) gives up
+  `[now, its end)`, and § *No idling* then puts a task at the line: what is left covering it is a layer
+  period, whose default resilience is `1` and which prevents nobody.
+  - **`sleep` retracts WHOLLY**, and it has to: no resilience can ever be written against it
+    (`isResilienceEditable` is false), so if the window itself stayed the line would go on being covered by a
+    period admitting nobody however awake the user is. This is PRD §17's *"carved by activity"* rule for the
+    SCHEDULER — the carve (`carveSleepPanels`) shipped display-only, so a night worked through showed the
+    band retracting to the line while the fill kept the whole window as an obstacle, and the line sat in a
+    stretch with **no band and no task at all** (account 3, 00:43 on 2026-09-18). Same shape as the dragged
+    pose of 2026-09-05, same answer.
+  - **`before bed` keeps its own hour** — the same test answering the other way, not an exception: its
+    resilience IS editable, so §17's *"a value above 0"* is the sanctioned way anything runs there and *No
+    idling*'s own clause is satisfied while nobody has one. Retracting it would delete the wind-down, the
+    hour the user is meant to stop working in being exactly an hour they are at a screen for. Only its
+    implied `no screen` period lifts, which is what lets the task they DID let through be an on-screen one.
+  - **`inactivity` and every kind the account defined never retract** — they say the timeline is empty, not
+    that nobody is at a screen. The predicate is deliberately **not** `coversNoScreen` (the bars' question,
+    which grey answers a fortiori), or a period the user drew would be pulled out from under them.
+  - **The plan is searched AND materialized across the retracted span; the DISPLAY is what stops at the
+    line** (`clipPlanForRetractedPeriod`, beside `clipPlanForPinnedScreenBreak` in `App.kt`, forward only).
+    The rules must name which task holds and until when (*"task A from 00:40 to $now line$, until 01:25"*),
+    and the fill runs at a rule change rather than on time passing — so a plan stopping at the line leaves
+    the stretch between two fills with nothing to be swept into, and the anomaly comes back three minutes to
+    the right. Behind the line the band is already gone by §17's own carve, off the same account activity
+    that makes the mode 1, so band-hole and task panels coincide. Ahead of it the band is whole and a lock
+    flips the mode with nothing to undo. **Neither away mode retracts anything**: their clause is the
+    opposite one (the line must BE covered), which is what `DynamicPeriods.awayCover` is for.
 - **PRD §17's wind-down is a KIND, not a rule: `before bed` (`PeriodKinds.BEFORE_BED`).** The hour before
   each §17 bedtime is covered by a period of it (`SchedulerDomain.beforeBedPanels`, derived from
   `sleepPanels` so the hour drifts with the wake time it is measured back from). The hour is empty for the
@@ -200,8 +232,16 @@ model exists to prevent.
   `0`); and it is **not** the
   user's, so it cannot be defined again or deleted (`isUserDefined` gates both, and an older payload's
   user-defined kind of that name collapses into it on decode, overrides intact).
-- **EVERY `before bed` PERIOD IS ALSO A `no screen` PERIOD** (user rule, 2026-09-13 — the hour is at least
-  four periods at once: `before bed`, `no screen`, `no computer unlocked`, `no phone unlocked`). It is an
+- **EVERY `before bed` PERIOD, AND EVERY §17 SLEEP WINDOW, IS ALSO A `no screen` PERIOD** (user rule,
+  2026-09-13; the sleep half added 2026-09-18 — each is at least four periods at once: its own kind,
+  `no screen`, `no computer unlocked`, `no phone unlocked`). A night is the plainest stretch there is of
+  nobody being at a screen, and the hour of wind-down running into it already said so; left out, a §17 window
+  asserted no layer at all, carried no hatch, and put no no-screen period in front of the scheduler or the
+  record bank — so a night with no other evidence (a cold start across it leaves neither a swept-stretch
+  cover nor an OS lock span) stood as the one grey kind saying nothing about screens. It is also what makes
+  the mode-1 retraction above reach a sleep window. The hatch over a wind-down hour and the window it runs
+  into is therefore **one stretch per night**: they abut, and two abutting statements of "nobody is at a
+  screen" are one statement. It is an
   IMPLICATION of the kind (`PeriodKinds.impliedKind`), folded into `PeriodKinds.assertedLayers`, so it reaches
   everything through the funnel a layer statement already has: the hatch (`assertedLayerRanges`), the
   scheduler and the recurrence bars (`impliedNoScreenPeriods`, which subtracts an explicit "No screen" period

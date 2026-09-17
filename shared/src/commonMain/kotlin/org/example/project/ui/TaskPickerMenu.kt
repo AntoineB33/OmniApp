@@ -100,6 +100,10 @@ fun TaskPickerMenu(
         }
     fun restrictionColorOf(taskId: TaskId): Color? =
         restrictionColor(SchedulerDomain.taskResilienceIn(state, taskId, restrictiveKinds))
+    // ...and each row's own colour, the one the tree and the calendar give that task ([TaskTitleLabel]).
+    // It is the row's BACKGROUND, so it never competes with the red/orange above: this menu has to say both
+    // which task a row is and what the now-line makes of it, and they are two channels.
+    val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
     var draft by remember { mutableStateOf("") }
     var highlighted by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -181,6 +185,7 @@ fun TaskPickerMenu(
                                 ago = taskTouchedAgoLabel(entry.lastTouchedMillis, nowMillis),
                                 highlighted = index == highlighted,
                                 color = restrictionColorOf(entry.taskId),
+                                taskColor = taskColors[entry.taskId],
                                 onClick = { onPick(entry.taskId) },
                             )
                         }
@@ -212,7 +217,11 @@ fun TaskPickerMenu(
                             // The same red/orange as the list above: a row names one task, so it can say what
                             // the now-line makes of it. A title *suggestion* cannot — it names a string
                             // several tasks may share — so those keep the ordinary colour.
-                            EditMenuItem(label = row.label, color = restrictionColorOf(taskId)) { onPick(taskId) }
+                            EditMenuItem(
+                                label = row.label,
+                                color = restrictionColorOf(taskId),
+                                taskColor = taskColors[taskId],
+                            ) { onPick(taskId) }
                         },
                     // A suggestion only fills the field, as in every other naming field of the app: it names
                     // a title, and a title several tasks share names no task. Filling it is what then raises
@@ -236,6 +245,8 @@ private fun TaskPickerRow(
     highlighted: Boolean,
     /** [restrictionColor] — what the periods covering the now-line make of this task, or null for nothing. */
     color: Color?,
+    /** The task's OWN colour, behind its name — see [TaskTitleLabel]. */
+    taskColor: Color?,
     onClick: () -> Unit,
 ) {
     Row(
@@ -250,10 +261,10 @@ private fun TaskPickerRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = color ?: MaterialTheme.colorScheme.onSurface,
+        TaskTitleLabel(
+            label = label,
+            taskColor = taskColor,
+            textColor = color ?: MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
         Text(

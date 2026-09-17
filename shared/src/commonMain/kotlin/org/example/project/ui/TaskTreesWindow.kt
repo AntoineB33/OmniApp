@@ -40,6 +40,7 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.state.TaskTreeEntry
+import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
  * **All task trees**: a floating window listing every named alternative task tree of the account, over a
@@ -232,7 +233,7 @@ private fun TaskTreeTimeline(
                     .padding(horizontal = 2.dp),
             ) {
                 Text(
-                    text = entry.title.ifBlank { "(untitled)" },
+                    text = entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL },
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -269,7 +270,7 @@ private fun TaskTreeRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = entry.title.ifBlank { "(untitled)" },
+            text = entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL },
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -320,7 +321,7 @@ private fun TaskTreeDetailWindow(
     val valid = dateText.isBlank() || parsed != null
 
     AppWindowFrame(
-        title = entry.title.ifBlank { "(untitled)" },
+        title = entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL },
         state = frame,
         onClose = onDismiss,
         defaultWidth = 300.dp,

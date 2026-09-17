@@ -318,6 +318,28 @@ disagreeing about what colour a task is.
   its own sub-tree holds. `TaskHue` still carries it and the palette still spends it on lightness, because a
   parent and the leaf it was placed beside are *neighbouring* hues by design. Do not go back to averaging an
   arc (that made `Book` and `Draft` the identical hue), and do not "fix" a collision by perturbing a hue.
+- **WHEREVER A TASK IS NAMED, IT IS NAMED THE SAME WAY** — the string from
+  `SchedulerDomain.taskTitleLabel`, the tint from `TaskPalette` (`ui/TaskTitleLabel.kt`). There is no surface
+  that prints a task's title and leaves it uncoloured; the rule is not "the tree and the calendar", it is
+  every place the app says a task's name. Thirteen sites had drifted into six spellings of `(untitled)` and
+  two of them had lost the colour entirely.
+  - **The tint is a BACKGROUND, never the text colour**, and that is the only reason the rule can be
+    universal. The foreground stays free for what a surface has to say about the row *here* — PRD §7's task
+    picker writes a task the now-line forbids in red and one it merely scales in orange — so "which task is
+    this" and "what is true of it here" never compete for one channel.
+  - **The one thing a caller configures is WHICH READING of the hue**, and it follows the surface's own
+    background and nothing else: `TaskPalette.sheet` on a light surface (the tree, the menus, the windows),
+    `TaskPalette.accent` on a dark one (the calendar's hover bubble is drawn on `inverseSurface`, where a
+    sheet tint is invisible). A third reading is a third answer to what colour a task is.
+  - **Two drawings, one rule**: the **block** form tints the whole row, because the row *is* the task — the
+    tree's `TaskRow`, an `EditMenuItem` row. The **chip** form (`TaskTitleLabel`) tints a name sitting among
+    other things — a bubble, a list row, the two ends of a task-relations pair. A third drawing that leaves a
+    name uncoloured is the drift the file exists to stop.
+  - **The one sanctioned exception is the priority-weight window's pie legend**, whose SWATCH is its slice's
+    colour and not its task's. The slices cannot be keyed by task: the rule above spreads childless tasks in
+    depth-first order, so the leaves of one sub-list — exactly what that chart draws — are a contiguous run of
+    neighbouring hues, and the pie would be a single smear. The legend's **name** is still tinted; only the
+    swatch answers the other question.
 - **The tree's tint is the row's RESTING background only.** Drag-move and non-selectable still win outright —
   a tint under either of them would be one more thing to read them against, and plain white is the strongest
   possible marker on a coloured tree.

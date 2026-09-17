@@ -2822,7 +2822,7 @@ object SchedulerReducer {
             TaskTreeDelta(
                 before = state.captureTaskTreeState(),
                 after = after.captureTaskTreeState(),
-                label = "Task tree \"${target.title.ifBlank { "(untitled)" }}\"",
+                label = "Task tree \"${target.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }}\"",
             ),
         )
     }
@@ -2920,7 +2920,7 @@ object SchedulerReducer {
             TaskTreeDelta(
                 before = state.captureTaskTreeState(),
                 after = after.captureTaskTreeState(),
-                label = "Delete task tree \"${entry.title.ifBlank { "(untitled)" }}\"",
+                label = "Delete task tree \"${entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }}\"",
             ),
         )
     }
@@ -5419,7 +5419,7 @@ private fun panelDiffLines(changes: EntryChanges<String, TaskPanel>): List<Strin
 }
 
 private fun panelSummary(panel: TaskPanel): String =
-    "${panel.title.ifBlank { "(untitled)" }}  ${formatPanelRange(panel.startEpochMillis, panel.endEpochMillis)}"
+    "${panel.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }}  ${formatPanelRange(panel.startEpochMillis, panel.endEpochMillis)}"
 
 private fun formatPanelRange(startMillis: Long, endMillis: Long): String {
     val tz = TimeZone.currentSystemDefault()
