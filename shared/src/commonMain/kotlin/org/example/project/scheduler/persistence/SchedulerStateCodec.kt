@@ -64,6 +64,7 @@ import org.example.project.scheduler.state.RecordDelta
 import org.example.project.scheduler.state.SchedulerEditSession
 import org.example.project.scheduler.state.SchedulerHistories
 import org.example.project.scheduler.state.SchedulerHistory
+import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.perf.Perf
 import org.example.project.scheduler.state.SchedulerState
@@ -185,7 +186,7 @@ object SchedulerStateCodec {
         SchedulerDomain.withRoot(toState()).let { state ->
             val panels = SchedulerDomain.unifyNoScreenPeriods(state.panels)
             if (panels === state.panels) state else state.copy(panels = panels)
-        }
+        }.let(SchedulerReducer::settleDefaultSubtree)
 
     private fun migrateLegacyRoot(element: JsonElement): JsonElement =
         when (element) {

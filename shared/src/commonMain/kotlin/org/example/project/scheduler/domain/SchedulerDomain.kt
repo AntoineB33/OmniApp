@@ -5613,15 +5613,42 @@ object SchedulerDomain {
     /**
      * All rows in the Change Task menu; first row is always "New task" (PRD §4).
      * Impossible IDs (same list / ancestor path) are hidden, per PRD §4 Filtering.
+     *
+     * [namingSource] is the state the rows are **named from** when the tree being drawn is not the account's
+     * own — `TaskTreeView`'s `colorSource` by another name, and for the same kind of reason.
+     *
+     * A row's path answers "**which** of the tasks with this title is this one", which is a fact about where
+     * the task lives in the ACCOUNT, not about the tree this window happens to draw. Both projections re-root
+     * the state: PRD §7's "All tasks" roots at its synthetic list and PRD §4's template shadows
+     * [WellKnownIds.ROOT_LIST] with its own root, so read off the drawing every live task is pathless and
+     * falls back to [childTitlesLabel] or its bare title — on the release account, **sixty-odd rows all
+     * reading "planning"**, which is exactly the flattening the path exists to prevent (the same symptom the
+     * stale `Task.childTaskIds` walk caused), and the row bound to the user's own "writing" task was named
+     * "main / planning / writing" after its place in the TEMPLATE rather than "root / long term / socialize /
+     * english / writing", where it lives.
+     *
+     * So a task the naming source's tree holds is named **exactly as that tree's own menu names it** — its
+     * path AND the titles along it read from there, or the shared root cell would be titled by whichever tree
+     * is drawn. Everything else is named from the drawn tree, which is where a template-owned task lives.
+     * What is *offered* and what is *filtered out* stay questions about the drawn tree: the cell being edited
+     * is one of its cells, and its siblings and ancestors are the ones the user can see.
+     *
+     * Two whole-tree walks, and only in a window drawing a projection; the account's own tree passes no
+     * [namingSource] and still walks once (ADR 0009).
      */
     fun changeTaskMenuEntries(
         state: SchedulerState,
         cellId: CellId,
         draftText: String,
         excludeTaskId: TaskId? = null,
+        namingSource: SchedulerState = state,
     ): List<ChangeTaskMenuEntry> {
         // One walk of the tree for the whole menu — the sort and every row's label read it (ADR 0009).
-        val paths = shortestTaskTreePaths(state)
+        val drawnPaths = shortestTaskTreePaths(state)
+        val sourcePaths = if (namingSource === state) drawnPaths else shortestTaskTreePaths(namingSource)
+        // The sort's first key is "has a path at all", so the merge is what keeps the rows in PRD §4's
+        // order (shortest first) instead of dropping every live task into the pathless tail.
+        val paths = if (namingSource === state) drawnPaths else drawnPaths + sourcePaths
         val matching = eligibleAssignTaskIds(state, cellId, draftText, paths, excludeTaskId)
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
@@ -5629,7 +5656,9 @@ object SchedulerDomain {
                 add(
                     ChangeTaskMenuEntry(
                         taskId = taskId,
-                        label = changeTaskMenuLabel(state, taskId, paths),
+                        label =
+                            if (taskId in sourcePaths) changeTaskMenuLabel(namingSource, taskId, sourcePaths)
+                            else changeTaskMenuLabel(state, taskId, drawnPaths),
                     ),
                 )
             }

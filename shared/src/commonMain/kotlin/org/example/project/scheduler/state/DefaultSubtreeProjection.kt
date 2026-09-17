@@ -94,8 +94,28 @@ fun SchedulerState.projectDefaultSubtree(): SchedulerState {
         editSession = defaultSubtreeEditSession,
         nextTaskCounter = maxOf(nextTaskCounter, template.tree.nextTaskCounter),
         nextCellCounter = maxOf(nextCellCounter, template.tree.nextCellCounter),
+        // The one thing about this state its own shape does not say — see [SchedulerState.isDefaultSubtreeProjection].
+        isDefaultSubtreeProjection = true,
     )
 }
+
+/**
+ * PRD §4: whether [cellId] is a **template row mirroring a task the LIVE tree owns** — the "switch off"
+ * binding, seen from inside a [projectDefaultSubtree] state (and false for every cell of every other tree,
+ * because a live cell's id is not one of the template's).
+ *
+ * Such a row may be re-pointed, moved or removed; the **task** is not the template's to change.
+ * [withDefaultSubtreeCapturedFrom] keeps the binding and discards the task itself, so an edit expressed as a
+ * change to that task evaporates at the fold — which is exactly what emptying one used to be. Clearing the
+ * row's title renamed the live task to blank, the cleanup then dropped the list's trailing placeholder
+ * because the emptied cell had become the bottom one, and the fold put the live title back: the row was
+ * still there reading "writing", and the placeholder it had eaten was not (2026-09-17, account 3).
+ */
+fun SchedulerState.mirrorsLiveTaskInDefaultSubtree(cellId: CellId, taskId: TaskId): Boolean =
+    isDefaultSubtreeProjection &&
+        cellId in defaultSubtree.tree.cells &&
+        taskId !in defaultSubtree.tree.tasks &&
+        taskId in tasks
 
 /**
  * The percentages the template window's priority column shows: each row's share **within the template**.

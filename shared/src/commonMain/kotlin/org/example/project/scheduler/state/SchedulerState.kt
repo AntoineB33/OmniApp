@@ -920,6 +920,22 @@ data class SchedulerState(
      * local-only: it never affects the sync fingerprint and is never adopted from a remote pull.
      */
     val supabaseUsageLog: List<SupabaseUsageEntry> = emptyList(),
+    /**
+     * True only on the state [org.example.project.scheduler.state.projectDefaultSubtree] makes of the PRD §4
+     * template — the one thing about that state the tree it is handed to cannot read off its own shape.
+     *
+     * It exists because the template and the live tree can hold the **same cell id**: both start from the
+     * same bare tree (`cell/root/0` is in each of them on a fresh account), so "this cell is one of the
+     * template's" is not a question `defaultSubtree.tree.cells` alone can answer — asked of the account's own
+     * tree it says yes about its very first cell. The one rule that needs the answer is
+     * [mirrorsLiveTaskInDefaultSubtree], and getting it wrong changes what deleting a cell of the real tree
+     * does.
+     *
+     * Transient in the strongest sense: never encoded, never synced, never persisted, and false on every
+     * state that is not that projection — `withDefaultSubtreeCapturedFrom` copies onto the live state, which
+     * is where it is false.
+     */
+    val isDefaultSubtreeProjection: Boolean = false,
 ) {
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
     val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar

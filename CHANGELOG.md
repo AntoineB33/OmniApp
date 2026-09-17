@@ -11,6 +11,55 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Emptying a bound template row empties the ROW — 2026-09-17
+
+→ `docs/invariants/task-tree.md` § *The default sub-tree*. `shared`: `SchedulerReducer.applySetCellTitle`
+(the `keepAsTombstone` branch), `settleDefaultSubtree` (now heals a sub-list that lost its placeholder),
+`mirrorsLiveTaskInDefaultSubtree` + `SchedulerState.isDefaultSubtreeProjection` (both new). Tests:
+`DefaultSubtreeTest` (+2). **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase
+deploy.** No persisted shape changed; a template whose sub-list lost its trailing placeholder is healed on
+load (and the healed template syncs like any template edit).
+
+The user's report: selecting `planning / writing` in the Default sub-tree window and pressing Delete left the
+row where it was and removed the trailing empty cell instead. Read off account 3's DB — history unit
+Main/2982 records the gesture, and its only effect was dropping the placeholder. That row's switch was off, so
+its title belongs to the LIVE task it mirrors: emptying it renamed that task to blank, `applySetCellTitle`'s
+inverse-of-auto-expansion then dropped the placeholder beneath it (the emptied cell becomes the list's bottom
+one), and `withDefaultSubtreeCapturedFrom` — which keeps the binding and discards the task — put the live
+title straight back. Emptying such a row now unbinds the CELL, the branch a §8 tombstone already took. The
+predicate cannot be read off the cell id (the two trees share `cell/root/0` on a fresh account, so every
+Delete in the real tree hit it), hence the projection flag. Renaming a bound row is still a silent no-op —
+the same evaporation, but what it *should* do is a question, not a bug with one answer.
+
+### An id row is named from the tree the task lives in — 2026-09-17
+
+→ `docs/invariants/task-tree.md` § *The default sub-tree*. `shared`: `SchedulerDomain.changeTaskMenuEntries`
+(new `namingSource`), threaded through `TaskTreeView` / `CellListSection` / `EditModeMenus` and passed by
+`DefaultSubtreeWindow` and `TaskListWindow`. Tests: `DefaultSubtreeTest` (+2). **Client only — an app rebuild
+(`account{1,2,3}-*deploy*.bat`); no Supabase deploy.** No persisted or synced state changed.
+
+The user's report: in the Default sub-tree window, the id menu under the `planning / writing` row did not show
+`long term / socialize / english / writing`. Read off account 3's DB: it did offer that task — labelled
+`main / planning / writing`, its place in the TEMPLATE. Both projections re-root the state, so
+`shortestTaskTreePaths` never reaches the live tree from them: every live task came out pathless and was named
+by its child titles or its bare title (the same menu, asked for "planning", returned **sixty-odd rows all
+reading "planning"**), and one a template row pointed at was named by the template. The menu now takes the
+state it NAMES from — the account's — while what it offers and filters stays about the tree on screen.
+
+### A template row whose task vanished is removed like any empty cell — 2026-09-17
+
+→ `docs/invariants/task-tree.md` § *The default sub-tree*. `shared`: `SchedulerReducer.settleDefaultSubtree` (new,
+run after every reduction and in `SchedulerStateCodec`'s decode heal). Tests: `DefaultSubtreeTest` (+3). **Client
+only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.** No persisted shape changed; a stored
+template holding such a row is healed on load (and the healed template syncs like any template edit).
+
+The user's report: *"in the sub list under 'planning', there are two empty task cells, and the first one has a switch
+button."* Read off account 3's DB: the row pointed at `task/user/325`, a task that existed in neither the template
+nor the live tree — a live "New task" draft (history unit 2892 is only the template's id counter catching up with the
+live one) that a template row was pointed at, switch off (2893, 2895), and that the tree then dropped. The template ran
+the tree's post-edit cleanup only at its own edit boundaries, and a live-side loss is none. Rule, per the user: every
+template sub-list is titled cells ending in one empty cell, kept by the tree's own code.
+
 ### Everything the now-line drags moves as continuously as the line — 2026-09-17
 
 → ADR 0009 § *Everything that follows the line moves continuously* (new), `docs/invariants/display-hot-path.md`

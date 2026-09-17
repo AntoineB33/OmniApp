@@ -235,6 +235,9 @@ fun TaskListWindow(
                 // colour here, in the tree and on the calendar (ADR 0013), and the projection's root is
                 // ordered by the sorter.
                 colorSource = state,
+                // ... and for the same reason a Change Task row is NAMED from the live tree: its path says
+                // where in the TREE that task is, which the sorter's synthetic root cannot answer.
+                namingSource = state,
                 rowTrailing = { cellId ->
                     // The window's own figures, in the order the sorter offers them: how alike this
                     // row's title is to another task's (only while that is the sort — see `similarities`)

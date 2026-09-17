@@ -163,6 +163,10 @@ fun DefaultSubtreeWindow(
             onSetDeepCopyCell = onSetDeepCopyCell,
             // The window's own raise-on-press is what focuses it, so the tree claims no app-wide focus.
             refocusWindow = null,
+            // A Change Task row is NAMED from the live tree: the path says which of the account's tasks of
+            // that title the row points at, and the projection roots at the template, where a live task has
+            // no path at all (or the template's own, which says nothing about where it lives).
+            namingSource = state,
             // The template is its OWN tree, so it gets its own colour solution: sharing the account's
             // memo would make each of the two trees the "previous answer" the other's ties are settled
             // against, and the cached answer would be thrown away on every recomposition of either.

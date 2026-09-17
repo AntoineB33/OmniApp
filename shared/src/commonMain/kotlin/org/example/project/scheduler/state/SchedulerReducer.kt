@@ -170,7 +170,56 @@ object SchedulerReducer {
      * the wrong root list — the settle they need is the one this method runs on the folded-back live state.
      */
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState =
-        CategoryRules.settle(state, reduceIntent(state, intent))
+        CategoryRules.settle(state, settleDefaultSubtree(reduceIntent(state, intent)))
+
+    /**
+     * PRD §4 **Default sub-tree**: every sub-list of the template is titled task cells ending in ONE empty cell,
+     * exactly as in the tree — and it is the tree's own post-edit cleanup that keeps it so.
+     *
+     * The window runs that cleanup at its own edit boundaries, but a row whose switch is off points at a task
+     * the **live** tree owns, and the live tree can lose that task without the template being edited at all: a
+     * "New task" draft picked in the window and then cancelled in the tree, a task tree switched away. The row
+     * then points at nothing and draws as an empty cell in the middle of its list, still carrying the switch
+     * (2026-09-17, account 3). So a cell whose task resolves nowhere is emptied — it IS an empty cell, by
+     * [SchedulerDomain.isTextuallyEmptyCell] — and [evaluatePostEditCleanup] is run over the projection and
+     * folded back like any edit made in the window.
+     *
+     * The **ending** half is healed here too: a template sub-list whose last row is titled has nowhere left to
+     * type, so that sub-list can never be added to again. A build that let a bound row eat its list's
+     * placeholder wrote exactly that (see [mirrorsLiveTaskInDefaultSubtree]), and the state it left is on
+     * disk, so the placeholder is put back on load as well as after any reduction that loses one.
+     *
+     * Called after every reduction and on decode. Returns [state] itself unless a row actually dangles or a
+     * sub-list actually ends titled, so the per-tick cost is one lookup per template cell and per template
+     * list, and a healthy template is never rewritten.
+     */
+    fun settleDefaultSubtree(state: SchedulerState): SchedulerState {
+        val template = state.defaultSubtree.tree
+        val dangling =
+            template.cells.values.filter { cell ->
+                val taskId = cell.taskId ?: return@filter false
+                taskId !in template.tasks && taskId !in state.tasks
+            }
+        val unterminated =
+            template.lists.values.filter { list ->
+                val last = list.cellIds.lastOrNull() ?: return@filter false
+                template.cells[last]?.taskId != null
+            }
+        if (dangling.isEmpty() && unterminated.isEmpty()) return state
+        val projected = state.projectDefaultSubtree()
+        var emptied =
+            projected.copy(
+                cells = projected.cells + dangling.associate { it.id to it.copy(taskId = null) },
+            )
+        for (list in unterminated) emptied = ensureTrailingPlaceholder(emptied, list.id)
+        val folded = state.withDefaultSubtreeCapturedFrom(evaluatePostEditCleanup(emptied))
+        // A switch belongs to a row with a task behind it; the emptied cell kept as a list's last one has none.
+        val boundCells =
+            folded.defaultSubtree.boundCells.filterTo(mutableSetOf()) {
+                folded.defaultSubtree.tree.cells[it]?.taskId != null
+            }
+        return folded.copy(defaultSubtree = folded.defaultSubtree.copy(boundCells = boundCells))
+    }
 
     private fun reduceIntent(state: SchedulerState, intent: SchedulerIntent): SchedulerState {
         return when (intent) {
@@ -4616,14 +4665,24 @@ private fun applySetCellTitle(
     val previousTask = working.tasks[taskId]
     val previousTitle = previousTask?.title
 
-    // PRD §4/§8: emptying a cell whose task still has calendar history — a recorded period (§8) or a panel
-    // (§9) — must NOT rename that task to blank, or its records/panels would render as "(untitled)". Keep
-    // the task as a tombstone the calendar still labels and unbind *this* cell instead of clearing the
-    // shared title. The taskId is dropped only once nothing — no cell, panel, or record — references it
-    // ([purgeOrphanTasks]); a cell-less task is never scheduled ([schedulableLeaves] needs [taskHasCells]).
+    // Emptying a cell clears the task's SHARED title — that is PRD §4's "a blank title deletes" — but only
+    // where this cell is the task's own home. Two cases where it is not, and both unbind *this* cell and
+    // leave the task alone:
+    //
+    //  - PRD §4/§8 the **tombstone**: the task still has calendar history — a recorded period (§8) or a
+    //    panel (§9) — and blanking it would render those as "(untitled)". The taskId is dropped only once
+    //    nothing — no cell, panel, or record — references it ([purgeOrphanTasks]); a cell-less task is never
+    //    scheduled ([schedulableLeaves] needs [taskHasCells]).
+    //  - PRD §4 a **template row mirroring a live task** ([mirrorsLiveTaskInDefaultSubtree]): the title
+    //    belongs to the live tree, and `withDefaultSubtreeCapturedFrom` discards every change to it. Blanking
+    //    it therefore emptied nothing — the row came back reading its old title, and the placeholder the
+    //    cleanup had dropped beneath it (the emptied cell becomes its list's bottom one) stayed dropped.
     val keepAsTombstone =
         title.isEmpty() && previousTask != null &&
-            (previousTask.record.isNotEmpty() || working.panels.any { it.taskId == taskId })
+            (
+                previousTask.record.isNotEmpty() || working.panels.any { it.taskId == taskId } ||
+                    working.mirrorsLiveTaskInDefaultSubtree(cellId, taskId)
+                )
 
     val tasks = working.tasks.toMutableMap()
     val task =

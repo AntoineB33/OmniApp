@@ -480,6 +480,42 @@ until it is applied to a real cell.
   empty.
 - **A node's switch is `boundCells`.** Off ⇒ every grafted cell mirrors the row's own `taskId`; on (the
   default) ⇒ a fresh task per graft, carrying the row's title, fields, minimum time and weight row.
+- **Every template sub-list is titled cells ending in ONE empty cell**, kept by the tree's own
+  `evaluatePostEditCleanup` — never a template-only rule. The window runs it at its edit boundaries, but a
+  switch-off row's task belongs to the LIVE tree, which can lose it with no template edit at all (a cancelled
+  "New task" draft, a task-tree switch). `SchedulerReducer.settleDefaultSubtree` — after every reduction and on
+  decode — empties a cell whose task resolves nowhere and runs that cleanup over the projection, so such a row is
+  removed (with its switch), never drawn as an empty row in the middle of its list. The **ending** is healed
+  there too: a sub-list whose last row is titled has nowhere left to type, so a placeholder is put back — on
+  load as well as after any reduction, because the build that let a bound row eat one wrote that state to disk.
+  It returns the same instance when nothing dangles and nothing ends titled; keep both checks to one lookup per
+  template cell and per template list, they run on every tick.
+- **An id row is NAMED from the tree the task LIVES in, never from the projection being drawn**
+  (`changeTaskMenuEntries`' `namingSource`, `TaskTreeView`'s parameter of the same name — the shape
+  `colorSource` already has, for the same kind of reason). A path answers *which* task of this title this is,
+  which is a fact about the account; both projections re-root the state, so read off the drawing every live
+  task is pathless — PRD §7's "All tasks" roots at its synthetic list, and the template shadows `ROOT_LIST`
+  — and falls back to its child titles or its bare title. On the release account that is **sixty-odd rows all
+  reading "planning"** (2026-09-17), the very flattening the path exists to prevent, and the row bound to the
+  user's own task was labelled `main / planning / writing` after its place in the TEMPLATE instead of
+  `root / long term / socialize / english / writing`, where it lives. So the path **and the titles along it**
+  are read from the naming source — sharing `WellKnownIds.ROOT_TASK` means the root segment is otherwise
+  titled by whichever tree is drawn — and only a task the account's tree does not hold (a template-owned row)
+  is named from the drawing, which is where it lives. What is **offered** and what is **filtered** stay
+  questions about the drawn tree: the cell, its siblings and its ancestors are the ones the user can see.
+- **A bound row may be re-pointed, moved or emptied — the TASK is not the template's to rename.** The fold
+  keeps the binding and discards the task itself, so any edit expressed as a change to that task evaporates.
+  Emptying one used to be exactly that: it blanked the live task's title, the cleanup then dropped the list's
+  trailing placeholder (an emptied cell becomes its list's bottom one), and the fold put the live title back —
+  the row was still there reading "writing", and the placeholder it had eaten was not (2026-09-17, account 3).
+  So emptying such a row **unbinds the cell**, the same branch a §8 tombstone takes
+  (`applySetCellTitle`'s `keepAsTombstone`, `mirrorsLiveTaskInDefaultSubtree`). Renaming one is still a silent
+  no-op — an open question, not a settled rule.
+- **"Is this cell one of the template's?" is `SchedulerState.isDefaultSubtreeProjection`, never the cell id.**
+  The template and the live tree can hold the SAME cell id — both start from the same bare tree, so
+  `cell/root/0` is in each of them on a fresh account — and asking `defaultSubtree.tree.cells` alone says yes
+  about the account tree's very first cell, which changed what Delete did to the real tree. The flag is set by
+  `projectDefaultSubtree()` and by nothing else; it is never encoded, synced or persisted.
 - **A row pointing at an existing task shows that task's OWN sub-tree** — a sub-list belongs to the task id —
   drawn by the tree as the ordinary mirror it is. Do not "fix" this by writing into the bound task's sub-list.
 - The chrome still lives in **one** place — `ui/TaskSheetChrome.kt` (`SheetColors`, `INDENT_STEP_DP`,

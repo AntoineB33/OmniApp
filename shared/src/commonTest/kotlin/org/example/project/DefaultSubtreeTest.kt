@@ -386,6 +386,143 @@ class DefaultSubtreeTest {
     }
 
     @Test
+    fun emptying_a_row_bound_to_a_live_task_empties_the_ROW_and_leaves_the_TASK_alone() {
+        // PRD §4: the blank title is what deletes — but the title of a row whose switch is off belongs to the
+        // LIVE task it mirrors, and the fold discards every change to that task. Blanking it emptied nothing:
+        // the row came back reading its old title, and the trailing placeholder the cleanup dropped beneath it
+        // (an emptied cell becomes its list's bottom one) stayed dropped, so the sub-list had nowhere left to
+        // type (2026-09-17, account 3).
+        var s = SchedulerState.empty()
+        val liveCell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(liveCell, "writing"))
+        val live = s.cells[liveCell]!!.taskId!!
+        s = withTemplate(listOf(node("dst/0", "writing", live)), from = s)
+
+        val row = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        s = reduceInTemplate(
+            s,
+            SchedulerIntent.ClickCell(
+                cellId = row,
+                ctrl = false,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(s.projectDefaultSubtree()),
+            ),
+        )
+        s = reduceInTemplate(s, SchedulerIntent.EmptySelectedCells)
+
+        assertEquals(emptyList(), templateTitles(s), "the row the user deleted must be gone")
+        assertEquals("writing", s.tasks[live]?.title, "the live task is not the template's to rename")
+        // ... and the sub-list still ends in exactly ONE empty cell, so it can be typed into again.
+        val remaining = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds
+        assertEquals(1, remaining.size)
+        assertNull(s.defaultSubtree.tree.cells[remaining.single()]?.taskId)
+    }
+
+    @Test
+    fun a_template_sub_list_left_without_its_trailing_placeholder_gets_one_back() {
+        // The heal for the accounts the above already damaged: a sub-list ending in a TITLED row has nowhere
+        // left to type, so it could never be added to again. Put back on load, as `settleDefaultSubtree` is
+        // run by the codec's decode as well as after every reduction.
+        val s = withTemplate(listOf(node("dst/0", "Plan")))
+        val tree = s.defaultSubtree.tree
+        val ids = tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds
+        val placeholder = ids.last()
+        assertNull(tree.cells[placeholder]?.taskId, "the fixture's list ends with the placeholder")
+        val stripped =
+            s.copy(
+                defaultSubtree =
+                    s.defaultSubtree.copy(
+                        tree =
+                            tree.copy(
+                                cells = tree.cells - placeholder,
+                                lists =
+                                    tree.lists +
+                                        (
+                                            WellKnownIds.ROOT_LIST to
+                                                tree.lists[WellKnownIds.ROOT_LIST]!!
+                                                    .copy(cellIds = ids.dropLast(1))
+                                            ),
+                            ),
+                    ),
+            )
+
+        val healed = SchedulerReducer.settleDefaultSubtree(stripped)
+
+        val healedIds = healed.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds
+        assertEquals(listOf("Plan"), templateTitles(healed), "healing adds a row, it never removes one")
+        assertEquals(2, healedIds.size)
+        assertNull(healed.defaultSubtree.tree.cells[healedIds.last()]?.taskId)
+        // A healthy template is never rewritten — the settle is on every reduction.
+        assertTrue(SchedulerReducer.settleDefaultSubtree(healed) === healed)
+    }
+
+    @Test
+    fun the_menus_rows_are_named_by_where_they_live_in_the_ACCOUNT_tree() {
+        // PRD §4 *Presentation*: the path on an id row says WHICH task of that title this is. The template
+        // window draws a projection rooted at the template, so read off the drawing a live task has no path
+        // at all — every row of the release account's menu read a bare "planning", sixty-odd times over, and
+        // the row bound to the user's "writing" task was named after its place in the TEMPLATE.
+        var s = SchedulerState.empty()
+        val englishCell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(englishCell, "english"))
+        val english = s.cells[englishCell]!!.taskId!!
+        val englishChildren = s.tasks[english]!!.childListId!!
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.SetCellTitle(s.lists[englishChildren]!!.cellIds.first(), "writing"),
+        )
+        val deepWriting = s.cells[s.lists[englishChildren]!!.cellIds.first()]!!.taskId!!
+        // A second task of the SAME title one level up: the two rows are told apart by their paths alone.
+        val topWritingCell = s.lists[s.rootListId]!!.cellIds.last { s.cells[it]?.taskId == null }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(topWritingCell, "writing"))
+        val topWriting = s.cells[topWritingCell]!!.taskId!!
+
+        s = withTemplate(listOf(node("dst/0", "planning")), from = s)
+        val projected = s.projectDefaultSubtree()
+        val planningCell =
+            projected.lists[projected.rootListId]!!.cellIds
+                .first { projected.cells[it]?.taskId != null }
+        val target =
+            projected.lists[projected.tasks[projected.cells[planningCell]!!.taskId!!]!!.childListId!!]!!
+                .cellIds.first()
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(projected, target, "writing", namingSource = s)
+        val labels = entries.filter { it.taskId != null }.associate { it.taskId to it.label }
+        assertEquals(
+            SchedulerDomain.taskPathLabel(s, topWriting),
+            labels[topWriting],
+            "a live task must be named exactly as the account's own tree names it",
+        )
+        assertEquals(SchedulerDomain.taskPathLabel(s, deepWriting), labels[deepWriting])
+        // ... which is the whole point: two tasks of one title, told apart.
+        assertTrue(labels[topWriting] != labels[deepWriting])
+    }
+
+    @Test
+    fun a_template_owned_task_is_still_named_by_the_template() {
+        // The other half: a task the account tree does not hold lives in the template, so that is where it
+        // is named from. Naming everything from the account would leave it labelled by nothing at all.
+        var s = withTemplate(listOf(node("dst/0", "planning", children = listOf(node("dst/1", "writing")))))
+        val projected = s.projectDefaultSubtree()
+        val planningCell =
+            projected.lists[projected.rootListId]!!.cellIds
+                .first { projected.cells[it]?.taskId != null }
+        val templateWriting =
+            projected.lists[projected.tasks[projected.cells[planningCell]!!.taskId!!]!!.childListId!!]!!
+                .cellIds.mapNotNull { projected.cells[it]?.taskId }.first()
+        // Asked from a cell elsewhere in the template, so the row is not filtered out as its own sibling.
+        val elsewhere = projected.lists[projected.rootListId]!!.cellIds.last()
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(projected, elsewhere, "writing", namingSource = s)
+        assertEquals(
+            SchedulerDomain.taskPathLabel(projected, templateWriting),
+            entries.first { it.taskId == templateWriting }.label,
+        )
+    }
+
+    @Test
     fun a_blank_title_deletes_a_template_row_with_its_children() {
         // PRD §4: the blank title is what deletes, in the template exactly as in the tree — and it is the
         // tree's own rule doing it, not a normalization step of the template's own.
@@ -557,7 +694,94 @@ class DefaultSubtreeTest {
         assertTrue(shares.keys.all { id -> tree.tasks[id] != null }, "no live-tree task may appear")
     }
 
+    /**
+     * A switch-off row mirroring the live task [shared] under a titled template row "Plan", as the window builds
+     * it: the ordinary Change Task menu, then the switch. Returns the state and the mirroring cell.
+     */
+    private fun withRowMirroring(from: SchedulerState, shared: TaskId): Pair<SchedulerState, CellId> {
+        var s = withTemplate(listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch")))), from = from)
+        val planTask = s.defaultSubtree.tree.cells.values.first { s.defaultSubtree.tree.tasks[it.taskId]?.title == "Plan" }.taskId!!
+        val planList = s.defaultSubtree.tree.tasks[planTask]!!.childListId!!
+        val row = s.defaultSubtree.tree.lists[planList]!!.cellIds.last()
+        s = reduceInTemplate(s, SchedulerIntent.BeginEdit(row))
+        s = reduceInTemplate(s, SchedulerIntent.PickTaskFromMenu(shared))
+        s = reduceInTemplate(s, SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
+        s = reduceInTemplate(s, SchedulerIntent.SetDefaultSubtreeCellBound(row, bound = true))
+        assertEquals(shared, s.defaultSubtree.tree.cells[row]!!.taskId, "fixture: the row mirrors the live task")
+        return s to row
+    }
+
+    /** Every template sub-list is titled cells ending in exactly one empty cell (PRD §4, as in the tree). */
+    private fun assertTemplateListsSettled(s: SchedulerState) {
+        val tree = s.defaultSubtree.tree
+        for (list in tree.lists.values) {
+            val empty = list.cellIds.map { id ->
+                val taskId = tree.cells[id]?.taskId
+                taskId == null || (tree.tasks[taskId] ?: s.tasks[taskId])?.title.isNullOrBlank()
+            }
+            assertEquals(listOf(true), empty.filter { it } , "one empty cell in ${list.id.value}: ${list.cellIds}")
+            assertTrue(empty.last(), "the empty cell ends ${list.id.value}")
+        }
+        assertTrue(
+            s.defaultSubtree.boundCells.all { tree.cells[it]?.taskId != null },
+            "a switch belongs to a row with a task: ${s.defaultSubtree.boundCells}",
+        )
+    }
+
+    @Test
+    fun a_mirrored_live_draft_the_tree_cancels_leaves_no_empty_row_in_the_template() {
+        // 2026-09-17, account 3: a "New task" draft still being typed in the tree was picked for a template row
+        // and the row's switch turned off; the tree then dropped the draft. The row pointed at nothing and drew
+        // as an empty cell in the middle of "planning", switch and all.
+        var s = SchedulerState.empty()
+        val live = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(live, initialText = "Draft"))
+        val draft = s.cells[live]!!.taskId!!
+        val (mirrored, row) = withRowMirroring(s, draft)
+
+        s = SchedulerReducer.reduce(mirrored, SchedulerIntent.CancelEdit)
+
+        assertNull(s.tasks[draft], "fixture: the cancel dropped the draft")
+        assertFalse(row in s.defaultSubtree.tree.cells, "the row that pointed at nothing is removed")
+        assertFalse(row in s.defaultSubtree.boundCells)
+        assertEquals(listOf("Plan"), templateTitles(s))
+        assertTemplateListsSettled(s)
+    }
+
+    @Test
+    fun a_row_mirroring_a_task_the_live_tree_still_has_is_kept() {
+        var s = SchedulerState.empty()
+        val live = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(live, "Shared"))
+        val (mirrored, row) = withRowMirroring(s, s.cells[live]!!.taskId!!)
+
+        assertTrue(row in mirrored.defaultSubtree.boundCells)
+        assertTrue(SchedulerReducer.settleDefaultSubtree(mirrored) === mirrored, "a healthy template is left alone")
+        assertTemplateListsSettled(mirrored)
+    }
+
     // ---- persistence ---------------------------------------------------------------------------
+
+    @Test
+    fun a_stored_template_row_pointing_at_a_vanished_task_is_healed_on_decode() {
+        // CLAUDE.md: decode heals a state an older build wrote. The previous build persisted exactly this — a
+        // switch-off row whose live task is gone — so the payload is that state, written without the heal.
+        var s = SchedulerState.empty()
+        val live = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(live, "Shared"))
+        val shared = s.cells[live]!!.taskId!!
+        val (mirrored, row) = withRowMirroring(s, shared)
+        val vanished = mirrored.copy(tasks = mirrored.tasks - shared)
+        val payload = SchedulerStateCodec.encode(vanished)
+        assertTrue(payload.contains(row.value), "fixture: the dangling row is in the payload")
+
+        val decoded = SchedulerStateCodec.decode(payload)
+
+        assertNotNull(decoded)
+        assertFalse(row in decoded.defaultSubtree.tree.cells)
+        assertEquals(listOf("Plan"), templateTitles(decoded))
+        assertTemplateListsSettled(decoded)
+    }
 
     @Test
     fun a_payload_written_before_the_feature_decodes_to_no_template_and_the_switch_off() {

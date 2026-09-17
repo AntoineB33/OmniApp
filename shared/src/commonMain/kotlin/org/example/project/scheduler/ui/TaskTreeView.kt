@@ -158,6 +158,17 @@ internal fun TaskTreeView(
      */
     colorSource: SchedulerState = state,
     /**
+     * The state a cell's Change Task menu NAMES its rows from, when that is not the state being drawn — the
+     * same shape as [colorSource], and for the same kind of reason.
+     *
+     * A row's path says WHICH task of that title this row is, which is a fact about the account's tree. Both
+     * projections re-root the state, so read off the drawing every live task is pathless (PRD §7's "All
+     * tasks") or named by where the TEMPLATE puts it (PRD §4's window) — the release account's menu offered
+     * sixty-odd rows all reading "planning". See
+     * [org.example.project.scheduler.domain.SchedulerDomain.changeTaskMenuEntries].
+     */
+    namingSource: SchedulerState = state,
+    /**
      * Which tree's colour solution this drawing belongs to — see [org.example.project.ui.TaskHueMemo].
      * The account's tree shares one memo with the calendar so the two cannot disagree about a task's colour;
      * the PRD §4 template is a different tree and gets its own.
@@ -692,6 +703,7 @@ internal fun TaskTreeView(
                 rowTrailing = rowTrailing,
                 onGoToTaskTree = onGoToTaskTree,
                 rootRenameOnly = rootRenameOnly,
+                namingSource = namingSource,
                 onIntent = { intent ->
                     // PRD §8 focus: a click into the tree hands focus back from the calendar, so typing
                     // resumes entering Edit Mode — even on an already-selected cell (whose selection

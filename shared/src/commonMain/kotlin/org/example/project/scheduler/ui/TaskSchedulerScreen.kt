@@ -443,6 +443,8 @@ internal fun CellListSection(
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
     /** PRD §7 "All tasks": [depth] 0 rows carry no Mode selector — they are always renaming. */
     rootRenameOnly: Boolean = false,
+    /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [EditModeMenus]. */
+    namingSource: SchedulerState = state,
 ) {
     val list = state.lists[listId] ?: return
 
@@ -659,6 +661,7 @@ internal fun CellListSection(
                             // PRD §7: a root row of the "All tasks" window is always renaming, so it is
                             // offered no choice (the reducer opens its session in Rename mode to match).
                             hideModeSelector = rootRenameOnly && depth == 0,
+                            namingSource = namingSource,
                         )
                     }
                 } else {
@@ -714,6 +717,7 @@ internal fun CellListSection(
                 rowTrailing = rowTrailing,
                 onGoToTaskTree = onGoToTaskTree,
                 rootRenameOnly = rootRenameOnly,
+                namingSource = namingSource,
             )
         }
     }
@@ -919,6 +923,12 @@ internal fun EditModeMenus(
     hideModeSelector: Boolean = false,
     /** Hands the caret back to the cell's field after a Mode pick — see [cellEditModeOptions]. */
     onModePicked: () -> Unit = {},
+    /**
+     * The state the id rows are NAMED from, when the tree being drawn is a projection — the account's own
+     * state in PRD §4's template window and PRD §7's "All tasks", exactly as `colorSource` is for the
+     * colours. See [SchedulerDomain.changeTaskMenuEntries].
+     */
+    namingSource: SchedulerState = state,
 ) {
     val session = state.editSession ?: return
 
@@ -932,6 +942,7 @@ internal fun EditModeMenus(
                 cellId,
                 draftText,
                 excludeTaskId = session.newTaskDraftId,
+                namingSource = namingSource,
             )
         } else {
             emptyList()
