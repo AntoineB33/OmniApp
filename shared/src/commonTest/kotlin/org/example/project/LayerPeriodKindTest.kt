@@ -5,7 +5,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.datetime.TimeZone
+import org.example.project.scheduler.domain.PeriodKindConfig
+import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -25,7 +28,7 @@ import org.example.project.scheduler.state.SchedulerState
  *
  *  - each asserts its OWN layer and nothing else ([SchedulerDomain.assertedLayerRanges]);
  *  - **a no-screen period is where BOTH layers fall**, so the OVERLAP of the two is one
- *    ([SchedulerDomain.assertedNoScreenRanges]) — and that is the only thing either of them restricts
+ *    ([SchedulerDomain.assertedNoScreenRanges], [SchedulerDomain.companionPeriods]) — and that is the only thing either of them restricts
  *    through, since neither has a scheduling rule of its own;
  *  - two overlapping statements of one layer are ONE statement, exactly as two "No screen" periods are
  *    ([SchedulerDomain.unifyNoScreenPeriods]); two statements about DIFFERENT screens are not.
@@ -47,6 +50,15 @@ class LayerPeriodKindTest {
 
     private fun range(start: Long, end: Long) = TaskTimeRange(start, end)
 
+    private val CONFIG = PeriodKindConfig.DEFAULT
+
+    /** The companion periods [panels] carry, the layers' overlap included ([SchedulerDomain.companionPeriods]). */
+    private fun companions(panels: List<TaskPanel>) =
+        SchedulerDomain.companionPeriods(
+            panels.map { RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind, it.title) },
+            CONFIG,
+        )
+
     // ----- what each kind asserts ---------------------------------------------------------------
 
     @Test
@@ -57,29 +69,65 @@ class LayerPeriodKindTest {
         )
         assertEquals(
             listOf(range(NOW, NOW + HOUR)),
-            SchedulerDomain.assertedLayerRanges(panels, SchedulerDomain.ActivityLayer.NoComputerUnlocked),
+            SchedulerDomain.assertedLayerRanges(panels, SchedulerDomain.ActivityLayer.NoComputerUnlocked, CONFIG),
         )
         assertEquals(
             listOf(range(NOW + 2 * HOUR, NOW + 3 * HOUR)),
-            SchedulerDomain.assertedLayerRanges(panels, SchedulerDomain.ActivityLayer.NoPhoneUnlocked),
+            SchedulerDomain.assertedLayerRanges(panels, SchedulerDomain.ActivityLayer.NoPhoneUnlocked, CONFIG),
         )
     }
 
     @Test
-    fun a_no_screen_period_and_a_before_bed_one_assert_both_layers_and_a_grey_one_asserts_neither() {
-        // `before bed` is always also a no-screen period (PRD §17, [PeriodKinds.impliedKind]).
+    fun by_default_no_screen_before_bed_and_grey_periods_assert_no_layer() {
+        // User rule (2026-09-18): by default "no screen" is NOT accompanied by "no computer unlocked" or "no
+        // phone unlocked", and inactivity is not accompanied by "no screen". `before bed` carries a no-screen
+        // period, which therefore carries no layer either.
         val panels = listOf(
             period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
             period(PeriodKinds.INACTIVITY, NOW + 2 * HOUR, NOW + 3 * HOUR),
             period(PeriodKinds.BEFORE_BED, NOW + 4 * HOUR, NOW + 5 * HOUR),
         )
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
+            assertEquals(emptyList(), SchedulerDomain.assertedLayerRanges(panels, layer, CONFIG), layer.name)
+        }
+        // They are still no-screen stretches for the record bank — by kind, not through the layers.
+        assertEquals(
+            listOf(range(NOW, NOW + HOUR), range(NOW + 4 * HOUR, NOW + 5 * HOUR)),
+            SchedulerDomain.assertedNoScreenRanges(panels, CONFIG),
+        )
+    }
+
+    @Test
+    fun a_no_screen_period_asserts_both_layers_once_the_account_makes_them_its_companions() {
+        val config = PeriodKindConfig(
+            mapOf(
+                PeriodKinds.NO_SCREEN to PeriodKindStyle(
+                    setOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED),
+                    PeriodKinds.defaultStyle(PeriodKinds.NO_SCREEN).drawing,
+                ),
+            ),
+        )
+        val panels = listOf(
+            period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
+            // before bed → no screen → both layers, transitively
+            period(PeriodKinds.BEFORE_BED, NOW + 4 * HOUR, NOW + 5 * HOUR),
+        )
+        SchedulerDomain.ActivityLayer.entries.forEach { layer ->
             assertEquals(
                 listOf(range(NOW, NOW + HOUR), range(NOW + 4 * HOUR, NOW + 5 * HOUR)),
-                SchedulerDomain.assertedLayerRanges(panels, layer),
-                "no screen and before bed speak about a screen, inactivity does not: " + layer.name,
+                SchedulerDomain.assertedLayerRanges(panels, layer, config),
+                layer.name,
             )
         }
+        // The layers' own definition then puts no SECOND no-screen period over the drawn one.
+        val implied = SchedulerDomain.companionPeriods(
+            panels.map { RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind, it.title) },
+            config,
+        )
+        assertEquals(
+            listOf(range(NOW + 4 * HOUR, NOW + 5 * HOUR)),
+            implied.filter { it.kind == PeriodKinds.NO_SCREEN }.map { range(it.startMillis, it.endMillis) },
+        )
     }
 
     // ----- both layers = a no-screen period -----------------------------------------------------
@@ -92,7 +140,7 @@ class LayerPeriodKindTest {
         )
         assertEquals(
             listOf(range(NOW + 2 * HOUR, NOW + 3 * HOUR)),
-            SchedulerDomain.assertedNoScreenRanges(panels),
+            SchedulerDomain.assertedNoScreenRanges(panels, CONFIG),
             "no screen is where BOTH fall — not the union of the two",
         )
     }
@@ -103,8 +151,8 @@ class LayerPeriodKindTest {
             period(PeriodKinds.NO_COMPUTER_UNLOCKED, NOW, NOW + HOUR),
             period(PeriodKinds.NO_PHONE_UNLOCKED, NOW + 2 * HOUR, NOW + 3 * HOUR),
         )
-        assertTrue(SchedulerDomain.assertedNoScreenRanges(panels).isEmpty())
-        assertTrue(SchedulerDomain.impliedNoScreenPeriods(panels).isEmpty())
+        assertTrue(SchedulerDomain.assertedNoScreenRanges(panels, CONFIG).isEmpty())
+        assertTrue(companions(panels).isEmpty())
     }
 
     @Test
@@ -112,9 +160,9 @@ class LayerPeriodKindTest {
         // The plan MULTIPLIES the resiliences of every covering period, so handing it the same stretch as
         // both a drawn "No screen" period and an implied one would square a task's resilience to the kind.
         val panels = listOf(period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
-        assertEquals(listOf(range(NOW, NOW + HOUR)), SchedulerDomain.assertedNoScreenRanges(panels))
+        assertEquals(listOf(range(NOW, NOW + HOUR)), SchedulerDomain.assertedNoScreenRanges(panels, CONFIG))
         assertTrue(
-            SchedulerDomain.impliedNoScreenPeriods(panels).isEmpty(),
+            companions(panels).isEmpty(),
             "the period is already there under its own kind",
         )
     }
@@ -126,7 +174,7 @@ class LayerPeriodKindTest {
             period(PeriodKinds.NO_PHONE_UNLOCKED, NOW, NOW + 4 * HOUR),
             period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
         )
-        val implied = SchedulerDomain.impliedNoScreenPeriods(panels)
+        val implied = companions(panels)
         assertEquals(1, implied.size)
         assertEquals(NOW + HOUR, implied.first().startMillis)
         assertEquals(NOW + 4 * HOUR, implied.first().endMillis)

@@ -38,6 +38,8 @@ import org.example.project.scheduler.model.PriorityWeightPin
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.SleepSchedule
+import org.example.project.scheduler.domain.PeriodDrawing
+import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -591,6 +593,16 @@ object SchedulerStateCodec {
             shortcutBindings = shortcutBindings.toPersistedRows(),
             // `side-dev/README.md`: the kinds of restrictive period this account has defined.
             periodKinds = periodKinds,
+            // The period edit window's overrides, one entry per kind (so one sync row per kind), sorted by kind
+            // and with sorted companions so one setting has exactly one encoding.
+            periodKindStyles =
+                periodKindStyles.entries.sortedBy { it.key }.map { (kind, style) ->
+                    PersistedPeriodKindStyle(
+                        id = kind,
+                        companions = style.companions.sorted(),
+                        drawing = style.drawing.name,
+                    )
+                },
             // PRD §5: the account's categories and the rules they impose. The tasks carrying each one are
             // written on the TASKS (`categoryIds`), so nothing here is a second copy of that; what lives
             // here is only what a category IS. The rules are sorted by scope so the encoded payload — and
@@ -1174,10 +1186,12 @@ object SchedulerStateCodec {
             // Migrated FIRST, then filtered: the two legacy names are built-ins under their new spellings,
             // and a payload holding one would otherwise pass `isUserDefined` and turn into an account-defined
             // kind that duplicates a built-in.
-            periodKinds =
-                periodKinds.map { PeriodKinds.migrateStoredKind(it) }
-                    .filter(PeriodKinds::isUserDefined)
-                    .distinct(),
+            periodKinds = decodedPeriodKinds(),
+            // A payload written before the period edit window had these holds none: every kind at its default.
+            // Heals what an older or hand-edited payload may hold — a style for a kind the account does not
+            // have, a companion naming one, a kind named as its own companion, a drawing this build does not
+            // know (the kind's default drawing instead).
+            periodKindStyles = periodKindStyles.toPeriodKindStyles(PeriodKinds.BUILT_IN + decodedPeriodKinds()),
             // PRD §5: a blank-titled category is dropped (a category is named by its title; a blank one
             // could never be typed or picked), duplicate ids collapse, and a rule's share is healed into
             // `[0, 1]` — decode heals what an older or hand-edited payload holds rather than surfacing it.
@@ -1510,6 +1524,8 @@ private data class PersistedState(
     val shortcutBindings: List<PersistedShortcutBinding> = emptyList(),
     // `side-dev/README.md` § Restrictive Period: the account's own period kinds; absent ⇒ none.
     val periodKinds: List<String> = emptyList(),
+    // The period edit window's companions + drawing per kind (overrides only); absent ⇒ every kind at its default.
+    val periodKindStyles: List<PersistedPeriodKindStyle> = emptyList(),
     // PRD §5: a payload written before categories existed has neither field, which decodes to an account
     // with no category at all — exactly what it had.
     val categories: List<PersistedCategory> = emptyList(),
@@ -1546,6 +1562,16 @@ private data class PersistedState(
     // the History Manager's "Supabase usage" column existed). Local-only — stripped from the sync fingerprint.
     val supabaseUsageLog: List<PersistedSupabaseUsageEntry> = emptyList(),
 )
+
+/**
+ * The account's own kinds as decoded. A blank or built-in name is not a kind; duplicates collapse. Migrated
+ * FIRST, then filtered: the two legacy names are built-ins under their new spellings, and a payload holding one
+ * would otherwise pass `isUserDefined` and turn into an account-defined kind that duplicates a built-in.
+ */
+private fun PersistedState.decodedPeriodKinds(): List<String> =
+    periodKinds.map { PeriodKinds.migrateStoredKind(it) }
+        .filter(PeriodKinds::isUserDefined)
+        .distinct()
 
 /**
  * PRD §4 Default sub-tree, **pre-1.6.0 only**: one node of the template back when it was a tree of titles.
@@ -2145,6 +2171,32 @@ private fun List<PersistedCategory>.toCategories(scopeSource: SchedulerState): L
 
 /** The `{n}` of a `category/user/{n}`, so the counter can be walked past ids the payload already used. */
 private fun categoryIdSuffix(id: String): Int = id.substringAfterLast('/').toIntOrNull() ?: -1
+
+/**
+ * The period edit window's settings for one kind, as stored. `id` is the KIND, so the sync splits the list into
+ * one row per kind (`EntityRows`) and an edit rewrites only that kind's row.
+ */
+@Serializable
+private data class PersistedPeriodKindStyle(
+    val id: String,
+    val companions: List<String> = emptyList(),
+    val drawing: String = "",
+)
+
+private fun List<PersistedPeriodKindStyle>.toPeriodKindStyles(kinds: List<String>): Map<String, PeriodKindStyle> {
+    val known = kinds.toSet()
+    val out = LinkedHashMap<String, PeriodKindStyle>()
+    for (p in this) {
+        val kind = PeriodKinds.migrateStoredKind(p.id)
+        if (kind !in known || kind in out) continue
+        val companions =
+            p.companions.map { PeriodKinds.migrateStoredKind(it) }.filterTo(LinkedHashSet()) { it != kind && it in known }
+        val drawing =
+            PeriodDrawing.entries.firstOrNull { it.name == p.drawing } ?: PeriodKinds.defaultStyle(kind).drawing
+        out[kind] = PeriodKindStyle(companions, drawing)
+    }
+    return out
+}
 
 @Serializable
 private data class PersistedCategory(

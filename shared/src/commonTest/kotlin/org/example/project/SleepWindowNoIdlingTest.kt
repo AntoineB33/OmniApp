@@ -7,6 +7,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.SleepSchedule
@@ -33,7 +34,7 @@ import org.example.project.scheduler.state.SchedulerState
  *    machine is not), whose resilience defaults to `1` and which therefore prevents nobody.
  *  - § *mode 1* — *"$now line$ must not be covered by the period 'no on-screen task'. This means that if it
  *    reaches one of those periods, the passing of the $now line$ line creates task panels not covered by the
- *    period."* A sleep window IS one of those periods ([PeriodKinds.impliedKind], the other half of the same
+ *    period."* A sleep window IS one of those periods ([PeriodKindConfig.impliedKinds], the other half of the same
  *    report: *a sleep period must always be with a no screen period*).
  *
  * The rule the app must answer with is the requirements' own shape — *task A from 00:40 to $now line$, until
@@ -94,12 +95,10 @@ class SleepWindowNoIdlingTest {
         // *"a sleep period, which must always be with a no screen period"*. A night is the plainest stretch
         // there is of nobody being at a screen — and the wind-down hour leading into it already said so, which
         // is what made the omission visible: the hour was hatched and the night it ran into was not.
-        assertEquals(PeriodKinds.NO_SCREEN, PeriodKinds.impliedKind(PeriodKinds.SLEEP))
-        assertEquals(
-            SchedulerDomain.ActivityLayer.entries.toSet(),
-            PeriodKinds.assertedLayers(PeriodKinds.SLEEP),
-            "so it asserts BOTH calendar layers, which is what a no-screen period is",
-        )
+        val config = PeriodKindConfig.DEFAULT
+        assertEquals(setOf(PeriodKinds.NO_SCREEN), config.impliedKinds(PeriodKinds.SLEEP))
+        // …and (2026-09-18) "no screen" is by default not accompanied by the layer periods, so it hatches none.
+        assertEquals(emptySet(), config.assertedLayers(PeriodKinds.SLEEP))
         // It is an implication, not a second kind: `sleep` still admits nobody by its own name and still
         // refuses to have a resilience written against it.
         assertEquals(0.0, PeriodKinds.defaultResilience(PeriodKinds.SLEEP))
@@ -107,8 +106,9 @@ class SleepWindowNoIdlingTest {
         // And the implied period really reaches the scheduler's period list over the window's own span.
         val window = SchedulerDomain.sleepPanels(sleep, NOW - 12 * HOUR, NOW + 12 * HOUR, tz)
             .single { it.startEpochMillis <= NOW && it.endEpochMillis > NOW }
-        val implied = SchedulerDomain.impliedNoScreenPeriods(listOf(window))
-        assertEquals(1, implied.size, "one implied no-screen period over the window: $implied")
+        val implied =
+            SchedulerDomain.restrictivePeriodsOf(listOf(window), config).filter { it.kind == PeriodKinds.NO_SCREEN }
+        assertEquals(1, implied.size, "one companion no-screen period over the window: $implied")
         assertEquals(window.startEpochMillis, implied.single().startMillis)
         assertEquals(window.endEpochMillis, implied.single().endMillis)
     }
@@ -117,12 +117,13 @@ class SleepWindowNoIdlingTest {
     fun inactivity_implies_nothing_because_it_says_nothing_about_screens() {
         // The control for the rule above, and the one that keeps mode 1 off a period the user drew: grey says
         // the timeline is EMPTY there, which is a different fact from nobody being at a screen.
-        assertEquals(null, PeriodKinds.impliedKind(PeriodKinds.INACTIVITY))
-        assertTrue(!PeriodKinds.isOrImpliesNoScreen(PeriodKinds.INACTIVITY))
-        assertTrue(PeriodKinds.isOrImpliesNoScreen(PeriodKinds.SLEEP))
-        assertTrue(PeriodKinds.isOrImpliesNoScreen(PeriodKinds.BEFORE_BED))
-        assertTrue(PeriodKinds.isOrImpliesNoScreen(PeriodKinds.NO_SCREEN))
-        assertTrue(!PeriodKinds.isOrImpliesNoScreen("deep work"), "an account's own kind is never retracted")
+        val config = PeriodKindConfig.DEFAULT
+        assertEquals(emptySet(), config.impliedKinds(PeriodKinds.INACTIVITY))
+        assertTrue(!config.isOrImpliesNoScreen(PeriodKinds.INACTIVITY))
+        assertTrue(config.isOrImpliesNoScreen(PeriodKinds.SLEEP))
+        assertTrue(config.isOrImpliesNoScreen(PeriodKinds.BEFORE_BED))
+        assertTrue(config.isOrImpliesNoScreen(PeriodKinds.NO_SCREEN))
+        assertTrue(!config.isOrImpliesNoScreen("deep work"), "an account's own kind is never retracted")
     }
 
     // ----- anomaly 1: the line may not sit on nothing ---------------------------------------------
@@ -179,7 +180,7 @@ class SleepWindowNoIdlingTest {
             "the PLAN runs across the retracted night, or the line has nothing to be swept into",
         )
 
-        val drawn = SchedulerDomain.clipPlanForRetractedPeriod(panels, sleepBands(panels), NOW, DynamicPeriods.MODE_AT_SCREEN)
+        val drawn = SchedulerDomain.clipPlanForRetractedPeriod(panels, sleepBands(panels), NOW, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT)
         val ahead = drawn.filter { it.auto && it.taskId != null && it.startEpochMillis > NOW }
         assertTrue(
             ahead.none { it.startEpochMillis < band.endEpochMillis },
@@ -249,13 +250,13 @@ class SleepWindowNoIdlingTest {
         val start = utc(18, 0, 40)
         val first = fill(s, start)
         val firstDrawn = SchedulerDomain.clipPlanForRetractedPeriod(
-            first, sleepBands(first), start, DynamicPeriods.MODE_AT_SCREEN,
+            first, sleepBands(first), start, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT,
         )
         assertTrue(workAt(firstDrawn, start).isNotEmpty(), "the case needs work at the line to begin with")
 
         val second = fill(s.copy(panels = first), NOW)
         val drawn = SchedulerDomain.clipPlanForRetractedPeriod(
-            second, sleepBands(second), NOW, DynamicPeriods.MODE_AT_SCREEN,
+            second, sleepBands(second), NOW, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT,
         )
         val uncovered = SchedulerDomain.derivedInactivityBands(
             drawn.filterNot { it.screenBreak || it.isRestrictivePeriod }

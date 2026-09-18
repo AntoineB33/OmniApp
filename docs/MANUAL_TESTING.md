@@ -121,11 +121,15 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         is (the past never moves); only the future tail is re-planned.
   - [ ] Undo (Ctrl+Z with the calendar focused) puts the pin back.
   - [ ] **"add…" → restrictive period → "no screen"** → an EMPTY box **outlined in blue**, labelled "No
-        screen", with the oblique lines of BOTH layers painted across it (which is what a no-screen period
-        IS) and no fill. The hatch is the statement, the blue outline is the hand that stated it — the app
-        draws that same hatch out of the OS lock log with no box and no outline.
-  - [ ] **Add that no-screen period over a stretch you were REALLY at the machine for** (earlier today, at
-        the keyboard, screen never locked) → the `/` "no computer unlocked" lines over it are **DOTTED**,
+        screen", with the "no screen" drawing (by default `(` half-circles) across it, **no** layer lines (by
+        default "no screen" is not accompanied by the layer periods) and no fill.
+  - [ ] **Period edit window (✎ on a kind):** tick "no computer unlocked" and "no phone unlocked" under
+        "Always present with it" for "no screen" → the same box now also shows the `/` and `\` lines; untick
+        → they go. Pick another drawing → every period of that kind (and every period carrying it as a
+        companion) repaints at once, and the swatch in the window matches the calendar. Give a kind of your
+        own the "no screen" companion → an on-screen task leaves its periods on the next plan.
+  - [ ] **Add a "no computer unlocked" period over a stretch you were REALLY at the machine for** (earlier
+        today, at the keyboard, screen never locked) → the `/` "no computer unlocked" lines over it are **DOTTED**,
         while the same period drawn over last night's locked hours keeps them **solid**. Three marks, three
         questions: the hatch claims, the blue outline says a hand claimed it, the dots say the lock log
         disagrees. Drawn over the FUTURE it is solid — nothing out there has been observed yet.
@@ -206,8 +210,8 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         alarm ring on it) and read the chooser top to bottom. A **sleep** row, where there is one, comes
         after all six.
   - [ ] With a "no computer unlocked" period and a "no phone unlocked" period over the same hours, the
-        period chooser also offers **"no screen"**. Pick it, change the end time, Save → **both** periods
-        take the new end.
+        period chooser offers exactly those two rows and **no "no screen"** row; editing one leaves the
+        other untouched. (On-screen tasks still stay out of the overlap.)
   - [ ] Right-click a reminder tag → **"edit reminder"** opens the reminder editor seeded with its title
         and switches; its bin removes the tag. Right-click an alarm ring → **"edit alarm"** opens the §18
         window ("edit timer" for a timer's ring).
@@ -318,8 +322,8 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         two markers **stack**: each is still named at its own instant, not at the row it was pushed down to.
         Hover a reminder tag drawn over a ring → the reminder leads and the ring follows it.
   - [ ] **The next "Before bed" hour carries its "no screen" period (PRD §17).** Look at the coming
-        evening's orange "Before bed" box: both oblique hatches ("no computer unlocked" `/`, "no phone
-        unlocked" `\`) run across its whole span, and hovering it names both layers under "Before bed". A task
+        evening's orange "Before bed" box: the "before bed" zig-zags and the "no screen" `(` half-circles run
+        across its whole span, and no layer lines (by default). A task
         set resilient to "before bed" but still on-screen stays
         out of it (an off-screen one may run there).
   - [ ] **A ring stays VISIBLE when the calendar is zoomed OUT (PRD §8, the two top-most markers).** Set an

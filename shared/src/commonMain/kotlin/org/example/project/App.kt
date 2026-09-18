@@ -120,6 +120,7 @@ import org.example.project.ui.CategoriesWindow
 import org.example.project.ui.CategoryEditWindow
 import org.example.project.ui.MessagePopup
 import org.example.project.ui.PeriodEditWindow
+import org.example.project.ui.LocalPeriodKindConfig
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.ReminderEditWindow
 import org.example.project.ui.SimPauseScope
@@ -903,7 +904,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // resilient to.
             val displayDynamicBase =
                 Perf.measure("display.dynamicBase") {
-                SchedulerDomain.restrictivePeriodsOf(schedulerState.panels) +
+                SchedulerDomain.restrictivePeriodsOf(schedulerState.panels, schedulerState.periodKindConfig) +
                     // The live pause reaches the recurrence bars as the rest stretch it is (see
                     // [SchedulerDomain.liveRestPeriod]), so the grid moves with a user who has walked away.
                     listOfNotNull(
@@ -915,29 +916,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // observed — the live gap covers only the one this device is in the middle of, and a restart
                     // clears even that.
                     SchedulerDomain.observedNoScreenPeriods(observedNoScreenEvidence) +
-                    SchedulerDomain.sleepRegions(
-                        schedulerState.sleep,
+                    // PRD §17: and the §17 windows and wind-down hours over the visible span, projected because it
+                    // may run past the fill's horizon, where `schedulerState.panels` holds neither — each WITH the
+                    // companion periods its kind carries.
+                    SchedulerDomain.projectedSleepPeriods(
+                        schedulerState,
                         visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
                         visibleSpanEndMillis,
                         tz,
-                    ).map {
-                        RestrictivePeriod(
-                            it.startEpochMillis, it.endEpochMillis, PeriodKinds.SLEEP, SchedulerDomain.SLEEP_PANEL_TITLE,
-                        )
-                    } +
-                    // PRD §17: and the hour before each of those bedtimes, which is covered by the period
-                    // "before bed". Projected here for the same reason the sleep windows are — the visible span
-                    // may run past the fill's horizon, where `schedulerState.panels` holds neither. Through
-                    // [SchedulerDomain.restrictivePeriodsOf] and not mapped by hand, so each hour arrives WITH the
-                    // no-screen period it always carries ([PeriodKinds.impliedKind]) — the grid the calendar
-                    // draws and the one the fill places must see the same rest.
-                    SchedulerDomain.restrictivePeriodsOf(
-                        SchedulerDomain.beforeBedPanels(
-                            schedulerState.sleep,
-                            visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
-                            visibleSpanEndMillis,
-                            tz,
-                        ),
                     )
                 }
             val displayDynamicTasks =
@@ -1025,6 +1011,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     displaySleepPanels,
                     nowMillis,
                     tpMode,
+                    schedulerState.periodKindConfig,
                 )
                 }
 
@@ -1253,19 +1240,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             //   • the PAST is evidence — that device kind's own OS lock/standby history, or, when no device of the
             //     kind can be asked at all, the whole asked past (a device nobody can vouch for was locked).
             //   • the FUTURE is assertion — nothing has been observed yet, so only what the rules PROMISE will be
-            //     unlocked-by-nobody counts: the §17 sleep windows and the §15 screen breaks (a break is by
-            //     definition time away from every screen). Screen breaks are asserted in the past too: a 20-second
-            //     look-away never stops the heartbeat, so evidence alone would never show it.
-            // The user's own periods assert a layer by their KIND (PRD §8,
-            // [SchedulerDomain.assertedLayerRanges]) — a hand-added "No screen" period IS "a period carrying both
-            // layers", and a "no computer unlocked" / "no phone unlocked" period is the user saying ONE of them.
-            // The derivation never overwrites either. Everything else here is a claim about every screen at once.
-            val layerAssertedAll =
-                SchedulerDomain.mergeOccupied(
-                    displaySidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
-                        displaySleepRegions.filter { it.endEpochMillis > nowMillis }
-                            .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) },
-                )
+            //     unlocked-by-nobody counts: the §17 sleep windows and the §15 screen breaks, **each only when
+            //     its kind carries the layer** (the period edit window's companions,
+            //     [org.example.project.scheduler.domain.PeriodKindConfig.assertedLayers]). By default neither does:
+            //     a sleep window carries a "no screen" period, which is its own statement with its own drawing,
+            //     and a break is an inactivity period, which carries nothing.
+            // The user's own periods assert a layer by their KIND and its companions (PRD §8,
+            // [SchedulerDomain.assertedLayerRanges]) — a "no computer unlocked" / "no phone unlocked" period is the
+            // user saying ONE of them. The derivation never overwrites either.
+            val periodKindConfig = schedulerState.periodKindConfig
+            val sleepAssertedLayers = periodKindConfig.assertedLayers(PeriodKinds.SLEEP)
+            val futureSleepRegions =
+                if (sleepAssertedLayers.isEmpty()) {
+                    emptyList()
+                } else {
+                    displaySleepRegions.filter { it.endEpochMillis > nowMillis }
+                        .map { TaskTimeRange(maxOf(it.startEpochMillis, nowMillis), it.endEpochMillis) }
+                }
             val layerRecords =
                 Perf.measure("display.layerRecords") {
                 SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
@@ -1279,11 +1270,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // nothing about the phone — while everything in [layerAsserted] is a claim about every screen
                     // at once.
                     val layerAway = if (layer == ownLayer) declaredAwayRegions else emptyList()
+                    // What the RULES promise for this layer: the breaks and the future sleep windows whose kind
+                    // carries it.
+                    val layerAssertedAll =
+                        SchedulerDomain.mergeOccupied(
+                            displaySidePanels
+                                .filter {
+                                    it.restrictiveKind.isNotEmpty() &&
+                                        layer in periodKindConfig.assertedLayers(it.restrictiveKind)
+                                }
+                                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
+                                (if (layer in sleepAssertedLayers) futureSleepRegions else emptyList()),
+                        )
                     // The periods the user DREW asserting this layer (PRD §8, by their kind). Hoisted because
                     // it is the second half of what the dots below are asked about: a hand-drawn period and an
                     // away spell are the same thing said two ways — the user's own word about who was at a
                     // screen — while everything in [layerAssertedAll] is the APP promising something.
-                    val layerStated = SchedulerDomain.assertedLayerRanges(schedulerState.panels, layer)
+                    val layerStated =
+                        SchedulerDomain.assertedLayerRanges(schedulerState.panels, layer, periodKindConfig)
                     val regions =
                         SchedulerDomain.layerRegions(
                             lockedIntervals = layerLocked,
@@ -1538,6 +1542,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         CompositionLocalProvider(
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,
+            // The period edit window's companions + drawings, for everything that draws a period.
+            LocalPeriodKindConfig provides schedulerState.periodKindConfig,
         ) {
         Box(
             modifier = Modifier
@@ -1821,6 +1827,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 // The two kinds the README names are the account's whether it likes it
                                 // or not; only a kind the user defined can be dropped.
                                 canDelete = PeriodKinds.isUserDefined(kind),
+                                allKinds = popupState.allPeriodKinds,
+                                style = popupState.periodKindConfig.style(kind),
+                                impliedKinds = popupState.periodKindConfig.impliedKinds(kind),
+                                onSetCompanions = { companions ->
+                                    popupDispatch(SchedulerIntent.SetPeriodCompanions(kind, companions))
+                                },
+                                onSetDrawing = { drawing ->
+                                    popupDispatch(SchedulerIntent.SetPeriodDrawing(kind, drawing))
+                                },
                                 onSetResilience = { ids, value ->
                                     popupDispatch(SchedulerIntent.SetPeriodResilience(ids, kind, value))
                                 },
@@ -2822,9 +2837,9 @@ private data class PeriodDraft(
     /**
      * The periods being edited — EMPTY while adding one.
      *
-     * More than one only where a single statement is spelt by several objects: the user's rule is that
-     * editing a "no screen" period and editing the `no computer unlocked` + `no phone unlocked` pair it is
-     * made of are the same edit, so Save writes the new bounds to all of them.
+     * One period per chooser row (2026-09-19: a "no screen" period no longer stands for the `no computer
+     * unlocked` + `no phone unlocked` pair, so no row edits several objects at once). Kept a list so Save's
+     * write path does not care.
      *
      * A member with no [PlacedRecord.entryId] is a DERIVED band (a past Inactivity stretch, the §17
      * wind-down hour). Saving MATERIALIZES it — the app was reporting that stretch, and the user is now
@@ -3040,8 +3055,9 @@ private fun mergePanelsForDisplay(
                 // or grey — and reading them off the panel's two legacy flags meant a period of any OTHER
                 // kind (`before bed`, one the account defined) carried neither and was drawn as a task
                 // panel. A kind is grey unless it is, BY ITS OWN NAME, a sentence about screens
-                // ([PeriodKinds.isLayerKind]) — a `before bed` period implies a no-screen one, and that
-                // implied period is drawn by the layer hatch, not by repainting the wind-down box.
+                // ([PeriodKinds.isLayerKind]) — a `before bed` period carries a no-screen one, and that
+                // companion is drawn by its own pattern over the box ([PeriodKindConfig.boxDrawings]), not by
+                // repainting the wind-down box as a no-screen one.
                 noScreen = PeriodKinds.isLayerKind(head.restrictiveKind),
                 inactivity = head.isRestrictivePeriod && !PeriodKinds.isLayerKind(head.restrictiveKind),
                 restrictiveKind = head.restrictiveKind,

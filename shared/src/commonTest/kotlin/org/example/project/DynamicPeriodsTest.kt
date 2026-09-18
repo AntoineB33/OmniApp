@@ -3,6 +3,7 @@ package org.example.project
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.PlanBlock
@@ -701,6 +702,7 @@ class DynamicPeriodsTest {
         val base =
             SchedulerDomain.dynamicPeriodBase(
                 panels = listOf(drawn),
+                config = PeriodKindConfig.DEFAULT,
                 liveRest = SchedulerDomain.LiveRest(TaskTimeRange(NOW - 10 * MIN, NOW), ongoing = true),
                 noScreenEvidence = listOf(TaskTimeRange(NOW - 2 * HOUR, NOW - 90 * MIN)),
             )
@@ -746,7 +748,7 @@ class DynamicPeriodsTest {
                 SchedulerIntent.RecordConductedBreak(lookAway, NOW - 20 * SEC, NOW),
             ).panels
         assertTrue(conducted.single().conductedBreak, "the recorded break must say it was one of the three")
-        val periods = SchedulerDomain.restrictivePeriodsOf(conducted)
+        val periods = SchedulerDomain.restrictivePeriodsOf(conducted, PeriodKindConfig.DEFAULT)
         assertEquals(1, periods.size, "the conducted break must reach the bars as a period")
         assertTrue(periods.single().dynamic, "…as a DYNAMIC one")
 

@@ -11,8 +11,8 @@ Global rules that always apply: `CLAUDE.md`.
 
 - **Two orthogonal things, and keeping them orthogonal is the point.** The **layers** say who was at a
   screen; the **restrictive periods** say what may be placed. Both are markings drawn over the timeline
-  without occupying it, and the marking is what names the statement: `/` no computer unlocked, `\` no phone
-  unlocked, `|` no task allowed.
+  without occupying it, and the marking is what names the statement: each kind's own drawing (by default `/`
+  no computer unlocked, `\` no phone unlocked, `|` inactivity).
 - **A layer is read from the DEVICE'S OS HISTORY** (`deviceLockedIntervals`), never from the app's own
   sessions or from banked panels. Both of those were shipped and both were wrong.
 - **`WindowsPowerLog` is the ONLY reading of that history** — the ids, the debounce, the pairing, the query.
@@ -36,19 +36,28 @@ Global rules that always apply: `CLAUDE.md`.
 - **A device that cannot be asked was LOCKED** (`null` ⇒ the layer hatches the whole asked past; an empty
   list ⇒ nothing drawn — the same default as `derivePauses`, and `null` and an empty list stay different
   answers). "Not asked yet" is a third state: the own layer draws nothing until its first scan lands.
-- **A stretch carrying BOTH layers is a no-screen period**, identical to the account-wide derived pause.
+- **A "NO SCREEN" PERIOD SAYS NOTHING ABOUT DEVICES** (user rule, 2026-09-19): it only refuses the tasks
+  with a resilience of `0` to it. It does not mean "no computer unlocked" or "no phone unlocked", asserts no
+  layer (unless the account makes them its companions), and is never edited together with a layer period.
+- **A stretch carrying BOTH layers is a no-screen period** — ONE-WAY: nobody at any device means no on-screen
+  work can happen there, so the overlap counts as no-screen time; the converse is false (above). Identical to
+  the account-wide derived pause.
   `CalendarLayerTest` pins that identity — keep it true.
 - **EITHER LAYER CAN ALSO BE ASSERTED BY A PERIOD** (`PeriodKinds.NO_COMPUTER_UNLOCKED` /
   `NO_PHONE_UNLOCKED`, `SchedulerDomain.assertedLayerRanges`): the two layers as sentences the USER states
   rather than reads off a lock history. Three rules, and `LayerPeriodKindTest` holds them:
-  - **which layers a kind asserts is `PeriodKinds.assertedLayers`, asked nowhere else** — `no on-screen task`
-    asserts both, each one-sided kind its own, every other kind none. The hatch, the no-screen intersection
-    and the kind's default resilience all read it;
+  - **which layers a kind asserts is `PeriodKindConfig.assertedLayers`, asked nowhere else** — each one-sided
+    kind its own, and any other kind only the layer kinds among its COMPANIONS (see *Period companions and
+    drawings* below). By default no other kind asserts a layer — `no screen` included (user rule,
+    2026-09-18). The hatch and the no-screen intersection read it; the kind's default resilience reads
+    `PeriodKinds.isLayerKind` (by name);
   - **a one-sided period restricts nothing by itself** (default resilience `1`): one locked screen is not "no
     screen". What restricts is the OVERLAP — `assertedNoScreenRanges` intersects the two layers' assertions
     exactly as `observedNoScreenRegions` intersects their evidence — so the two kinds never grow a scheduling
     rule of their own, they feed the one `no on-screen task` already has
-    (`impliedNoScreenPeriods` → the fill's `restrictions`/`dynamicBase`, `noScreenRangesFor` → the bank);
+    (`SchedulerDomain.companionPeriods` → the fill's `restrictions`/`dynamicBase`, `noScreenRangesFor` → the
+    bank). This direction (both layers ⇒ no screen) is the layers' definition and is **not** a companion
+    setting: no account setting turns it off;
   - **the implied period is subtracted where an explicit "No screen" period already covers**, because the plan
     MULTIPLIES every covering kind's resilience (`PeriodKinds.multiplier`): counting the stretch twice would
     square it and halve the share of anybody sitting strictly between 0 and 1. A `0` and a `1` would not have
@@ -76,7 +85,7 @@ Global rules that always apply: `CLAUDE.md`.
   mid-away lands the episode closed at its last beat exactly as a live `device_active_session` row does.
   LOCAL-ONLY, pruned to the same 24 h window the no-screen evidence answers over.
 - **A HATCH THE LOCK LOG CONTRADICTS IS DOTTED — WHOEVER SAID IT**
-  (`SchedulerDomain.declaredLayerRegions` -> `CalendarRecord.layerDeclared` -> `obliqueHatch(dotted = …)`).
+  (`SchedulerDomain.declaredLayerRegions` -> `CalendarRecord.layerDeclared` -> `periodDrawing(dotted = …)`).
   A hatch says *no device of this kind was unlocked*; the dots say that sentence is the USER'S WORD against
   the machine's. Two things state it where the OS log disagrees, and they are **one rule**, in one funnel:
   - the **"I'm away" button** (*"the oblique lines must be dotted if at least one of the corresponding
@@ -228,20 +237,40 @@ Global rules that always apply: `CLAUDE.md`.
     anchor, like every other derivation; only the placement is exact).
 - **"NOTHING IS PLACED HERE" IS A STATEMENT ABOUT THE SCHEDULER, AND IT HAS NO PAINT** — it covers an
   inactivity period, a sleep window, the §17 **"Before bed" hour** (`before bed`, whose default resilience is
-  `0` like theirs — and which is always ALSO a no-screen period, as **a sleep window is too** since
-  2026-09-18, so both layer hatches are painted across the orange boxes of each and, the hour abutting the
-  window it runs into, across the pair as one stretch: `PeriodKinds.impliedKind`, read through
-  `assertedLayerRanges` like any drawn layer), and **all three screen breaks end to end** (they are `no task allowed`; there is no closed
+  `0` like theirs — and which by default carries a `no screen` companion, as **a sleep window does too**, so
+  the no-screen drawing is painted over the orange boxes of each), and **all three screen breaks end to end** (they are `no task allowed`; there is no closed
   head and no hollow tail any more). It is not a screen classification: it refuses off-screen tasks too.
   "Refuses" means the task's resilience to the covering kind is `0`, so a task given a non-zero one may work
   through a break — the only thing that is ever placed there. The calendar draws every one of them the same
   way — see the period-box rules below — so the statement is not a kind either: a band still carries its own
-  kind and its own name (`decorativeBandLabel` — a derived band names itself where it has a name). **The one
-  kind that is MARKED is `no task allowed`**, by vertical lines (`Modifier.verticalHatch`), which makes it
-  the third member of a family whose whole job is to say what kind of statement covers a stretch without
-  occupying it: `/` no computer unlocked, `\` no phone unlocked, `|` no task allowed. (It was a grey WASH
-  until 2026-09-11, and the wash is what collided with every task drawn through a period. A marking made of
-  lines does not.)
+  kind and its own name (`decorativeBandLabel` — a derived band names itself where it has a name). **Every
+  kind is MARKED by its own drawing** (see *Period companions and drawings*): a family whose whole job is to
+  say what kinds of statement cover a stretch without occupying it. (Grey was a WASH until 2026-09-11, and the
+  wash is what collided with every task drawn through a period. A marking made of lines does not.)
+- **PERIOD COMPANIONS AND DRAWINGS** (the period edit window, user rule 2026-09-18;
+  `PeriodKindStyle`/`PeriodKindConfig`, stored as `SchedulerState.periodKindStyles` — overrides only, one sync
+  row per kind, not an Undo/Redo unit, like defining a kind).
+  - **Companions**: *"a set of periods that are always present when this period is present"*. TRANSITIVE
+    (`PeriodKindConfig.kindsOf`; a cycle is harmless). An implication, never a laid panel. Every reader asks
+    the config: the scheduler (`SchedulerDomain.companionPeriods`, via `restrictivePeriodsOf` and the fill),
+    the mode-1 retraction, the layers a period hatches (`assertedLayers`), the record bank
+    (`assertedNoScreenRanges`) and the calendar's drawings. **Defaults** (`PeriodKinds.defaultStyle`): `sleep`
+    and `before bed` carry `no screen`; `inactivity` carries **no** `no screen`; `no screen` carries **neither**
+    `no computer unlocked` nor `no phone unlocked`; everything else carries nothing. Companion changes are in
+    `schedulingSignature`; drawing changes are not (paint).
+  - **Drawings** (`PeriodDrawing`, rendered only by `ui/PeriodDrawings.kt`'s `Modifier.periodDrawing`): a
+    CLOSED set of line patterns that differ by geometry alone (same colour, stroke and 35 % alpha), so any
+    number overlap legibly. Defaults are pairwise distinct across the built-ins: `|` inactivity, `—` sleep,
+    `/` no computer unlocked, `\` no phone unlocked, `(` no screen, zig-zags before bed. A kind the account
+    adds is given the least-worn drawing AT CREATION and stores it — never derived from the list position, or
+    deleting a kind would repaint the others. Drawn as a repeated TILE, one rect per box, so the cost does not
+    grow with the box's height (a night at the zoom ceiling is ~150 000 px).
+  - **Who paints what**: a period box (and the sleep band) paints its kind's drawing and every companion's
+    (`PeriodKindConfig.boxDrawings`) **except the two layer kinds**, whose drawing is painted by the layer band
+    — the band unions a period's assertion with the OS evidence, so painting it on the box too would draw one
+    statement twice. The layer bands read their drawing from the config as well (`LocalPeriodKindConfig`).
+  - The §17 windows and the screen breaks assert a layer on the calendar **only if their kind carries it**
+    (App.kt's per-layer `layerAssertedAll`). By default neither does.
 - **A band spans its TRUE duration and is NEVER stretched to hold its own name.** A break drawn taller than it
   lasts covers the task panel it abuts, which reads on the calendar as a task running through the break. So the
   band's floor is a hairline (`SCREEN_BREAK_MIN_HEIGHT`) and the NAME is what gives way: it is drawn only where
@@ -425,16 +454,17 @@ Global rules that always apply: `CLAUDE.md`.
   holding — it keeps its id, its pins and its weight, and only its bounds grow.
 - **EVERY PERIOD IS DRAWN AS A BOX BUT THE SLEEP BAND** (`isDrawnPeriodRecord`), which draws itself (§17's
   own orange box, its own label, its own carving) and would otherwise be one statement drawn twice. The
-  `no screen` kind was the second exception until 2026-09-12 — it asserts both layers, so the two slopes are
-  already painted over it — and it is **back**, because *"the whole added period/panel/reminder/alarm must be
+  `no screen` kind was the second exception until 2026-09-12 — it then asserted both layers, so the two slopes
+  were already painted over it (since 2026-09-18 it asserts none by default and wears its own drawing) — and
+  it is **back**, because *"the whole added period/panel/reminder/alarm must be
   outlined in blue"*: the hatch and the box do not say the same thing. A hatch is *nobody of this kind was
   unlocked here*, which the app derives out of the OS log all day; the box's outline is *a hand stated this*,
   which no derived hatch can ever say. With no box, the user's own no-screen period was the one thing they
-  could add to the calendar that left no trace of having been added. Its chooser row also carries the user's
-  equivalence: **editing a "no screen" period is editing both one-sided
-  layer periods**, so the row stands for either spelling — a real `no on-screen task` panel, or a
-  `no computer unlocked` period overlapping a `no phone unlocked` one — and its Save writes the new bounds to
-  every record behind it.
+  could add to the calendar that left no trace of having been added. **Its chooser row is that period and
+  nothing else** (2026-09-19): it used to stand for a `no computer unlocked` period overlapping a
+  `no phone unlocked` one too, and edit all of them at once, because a no-screen period WAS "both layers". It
+  is not any more — see *A "no screen" period says nothing about devices* — so the layer periods are rows of
+  their own even where they overlap.
 - **A period LAID or DRAGGED over the past clears the work banked under it**, for exactly the tasks it
   **refuses** — the same question the override rule asks, so the on-screen tasks' records go under a
   no-screen period and everybody's under a grey one, as two resiliences rather than as two rules. Same
@@ -546,7 +576,7 @@ Global rules that always apply: `CLAUDE.md`.
   editor exists for: **an inactivity period from ∞ to now** empties the recorded past.
 - **A PERIOD'S PAINT IS DERIVED FROM ITS KIND, IN ONE PLACE** (`App.kt`'s `calendarRecords`). Both paints are
   now fill-less, and what the two bits still say is whether the period **asserts a layer**
-  (`CalendarRecord.noScreen`, read off `PeriodKinds.assertedLayers` — the hatch is painted over it and the
+  (`CalendarRecord.noScreen`, read off `PeriodKinds.isLayerKind` — its drawing is painted over it and the
   stretch is not covered past, so a derived Inactivity band may still be drawn under it) or only speaks about
   the timeline (`.inactivity` — it covers the past, so no band is derived under it). Read off the panel's two
   legacy flags instead, a period of any other kind carried neither and was drawn as a **task panel**. `CalendarRecord.restrictiveKind` / `PlacedRecord.restrictiveKind` carry the identity beside the
@@ -601,8 +631,8 @@ Global rules that always apply: `CLAUDE.md`.
 → ADR 0002. **An on-screen task banks NO record over a no-screen period**, and "no-screen period" has two
 sources that are UNIONED, never one or the other:
 
-1. what the user DREW (`SchedulerDomain.assertedNoScreenRanges`: a "No screen" period, or a computer-layer
-   period overlapping a phone-layer one), and
+1. what the user DREW (`SchedulerDomain.assertedNoScreenRanges`: a period that is or carries "No screen" —
+   companions included — or a computer-layer period overlapping a phone-layer one), and
 2. **what the devices observed** — both layers' OS lock/standby evidence intersected
    (`SchedulerDomain.observedNoScreenRegions`), injected by the engine through `SchedulerReducer.noScreenEvidence`.
 

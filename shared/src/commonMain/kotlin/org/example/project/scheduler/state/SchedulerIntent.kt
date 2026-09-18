@@ -378,6 +378,19 @@ sealed interface SchedulerIntent {
         val value: Double,
     ) : SchedulerIntent
 
+    /**
+     * The **period edit window**: the kinds that are always present wherever a period of [kind] is. Kinds the
+     * account does not hold, and [kind] itself, are dropped. An account setting like [AddPeriodKind]: no history
+     * unit.
+     */
+    data class SetPeriodCompanions(val kind: String, val companions: Set<String>) : SchedulerIntent
+
+    /** The **period edit window**: the drawing periods of [kind] wear on the calendar. No history unit. */
+    data class SetPeriodDrawing(
+        val kind: String,
+        val drawing: org.example.project.scheduler.domain.PeriodDrawing,
+    ) : SchedulerIntent
+
     // ----- PRD §5 categories ---------------------------------------------------------------------
 
     /**

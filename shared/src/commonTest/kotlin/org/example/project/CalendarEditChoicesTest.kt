@@ -235,11 +235,12 @@ class CalendarEditChoicesTest {
     }
 
     /**
-     * The user's rule: editing a "no screen" period IS editing both one-sided layer periods. So the row
-     * stands for either spelling and carries every record behind it — the edit is applied to all of them.
+     * 2026-09-19: a "no screen" period no longer means "no computer unlocked" and "no phone unlocked", so the
+     * "no screen" row is that period and nothing else, and the two layer periods are two rows of their own
+     * even where they overlap — no third row edits them together.
      */
     @Test
-    fun noScreenRowStandsForBothSpellings() {
+    fun noScreenRowIsTheNoScreenPeriodAlone() {
         val stated = calendarEditChoices(listOf(period("ns", PeriodKinds.NO_SCREEN)))
         assertEquals(listOf(PeriodKinds.NO_SCREEN), stated.map { it.label })
         assertEquals(listOf("ns"), stated.single().records.map { it.entryId })
@@ -253,12 +254,10 @@ class CalendarEditChoicesTest {
             )
         assertEquals(listOf(EDIT_LABEL_RESTRICTIVE_PERIOD), pair.map { it.label })
         assertEquals(
-            listOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED, PeriodKinds.NO_SCREEN),
+            listOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED),
             pair.single().children.map { it.label },
         )
-        val noScreen = pair.single().children.last()
-        assertEquals(listOf("c", "f"), noScreen.records.map { it.entryId })
-        assertEquals(PeriodKinds.NO_SCREEN, noScreen.periodKind)
+        assertEquals(listOf(listOf("c"), listOf("f")), pair.single().children.map { c -> c.records.map { it.entryId } })
     }
 
     /** One locked screen is not "no screen": a lone one-sided period grows no conjunction row. */
@@ -322,7 +321,7 @@ class CalendarEditChoicesTest {
      * of the OS lock log all day, and the only thing that can say *a HAND stated this stretch* is the blue
      * outline — so a hand-added no-screen period was the single thing the user could add to the calendar
      * that left no mark of having been added. The hatch is the statement, the outline is the hand, and
-     * `obliqueHatch`'s dots are the third and last mark (the lock log disagrees).
+     * `periodDrawing`'s dots are the third and last mark (the lock log disagrees).
      *
      * The §17 sleep band stays the one exception, for the reason it always was: it draws itself.
      */

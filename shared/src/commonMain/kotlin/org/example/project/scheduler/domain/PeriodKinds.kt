@@ -24,11 +24,9 @@ package org.example.project.scheduler.domain
  *   used to be a hard-coded extension of the sleep obstacle, which is a second mechanism for "where may this
  *   task run" and therefore the mistake this model exists to prevent. As a KIND it is one period like any
  *   other: its default `0` is what keeps the hour empty, and a task the user gives a non-zero resilience to
- *   it works through the wind-down without any rule of its own. **Every "before bed" period is also a "no
- *   screen" period** over the same span ([impliedKind]) — so the hour is always at least FOUR restrictive
- *   periods at once: `before bed`, `no screen`, and the two layer sentences `no screen` is made of. It
- *   reaches the scheduler, the hatch and the record bank through [assertedLayers], the one funnel a layer
- *   statement already has, never as a rule of its own.
+ *   it works through the wind-down without any rule of its own. By default it is **accompanied by a "no
+ *   screen" period** over the same span ([defaultStyle], [PeriodKindConfig.kindsOf]) — a companion, never a
+ *   second panel.
  * - [NO_COMPUTER_UNLOCKED] / [NO_PHONE_UNLOCKED] — PRD §8's two layers, ASSERTED. Each hatches its own
  *   layer and restricts nothing by itself; where the two overlap the stretch is a no-screen period, which is
  *   the layers' own definition ([SchedulerDomain.assertedNoScreenRanges]).
@@ -108,7 +106,7 @@ object PeriodKinds {
      * is not "no screen", and the app's tasks are on-screen or off-screen, not per-device. What restricts is
      * the OVERLAP — a stretch carrying this kind *and* [NO_PHONE_UNLOCKED] is where both layers fall, which is
      * the definition of a no-screen period, and
-     * [org.example.project.scheduler.domain.SchedulerDomain.assertedNoScreenRanges] is the one place that
+     * [org.example.project.scheduler.domain.SchedulerDomain.companionPeriods] is the one place that
      * intersection is taken. So the two one-sided kinds never grow a scheduling rule of their own: they feed
      * the rule [NO_SCREEN] already has.
      */
@@ -165,7 +163,7 @@ object PeriodKinds {
      * That is what a restrictive period *is* — [INACTIVITY] and [SLEEP] accept nobody by their own names, and a kind the user
      * has just defined accepts nobody either until its edit window says otherwise, which is what "adding a
      * period adds it to every task with the default value 0" means. The exceptions are the kinds that say
-     * something about a SCREEN rather than about the timeline being empty ([assertedLayers]): [NO_SCREEN],
+     * something about a SCREEN rather than about the timeline being empty ([isLayerKind]): [NO_SCREEN],
      * because an on-screen task is exactly a `0` against it
      * ([org.example.project.scheduler.model.Task.DEFAULT_RESILIENCE]) and its default has to be the *other*
      * answer or an off-screen task would be the one that has to say so; and the two one-sided layer kinds,
@@ -175,86 +173,59 @@ object PeriodKinds {
     fun defaultResilience(kind: String): Double = if (isLayerKind(kind)) 1.0 else 0.0
 
     /**
-     * PRD §17: **the kind a period of [kind] is ALSO a period of, over the same span** — [NO_SCREEN] for
-     * [BEFORE_BED] (*"every time there is a 'before bed' restrictive period, there is also a 'no screen'
-     * period"*) and for [SLEEP], `null` for every other kind.
+     * **The style a kind has until the account says otherwise** — its companions and its drawing
+     * ([PeriodKindStyle]). The account's overrides live in
+     * [org.example.project.scheduler.state.SchedulerState.periodKindStyles] and are read through
+     * [PeriodKindConfig], never beside it.
      *
-     * **[SLEEP] implies it for the same reason and was missing until 2026-09-18**: a night is the plainest
-     * stretch there is of nobody being at a screen, and the hour of wind-down that leads into it already said
-     * so. Left out, a §17 window asserted no layer at all — so it carried no hatch, no no-screen period
-     * reached the scheduler or the record bank over it, and a sleep band the app drew over a stretch with no
-     * other evidence (a cold start across it: the process is down, so no swept-stretch cover is noted and the
-     * OS lock scan has no span either) stood there as the one grey kind that says nothing about screens. It
-     * is also what makes § *mode 1*'s clause reach a sleep window at all
-     * ([SchedulerDomain.retractedAtLineSpans]).
+     * The companions (user rule, 2026-09-18: *"the user can define a set of periods that are always present when
+     * this period is present"*):
+     * - [SLEEP] and [BEFORE_BED] carry a [NO_SCREEN] period (PRD §17: a night and the hour of wind-down leading
+     *   into it are the plainest stretches there are of nobody being at a screen);
+     * - [INACTIVITY] carries **no** "no screen" period — it says the timeline is empty, not that nobody is at a
+     *   screen, and a grey stretch the user drew must not be retracted by a mode-1 line;
+     * - [NO_SCREEN] carries **neither** "no computer unlocked" nor "no phone unlocked": it is its own statement,
+     *   drawn with its own pattern. Since 2026-09-19 that is what "no screen" MEANS: a period that refuses the
+     *   tasks with a resilience of 0 to it, and nothing about computers or phones. The reverse — a stretch where both layers fall IS a no-screen period — is the
+     *   layers' definition and stays true whatever the account sets ([SchedulerDomain.companionPeriods]);
+     * - every other kind carries nothing.
      *
-     * An implication, not a second panel: nothing lays a companion period, so there is nothing to drift from
-     * the window (or the wind-down hour), to edit apart from it or to sync. [assertedLayers] folds the implied
-     * kind's layers in, and every reader of "which layers does this stretch carry" — the hatch, the no-screen
-     * intersection ([SchedulerDomain.impliedNoScreenPeriods]), the record bank — answers for it from there.
-     *
-     * It does NOT make either kind a layer kind ([isLayerKind] reads [ownLayers]), so [defaultResilience] is
-     * untouched: `sleep` and `before bed` go on turning everybody away by their own names, and the implied
-     * no-screen period is the separate statement that nobody is at a screen there.
+     * The drawings are pairwise distinct across the built-ins, so the six can overlap in any combination and
+     * still be told apart. A kind the account defines gets the least-used drawing when it is added
+     * (`SchedulerReducer`'s `reduceAddPeriodKind`); [PeriodDrawing.Crosses] is only the fallback for a payload
+     * that never stored one.
      */
-    fun impliedKind(kind: String): String? = if (kind == BEFORE_BED || kind == SLEEP) NO_SCREEN else null
-
-    /**
-     * Whether a period of [kind] is, or implies ([impliedKind]), a [NO_SCREEN] period — **the one predicate
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* is written against**: *"Mode 1: $now line$ must
-     * not be covered by the period 'no on-screen task'"*, and *"Mode 2 & 3: $now line$ must be covered"* by
-     * one.
-     *
-     * Deliberately NOT [coversNoScreen], which is the bars' question (*is this stretch a rest*) and answers
-     * true for [INACTIVITY] as well, because a period that turns everybody away turns the on-screen tasks away
-     * a fortiori. The modes ask the other question — *does this stretch SAY nobody is at a screen* — and a grey
-     * stretch the user drew to say nothing happened says nothing of the sort. The difference is what keeps
-     * mode 1 from retracting a hand-drawn `inactivity` period out from under the line.
-     */
-    fun isOrImpliesNoScreen(kind: String): Boolean = kind == NO_SCREEN || impliedKind(kind) == NO_SCREEN
-
-    /**
-     * Whether [kind] is, **by its own name**, a sentence about the calendar LAYERS — [NO_SCREEN] and the two
-     * one-sided kinds — as opposed to a kind that only IMPLIES one ([impliedKind]).
-     *
-     * The difference matters wherever the question is what the period IS rather than what it covers: its
-     * default resilience ([defaultResilience] — `before bed` still turns everybody away, the no-screen period
-     * it implies being the part that is about screens), the calendar paint of a drawn period, and which
-     * periods unify ([SchedulerDomain.unifyNoScreenPeriods]).
-     */
-    fun isLayerKind(kind: String): Boolean = ownLayers(kind).isNotEmpty()
-
-    /**
-     * PRD §8: **which calendar LAYERS a period of [kind] asserts** — the one reading of the tie between a
-     * restrictive period and the two oblique-line hatches, asked by the calendar (which hatch to draw over
-     * the period), by [SchedulerDomain.assertedNoScreenRanges] (where both fall) and by [defaultResilience]
-     * (a kind that speaks about a screen restricts nobody by itself).
-     *
-     * [NO_SCREEN] asserts BOTH — *"a no-screen period is where both layers fall"*, which is the same sentence
-     * read from the other end — and each one-sided kind asserts its own. [BEFORE_BED] asserts both too, but
-     * not by its own name: it IMPLIES a no-screen period ([impliedKind]). Every other kind, [INACTIVITY] and
-     * [SLEEP] included, asserts none: they are statements about the TIMELINE being empty, and a user at a
-     * locked screen and a user at an unlocked screen with nothing to do are different facts.
-     */
-    fun assertedLayers(kind: String): Set<SchedulerDomain.ActivityLayer> =
-        ownLayers(kind).ifEmpty { impliedKind(kind)?.let(::ownLayers) ?: emptySet() }
-
-    private fun ownLayers(kind: String): Set<SchedulerDomain.ActivityLayer> =
+    fun defaultStyle(kind: String): PeriodKindStyle =
         when (kind) {
-            NO_SCREEN -> BOTH_LAYERS
-            NO_COMPUTER_UNLOCKED -> COMPUTER_LAYER
-            NO_PHONE_UNLOCKED -> PHONE_LAYER
-            else -> emptySet()
+            INACTIVITY -> PeriodKindStyle(emptySet(), PeriodDrawing.VerticalLines)
+            SLEEP -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.HorizontalLines)
+            NO_SCREEN -> PeriodKindStyle(emptySet(), PeriodDrawing.HalfCirclesLeft)
+            BEFORE_BED -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.Zigzags)
+            NO_COMPUTER_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.RisingObliques)
+            NO_PHONE_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.FallingObliques)
+            else -> PeriodKindStyle(emptySet(), PeriodDrawing.Crosses)
         }
 
-    // Held rather than built per call: [defaultResilience] asks through here, and that is read once per
-    // covering period per task on the plan walk ([multiplier]).
-    private val BOTH_LAYERS: Set<SchedulerDomain.ActivityLayer> =
-        SchedulerDomain.ActivityLayer.entries.toSet()
-    private val COMPUTER_LAYER: Set<SchedulerDomain.ActivityLayer> =
-        setOf(SchedulerDomain.ActivityLayer.NoComputerUnlocked)
-    private val PHONE_LAYER: Set<SchedulerDomain.ActivityLayer> =
-        setOf(SchedulerDomain.ActivityLayer.NoPhoneUnlocked)
+    /**
+     * Whether [kind] is, **by its own name**, a sentence about SCREENS — [NO_SCREEN] and the two one-sided
+     * layer kinds — as opposed to one that merely carries such a period as a companion.
+     *
+     * The difference matters wherever the question is what the period IS rather than what comes with it: its
+     * default resilience ([defaultResilience] — `before bed` still turns everybody away, the no-screen period it
+     * carries being the part that is about screens), the calendar paint of a drawn period (it does not cover the
+     * past), and which periods unify ([SchedulerDomain.unifyNoScreenPeriods]).
+     */
+    fun isLayerKind(kind: String): Boolean = kind == NO_SCREEN || kind in LAYER_KINDS
+
+    /** The two kinds that state a calendar LAYER, one per [SchedulerDomain.ActivityLayer]. */
+    val LAYER_KINDS: Set<String> = setOf(NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED)
+
+    /** The kind that states [layer] — the one tie between a layer hatch and a restrictive period. */
+    fun layerKind(layer: SchedulerDomain.ActivityLayer): String =
+        when (layer) {
+            SchedulerDomain.ActivityLayer.NoComputerUnlocked -> NO_COMPUTER_UNLOCKED
+            SchedulerDomain.ActivityLayer.NoPhoneUnlocked -> NO_PHONE_UNLOCKED
+        }
 
     /**
      * Whether a task may be given a resilience to [kind] **at all**.
@@ -300,9 +271,9 @@ object PeriodKinds {
      * that turns everybody away turns the on-screen tasks away too). That is exactly why the three dynamic
      * periods, whose kind is [INACTIVITY], are the ones the modes govern.
      *
-     * [BEFORE_BED] is not one of them BY NAME, and does not need to be: the no-screen period it implies
-     * ([impliedKind]) reaches the bars as a [NO_SCREEN] period of its own
-     * ([SchedulerDomain.impliedNoScreenPeriods]), so the wind-down hour is a no-screen stretch exactly where
+     * [BEFORE_BED] is not one of them BY NAME, and does not need to be: the no-screen period it carries
+     * ([PeriodKindConfig.impliedKinds]) reaches the bars as a [NO_SCREEN] period of its own
+     * ([SchedulerDomain.companionPeriods]), so the wind-down hour is a no-screen stretch exactly where
      * that period is — and a second answer here would count it twice.
      */
     fun coversNoScreen(kind: String): Boolean = kind == INACTIVITY || kind == SLEEP || kind == NO_SCREEN

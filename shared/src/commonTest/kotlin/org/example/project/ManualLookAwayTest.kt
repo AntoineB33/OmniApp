@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.ScreenBreak
@@ -104,7 +105,7 @@ class ManualLookAwayTest {
             vm.state.value.screenBreaks,
             "look 20 feet away",
             clock.nowMillis(),
-            basePeriods = SchedulerDomain.restrictivePeriodsOf(vm.state.value.panels),
+            basePeriods = SchedulerDomain.restrictivePeriodsOf(vm.state.value.panels, PeriodKindConfig.DEFAULT),
         )
         assertTrue(
             next != null && next >= manualStart + 20 * SEC + 20 * MIN,

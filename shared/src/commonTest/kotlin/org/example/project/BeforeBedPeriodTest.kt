@@ -8,7 +8,9 @@ import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
@@ -64,13 +66,11 @@ class BeforeBedPeriodTest {
     @Test
     fun every_before_bed_period_is_also_a_no_screen_period() {
         // The user's rule: "Everytime there is 'before bed' restrictive period, there is also 'no screen'
-        // period" — so the hour is at least FOUR periods at once: before bed, no screen, and the two layer
-        // sentences no screen is made of. An IMPLICATION of the kind, not a companion panel.
-        assertEquals(PeriodKinds.NO_SCREEN, PeriodKinds.impliedKind(PeriodKinds.BEFORE_BED))
-        assertEquals(
-            SchedulerDomain.ActivityLayer.entries.toSet(),
-            PeriodKinds.assertedLayers(PeriodKinds.BEFORE_BED),
-        )
+        // period" — a COMPANION of the kind by default, not a companion panel. And (2026-09-18) "no screen" is
+        // by default NOT accompanied by the two layer periods, so the hour asserts no layer.
+        val config = PeriodKindConfig.DEFAULT
+        assertEquals(setOf(PeriodKinds.NO_SCREEN), config.impliedKinds(PeriodKinds.BEFORE_BED))
+        assertEquals(emptySet(), config.assertedLayers(PeriodKinds.BEFORE_BED))
         // ...but it is not a no-screen period BY NAME: it still turns everybody away by default, and the
         // bars read the implied period rather than a second answer off the kind.
         assertFalse(PeriodKinds.isLayerKind(PeriodKinds.BEFORE_BED))
@@ -78,16 +78,16 @@ class BeforeBedPeriodTest {
         // `sleep` implies it too (2026-09-18): a night is the plainest stretch there is of nobody being at a
         // screen, and the hour of wind-down leading into it already said so. `inactivity` and an account's own
         // kind do NOT — they say the timeline is empty there, which is a different fact.
-        assertEquals(PeriodKinds.NO_SCREEN, PeriodKinds.impliedKind(PeriodKinds.SLEEP))
+        assertEquals(setOf(PeriodKinds.NO_SCREEN), config.impliedKinds(PeriodKinds.SLEEP))
         listOf(PeriodKinds.NO_SCREEN, PeriodKinds.INACTIVITY, "deep focus").forEach {
-            assertEquals(null, PeriodKinds.impliedKind(it), it)
+            assertEquals(emptySet(), config.impliedKinds(it), it)
         }
     }
 
     @Test
-    fun the_wind_down_hour_carries_its_no_screen_period_and_both_layers() {
-        // What was missing on the calendar: the hatch ("no computer unlocked", "no phone unlocked") over the
-        // next before-bed hour, and the no-screen period the scheduler reads there.
+    fun the_wind_down_hour_carries_its_no_screen_period_and_no_layer() {
+        // The no-screen period the scheduler reads over the next before-bed hour — and, since "no screen" is not
+        // accompanied by the layer periods by default, no layer hatch over it.
         val now = utc(2024, 1, 1, 10, 0)
         val panels = SchedulerDomain.fillSchedule(sleeping(), now, tz)
         val windDowns = panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }
@@ -101,9 +101,11 @@ class BeforeBedPeriodTest {
             .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         assertTrue(sleeps.isNotEmpty(), "the fixture sleeps")
         val hatched = SchedulerDomain.mergeOccupied(spans + sleeps)
+        val config = PeriodKindConfig.DEFAULT
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
-            assertEquals(hatched, SchedulerDomain.assertedLayerRanges(panels, layer), "$layer hatch")
+            assertEquals(emptyList(), SchedulerDomain.assertedLayerRanges(panels, layer, config), "$layer hatch")
         }
+        assertEquals(hatched, SchedulerDomain.assertedNoScreenRanges(panels, config))
         // …and each night's hatch really does start at the wind-down hour rather than at bedtime.
         spans.forEach { hour ->
             assertTrue(
@@ -111,11 +113,16 @@ class BeforeBedPeriodTest {
                 "the hour at ${hour.startEpochMillis} must open a stretch that outlasts it: $hatched",
             )
         }
-        val implied = SchedulerDomain.impliedNoScreenPeriods(panels)
+        val implied = SchedulerDomain.companionPeriods(
+            panels.filter { it.isRestrictivePeriod && !it.screenBreak }.map {
+                RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind, it.title)
+            },
+            config,
+        )
         assertEquals(hatched, implied.map { TaskTimeRange(it.startMillis, it.endMillis) }.sortedBy { it.startEpochMillis })
         assertTrue(implied.all { it.kind == PeriodKinds.NO_SCREEN })
         // restrictivePeriodsOf (the display's and the cue's environment) carries both kinds over the hour.
-        val periods = SchedulerDomain.restrictivePeriodsOf(windDowns)
+        val periods = SchedulerDomain.restrictivePeriodsOf(windDowns, config)
         spans.forEach { span ->
             val here = periods.filter { it.startMillis == span.startEpochMillis && it.endMillis == span.endEpochMillis }
             assertEquals(setOf(PeriodKinds.BEFORE_BED, PeriodKinds.NO_SCREEN), here.map { it.kind }.toSet())
@@ -134,7 +141,8 @@ class BeforeBedPeriodTest {
                 PeriodKinds.NO_SCREEN, windDown.startEpochMillis - HOUR_MS, windDown.endEpochMillis,
             ),
         ).panels.filter { it.isRestrictivePeriod }
-        assertTrue(SchedulerDomain.impliedNoScreenPeriods(drawn + windDown).isEmpty())
+        val periods = SchedulerDomain.restrictivePeriodsOf(drawn + windDown, PeriodKindConfig.DEFAULT)
+        assertEquals(1, periods.count { it.kind == PeriodKinds.NO_SCREEN })
     }
 
     @Test

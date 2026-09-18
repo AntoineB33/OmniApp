@@ -5,6 +5,8 @@ import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
+import org.example.project.scheduler.domain.PeriodDrawing
+import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
@@ -423,6 +425,8 @@ object SchedulerReducer {
             is SchedulerIntent.RecordConductedBreak -> reduceRecordConductedBreak(state, intent)
             is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
+            is SchedulerIntent.SetPeriodCompanions -> reduceSetPeriodCompanions(state, intent.kind, intent.companions)
+            is SchedulerIntent.SetPeriodDrawing -> reduceSetPeriodDrawing(state, intent.kind, intent.drawing)
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
@@ -3536,8 +3540,8 @@ private fun applySetPriorityWeight(
  */
 /**
  * PRD §9/§12: every stretch an on-screen task must NOT bank a record over — what the user DREW
- * ([SchedulerDomain.assertedNoScreenRanges]: a "No screen" period, or a computer-layer period overlapping a
- * phone-layer one) UNIONED with what the devices observed ([SchedulerReducer.noScreenEvidence]).
+ * ([SchedulerDomain.assertedNoScreenRanges]: a period that is or carries "No screen", or a computer-layer
+ * period overlapping a phone-layer one) UNIONED with what the devices observed ([SchedulerReducer.noScreenEvidence]).
  *
  * Both halves are needed and neither is redundant. The panels are an assertion the user made and hold whatever
  * any history says; the evidence is the OS's own lock/standby record, which is the only half that fires on an
@@ -3548,7 +3552,7 @@ private fun noScreenRangesFor(
     state: SchedulerState,
     noScreenEvidence: List<TaskTimeRange>,
 ): List<TaskTimeRange> {
-    val drawn = SchedulerDomain.assertedNoScreenRanges(state.panels)
+    val drawn = SchedulerDomain.assertedNoScreenRanges(state.panels, state.periodKindConfig)
     if (drawn.isEmpty() && noScreenEvidence.isEmpty()) return emptyList()
     return SchedulerDomain.mergeOccupied(drawn + noScreenEvidence)
 }
@@ -4043,8 +4047,53 @@ private fun reduceAddPeriodKind(state: SchedulerState, kindRaw: String): Schedul
     val kind = PeriodKinds.normalize(kindRaw)
     if (!PeriodKinds.isUserDefined(kind)) return state
     if (state.periodKinds.any { it.equals(kind, ignoreCase = true) }) return state
-    return state.copy(periodKinds = state.periodKinds + kind)
+    // The period edit window: every kind wears a drawing, and a new one gets the drawing the fewest kinds
+    // already wear, so it can be told apart from the others wherever they overlap. Stored rather than derived
+    // from the kind's position in the list: removing another kind must not repaint this one.
+    val config = state.periodKindConfig
+    val worn = state.allPeriodKinds.groupingBy { config.drawing(it) }.eachCount()
+    val drawing = PeriodDrawing.entries.minBy { worn[it] ?: 0 }
+    return state.copy(
+        periodKinds = state.periodKinds + kind,
+        periodKindStyles = state.periodKindStyles + (kind to PeriodKindStyle(emptySet(), drawing)),
+    )
 }
+
+/**
+ * The period edit window's companions: **the kinds always present wherever a period of [kindRaw] is.** Only
+ * kinds the account holds are kept, and never the kind itself. A set equal to what the kind already carries is
+ * a no-op. The write is the whole style (companions + the drawing it already wears), so the override stays one
+ * row per kind.
+ */
+private fun reduceSetPeriodCompanions(state: SchedulerState, kindRaw: String, companions: Set<String>): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    val kinds = state.allPeriodKinds
+    if (kind !in kinds) return state
+    val kept = companions.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it != kind && it in kinds }
+    val current = state.periodKindConfig.style(kind)
+    if (kept == current.companions) return state
+    return state.withPeriodKindStyle(kind, current.copy(companions = kept))
+}
+
+/** The period edit window's drawing for [kindRaw]; the same drawing again is a no-op. */
+private fun reduceSetPeriodDrawing(state: SchedulerState, kindRaw: String, drawing: PeriodDrawing): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    if (kind !in state.allPeriodKinds) return state
+    val current = state.periodKindConfig.style(kind)
+    if (current.drawing == drawing) return state
+    return state.withPeriodKindStyle(kind, current.copy(drawing = drawing))
+}
+
+/** Stores [style] for [kind] as an override — or drops the override when [style] is the kind's default. */
+private fun SchedulerState.withPeriodKindStyle(kind: String, style: PeriodKindStyle): SchedulerState =
+    copy(
+        periodKindStyles =
+            if (!PeriodKinds.isUserDefined(kind) && style == PeriodKinds.defaultStyle(kind)) {
+                periodKindStyles - kind
+            } else {
+                periodKindStyles + (kind to style)
+            },
+    )
 
 /**
  * Remove a user-defined kind. Every task's override for it goes with it — a resilience to a kind that no
@@ -4057,8 +4106,16 @@ private fun reduceRemovePeriodKind(state: SchedulerState, kindRaw: String): Sche
     val kind = PeriodKinds.normalize(kindRaw)
     if (!PeriodKinds.isUserDefined(kind)) return state
     if (state.periodKinds.none { it == kind }) return state
+    // Its style goes with it, and it stops being anybody's companion: a companion that no longer exists is
+    // unreachable state, and would silently come back if the kind were ever re-added under the same name.
+    // Only the OVERRIDES are touched — a default never names a user-defined kind.
+    val styles =
+        (state.periodKindStyles - kind).mapValues { (_, style) ->
+            if (kind in style.companions) style.copy(companions = style.companions - kind) else style
+        }
     return state.copy(
         periodKinds = state.periodKinds.filterNot { it == kind },
+        periodKindStyles = styles,
         tasks = state.tasks.mapValues { (_, t) -> if (kind in t.resilience) t.copy(resilience = t.resilience - kind) else t },
         panels = state.panels.filterNot { it.periodKind == kind },
     )

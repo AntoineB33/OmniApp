@@ -11,6 +11,47 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "no screen" means only "refuses the tasks at 0 to it" — 2026-09-19
+
+User rule: *"'no screen' period only means it forbids tasks that have 0 resilience with 'no screen' period. It
+doesn't mean no computer unlocked anymore."* The converse is kept on purpose: where both layers fall, the stretch
+still counts as no-screen time (plan, bars, record bank). The calendar's "edit…" chooser no longer folds a
+"no computer unlocked" + "no phone unlocked" overlap into a "no screen" row that edited both at once
+(`periodEditChoices`, `CalendarEditChoicesTest.noScreenRowIsTheNoScreenPeriodAlone`); every period is its own row.
+
+### Period companions and drawings, set in the period edit window — 2026-09-18
+
+→ `docs/invariants/calendar.md` § *Period companions and drawings*, `docs/invariants/scheduler.md`, PRD §8/§13/§17.
+
+User rule: *"In the period edit window, the user can define a set of periods that are always present when this
+period is present. By default, the inactivity period is not accompanied by the 'no screen' period, and the 'no
+screen' period is not accompanied by the periods 'no computer unlocked' or 'no phone unlocked'. The user can also
+define the drawing of each period among a predefined set of drawings that are very distinguishable from one
+another, even when they overlap."*
+
+- **Companions replace the hard-coded implication.** `PeriodKinds.impliedKind` (before bed / sleep ⇒ no screen)
+  and `PeriodKinds.assertedLayers` (no screen ⇒ both layers) are gone; `PeriodKindConfig` (transitive, off
+  `SchedulerState.periodKindStyles`) answers both, and `SchedulerDomain.companionPeriods` replaces
+  `impliedNoScreenPeriods` as the one funnel to the scheduler (it still adds "both layers ⇒ no screen", which is
+  the layers' definition, not a setting). `restrictivePeriodsOf`, `dynamicPeriodBase`, `assertedLayerRanges`,
+  `assertedNoScreenRanges`, `retractedAtLineSpans`/`retractAtLine` and `clipPlanForRetractedPeriod` take the config.
+  New `SchedulerDomain.projectedSleepPeriods` for the calendar's projected §17 windows, which were mapped by hand
+  and so dropped the sleep window's no-screen companion.
+- **Behaviour change by default: "no screen" no longer asserts the two layers.** A drawn "no screen" period, a
+  sleep window and a wind-down hour no longer hatch `/` and `\`; each wears its own drawing. They still count as
+  no-screen time for the plan, the bars, the mode-1 retraction and the record bank (by kind). The future sleep
+  windows and the screen breaks likewise hatch a layer only if their kind carries it (by default, neither).
+- **Drawings**: `PeriodDrawing` (8 patterns), rendered only by `ui/PeriodDrawings.kt` as a repeated tile (constant
+  cost at any box height). `Modifier.obliqueHatch`/`verticalHatch` deleted. Defaults: `|` inactivity, `—` sleep,
+  `/` no computer unlocked, `\` no phone unlocked, `(` no screen, zig-zags before bed; a new account kind is given
+  the least-worn drawing at creation and stores it.
+- **Persistence/sync**: new `periodKindStyles` field (overrides only, one row per kind via `EntityRows`, no
+  Supabase change). A payload without it decodes to every default; decode heals styles for unknown kinds, unknown
+  or self companions and unknown drawings. `RemovePeriodKind` drops the kind's style and every reference to it.
+  Intents `SetPeriodCompanions` / `SetPeriodDrawing` — account settings, no history unit. Companion changes are in
+  `schedulingSignature`; drawing changes are not. Tests: `PeriodCompanionsAndDrawingsTest`, plus the updated
+  `LayerPeriodKindTest`, `BeforeBedPeriodTest`, `SleepWindowNoIdlingTest`.
+
 ### Requirements audit: the pace per stage, and a follower's rules checked on its own timeline — 2026-09-18
 
 → `docs/scheduler_requirements.md` § *Progressive Calculation*, § *No idling*, § *Restrictive Period*;

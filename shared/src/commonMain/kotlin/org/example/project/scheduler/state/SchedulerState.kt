@@ -1,6 +1,8 @@
 package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.PeriodKindConfig
+import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Category
@@ -878,6 +880,17 @@ data class SchedulerState(
      */
     val periodKinds: List<String> = emptyList(),
     /**
+     * The **period edit window**'s two settings, per kind: the kinds **always present wherever a period of it
+     * is** (its companions) and the **drawing** it wears on the calendar
+     * ([org.example.project.scheduler.domain.PeriodKindStyle]). OVERRIDES only, like [shortcutBindings]: a kind
+     * absent here is at [PeriodKinds.defaultStyle], so a built-in kind nobody edited costs nothing. Read it
+     * through [periodKindConfig], never directly — that is where the companions are made transitive.
+     *
+     * Authoritative user-authored data: persisted and synced (one row per kind). Like defining a kind, an
+     * account setting and not an Undo/Redo unit.
+     */
+    val periodKindStyles: Map<String, PeriodKindStyle> = emptyMap(),
+    /**
      * PRD §5 **the account's categories**: every label a task can carry, in the order they were created,
      * each with the standing [org.example.project.scheduler.model.CategoryRule]s it imposes.
      *
@@ -1004,6 +1017,12 @@ data class SchedulerState(
      */
     val allPeriodKinds: List<String>
         get() = PeriodKinds.BUILT_IN + periodKinds.filter { PeriodKinds.isUserDefined(it) }
+
+    /**
+     * [periodKindStyles] resolved: every kind's companions (transitively) and drawing — the one reading of both
+     * ([PeriodKindConfig]). Built once per state value; a copy builds its own.
+     */
+    val periodKindConfig: PeriodKindConfig by lazy { PeriodKindConfig(periodKindStyles) }
 
     fun captureTree(): TreeSnapshot =
         TreeSnapshot(

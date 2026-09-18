@@ -8,6 +8,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskPanel
@@ -167,7 +168,7 @@ class CalendarLineMotionTest {
                 screenBreaks = state.screenBreaks,
                 nowMillis = now,
                 horizonMillis = NOW + 3 * HOUR,
-                basePeriods = SchedulerDomain.restrictivePeriodsOf(work),
+                basePeriods = SchedulerDomain.restrictivePeriodsOf(work, PeriodKindConfig.DEFAULT),
                 tasks = SchedulerDomain.planTasksOf(state, now),
                 mode = DynamicPeriods.MODE_AT_SCREEN,
             ).filter { it.startEpochMillis >= now }

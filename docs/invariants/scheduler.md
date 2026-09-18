@@ -194,7 +194,7 @@ model exists to prevent.
   nowhere else). Mode 1 is *a device of the account is unlocked*, and the requirements' clause is flat —
   *"$now line$ must not be covered by the period 'no on-screen task'. This means that if it reaches one of
   those periods, the passing of the $now line$ line creates task panels not covered by the period."* So a
-  covering period that **is or implies `no screen`** (`PeriodKinds.isOrImpliesNoScreen`) gives up
+  covering period that **is or carries `no screen`** (`PeriodKindConfig.isOrImpliesNoScreen`) gives up
   `[now, its end)`, and § *No idling* then puts a task at the line: what is left covering it is a layer
   period, whose default resilience is `1` and which prevents nobody.
   - **`sleep` retracts WHOLLY**, and it has to: no resilience can ever be written against it
@@ -209,8 +209,10 @@ model exists to prevent.
     idling*'s own clause is satisfied while nobody has one. Retracting it would delete the wind-down, the
     hour the user is meant to stop working in being exactly an hour they are at a screen for. Only its
     implied `no screen` period lifts, which is what lets the task they DID let through be an on-screen one.
-  - **`inactivity` and every kind the account defined never retract** — they say the timeline is empty, not
-    that nobody is at a screen. The predicate is deliberately **not** `coversNoScreen` (the bars' question,
+  - **By default `inactivity` and every kind the account defined never retract** — they say the timeline is
+    empty, not that nobody is at a screen. Giving one a `no screen` companion (the period edit window) is the
+    user saying otherwise: a non-editable kind (`inactivity`) then retracts like `sleep`, an editable one keeps
+    its span like `before bed` and only its companion lifts. The predicate is deliberately **not** `coversNoScreen` (the bars' question,
     which grey answers a fortiori), or a period the user drew would be pulled out from under them.
   - **The plan is searched AND materialized across the retracted span; the DISPLAY is what stops at the
     line** (`clipPlanForRetractedPeriod`, beside `clipPlanForPinnedScreenBreak` in `App.kt`, forward only).
@@ -232,26 +234,23 @@ model exists to prevent.
   `0`); and it is **not** the
   user's, so it cannot be defined again or deleted (`isUserDefined` gates both, and an older payload's
   user-defined kind of that name collapses into it on decode, overrides intact).
-- **EVERY `before bed` PERIOD, AND EVERY §17 SLEEP WINDOW, IS ALSO A `no screen` PERIOD** (user rule,
-  2026-09-13; the sleep half added 2026-09-18 — each is at least four periods at once: its own kind,
-  `no screen`, `no computer unlocked`, `no phone unlocked`). A night is the plainest stretch there is of
-  nobody being at a screen, and the hour of wind-down running into it already said so; left out, a §17 window
-  asserted no layer at all, carried no hatch, and put no no-screen period in front of the scheduler or the
-  record bank — so a night with no other evidence (a cold start across it leaves neither a swept-stretch
-  cover nor an OS lock span) stood as the one grey kind saying nothing about screens. It is also what makes
-  the mode-1 retraction above reach a sleep window. The hatch over a wind-down hour and the window it runs
-  into is therefore **one stretch per night**: they abut, and two abutting statements of "nobody is at a
-  screen" are one statement. It is an
-  IMPLICATION of the kind (`PeriodKinds.impliedKind`), folded into `PeriodKinds.assertedLayers`, so it reaches
-  everything through the funnel a layer statement already has: the hatch (`assertedLayerRanges`), the
-  scheduler and the recurrence bars (`impliedNoScreenPeriods`, which subtracts an explicit "No screen" period
-  so a fractional resilience is never squared), the record bank (`noScreenRangesFor`). Never lay a companion
-  panel. **Whoever builds wind-down periods outside `state.panels` must hand them to
-  `impliedNoScreenPeriods`/`restrictivePeriodsOf`** — the fill's `dynamicBase` (the hours are laid by that
-  very fill, not kept) and the calendar's display environment (projected past the horizon). Mapping a
-  `before bed` panel to a `RestrictivePeriod` by hand drops its no-screen half: that is exactly how the next
-  wind-down hour went un-hatched and un-rested. `coversNoScreen(before bed)` stays false on purpose — the
-  implied period answers it, and a second answer off the kind would count the hour twice.
+- **EVERY `before bed` PERIOD, AND EVERY §17 SLEEP WINDOW, CARRIES A `no screen` PERIOD BY DEFAULT** (user
+  rule, 2026-09-13; the sleep half added 2026-09-18). A night is the plainest stretch there is of nobody being
+  at a screen, and the hour of wind-down running into it already said so. It is also what makes the mode-1
+  retraction above reach a sleep window. Since 2026-09-18 this is a **COMPANION** — the period edit window's
+  *"periods always present when this period is present"* (`PeriodKindConfig`, `PeriodKinds.defaultStyle`),
+  transitive, editable per kind — and **`no screen` no longer carries the two layer periods** by default, so
+  neither the night nor the hour hatches a layer unless the account says so. Companions reach everything
+  through ONE funnel, `SchedulerDomain.companionPeriods`: the scheduler and the recurrence bars (via
+  `restrictivePeriodsOf`, the fill's `dynamicBase`/`restrictions`), the record bank
+  (`assertedNoScreenRanges`), the mode-1 retraction. Per kind it subtracts the spans a period of that very kind
+  already covers, so a fractional resilience is never squared. Never lay a companion panel. **Whoever builds
+  periods outside `state.panels` must hand them to `companionPeriods`/`restrictivePeriodsOf`/
+  `projectedSleepPeriods`** — the fill's `dynamicBase` (the hours are laid by that very fill, not kept) and the
+  calendar's display environment (projected past the horizon). Mapping a period to a `RestrictivePeriod` by
+  hand drops its companions: that is exactly how the next wind-down hour once went un-rested.
+  `coversNoScreen(before bed)` stays false on purpose — the companion period answers it, and a second answer
+  off the kind would count the hour twice.
 - **The wind-down periods are DERIVED, like the sleep windows they come from.** `before-bed/{wake day}`
   (`BEFORE_BED_PANEL_ID_PREFIX`) is cut and regenerated by every fill, is an `isRegeneratedPanel` (so it is
   out of the sync fingerprint and out of `schedulingSignature`), and the calendar draws it as a grey band

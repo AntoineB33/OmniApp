@@ -39,6 +39,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
+import org.example.project.scheduler.domain.PeriodDrawing
+import org.example.project.scheduler.domain.PeriodKindStyle
+import org.example.project.ui.periodDrawing
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -3557,7 +3561,15 @@ internal fun TaskEditWindow(
  * a period ("who may work through it?"), because defining one adds it to every task at the default `0`
  * ([PeriodKinds.defaultResilience]) and somebody has to be let back in.
  *
- * Three things it holds, and nothing else:
+ * Five things it holds, and nothing else:
+ * - **Always present with it** — the kinds whose periods are always present wherever a period of this kind
+ *   is ([PeriodKindStyle.companions], written by
+ *   [org.example.project.scheduler.state.SchedulerIntent.SetPeriodCompanions]). One check box per other kind;
+ *   the kinds that come along only THROUGH one of them (companions are transitive,
+ *   [org.example.project.scheduler.domain.PeriodKindConfig.kindsOf]) are named under the list, since a box for
+ *   them would claim a setting this kind does not hold.
+ * - **Drawing** — the pattern its periods wear on the calendar, one of [PeriodDrawing]'s fixed set, each shown
+ *   as the swatch the calendar will draw ([org.example.project.ui.periodDrawing]).
  * - **Delete**, offered only for a user-defined kind: this is the one place a period is deleted, because it
  *   is the one place a period is an object in its own right. It takes every task's value for it and every
  *   panel laid with it ([org.example.project.scheduler.state.SchedulerIntent.RemovePeriodKind]). The two
@@ -3586,6 +3598,14 @@ internal fun PeriodKindEditWindow(
     taskColors: Map<TaskId, Color>,
     /** False for the two built-in kinds — the README names them, so the account cannot drop them. */
     canDelete: Boolean,
+    /** Every kind the account holds, this one included — the rows of "Always present with it". */
+    allKinds: List<String>,
+    /** This kind's companions and drawing as they stand. */
+    style: PeriodKindStyle,
+    /** Every kind present wherever this one is, transitively, this one excluded. */
+    impliedKinds: Set<String>,
+    onSetCompanions: (Set<String>) -> Unit,
+    onSetDrawing: (PeriodDrawing) -> Unit,
     onSetResilience: (List<TaskId>, Double) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
@@ -3619,6 +3639,54 @@ internal fun PeriodKindEditWindow(
                 Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Text("Always present with it", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Wherever a period of this kind is, a period of each checked kind is too.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                for (other in allKinds) {
+                    if (other == kind) continue
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = other in style.companions,
+                            onCheckedChange = { on ->
+                                onSetCompanions(if (on) style.companions + other else style.companions - other)
+                            },
+                        )
+                        Text(other, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                val throughOthers = impliedKinds - style.companions
+                if (throughOthers.isNotEmpty()) {
+                    Text(
+                        "Also present through them: " + throughOthers.joinToString(", "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                HorizontalDivider()
+
+                Text("Drawing", style = MaterialTheme.typography.titleSmall)
+                for (drawing in PeriodDrawing.entries) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { onSetDrawing(drawing) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RadioButton(selected = style.drawing == drawing, onClick = { onSetDrawing(drawing) })
+                        Box(
+                            Modifier.size(width = 56.dp, height = 28.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(3.dp))
+                                .periodDrawing(drawing, MaterialTheme.colorScheme.onSurface),
+                        )
+                        Text(drawing.label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                HorizontalDivider()
+
                 Text(
                     "Each task’s resilience to a period of this kind: 0 % forbids it there, " +
                         "100 % leaves it untouched.",

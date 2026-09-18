@@ -149,6 +149,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ChoreEntry
@@ -832,7 +833,7 @@ internal fun isRestrictivePeriodRecord(r: PlacedRecord): Boolean =
  * the box do not say the same thing: a hatch is *nobody of this kind was unlocked here*, which the app draws
  * out of the OS log all day long, and the box's OUTLINE is *a hand stated this* — the one question a
  * derived hatch can never answer. With no box, the user's own no-screen period was the single thing they
- * could add to the calendar that left no trace they had added it. [obliqueHatch]'s dots are the third mark
+ * could add to the calendar that left no trace they had added it. [periodDrawing]'s dots are the third mark
  * and the third question (*the machine's log disagrees*); all three are independent.
  */
 internal fun isDrawnPeriodRecord(r: PlacedRecord): Boolean =
@@ -842,42 +843,17 @@ internal fun isDrawnPeriodRecord(r: PlacedRecord): Boolean =
  * PRD §8: the rows of the **"restrictive period" chooser** at one point — one per period the cursor is on,
  * named by its kind, in [CALENDAR_EDIT_ROW_ORDER].
  *
- * The `no screen` row is the one that is not a period one-for-one, and it is the user's own rule: *"editing a
- * 'no screen' restrictive period is the equivalent of doing this edit in both no computer unlocked and no
- * phone unlocked"*. So the row stands for whichever of the two spellings is there — a period of kind
- * [PeriodKinds.NO_SCREEN], or a one-sided computer period overlapping a one-sided phone one — and carries
- * every record behind it, because the edit is applied to all of them at once. A lone one-sided period gets no
- * such row: one locked screen is not "no screen" ([PeriodKinds.assertedLayers]), which is the same rule the
- * scheduler and the hatch already read.
+ * One period, one row, `no screen` included. Until 2026-09-19 the `no screen` row also stood for a
+ * "no computer unlocked" period overlapping a "no phone unlocked" one, and editing it edited both — the user's
+ * old rule that a no-screen period IS "both layers". It is not any more: a "no screen" period only refuses the
+ * tasks with a resilience of 0 to it and says nothing about computers or phones, so the two layer periods are
+ * edited as what they are. Their overlap still COUNTS as no-screen time ([SchedulerDomain.companionPeriods]);
+ * that is a reading, with no object behind it to edit.
  */
-private fun periodEditChoices(hits: List<PlacedRecord>): List<CalendarEditChoice> {
-    val periods = hits.filter(::isRestrictivePeriodRecord)
-    if (periods.isEmpty()) return emptyList()
-    val rows = mutableListOf<CalendarEditChoice>()
-    for (period in periods) {
-        if (period.restrictiveKind == PeriodKinds.NO_SCREEN) continue // folded into the one row below
-        rows +=
-            CalendarEditChoice(
-                label = period.restrictiveKind,
-                records = listOf(period),
-                periodKind = period.restrictiveKind,
-            )
-    }
-    val stated = periods.filter { it.restrictiveKind == PeriodKinds.NO_SCREEN }
-    val computer = periods.filter { it.restrictiveKind == PeriodKinds.NO_COMPUTER_UNLOCKED }
-    val phone = periods.filter { it.restrictiveKind == PeriodKinds.NO_PHONE_UNLOCKED }
-    val spelled = if (computer.isNotEmpty() && phone.isNotEmpty()) computer + phone else emptyList()
-    val noScreen = stated + spelled
-    if (noScreen.isNotEmpty()) {
-        rows +=
-            CalendarEditChoice(
-                label = PeriodKinds.NO_SCREEN,
-                records = noScreen,
-                periodKind = PeriodKinds.NO_SCREEN,
-            )
-    }
-    return rows.sortedBy { periodRowRank(it.periodKind) }
-}
+private fun periodEditChoices(hits: List<PlacedRecord>): List<CalendarEditChoice> =
+    hits.filter(::isRestrictivePeriodRecord)
+        .map { CalendarEditChoice(label = it.restrictiveKind, records = listOf(it), periodKind = it.restrictiveKind) }
+        .sortedBy { periodRowRank(it.periodKind) }
 
 /**
  * PRD §8: **the ordered rows of the calendar's "edit…" chooser** for the things [hits] says the cursor is on.
@@ -4623,6 +4599,8 @@ private fun DayColumn(
     // pipeline that lays panels out or hit-tests them. An idle stretch that carries no panel now draws no
     // band at all (the derived "Inactivity"/"No screen" bands are gone); it simply shows the layers.
     val layerBands = records.filter { it.layer != null }
+    // The period edit window's companions and drawings, for the layers, the sleep bands and the period boxes.
+    val periodKindConfig = LocalPeriodKindConfig.current
     // PRD §8: **EVERY restrictive period leaves the block pipeline.** A period is not an object owning a
     // slice of the timeline the way a task panel is — it states something about it — so it never competes for
     // the column's width: overlapping periods are cut at their boundaries and each stretch is drawn once,
@@ -5453,11 +5431,13 @@ private fun DayColumn(
         // The outline is drawn OVER the panels, like the layers and for the same reason: the fill projects
         // the plan straight through a sleep window, so a marking hidden under the block would leave that
         // stretch unmarked — and it has no fill, so the block underneath keeps its own colour. The "Sleep"
-        // label is drawn on top of everything further down, so it stays legible at the band's start. It
-        // carries no hatch of its own: the two oblique slopes mean "no computer unlocked" / "no phone
-        // unlocked", and a sleep window gets both from the LAYERS drawn over the whole column (below).
+        // label is drawn on top of everything further down, so it stays legible at the band's start. It wears
+        // the drawing of its kind and of every companion that kind carries (the period edit window: by default
+        // "sleep" and the "no screen" period that always comes with it) — the same drawings a hand-drawn
+        // `sleep` period box wears, the layer kinds excepted, which the LAYERS below paint.
         // Purely decorative: this registers no pointer input — its bubble section comes from
         // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
+        val sleepDrawings = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
         sleepBands.forEach { band ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
             val bandOutline = outlineColor(band.outline) ?: return@forEach
@@ -5469,6 +5449,7 @@ private fun DayColumn(
                         followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
                     )
                     .clipToBounds()
+                    .periodDrawings(sleepDrawings, CalColors.muted)
                     .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
             )
         }
@@ -5476,10 +5457,10 @@ private fun DayColumn(
         // PRD §8: **the restrictive periods, as one full-width box per stretch** ([periodSegments]).
         //
         // Three things are drawn and each answers one question:
-        //  • the MARKING says what kind of statement this is — vertical lines for the two grey kinds, nothing
-        //    of its own for any other (a "no screen" period and the two one-sided layer kinds get their
-        //    oblique slopes from [layerBands] below, which draws them whether a period asserted the layer
-        //    or the OS lock log did);
+        //  • the MARKING says what kinds of statement are in force — the drawing of every period's kind and of
+        //    every companion it carries (the period edit window, [PeriodKindConfig.boxDrawings]), except the two
+        //    one-sided layer kinds, which get their drawing from [layerBands] below whether a period asserted
+        //    the layer or the OS lock log did;
         //  • the OUTLINE says whether a HAND stated any of it ([periodSegmentOutline]) — the user's own
         //    example: an hour of OS lock evidence draws unoutlined and the hour they extended it by draws
         //    blue. It is the one mark a derived hatch can never carry, which is why a "no screen" period
@@ -5501,8 +5482,8 @@ private fun DayColumn(
             )
         }
 
-        // PRD §8 calendar LAYERS: the two decorative "nobody unlocked" hatches — "/" where no computer was
-        // unlocked, "\\" (opposite slope) where no phone was. Drawn OVER the panels, because a layer
+        // PRD §8 calendar LAYERS: the two decorative "nobody unlocked" hatches, each in the drawing of its kind
+        // (by default "/" where no computer was unlocked, "\\" where no phone was). Drawn OVER the panels, because a layer
         // displaces nothing (PRD §8 panel taxonomy: decorative elements pattern the calendar rather than
         // occupying it), and UNDER the now-line / alarm / screen-break markers and the reminder tags, which
         // have to stay crisp — the tags top everything, being the one marker that is clicked. A stretch carrying BOTH slopes is a no-screen period — the user's definition, and the same
@@ -5518,9 +5499,9 @@ private fun DayColumn(
                         followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
                     )
                     .clipToBounds()
-                    .obliqueHatch(
+                    .periodDrawing(
+                        periodKindConfig.drawing(PeriodKinds.layerKind(band.layer!!)),
                         CalColors.muted,
-                        reversed = band.layer == SchedulerDomain.ActivityLayer.NoPhoneUnlocked,
                         dotted = band.layerDeclared,
                     ),
             )
@@ -6966,74 +6947,6 @@ private fun underHoverTitle(u: PlacedRecord): String =
     if (u.entryId == null && (u.sleep || u.inactivity || u.noScreen)) decorativeBandLabel(u) else u.title
 
 /**
- * PRD §8 decorative panels: an oblique-line hatch. [reversed] flips the slope — the no-screen pattern
- * draws "/" (bottom-left → top-right); the sleep pattern draws "\" (top-left → bottom-right), so a sleep
- * window (which is also a no-screen period) reads as the two crossed.
- *
- * [dotted] breaks each line into dashes without touching its slope, spacing or colour: PRD §8 +
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* — a device of the layer's kind really was UNLOCKED
- * over that stretch and the user said otherwise, with the "I'm away" button on (mode 3) or by drawing a
- * period over hours already elapsed. The hatch there is the user's word and not a locked screen. Only the
- * LINE changes, because it is the same layer saying the same thing about the same stretch; a second colour
- * or a second slope would read as a third layer. It is NOT the outline rule in another guise
- * ([periodSegmentOutline] says who PLACED a period; this says the machine's log DISAGREES with it) — and
- * the away button places nothing at all, so without this a declared stretch and an observed one are one
- * drawing.
- */
-private fun Modifier.obliqueHatch(color: Color, reversed: Boolean, dotted: Boolean = false): Modifier =
-    this.drawBehind {
-        val step = 10.dp.toPx()
-        val stroke = 1.dp.toPx()
-        // Dash and gap in the same unit as the stroke, so the dotting reads the same at every zoom (the band's
-        // height changes, the line's texture does not).
-        val effect =
-            if (dotted) PathEffect.dashPathEffect(floatArrayOf(1.5.dp.toPx(), 2.5.dp.toPx())) else null
-        var x = -size.height
-        while (x < size.width) {
-            val start = if (reversed) Offset(x, 0f) else Offset(x, size.height)
-            val end = if (reversed) Offset(x + size.height, size.height) else Offset(x + size.height, 0f)
-            drawLine(
-                color = color.copy(alpha = 0.35f),
-                start = start,
-                end = end,
-                strokeWidth = stroke,
-                pathEffect = effect,
-            )
-            x += step
-        }
-    }
-
-/**
- * PRD §8: **the marking of an INACTIVITY period — vertical lines**, and the third member of a family whose
- * whole job is to say *what kind of statement covers this stretch* without occupying it: "/" for no computer
- * unlocked, "\" for no phone unlocked, "|" for "no task allowed".
- *
- * Same colour, same weight and the same 35 % alpha as [obliqueHatch], so an inactivity period under a layer
- * reads as two markings crossing rather than as one thing changing colour — and, like them, it is drawn
- * BEHIND whatever the box contains, because a task resilient to the kind may work straight through the
- * period and must stay readable.
- *
- * The slope is what carries the meaning here, which is why the lines are vertical rather than, say, a second
- * shade of grey: the calendar had a grey wash for this until 2026-09-11 and it collided with every task
- * drawn through a period (ADR 0002). A marking made of lines does not.
- */
-private fun Modifier.verticalHatch(color: Color): Modifier =
-    this.drawBehind {
-        val step = 10.dp.toPx()
-        val stroke = 1.dp.toPx()
-        var x = step / 2f
-        while (x < size.width) {
-            drawLine(
-                color = color.copy(alpha = 0.35f),
-                start = Offset(x, 0f),
-                end = Offset(x, size.height),
-                strokeWidth = stroke,
-            )
-            x += step
-        }
-    }
-
-/**
  * PRD §8: which period box is being dragged or resized, and by how far — the live state
  * [PeriodSegmentGesture] writes and [PeriodSegmentMarking] reads, so the two halves of one box move together.
  */
@@ -7085,12 +6998,11 @@ private fun PeriodSegmentMarking(
     val density = LocalDensity.current
     val (topShiftPx, heightShiftPx) = periodDragShift(segment, drag)
     val height = hourHeight * (segment.endHour - segment.startHour) + with(density) { heightShiftPx.toDp() }
-    // PRD §8: the vertical lines are the marking of "nothing may be placed here", which is what BOTH grey
-    // kinds say. A shared box carries them when ANY period in force is of one — the statement is true of the
-    // stretch whichever period makes it.
-    val idle = segment.records.any {
-        it.restrictiveKind == PeriodKinds.INACTIVITY || it.restrictiveKind == PeriodKinds.SLEEP
-    }
+    // PRD §8 + the period edit window: every period in force over the box paints its kind's drawing and the
+    // drawing of every companion that kind carries — one pattern per KIND, however many periods say it. The
+    // two one-sided layer kinds are left to the layer hatch ([PeriodKindConfig.boxDrawings]).
+    val config = LocalPeriodKindConfig.current
+    val drawings = segment.records.flatMap { config.boxDrawings(it.restrictiveKind) }.distinct()
     val outline = outlineColor(periodSegmentOutline(segment))
     Box(
         modifier = Modifier
@@ -7110,7 +7022,7 @@ private fun PeriodSegmentMarking(
                 },
             )
             .clipToBounds()
-            .then(if (idle) Modifier.verticalHatch(CalColors.muted) else Modifier)
+            .periodDrawings(drawings, CalColors.muted)
             .then(
                 outline?.let { Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(3.dp)) }
                     ?: Modifier,
@@ -7862,7 +7774,7 @@ private fun PeriodKindField(
  * special cases: a period multiplies every covered task's priority by that task's resilience to the kind, and
  * the only thing that differs between kinds is the resilience the tasks that were never told about it carry
  * ([PeriodKinds.defaultResilience]). The kinds that speak about a SCREEN rather than about the timeline are
- * the ones whose default is `1` ([PeriodKinds.assertedLayers]), which is exactly why `no on-screen task`
+ * the ones whose default is `1` ([PeriodKinds.isLayerKind]), which is exactly why `no on-screen task`
  * reads as "only the tasks that need no screen" — and why each of the two one-sided LAYER kinds, being half
  * of that sentence, restricts nothing until the other half is drawn over the same hours.
  */

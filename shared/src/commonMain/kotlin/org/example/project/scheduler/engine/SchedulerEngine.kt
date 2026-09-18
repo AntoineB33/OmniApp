@@ -2155,6 +2155,7 @@ class SchedulerEngine(
     private fun dynamicPeriodBaseNow(state: SchedulerState) =
         SchedulerDomain.dynamicPeriodBase(
             panels = state.panels,
+            config = state.periodKindConfig,
             liveRest =
                 SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis()),
             noScreenEvidence = _noScreenEvidence.value,
