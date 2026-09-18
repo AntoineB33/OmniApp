@@ -366,6 +366,11 @@ model exists to prevent.
   regenerates its sleep windows, breaks and periods and lays the runs through its own environment, so a stretch this
   device refuses is never given to a task. Rules are taken only for the follower's own `schedulingSignature`, and
   only when newer (`nowMillis`, then stage) than what it last took or planned.
+- **A follower lays the leader's runs only when they are a legal continuation ON ITS OWN TIMELINE**
+  (`ScheduleOptimizer.isLegalContinuation`, `SchedulerPeerProtocolTest`). The leader planned over its own
+  environment: a period only the leader had leaves a hole in its runs that the follower would leave to nobody
+  (§ *No idling*), and a period only the follower has may refuse the task the leader put there (resilience `0`).
+  Either way the follower plans for itself with the leader's runs as a seed — never lays them anyway.
 - **The rules on the wire are derived and never stored**: a broadcast, not a row, and `AdoptScheduleRules` never
   pushes (`syncsToServer`). The channel is `realtime:scheduler:<userId>`, **private** — its RLS is migration
   20260916000000.
@@ -416,6 +421,10 @@ model exists to prevent.
      would resume the stages one poll later with a fresh budget, for ever (`PlanCalculationLimitTest`).
      The limit is given up in the requirement's own order: `stageSearchMillis` drops the SEARCH first and spends
      what is left on reaching further, because a schedule that stops short is worse than one that is not the best.
+     **This third reason is not in `docs/scheduler_requirements.md`** — the requirement lets the scheduler stop
+     only at $t_{goal}$, and a device that meets the pace but needs more than two minutes to reach its week stops
+     short of it. It is a deliberate deviation (a phone must not plan for hours after every edit); do not describe
+     it as the requirement's.
   How the rolling floor is kept from re-triggering itself, and the 168 h ceiling, are in `display-hot-path.md`.
   Each extension keeps the head, so a run the line is in continues to its minimum across them.
 - **The engine fills in DOUBLING STAGES** (`SchedulerEngine.dispatchProgressivePlan`): a re-plan (or an
@@ -423,10 +432,14 @@ model exists to prevent.
   $t_{goal}$, each capped through the intents' `horizonCapMillis`. An extension keeps everything materialized, so
   every published stage is **definitive** until a rule change
   (`SchedulerFillTest.progressive_stages_never_rewrite_what_an_earlier_stage_made_definitive`).
-- **Why doubling:** a stage costs in proportion to its length, so stage `k` is published after about twice its own
-  cost — the 10-minutes-per-10-seconds pace holds on any device that fills an hour of schedule in under ~15 s,
-  whatever the size of the goal. A single fill to the goal would hold it only while the whole fill takes < 10 s
-  (60 tasks over 8 days: 5.4 s on the desktop, 2026-09-16).
+- **Doubling, CAPPED BY THE PACE** (`progressiveStageCapMillis`, `ProgressivePaceTest`). The pace binds every
+  stage, not the average: with the front at `t1` when a stage is published, the next must be published within 10 s
+  and reach `t1 + 10 min`. A stage costs in proportion to its length, so pure doubling broke it at the long stages
+  (a 64-h stage on a device filling an hour in 0.2 s is 12.8 s of work) — the claim that it held "for any device
+  under ~15 s an hour" was wrong. So a stage after the first reaches no further past the front than this device
+  fills in `PROGRESSIVE_PACE_MILLIS − PROGRESSIVE_PACE_MARGIN_MILLIS` at its measured `planHoursPerSecond`, and
+  never less than the requirement's own 10 minutes. A single fill to the goal would hold the pace only while the
+  whole fill takes < 10 s (60 tasks over 8 days: 5.4 s on the desktop, 2026-09-16).
 - **A newer request cancels the stages the older one has not reached**, and the horizon watchers stand aside while
   a progressive fill is in flight (its own stages are not a gap).
 - **A stage spends the pace it is not using on reaching the best score** (`SchedulerEngine.stageSearchMillis`): the

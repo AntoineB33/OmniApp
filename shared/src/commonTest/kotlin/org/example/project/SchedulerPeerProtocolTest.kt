@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.RulePlacement
@@ -126,6 +127,41 @@ class SchedulerPeerProtocolTest {
             "a run was laid over the follower's own period",
         )
         assertTrue(adopted.panels.any { it.auto && it.startEpochMillis >= period.endEpochMillis }, "the rules go on after it")
+    }
+
+    @Test
+    fun a_stretch_the_leader_left_to_nobody_is_not_left_idle_on_the_follower() {
+        // `docs/scheduler_requirements.md` § *No idling*. The leader had a period the follower does not: its runs have
+        // a hole there, and laying them as they are left the follower's timeline empty where every task may run.
+        val s = account()
+        val holeStart = NOW + 3 * HOUR
+        val period =
+            TaskPanel("panel/leader-only", null, "Inactivity", holeStart, holeStart + HOUR, pinned = false, auto = false,
+                inactivity = true, pins = PanelPins(existence = true))
+        val (leader, _) = leaderPlan(s.copy(panels = listOf(period)), NOW + DAY)
+        assertTrue(runs(leader).none { (r, _) -> r.second < holeStart + HOUR && r.third > holeStart }, "the leader's runs have the hole")
+        val adopted = SchedulerReducer.reduce(s, SchedulerIntent.AdoptScheduleRules(NOW, placements(leader), null, NOW + DAY))
+        val covered = adopted.panels.filter { (it.auto && it.taskId != null) || it.isRestrictivePeriod }
+        var t = holeStart
+        while (t < holeStart + HOUR) {
+            assertTrue(covered.any { it.startEpochMillis <= t && t < it.endEpochMillis }, "idle at ${(t - NOW) / MIN} min on the follower")
+            t += MIN
+        }
+    }
+
+    @Test
+    fun a_follower_never_gives_a_task_a_stretch_its_own_period_refuses_it() {
+        // `docs/scheduler_requirements.md` § *Restrictive Period*: resilience 0 forbids the task there. Only the
+        // follower has the no-screen period, and only C may run in it: the leader's A or B there is no answer here.
+        var s = account()
+        val c = s.tasks.keys.first { s.tasks[it]!!.title == "C" }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, PeriodKinds.NO_SCREEN, 1.0))
+        val (leader, _) = leaderPlan(s, NOW + DAY)
+        val from = NOW + 3 * HOUR
+        val follower = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, from, from + HOUR))
+        val adopted = SchedulerReducer.reduce(follower, SchedulerIntent.AdoptScheduleRules(NOW, placements(leader), null, NOW + DAY))
+        val inside = adopted.panels.filter { it.auto && it.taskId != null && it.startEpochMillis < from + HOUR && it.endEpochMillis > from }
+        assertTrue(inside.isNotEmpty() && inside.all { it.taskId == c }, "only C may run in the follower's period: $inside")
     }
 
     @Test

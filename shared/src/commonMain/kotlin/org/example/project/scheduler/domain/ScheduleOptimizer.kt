@@ -438,6 +438,17 @@ class ScheduleOptimizer(
     }
 
     /**
+     * Whether [runs], exactly as given, are a legal continuation from [start] all the way to [untilU]: no stretch left
+     * to nobody where somebody may run (§ *No idling*), no task where it may not run, no other task's pre-placed block
+     * entered. What a follower checks another device's runs against before laying them on its own timeline.
+     */
+    fun isLegalContinuation(start: ScoreCursor, runs: List<Run>, untilU: Double): Boolean {
+        if (untilU <= start.u + ScoreModel.EPS) return true
+        val (prefix, _) = legalPrefix(start, runs, untilU, -1, -1) ?: return false
+        return prefix.isNotEmpty() && prefix.last().toU >= untilU - ScoreModel.EPS
+    }
+
+    /**
      * Pass 2: [seed] cut to its legal prefix and completed by what pass 1 built from the same instant on ([built],
      * cut where the prefix ends — a run cut short is still a task that may run over what is left of it); null when
      * it is unusable. Completing with a second rollout doubled what every re-plan costs, for a tail the improver

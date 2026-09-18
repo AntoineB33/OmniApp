@@ -120,13 +120,41 @@ private const val TASK_TREE_BLEND_POLL_MILLIS: Long = 60_000
 internal const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS
 
 // `docs/scheduler_requirements.md` § *Progressive Calculation*: "if the definitive schedule is found for any t < t1,
-// then 10 seconds later [it] must be found for any t < t1 + 10 minutes". Every stage extends by at least an hour, so
-// each must be published within this of the previous one.
+// then 10 seconds later [it] must be found for any t < t1 + 10 minutes". Every stage extends by at least
+// [PROGRESSIVE_MIN_ADVANCE_MILLIS], so each must be published within this of the previous one.
 internal const val PROGRESSIVE_PACE_MILLIS: Long = 10_000
+
+// The requirement's own step: the least a stage may add to the definitive front.
+internal const val PROGRESSIVE_MIN_ADVANCE_MILLIS: Long = 10L * 60 * 1_000
 
 // What a stage keeps back from the pace for everything but the search (the fill's own passes, the dispatch, a
 // device slower than its last measurement).
 private const val PROGRESSIVE_PACE_MARGIN_MILLIS: Long = 3_000
+
+/**
+ * `docs/scheduler_requirements.md` § *Progressive Calculation*: **where the next stage of a progressive fill ends.**
+ *
+ * The first stage re-plans [stageMillis] ahead of [nowMillis]. Every later one doubles, but never reaches further
+ * past the front already made definitive ([reachedMillis]) than this device fills in [PROGRESSIVE_PACE_MILLIS]
+ * less [PROGRESSIVE_PACE_MARGIN_MILLIS] at its measured [planHoursPerSecond] — nor less far than the requirement's
+ * own [PROGRESSIVE_MIN_ADVANCE_MILLIS]. Doubling alone holds the pace on average and breaks it at the stage that
+ * matters: a stage costs in proportion to its length, so the one published after a 64-hour extension on a device
+ * filling an hour in 0.2 s arrives 13 s after the one before it, while the front has to move ten minutes every
+ * ten seconds. Before the device has measured itself the doubling is left as it is.
+ */
+internal fun progressiveStageCapMillis(
+    nowMillis: Long,
+    reachedMillis: Long,
+    stageMillis: Long,
+    first: Boolean,
+    planHoursPerSecond: Double,
+): Long {
+    val doubled = nowMillis + stageMillis
+    if (first || planHoursPerSecond <= 0.0) return doubled
+    val affordable =
+        (planHoursPerSecond * 3_600_000.0 * (PROGRESSIVE_PACE_MILLIS - PROGRESSIVE_PACE_MARGIN_MILLIS) / 1_000.0).toLong()
+    return minOf(doubled, reachedMillis + maxOf(affordable, PROGRESSIVE_MIN_ADVANCE_MILLIS))
+}
 
 // The longest a stage searches for the best score, whatever the pace would allow.
 internal const val PROGRESSIVE_STAGE_SEARCH_MILLIS: Long = 5_000
@@ -139,10 +167,14 @@ internal const val PROGRESSIVE_STAGE_SEARCH_MILLIS: Long = 5_000
  * ([SchedulerEngine.calculationLimitStop]).
  *
  * Two minutes, because the limit must not be what stops a healthy account from reaching the end of its week:
- * the goal is at most 168 h away, which is nine doubling stages, and the pace lets each be published up to
- * [PROGRESSIVE_PACE_MILLIS] after the previous — so a device that spends its full search budget needs ~90 s to
- * walk them. The limit is what stops the account that CANNOT: a device filling an hour of schedule in more than
+ * the goal is at most 168 h away, which is nine doubling stages on a fast device, and the pace lets each be
+ * published up to [PROGRESSIVE_PACE_MILLIS] after the previous — so a device that spends its full search budget
+ * needs ~90 s to walk them (a slower one takes more, smaller stages, [progressiveStageCapMillis], for about the same
+ * total work). The limit is what stops the account that CANNOT: a device filling an hour of schedule in more than
  * ~45 s never reaches a week, and would otherwise plan without end after every edit.
+ *
+ * This is the one stopping condition `docs/scheduler_requirements.md` itself does not name: past it the pace is
+ * no longer kept before $t_{goal}$. It is kept deliberately (see `docs/invariants/scheduler.md`).
  *
  * The SEARCH is given up before the extension is ([SchedulerEngine.stageSearchMillis]), which is the requirement's
  * own order of degradation: *"the only acceptable degradation … is getting as close as possible to the best score
@@ -1884,9 +1916,11 @@ class SchedulerEngine(
      * on a slow device does not promise. So the first stage re-plans [PROGRESSIVE_FIRST_STAGE_MILLIS] ahead
      * ([SchedulerIntent.RefreshSchedule], or an [SchedulerIntent.ExtendSchedule] when [replan] is false), and every
      * next stage EXTENDS it to twice as far — keeping everything already materialized, which is what makes each
-     * stage definitive. A stage costs in proportion to its length, so stage `k` (`2^k` h) is published after about
-     * twice its own cost: the pace holds for any device that fills an hour of schedule in under ~15 s, whatever the
-     * size of the goal. A newer request cancels the stages this one has not reached.
+     * stage definitive — but never further than this device can fill inside the pace
+     * ([progressiveStageCapMillis]). The pace binds EVERY stage, not the average: with the definitive front at
+     * `t1` when a stage is published, the next must be published within 10 s and reach `t1 + 10 min`, so a stage
+     * that doubled into a 64-hour extension on a device filling an hour in 0.2 s missed it by seconds. A newer
+     * request cancels the stages this one has not reached.
      */
     private fun dispatchProgressivePlan(
         replan: Boolean,
@@ -1910,7 +1944,8 @@ class SchedulerEngine(
             while (true) {
                 val now = clock.nowMillis()
                 val goal = scheduleHorizonEndMillis(now)
-                val cap = now + stage
+                val cap = progressiveStageCapMillis(now, reached, stage, first, planHoursPerSecond)
+                stage = cap - now
                 val capOrNull = cap.takeIf { it < goal }
                 val span = (capOrNull ?: goal) - if (first) now else reached
                 val remaining = calculationLimitMillis - calculationMark.elapsedNow().inWholeMilliseconds

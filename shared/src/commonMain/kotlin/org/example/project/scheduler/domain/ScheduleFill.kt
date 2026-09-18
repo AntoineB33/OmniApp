@@ -66,8 +66,10 @@ internal object ScheduleFill {
         val repeatBeyondMillis: Long? = null,
         /**
          * `docs/invariants/scheduler.md` § *One device plans*: the runs the account's elected device placed for these
-         * rules. When given, nothing is searched: each is laid over THIS device's environment from [startMillis] to
-         * the horizon, and [cycle] is returned as the repeating part.
+         * rules. When they are a legal continuation on THIS device's environment from [startMillis] to the horizon,
+         * nothing is searched: they are laid, and [cycle] is returned as the repeating part. When they are not (a gap
+         * this device's own timeline would leave to nobody, a task where a period here refuses it), they are a seed
+         * and this device plans for itself.
          */
         val adopted: List<RulePlacement>? = null,
         /**
@@ -162,17 +164,26 @@ internal object ScheduleFill {
         if (tasks.isEmpty()) return Result(emptyList(), null)
         val ruleStateHash = tasks.hashCode()
 
-        // `docs/invariants/scheduler.md` § *One device plans*: another device of the account searched; lay its runs.
+        // `docs/invariants/scheduler.md` § *One device plans*: another device of the account searched; lay its runs —
+        // when they are a legal continuation HERE. The peer planned over its own environment; a stretch it had a break
+        // in that this device does not (left to nobody: § *No idling*), or a period only this device has that turns
+        // the task away, makes its runs no answer on this timeline. Then this device plans for itself, the peer's
+        // runs competing as a seed, exactly as a device with no rules does.
+        var adoptedSeed: List<RulePlacement>? = null
         input.adopted?.let { adopted ->
             val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to)
-            layAdopted(model, adopted, input.startMillis, emitEnd, raw)
-            return Result(group(raw), input.cycle)
+            val cursor = replay(model, input.history, input.startMillis)
+            if (ScheduleOptimizer(model).isLegalContinuation(cursor, adoptedRuns(model, adopted, input.startMillis), model.uAt(emitEnd))) {
+                layAdopted(model, adopted, input.startMillis, emitEnd, raw)
+                return Result(group(raw), input.cycle)
+            }
+            adoptedSeed = adopted
         }
 
         // The rules already repeat: unroll them, if nothing they did not see has changed.
         val cycle = input.cycle
-        if (cycle != null && cycle.ruleStateHash == ruleStateHash && input.forcedFirst == null && input.refusedFirst == null &&
-            cycle.anchorMillis <= input.startMillis
+        if (cycle != null && adoptedSeed == null && cycle.ruleStateHash == ruleStateHash && input.forcedFirst == null &&
+            input.refusedFirst == null && cycle.anchorMillis <= input.startMillis
         ) {
             val modelFrom = minOf(from, cycle.anchorMillis)
             val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, modelFrom, to), modelFrom, to)
@@ -193,7 +204,7 @@ internal object ScheduleFill {
         val approximate = limit != null && emitEnd >= limit
         val searchUntil = if (approximate) model.uAt(limit!!) else model.uEnd
         val emitU = model.uAt(emitEnd)
-        val seeds = input.seeds.map { seedRuns(model, it, input.startMillis) }.filter { it.isNotEmpty() }
+        val seeds = (input.seeds + listOfNotNull(adoptedSeed)).map { seedRuns(model, it, input.startMillis) }.filter { it.isNotEmpty() }
         // The platform solver is resolved only for a fill given search time: on the desktop, resolving it loads
         // OR-Tools' native library (~1 s once), which a display fill on the UI thread must never pay.
         val optimizer = ScheduleOptimizer(model, solver = if (input.budget.expired()) null else platformScheduleSolver())
@@ -237,6 +248,23 @@ internal object ScheduleFill {
         }
         emit(model, settled.first, raw, emitU)
         return Result(group(raw), settled.second, plan.report, plan.cost)
+    }
+
+    /**
+     * [adopted] as runs on [model]'s clock, read exactly as [layAdopted] lays them (the first run pulled back onto the
+     * line within [ADOPT_SKEW_MILLIS]), so the legality asked of them is the legality of what would be laid.
+     */
+    private fun adoptedRuns(model: ScoreModel, adopted: List<RulePlacement>, startMillis: Long): List<ScheduleOptimizer.Run> {
+        val sorted = adopted.filter { model.indexOf.containsKey(it.taskId) && it.endMillis > startMillis }.sortedBy { it.startMillis }
+        return sorted.mapIndexedNotNull { k, p ->
+            val task = model.indexOf.getValue(p.taskId)
+            val start =
+                if (k == 0 && p.startMillis > startMillis && p.startMillis - startMillis <= ADOPT_SKEW_MILLIS) startMillis
+                else maxOf(p.startMillis, startMillis)
+            val a = model.uAt(start)
+            val b = model.uAt(p.endMillis)
+            if (b <= a + ScoreModel.EPS) null else ScheduleOptimizer.Run(task, a, b, -1)
+        }
     }
 
     /** A seed's placements as runs on [model]'s clock from [startMillis]; tasks the model does not know are dropped. */

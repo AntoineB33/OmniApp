@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Requirements audit: the pace per stage, and a follower's rules checked on its own timeline — 2026-09-18
+
+→ `docs/scheduler_requirements.md` § *Progressive Calculation*, § *No idling*, § *Restrictive Period*;
+`docs/invariants/scheduler.md`.
+
+- **Progressive stages are capped by the pace** (`progressiveStageCapMillis`, `ProgressivePaceTest`). Pure doubling
+  held the "10 minutes every 10 seconds" pace only on average; the long stages (32 h, 64 h) arrived more than 10 s
+  after the one before on any device filling an hour in more than ~0.1 s. Each stage after the first now reaches
+  no further past the definitive front than the device fills in 7 s at its measured rate (never less than 10 min).
+- **A follower lays the leader's runs only when they are legal on its own timeline**
+  (`ScheduleOptimizer.isLegalContinuation`, `SchedulerPeerProtocolTest`). A period only the leader had left a hole
+  the follower left to nobody, and a period only the follower had could hold a task its resilience of `0`
+  forbids there. The follower now plans for itself then, with the leader's runs as a seed.
+- **The calculation time limit is documented as a deviation**, not as the requirement's: the requirement stops
+  only at $t_{goal}$.
+
 ### $t_{goal}$ gains the current week, and a calculation time limit that actually stops — 2026-09-18
 
 → `docs/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/scheduler.md`, PRD §9.
