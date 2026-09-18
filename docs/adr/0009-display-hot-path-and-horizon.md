@@ -195,14 +195,30 @@ drag carries it, because its slices are what hold the gesture.
 Tests: `RollingCalendarTest` — the safety property (the window never clips anything on screen, swept over every
 offset × zoom × viewport × row), the quantization bound, and that it actually culls.
 
-## The schedule horizon is $t_{goal}$: the end of the displayed timeline, floored at ten minutes
+## The schedule horizon is $t_{goal}$: the current week, the displayed timeline, floored at ten minutes
 
 The engine does **not** systematically materialize 168 h: it fills to **$t_{goal}$**, the instant
 `docs/scheduler_requirements.md` § *Progressive Calculation* lets the scheduler stop at — *"The scheduler can have
 a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop."*
 
-**$t_{goal}$ = the end of the timeline the calendar shows, or `now + 10 min` if that is further**
-(`SchedulerDomain.scheduleGoalEndMillis`, `SCHEDULE_GOAL_FLOOR_MILLIS`; user rule, 2026-09-16).
+**$t_{goal}$ = the latest of the end of the current week, the end of the timeline the calendar shows, and
+`now + 10 min`** (`SchedulerDomain.scheduleGoalEndMillis`, `currentWeekEndMillis`, `SCHEDULE_GOAL_FLOOR_MILLIS`;
+user rule, 2026-09-18).
+
+> **The week came back, and what changed around it.** The history below records the weekly floor being REMOVED
+> on 2026-09-16, and one of the two reasons given was that it *"made every rule change on a closed calendar plan
+> a week — seconds of work on a large account — for a picture nobody was looking at"*. The user restored the week
+> on 2026-09-18 as a term of the goal in its own right: the week one is living in is what the plan is FOR, and
+> whether a window happens to show it is not what should decide that it exists.
+>
+> That cost is therefore back, and it is real — measured, not feared: `ServerQuotaTest`'s simulated month on a
+> 224-task account went from minutes to over twenty of them when the week term landed, purely in fills (it now
+> runs its devices with no compute budget, since a plan is derived state and cannot reach the server it
+> measures). What answers the cost now is the third stopping condition the same user rule introduced —
+> `SchedulerEngine.PLAN_CALCULATION_LIMIT_MILLIS`, two minutes of real computing per change, after which the
+> scheduler stops where it got to and stays there. The weekly floor of 2026-09-04 had no such bound: it planned
+> the week whatever it cost. The trade is now explicit rather than accidental, and a device too slow to reach
+> its week says so by stopping rather than by planning for ever.
 
 > **History.** From 2026-09-04 to 2026-09-16 it was `max(` end of the first day that does not appear in the
 > calendar `,` end of the first day of the week after the current week `)`: one day past the grid, floored at a

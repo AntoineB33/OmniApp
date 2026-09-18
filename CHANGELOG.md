@@ -11,6 +11,69 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### $t_{goal}$ gains the current week, and a calculation time limit that actually stops — 2026-09-18
+
+→ `docs/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/scheduler.md`, PRD §9.
+
+The user's statement of the stopping rule: *"The scheduler stops when the schedule is definitive up to the end
+of the current week, the last displayed time in the calendar, and 10 minutes after now, or if the set of rules
+is too heavy or if the calculation time limit for on task tree change is reached."* Three of those five clauses
+were already in force. Two were not:
+
+- **The end of the current week is now a term of $t_{goal}$** (`SchedulerDomain.currentWeekEndMillis`, read by
+  `scheduleGoalEndMillis` / `scheduleHorizonEndMillis` / `horizonRefillDueMillis`), and it holds **with the
+  calendar closed**. Under the 2026-09-16 rule the goal was the calendar's end alone, so a rule change on a
+  headless device planned twenty minutes and opening the calendar on the current week was what made that week
+  get planned. The goal now steps forward once per rollover instead of drifting with the line, which leaves the
+  ten-minute floor governing only a week's last ten minutes — the regime `HorizonRefillRuleTest`'s anti-spin
+  obligation is restated in. The week is a WALL-CLOCK week, so the goal is no longer a pure function of `now`
+  and the scroll: every caller passes a zone (`App.kt` its own `tz`, `SchedulerEngine` its `tz` — which also
+  makes the engine's goal deterministic in tests).
+- **`PLAN_CALCULATION_LIMIT_MILLIS` (2 min of real time per progressive fill)**, and, the half that makes it a
+  stop rather than a pause, `SchedulerEngine.extensionStoodDown`: the shortfall a stopped fill leaves is exactly
+  what the rolling-horizon watcher exists to close, so without a latch the stages resumed one poll later with a
+  fresh budget, for ever. The latch is keyed on the `schedulingSignature` it stopped under and on the goal it
+  gave up on — the two things the rule names as asking the question again (a rule change; a goal grown past it).
+  `stageSearchMillis` gives up the SEARCH before the reach, which is the requirement's own order of degradation.
+  Two minutes because the limit must not be what stops a healthy account from reaching its week: nine doubling
+  stages at the pace is ~90 s. `PlanCalculationLimitTest`.
+
+**The cost the week term brings back is real and measured.** ADR 0009 records the 2026-09-04 weekly floor being
+removed on 2026-09-16 partly because it *"made every rule change on a closed calendar plan a week — seconds of
+work on a large account"*. That is back: `ServerQuotaTest`'s simulated month on a 224-task account went from
+minutes to over twenty of them, purely in fills. It now runs its devices with `calculationLimitMillis = 0` (one
+stage per fill) — a plan is derived state, stripped from the wire, so it cannot move a byte of the quota that
+test measures. What answers the cost in production is the calculation limit itself, which the 2026-09-04 version
+never had.
+
+`SchedulerReducer.scheduleHorizonEndMillis`'s default is now the bare rolling floor, documented as the seam
+UNSET rather than as the goal: the week term would otherwise have every fill in a test plan seven days in
+whatever zone the machine is in. Every host installs the real provider at start. Client rebuild
+(`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
+### A task panel past the definitive-schedule front is drawn with blurred edges — 2026-09-18
+
+→ `docs/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/calendar.md`.
+
+The calendar drew every task panel identically, whether or not the scheduler had settled it. § *Progressive
+Calculation* guarantees a schedule only below a front $t_1$ — *"for all the next set of rules the scheduler
+will return until it is done, they will all indicate the same schedule rules for any t < $t_1$"* — and the
+front is exactly how far a fill materializes into `state.panels`. Past it (a calendar scrolled beyond the
+168 h ceiling) the blocks come from `App.kt`'s far-week fill: computed off the UI thread for display, never
+retained, recomputed from scratch on the next visit. They were indistinguishable from a settled plan.
+
+- `SchedulerDomain.definitiveScheduleFrontMillis` names that instant (it *is* `scheduleHorizonEndMillis` — the
+  same front the derived inactivity bands already stopped at, now said once) and `isProvisionalPanel` decides
+  which panels reach past it.
+- `CalendarRecord.provisional` / `PlacedRecord.provisional` carry it to `CalendarBlockBody`, which draws such a
+  block's **paint** — tint and outline both — through `Modifier.blur(2.dp, BlurredEdgeTreatment.Unbounded)`.
+  The title stays crisp: which task is planned is the answer that holds, where it starts and ends is not.
+  A definitive block is still the single un-layered `Box` it always was (display hot path, ADR 0009); on a host
+  with no blur (Android < 12) it degrades to the plain block.
+- Only the fill's own picks blur — a pinned or hand-drawn panel is § *Starting timeline* input, as fixed past
+  the front as before it. A merged block asks every panel it fused, so a run straddling the front blurs whole.
+- `ProvisionalPanelTest`. Client rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy.
+
 ### A sleep window implies a no-screen period, and a mode-1 line retracts it — 2026-09-18
 
 → `docs/scheduler_requirements.md` § *$now line$ 3 modes* (mode 1) + § *No idling*, PRD §17 (both its

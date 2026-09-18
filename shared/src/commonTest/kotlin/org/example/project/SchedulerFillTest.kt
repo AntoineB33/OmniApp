@@ -389,7 +389,7 @@ class SchedulerFillTest {
             }
             assertTrue(s.panels.filter { it.auto }.maxOf { it.endEpochMillis } >= goal - HOUR, "the last stage reaches the goal")
         } finally {
-            SchedulerReducer.scheduleHorizonEndMillis = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
+            CalendarHorizonFixture.close()
         }
     }
 

@@ -397,11 +397,27 @@ model exists to prevent.
 
 → `docs/scheduler_requirements.md` § *Progressive Calculation*.
 
-- **$t_{goal}$ is the end of the timeline the calendar shows, or `now + 10 min` if further**
-  (`SchedulerDomain.scheduleGoalEndMillis`, user rule 2026-09-16). How the rolling floor is kept from
-  re-triggering itself, and the 168 h materialization ceiling, are in `display-hot-path.md`. A rule change with
-  the calendar closed therefore plans twenty minutes, and the horizon watcher extends it ten minutes at a time —
-  each extension keeps the head, so a run the line is in continues to its minimum across them.
+- **THE SCHEDULER MAY STOP FOR EXACTLY THREE REASONS** (user rule, 2026-09-18). Two of them are $t_{goal}$'s
+  terms and one is not an instant at all:
+  1. **$t_{goal}$ — the LATEST of the end of the current week, the last displayed time in the calendar, and
+     `now + 10 min`** (`SchedulerDomain.scheduleGoalEndMillis`; the week from `currentWeekEndMillis`, Monday-first
+     and in the app's own zone). The week term holds **with the calendar closed**: a rule change on a headless
+     device plans to Monday, not for ten minutes, and the goal steps a week forward at each rollover rather than
+     drifting with the line. It replaces the 2026-09-16 rule, whose goal was the calendar's end alone. The floor
+     can therefore only govern a week's last ten minutes — which is also where the rollover falls, and that is
+     what `HorizonRefillRuleTest` reads.
+  2. **the set of rules growing too heavy** — the 168 h ceiling, applied by `scheduleHorizonEndMillis`; only a
+     calendar scrolled out can reach it. Past it the plan is a display-only far week (`display-hot-path.md`).
+  3. **the calculation time limit** (`SchedulerEngine.PLAN_CALCULATION_LIMIT_MILLIS`, 2 min of REAL time per
+     progressive fill). When it runs out the front stays where the last stage left it, and — this is the half
+     that makes it a stop rather than a pause — `extensionStoodDown` keeps the rolling-horizon and calendar
+     watchers from closing the shortfall it left. Only a **rule change** (the signature it was stopped under) or
+     a **goal that has grown past the one abandoned** asks the question again. Without that latch the watcher
+     would resume the stages one poll later with a fresh budget, for ever (`PlanCalculationLimitTest`).
+     The limit is given up in the requirement's own order: `stageSearchMillis` drops the SEARCH first and spends
+     what is left on reaching further, because a schedule that stops short is worse than one that is not the best.
+  How the rolling floor is kept from re-triggering itself, and the 168 h ceiling, are in `display-hot-path.md`.
+  Each extension keeps the head, so a run the line is in continues to its minimum across them.
 - **The engine fills in DOUBLING STAGES** (`SchedulerEngine.dispatchProgressivePlan`): a re-plan (or an
   extension) to `PROGRESSIVE_FIRST_STAGE_MILLIS` (1 h) ahead, then `ExtendSchedule` to 2 h, 4 h, … up to
   $t_{goal}$, each capped through the intents' `horizonCapMillis`. An extension keeps everything materialized, so

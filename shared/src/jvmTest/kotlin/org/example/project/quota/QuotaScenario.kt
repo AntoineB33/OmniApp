@@ -74,6 +74,14 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
                     override fun nowMillis(): Long = t0.value + test.testScheduler.currentTime
                 },
                 scope = test.backgroundScope,
+                // `docs/scheduler_requirements.md` § *Progressive Calculation*: this simulated device is given NO
+                // compute budget, so every fill stops after its first stage (one hour) instead of walking the
+                // doubling stages out to the end of the week — which, over a simulated month of edits on a
+                // 224-task account, is this scenario's whole cost and none of its subject. What the scheduler
+                // returns is DERIVED state: it is stripped from the wire and never triggers a push, so it cannot
+                // move a single byte of the quota this test measures. The device is otherwise the real app: it
+                // still plans on every rule change, and a fill that DID reach the server would still be caught.
+                calculationLimitMillis = 0,
                 deviceKind = kind,
                 screenActive = { active },
                 speak = {},

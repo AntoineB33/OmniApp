@@ -4,6 +4,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
@@ -15,10 +16,13 @@ import org.example.project.scheduler.state.SchedulerState
  * `docs/scheduler_requirements.md` § *Progressive Calculation* — **$t_goal$**: *"The scheduler can have a time
  * $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop."*
  *
- * It is **the end of the timeline the calendar shows, or `now + 10 min` if that is further**
- * ([SchedulerDomain.scheduleGoalEndMillis], user rule 2026-09-16), and the fill is computed out to
+ * It is **the latest of the end of the current week, the last displayed time in the calendar, and `now + 10
+ * min`** ([SchedulerDomain.scheduleGoalEndMillis], user rule 2026-09-18), and the fill is computed out to
  * [SchedulerDomain.scheduleHorizonEndMillis] — the same goal with its rolling floor doubled and a far calendar
  * end capped at 168 h, so a far week never enters the persisted state.
+ *
+ * Every call here names its ZONE, because the week term is a wall-clock week: read in the machine's own zone
+ * these assertions would pass or fail by where the suite runs.
  *
  * The complementary async/never-freeze half lives in `App.kt` (the far-week `LaunchedEffect` on
  * `Dispatchers.Default`); what is testable as pure logic is where the goal falls, that everything the fill
@@ -33,12 +37,17 @@ class ScheduleHorizonTest {
     private val WEEK = 7 * DAY
     private val FLOOR = SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS
 
+    private val UTC = TimeZone.UTC
+
     /** Wednesday 2026-09-02, 10:00 UTC. */
     private val NOW = 1_788_343_200_000L
 
+    /** The end of [NOW]'s week: Monday 2026-09-07, 00:00 UTC. The app is Monday-first everywhere. */
+    private val WEEK_END = NOW + 4 * DAY + 14 * HOUR
+
     @AfterTest
     fun resetReducerSeam() {
-        SchedulerReducer.scheduleHorizonEndMillis = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
+        CalendarHorizonFixture.close()
     }
 
     /** One schedulable task under "main", so the fill has something to lay down across the horizon. */
@@ -52,38 +61,57 @@ class ScheduleHorizonTest {
     // ----- $t_goal$ itself -------------------------------------------------------------------------
 
     @Test
-    fun the_goal_is_the_end_of_the_displayed_timeline() {
-        assertEquals(NOW + 2 * DAY, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 2 * DAY))
+    fun the_goal_reaches_the_end_of_the_current_week_with_no_calendar_open() {
+        // The week the user is LIVING IN is a term of the goal whether or not a calendar is open on it: a rule
+        // change with the window closed plans to Monday, not for ten minutes (user rule, 2026-09-18).
+        assertEquals(WEEK_END, SchedulerDomain.currentWeekEndMillis(NOW, UTC))
+        assertEquals(WEEK_END, SchedulerDomain.scheduleGoalEndMillis(NOW, null, UTC))
+        // A calendar showing less than the week left adds nothing; one scrolled into the past, nothing either.
+        assertEquals(WEEK_END, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 2 * DAY, UTC))
+        assertEquals(WEEK_END, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW - 3 * DAY, UTC))
+        // It does not roll with the line: every instant of a week shares that week's end, so the goal steps
+        // forward once a week rather than drifting with `now`.
+        assertEquals(WEEK_END, SchedulerDomain.scheduleGoalEndMillis(NOW + HOUR, null, UTC))
+        // …and one week on, it has stepped exactly one week.
+        assertEquals(WEEK_END + WEEK, SchedulerDomain.currentWeekEndMillis(WEEK_END, UTC))
+    }
+
+    @Test
+    fun the_goal_is_the_end_of_the_displayed_timeline_when_that_is_further() {
+        assertEquals(NOW + 6 * DAY, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 6 * DAY, UTC))
         // No day is added past it, and a scroll of one hour moves it by one hour.
-        assertEquals(NOW + 2 * DAY + HOUR, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 2 * DAY + HOUR))
+        assertEquals(NOW + 6 * DAY + HOUR, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 6 * DAY + HOUR, UTC))
     }
 
     @Test
     fun the_goal_is_never_less_than_ten_minutes_after_now() {
         assertEquals(10 * MINUTE, FLOOR)
-        // No calendar open.
-        assertEquals(NOW + FLOOR, SchedulerDomain.scheduleGoalEndMillis(NOW, null))
-        // A calendar whose end is within ten minutes, or entirely in the past.
-        assertEquals(NOW + FLOOR, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 3 * MINUTE))
-        assertEquals(NOW + FLOOR, SchedulerDomain.scheduleGoalEndMillis(NOW, NOW - 3 * DAY))
+        // The only instants the floor governs at are the last ten minutes of a week — everywhere else the week
+        // term is already further. Sunday 2026-09-06, 23:55 UTC: the week ends in five minutes.
+        val lateSunday = WEEK_END - 5 * MINUTE
+        assertEquals(lateSunday + FLOOR, SchedulerDomain.scheduleGoalEndMillis(lateSunday, null, UTC))
+        assertEquals(lateSunday + FLOOR, SchedulerDomain.scheduleGoalEndMillis(lateSunday, lateSunday + MINUTE, UTC))
         // The floor rolls with the line.
-        assertEquals(NOW + HOUR + FLOOR, SchedulerDomain.scheduleGoalEndMillis(NOW + HOUR, null))
+        assertEquals(lateSunday + MINUTE + FLOOR, SchedulerDomain.scheduleGoalEndMillis(lateSunday + MINUTE, null, UTC))
     }
 
     // ----- the horizon that honours it -------------------------------------------------------------
 
     @Test
     fun the_horizon_is_the_goal_with_the_floor_doubled_and_a_far_week_capped() {
-        // A calendar end past the floor: the goal itself.
-        assertEquals(NOW + 2 * DAY, SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + 2 * DAY))
-        // The floor governs: a fill reaches twice it, so it is not due again at once.
-        assertEquals(NOW + 2 * FLOOR, SchedulerDomain.scheduleHorizonEndMillis(NOW, null))
-        assertEquals(NOW + 2 * FLOOR, SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + 15 * MINUTE))
+        // A calendar end past the week: the goal itself.
+        assertEquals(NOW + 6 * DAY, SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + 6 * DAY, UTC))
+        // Otherwise the week end, open calendar or not.
+        assertEquals(WEEK_END, SchedulerDomain.scheduleHorizonEndMillis(NOW, null, UTC))
+        assertEquals(WEEK_END, SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + 15 * MINUTE, UTC))
+        // The floor governs in the last minutes of a week: a fill reaches twice it, so it is not due again at once.
+        val lateSunday = WEEK_END - 5 * MINUTE
+        assertEquals(lateSunday + 2 * FLOOR, SchedulerDomain.scheduleHorizonEndMillis(lateSunday, null, UTC))
 
-        // A far week the user scrolled to is capped: it is never materialized into the state (App.kt fills it
-        // for display only, out to the real goal).
-        assertEquals(NOW + WEEK, SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + 40 * DAY))
-        assertTrue(SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 40 * DAY) > NOW + WEEK)
+        // A far week the user scrolled to is capped — *"the set of rules is too heavy"*: it is never
+        // materialized into the state (App.kt fills it for display only, out to the real goal).
+        assertEquals(NOW + WEEK, SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + 40 * DAY, UTC))
+        assertTrue(SchedulerDomain.scheduleGoalEndMillis(NOW, NOW + 40 * DAY, UTC) > NOW + WEEK)
     }
 
     // ----- what the fill computes is bounded by it ------------------------------------------------
@@ -92,7 +120,7 @@ class ScheduleHorizonTest {
     fun the_fill_stops_at_the_horizon() {
         val (s, _) = stateWithOneTask()
         for (displayed in listOf(null, NOW + DAY)) {
-            val horizon = SchedulerDomain.scheduleHorizonEndMillis(NOW, displayed)
+            val horizon = SchedulerDomain.scheduleHorizonEndMillis(NOW, displayed, UTC)
             val near = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = horizon)
             assertTrue(near.isNotEmpty(), "the goal must still be scheduled")
             assertTrue(
@@ -100,7 +128,7 @@ class ScheduleHorizonTest {
                 "no panel may start after the horizon: ${near.filter { it.startEpochMillis >= horizon }.size} did",
             )
             assertTrue(
-                SchedulerDomain.firstFreeMoment(near, NOW) >= SchedulerDomain.scheduleGoalEndMillis(NOW, displayed),
+                SchedulerDomain.firstFreeMoment(near, NOW) >= SchedulerDomain.scheduleGoalEndMillis(NOW, displayed, UTC),
                 "the plan must cover the goal",
             )
         }
@@ -163,10 +191,10 @@ class ScheduleHorizonTest {
         val (s, _) = stateWithOneTask()
         val displayed = NOW + DAY
         val filled =
-            SchedulerDomain.fillSchedule(s, NOW, horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(NOW, displayed))
+            SchedulerDomain.fillSchedule(s, NOW, horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(NOW, displayed, UTC))
         val coverage = SchedulerDomain.firstFreeMoment(filled, NOW)
-        assertTrue(SchedulerDomain.horizonRefillDueMillis(filled, NOW, displayed) > NOW, "not due right after")
-        assertEquals(coverage - FLOOR, SchedulerDomain.horizonRefillDueMillis(filled, NOW, displayed))
+        assertTrue(SchedulerDomain.horizonRefillDueMillis(filled, NOW, displayed, UTC) > NOW, "not due right after")
+        assertEquals(coverage - FLOOR, SchedulerDomain.horizonRefillDueMillis(filled, NOW, displayed, UTC))
     }
 
     @Test
@@ -175,10 +203,10 @@ class ScheduleHorizonTest {
         // engine extends it — that is `launchCalendarHorizonReschedule`.
         val (s, _) = stateWithOneTask()
         val filled =
-            SchedulerDomain.fillSchedule(s, NOW, horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + DAY))
-        assertTrue(SchedulerDomain.horizonRefillDueMillis(filled, NOW, NOW + 2 * DAY) <= NOW)
+            SchedulerDomain.fillSchedule(s, NOW, horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(NOW, NOW + DAY, UTC))
+        assertTrue(SchedulerDomain.horizonRefillDueMillis(filled, NOW, NOW + 6 * DAY, UTC) <= NOW)
         // Scrolling back to a nearer end asks for nothing.
-        assertTrue(SchedulerDomain.horizonRefillDueMillis(filled, NOW, NOW + HOUR) > NOW)
+        assertTrue(SchedulerDomain.horizonRefillDueMillis(filled, NOW, NOW + HOUR, UTC) > NOW)
     }
 
     @Test
@@ -186,11 +214,11 @@ class ScheduleHorizonTest {
         val (s, _) = stateWithOneTask()
         val displayed = NOW + 40 * DAY
         val filled =
-            SchedulerDomain.fillSchedule(s, NOW, horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(NOW, displayed))
+            SchedulerDomain.fillSchedule(s, NOW, horizonMillis = SchedulerDomain.scheduleHorizonEndMillis(NOW, displayed, UTC))
         val margin = SchedulerDomain.HORIZON_REFILL_MARGIN_MILLIS
         val coverage = SchedulerDomain.firstFreeMoment(filled, NOW)
         assertTrue(coverage >= NOW + WEEK - margin, "the capped fill reaches the ceiling")
-        val due = SchedulerDomain.horizonRefillDueMillis(filled, NOW, displayed)
+        val due = SchedulerDomain.horizonRefillDueMillis(filled, NOW, displayed, UTC)
         assertTrue(due > NOW, "a capped fill is not due at once")
         assertTrue(due <= NOW + margin, "…but is due within one margin")
     }

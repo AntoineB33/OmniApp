@@ -147,12 +147,18 @@ object SchedulerReducer {
 
     /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
-     * ([SchedulerDomain.scheduleHorizonEndMillis] over [SchedulerDomain.scheduleGoalEndMillis]): the end of
-     * the timeline the calendar shows, or `now + 10 min` if further. The engine injects a provider over the
-     * day span `App.kt` publishes (`SchedulerEngine.setCalendarHorizon`); the default (no engine / tests) is
-     * the calendar-closed goal, which is all a headless app needs for its notifications and cues.
+     * ([SchedulerDomain.scheduleHorizonEndMillis] over [SchedulerDomain.scheduleGoalEndMillis]): the latest of
+     * the end of the current week, the last displayed time in the calendar, and `now + 10 min`. The engine
+     * injects a provider that answers all three (`SchedulerEngine.setCalendarHorizon`, and the week from the
+     * zone the app runs in).
+     *
+     * **The default is the seam UNSET, not the goal**: the rolling floor alone, which is what a reducer nobody
+     * has told the goal to can honestly reach for. The week term needs a time zone and would make every fill in
+     * a test plan seven days in whatever zone the machine is in — a rule about the product read into a stub.
+     * Every host installs the provider at start; tests that want a longer goal set it themselves
+     * (`CalendarHorizonFixture`).
      */
-    var scheduleHorizonEndMillis: (Long) -> Long = { SchedulerDomain.scheduleHorizonEndMillis(it, null) }
+    var scheduleHorizonEndMillis: (Long) -> Long = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
 
     /**
      * The app's one dispatch point — [reduceIntent] followed by the PRD §5 **category-rule invariant**.

@@ -74,7 +74,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
@@ -330,6 +332,14 @@ data class CalendarRecord(
      */
     val openStart: Boolean = false,
     /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: this task panel is part of a schedule the
+     * scheduler has **not made definitive** — it reaches past the definitive-schedule front, where a later set
+     * of rules may still say something else ([SchedulerDomain.isProvisionalPanel]). Drawn with BLURRED EDGES:
+     * the block is there, its bounds are not settled. False for everything below the front, and for every
+     * panel that is not the fill's own answer (pinned, hand-drawn, a period, a record).
+     */
+    val provisional: Boolean = false,
+    /**
      * ADR 0009: this record's START follows the now-line — it is `now + a` until the next boundary the rules
      * name, not a fixed instant (a pose the line drags, the panel resuming after it). Derived by
      * [withLineMotion] from two readings of the display derivation; false for everything built by hand.
@@ -385,6 +395,11 @@ data class PlacedRecord(
     val noScreenRange: TaskTimeRange? = null,
     /** PRD §12: this derived band is open-ended into the past; the hover bubble shows "∞" as its start. */
     val openStart: Boolean = false,
+    /**
+     * § *Progressive Calculation*: this task panel reaches past the definitive-schedule front and is drawn with
+     * blurred edges. See [CalendarRecord.provisional].
+     */
+    val provisional: Boolean = false,
     /** The entry's true (un-clipped) start/end, used to compute drag/resize targets and edit times. */
     val fullStartMillis: Long = 0L,
     val fullEndMillis: Long = 0L,
@@ -508,6 +523,7 @@ fun recordsForDay(
             restrictiveKind = record.restrictiveKind,
             noScreenRange = record.noScreenRange,
             openStart = record.openStart,
+            provisional = record.provisional,
             fullStartMillis = record.range.startEpochMillis,
             fullEndMillis = record.range.endEpochMillis,
             // An edge clipped to this day's midnight is the day's edge, not the record's: it stays put.
@@ -6884,6 +6900,7 @@ private fun CalendarBlock(
                         titleTopInset = titleTopInset,
                         titleColor = taskColor ?: CalColors.event,
                         outline = record.outline,
+                        provisional = record.provisional,
                     )
                     // The block's own section, one overlay per device-set segment, then re-tiled together
                     // with the grey periods and layers covering it so each tile reports one whole stack —
@@ -7277,21 +7294,27 @@ private fun CalendarBlockBody(
      * which reads on a blue task as well as on a red one, and on a period that has no task colour at all.
      */
     outline: SchedulerDomain.PanelOutline = SchedulerDomain.PanelOutline.None,
+    /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: this panel is past the definitive-schedule
+     * front, so the scheduler may still answer differently here ([CalendarRecord.provisional]). Its PAINT — the
+     * tint and the outline both — is drawn blurred, which is a statement about its EDGES: the block says a task
+     * is planned around here, and refuses to say where it starts and ends until the front has reached it.
+     */
+    provisional: Boolean = false,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(3.dp))
-            // Every block this draws is a TASK PANEL — it occupies the timeline, so it is tinted. A
-            // restrictive period does not and is not: it never reaches this composable at all, being drawn by
-            // [PeriodSegmentMarking] as a full-width box with a marking, an outline and no fill.
-            .background(color.copy(alpha = 0.30f))
-            .border(
-                if (outline == SchedulerDomain.PanelOutline.None) 1.dp else USER_PLACED_BORDER_DP,
-                outlineColor(outline) ?: color,
-                RoundedCornerShape(3.dp),
-            ),
-    ) {
+    val shape = RoundedCornerShape(3.dp)
+    // Every block this draws is a TASK PANEL — it occupies the timeline, so it is tinted. A restrictive period
+    // does not and is not: it never reaches this composable at all, being drawn by [PeriodSegmentMarking] as a
+    // full-width box with a marking, an outline and no fill.
+    val paint = Modifier
+        .clip(shape)
+        .background(color.copy(alpha = 0.30f))
+        .border(
+            if (outline == SchedulerDomain.PanelOutline.None) 1.dp else USER_PLACED_BORDER_DP,
+            outlineColor(outline) ?: color,
+            shape,
+        )
+    val label: @Composable () -> Unit = {
         if (showTitle) {
             Text(
                 text = SchedulerDomain.taskTitleLabel(title),
@@ -7305,7 +7328,31 @@ private fun CalendarBlockBody(
             )
         }
     }
+    // The definitive block is ONE box, exactly as it has always been: a settled panel pays nothing for the
+    // unsettled one's extra layer, and this composable is on the display hot path (ADR 0009).
+    if (!provisional) {
+        Box(modifier = Modifier.fillMaxSize().then(paint)) { label() }
+        return
+    }
+    Box(Modifier.fillMaxSize()) {
+        // The paint alone is blurred, and the label is not: a blurred title is unreadable at this size, and it
+        // is not what is uncertain here — WHICH task is planned is the answer the fill gives first, and it is
+        // the same answer the front will keep. [BlurredEdgeTreatment.Unbounded] so the blur is a soft edge
+        // rather than a hard cut at the block's own bounds (clipped to them, the edge pixels are clamped and
+        // the block reads sharp again). On a host with no blur (Android < 12) it degrades to the plain block.
+        Box(Modifier.matchParentSize().blur(PROVISIONAL_EDGE_BLUR, BlurredEdgeTreatment.Unbounded).then(paint))
+        // Clipped like the single-box case, so a title with no room below [titleTopInset] still shows none.
+        Box(Modifier.matchParentSize().clip(shape)) { label() }
+    }
 }
+
+/**
+ * `docs/scheduler_requirements.md` § *Progressive Calculation*: the blur radius a task panel past the
+ * definitive-schedule front is painted with ([CalendarBlockBody]'s `provisional`). Two device-independent dp:
+ * enough that the edge reads as unsettled beside the crisp block before the front, small enough that a block
+ * as short as a few minutes is still a block.
+ */
+private val PROVISIONAL_EDGE_BLUR = 2.dp
 
 private fun twoDigits(n: Int): String = n.toString().padStart(2, '0')
 

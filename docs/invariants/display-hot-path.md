@@ -94,12 +94,18 @@ Global rules that always apply: `CLAUDE.md`.
   hit-testing, the contextual menu and the drag snap set all still see the whole day — a partner scrolled out
   of view must still narrow the block on screen. A block mid-gesture is exempt: its slices hold the gesture.
 - **Test against a large, realistic DB**, not just an emptied one — an empty account hides the cost entirely.
-- **The schedule horizon is $t_{goal}$** (`SchedulerDomain.scheduleGoalEndMillis`): **the end of the timeline
-  the calendar shows, or `now + 10 min` if that is further** (`SCHEDULE_GOAL_FLOOR_MILLIS`; user rule,
-  2026-09-16) — `docs/scheduler_requirements.md` § *Progressive Calculation*, the instant the scheduler may stop
-  at. It follows the SCROLL; a closed calendar leaves only the floor, which is all the headless task and
-  wind-down cues read ahead of the line (the break windows the server is told come from the recurrence bars,
-  not from `state.panels`). There is no "focused week".
+- **The schedule horizon is $t_{goal}$** (`SchedulerDomain.scheduleGoalEndMillis`): **the LATEST of the end of
+  the current week, the end of the timeline the calendar shows, and `now + `**`SCHEDULE_GOAL_FLOOR_MILLIS`
+  (user rule, 2026-09-18) — `docs/scheduler_requirements.md` § *Progressive Calculation*, the instant the
+  scheduler may stop at. It follows the SCROLL and it follows the WEEK, so a closed calendar no longer leaves
+  only the floor: the week the user is living in is planned whether or not a window shows it, and the goal steps
+  forward at each rollover instead of drifting with the line. The floor is what is left in a week's last ten
+  minutes, and what the headless task and wind-down cues read ahead of the line (the break windows the server is
+  told come from the recurrence bars, not from `state.panels`). There is no "focused week".
+- **A fill may also stop for the other two reasons the rule names** — the set of rules growing too heavy (the
+  168 h ceiling) and `SchedulerEngine.PLAN_CALCULATION_LIMIT_MILLIS`. The second one leaves `panels` SHORT of
+  $t_{goal}$ on purpose, and `extensionStoodDown` is what stops the watcher below from treating that as the gap
+  it exists to close (`scheduler.md` § *Progressive Calculation*).
 - **The floor ROLLS, so a fill never aims at the goal itself.** It fills to `scheduleHorizonEndMillis` — the
   goal with the floor **doubled** and a calendar end capped at 168 h — and `horizonRefillDueMillis` comes due
   when the plan covers only one floor ahead of the line. So a closed calendar costs one small extension per ten

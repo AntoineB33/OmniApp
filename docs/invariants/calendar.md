@@ -561,6 +561,17 @@ Global rules that always apply: `CLAUDE.md`.
   has a definitive schedule for, where there is no answer yet to give. The future's empty stretches are the
   same statement as the past's, derived from the plan instead of from what happened. Display-only on both
   sides, sub-minute remnants dropped.
+- **A TASK PANEL PAST THAT SAME FRONT IS DRAWN WITH BLURRED EDGES**
+  (`SchedulerDomain.definitiveScheduleFrontMillis` / `isProvisionalPanel` → `CalendarRecord.provisional` →
+  `CalendarBlockBody`'s `provisional`, `ProvisionalPanelTest`). The front is one instant and it answers three
+  questions at once: where the derived bands stop, where the far-week display fill takes over, and which blocks
+  are unsettled. Past it the scheduler has returned nothing — what is drawn is the far-week fill, never
+  retained and recomputed from scratch on the next visit — so § *Progressive Calculation*'s guarantee
+  ("every later set of rules says the same for `t < t₁`") does not cover it. Only the fill's OWN panels blur:
+  a pinned or hand-drawn one is § *Starting timeline* input, as fixed past the front as before it. A merged
+  block asks every panel it fused, not its head, so a run straddling the front blurs whole — the guarantee is
+  over `t < t₁`, and the front did not bound that run's length. The **paint** is blurred and the title is not:
+  which task is planned is not what is uncertain, where it starts and ends is.
 - **A stretch carrying both layers OVERRIDES the on-screen task panels it covers**
   (`clipPanelsForObservedNoScreen`), because it *is* a `no on-screen task` period — the same rule a hand-drawn
   "No screen" panel follows, and the same set §9 refuses to bank a record over

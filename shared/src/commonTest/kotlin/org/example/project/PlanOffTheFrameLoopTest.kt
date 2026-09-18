@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.PROGRESSIVE_FIRST_STAGE_MILLIS
 import org.example.project.scheduler.engine.SchedulerEngine
@@ -149,7 +150,7 @@ class PlanOffTheFrameLoopTest {
         // (`docs/scheduler_requirements.md` § *mode 1*), so inside a §17 window the run starts at the line and
         // the second's difference between the two instants became a second's difference in the plan.
         for (now in listOf(T0, T0 + DEBOUNCE_MILLIS)) {
-            val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null)
+            val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null, TimeZone.UTC)
             var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
             var first = true
             while (true) {

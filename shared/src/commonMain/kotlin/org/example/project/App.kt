@@ -757,7 +757,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_goal$**, the instant the
         // scheduler may stop at — the end of the timeline the calendar shows, or `now + 10 min` if further. It
         // follows the SCROLL: it is what the whole plan is computed out to.
-        val goalEndMillis = SchedulerDomain.scheduleGoalEndMillis(nowMillis, visibleSpanEndMillis)
+        val goalEndMillis = SchedulerDomain.scheduleGoalEndMillis(nowMillis, visibleSpanEndMillis, tz)
 
         // PRD §9: tell the ENGINE which days are on screen, so its §9 refills materialize the work plan out
         // to exactly that span (capped at 168h) instead of computing schedule the user is not looking at.
@@ -777,7 +777,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // engine already fills exactly to the goal (`engine.setCalendarHorizon` above), so
         // `schedulerState.panels` covers the whole displayed span.
         val nearHorizonEndMillis =
-            SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis)
+            SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis, tz)
         val visibleSpanBeyondNearHorizon = goalEndMillis > nearHorizonEndMillis
         var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }
         var farWeekCalculating by remember { mutableStateOf(false) }
@@ -1193,6 +1193,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     displayReminderPanels, displaySidePanels, displaySleepPanels,
                     schedulerState.showScreenBreaks, schedulerState.showReminders,
                     schedulerState.screenBreaks, activeRegions, displayInactivityGaps,
+                    // § *Progressive Calculation*: the same front the derived inactivity bands stop at, below —
+                    // where the plan stops being the scheduler's settled answer and starts being the far-week
+                    // fill's display-only continuation of it.
+                    definitiveFrontMillis =
+                        SchedulerDomain.definitiveScheduleFrontMillis(nowMillis, visibleSpanEndMillis, tz),
                 )
                 )
                 }
@@ -1221,7 +1226,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     .filterNot { it.reminder || it.alarm || it.screenBreak || it.noScreen }
                     .map { it.range }
             val inactivityUntilMillis =
-                maxOf(nowMillis, SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis))
+                maxOf(nowMillis, SchedulerDomain.definitiveScheduleFrontMillis(nowMillis, visibleSpanEndMillis, tz))
             val pastInactivityRecords =
                 Perf.measure("display.inactivityBands") {
                 SchedulerDomain.derivedInactivityBands(pastCoveredRegions, displayFloorMillis, inactivityUntilMillis)
@@ -2928,6 +2933,12 @@ private fun mergePanelsForDisplay(
     // sleep band records the enclosing offline window here to drive its "No screen" hover line — which is
     // therefore >= the sleep's own span when the sleep is directly followed/preceded by more offline time.
     noScreenRegions: List<TaskTimeRange> = emptyList(),
+    // `docs/scheduler_requirements.md` § *Progressive Calculation*: the DEFINITIVE-SCHEDULE FRONT
+    // ([SchedulerDomain.definitiveScheduleFrontMillis]). An auto panel reaching past it is the far-week display
+    // fill's, not a schedule the scheduler has settled, and is marked [CalendarRecord.provisional] so the
+    // calendar draws its edges blurred. The default says "everything shown is definitive", which is what a
+    // caller that materialized the whole span it draws (the tests) is stating.
+    definitiveFrontMillis: Long = Long.MAX_VALUE,
 ): List<CalendarRecord> {
     // PRD §14/§15: reminder tags (zero-duration) and screen breaks (very short real durations, e.g. a 20-second
     // look-away) are NOT height-proportional blocks — drawn at scale they'd be invisible. They render on
@@ -3037,6 +3048,10 @@ private fun mergePanelsForDisplay(
                 // PRD §8/§12: a hand-added period saved with an open ("∞") start reads as one in the hover
                 // bubble, exactly like a derived band that nothing precedes.
                 openStart = SchedulerDomain.isOpenPast(head.startEpochMillis),
+                // § *Progressive Calculation*: asked of EVERY panel of the merged block, not of its head — a
+                // block merges consecutive same-task panels, so one may straddle the front, and a run whose
+                // length the front did not bound is unsettled as a whole.
+                provisional = group.any { SchedulerDomain.isProvisionalPanel(it, definitiveFrontMillis) },
             )
         }
     // The sleep windows render as their own labeled band behind the task blocks (drawn first), carved wherever
