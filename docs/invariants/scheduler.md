@@ -19,6 +19,13 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
 - **Everything the score measures is on the SCHEDULABLE clock** — time at which at least one task may run. A
   stretch nobody may run in (a night, a 20 s look-away) neither separates a panel, nor discounts, nor forgets, nor
   creates any compensation. Do not reintroduce wall-time distances anywhere in it.
+- **How far back the frozen past is replayed is measured in `Θ`, on the SCHEDULABLE clock**
+  (`ScheduleFill.pastLookbackMillis`; four windows, floored at 168 h and capped at 90 days). A lag forgets over its
+  own `τ_i`, so a cutoff loses exactly the lag standing there — and `τ_i = max(M_i, 1min)/π_i` grows without bound
+  as a task gets rarer. The flat 168 h of WALL time that shipped re-seeded at zero the lag of every task under
+  about `M_i/168h` of share (0.3 % for a 30-minute minimum): a three-day pre-placed block ending nine days ago did
+  not count as served, and the task was laid at the line instead of not for weeks (`SchedulePastLookbackTest`). Do
+  not put a wall-time span back in, and do not raise the cap without bounding what a fill then costs.
 - **A task's lag depends on its own service and its own target alone.** Both the optimizer's per-decision
   baselines and the improver's per-task terms rest on it; a coupling between tasks' lags would silently make both
   wrong.

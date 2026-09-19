@@ -660,6 +660,58 @@ internal object ScheduleFill {
      * stretch carries the SET of kinds covering it, so two overlapping periods of one kind are one restriction and
      * two of different kinds multiply ([PeriodKinds.multiplier]).
      */
+    /**
+     * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
+     * and backward"* — **how far back the frozen past has to be replayed for the lags at the line to be the ones the
+     * score defines**, in wall millis, because that is what the model is built over.
+     *
+     * A lag forgets over its own task's window `tau_i = max(M_i, 1min)/pi_i`, so replaying from a cutoff rather than
+     * from the beginning of time gets exactly `L_i(cutoff)*e^(-d/tau_i)` wrong: the whole lag standing at the cutoff,
+     * re-seeded at zero by [replay]. The window is therefore measured in `Theta = max tau_i`
+     * ([ScoreModel.thetaOf]) and **on the schedulable clock the rest of the score is measured on** — at [windows]
+     * `* Theta` the dropped lag is down to `e^(-`[windows]`)` of itself. Hence the walk below: a stretch that refuses
+     * every task is not on that clock ([ScoreModel]'s own reading), so it buys the window no lag at all and the walk
+     * has to reach past it.
+     *
+     * A flat 168 h of WALL time is what shipped, and it made every task whose share is under about `M_i/168h`
+     * (0.3 % for a 30-minute minimum — a task that runs once a fortnight) start every re-plan from a lag of zero: a
+     * three-day pre-placed block ending nine days ago read as *starved by twelve minutes* instead of over-served by
+     * thirty-three hours, and the task was placed at the line instead of not for weeks.
+     *
+     * [capMillis] is the one approximation that remains, and it is what keeps a pathological tree — a leaf at a
+     * near-zero share has an enormous `tau` — from making a fill cost O(total history) (CLAUDE.md). [floorMillis] is
+     * what every ordinary account gets, since its `Theta` is hours.
+     */
+    fun pastLookbackMillis(
+        tasks: List<PlanTask>,
+        periods: List<RestrictivePeriod>,
+        nowMillis: Long,
+        windows: Double,
+        floorMillis: Long,
+        capMillis: Long,
+    ): Long {
+        if (tasks.isEmpty()) return floorMillis
+        val need = windows * ScoreModel.thetaOf(tasks)
+        if (need <= floorMillis.toDouble()) return floorMillis
+        if (need >= capMillis.toDouble()) return capMillis
+        val earliest = nowMillis - capMillis
+        val blocked = windowsFor(periods, tasks, earliest, nowMillis)
+            .filter { w -> tasks.none { w.allows(it.id) } }
+            .sortedByDescending { it.startMillis }
+        var remaining = need
+        var cursor = nowMillis
+        for (w in blocked) {
+            val end = minOf(w.endMillis ?: nowMillis, cursor)
+            val start = maxOf(w.startMillis, earliest)
+            if (end <= start) continue
+            val open = (cursor - end).toDouble()
+            if (open >= remaining) break
+            remaining -= open
+            cursor = start
+        }
+        return (nowMillis - cursor + remaining).toLong().coerceIn(floorMillis, capMillis)
+    }
+
     fun windowsFor(periods: List<RestrictivePeriod>, tasks: List<PlanTask>, fromMillis: Long, toMillis: Long): List<PlanWindow> {
         val relevant = periods.filter { it.kind.isNotEmpty() && it.endMillis > fromMillis && it.startMillis < toMillis }
         if (relevant.isEmpty()) return emptyList()

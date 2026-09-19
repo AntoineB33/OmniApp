@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The frozen past is replayed over Θ, not over a week of wall time — 2026-09-19
+
+`fillSchedule` read the already-placed past from a flat `now - 168 h`, and `ScheduleFill.replay` starts every lag
+at zero there. A lag forgets over its own window `τ_i = max(M_i, 1min)/π_i`, which grows without bound as a task
+gets rarer, so every task with a share under about `M_i/168h` (0.3 % for a 30-minute minimum — a task that runs
+once a fortnight) began each re-plan from a lag of zero. A three-day pre-placed block ending nine days ago was
+invisible: the task read as starved by twelve minutes instead of over-served by thirty-three hours, and was laid
+at the now-line instead of not for weeks. Reported by the user for a task due once every twenty days coming late.
+
+The span is now `4 × Θ` of SCHEDULABLE time (`ScheduleFill.pastLookbackMillis`), floored at the old 168 h — which
+is what every ordinary account still gets, its `Θ` being hours — and capped at 90 days, the backward counterpart
+of the forward 168 h limit and the one approximation this side still carries. `ScoreModel.sharesOf`/`windowsOf`/
+`thetaOf` are the one home of the window formula the model and the lookback both read. The compensation
+coefficients now stop walking `depr` at `COMP_REACH_LENGTHS`, which a months-long window would otherwise have made
+O(pieces²) (`fillSchedule 168h` 103.5 → 94.7 ms in `PerfBenchmarkTest`). `SchedulePastLookbackTest`;
+`docs/scheduler_score.md` § *How far back the frozen past is read*. Client rebuild.
+
 ### A sleep window's bubble names its "No screen" companion — 2026-09-19
 
 Hovering a sleep window named only "Sleep". Its "No screen" line depended on a `noScreenRegions` parameter of

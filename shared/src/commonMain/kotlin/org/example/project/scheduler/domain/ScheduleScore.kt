@@ -85,14 +85,9 @@ class ScoreModel(
     val uEnd: Double
 
     init {
-        val total = priority.sum()
-        share = if (n == 0) DoubleArray(0)
-        else if (total > 0.0) DoubleArray(n) { priority[it] / total }
-        else DoubleArray(n) { 1.0 / n }
-        val windowOf = DoubleArray(n) { i ->
-            if (share[i] > 0.0) maxOf(minimum[i], MIN_WINDOW_MILLIS) / share[i] else Double.NaN
-        }
-        theta = windowOf.filter { !it.isNaN() }.maxOrNull() ?: MIN_WINDOW_MILLIS
+        share = sharesOf(tasks)
+        val windowOf = windowsOf(tasks)
+        theta = thetaOf(windowOf)
         tau = DoubleArray(n) { i -> if (windowOf[i].isNaN()) theta else windowOf[i] }
 
         // --- cut the wall timeline at every edge
@@ -196,25 +191,36 @@ class ScoreModel(
             // Only a piece where the multiplier is below 1 can deprive anyone.
             val depr = (0 until pieceCount).filter { pieceMult[it][i] < 1.0 }
             if (depr.isEmpty()) continue
+            // `depr` is ascending and the pieces TILE the schedulable clock, so the distance from `p` grows
+            // monotonically as `q` moves away from it on either side: the first `q` out of [reach] puts the whole rest
+            // of that side out of reach too, and the walk stops. Scanning all of `depr` for every `p` instead is
+            // O(pieces^2), which the lookback the frozen past is now replayed over
+            // ([ScheduleFill.pastLookbackMillis], up to months where a rare task asks for it) would make a real cost.
+            var head = 0
             for (p in 0 until pieceCount) {
+                while (head < depr.size && depr[head] < p) head++
                 val mu = pieceMult[p][i]
                 if (mu <= 0.0) continue
                 var a = 0.0
                 var b = 0.0
-                for (q in depr) {
+                var back = head - 1
+                while (back >= 0) {
+                    val q = depr[back--]
+                    val d = pieceUStart[p] - (pieceUStart[q] + pieceULen[q])
+                    if (d > reach) break
                     val mq = pieceMult[q][i]
                     if (mq >= mu) continue
-                    val lenQ = pieceLenForComp(q)
-                    val weight = (mu - mq) * t * (1.0 - expNeg(lenQ / t))
-                    if (q < p) {
-                        val d = pieceUStart[p] - (pieceUStart[q] + pieceULen[q])
-                        if (d > reach) continue
-                        a += weight * exp(-d / t)
-                    } else if (q > p) {
-                        val d = pieceUStart[q] - (pieceUStart[p] + pieceULen[p])
-                        if (d > reach) continue
-                        b += weight * exp(-d / t)
-                    }
+                    a += (mu - mq) * t * (1.0 - expNeg(pieceLenForComp(q) / t)) * exp(-d / t)
+                }
+                var fwd = head
+                while (fwd < depr.size) {
+                    val q = depr[fwd++]
+                    if (q == p) continue
+                    val d = pieceUStart[q] - (pieceUStart[p] + pieceULen[p])
+                    if (d > reach) break
+                    val mq = pieceMult[q][i]
+                    if (mq >= mu) continue
+                    b += (mu - mq) * t * (1.0 - expNeg(pieceLenForComp(q) / t)) * exp(-d / t)
                 }
                 val k = share[i] / t
                 compA[p][i] = a * k
@@ -650,6 +656,43 @@ class ScoreModel(
     companion object {
         const val NOBODY: Int = -2
         const val MIN_WINDOW_MILLIS: Double = 60_000.0
+
+        /**
+         * `pi_i = P_i / sum P_j` for [tasks] — uniform over all of them when every priority is 0.
+         *
+         * The three formulas below are the score's definition of a task's window, and they have this one home: the
+         * model reads them for its own `share`/`tau`/`theta`, and [ScheduleFill.pastLookbackMillis] reads `theta` to
+         * decide how far back the frozen past has to be replayed. Two readings of "the smallest window in which task
+         * `i` can get one slot" would be two different scores.
+         */
+        fun sharesOf(tasks: List<PlanTask>): DoubleArray {
+            val n = tasks.size
+            if (n == 0) return DoubleArray(0)
+            val p = DoubleArray(n) { tasks[it].priority.coerceAtLeast(0.0) }
+            val total = p.sum()
+            return if (total > 0.0) DoubleArray(n) { p[it] / total } else DoubleArray(n) { 1.0 / n }
+        }
+
+        /**
+         * `tau_i = max(M_i, 1 min) / pi_i` — the smallest window in which task `i` can get one slot of its minimum
+         * execution time at its share. `NaN` where `pi_i = 0`: such a task has no window of its own and takes `Theta`.
+         */
+        fun windowsOf(tasks: List<PlanTask>): DoubleArray {
+            val share = sharesOf(tasks)
+            return DoubleArray(tasks.size) { i ->
+                if (share[i] > 0.0) {
+                    maxOf(tasks[i].minimumMillis.coerceAtLeast(0L).toDouble(), MIN_WINDOW_MILLIS) / share[i]
+                } else {
+                    Double.NaN
+                }
+            }
+        }
+
+        /** `Theta = max tau_i` over the tasks with a share — the discount horizon, and the longest window any task needs. */
+        fun thetaOf(windows: DoubleArray): Double = windows.filter { !it.isNaN() }.maxOrNull() ?: MIN_WINDOW_MILLIS
+
+        /** `Theta` for [tasks]. */
+        fun thetaOf(tasks: List<PlanTask>): Double = thetaOf(windowsOf(tasks))
         /**
          * `λ`, the schedulable distance over which a deprivation's compensation fades, on both sides. It also bounds
          * what a long deprivation buys (`2π_iλ`), so it is what makes a 48-hour blockage buy barely more than a

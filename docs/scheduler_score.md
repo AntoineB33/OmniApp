@@ -51,6 +51,27 @@ requirement: it only fixes what "best" means. Every § below names a section of 
   $f_i(t) = q_i(t)\,(1 - C(t)) + c_i(t)$ if $C(t) \le 1$, otherwise $f_i(t) = c_i(t) / C(t)$.
   So $f_i \ge 0$, $\sum_i f_i = 1$, and $f_i = 0$ wherever task $i$ is forbidden.
 
+## How far back the frozen past is read
+
+§ *Core Constraints*: *"The timeline is infinite forward **and backward**"*. $L_i(x)$ is determined by the frozen
+past, so the past has to be replayed far enough back that what is left out no longer moves it.
+
+* **The window is measured in $\Theta$, on the schedulable clock**, never in wall time. A lag forgets over its own
+  $\tau_i$, so replaying from a cutoff rather than from the beginning of time gets exactly
+  $L_i(\text{cutoff})\,e^{-\Delta/\tau_i}$ wrong — the whole lag standing at the cutoff, re-seeded at zero. At
+  $\Delta = 4\Theta$ of schedulable time under 2 % of it survives. A stretch nobody may run in buys the window no
+  lag at all, so the walk reaches past it exactly as every other distance here does.
+* **What a wall-time ceiling did.** A flat 168 h is what shipped, and it zeroed the lag of every task whose
+  $\tau_i$ exceeded it — a share under about $M_i / 168\text{h}$, i.e. 0.3 % for a 30-minute minimum, a task that
+  runs once a fortnight. A three-day pre-placed task ending nine days ago did not count as served at all: the task
+  read as starved by twelve minutes instead of over-served by thirty-three hours, and was placed at the $now line$
+  instead of not for weeks.
+* **The cap is the one approximation left** (`SchedulerDomain.SCHEDULE_PAST_LOOKBACK_CAP_MILLIS`, 90 days), the
+  backward counterpart of the forward limit in § *The rules repeat*. A leaf at a near-zero share has an enormous
+  $\tau_i$, and without a cap a fill would cost O(total history). A floor of 168 h is what every ordinary account
+  gets, its $\Theta$ being hours.
+
+
 ## Criterion 1: priority percentages over the smallest possible window
 
 * The **lag** of task $i$ is its service minus its target, forgetting exponentially over its own window, on the

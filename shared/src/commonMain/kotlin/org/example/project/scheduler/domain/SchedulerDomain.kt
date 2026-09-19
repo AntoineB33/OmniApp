@@ -1836,14 +1836,32 @@ object SchedulerDomain {
     const val INLINE_REPLAN_SEARCH_MILLIS: Long = 250
 
     /**
-     * The **ceiling** on how far back [fillSchedule] reads the already-placed past (one week — the same span
-     * as the horizon ceiling): the frozen past is replayed over it to give every task's lag at the line, and a
-     * deprivation inside it still raises a target share after it. A lag forgets over its task's own window, so
-     * a week is far past what any account's shares make relevant; the ceiling stops a pathological tree (a leaf
-     * with a near-zero share has a huge window) from making the fill cost total history — CLAUDE.md: hot-path
-     * derivations scale with the screen, not with the whole record.
+     * How far back [fillSchedule] reads the already-placed past, in **windows of `Theta`** — the whole rule lives
+     * in [ScheduleFill.pastLookbackMillis], which is what turns these three constants into an instant. The frozen
+     * past is replayed over that span to give every task's lag at the line, and a deprivation inside it still
+     * raises a target share after it.
+     *
+     * Four windows: what replaying from a cutoff loses is the lag standing there, damped by `e^(-d/tau_i)`, so at
+     * `4*Theta` of SCHEDULABLE time under 2 % of it survives. A flat 168 h of WALL time is what shipped, and it
+     * zeroed the lag of every task rare enough for `tau_i` to exceed it — a three-day pre-placed block ending nine
+     * days ago simply did not count as served.
      */
-    const val SCHEDULE_PAST_LOOKBACK_MILLIS: Long = 168L * 60 * 60 * 1000
+    const val SCHEDULE_PAST_LOOKBACK_WINDOWS: Double = 4.0
+
+    /**
+     * The floor under the past lookback (one week — what shipped as the flat ceiling, and the same span as the
+     * horizon ceiling). Every ordinary account lands here: its `Theta` is hours, so four windows of it are far
+     * shorter, and a week costs nothing to replay.
+     */
+    const val SCHEDULE_PAST_LOOKBACK_FLOOR_MILLIS: Long = 168L * 60 * 60 * 1000
+
+    /**
+     * The ceiling over it (90 days), and the **one approximation the backward side still carries**: a leaf at a
+     * near-zero share has an enormous `tau`, and without this a fill would cost O(total history) — CLAUDE.md:
+     * hot-path derivations scale with the screen, not with the whole record. A task whose window reaches past it
+     * is rarer than once a quarter, and its lag is clamped exactly as it was before.
+     */
+    const val SCHEDULE_PAST_LOOKBACK_CAP_MILLIS: Long = 90L * 24 * 60 * 60 * 1000
 
     /**
      * PRD §15 display only: the floor under how far the calendar PROJECTS its forward bands (screen breaks,
@@ -5040,7 +5058,18 @@ object SchedulerDomain {
                     it.startEpochMillis <= horizon && !it.isRestrictivePeriod
             }
         val startMillis = maxOf(nowMillis, keptHead.maxOfOrNull { it.endEpochMillis } ?: nowMillis).coerceAtMost(horizon)
-        val scoreFrom = nowMillis - SCHEDULE_PAST_LOOKBACK_MILLIS
+        // `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the timeline is infinite
+        // forward and backward"*. How far back is not a wall-time constant — it is four of the longest task window
+        // `Theta`, measured on the schedulable clock, so a task rare enough to need a month of it gets one
+        // ([ScheduleFill.pastLookbackMillis] holds the whole rule and its reasons).
+        val scoreFrom = nowMillis - ScheduleFill.pastLookbackMillis(
+            tasks = planTasks,
+            periods = restrictions,
+            nowMillis = nowMillis,
+            windows = SCHEDULE_PAST_LOOKBACK_WINDOWS,
+            floorMillis = SCHEDULE_PAST_LOOKBACK_FLOOR_MILLIS,
+            capMillis = SCHEDULE_PAST_LOOKBACK_CAP_MILLIS,
+        )
 
         // --- the pre-placed tasks: the user's pinned panels, past and future.
         val pinnedBlocks =

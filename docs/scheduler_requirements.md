@@ -10,7 +10,7 @@ The scheduler returns a set of rules that define the task schedule for a given t
 * Each task has a **target priority percentage**. One optimization goal is to match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals). The time windows must be as small as possible while still allowing for the task's minimum execution time to be respected (e.g., task A 30min 33%, task B 15min 33%, task C 15min 33% => task A 30min, task B 15min, task C 15min, task B 15min, task C 15min...).
 * Pre-placed tasks or restrictive periods can create priority deficits for excluded tasks. To prevent massive, disruptive overcompensation and ensure the timeline rapidly returns to a normal schedule, the priority optimization uses an **exponential decay** model. 
 * The influence of debt repayment decays over the distance from the blockage (both backward and forward in time). Because the influence decays exponentially with distance, a long blockage's compensation is bounded rather than proportional to its length. The goal is to avoid repaying debts indefinitely in favor of stabilizing the schedule.
-* In an ideal situation where the timeline is cleared from pre-placed tasks or restrictive periods, there is no exponential decay.
+* In an ideal situation where the timeline is cleared from pre-placed tasks or restrictive periods, this exponential decay is not needed.
 * The timeline is infinite forward and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns.
 
 #### Soft Minimum Execution Time
