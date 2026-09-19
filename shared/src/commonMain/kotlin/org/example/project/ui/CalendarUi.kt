@@ -320,13 +320,6 @@ data class CalendarRecord(
      */
     val restrictiveKind: String = "",
     /**
-     * For a [sleep] band: the enclosing account-offline "No screen" window. A sleep window is by
-     * definition also a no-screen period, and that no-screen stretch may extend past the sleep into a
-     * directly-following (or preceding) awake-offline window — so this range is >= the sleep range. It
-     * drives the "No screen" line's time span in the hover bubble; null for every non-sleep record.
-     */
-    val noScreenRange: TaskTimeRange? = null,
-    /**
      * PRD §12: this derived Inactivity/No-screen band is open-ended into the past — nothing precedes it, so
      * the inactivity extends indefinitely back (its rendered start is only the display floor, not a real
      * boundary). The hover bubble / phone menu then shows "∞" as the start instead of a wall-clock time.
@@ -392,8 +385,6 @@ data class PlacedRecord(
     val noScreen: Boolean = false,
     /** `side-dev/README.md`: which KIND of restrictive period this block is, blank if it is not one. */
     val restrictiveKind: String = "",
-    /** For a [sleep] band: its enclosing "No screen" window (>= the sleep range). See [CalendarRecord.noScreenRange]. */
-    val noScreenRange: TaskTimeRange? = null,
     /** PRD §12: this derived band is open-ended into the past; the hover bubble shows "∞" as its start. */
     val openStart: Boolean = false,
     /**
@@ -522,7 +513,6 @@ fun recordsForDay(
             layerDeclared = record.layerDeclared,
             noScreen = record.noScreen,
             restrictiveKind = record.restrictiveKind,
-            noScreenRange = record.noScreenRange,
             openStart = record.openStart,
             provisional = record.provisional,
             fullStartMillis = record.range.startEpochMillis,
@@ -4655,31 +4645,11 @@ private fun DayColumn(
     val contextOverlays: List<BubbleOverlay> =
         buildList {
             sleepBands.forEach { band ->
-                add(
-                    BubbleOverlay(
-                        band.startHour,
-                        band.endHour,
-                        CalendarBubbleSection(
-                            CalendarBubbleSection.Kind.Sleep,
-                            "Sleep",
-                            placedTimeRange(band, tz),
-                        ),
-                    ),
-                )
-                // A sleep window is by definition a no-screen period, and the enclosing offline window can
-                // reach past it on either side — so this line carries its own (wider) span.
-                band.noScreenRange?.let { range ->
-                    add(
-                        BubbleOverlay(
-                            band.startHour,
-                            band.endHour,
-                            CalendarBubbleSection(
-                                CalendarBubbleSection.Kind.NoScreen,
-                                "No screen",
-                                bubbleTimeRange(range.startEpochMillis, range.endEpochMillis, tz),
-                            ),
-                        ),
-                    )
+                val times = placedTimeRange(band, tz)
+                add(BubbleOverlay(band.startHour, band.endHour, CalendarBubbleSection(CalendarBubbleSection.Kind.Sleep, "Sleep", times)))
+                // Its companions ("no screen" by default) are periods in force over the same span.
+                companionBubbleSections(PeriodKinds.SLEEP, periodKindConfig, times).forEach {
+                    add(BubbleOverlay(band.startHour, band.endHour, it))
                 }
             }
             // PRD §8: **one section per PERIOD, not per drawn box.** Overlapping periods share a box
@@ -4707,6 +4677,9 @@ private fun DayColumn(
                         ),
                     ),
                 )
+                companionBubbleSections(band.restrictiveKind, periodKindConfig, placedTimeRange(band, tz)).forEach {
+                    add(BubbleOverlay(band.startHour, band.endHour, it))
+                }
             }
             layerBands.forEach { band ->
                 val layer = band.layer ?: return@forEach
@@ -6298,6 +6271,35 @@ private fun panelBubbleSection(r: PlacedRecord, tz: TimeZone, times: String? = n
         }
     return CalendarBubbleSection(kind, underHoverTitle(r), times ?: placedTimeRange(r, tz), r.taskId)
 }
+
+/**
+ * PRD §8: **the sections a period's COMPANIONS contribute** ([PeriodKindConfig.impliedKinds]) — each is a
+ * period in force over the same span, so the bubble names it exactly as it names the period itself (a sleep
+ * window's "No screen", a wind-down hour's). The same config the box's drawings read
+ * ([PeriodKindConfig.boxDrawings]), so the bubble names what the pattern paints.
+ *
+ * The two layer kinds are left out for the reason the box leaves out their drawing: the layer band unions a
+ * period's assertion with the OS evidence and names itself ([bubbleKind]), so naming them here would say one
+ * statement twice.
+ */
+internal fun companionBubbleSections(
+    kind: String,
+    config: PeriodKindConfig,
+    times: String,
+): List<CalendarBubbleSection> =
+    if (kind.isBlank()) {
+        emptyList()
+    } else {
+        config.impliedKinds(kind).filterNot { it in PeriodKinds.LAYER_KINDS }.map { companion ->
+            val sectionKind =
+                when (companion) {
+                    PeriodKinds.SLEEP -> CalendarBubbleSection.Kind.Sleep
+                    PeriodKinds.NO_SCREEN -> CalendarBubbleSection.Kind.NoScreen
+                    else -> CalendarBubbleSection.Kind.Inactivity
+                }
+            CalendarBubbleSection(sectionKind, companion.replaceFirstChar { it.uppercase() }, times)
+        }
+    }
 
 /** PRD §8/§12: a placed element's true (un-clipped) start–end line; an open-ended start shows "∞". */
 private fun placedTimeRange(r: PlacedRecord, tz: TimeZone): String =

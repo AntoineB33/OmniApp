@@ -135,6 +135,11 @@ Global rules that always apply: `CLAUDE.md`.
   site. The **two zero-duration markers lead** it for the same reason they are emitted last: a §14 reminder tag
   and a §18 alarm/timer ring are the top-most things the column draws, so each is what the cursor is on and
   each is what hides everything below it (the tag over the ring, which is the order they are drawn in).
+- **A period's COMPANIONS are sections of the bubble too**, over the period's own span, read from the same
+  `PeriodKindConfig` the box's drawings are (`companionBubbleSections`) — so a sleep window names its
+  "No screen", as does the wind-down hour. The layer kinds are left to the layer band. Until 2026-09-19 the
+  sleep band's "No screen" line hung on pause *evidence* enclosing it (an inactivity gap passed by position
+  into the wrong parameter), so every night without one, all the future ones included, named only "Sleep".
 - **The bubble's times are written TO THE SECOND** (`HH:MM:SS`), through the one funnel `bubbleTimeRange` —
   `placedTimeRange`, the block/break/no-screen lines and the phone menu's panel info all read it, and the two
   zero-duration sections (`reminderBubbleSection`, `alarmBubbleSection`) share its `formatHms`. The bubble is

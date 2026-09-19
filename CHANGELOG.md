@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A sleep window's bubble names its "No screen" companion — 2026-09-19
+
+Hovering a sleep window named only "Sleep". Its "No screen" line depended on a `noScreenRegions` parameter of
+`mergePanelsForDisplay` that no caller named. `displayInactivityGaps` landed in it by position, so the line
+showed only when an inactivity gap covered the band's midpoint, and then with the gap's span. That never happens
+for a future night. The line now comes from the kind's companions (`companionBubbleSections`), the same
+`PeriodKindConfig` the drawings read, over the period's own span, for every period box too (the wind-down hour
+names its "No screen" as well). The `noScreenRange` field is deleted. `CalendarBubbleSectionTest` covers it.
+
 ### The away cover is zero wide, `[now, now]`, not one millisecond — 2026-09-19
 
 In modes 2 and 3 the fill covered the line with a "no screen" period `[now, now + 1)`. The search decides at every

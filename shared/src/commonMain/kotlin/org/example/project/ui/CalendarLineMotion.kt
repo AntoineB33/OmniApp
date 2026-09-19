@@ -68,7 +68,6 @@ private val NEUTRAL_RANGE = TaskTimeRange(0L, 0L)
 private fun motionNeutral(record: CalendarRecord): CalendarRecord =
     record.copy(
         range = NEUTRAL_RANGE,
-        noScreenRange = null,
         entryId = null,
         entryIds = emptyList(),
         startFollowsLine = false,

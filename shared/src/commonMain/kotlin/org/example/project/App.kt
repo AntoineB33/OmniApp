@@ -1179,7 +1179,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     ),
                     displayReminderPanels, displaySidePanels, displaySleepPanels,
                     schedulerState.showScreenBreaks, schedulerState.showReminders,
-                    schedulerState.screenBreaks, activeRegions, displayInactivityGaps,
+                    schedulerState.screenBreaks, activeRegions,
                     // § *Progressive Calculation*: the same front the derived inactivity bands stop at, below —
                     // where the plan stops being the scheduler's settled answer and starts being the far-week
                     // fill's display-only continuation of it.
@@ -2943,11 +2943,6 @@ private fun mergePanelsForDisplay(
     // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
     // hiding screen breaks doesn't fuse task blocks across a night just because part of it was carved.
     activeRegions: List<TaskTimeRange> = emptyList(),
-    // PRD §8: the account-offline "No screen" windows (un-subtracted, so each spans any sleep it contains
-    // plus the awake-offline stretch around it). A sleep window is by definition a no-screen period, so each
-    // sleep band records the enclosing offline window here to drive its "No screen" hover line — which is
-    // therefore >= the sleep's own span when the sleep is directly followed/preceded by more offline time.
-    noScreenRegions: List<TaskTimeRange> = emptyList(),
     // `docs/scheduler_requirements.md` § *Progressive Calculation*: the DEFINITIVE-SCHEDULE FRONT
     // ([SchedulerDomain.definitiveScheduleFrontMillis]). An auto panel reaching past it is the far-week display
     // fill's, not a schedule the scheduler has settled, and is marked [CalendarRecord.provisional] so the
@@ -3073,21 +3068,15 @@ private fun mergePanelsForDisplay(
     // The sleep windows render as their own labeled band behind the task blocks (drawn first), carved wherever
     // the device/account was active so a night the user worked through shows a gap rather than a solid block.
     val sleepRecords =
+        // Its "No screen" hover line is the sleep kind's companion, named by the calendar over the band's own
+        // span (`companionBubbleSections`) — not read off any evidence here.
         SchedulerDomain.carveSleepPanels(sleepPanels, activeRegions).map { sleepPanel ->
-            // The enclosing offline window (contains this carved sleep sub-panel's midpoint) — a sleep is
-            // always inactive, so it sits inside an offline window that may extend past it. Null when no
-            // pause evidence exists yet (conservative empty case): the "No screen" line then falls back to
-            // the sleep's own span.
-            val mid = (sleepPanel.startEpochMillis + sleepPanel.endEpochMillis) / 2
-            val enclosing =
-                noScreenRegions.firstOrNull { it.startEpochMillis <= mid && it.endEpochMillis >= mid }
             CalendarRecord(
                 title = sleepPanel.title,
                 range = TaskTimeRange(sleepPanel.startEpochMillis, sleepPanel.endEpochMillis),
                 entryId = sleepPanel.id,
                 entryIds = listOf(sleepPanel.id),
                 sleep = true,
-                noScreenRange = enclosing,
                 // PRD §8: a §17 sleep window is a restrictive period a repeating rule lays — orange.
                 outline = SchedulerDomain.panelOutline(sleepPanel),
             )

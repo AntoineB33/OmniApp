@@ -4,12 +4,17 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
+import org.example.project.scheduler.domain.PeriodDrawing
+import org.example.project.scheduler.domain.PeriodKindConfig
+import org.example.project.scheduler.domain.PeriodKindStyle
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.ui.CalendarBubbleSection
 import org.example.project.ui.CalendarBubbleSection.Kind
 import org.example.project.ui.PlacedRecord
 import org.example.project.ui.alarmBubbleSection
 import org.example.project.ui.bubbleTimeRange
+import org.example.project.ui.companionBubbleSections
 import org.example.project.ui.orderedBubbleSections
 import org.example.project.ui.reminderBubbleSection
 
@@ -36,6 +41,48 @@ class CalendarBubbleSectionTest {
 
     private fun kindsOf(vararg kinds: Kind) =
         orderedBubbleSections(kinds.map(::section)).map { it.kind }
+
+    // ----- a period's companions ------------------------------------------------------------------------
+
+    @Test
+    fun a_sleep_window_names_its_no_screen_companion_over_its_own_span() {
+        // The anomaly: hovering a sleep window named "Sleep" only. Its "No screen" line hung on pause
+        // EVIDENCE enclosing the band (an inactivity gap, passed by position into the wrong parameter), so a
+        // night with none — every future one — named nothing but the sleep. The companion is a period in
+        // force wherever the sleep is, and the bubble names it with the sleep's own times.
+        assertEquals(
+            listOf(CalendarBubbleSection(Kind.NoScreen, "No screen", "23:00:00 – 07:00:00")),
+            companionBubbleSections(PeriodKinds.SLEEP, PeriodKindConfig.DEFAULT, "23:00:00 – 07:00:00"),
+        )
+        // The wind-down hour carries one too.
+        assertEquals(
+            listOf(Kind.NoScreen),
+            companionBubbleSections(PeriodKinds.BEFORE_BED, PeriodKindConfig.DEFAULT, "x").map { it.kind },
+        )
+    }
+
+    @Test
+    fun a_companion_the_account_removed_is_not_named_and_a_layer_is_left_to_its_band() {
+        assertEquals(emptyList(), companionBubbleSections(PeriodKinds.INACTIVITY, PeriodKindConfig.DEFAULT, "x"))
+        val noCompanion =
+            PeriodKindConfig(mapOf(PeriodKinds.SLEEP to PeriodKindStyle(emptySet(), PeriodDrawing.HorizontalLines)))
+        assertEquals(emptyList(), companionBubbleSections(PeriodKinds.SLEEP, noCompanion, "x"))
+        // A layer companion is named by the layer band (which unions it with the OS evidence), not twice.
+        val layers =
+            PeriodKindConfig(
+                mapOf(
+                    PeriodKinds.SLEEP to
+                        PeriodKindStyle(
+                            setOf(PeriodKinds.NO_SCREEN, PeriodKinds.NO_PHONE_UNLOCKED),
+                            PeriodDrawing.HorizontalLines,
+                        ),
+                ),
+            )
+        assertEquals(
+            listOf(Kind.NoScreen),
+            companionBubbleSections(PeriodKinds.SLEEP, layers, "x").map { it.kind },
+        )
+    }
 
     // ----- the ordering --------------------------------------------------------------------------------
 
