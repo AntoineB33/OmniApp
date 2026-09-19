@@ -146,18 +146,46 @@ class ScheduleScoreTest {
             val m = model(tasks, 60, windows = listOf(w))
             return m.targetAt(((10 + banHours) * HOUR + afterMinutes * MIN).toDouble())[1]
         }
-        val near = targetAfter(4, 0)
-        val far = targetAfter(4, 240)
+        val near = targetAfter(24, 0)
+        val far = targetAfter(24, 16 * 60)
         assertTrue(near > 0.6, "B is repaid right after its ban: $near")
-        assertTrue(far < 0.51, "the repayment has decayed four hours later: $far")
-        // A ban 6x longer buys almost no more at the edge.
-        assertTrue(targetAfter(24, 0) - near < 0.02)
+        assertTrue(far < 0.51, "the repayment has decayed sixteen hours later: $far")
+        // A ban twice as long (48h against 24h, both far longer than λ) buys almost no more at the edge.
+        assertTrue(targetAfter(48, 0) - near < 0.02)
         // Before the ban, the influence reaches back too.
         val m = model(tasks, 60, windows = listOf(PlanWindow(10 * HOUR, 14 * HOUR, mapOf(TaskId("B") to 0.0))))
         assertTrue(m.targetAt((10 * HOUR - MIN).toDouble())[1] > 0.6)
         // A stretch that turns everybody away compensates nobody.
         val night = model(tasks, 60, windows = listOf(PlanWindow(10 * HOUR, 18 * HOUR, emptyMap(), defaultMultiplier = 0.0)))
         assertEquals(0.5, night.targetAt((10 * HOUR).toDouble())[1], 1e-9)
+    }
+
+    @Test
+    fun a_longer_pre_placed_task_saturates_the_compensation_on_both_sides() {
+        // `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: a 48-hour pre-placed task
+        // increases a deprived task's presence in the adjacent schedule, but not twice as much as a 24-hour one —
+        // before the block as well as after it.
+        val tasks = listOf(task("A", 0.5, 30), task("B", 0.5, 30))
+        val start = 10 * HOUR
+        val window = 4 * HOUR
+        /** B's minutes in the [window] after (or before) a block of A lasting [blockHours] (0: no block). */
+        fun presenceOfB(blockHours: Long, after: Boolean): Double {
+            val end = start + blockHours * HOUR
+            val blocks = if (blockHours > 0) listOf(PlanBlock(TaskId("A"), start, end)) else emptyList()
+            val m = model(tasks, (end + window) / HOUR + 12, blocks = blocks)
+            val from = m.uAt(if (after) end else start - window)
+            val plan = ScheduleOptimizer(m).plan(m.cursor(from), from + window, alternatives = false)
+            return plan.runs.filter { it.task == 1 }.sumOf { it.toU - it.fromU } / MIN
+        }
+        for (after in listOf(true, false)) {
+            val side = if (after) "after" else "before"
+            val none = presenceOfB(0, after)
+            val day = presenceOfB(24, after)
+            val twoDays = presenceOfB(48, after)
+            // The target's excess in the first 4h after a saturated block is π(1−π)·λ·(1 − e^(−4h/λ)) ≈ 38 min.
+            assertTrue(day > none + 25, "B is compensated $side a 24h block: $day vs $none min")
+            assertTrue(twoDays - none < 2 * (day - none), "48h ($twoDays) buys less than twice 24h ($day) $side")
+        }
     }
 
     @Test

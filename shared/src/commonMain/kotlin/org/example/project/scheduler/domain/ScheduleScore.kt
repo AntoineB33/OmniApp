@@ -76,7 +76,7 @@ class ScoreModel(
     val pieceFixed: IntArray
     /** `q_i` per piece. */
     private val pieceShare: Array<DoubleArray>
-    /** Compensation coefficients: `c_i(v) = A·e^(−v/τ) + B·e^(−(len−v)/τ)` inside the piece. */
+    /** Compensation coefficients: `c_i(v) = A·e^(−v/λ) + B·e^(−(len−v)/λ)` inside the piece. */
     private val compA: Array<DoubleArray>
     private val compB: Array<DoubleArray>
     private val pieceHasComp: BooleanArray
@@ -191,8 +191,8 @@ class ScoreModel(
         pieceHasComp = BooleanArray(pieceCount)
         for (i in 0 until n) {
             if (share[i] <= 0.0) continue
-            val t = tau[i]
-            val reach = COMP_REACH_TAUS * t
+            val t = COMPENSATION_LENGTH_MILLIS
+            val reach = COMP_REACH_LENGTHS * t
             // Only a piece where the multiplier is below 1 can deprive anyone.
             val depr = (0 until pieceCount).filter { pieceMult[it][i] < 1.0 }
             if (depr.isEmpty()) continue
@@ -256,8 +256,8 @@ class ScoreModel(
         }
         val len = pieceULen[p]
         var c = 0.0
+        val t = COMPENSATION_LENGTH_MILLIS
         for (i in 0 until n) {
-            val t = tau[i]
             var ci = 0.0
             val a = compA[p][i]
             if (a != 0.0) ci += a * exp(-v / t)
@@ -442,14 +442,13 @@ class ScoreModel(
     // ----- the lag, and the two criteria ------------------------------------------------------------
 
     /**
-     * Inside a piece with compensation the target moves on the scale of `τ`, so the piece is cut into cells of at
-     * most `τ_min/16` and the target is read at each cell's midpoint; the lag is exact inside a cell for that
+     * Inside a piece with compensation the target moves on the scale of `λ`, so the piece is cut into cells of at
+     * most `λ/16` and the target is read at each cell's midpoint; the lag is exact inside a cell for that
      * target (an exponential, and so is the discounted square of it). The cells are FIXED per piece, so how an
      * interval happens to be split by the calls that integrate it never changes the result.
      */
-    private val minTau: Double = tau.minOrNull() ?: MIN_WINDOW_MILLIS
     private val cellLen: DoubleArray =
-        DoubleArray(pieceCount) { p -> if (pieceHasComp[p]) minOf(pieceULen[p], minTau / COMP_STEPS_PER_TAU).coerceAtLeast(1.0) else Double.POSITIVE_INFINITY }
+        DoubleArray(pieceCount) { p -> if (pieceHasComp[p]) minOf(pieceULen[p], COMPENSATION_LENGTH_MILLIS / COMP_STEPS_PER_LENGTH).coerceAtLeast(1.0) else Double.POSITIVE_INFINITY }
     private val cellTotal = arrayOfNulls<DoubleArray>(pieceCount)
 
     /** `∫ q_i` from the model's start to each piece's start — what the base policy's quick lag estimate reads. */
@@ -458,7 +457,7 @@ class ScoreModel(
     }
 
     private fun compOf(i: Int, p: Int, v: Double): Double {
-        val t = tau[i]
+        val t = COMPENSATION_LENGTH_MILLIS
         var c = 0.0
         val a = compA[p][i]
         if (a != 0.0) c += a * exp(-v / t)
@@ -651,9 +650,15 @@ class ScoreModel(
     companion object {
         const val NOBODY: Int = -2
         const val MIN_WINDOW_MILLIS: Double = 60_000.0
+        /**
+         * `λ`, the schedulable distance over which a deprivation's compensation fades, on both sides. It also bounds
+         * what a long deprivation buys (`2π_iλ`), so it is what makes a 48-hour blockage buy barely more than a
+         * 24-hour one. A constant, not `τ_i`: how much a task is repaid must not depend on its minimum time.
+         */
+        const val COMPENSATION_LENGTH_MILLIS: Double = 4 * 3_600_000.0
         /** `e^(−40)`: past it a deprivation's influence is below double precision's relevance to the score. */
-        const val COMP_REACH_TAUS: Double = 40.0
-        const val COMP_STEPS_PER_TAU: Double = 16.0
+        const val COMP_REACH_LENGTHS: Double = 40.0
+        const val COMP_STEPS_PER_LENGTH: Double = 16.0
         const val EPS: Double = 1e-6
         const val HALF_MILLI: Double = 0.5
 

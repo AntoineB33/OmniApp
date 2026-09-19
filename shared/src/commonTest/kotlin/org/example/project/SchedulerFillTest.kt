@@ -88,8 +88,8 @@ class SchedulerFillTest {
     @Test
     fun a_massive_past_exclusion_buys_a_bounded_compensation_not_an_equal_one() {
         // A pinned solid for 17 hours right up to `now`. `docs/scheduler_score.md`: B's compensation around a
-        // deprivation of any length is bounded by 2·π_B·τ_B (90 minutes for two equal 45-minute tasks), and it
-        // decays with the distance — so B leads, but is NOT handed 17 hours back.
+        // deprivation of any length is bounded by 2·π_B·λ (λ = 4 hours of schedulable time), and it decays with the
+        // distance — so B leads, but is NOT handed 17 hours back.
         val (s0, ids) = stateWithTasks("A", "B")
         val (a, b) = ids
         val s = s0.copy(panels = listOf(pinned("pin/0", a, NOW - 17 * HOUR, NOW)))
@@ -110,17 +110,19 @@ class SchedulerFillTest {
     fun a_block_committed_ahead_swells_the_other_task_around_it() {
         // § *Priority, Granularity and Compensation*: a pre-placed hour of A deprives B, and the influence of the
         // repayment decays with the distance from the blockage on both sides — so B holds more than half of the
-        // stretch just before the block and just after it.
+        // stretch before the block and after it. The fade length is 4 hours, so the 30 min B loses is repaid gently
+        // over the hours around the block, not crammed next to it.
         val (s0, ids) = stateWithTasks("A", "B", minMinutes = 10)
         val (a, b) = ids
-        val blockStart = NOW + 100 * MIN
+        val blockStart = NOW + 4 * HOUR
         val blockEnd = blockStart + HOUR
         val s = s0.copy(panels = listOf(pinned("pin/0", a, blockStart, blockEnd)))
-        val autos = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 12 * HOUR).filter { it.auto }
+        val autos = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 16 * HOUR).filter { it.auto }
         fun servedIn(task: TaskId, from: Long, until: Long) =
             autos.filter { it.taskId == task }.sumOf { maxOf(0L, minOf(it.endEpochMillis, until) - maxOf(it.startEpochMillis, from)) }
-        assertTrue(servedIn(b, blockStart - 40 * MIN, blockStart) > servedIn(a, blockStart - 40 * MIN, blockStart))
-        assertTrue(servedIn(b, blockEnd, blockEnd + 40 * MIN) > servedIn(a, blockEnd, blockEnd + 40 * MIN))
+        val w = 3 * HOUR
+        assertTrue(servedIn(b, blockStart - w, blockStart) > servedIn(a, blockStart - w, blockStart))
+        assertTrue(servedIn(b, blockEnd, blockEnd + w) > servedIn(a, blockEnd, blockEnd + w))
         assertTrue(autos.any { it.taskId == a }, "A must still hold its own share")
     }
 

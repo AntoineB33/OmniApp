@@ -33,11 +33,18 @@ requirement: it only fixes what "best" means. Every § below names a section of 
 * Local share: $q_i(t) = P_i \mu_i(t) / \sum_j P_j \mu_j(t)$. If that sum is 0 while $t$ is schedulable,
   $q_i(t)$ is uniform over the tasks with $\mu_i(t) > 0$.
 * **Compensation.** A task is deprived at $s$ by as much as its multiplier there is below its multiplier now.
-  The influence of a deprivation decays exponentially with the schedulable distance from it, on both sides:
-  $$c_i(t) = \frac{\pi_i}{\tau_i} \int e^{-|u(t) - u(s)|/\tau_i}\, \big(\mu_i(t) - \mu_i(s)\big)^+ \, du(s)$$
-  With this constant, the compensation around a deprivation much shorter than $\tau_i$ is proportional to its
-  length (of the size of the time lost for two equal tasks), and the compensation around a deprivation of any
-  length is bounded by $2\pi_i\tau_i$: the decay is what prevents a massive overcompensation. A stretch that
+  The influence of a deprivation decays exponentially with the schedulable distance from it, on both sides, over
+  the **compensation length** $\lambda = 4\text{h}$ of schedulable time:
+  $$c_i(t) = \frac{\pi_i}{\lambda} \int e^{-|u(t) - u(s)|/\lambda}\, \big(\mu_i(t) - \mu_i(s)\big)^+ \, du(s)$$
+  With this constant, the compensation around a deprivation much shorter than $\lambda$ is proportional to its
+  length (for two equal tasks, it repays exactly the time lost), and the compensation around a deprivation of any
+  length is bounded by $2\pi_i\lambda$: the decay is what prevents a massive overcompensation. This bound is the
+  saturation the requirements ask for: a deprivation much longer than $\lambda$ (a 24-hour pre-placed task, and a
+  48-hour one) buys about the same compensation, at most $\pi_i(1-\pi_i)\lambda$ of extra presence on each side
+  (an hour for a 50% task), and the schedule returns to the nominal shares within a few $\lambda$ of the blockage
+  instead of repaying it indefinitely. $\lambda$ is one constant, not $\tau_i$: how much a task is repaid must not
+  depend on its minimum execution time (with $\tau_i$, a 50% task with a 30min minimum got about 15min back on
+  each side of a day-long blockage, and one with a 10min minimum about 5min). A stretch that
   deprives every task equally (a night) creates no relative compensation, because the shares are renormalized
   below. A task that is deprived at $t$ itself (its multiplier now is the lower one) is not compensated at $t$.
 * Target share, with $C(t) = \sum_j c_j(t)$:

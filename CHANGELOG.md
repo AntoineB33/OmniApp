@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The compensation fades over 4 hours, not over the task's own window — 2026-09-19
+
+`docs/scheduler_requirements.md` now states that the compensation decays on both sides of a blockage and saturates
+(a 48-hour pre-placed task buys more presence than a 24-hour one, but not twice as much). The score already had that
+shape, but faded it over `τ_i = M_i/π_i`, which both capped it far too low (a whole day of deprivation bought a 50%
+task with a 30-min minimum ~7.5 min in the next 4 hours) and made it depend on the minimum time. User decision: one
+constant fade length `λ` = 4 h of schedulable time (`ScoreModel.COMPENSATION_LENGTH_MILLIS`), so a long blockage now
+buys up to `π(1−π)·λ` (1 h for a 50% task) of extra presence on each side. The lag's own forgetting stays on `τ_i`.
+`ScheduleScoreTest.a_longer_pre_placed_task_saturates_the_compensation_on_both_sides` pins the requirement's example
+on the planned schedule; `compensation_decays_with_distance_and_is_bounded` and
+`SchedulerFillTest.a_block_committed_ahead_swells_the_other_task_around_it` were moved to the 4-hour scale.
+
 ### "no screen" means only "refuses the tasks at 0 to it" — 2026-09-19
 
 User rule: *"'no screen' period only means it forbids tasks that have 0 resilience with 'no screen' period. It

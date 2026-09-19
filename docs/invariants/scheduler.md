@@ -278,6 +278,10 @@ model exists to prevent.
   multiplier mean "this fraction of the percentage for as long as the period lasts".
 - A deprivation is **fractional**: a resilience of `0.4` deprives a task of `0.6` of its multiplier there, and the
   compensation it buys is that fraction of a flat refusal's.
+- **The compensation fades over ONE constant length, `λ` = `ScoreModel.COMPENSATION_LENGTH_MILLIS` (4 h of
+  schedulable time), never over `τ_i`.** `λ` sets both how far a blockage's repayment reaches and how much a long
+  one can buy (`π_i(1−π_i)·λ` of extra presence per side), so a 48-hour blockage buys barely more than a 24-hour
+  one. Tied to `τ_i`, it made the repayment depend on the minimum time and shrank it to minutes (2026-09-19).
 - **NO IDLING is the hard constraint and the minimum time is the SOFT goal, and only one thing may empty a
   stretch: that nobody may run in it.** `docs/scheduler_requirements.md` § *No idling* against § *Soft Minimum
   Execution Time*, which is *"another optimization goal"*. A continuation that idles where a task may run is not a
