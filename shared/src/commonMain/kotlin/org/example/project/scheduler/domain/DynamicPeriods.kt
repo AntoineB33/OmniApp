@@ -583,9 +583,10 @@ object DynamicPeriods {
         // case to be dropped — it is the rule. Mode 2 drags a pose onto the line, so the period the line came
         // out of may not exist at all (the pose covers `(t_p, t_p + d]` and leaves `t_p` itself uncovered by
         // construction), and answering null there would leave mode 2's own rule reaching nothing exactly where
-        // it matters most. `SchedulerDomain.fillSchedule` re-expresses whatever this returns as `[now, now+1)`
-        // — the one millisecond the walk reads as "what runs AT the line must be resilient to no on-screen
-        // task" — so the reach behind the line is documentation, never a scheduling input.
+        // it matters most. `SchedulerDomain.fillSchedule` re-expresses whatever this returns as `[now, now]`
+        // — the zero-width instant the fill reads as "the run AT the line must be resilient to no on-screen
+        // task" (`ScheduleFill.firstAmong`) — so the reach behind the line is documentation, never a scheduling
+        // input.
         val from = (ends ?: tpMillis).coerceAtMost(tpMillis)
         return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
     }

@@ -42,7 +42,10 @@ internal object ScheduleFill {
         val lookbackMillis: Long,
         /** `R(x)` at the now-line, in the tie-break order. */
         val ruleState: List<PlanTask>,
-        /** Every restrictive period, whatever its kind. */
+        /**
+         * Every restrictive period, whatever its kind. A ZERO-width one with a closed end at [startMillis] restricts the
+         * line's own instant: it takes no time from anybody, it only decides who the first run may be ([firstAmong]).
+         */
         val periods: List<RestrictivePeriod>,
         /** The pre-placed tasks (a `null` task: a block owned by nobody). */
         val blocks: List<PlanBlock>,
@@ -173,7 +176,8 @@ internal object ScheduleFill {
         input.adopted?.let { adopted ->
             val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to)
             val cursor = replay(model, input.history, input.startMillis)
-            if (ScheduleOptimizer(model).isLegalContinuation(cursor, adoptedRuns(model, adopted, input.startMillis), model.uAt(emitEnd))) {
+            val among = firstAmong(input, model)
+            if (ScheduleOptimizer(model).isLegalContinuation(cursor, adoptedRuns(model, adopted, input.startMillis), model.uAt(emitEnd), among)) {
                 layAdopted(model, adopted, input.startMillis, emitEnd, raw)
                 return Result(group(raw), input.cycle)
             }
@@ -183,7 +187,7 @@ internal object ScheduleFill {
         // The rules already repeat: unroll them, if nothing they did not see has changed.
         val cycle = input.cycle
         if (cycle != null && adoptedSeed == null && cycle.ruleStateHash == ruleStateHash && input.forcedFirst == null &&
-            input.refusedFirst == null && cycle.anchorMillis <= input.startMillis
+            input.refusedFirst == null && linePoints(input).isEmpty() && cycle.anchorMillis <= input.startMillis
         ) {
             val modelFrom = minOf(from, cycle.anchorMillis)
             val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, modelFrom, to), modelFrom, to)
@@ -198,6 +202,7 @@ internal object ScheduleFill {
         val cursor = replay(model, input.history, input.startMillis)
         val forcedFirst = input.forcedFirst?.let { model.indexOf[it] } ?: -1
         val refusedFirst = input.refusedFirst?.let { model.indexOf[it] } ?: -1
+        val among = firstAmong(input, model)
         // Past the limit the rules may not grow: the search stops there, and what lies beyond is the repetition —
         // exact when the runs repeat, the closest approximate one when they do not.
         val limit = input.repeatBeyondMillis
@@ -208,15 +213,15 @@ internal object ScheduleFill {
         // The platform solver is resolved only for a fill given search time: on the desktop, resolving it loads
         // OR-Tools' native library (~1 s once), which a display fill on the UI thread must never pay.
         val optimizer = ScheduleOptimizer(model, solver = if (input.budget.expired()) null else platformScheduleSolver())
-        var plan = optimizer.plan(cursor, searchUntil, forcedFirst, refusedFirst, seeds = seeds, budget = input.budget)
+        var plan = optimizer.plan(cursor, searchUntil, forcedFirst, refusedFirst, seeds = seeds, budget = input.budget, firstAmong = among)
         var settled = settle(model, plan.runs, ruleStateHash, approximate, emitU)
         if (settled.second == null && searchUntil < model.uEnd - ScoreModel.EPS) {
             // Nothing repeats here (the environment ahead is not uniform): the search has to reach the horizon itself.
-            plan = optimizer.plan(cursor, model.uEnd, forcedFirst, refusedFirst, seeds = seeds + listOf(plan.runs), budget = input.budget)
+            plan = optimizer.plan(cursor, model.uEnd, forcedFirst, refusedFirst, seeds = seeds + listOf(plan.runs), budget = input.budget, firstAmong = among)
             settled = plan.runs to null
         }
         val moving = input.ruleStateAt
-        if (moving != null && forcedFirst < 0 && refusedFirst < 0) {
+        if (moving != null && forcedFirst < 0 && refusedFirst < 0 && among.isEmpty()) {
             val switch = ruleStateSwitch(input, model, settled.first, emitEnd, moving)
             if (switch != null) {
                 val (cut, head) = switch
@@ -618,6 +623,36 @@ internal object ScheduleFill {
         }
         if (end > cursor.u + ScoreModel.EPS) model.serve(cursor, -1, end)
         return model.rebase(cursor)
+    }
+
+    /**
+     * The zero-width periods restricting the line's own instant: `[startMillis, startMillis]`, end closed. `windowsFor`
+     * never turns one into a window — it covers no time — so this is the only place it is read.
+     */
+    private fun linePoints(input: Input): List<RestrictivePeriod> =
+        input.periods.filter {
+            it.kind.isNotEmpty() && it.closedEnd && it.startMillis == input.startMillis && it.endMillis == input.startMillis
+        }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, modes 2 & 3: *"$now line$ must be covered by the period
+     * 'no on-screen task'"* — at the line's INSTANT, a zero-width period ([linePoints]). The tasks that may be the first
+     * run from it: those the kinds covering that instant leave a non-zero multiplier. Empty — no restriction — when no
+     * such period is there; and [ScheduleOptimizer.firstOptions] lets anybody run when nobody in the set may (the
+     * README's *"or no task if none have such resilience"* is a no-task of zero length).
+     *
+     * It restricts the first run and never CUTS it. The cover was once `[now, now + 1)`: a one-millisecond window,
+     * whose edge the search decides at like any other, so a resilient task got exactly one millisecond and an
+     * on-screen task the rest — and since time passing never re-plans, an away line then swept on-screen tasks the
+     * display refuses to draw or bank: an idle stretch where the away plan had tasks to run (§ *No idling*).
+     */
+    fun firstAmong(input: Input, model: ScoreModel): Set<Int> {
+        val points = linePoints(input)
+        if (points.isEmpty()) return emptySet()
+        val window = PlanWindow.of(input.startMillis, input.startMillis, points.map { it.kind }.toSet(), model.tasks)
+        val allowed = (0 until model.n).filterTo(HashSet()) { window.allows(model.tasks[it].id) }
+        // Restricting nobody is no restriction: the first run is then left to the search like any other.
+        return if (allowed.size == model.n) emptySet() else allowed
     }
 
     /**

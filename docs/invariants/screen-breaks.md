@@ -223,16 +223,20 @@ identifiers, persisted keys.
   line and `awayCover` has nothing left to do; in mode 3 the pose the line is inside usually covers it too.
   **"Nothing precedes" is not a reason to answer null**: mode 2 drags the pose onto the line as
   `(t_p, t_p + d]`, which leaves `t_p` itself uncovered by construction, so the cover is then the line's own
-  instant `[t_p, t_p]` — and since the fill re-expresses whatever comes back as `[now, now + 1)` anyway, the
+  instant `[t_p, t_p]` — and since the fill re-expresses whatever comes back as `[now, now]` anyway, the
   reach behind the line is documentation and the existence of the answer is the rule.
 - **The cover is an ENVIRONMENT period, never a panel, and that distinction is the whole of why it was
   missing.** It shipped as an `Away` panel, the calendar drew a synthetic band nobody wanted, and the revert
   (2026-08-31) took the scheduling effect away with the band — so mode 2's own rule reached nothing at all and
   the fill went on starting an on-screen task AT the line while no device of the account was unlocked. It is
   built in `fillSchedule`, straight into `restrictions`; `dynamicPeriodPanels` answers what the calendar draws
-  and must not carry it. Its forward reach is `[now, now + 1)` — the README's end is CLOSED, so in discrete
-  time it covers the line's own instant, where any other period clipped to the line would collapse and be
-  dropped.
+  and must not carry it. **It is ZERO wide, `[now, now]`, end closed** — the README's end is CLOSED, so it
+  covers the line's own instant and nothing more — and the fill reads it as a rule on the FIRST run
+  (`ScheduleFill.firstAmong`): the run the line starts in must be a task resilient to `no on-screen task`,
+  when one exists, and it runs its full length. **Never `[now, now + 1)`**: a one-millisecond window is an edge
+  the search decides at, so the resilient task got one millisecond and an on-screen task the rest, and the
+  away line (or the mode-2 sweep after a device sleep) then walked over on-screen work the display clips and
+  the bank refuses — an idle stretch where resilient work was schedulable (§ *No idling*).
 - **The now-line NEVER JUMPS — a distant position is a JOURNEY, and waking from device sleep is walked in
   mode 2 except where the account was in MODE 3** (`SchedulerEngine.sweepNowLineTo`,
   `SchedulerDomain.sweepStepMillis`). The README says both halves in
@@ -294,9 +298,9 @@ identifiers, persisted keys.
   (`SchedulerDomain.currentPanel`, the one reading the cue sweep uses). The requirement — *"Mode 2 & 3: $now
   line$ must be covered by the period 'no on-screen task'"* — binds the line at **every** instant it is in
   one of those modes, not only at the instant the last fill ran. The fill expresses it as
-  `DynamicPeriods.awayCover`, one millisecond wide at the `t_p` it was built for (`[now, now + 1)`), and
-  time passing never re-plans — so the line walks straight out of that millisecond into the task the plan
-  put after it. A reader that takes the stored panel at face value is reading an answer computed for a `t_p`
+  `DynamicPeriods.awayCover`, zero wide at the `t_p` it was built for (`[now, now]`: it picks the run the
+  line starts in), and time passing never re-plans — so the line walks on past that run into the task the
+  plan put after it. A reader that takes the stored panel at face value is reading an answer computed for a `t_p`
   the line has left, and the app **spoke "Task to do now" in the middle of a declared-away spell** (account
   3, 15:08:40 on 2026-09-12, away since 14:54:15). So the mode is applied where the question is asked: in
   either away mode an ON-SCREEN task is not at the line, whatever a plan built under mode 1 says. Who

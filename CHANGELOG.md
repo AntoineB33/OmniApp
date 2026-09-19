@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The away cover is zero wide, `[now, now]`, not one millisecond — 2026-09-19
+
+In modes 2 and 3 the fill covered the line with a "no screen" period `[now, now + 1)`. The search decides at every
+window edge, so the resilient task got one millisecond and an on-screen task got the rest. Time passing never
+re-plans, so the away line (and the mode-2 sweep after a device sleep) then walked over on-screen work that the
+display clips and the bank refuses. That left idle a stretch where off-screen tasks could have run (§ *No idling*).
+User fix: the cover is a zero-width, closed-end period at the line. `ScheduleFill.firstAmong` reads it as a rule on
+the first free run only (`ScheduleOptimizer.firstOptions`, the same funnel as §7/§13's first-run rules): that run
+must be a task resilient to "no screen" when one exists, and it keeps its full length. With no resilient task, the
+README's "no task" now has zero length, so the plan is no longer cut at the line. `AwayCoverFirstRunTest` is new;
+`TpModeTest.both_away_modes_cover_the_line_with_no_on_screen_task` now asserts this.
+
 ### The compensation fades over 4 hours, not over the task's own window — 2026-09-19
 
 `docs/scheduler_requirements.md` now states that the compensation decays on both sides of a blockage and saturates

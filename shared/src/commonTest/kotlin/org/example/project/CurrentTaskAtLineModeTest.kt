@@ -16,9 +16,9 @@ import org.example.project.scheduler.state.SchedulerState
  * period 'no on-screen task'"** — so *what is the task to do now* is a question about the line AND the mode,
  * and [SchedulerDomain.currentPanel] is where the two meet.
  *
- * The fill expresses the same rule as [DynamicPeriods.awayCover], but only one millisecond wide at the `t_p`
- * it was built for (`[now, now + 1)`), and time passing never re-plans (CLAUDE.md) — so the line walks out
- * of that millisecond into whatever the plan put after it. Reading the stored panel alone therefore reads an
+ * The fill expresses the same rule as [DynamicPeriods.awayCover], but only at the `t_p` it was built for
+ * (`[now, now]`: it picks the run the line starts in), and time passing never re-plans (CLAUDE.md) — so the
+ * line walks on past that run into whatever the plan put after it. Reading the stored panel alone therefore reads an
  * answer computed for a `t_p` the line has left, which is how the app came to announce "Task to do now" in
  * the middle of a declared-away spell (account 3, 15:08:40 on 2026-09-12, away since 14:54:15).
  *

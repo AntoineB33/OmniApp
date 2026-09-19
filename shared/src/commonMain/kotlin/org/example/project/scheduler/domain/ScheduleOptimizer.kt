@@ -217,14 +217,16 @@ class ScheduleOptimizer(
         val fixed: Int = -1,
         val fixedLength: Double = 0.0,
     ) {
-        /** The best candidate's index, honouring PRD §13's [forced] task and PRD §7's [refused] one; -1 if none. */
-        fun choose(forced: Int = -1, refused: Int = -1): Int {
-            val forcedHere = forced >= 0 && forced in candidates
+        /**
+         * The best candidate's index, honouring PRD §13's [forced] task, PRD §7's [refused] one and the instant
+         * restriction at the line ([among], see [firstOptions]); -1 if none.
+         */
+        fun choose(forced: Int = -1, refused: Int = -1, among: Set<Int> = emptySet()): Int {
+            val allowed = firstOptions(candidates, forced, refused, among)
             var best = -1
             for ((k, j) in candidates.withIndex()) {
                 if (values[k] == Double.POSITIVE_INFINITY) continue
-                if (forcedHere && j != forced) continue
-                if (j == refused && candidates.size > 1) continue
+                if (j !in allowed) continue
                 if (best < 0 || better(values[k], values[best])) best = k
             }
             return best
@@ -295,13 +297,14 @@ class ScheduleOptimizer(
         alternatives: Boolean = true,
         seeds: List<List<Run>> = emptyList(),
         budget: SearchBudget = SearchBudget.NONE,
+        firstAmong: Set<Int> = emptySet(),
     ): Plan {
-        val pinFirst = forcedFirst >= 0 || refusedFirst >= 0
-        val built = construct(start, untilU, forcedFirst, refusedFirst)
+        val pinFirst = forcedFirst >= 0 || refusedFirst >= 0 || firstAmong.isNotEmpty()
+        val built = construct(start, untilU, forcedFirst, refusedFirst, firstAmong)
         var runs = built
         var cost = score(start, runs)
         for (seed in seeds) {
-            val completed = complete(start, seed, untilU, forcedFirst, refusedFirst, built) ?: continue
+            val completed = complete(start, seed, untilU, forcedFirst, refusedFirst, firstAmong, built) ?: continue
             val c = score(start, completed)
             if (better(c, cost)) {
                 runs = completed
@@ -320,7 +323,7 @@ class ScheduleOptimizer(
             // solver has nothing left to find. It keeps a share of the time back for the solver when it does not.
             val external = solver
             val exactBudget = if (external == null) budget else budget.share(budget.remainingMillis() * EXACT_SHARE_PERCENT / 100)
-            val exact = certify(start, untilU, forcedFirst, refusedFirst, incumbent = runs, budget = exactBudget)
+            val exact = certify(start, untilU, forcedFirst, refusedFirst, incumbent = runs, budget = exactBudget, firstAmong = firstAmong)
             if (better(exact.cost, cost)) {
                 runs = exact.runs
                 cost = exact.cost
@@ -328,7 +331,7 @@ class ScheduleOptimizer(
             certified = exact.certified
             if (!certified && external != null && !budget.expired()) {
                 val proposed = runCatching { external.improve(model, start, untilU, runs, pinFirst, budget) }.getOrNull()
-                val checked = proposed?.let { accepted(start, it, untilU, forcedFirst, refusedFirst, runs.firstOrNull()) }
+                val checked = proposed?.let { accepted(start, it, untilU, forcedFirst, refusedFirst, firstAmong, runs.firstOrNull()) }
                 if (checked != null) {
                     val polished = improve(start, checked, untilU, pinFirst)
                     val c = score(start, polished)
@@ -360,6 +363,7 @@ class ScheduleOptimizer(
         untilU: Double,
         forcedFirst: Int,
         refusedFirst: Int,
+        firstAmong: Set<Int>,
         prefix: List<Run> = emptyList(),
         firstDecided: Boolean = false,
     ): List<Run> {
@@ -378,7 +382,7 @@ class ScheduleOptimizer(
                 runs += Run(eval.fixed, from, to, -1)
                 continue
             }
-            val k = eval.choose(if (first) forcedFirst else -1, if (first) refusedFirst else -1)
+            val k = if (first) eval.choose(forcedFirst, refusedFirst, firstAmong) else eval.choose()
             if (k < 0) break
             first = false
             val to = minOf(untilU, from + eval.lengths[k])
@@ -392,8 +396,9 @@ class ScheduleOptimizer(
     /**
      * The longest prefix of [runs] that is a legal continuation from [start] — every run starts where the previous
      * one ended, is a task that may run over all of it, never enters another task's pre-placed block, and the first
-     * free run honours §13's [forcedFirst] and §7's [refusedFirst] — with the pre-placed blocks the environment
-     * holds laid in between. Null when the first free run breaks §7/§13 (then the whole continuation is unusable).
+     * free run honours §13's [forcedFirst], §7's [refusedFirst] and the instant restriction at the line
+     * ([firstAmong]) — with the pre-placed blocks the environment holds laid in between. Null when the first free
+     * run breaks one of them (then the whole continuation is unusable).
      * The second value says whether a free run has been decided.
      */
     private fun legalPrefix(
@@ -402,6 +407,7 @@ class ScheduleOptimizer(
         untilU: Double,
         forcedFirst: Int,
         refusedFirst: Int,
+        firstAmong: Set<Int> = emptySet(),
     ): Pair<List<Run>, Boolean>? {
         val out = ArrayList<Run>()
         var u = start.u
@@ -423,11 +429,7 @@ class ScheduleOptimizer(
             if (r.fromU > u + ScoreModel.EPS) break
             val task = r.task
             if (!model.permitted(task, u)) break
-            if (!decided) {
-                val candidates = model.candidatesAt(u)
-                if (forcedFirst >= 0 && forcedFirst in candidates && task != forcedFirst) return null
-                if (refusedFirst >= 0 && task == refusedFirst && candidates.size > 1) return null
-            }
+            if (!decided && task !in firstOptions(model.candidatesAt(u), forcedFirst, refusedFirst, firstAmong)) return null
             val e = minOf(r.toU, untilU, model.runLimit(task, u), model.nextFixedStart(u))
             if (e <= u + ScoreModel.EPS) break
             out += Run(task, u, e, -1)
@@ -442,9 +444,9 @@ class ScheduleOptimizer(
      * to nobody where somebody may run (§ *No idling*), no task where it may not run, no other task's pre-placed block
      * entered. What a follower checks another device's runs against before laying them on its own timeline.
      */
-    fun isLegalContinuation(start: ScoreCursor, runs: List<Run>, untilU: Double): Boolean {
+    fun isLegalContinuation(start: ScoreCursor, runs: List<Run>, untilU: Double, firstAmong: Set<Int> = emptySet()): Boolean {
         if (untilU <= start.u + ScoreModel.EPS) return true
-        val (prefix, _) = legalPrefix(start, runs, untilU, -1, -1) ?: return false
+        val (prefix, _) = legalPrefix(start, runs, untilU, -1, -1, firstAmong) ?: return false
         return prefix.isNotEmpty() && prefix.last().toU >= untilU - ScoreModel.EPS
     }
 
@@ -460,9 +462,10 @@ class ScheduleOptimizer(
         untilU: Double,
         forcedFirst: Int,
         refusedFirst: Int,
+        firstAmong: Set<Int>,
         built: List<Run>,
     ): List<Run>? {
-        val (prefix, decided) = legalPrefix(start, seed, untilU, forcedFirst, refusedFirst) ?: return null
+        val (prefix, decided) = legalPrefix(start, seed, untilU, forcedFirst, refusedFirst, firstAmong) ?: return null
         if (prefix.isEmpty()) return null
         val end = prefix.last().toU
         if (end >= untilU - ScoreModel.EPS) return prefix
@@ -471,15 +474,15 @@ class ScheduleOptimizer(
         }
         // The tail must start where the prefix ends; a pre-placed run the prefix stopped inside is laid again whole.
         if (tail.isEmpty() || abs(tail.first().fromU - end) > ScoreModel.EPS) {
-            return construct(start, untilU, forcedFirst, refusedFirst, prefix = prefix, firstDecided = decided)
+            return construct(start, untilU, forcedFirst, refusedFirst, firstAmong, prefix = prefix, firstDecided = decided)
         }
         return prefix + tail
     }
 
     /**
      * An external solver's continuation, kept only when ALL of it is legal and it reaches [untilU] (a solver answer is
-     * never completed or cut: it is either a whole continuation or nothing), and — when §7/§13 decided the first run
-     * ([pinned]) — it keeps that run's task.
+     * never completed or cut: it is either a whole continuation or nothing), and — when §7/§13 or the instant
+     * restriction at the line decided the first run ([pinned]) — it keeps that run's task.
      */
     private fun accepted(
         start: ScoreCursor,
@@ -487,11 +490,12 @@ class ScheduleOptimizer(
         untilU: Double,
         forcedFirst: Int,
         refusedFirst: Int,
+        firstAmong: Set<Int>,
         pinned: Run?,
     ): List<Run>? {
-        val (prefix, _) = legalPrefix(start, proposed, untilU, forcedFirst, refusedFirst) ?: return null
+        val (prefix, _) = legalPrefix(start, proposed, untilU, forcedFirst, refusedFirst, firstAmong) ?: return null
         if (prefix.isEmpty() || prefix.last().toU < untilU - ScoreModel.EPS) return null
-        if ((forcedFirst >= 0 || refusedFirst >= 0) && pinned != null) {
+        if ((forcedFirst >= 0 || refusedFirst >= 0 || firstAmong.isNotEmpty()) && pinned != null) {
             val firstFree = prefix.firstOrNull { model.fixedAt(it.fromU) < 0 } ?: return null
             val pinnedFree = if (model.fixedAt(pinned.fromU) < 0) pinned.task else -1
             if (pinnedFree >= 0 && firstFree.task != pinnedFree) return null
@@ -576,8 +580,9 @@ class ScheduleOptimizer(
         refusedFirst: Int = -1,
         incumbent: List<Run>? = null,
         budget: SearchBudget = SearchBudget.NONE,
+        firstAmong: Set<Int> = emptySet(),
     ): Plan {
-        val initial = incumbent ?: plan(start, untilU, forcedFirst, refusedFirst, alternatives = false).runs
+        val initial = incumbent ?: plan(start, untilU, forcedFirst, refusedFirst, alternatives = false, firstAmong = firstAmong).runs
         var bestCost = score(start, initial)
         var bestRuns: List<Run> = initial
         val timed = !budget.expired()
@@ -606,10 +611,9 @@ class ScheduleOptimizer(
             if (settled.cost + model.lowerBound(settled, untilU) >= bestCost * (1.0 - TIE)) return
             val fixed = model.fixedAt(c.u)
             val options = if (fixed >= 0) listOf(fixed) else model.candidatesAt(c.u)
-            val forcedHere = first && fixed < 0 && forcedFirst >= 0 && forcedFirst in options
+            val allowed = if (first && fixed < 0) firstOptions(options, forcedFirst, refusedFirst, firstAmong) else options
             for (j in options) {
-                if (forcedHere && j != forcedFirst) continue
-                if (first && fixed < 0 && refusedFirst >= 0 && j == refusedFirst && options.size > 1) continue
+                if (j !in allowed) continue
                 val lengths = if (fixed >= 0) doubleArrayOf(minOf(untilU, model.fixedEnd(c.u)) - c.u)
                 else lengthsFor(c, j, untilU)
                 for (d in lengths) {
@@ -638,6 +642,19 @@ class ScheduleOptimizer(
 
     companion object {
         const val DEFAULT_SEARCH_BUDGET: Int = 20_000
+
+        /**
+         * The tasks the first FREE run may be, out of the [candidates] the instant offers: PRD §13's [forced] task
+         * alone when it may run; else, when anybody in [among] may run, only them — the instant restriction at the
+         * line (`ScheduleFill.firstAmong`: modes 2 & 3 cover the line itself by "no on-screen task"); and never
+         * PRD §7's [refused] task while somebody else may.
+         */
+        fun firstOptions(candidates: List<Int>, forced: Int, refused: Int, among: Set<Int>): List<Int> {
+            if (forced >= 0 && forced in candidates) return listOf(forced)
+            val restricted =
+                if (among.isEmpty()) candidates else candidates.filter { it in among }.ifEmpty { candidates }
+            return if (refused >= 0 && restricted.size > 1) restricted.filter { it != refused } else restricted
+        }
         const val DEFAULT_LOOKAHEAD_DEPTH: Int = 2
         const val DEFAULT_IMPROVE_BUDGET: Int = 5_000
         /** How many of the most promising trials are looked into one run deeper. */

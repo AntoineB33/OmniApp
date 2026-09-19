@@ -153,16 +153,21 @@ class TpModeTest {
         )
 
         // Both away modes cover the line: they differ over whether a DYNAMIC period may, never over this.
+        //
+        // The cover is the line's INSTANT, `[now, now]` (`ScheduleFill.firstAmong`). With no resilient task the
+        // README's "no task" is a no-task of zero length, so the plan is not cut: the only task starts at the line
+        // (what the app ANNOUNCES there is `currentPanel`'s, which asks the mode — `CurrentTaskAtLineModeTest`).
+        // The cover used to be `[now, now + 1)`, a window that cut every away plan one millisecond past the line.
+        // `AwayCoverFirstRunTest` pins the case with a resilient task.
         for (mode in listOf(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK)) {
             val away = fill(mode)
             assertTrue(
-                away.none { it.auto && it.taskId == solo && it.startEpochMillis <= NOW && NOW < it.endEpochMillis },
-                "mode $mode: an on-screen task may not be what the line is covered by",
+                away.any { it.auto && it.taskId == solo && it.startEpochMillis <= NOW && it.endEpochMillis > NOW + MIN },
+                "mode $mode: with nobody resilient, the cover takes no time and the line is not left idle",
             )
-            // The plan is not abandoned — it resumes the instant past the covered line.
             assertTrue(
-                away.any { it.auto && it.taskId == solo && it.startEpochMillis > NOW },
-                "mode $mode covers the line, it does not empty the timeline ahead of it",
+                SchedulerDomain.currentPanel(s.copy(panels = away), NOW, mode) == null,
+                "mode $mode: the on-screen task at the line is still never what the app announces",
             )
             // And the cover stays out of `state.panels`: it is read by the fill, never drawn.
             assertTrue(

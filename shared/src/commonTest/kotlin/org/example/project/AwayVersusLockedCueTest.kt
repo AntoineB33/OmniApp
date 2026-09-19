@@ -140,8 +140,8 @@ class AwayVersusLockedCueTest {
      * modes require to be covered by PeriodKinds.NO_SCREEN, so there is nothing to announce there.
      *
      * The app announced one anyway (account 3, "Task to do now — planning" at 15:08:40, away since
-     * 14:54:15). The cover the fill builds for mode 2/3 is one millisecond wide at the `t_p` it was built
-     * for, and time passing never re-plans — so the line walked out of it into the task the plan had put
+     * 14:54:15). The cover the fill builds for mode 2/3 holds only at the `t_p` it was built for (it picks
+     * the run the line starts in), and time passing never re-plans — so the line walked out of it into the task the plan had put
      * after it, and the cue read that stored panel without ever asking the mode. The calendar was already
      * cutting the panel and the §9 bank was already refusing the record over the same stretch; the cue was
      * the third reading of that rule and the only one that had never been written.

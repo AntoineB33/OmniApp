@@ -4030,8 +4030,8 @@ object SchedulerDomain {
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: *"Mode 2 & 3: $now line$ must be covered by
      * the period 'no on-screen task'"* — a constraint on the line at EVERY instant it is in one of those
      * modes, not only at the instant the last fill happened to run. The fill expresses it as
-     * [DynamicPeriods.awayCover], one millisecond wide at the line it was built for
-     * (`[now, now + 1)`); the line then walks on without re-planning (CLAUDE.md: time passing never
+     * [DynamicPeriods.awayCover], zero wide at the line it was built for
+     * (`[now, now]`: it decides the run the line starts in, [ScheduleFill.firstAmong]); the line then walks on without re-planning (CLAUDE.md: time passing never
      * re-plans), straight into the on-screen task the plan put after it. Reading the stored panel alone is
      * therefore reading an answer computed for a different `t_p` — and the app **announced "Task to do now"
      * in the middle of a declared-away spell** (account 3, 15:08:40 on 2026-09-12, away since 14:54:15).
@@ -5020,9 +5020,14 @@ object SchedulerDomain {
             retractedAtLineSpans(standingRestrictions, nowMillis, tpMode, state.periodKindConfig)
         val restrictions =
             retractAtLine(standingRestrictions, retractedSpans, state.periodKindConfig) +
-                // Mode 2's cover. It is the one period whose end is CLOSED — the README covers `t_p` itself — so in
-                // discrete time it reaches `now + 1`: what runs at the line must be resilient to "no screen".
-                listOfNotNull(awayCover?.let { RestrictivePeriod(nowMillis, nowMillis + 1L, it.kind, it.label) })
+                // The away modes' cover. It is the one period whose end is CLOSED — the README covers `t_p` itself —
+                // and it is ZERO wide, `[now, now]`: what runs AT the line must be resilient to "no screen", and
+                // nothing more ([ScheduleFill.firstAmong]). It was `[now, now + 1)`, a one-millisecond window the
+                // search decides at the edge of: the resilient task got that millisecond and an on-screen task the
+                // rest, which the away line then swept without drawing or banking anything (§ *No idling*).
+                listOfNotNull(
+                    awayCover?.let { RestrictivePeriod(nowMillis, nowMillis, it.kind, it.label, closedEnd = true) },
+                )
 
         // --- where placement starts. An EXTENSION keeps the head already materialized: it is part of the
         // continuation the rules gave, so it is replayed as served time, never re-planned and never treated as a
