@@ -30,6 +30,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.defaultSubtreePriorities
+import org.example.project.scheduler.state.isTitledDefaultSubtreeRow
 import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.ui.TaskTreeView
 
@@ -172,8 +173,11 @@ fun DefaultSubtreeWindow(
             // against, and the cached answer would be thrown away on every recomposition of either.
             hueMemo = remember { TaskHueMemo() },
             rowTrailing = { cellId ->
-                // PRD §4: every non-empty row carries the switch — an empty cell has no task behind it.
-                if (projected.cells[cellId]?.taskId != null) {
+                // PRD §4: every titled row OF THE TEMPLATE carries the switch. Not the rows drawn under a
+                // bound one — those are the live tree's, and a switch is a fact about a template cell — and
+                // not an empty row, which keeps pointing at its blank task once emptying it took the list's
+                // trailing placeholder with it ([isTitledDefaultSubtreeRow]).
+                if (state.isTitledDefaultSubtreeRow(cellId)) {
                     DefaultSubtreeRowSwitch(
                         checked = cellId !in state.defaultSubtree.boundCells,
                         onToggle = {

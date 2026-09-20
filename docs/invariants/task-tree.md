@@ -512,6 +512,15 @@ until it is applied to a real cell.
 - **`defaultSubtreeIsEmpty` lives on the STATE, not on the template.** A bound row's title lives on the *live*
   task it points at, so asking the template alone calls it untitled and skips a template that is anything but
   empty.
+- **"Does this row carry a switch?" is `SchedulerState.isTitledDefaultSubtreeRow`, never `cell.taskId !=
+  null`** — the window that draws the switch, the intent that flips it and the settle's "ends in a titled row"
+  all ask that one function. Two rows answer no that the shorthand answered yes about. A row **emptied** keeps
+  pointing at its now blank-titled task, and when it was the cell directly above the list's trailing
+  placeholder it *becomes* the bottom cell (`applySetCellTitle` drops that placeholder — the inverse of
+  Auto-Expansion), so deleting every row of a sub-list leaves one cell that is a placeholder to the tree and
+  drew a switch here (2026-09-20, account 3); and the rows under a **bound** row are the LIVE tree's, whose
+  cell ids `boundCells` is not keyed by — a switch flipped there wrote an entry the next fold dropped. The
+  predicate resolves the title through the live tasks, exactly as `defaultSubtreeIsEmpty` has to.
 - **A node's switch is `boundCells`.** Off ⇒ every grafted cell mirrors the row's own `taskId`; on (the
   default) ⇒ a fresh task per graft, carrying the row's title, fields, minimum time and weight row.
 - **Every template sub-list is titled cells ending in ONE empty cell**, kept by the tree's own
@@ -520,7 +529,9 @@ until it is applied to a real cell.
   "New task" draft, a task-tree switch). `SchedulerReducer.settleDefaultSubtree` — after every reduction and on
   decode — empties a cell whose task resolves nowhere and runs that cleanup over the projection, so such a row is
   removed (with its switch), never drawn as an empty row in the middle of its list. The **ending** is healed
-  there too: a sub-list whose last row is titled has nowhere left to type, so a placeholder is put back — on
+  there too: a sub-list whose last row is titled (`isTitledDefaultSubtreeRow` — a blank-titled task is not a
+  title, and reading it as one re-folded the whole template on every reduction while
+  `ensureTrailingPlaceholder` rightly did nothing) has nowhere left to type, so a placeholder is put back — on
   load as well as after any reduction, because the build that let a bound row eat one wrote that state to disk.
   It returns the same instance when nothing dangles and nothing ends titled; keep both checks to one lookup per
   template cell and per template list, they run on every tick.

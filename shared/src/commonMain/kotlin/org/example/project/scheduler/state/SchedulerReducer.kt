@@ -211,7 +211,7 @@ object SchedulerReducer {
         val unterminated =
             template.lists.values.filter { list ->
                 val last = list.cellIds.lastOrNull() ?: return@filter false
-                template.cells[last]?.taskId != null
+                state.isTitledDefaultSubtreeRow(last)
             }
         if (dangling.isEmpty() && unterminated.isEmpty()) return state
         val projected = state.projectDefaultSubtree()
@@ -1304,8 +1304,9 @@ object SchedulerReducer {
         bound: Boolean,
     ): SchedulerState {
         val template = state.defaultSubtree
-        // An empty row has no task behind it, so it has no switch to flip.
-        if (template.tree.cells[cellId]?.taskId == null) return state
+        // An empty row has no task behind it, so it has no switch to flip — and neither has a row of the
+        // LIVE tree, drawn under a bound row as the mirror it is ([isTitledDefaultSubtreeRow]).
+        if (!state.isTitledDefaultSubtreeRow(cellId)) return state
         val next =
             if (bound) template.boundCells + cellId else template.boundCells - cellId
         if (next == template.boundCells) return state

@@ -19,6 +19,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.state.defaultSubtreePriorities
+import org.example.project.scheduler.state.isTitledDefaultSubtreeRow
 import org.example.project.scheduler.state.projectDefaultSubtree
 
 /**
@@ -62,6 +63,25 @@ class DefaultSubtreeTest {
             .mapNotNull { state.tasks[it]?.title }
             .filter { it.isNotBlank() }
     }
+
+    /** The template sub-list [cellId] parents. */
+    private fun childListOf(state: SchedulerState, cellId: CellId): CellListId {
+        val tree = state.defaultSubtree.tree
+        val taskId = tree.cells[cellId]!!.taskId!!
+        return (tree.tasks[taskId] ?: state.tasks[taskId])!!.childListId!!
+    }
+
+    /** A press on a template row, through the window's own intent. */
+    private fun clickTemplateCell(state: SchedulerState, cellId: CellId, ctrl: Boolean): SchedulerState =
+        reduceInTemplate(
+            state,
+            SchedulerIntent.ClickCell(
+                cellId = cellId,
+                ctrl = ctrl,
+                shift = false,
+                visibleOrder = SchedulerDomain.selectableVisibleOrder(state.projectDefaultSubtree()),
+            ),
+        )
 
     private fun childCells(state: SchedulerState, cellId: CellId): List<CellId> {
         val taskId = state.cells[cellId]!!.taskId!!
@@ -454,6 +474,88 @@ class DefaultSubtreeTest {
         assertNull(healed.defaultSubtree.tree.cells[healedIds.last()]?.taskId)
         // A healthy template is never rewritten — the settle is on every reduction.
         assertTrue(SchedulerReducer.settleDefaultSubtree(healed) === healed)
+    }
+
+    @Test
+    fun deleting_every_row_of_a_template_sub_list_leaves_a_placeholder_with_no_switch() {
+        // 2026-09-20, account 3: under "how to measure improvement / planning" the user selected every titled
+        // row and pressed Delete, and the sub-list came back holding one EMPTY row that still carried the
+        // "new task" switch. Emptying the cell directly above a list's trailing placeholder drops that
+        // placeholder (`applySetCellTitle`'s inverse of Auto-Expansion), so the last row emptied becomes the
+        // list's bottom cell and goes on pointing at its now blank-titled task — and the window asked
+        // `taskId != null` rather than whether the row is titled.
+        var s = withTemplate(
+            listOf(
+                node(
+                    "dst/0",
+                    "planning",
+                    children = listOf(node("dst/1", "typing fast"), node("dst/2", "look for best LLM")),
+                ),
+            ),
+        )
+        val parent = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        val childList = childListOf(s, parent)
+        val rows = s.defaultSubtree.tree.lists[childList]!!.cellIds
+        assertEquals(3, rows.size, "fixture: two titled rows and the trailing placeholder")
+
+        s = reduceInTemplate(s, SchedulerIntent.ToggleExpand(parent))
+        s = clickTemplateCell(s, rows[0], ctrl = false)
+        s = clickTemplateCell(s, rows[1], ctrl = true)
+        s = reduceInTemplate(s, SchedulerIntent.EmptySelectedCells)
+
+        val remaining = s.defaultSubtree.tree.lists[childList]!!.cellIds
+        assertEquals(1, remaining.size, "the deleted rows leave ONE row to type into: $remaining")
+        val placeholder = remaining.single()
+        assertFalse(
+            s.isTitledDefaultSubtreeRow(placeholder),
+            "the row the delete left is empty, so the window draws no switch on it",
+        )
+        assertTrue(
+            SchedulerDomain.isTextuallyEmptyCell(s.projectDefaultSubtree(), placeholder),
+            "it is a placeholder to the tree as well, whatever it still points at",
+        )
+        // ... and the settle has nothing left to do, which is the other half of the bug: the sub-list read as
+        // "ending in a titled row" for ever, so every reduction re-projected and re-folded the whole template.
+        assertTrue(
+            SchedulerReducer.settleDefaultSubtree(s) === s,
+            "an emptied sub-list is settled, not re-folded on every reduction",
+        )
+        assertTemplateListsSettled(s)
+        // The switch is not there to be flipped either — the intent answers for itself.
+        assertTrue(
+            SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeCellBound(placeholder, bound = true)) === s,
+            "an empty row has no switch to flip",
+        )
+    }
+
+    @Test
+    fun a_row_drawn_UNDER_a_bound_row_belongs_to_the_live_tree_and_carries_no_switch() {
+        // A bound row shows the live task's own sub-tree, as any mirror does. Those rows are the live tree's
+        // cells: `boundCells` is keyed by a TEMPLATE cell, so a switch flipped on one of them wrote an entry
+        // the next fold silently dropped.
+        var s = SchedulerState.empty()
+        val live = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(live, "Shared"))
+        val shared = s.cells[live]!!.taskId!!
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.SetCellTitle(s.lists[s.tasks[shared]!!.childListId!!]!!.cellIds.first(), "child"),
+        )
+        val (mirrored, row) = withRowMirroring(s, shared)
+        val liveChild = mirrored.lists[mirrored.tasks[shared]!!.childListId!!]!!.cellIds.first()
+
+        assertTrue(mirrored.isTitledDefaultSubtreeRow(row), "the bound row itself carries the switch")
+        assertFalse(
+            mirrored.isTitledDefaultSubtreeRow(liveChild),
+            "the live task's own child is not a template row",
+        )
+        assertTrue(
+            SchedulerReducer.reduce(
+                mirrored,
+                SchedulerIntent.SetDefaultSubtreeCellBound(liveChild, bound = true),
+            ) === mirrored,
+            "flipping a switch the window does not draw changes nothing",
+        )
     }
 
     @Test

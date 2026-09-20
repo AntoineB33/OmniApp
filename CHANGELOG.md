@@ -11,6 +11,31 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An emptied template sub-list is a placeholder, switch and all — 2026-09-20
+
+Anomaly: in the Default sub-tree window, under `how to measure improvement / planning`, the user selected
+every titled row and pressed Delete — and the sub-list came back holding one EMPTY row that still carried the
+"new task" switch. Probed read-only against the release DB: the row is `cell/task/user/339/children/378`,
+pointing at `task/user/343`, whose title is blank. It is the list's only cell.
+
+- The cause is a rule of the tree, not of the template: emptying the cell directly ABOVE a list's trailing
+  placeholder drops that placeholder (`applySetCellTitle`, the inverse of Auto-Expansion), so the last row
+  emptied becomes the list's bottom cell — and an emptied cell goes on pointing at its now blank-titled task.
+  The live tree has always left exactly that behind and nothing shows it, because every reader there asks
+  `SchedulerDomain.isTextuallyEmptyCell`. The template window asked `cell.taskId != null` instead.
+- `SchedulerState.isTitledDefaultSubtreeRow` is now the one answer to "does this row carry a switch?", read
+  by the window that draws it, by `SetDefaultSubtreeCellBound` and by `settleDefaultSubtree`. It resolves the
+  title through the live tasks, as `defaultSubtreeIsEmpty` must, because a bound row's title lives on the
+  task it mirrors.
+- Two more things the shorthand got wrong. The settle read such a list as "ending in a titled row" for ever —
+  `ensureTrailingPlaceholder` correctly declines to add a second empty cell — so every reduction and every
+  decode re-projected and re-folded the whole template, against a documented early-exit. And the rows drawn
+  *under* a bound row are the LIVE tree's cells: they carried a switch whose flip wrote a `boundCells` entry
+  keyed by a live cell id, which the next fold silently dropped.
+
+No migration: the state the delete leaves is what the live tree leaves in the same case, and it now reads as
+the placeholder it is. Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy.
+
 ### A Change Task row that names a template task says so — 2026-09-20
 
 Anomaly: in the Default sub-tree window, the id menu under `planning / write good prompt` offered

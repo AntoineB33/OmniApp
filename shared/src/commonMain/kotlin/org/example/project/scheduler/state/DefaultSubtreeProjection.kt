@@ -77,6 +77,30 @@ val SchedulerState.defaultSubtreeIsEmpty: Boolean
     }
 
 /**
+ * PRD §4: whether [cellId] is a **titled row of the template** — the one question "does this row carry a
+ * switch?" is, asked by the window that draws it, by the intent that flips it and by the settle that keeps
+ * every sub-list ending in an empty cell.
+ *
+ * It is [SchedulerDomain.isTextuallyEmptyCell] read against the template, and it has to be written out here
+ * for the same reason [defaultSubtreeIsEmpty] does: a row whose switch is off holds its title on the **live**
+ * task it points at, so the template's own map has no entry for it. A cell the template does not own answers
+ * false — the rows drawn *under* a bound row are the live tree's, and a switch is a fact about a template
+ * cell (`boundCells` is keyed by one).
+ *
+ * The shorthand it replaces was `cell.taskId != null`, which is not the same question: emptying the cell
+ * directly above a list's trailing placeholder **drops** that placeholder ([applySetCellTitle]'s inverse of
+ * Auto-Expansion), so the emptied cell becomes the list's bottom one and goes on pointing at its now
+ * blank-titled task. Delete every row of a template sub-list and that is exactly what is left — a cell the
+ * tree treats as a placeholder in every other way, which the window drew a switch on and the settle then
+ * re-folded the whole template over on every reduction, for ever (2026-09-20, account 3).
+ */
+fun SchedulerState.isTitledDefaultSubtreeRow(cellId: CellId): Boolean {
+    val tree = defaultSubtree.tree
+    val taskId = tree.cells[cellId]?.taskId ?: return false
+    return (tree.tasks[taskId] ?: tasks[taskId])?.title.isNullOrEmpty() == false
+}
+
+/**
  * The state the "Default sub-tree" window draws and dispatches against: the template as the live tree, with
  * the account's real tree merged in underneath so a bound row resolves.
  */
