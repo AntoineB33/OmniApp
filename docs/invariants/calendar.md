@@ -240,6 +240,11 @@ Global rules that always apply: `CLAUDE.md`.
     the now-line and a checked one is frozen at the instant it was ticked off, and neither is the answer to
     "when is this reminder". What it hides, on the other hand, is read at where it is DRAWN (the quantized
     anchor, like every other derivation; only the placement is exact).
+- **The tag is also what the app ANNOUNCES from.** A reminder alerting at its moment (PRD §11/§14) keys on
+  the instant this tag is drawn for, through the cue sweep — never on a second reading of the recurrence — so
+  the app cannot say a reminder is due at a moment the calendar does not draw it at. A **checked** tag is a
+  completion and is never announced. `docs/invariants/alarms-and-timers.md` § *A reminder is announced by the
+  SWEEP, never armed*.
 - **"NOTHING IS PLACED HERE" IS A STATEMENT ABOUT THE SCHEDULER, AND IT HAS NO PAINT** — it covers an
   inactivity period, a sleep window, the §17 **"Before bed" hour** (`before bed`, whose default resilience is
   `0` like theirs — and which by default carries a `no screen` companion, as **a sleep window does too**, so

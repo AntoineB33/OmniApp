@@ -13,8 +13,10 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.engine.ArmedAlarm
+import org.example.project.scheduler.engine.RingKind
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.state.SchedulerIntent
@@ -67,7 +69,7 @@ class TimerEngineTest {
         h.vm.dispatch(SchedulerIntent.SetTimers(listOf(timer("timer-0", 300, label = "Tea", soundSeconds = 45))))
         h.vm.dispatch(SchedulerIntent.StartTimer("timer-0", at(7, 0)))
         h.armed.clear()
-        val armedNow = ArmedAlarm("timer-0", at(7, 5), "Tea", 45, vibrate = true, timer = true)
+        val armedNow = ArmedAlarm("timer-0", at(7, 5), "Tea", 45, alert = AlertSettings.RING, kind = RingKind.Timer)
 
         h.engine.onAlarmFire(armedNow)
 
@@ -91,7 +93,7 @@ class TimerEngineTest {
         h.armed.clear()
 
         // Any ring re-arms from the state; fire an unrelated id so only the arming decision is under test.
-        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, vibrate = false))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, alert = AlertSettings.RING.copy(vibrate = false)))
 
         val next = h.armed.single()
         assertNotNull(next)
@@ -108,7 +110,7 @@ class TimerEngineTest {
         h.vm.dispatch(SchedulerIntent.StartTimer("timer-0", at(7, 0)))
         h.armed.clear()
 
-        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, vibrate = false))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, alert = AlertSettings.RING.copy(vibrate = false)))
 
         val next = h.armed.single()
         assertNotNull(next)
@@ -125,7 +127,7 @@ class TimerEngineTest {
         h.vm.dispatch(SchedulerIntent.PauseTimer("timer-1", at(7, 1)))
         h.armed.clear()
 
-        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, vibrate = false))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, alert = AlertSettings.RING.copy(vibrate = false)))
 
         assertTrue(
             h.armed.none { it != null },

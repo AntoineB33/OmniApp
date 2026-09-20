@@ -19,7 +19,7 @@ cross-device presence.
   DST days.
 - Every ring is drawn on the calendar as an inert zero-duration marker, projected over the displayed span
   only — and **inert is not silent**: it names itself in the hover bubble over what it hides (below).
-- The tone is synthesized in commonMain (`AlarmTone.loopPcm()`, deterministic) so every device rings
+- The tone is synthesized in commonMain (`AlarmTone.loopPcm(sound)`, deterministic) so every device rings
   identically with no loadable resource. Android falls back to the system alarm ringtone if the PCM track
   fails — an alarm must never fail silently. The desktop uses its own thread, never the voice-cue worker.
 
@@ -35,9 +35,9 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   `launchAlarmSweep` merges both crossing streams (`ringCrossingsBetween`) in boundary order. A second loop
   would not add a ring — it would overwrite the first's. Ids are disjoint (`alarm-{n}` / `timer-{n}`), so the
   sweep's `(id, instant)` de-dupe key cannot collide.
-- **`ArmedAlarm.timer` is the one distinguishing bit, and it TRAVELS with the armed ring** — into the phone's
-  OS intent included — never inferred from the id. It decides two things and nothing else: reset-vs-disarm,
-  and whether the notification is titled *Timer* or *Alarm*.
+- **`ArmedAlarm.kind` is the one distinguishing bit, and it TRAVELS with the armed ring** — into the phone's
+  OS intent included — never inferred from the id. It decides reset-vs-disarm and what the ring is called
+  (*Alarm* / *Timer* / *Reminder*), and nothing else; `timer` is derived from it, never stored beside it.
 - **`endsAtMillis` is authoritative; the remaining time is DERIVED.** The instant cannot be recomputed from
   anything else, so it is persisted **and synced** — which is what makes "it rings on every device of the
   account" true of a timer started on the desktop. The countdown is `endsAtMillis` minus the now-line
@@ -48,8 +48,9 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **No on/off switch and no repeat switch.** A timer that is not running is already not due (an idle row is not
   a silenced one), and a timer is a one-off by nature: having rung it **resets** to its full duration. A
   one-off *alarm* disarms itself instead precisely because it has a switch to leave off.
-- **Editing a row's settings must not disturb the instant it is due at, and a countdown edit must not touch
-  the settings.** One rule, said both ways. `SetTimers` carries the settings; the run state moves only through
+- **Editing a row's settings — its alert block included — must not disturb the instant it is due at, and a
+  countdown edit must not touch the settings.** One rule, said both ways. `SetTimers` carries the settings;
+  the run state moves only through
   `StartTimer` / `PauseTimer` / `ResetTimer` / `SetTimerCountdownField` / `NudgeTimerRemaining`, which take
   `nowMillis` as an argument so the reducer stays pure — and the window's local row copy deliberately holds no
   run state.
@@ -160,5 +161,54 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   not hypothetical; it shipped, and the History rows showed the units committed with the pointer never
   moving. Do not gate either the `focusable()` or the reclaim on "is this the focused window".
 
----
+## One alert block, three kinds of row
 
+→ PRD §11. `model/AlertSettings.kt`, `ui/AlertSettingsEditor.kt`.
+
+**An alarm, a timer and a reminder each carry one `AlertSettings`** — sound (and which of `AlertSound`'s five),
+voice, notification, vibrate. One type and one editor for all three, because it is one question asked of all
+three; a second spelling of "does this one vibrate" per kind is the drift this file exists to prevent.
+
+- **The four channels are independent, and each is ASKED SEPARATELY at the ring.** `onAlarmFire` calls the ring
+  seam only for a row that `rings` (sound or vibration), and hands `alert` to `notifyUser`, which gates the
+  posted and the spoken halves on it. The row's switches **narrow** the account's `notificationsEnabled` /
+  `notificationVoiceEnabled`; they can never make a muted account speak.
+- **A row with every channel off is not schedulable** — nothing to arm an OS slot for. It is a silenced row,
+  exactly like one with an empty `days` set, and the Android receiver drops such a ring too.
+- **The sound set is a closed enum, never a path or a system ringtone id**, and is synthesized for the reason
+  the guitar always was: the choice is account data that must sound identical on every device, offline. Adding
+  a sound is adding a recipe to `AlarmTone`, never a resource. On the wire it is the enum's **name** (an
+  ordinal would silently re-point every alarm the day the list is reordered), and an unknown name decodes to
+  the default rather than to silence.
+- **The whole block travels with the armed ring**, into the phone's OS intent included (`EXTRA_SOUND` blank =
+  sound off), for the same reason the length always did: what rings must be what was armed.
+- `ArmedAlarm.kind` (`RingKind`: Alarm / Timer / Reminder) is the one distinguishing bit and `timer` is now
+  **derived from it**. It decides three things and nothing else: reset-vs-disarm, the notification's title, and
+  what the phone's ring service calls itself.
+
+## A reminder is announced by the SWEEP, never armed
+
+→ PRD §14, `docs/invariants/calendar.md` for the tags themselves.
+
+A reminder falls due like an alarm and alerts through the same block and the same ring seam — but it is **not**
+an alarm, and the two differences are load-bearing:
+
+- **It is never armed with the OS.** A device has one alarm slot and the alarms and the timers own it
+  (`launchAlarmArming` arms the soonest of exactly those two). A reminder is announced from the ordered cue
+  sweep, like a screen break, so it reaches a running device (the phone's foreground service included) and a
+  slept-through one is **not** replayed — the overdue tag riding the now-line is that answer.
+- **Its occurrence source is the TAG the calendar draws** (`SchedulerDomain.reminderCueOccurrencesBetween` over
+  `state.panels`), not a second reading of the recurrence. A reminder's placement is dispersed, constrained by
+  another reminder, anchored on the last completion, and sometimes placed by hand: a second derivation of that
+  would announce it at an instant the calendar does not draw it at. A **checked** tag is a completion and is
+  never announced.
+- **The de-dupe key is the tag's panel id, not its instant.** A reminder with no time of day is re-placed at
+  the current time on every regeneration, so an instant key would announce it again each time; the id
+  (`chore/{reminderId}/{offset}`) is the same tag across all of them.
+- The sweep **self-delays to the next tag** like it does to the next break, and a crossing is swallowed past
+  the alarms' real-age budget (`ALARM_FRESH_MILLIS`), not the look-away's — a reminder is worth saying a few
+  seconds late.
+- A tag whose reminder is no longer a manager row still alerts, with `AlertSettings.REMINDER`: that is a
+  hand-placed tag, and it is the one the user was most deliberate about.
+
+---

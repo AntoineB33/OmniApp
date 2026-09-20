@@ -8,6 +8,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.HistoryCategory
@@ -41,7 +42,7 @@ class TimerTest {
         id: String = "timer-0",
         durationSeconds: Int = 5 * 60,
         soundSeconds: Int = 30,
-        vibrate: Boolean = true,
+        alert: AlertSettings = AlertSettings.RING,
         label: String = "",
         endsAtMillis: Long? = null,
         remainingMillis: Long? = null,
@@ -50,7 +51,7 @@ class TimerTest {
         label = label,
         durationSeconds = durationSeconds,
         soundSeconds = soundSeconds,
-        vibrate = vibrate,
+        alert = alert,
         endsAtMillis = endsAtMillis,
         remainingMillis = remainingMillis,
     )
@@ -630,8 +631,8 @@ class TimerTest {
     @Test
     fun codec_round_trip_preserves_every_timer_field_including_a_running_countdown() {
         val entries = listOf(
-            timer(id = "timer-0", label = "Tea", durationSeconds = 180, soundSeconds = 45, vibrate = true),
-            timer(id = "timer-1", durationSeconds = 600, soundSeconds = 5, vibrate = false, endsAtMillis = now),
+            timer(id = "timer-0", label = "Tea", durationSeconds = 180, soundSeconds = 45, alert = AlertSettings.RING),
+            timer(id = "timer-1", durationSeconds = 600, soundSeconds = 5, alert = AlertSettings.RING.copy(vibrate = false), endsAtMillis = now),
             timer(id = "timer-2", durationSeconds = 60, remainingMillis = 12_000L),
         )
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetTimers(entries))
@@ -671,7 +672,7 @@ class TimerTest {
         val t = decoded.timers.single()
         assertEquals(TimerEntry.DEFAULT_TIMER_SECONDS, t.durationSeconds)
         assertEquals(AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS, t.soundSeconds)
-        assertTrue(t.vibrate)
+        assertTrue(t.alert.vibrate)
         assertTrue(t.idle, "a row that says nothing about running is idle")
     }
 

@@ -38,6 +38,7 @@ import org.example.project.scheduler.model.AlternativeSpan
 import org.example.project.scheduler.sync.PeerPlacement
 import kotlin.concurrent.Volatile
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.RulePlacement
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.ScreenBreak
@@ -337,21 +338,50 @@ class AppSchedulerHost(val vm: TaskSchedulerViewModel, val engine: SchedulerEngi
  * Only the soonest ring is ever armed; the platform receiver calls `SchedulerEngine.onAlarmFire`, which rings
  * it and arms the one after it.
  */
+enum class RingKind(val label: String) {
+    /** PRD §18: a wall-clock time of day on a set of local weekdays. */
+    Alarm("Alarm"),
+
+    /** PRD §18: one stored instant, fixed when the countdown was started. */
+    Timer("Timer"),
+
+    /**
+     * PRD §14: a reminder tag falling due. It reaches the ring seam through the same [ArmedAlarm] the other
+     * two do — one ring path, one sound set — but it is never *armed*: a device has one OS alarm slot and it
+     * belongs to the alarms and the timers (`alarms-and-timers.md`), so a reminder is announced by the running
+     * app, from the ordered cue sweep, exactly as a screen break is.
+     */
+    Reminder("Reminder"),
+}
+
 data class ArmedAlarm(
     val alarmId: String,
     val atMillis: Long,
     val label: String = "",
     val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
-    val vibrate: Boolean = true,
     /**
-     * PRD §18 Timers: whether [alarmId] names a `TimerEntry` rather than an `AlarmEntry`. A timer is due at
-     * one absolute instant instead of a wall-clock time of day, and that is the *whole* difference — so it is
-     * armed, swept and rung through this same type, and this flag exists only so `onAlarmFire` knows which
-     * list to put the row back in and what to call the ring. It travels with the armed ring (into the phone's
-     * OS intent included) rather than being inferred from the id, so the routing is stated, not guessed.
+     * PRD §11/§18: the row's four channels and its chosen sound ([AlertSettings]) — **the whole of how this
+     * ring makes itself heard**, travelling with the armed ring for the reason above: what rings has to be
+     * what was armed, down to the phone that must still buzz for a row whose sound the user turned off.
      */
-    val timer: Boolean = false,
-)
+    val alert: AlertSettings = AlertSettings.RING,
+    /**
+     * PRD §14/§18: **which sort of thing is ringing** — the one distinguishing bit, and what the ring is
+     * called where it is shown ([RingKind.label]). A timer is due at one absolute instant instead of a
+     * wall-clock time of day, and that is the *whole* difference between the first two — so both are armed,
+     * swept and rung through this same type, and this says only which list `onAlarmFire` puts the row back in
+     * and what to title the notification. It travels with the armed ring (into the phone's OS intent
+     * included) rather than being inferred from the id, so the routing is stated, not guessed.
+     */
+    val kind: RingKind = RingKind.Alarm,
+) {
+    /**
+     * Whether this ring came from the timers. **Derived from [kind]**, never stored beside it: it is the one
+     * question the arming, the OS intent and the fire path ask, and two fields answering it is how they would
+     * come to disagree.
+     */
+    val timer: Boolean get() = kind == RingKind.Timer
+}
 
 /** PRD §13: a compact `HH:MM` label for a schedule-unit step deadline in the task-switch notification. */
 private fun formatClockTime(dateTime: LocalDateTime): String {
@@ -849,6 +879,16 @@ class SchedulerEngine(
     private var rungAlarms = setOf<Pair<String, Long>>()
 
     /**
+     * PRD §14: the reminder tags this device has already announced — **keyed by the tag's panel id**, valued
+     * by the instant it was due at (which is only how the set is kept bounded).
+     *
+     * The id and not the instant, because the id is the stable one: a reminder with no time of day is placed
+     * at the current time each time the tags are regenerated, so an instant key would announce it again at
+     * every regeneration. The id (`chore/{reminderId}/{offset}`) is the same tag across all of them.
+     */
+    private var announcedReminderTags = mapOf<String, Long>()
+
+    /**
      * PRD §18 Alarms/Timers: keep the OS-level alarm armed for the soonest ring in the synced alarm **and
      * timer** lists. Re-runs on every now-tick and whenever either list changes (an edit here, a timer
      * started, or a peer's edit arriving over sync), and only touches the OS when the target actually moves.
@@ -882,7 +922,7 @@ class SchedulerEngine(
                 atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
-                vibrate = it.entry.vibrate,
+                alert = it.entry.alert,
             )
         }
         val nextTimer = TimerDomain.nextOccurrence(timers, now)?.let {
@@ -891,8 +931,8 @@ class SchedulerEngine(
                 atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
-                vibrate = it.entry.vibrate,
-                timer = true,
+                alert = it.entry.alert,
+                kind = RingKind.Timer,
             )
         }
         // The winner is picked on the engine's own (possibly simulated) timeline, and only then converted to
@@ -1000,7 +1040,7 @@ class SchedulerEngine(
                 atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
-                vibrate = it.entry.vibrate,
+                alert = it.entry.alert,
             )
         }
         val fromTimers = TimerDomain.crossingsBetween(timers, fromMillis, toMillis).map {
@@ -1009,8 +1049,8 @@ class SchedulerEngine(
                 atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
-                vibrate = it.entry.vibrate,
-                timer = true,
+                alert = it.entry.alert,
+                kind = RingKind.Timer,
             )
         }
         return (fromAlarms + fromTimers).sortedWith(compareBy({ it.atMillis }, { it.alarmId }))
@@ -1043,15 +1083,22 @@ class SchedulerEngine(
      * what each of them is: a **one-off alarm** disarms itself (it has an on/off switch, and it has now
      * happened), while a **timer** resets to its full duration (it has no switch — a countdown that has run
      * out is simply back at the start, ready to be started again).
+     *
+     * **Which channels sound is the row's own answer** ([ArmedAlarm.alert], PRD §11): the audio seam is
+     * touched only for a row that rings or buzzes, and the notification and the voice are gated inside the one
+     * funnel. The row is still put back either way — a silent alarm has *happened*, so a one-off still disarms
+     * itself and a timer still resets, exactly as if it had been heard.
      */
     fun onAlarmFire(armed: ArmedAlarm) {
         val kind = if (armed.timer) "timer" else "alarm"
         Diagnostics.log(
-            "$kind ${armed.alarmId} RINGING (${armed.soundSeconds}s sound, vibrate=${armed.vibrate})",
+            "$kind ${armed.alarmId} RINGING (${armed.soundSeconds}s sound, alert=${armed.alert.describe()})",
         )
-        ringAlarm(armed)
-        val title = if (armed.timer) "Timer" else "Alarm"
-        notifyUser(title, armed.label.ifBlank { title })
+        // Nothing to hand the audio seam when the row neither rings nor buzzes: its alert is the notification
+        // and the voice below, which is a perfectly ordinary way to set an alarm on a machine in an office.
+        if (armed.alert.rings) ringAlarm(armed)
+        val title = armed.kind.label
+        notifyUser(title, armed.label.ifBlank { title }, alert = armed.alert)
         if (armed.timer) {
             // A timer is a one-off by nature: it has run out, so it goes back to its full duration. Unknown
             // id = deleted meanwhile; nothing to reset.
@@ -1333,6 +1380,12 @@ class SchedulerEngine(
      *    that went on talking would not be one — the half that survived it would be the loud half.
      *  * [SchedulerState.notificationVoiceEnabled] silences the voice alone, which is what that switch is for.
      *
+     * [alert] is the **row's own** answer to the same two questions (PRD §11/§14/§18: an alarm, a timer or a
+     * reminder each carry an [AlertSettings]), and it **narrows** those switches rather than competing with
+     * them: a channel fires only when the account allows it AND the row asked for it. Everything the app
+     * authors itself — the task switch, the break cues, the wind-down, a chord's receipt — has no row behind
+     * it and so passes [AlertSettings.RING], which asks for both halves and changes nothing.
+     *
      * The **record** is written before either call, muted or not: the History window's Notifications column
      * answers "what did the app decide to say", which is why it was never proof of delivery.
      *
@@ -1340,7 +1393,12 @@ class SchedulerEngine(
      * because an alarm rings a locked machine on purpose (ADR 0010) and a funnel with an exception is not a
      * funnel.
      */
-    private fun notifyUser(title: String, message: String, cue: VoiceCue? = null) {
+    private fun notifyUser(
+        title: String,
+        message: String,
+        cue: VoiceCue? = null,
+        alert: AlertSettings = AlertSettings.RING,
+    ) {
         val now = clock.nowMillis()
         val st = vm.state.value
         // PRD §11: the account's Notifications switch, read HERE and nowhere else — this is the one funnel
@@ -1349,18 +1407,22 @@ class SchedulerEngine(
         // mean every one of them rather than the handful somebody remembered to guard.
         val muted = !st.notificationsEnabled
         val utterance = VoiceUtterance.forNotification(title, message, cue)
-        val spoken = !muted && st.notificationVoiceEnabled
+        // The row's own two channels, under the account's. A row that asked for neither is not a bug: it is
+        // an alarm set to ring and say nothing, or a reminder set to be a tag on the calendar and no more.
+        val posted = !muted && alert.notification
+        val spoken = !muted && st.notificationVoiceEnabled && alert.voice
         Diagnostics.log(
             "notification [$title] ${message.replace('\n', ' ')} " +
                 "(sim now=${Diagnostics.formatInstant(now)})" +
                 (if (muted) " [suppressed: notifications off]" else "") +
+                (if (!muted && !alert.notification) " [suppressed: this row posts no notification]" else "") +
                 (if (spoken) " [spoken: ${utterance.text}]" else " [voice off]"),
         )
         // Append to the History Manager's local-only Notifications column (capped, non-syncing). Written
         // whether or not the OS is told: the switch silences the interruption, never the record, so the
         // column still answers "what did the app decide to say while I had it muted".
         vm.dispatch(SchedulerIntent.RecordNotification(title, message, now, cue))
-        if (!muted) postNotification(title, message)
+        if (posted) postNotification(title, message)
         if (spoken) speak(utterance)
     }
 
@@ -2623,6 +2685,7 @@ class SchedulerEngine(
                     val scanFloor = cueSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
                     announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= scanFloor }
                     announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= scanFloor }
+                    announcedReminderTags = announcedReminderTags.filterValues { it >= scanFloor }
 
                     // PRD §17: the wind-down cue fires where the "before bed" PERIOD starts — the period the
                     // fill laid, not a second reading of the sleep schedule. One instant, so the notification
@@ -2647,6 +2710,9 @@ class SchedulerEngine(
                         alreadyNotifiedPoseDues = sidePoseNotifiedDue,
                         fromMillis = scanFloor,
                         toMillis = simNow,
+                        // PRD §14: the calendar's own reminder tags — the placement the user sees, never a
+                        // second derivation of the recurrence.
+                        reminderTags = st.panels,
                         basePeriods = dynamicPeriodBaseNow(st),
                         tasks = SchedulerDomain.planTasksOf(st, simNow),
                         // ...and the mode, because half that reading is the AT-LINE run: the 20 s look-away
@@ -2819,6 +2885,59 @@ class SchedulerEngine(
                                     }
                                 }
                             }
+                            SchedulerDomain.CueKind.ReminderDue -> {
+                                val due = crossing.instant
+                                val tagId = crossing.sourceId
+                                if (tagId in announcedReminderTags) continue
+                                // The row's own alert block (PRD §11) decides every channel; a tag whose
+                                // reminder has gone (a manually placed one, a row just removed) still says
+                                // what it says, with the default a reminder has.
+                                val alert = SchedulerDomain.alertForReminderTag(st.chores, tagId)
+                                val title = crossing.title
+                                // Late by the ALARM budget rather than the look-away's: a reminder is a
+                                // moment the user chose, so it is worth saying a few seconds late — but one
+                                // the machine slept straight through is not replayed on resume. It stays on
+                                // the calendar as the overdue tag riding the now-line, which is the answer
+                                // the user actually wants to that.
+                                val lateness = cueSweep.realLatenessMillis(due)
+                                firings += Firing(due, 5) {
+                                    announcedReminderTags = announcedReminderTags + (tagId to due)
+                                    if (lateness > ALARM_FRESH_MILLIS) {
+                                        Diagnostics.log(
+                                            "reminder $tagId at ${Diagnostics.formatInstant(due)} swallowed: " +
+                                                "crossed ~$lateness ms (real) ago (budget $ALARM_FRESH_MILLIS " +
+                                                "ms, speed ${speed}x)",
+                                        )
+                                    } else if (!alert.announces) {
+                                        Diagnostics.log("reminder $tagId ($title) has every channel off")
+                                    } else {
+                                        // The alarms' own ring seam, so the five sounds and the vibration
+                                        // are one implementation however the ring came to be due. No lock
+                                        // gate, exactly as an alarm has none: this is a moment the user
+                                        // asked to be told about, not a cue about the screen they left.
+                                        if (alert.rings) {
+                                            ringAlarm(
+                                                ArmedAlarm(
+                                                    alarmId = tagId,
+                                                    atMillis = due,
+                                                    label = title,
+                                                    soundSeconds = AlertSettings.REMINDER_SOUND_SECONDS,
+                                                    alert = alert,
+                                                    kind = RingKind.Reminder,
+                                                ),
+                                            )
+                                        }
+                                        // A nameless tag is named by what it is, exactly as a nameless
+                                        // alarm is — a notification saying nothing at all is worse than a
+                                        // generic one.
+                                        notifyUser(
+                                            RingKind.Reminder.label,
+                                            title.ifBlank { RingKind.Reminder.label },
+                                            alert = alert,
+                                        )
+                                    }
+                                }
+                            }
                             SchedulerDomain.CueKind.WindDown -> {
                                 val wd = crossing.instant
                                 if (wd in announcedWindDowns) continue
@@ -2890,7 +3009,17 @@ class SchedulerEngine(
                             .map { it.startEpochMillis }
                             .filter { it > simNow && it !in announcedStarts }
                             .minOrNull()
-                    val next = listOfNotNull(nextBreak, nextEnd, nextWind).minOrNull() ?: break
+                    // PRD §14: and to the next reminder tag, for the same reason — a sweep that only woke
+                    // on the tick would announce a reminder up to a production tick (30 s) late.
+                    val nextReminder = SchedulerDomain
+                        .reminderCueOccurrencesBetween(
+                            st.panels,
+                            simNow,
+                            simNow + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS,
+                        )
+                        .filter { it.sourceId !in announcedReminderTags }
+                        .minOfOrNull { it.instant }
+                    val next = listOfNotNull(nextBreak, nextEnd, nextWind, nextReminder).minOrNull() ?: break
                     if (speed <= 0.0) break
                     delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
                 }

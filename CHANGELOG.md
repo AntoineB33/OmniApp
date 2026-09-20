@@ -11,6 +11,39 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An alarm, a timer and a reminder each choose their own channels and their own sound — 2026-09-20
+
+The user's spec: *"For any alarm, timer or reminder, the user can define if there is a sound alarm, a voice, a
+notification, a vibration for the phones… The sound alarm can be selected among a small available set of
+sounds."*
+
+One new type, `AlertSettings` (sound + which sound + voice + notification + vibrate), on `AlarmEntry`,
+`TimerEntry` and `ChoreEntry` alike — it replaces each row's lone `vibrate` flag, and `ArmedAlarm` carries the
+whole block into the phone's OS intent so what rings is what was armed. The four channels are **independent**
+and **narrow** the account's own switches (PRD §11) rather than competing with them: `notifyUser` gained an
+`alert` argument and asks each half separately, and the ring seam is not called at all for a row that neither
+sounds nor buzzes. An alarm with every channel off is not `schedulable` — a silenced row, like one with no days.
+
+The **small set of sounds** is `AlertSound` — Guitar (the original arpeggio, still the default), Chime, Bell,
+Marimba, Beeps — all synthesized in `AlarmTone` for the reason the guitar always was: the choice is account data
+that must sound identical on every device, offline, with nothing to load. The three new struck sounds share one
+additive renderer (inharmonic partials over an exponential decay); the beeps are a gated tone. The ring seam is
+`ringAlarmPlatform(label, soundSeconds, sound, vibrate)`, with a **null sound** meaning "vibration only".
+
+**Reminders now announce themselves**, which they never did: the ordered cue sweep gained
+`CueKind.ReminderDue`, whose occurrences are the **tags the calendar draws** (`reminderCueOccurrencesBetween`
+over `state.panels`, checked ones excluded) rather than a second reading of the recurrence arithmetic, de-duped
+on the tag's stable id (a reminder with no time of day is re-placed at "now" on every regeneration, so an
+instant key would re-announce it). The sweep self-delays to the next tag, the alarms' 60 s real-age budget
+decides a slept-through one, and a reminder is **not** OS-armed — the one alarm slot belongs to the alarms and
+the timers. A reminder defaults to `AlertSettings.REMINDER`: said and posted, neither rung nor buzzed.
+
+One editor for all three rows (`ui/AlertSettingsEditor.kt`), shown in both Alarms sections and in the reminders
+manager. The History Unit details name every channel that moved (`alertChanges`). Decode heals a payload
+written before any of it: an alarm/timer keeps its stored vibration and rings as it did, a reminder takes the
+reminder default, and a sound name this build does not have falls back to the default rather than to silence.
+`AlertSettingsTest`. Client rebuild (desktop + Android); no Supabase deploy.
+
 ### The frozen past is replayed over Θ, not over a week of wall time — 2026-09-19
 
 `fillSchedule` read the already-placed past from a flat `now - 168 h`, and `ScheduleFill.replay` starts every lag

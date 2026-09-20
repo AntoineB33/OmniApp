@@ -5,4 +5,4 @@ package org.example.project.scheduler.platform
  * `ringAlarm` seam straight to `AlarmRingService` (a foreground service playing the alarm ringtone on the
  * alarm audio stream + vibrating), so this common seam must never ring a second time.
  */
-actual fun ringAlarmPlatform(label: String, soundSeconds: Int, vibrate: Boolean) = Unit
+actual fun ringAlarmPlatform(label: String, soundSeconds: Int, sound: AlertSound?, vibrate: Boolean) = Unit

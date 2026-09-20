@@ -25,6 +25,12 @@ object AlarmClockScheduler {
     const val EXTRA_LABEL = "org.example.project.ALARM_LABEL"
     const val EXTRA_SECONDS = "org.example.project.ALARM_SECONDS"
     const val EXTRA_VIBRATE = "org.example.project.ALARM_VIBRATE"
+    // PRD §11: the row's four channels, so the ring the receiver rebuilds is the alert the user configured —
+    // the sound's name (blank = sound off), and whether it speaks and posts. Like every other extra here they
+    // travel rather than being looked up, because the broadcast may wake a process with no state yet.
+    const val EXTRA_SOUND = "org.example.project.ALARM_SOUND"
+    const val EXTRA_VOICE = "org.example.project.ALARM_VOICE"
+    const val EXTRA_NOTIFICATION = "org.example.project.ALARM_NOTIFICATION"
     // PRD §18 Timers: which list the armed ring came from. The receiver hands it straight back to
     // `onAlarmFire`, which needs it to reset the timer (rather than disarm a one-off alarm) and to title the
     // notification — so the routing survives a process the broadcast had to start from scratch.
@@ -38,7 +44,10 @@ object AlarmClockScheduler {
             putExtra(EXTRA_ALARM_ID, armed?.alarmId.orEmpty())
             putExtra(EXTRA_LABEL, armed?.label.orEmpty())
             putExtra(EXTRA_SECONDS, armed?.soundSeconds ?: 0)
-            putExtra(EXTRA_VIBRATE, armed?.vibrate ?: false)
+            putExtra(EXTRA_VIBRATE, armed?.alert?.vibrate ?: false)
+            putExtra(EXTRA_SOUND, armed?.alert?.takeIf { it.sound }?.tone?.name.orEmpty())
+            putExtra(EXTRA_VOICE, armed?.alert?.voice ?: false)
+            putExtra(EXTRA_NOTIFICATION, armed?.alert?.notification ?: false)
             putExtra(EXTRA_TIMER, armed?.timer ?: false)
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

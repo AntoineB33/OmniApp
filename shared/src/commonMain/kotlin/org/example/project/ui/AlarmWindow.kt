@@ -53,16 +53,17 @@ import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.TimerEntry
 
 /**
  * PRD §18 Alarms and timers: a floating, draggable window in **two sections**.
  *
  * **Alarms** — one row each, with the time of day it rings, an optional label, **the days it is triggered
- * on** (every day by default), **how long the alarm sound lasts**, whether it **vibrates the phone**, whether
- * it repeats, and an on/off switch.
+ * on** (every day by default), **how long the alarm sound lasts**, how it **announces itself** (PRD §11: the
+ * four channels and the chosen sound), whether it repeats, and an on/off switch.
  *
- * **Timers** — one row each, with a duration, an optional label, the same ring length / vibration, a live
+ * **Timers** — one row each, with a duration, an optional label, the same ring length / alert block, a live
  * countdown and start / pause / reset. A timer is due at one absolute instant rather than at a wall-clock
  * time of day; everything after that instant — the arming, the sweep, the ring — is the alarms' own machinery
  * (see [TimerDomain]).
@@ -227,7 +228,7 @@ fun AlarmWindow(
                     // field shows the error state until it parses.
                     timeOfDayMinutes = parseAlarmTime(row.timeText) ?: 0,
                     soundSeconds = parseSoundSeconds(row.soundText) ?: AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
-                    vibrate = row.vibrate,
+                    alert = row.alert,
                     days = row.days,
                     repeats = row.repeats,
                     enabled = row.enabled,
@@ -251,7 +252,7 @@ fun AlarmWindow(
                     // timer; the field shows the error state until it parses.
                     durationSeconds = parseDurationSeconds(row.durationText) ?: TimerEntry.DEFAULT_TIMER_SECONDS,
                     soundSeconds = parseSoundSeconds(row.soundText) ?: AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
-                    vibrate = row.vibrate,
+                    alert = row.alert,
                     endsAtMillis = live?.endsAtMillis,
                     remainingMillis = live?.remainingMillis,
                 )
@@ -425,7 +426,7 @@ private fun SectionHeader(text: String) {
 
 /**
  * One editable alarm row: time + label on the first line, the days it is triggered on on the second, and
- * sound length / vibrate / repeat on the third.
+ * sound length / repeat on the third, and the alert block (PRD §11) on the fourth.
  */
 @Composable
 private fun AlarmRowEditor(
@@ -518,19 +519,23 @@ private fun AlarmRowEditor(
             Spacer(Modifier.width(4.dp))
             Text(text = "s", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.width(12.dp))
-            Text(text = "Vibrate", style = MaterialTheme.typography.bodySmall)
-            Switch(checked = row.vibrate, onCheckedChange = { onRowChange(row.copy(vibrate = it), null) })
-            Spacer(Modifier.width(8.dp))
             // Off = a one-off: it rings at the next of its days and then disarms itself.
             Text(text = "Repeat", style = MaterialTheme.typography.bodySmall)
             Switch(checked = row.repeats, onCheckedChange = { onRowChange(row.copy(repeats = it), null) })
         }
+        // PRD §11: how this alarm makes itself heard. A structural change (no field key), so a chip pressed
+        // while a text field still holds the focus is its own History Unit rather than part of that edit.
+        AlertSettingsEditor(
+            alert = row.alert,
+            onChange = { onRowChange(row.copy(alert = it), null) },
+        )
     }
 }
 
 /**
  * PRD §18 Timers: one editable timer row — duration + label on the first line, the countdown **field** and the
- * start/pause/reset controls on the second, sound length and vibration on the third.
+ * start/pause/reset controls on the second, sound length on the third and the alert block (PRD §11) on the
+ * fourth.
  *
  * [entry] is the live state of this timer (null only in the instant between adding the row and the push
  * landing): it is what says whether the row is idle, running or paused, and the countdown is read off it and
@@ -673,10 +678,12 @@ private fun TimerRowEditor(
             )
             Spacer(Modifier.width(4.dp))
             Text(text = "s", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.width(12.dp))
-            Text(text = "Vibrate", style = MaterialTheme.typography.bodySmall)
-            Switch(checked = row.vibrate, onCheckedChange = { onRowChange(row.copy(vibrate = it), null) })
         }
+        // PRD §11: the alarms' own block, unchanged — a timer rings exactly like an alarm.
+        AlertSettingsEditor(
+            alert = row.alert,
+            onChange = { onRowChange(row.copy(alert = it), null) },
+        )
     }
 }
 
@@ -700,7 +707,7 @@ private fun alarmRowOf(entry: AlarmEntry): AlarmRow =
         timeText = formatAlarmTime(entry.timeOfDayMinutes),
         label = entry.label,
         soundText = entry.soundSeconds.toString(),
-        vibrate = entry.vibrate,
+        alert = entry.alert,
         days = entry.days,
         repeats = entry.repeats,
         enabled = entry.enabled,
@@ -716,7 +723,7 @@ private fun timerRowOf(entry: TimerEntry): TimerRow =
         durationText = formatDuration(entry.durationSeconds),
         label = entry.label,
         soundText = entry.soundSeconds.toString(),
-        vibrate = entry.vibrate,
+        alert = entry.alert,
     )
 
 /**
@@ -801,7 +808,8 @@ private data class AlarmRow(
     val timeText: String = "",
     val label: String = "",
     val soundText: String = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS.toString(),
-    val vibrate: Boolean = true,
+    /** PRD §11: the four channels and the chosen sound, edited by the shared [AlertSettingsEditor]. */
+    val alert: AlertSettings = AlertSettings.RING,
     val days: Set<DayOfWeek> = AlarmEntry.EVERY_DAY,
     val repeats: Boolean = true,
     val enabled: Boolean = true,
@@ -816,7 +824,8 @@ private data class TimerRow(
     val durationText: String = formatDuration(TimerEntry.DEFAULT_TIMER_SECONDS),
     val label: String = "",
     val soundText: String = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS.toString(),
-    val vibrate: Boolean = true,
+    /** PRD §11: an alarm row's own field, with an alarm row's meaning. */
+    val alert: AlertSettings = AlertSettings.RING,
 )
 
 /**

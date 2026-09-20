@@ -18,6 +18,7 @@ import org.example.project.scheduler.model.AlternativeSpan
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ForcedTaskStart
@@ -3772,19 +3773,64 @@ object SchedulerDomain {
             endEpochMillis = stop,
         )
 
-    /** PRD §15: a cue boundary the now-line crossed — the atom of the engine's single ordered cue sweep. */
-    enum class CueKind { LookAwayStart, RestPoseDue, WindDown }
+    /**
+     * PRD §14/§15: a cue boundary the now-line crossed — the atom of the engine's single ordered cue sweep.
+     *
+     * [ReminderDue] is here rather than on the alarms' sweep on purpose: a reminder is **not** armed with the
+     * OS (the one alarm slot a device has belongs to the alarms and the timers, `alarms-and-timers.md`), so it
+     * is announced by the running app like the break cues are, and in the same boundary order as them.
+     */
+    enum class CueKind { LookAwayStart, RestPoseDue, ReminderDue, WindDown }
 
     /**
      * A single cue crossing: fire the [kind] cue for [title] at [instant]. [endInstant] is the look-away's
      * resume moment (`start + duration`) for [CueKind.LookAwayStart], else equal to [instant].
+     *
+     * [sourceId] names the thing that is due where the [title] cannot: a [CueKind.ReminderDue] carries its
+     * **tag's panel id**, which is how the engine finds the reminder's own alert settings (PRD §11) and how it
+     * de-dupes — the id is stable across a regeneration of the tags while the instant of a reminder with no
+     * time of day is not. Empty for the break cues, which are named by their title.
      */
     data class CueCrossing(
         val instant: Long,
         val kind: CueKind,
         val title: String,
         val endInstant: Long,
+        val sourceId: String = "",
     )
+
+    /**
+     * PRD §14: the **reminder tags** the now-line crossed in `(fromMillis, toMillis]`, as cue crossings.
+     *
+     * The occurrence source is the tag itself — the zero-duration panel the calendar draws, laid by
+     * [choreScheduledPanels] and kept by the regeneration — rather than a second reading of the reminders'
+     * recurrence arithmetic. A reminder's placement is not a formula per local day the way an alarm's is: it
+     * is dispersed, constrained by another reminder, anchored on the last completion, and a manually placed
+     * tag is a placement too. Announcing off a second derivation of that is how the app would come to say a
+     * reminder is due at an instant the calendar does not draw it at.
+     *
+     * A **checked** tag is a completion, so it is not announced: the user has already done the thing. An
+     * overdue unchecked one rides the now-line on the calendar but keeps the instant it was *for*, which is
+     * the boundary that gets crossed exactly once.
+     */
+    fun reminderCueOccurrencesBetween(
+        tags: List<TaskPanel>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<CueCrossing> =
+        tags.asSequence()
+            .filter { it.chore && !it.checked }
+            .filter { it.startEpochMillis > fromMillis && it.startEpochMillis <= toMillis }
+            .map {
+                CueCrossing(
+                    instant = it.startEpochMillis,
+                    kind = CueKind.ReminderDue,
+                    title = it.title,
+                    endInstant = it.startEpochMillis,
+                    sourceId = it.id,
+                )
+            }
+            .toList()
 
     /**
      * PRD §15 / CLAUDE.md "each fires exactly once, **in order**": the cue boundaries the clock crossed in a
@@ -3817,6 +3863,12 @@ object SchedulerDomain {
         alreadyNotifiedPoseDues: Map<String, Long>,
         fromMillis: Long,
         toMillis: Long,
+        /**
+         * PRD §14: the reminder tags to announce off ([reminderCueOccurrencesBetween]) — the calendar's own,
+         * normally `state.panels`. Empty asks about no reminders, which is what every caller that has none
+         * wants to say.
+         */
+        reminderTags: List<TaskPanel> = emptyList(),
         basePeriods: List<RestrictivePeriod> = emptyList(),
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
@@ -3845,6 +3897,9 @@ object SchedulerDomain {
                 out += CueCrossing(start, CueKind.LookAwayStart, panel.title, panel.endEpochMillis)
             }
         }
+        // PRD §14: the reminder tags due in the window — announced in the same ordered sweep as the breaks,
+        // so a reminder and a screen break crossed by one leap are said in the order they were due.
+        out += reminderCueOccurrencesBetween(reminderTags, fromMillis, toMillis)
         // Wind-down (bedtime - 1h) instants that fall in the window.
         for (wd in windDownInstants) {
             if (wd in fromMillis..toMillis) out += CueCrossing(wd, CueKind.WindDown, "", wd)
@@ -6151,7 +6206,20 @@ object SchedulerDomain {
      * from the id segment (no row-index lookup, so it is stable across reorders/detach). Null when the id
      * carries no reminder id.
      */
-    private fun reminderIdOfChorePanel(panelId: String): String? = when {
+    /**
+     * PRD §11/§14: **how the reminder behind a tag announces itself** — the row's own [AlertSettings].
+     *
+     * A tag whose reminder is not in [chores] still alerts, with [AlertSettings.REMINDER]: that is a
+     * manually placed "add a reminder" tag whose id never became a manager row, or a row struck off while its
+     * checked/pinned tag stayed. Falling silent there would be the app quietly dropping a reminder the user
+     * placed by hand, which is the one tag they were most deliberate about.
+     */
+    fun alertForReminderTag(chores: List<ChoreEntry>, tagId: String): AlertSettings {
+        val reminderId = reminderIdOfChorePanel(tagId) ?: return AlertSettings.REMINDER
+        return chores.firstOrNull { it.id == reminderId }?.alert ?: AlertSettings.REMINDER
+    }
+
+    fun reminderIdOfChorePanel(panelId: String): String? = when {
         panelId.startsWith(MANUAL_REMINDER_PREFIX) -> reminderIdOfManualPanel(panelId)
         panelId.startsWith("chore/") -> panelId.removePrefix("chore/").substringBefore('/').ifBlank { null }
         else -> null

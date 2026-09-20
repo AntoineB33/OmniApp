@@ -110,8 +110,11 @@ object SchedulerHolder {
                         appContext,
                         armed.label,
                         armed.soundSeconds,
-                        armed.vibrate,
-                        title = if (armed.timer) "Timer" else "Alarm",
+                        // PRD §11: null = this row's sound channel is off, so the service buzzes and does
+                        // not play — the phone's half of an alert set to be felt and not heard.
+                        armed.alert.tone.takeIf { armed.alert.sound },
+                        armed.alert.vibrate,
+                        title = armed.kind.label,
                     )
                 },
             )

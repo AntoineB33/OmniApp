@@ -15,6 +15,7 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.platform.AlarmTone
 import org.example.project.scheduler.state.SchedulerIntent
@@ -46,7 +47,7 @@ class AlarmTest {
         id: String = "alarm-0",
         minutes: Int = 7 * 60,
         soundSeconds: Int = 30,
-        vibrate: Boolean = true,
+        alert: AlertSettings = AlertSettings.RING,
         days: Set<DayOfWeek> = AlarmEntry.EVERY_DAY,
         repeats: Boolean = true,
         enabled: Boolean = true,
@@ -54,7 +55,7 @@ class AlarmTest {
         id = id,
         timeOfDayMinutes = minutes,
         soundSeconds = soundSeconds,
-        vibrate = vibrate,
+        alert = alert,
         days = days,
         repeats = repeats,
         enabled = enabled,
@@ -244,13 +245,13 @@ class AlarmTest {
     @Test
     fun set_alarms_stores_the_list_and_mints_ids_for_blank_rows() {
         val entries = listOf(
-            AlarmEntry(id = "", label = "Wake up", timeOfDayMinutes = 7 * 60, soundSeconds = 45, vibrate = true),
-            AlarmEntry(id = "", label = "Pills", timeOfDayMinutes = 20 * 60, soundSeconds = 10, vibrate = false),
+            AlarmEntry(id = "", label = "Wake up", timeOfDayMinutes = 7 * 60, soundSeconds = 45, alert = AlertSettings.RING),
+            AlarmEntry(id = "", label = "Pills", timeOfDayMinutes = 20 * 60, soundSeconds = 10, alert = AlertSettings.RING.copy(vibrate = false)),
         )
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetAlarms(entries))
         assertEquals(listOf("Wake up", "Pills"), s.alarms.map { it.label })
         assertEquals(listOf(45, 10), s.alarms.map { it.soundSeconds })
-        assertEquals(listOf(true, false), s.alarms.map { it.vibrate })
+        assertEquals(listOf(true, false), s.alarms.map { it.alert.vibrate })
         assertTrue(s.alarms.all { it.id.isNotBlank() })
         assertEquals(2, s.alarms.map { it.id }.toSet().size, "minted ids must be unique")
     }
@@ -299,11 +300,11 @@ class AlarmTest {
     fun codec_round_trip_preserves_every_alarm_field() {
         val entries = listOf(
             AlarmEntry(
-                "alarm-0", "Wake up", 7 * 60, 45, vibrate = true,
+                "alarm-0", "Wake up", 7 * 60, 45, alert = AlertSettings.RING,
                 days = AlarmEntry.EVERY_DAY, repeats = true, enabled = true,
             ),
             AlarmEntry(
-                "alarm-1", "One-off", 20 * 60 + 15, 5, vibrate = false,
+                "alarm-1", "One-off", 20 * 60 + 15, 5, alert = AlertSettings.RING.copy(vibrate = false),
                 days = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), repeats = false, enabled = false,
             ),
         )
@@ -342,7 +343,7 @@ class AlarmTest {
         val alarm = decoded.alarms.single()
         assertEquals(7 * 60, alarm.timeOfDayMinutes)
         assertEquals(AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS, alarm.soundSeconds)
-        assertTrue(alarm.vibrate)
+        assertTrue(alarm.alert.vibrate)
         assertTrue(alarm.repeats)
         assertTrue(alarm.enabled)
         // PRD §18 "by default it is everyday": a row written before the days existed rings every day, which

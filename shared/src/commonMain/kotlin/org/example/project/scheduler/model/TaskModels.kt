@@ -171,6 +171,18 @@ data class ChoreEntry(
      * dangling / cyclic reference falls back to the reminder's own unconstrained cadence.
      */
     val constrainedToReminderId: String = "",
+    /**
+     * PRD §11/§14: how this reminder announces itself when its moment comes round — the same four channels
+     * and the same sound set an alarm has ([AlertSettings]), because it is the same question.
+     *
+     * A reminder defaults to [AlertSettings.REMINDER] (said and posted, neither rung nor buzzed): it is a tag
+     * on the day, not an alarm clock. Turning its sound on is what makes it one.
+     *
+     * The reminder's ring, when it has one, lasts [AlertSettings.REMINDER_SOUND_SECONDS] — there is no
+     * "Rings for" field on a reminder row, because a reminder is not something to be woken by and then turned
+     * off; it says its piece and stops.
+     */
+    val alert: AlertSettings = AlertSettings.REMINDER,
 )
 
 /**
@@ -272,19 +284,29 @@ data class AlarmEntry(
     val label: String = "",
     val timeOfDayMinutes: Int = 0,
     val soundSeconds: Int = DEFAULT_ALARM_SOUND_SECONDS,
-    val vibrate: Boolean = true,
+    /**
+     * PRD §11/§18: the four channels this alarm reaches the user through, and which of the small set of
+     * sounds it rings with. It is the whole of "how does this one go off" — the vibration included, which is
+     * why there is no [vibrate] field beside it.
+     */
+    val alert: AlertSettings = AlertSettings.RING,
     /** The local weekdays this alarm rings on — every day unless the user narrowed it. */
     val days: Set<DayOfWeek> = EVERY_DAY,
     val repeats: Boolean = true,
     val enabled: Boolean = true,
 ) {
     /**
-     * Whether this alarm can ever ring: armed, at a real time of day, lasting a positive time, and with at
-     * least one day to ring on. [soundSeconds] is the length of the whole ring — the sound, and the
-     * vibration alongside it.
+     * Whether this alarm can ever ring: armed, at a real time of day, lasting a positive time, with at least
+     * one day to ring on, and with **something switched on to announce it with** ([AlertSettings.announces]).
+     * [soundSeconds] is the length of the whole ring — the sound, and the vibration alongside it.
+     *
+     * A row with all four channels off is not a broken alarm, it is a silenced one: the user turned every way
+     * of being told off, so there is nothing to arm an OS alarm slot for. It is the same reading as an empty
+     * [days] set — the row stays, ready to be given a channel back.
      */
     val schedulable: Boolean
-        get() = enabled && timeOfDayMinutes in 0..<MINUTES_PER_DAY && soundSeconds > 0 && days.isNotEmpty()
+        get() = enabled && timeOfDayMinutes in 0..<MINUTES_PER_DAY && soundSeconds > 0 &&
+            days.isNotEmpty() && alert.announces
 
     /** Whether this alarm rings on [day] — i.e. whether [day] is one of the days the user selected. */
     fun ringsOn(day: DayOfWeek): Boolean = day in days
@@ -338,7 +360,8 @@ data class TimerEntry(
     val durationSeconds: Int = DEFAULT_TIMER_SECONDS,
     /** How long the ring lasts once it goes off — the same field, and the same meaning, as an alarm's. */
     val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
-    val vibrate: Boolean = true,
+    /** PRD §11/§18: how it makes itself heard — an alarm's own field, with an alarm's meaning. */
+    val alert: AlertSettings = AlertSettings.RING,
     /** Running: the absolute instant this timer fires at. Null when idle or paused. */
     val endsAtMillis: Long? = null,
     /** Paused: how much of the countdown is left. Null when idle or running. */
@@ -360,7 +383,7 @@ data class TimerEntry(
      * there is nothing about days or a time of day — a timer that is not running is simply not due, and an
      * idle row is not a silenced one.
      */
-    val schedulable: Boolean get() = endsAtMillis != null && soundSeconds > 0
+    val schedulable: Boolean get() = endsAtMillis != null && soundSeconds > 0 && alert.announces
 
     /**
      * How much is left at [nowMillis] — **derived**, never stored: the running form is the distance to

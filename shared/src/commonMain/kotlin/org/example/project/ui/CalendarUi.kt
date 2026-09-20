@@ -152,6 +152,7 @@ import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.PanelPins
@@ -1566,6 +1567,7 @@ fun ChoresManagerWindow(
                         unit = it.recurrenceUnit,
                         id = it.id,
                         constrainedToReminderId = it.constrainedToReminderId,
+                        alert = it.alert,
                     )
                 },
             )
@@ -1623,6 +1625,7 @@ fun ChoresManagerWindow(
                     recurrenceUnit = row.unit,
                     id = ids[index],
                     constrainedToReminderId = row.constrainedToReminderId,
+                    alert = row.alert,
                 )
             },
         )
@@ -1737,6 +1740,15 @@ fun ChoresManagerWindow(
                         Text("(none)", style = MaterialTheme.typography.bodyMedium, color = CalColors.muted)
                     }
                 }
+
+                // PRD §11/§14: how this reminder announces itself at its time of day — the Alarms window's
+                // own block, because it is the same question (an alarm, a timer and a reminder differ in
+                // WHEN they are due and in nothing else once they are). A reminder starts out said and
+                // posted but neither rung nor buzzed: it is a tag on the day, not an alarm clock.
+                AlertSettingsEditor(
+                    alert = row.alert,
+                    onChange = { rows[index] = row.copy(alert = it); push() },
+                )
 
                 // PRD §14: the row's Edit mode — the shared mode selector + menus show beneath the fields
                 // (and vanish when focus leaves the row). The id menu lists reminders matching the draft
@@ -2834,6 +2846,9 @@ private data class ChoreRow(
     val explicitNew: Boolean = false,
     // PRD §14 "constrained in": id of the reminder this row is constrained to (blank = unconstrained).
     val constrainedToReminderId: String = "",
+    // PRD §11/§14: how this reminder announces itself when its moment comes round — the four channels and
+    // the chosen sound, edited by the same block the Alarms window shows ([AlertSettingsEditor]).
+    val alert: AlertSettings = AlertSettings.REMINDER,
 )
 
 /** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */

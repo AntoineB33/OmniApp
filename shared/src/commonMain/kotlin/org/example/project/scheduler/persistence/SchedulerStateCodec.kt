@@ -20,6 +20,8 @@ import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
+import org.example.project.scheduler.platform.AlertSound
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
@@ -510,7 +512,12 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map { PersistedChoreEntry(it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id, it.constrainedToReminderId) },
+            chores = chores.map {
+                PersistedChoreEntry(
+                    it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id,
+                    it.constrainedToReminderId, it.alert.toPersisted(),
+                )
+            },
             alarms = alarms.map { it.toPersisted() },
             // PRD §18 Timers: the run state rides along with the settings — `endsAtMillis` is an absolute
             // instant nothing else can recompute, so it is authoritative and belongs on the wire (CLAUDE.md
@@ -1109,6 +1116,9 @@ object SchedulerStateCodec {
                         recurrenceUnit = it.recurrenceUnit,
                         id = it.id,
                         constrainedToReminderId = it.constrainedToReminderId,
+                        // PRD §11: a payload written before a reminder had an alert says nothing here, and a
+                        // reminder that said nothing is exactly what [AlertSettings.REMINDER] is.
+                        alert = it.alert.toAlertSettings(AlertSettings.REMINDER),
                     )
                 },
             ),
@@ -1717,11 +1727,16 @@ private data class PersistedTaskRelation(
  */
 private fun AlarmEntry.toPersisted(): PersistedAlarm =
     PersistedAlarm(
-        id, label, timeOfDayMinutes, soundSeconds, vibrate,
+        id = id,
+        label = label,
+        timeOfDayMinutes = timeOfDayMinutes,
+        soundSeconds = soundSeconds,
+        alert = alert.toPersisted(),
         // Sorted ISO day numbers, so the encoded payload (and therefore the sync fingerprint) is stable
         // whatever order the set iterates in.
-        days.map { day -> day.isoDayNumber }.sorted(),
-        repeats, enabled,
+        days = days.map { day -> day.isoDayNumber }.sorted(),
+        repeats = repeats,
+        enabled = enabled,
     )
 
 /** The inverse of [AlarmEntry.toPersisted]. A blank id is minted by the caller's `assignAlarmIds`. */
@@ -1731,7 +1746,9 @@ private fun PersistedAlarm.toAlarmEntry(): AlarmEntry =
         label = label,
         timeOfDayMinutes = timeOfDayMinutes,
         soundSeconds = soundSeconds,
-        vibrate = vibrate,
+        // PRD §11: a payload written before the alert block existed carries the four channels an alarm had
+        // then — it rang, spoke and posted — with the vibration it actually stored ([legacyVibrate]).
+        alert = alert.toAlertSettings(AlertSettings.RING.copy(vibrate = legacyVibrate)),
         // A payload written before the days existed (null) rings every day — what it did.
         days = days?.mapNotNullTo(mutableSetOf(), ::dayOfWeekOrNull) ?: AlarmEntry.EVERY_DAY,
         repeats = repeats,
@@ -1740,7 +1757,15 @@ private fun PersistedAlarm.toAlarmEntry(): AlarmEntry =
 
 /** PRD §18 Timers: the persisted form of one timer row — [AlarmEntry.toPersisted]'s rule for the timers. */
 private fun TimerEntry.toPersisted(): PersistedTimer =
-    PersistedTimer(id, label, durationSeconds, soundSeconds, vibrate, endsAtMillis, remainingMillis)
+    PersistedTimer(
+        id = id,
+        label = label,
+        durationSeconds = durationSeconds,
+        soundSeconds = soundSeconds,
+        alert = alert.toPersisted(),
+        endsAtMillis = endsAtMillis,
+        remainingMillis = remainingMillis,
+    )
 
 /** The inverse of [TimerEntry.toPersisted]. The caller heals the run fields ([TimerDomain.healed]). */
 private fun PersistedTimer.toTimerEntry(): TimerEntry =
@@ -1749,7 +1774,8 @@ private fun PersistedTimer.toTimerEntry(): TimerEntry =
         label = label,
         durationSeconds = durationSeconds,
         soundSeconds = soundSeconds,
-        vibrate = vibrate,
+        // The alarms' rule, for the same reason (see [PersistedAlarm.legacyVibrate]).
+        alert = alert.toAlertSettings(AlertSettings.RING.copy(vibrate = legacyVibrate)),
         endsAtMillis = endsAtMillis,
         remainingMillis = remainingMillis,
     )
@@ -1764,7 +1790,19 @@ private data class PersistedAlarm(
     val label: String = "",
     val timeOfDayMinutes: Int = 0,
     val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
-    val vibrate: Boolean = true,
+    /**
+     * PRD §11: the four channels and the chosen sound. **null** = a payload written before the alert block
+     * existed, which decodes to what an alarm did then (ring + voice + notification) with [legacyVibrate]'s
+     * vibration.
+     */
+    val alert: PersistedAlert? = null,
+    /**
+     * The vibrate flag as it was stored **before** [alert] existed — read on decode when [alert] is absent,
+     * and written no more. It keeps its old name on the wire (`vibrate`) because that is what the old
+     * payloads call it; there is no second spelling of the live value, only this one reading of an old one.
+     */
+    @SerialName("vibrate")
+    val legacyVibrate: Boolean = true,
     /**
      * PRD §18: the days the alarm is triggered on, as ISO day numbers (1 = Monday … 7 = Sunday). **null**
      * means every day — which is both the default and what a payload written before the field existed says,
@@ -1792,12 +1830,51 @@ private data class PersistedTimer(
     val label: String = "",
     val durationSeconds: Int = TimerEntry.DEFAULT_TIMER_SECONDS,
     val soundSeconds: Int = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS,
-    val vibrate: Boolean = true,
+    /** PRD §11: the four channels and the chosen sound — [PersistedAlarm.alert]'s rule. */
+    val alert: PersistedAlert? = null,
+    /** The pre-[alert] vibrate flag — [PersistedAlarm.legacyVibrate]'s rule. */
+    @SerialName("vibrate")
+    val legacyVibrate: Boolean = true,
     /** Running: the absolute instant it fires at. Null when idle or paused. */
     val endsAtMillis: Long? = null,
     /** Paused: the banked remainder. Null when idle or running. */
     val remainingMillis: Long? = null,
 )
+
+/**
+ * PRD §11/§14/§18: the persisted form of one row's [AlertSettings] — an alarm's, a timer's or a reminder's,
+ * one shape for all three exactly as the live type is one type for all three.
+ *
+ * [tone] is the sound's **name**, not its ordinal: the set of sounds is a list a later build may add to or
+ * reorder, and a payload that silently changed which sound an alarm rings with would be the worst kind of
+ * migration bug. An unknown name (a sound this build does not have) decodes to the default rather than to
+ * silence — a row that rang must go on ringing.
+ */
+@Serializable
+private data class PersistedAlert(
+    val sound: Boolean = true,
+    val tone: String = AlertSound.DEFAULT.name,
+    val voice: Boolean = true,
+    val notification: Boolean = true,
+    val vibrate: Boolean = true,
+)
+
+private fun AlertSettings.toPersisted(): PersistedAlert =
+    PersistedAlert(sound = sound, tone = tone.name, voice = voice, notification = notification, vibrate = vibrate)
+
+/**
+ * The inverse. **null is not "no alert"** — it is a payload written before the block existed, so the caller
+ * names what that build's behaviour was ([fallback]) and that is what it decodes to.
+ */
+private fun PersistedAlert?.toAlertSettings(fallback: AlertSettings): AlertSettings =
+    if (this == null) fallback
+    else AlertSettings(
+        sound = sound,
+        tone = AlertSound.entries.firstOrNull { it.name == tone } ?: AlertSound.DEFAULT,
+        voice = voice,
+        notification = notification,
+        vibrate = vibrate,
+    )
 
 @Serializable
 private data class PersistedSleep(
@@ -1977,6 +2054,9 @@ private data class PersistedChoreEntry(
     // PRD §14 "constrained in": the id of the reminder this one is constrained to; "" when unconstrained
     // (and for payloads written before the feature existed).
     val constrainedToReminderId: String = "",
+    // PRD §11/§14: how the reminder announces itself. **null** = a payload written before reminders had an
+    // alert, which decodes to [AlertSettings.REMINDER] — said and posted, neither rung nor buzzed.
+    val alert: PersistedAlert? = null,
 )
 
 @Serializable

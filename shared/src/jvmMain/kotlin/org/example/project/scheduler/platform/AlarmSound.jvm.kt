@@ -9,8 +9,8 @@ import javax.sound.sampled.SourceDataLine
 import kotlin.math.min
 
 /**
- * PRD §18 Alarms on the desktop: the **acoustic guitar** arpeggio ([AlarmTone]) repeating on the default audio
- * line for exactly the alarm's configured length.
+ * PRD §18 Alarms on the desktop: the row's chosen sound ([AlarmTone], [AlertSound]) repeating on the default
+ * audio line for exactly the alarm's configured length.
  *
  * The sound is **synthesized in common code**, not a bundled asset — see [AlarmTone] for why — so the desktop
  * and the phone ring with the identical waveform, and nothing here can fail to load in a packaged app image.
@@ -20,7 +20,9 @@ import kotlin.math.min
  * minutes. A ring supersedes the previous one via [alarmGeneration] (two alarms due in the same minute must
  * not play over each other), and the audio line is held in [alarmLine] so the superseding ring can cut it.
  *
- * Desktops do not vibrate, so `vibrate` is accepted and ignored — the phone is what honours it.
+ * Desktops do not vibrate, so `vibrate` is accepted and ignored — the phone is what honours it. A ring with
+ * its sound switched off (`sound == null`) is therefore nothing at all here, and returns without opening a
+ * line: the vibration it would have been is the phone's half of the same alert.
  */
 private val alarmExecutor = Executors.newSingleThreadExecutor { runnable ->
     Thread(runnable, "alarm-ring").apply { isDaemon = true }
@@ -32,24 +34,24 @@ private val alarmGeneration = AtomicLong(0)
 /** The line backing the ring currently sounding, so a superseding ring can cut it mid-note. */
 @Volatile private var alarmLine: SourceDataLine? = null
 
-actual fun ringAlarmPlatform(label: String, soundSeconds: Int, vibrate: Boolean) {
-    if (soundSeconds <= 0) return
+actual fun ringAlarmPlatform(label: String, soundSeconds: Int, sound: AlertSound?, vibrate: Boolean) {
+    if (soundSeconds <= 0 || sound == null) return
     val generation = alarmGeneration.incrementAndGet()
     // Cut whatever is still sounding right away, rather than waiting for the worker to pick this ring up.
     alarmLine?.let { line -> runCatching { line.stop(); line.flush() } }
     alarmExecutor.execute {
         if (generation != alarmGeneration.get()) return@execute // superseded before it started
-        runCatching { playAlarmTone(soundSeconds, generation) }
+        runCatching { playAlarmTone(soundSeconds, sound, generation) }
     }
 }
 
 /**
- * Writes exactly [soundSeconds] of the guitar loop to the default line, bailing early once [generation] is
+ * Writes exactly [soundSeconds] of [sound]'s loop to the default line, bailing early once [generation] is
  * superseded. One loop cycle is synthesized up front and written repeatedly (a 10-minute ring materialized
  * whole would be ~53 MB), and [SourceDataLine.write] blocking on a full buffer is what paces the loop in real
  * time. A cut mid-cycle is inaudible as a seam because the cycle fades in and out at its edges.
  */
-private fun playAlarmTone(soundSeconds: Int, generation: Long) {
+private fun playAlarmTone(soundSeconds: Int, sound: AlertSound, generation: Long) {
     // Signed 16-bit little-endian mono — the most widely supported PCM line format.
     val format = AudioFormat(AlarmTone.SAMPLE_RATE.toFloat(), 16, 1, true, false)
     val line = AudioSystem.getLine(DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine
@@ -57,7 +59,7 @@ private fun playAlarmTone(soundSeconds: Int, generation: Long) {
     line.start()
     alarmLine = line
     try {
-        val cycle = AlarmTone.loopPcm()
+        val cycle = AlarmTone.loopPcm(sound)
         val totalBytes = AlarmTone.SAMPLE_RATE * soundSeconds * 2
         var written = 0
         while (written < totalBytes && generation == alarmGeneration.get()) {

@@ -344,7 +344,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // engine rings from its now-line sweep and this seam plays the sound (Android does not
                     // reach here — SchedulerHolder injects AlarmRingService instead).
                     ringAlarm = { armed ->
-                        ringAlarmPlatform(armed.label, armed.soundSeconds, armed.vibrate)
+                        // PRD §11: the row's own sound channel decides whether there is a sound at all, and
+                        // which one — a ring with it off is the vibration alone (nothing, on a desktop).
+                        ringAlarmPlatform(
+                            armed.label,
+                            armed.soundSeconds,
+                            armed.alert.tone.takeIf { armed.alert.sound },
+                            armed.alert.vibrate,
+                        )
                     },
                 )
         }

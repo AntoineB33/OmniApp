@@ -13,6 +13,7 @@ import kotlinx.datetime.toInstant
 import org.example.project.scheduler.engine.ArmedAlarm
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
@@ -62,14 +63,14 @@ class AlarmEngineTest {
         minutes: Int,
         label: String = "",
         soundSeconds: Int = 30,
-        vibrate: Boolean = true,
+        alert: AlertSettings = AlertSettings.RING,
         repeats: Boolean = true,
     ) = AlarmEntry(
         id = id,
         label = label,
         timeOfDayMinutes = minutes,
         soundSeconds = soundSeconds,
-        vibrate = vibrate,
+        alert = alert,
         repeats = repeats,
     )
 
@@ -78,10 +79,10 @@ class AlarmEngineTest {
         val h = Harness(nowMillis = at(7, 0))
         h.vm.dispatch(
             SchedulerIntent.SetAlarms(
-                listOf(alarm("alarm-0", 7 * 60, label = "Wake up", soundSeconds = 45, vibrate = true)),
+                listOf(alarm("alarm-0", 7 * 60, label = "Wake up", soundSeconds = 45, alert = AlertSettings.RING)),
             ),
         )
-        val armedNow = ArmedAlarm("alarm-0", at(7, 0), "Wake up", 45, vibrate = true)
+        val armedNow = ArmedAlarm("alarm-0", at(7, 0), "Wake up", 45, alert = AlertSettings.RING)
 
         h.engine.onAlarmFire(armedNow)
 
@@ -94,7 +95,7 @@ class AlarmEngineTest {
         assertEquals("alarm-0", next.alarmId)
         assertEquals(at(7, 0) + day, next.atMillis)
         assertEquals(45, next.soundSeconds)
-        assertTrue(next.vibrate)
+        assertTrue(next.alert.vibrate)
     }
 
     @Test
@@ -102,7 +103,7 @@ class AlarmEngineTest {
         val h = Harness(nowMillis = at(7, 0))
         h.vm.dispatch(SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, repeats = false))))
 
-        h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "", 30, vibrate = true))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "", 30, alert = AlertSettings.RING))
 
         assertEquals(1, h.rung.size, "the one-off still rings")
         assertFalse(h.vm.state.value.alarms.single().enabled, "a one-off disarms itself once it has rung")
@@ -122,7 +123,7 @@ class AlarmEngineTest {
         )
         h.vm.dispatch(SchedulerIntent.SetAlarmEnabled("alarm-0", false))
 
-        h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "", 30, vibrate = true))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "", 30, alert = AlertSettings.RING))
 
         assertEquals(1, h.rung.size)
     }
@@ -132,7 +133,7 @@ class AlarmEngineTest {
         val h = Harness(nowMillis = at(7, 0))
         h.vm.dispatch(SchedulerIntent.SetAlarms(listOf(alarm("alarm-1", 9 * 60))))
 
-        h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "Deleted", 30, vibrate = false))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-0", at(7, 0), "Deleted", 30, alert = AlertSettings.RING.copy(vibrate = false)))
 
         assertEquals(1, h.rung.size)
         val next = h.armed.single()
@@ -220,7 +221,7 @@ class AlarmEngineTest {
             ),
         )
 
-        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, vibrate = false))
+        h.engine.onAlarmFire(ArmedAlarm("alarm-9", at(7, 0), "", 30, alert = AlertSettings.RING.copy(vibrate = false)))
 
         val next = h.armed.single()
         assertNotNull(next)

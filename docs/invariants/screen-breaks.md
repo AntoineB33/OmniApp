@@ -374,6 +374,12 @@ instant it is waiting for; read off an anchor instead, it found no next boundary
 pause cue's `nextScreenBreakStartMillis` is the pose half of that reading, so the server and this device key
 on one instant.
 
+**The sweep also carries the §14 reminder tags** (`CueKind.ReminderDue`), for the same reason the four break
+cues were collapsed into it: a leap that crosses a reminder and a break must say them in the order they were
+due. Their occurrence source is the tags themselves, never a second reading of the recurrence, and they
+de-dupe on the tag's stable id — `docs/invariants/alarms-and-timers.md` § *A reminder is announced by the
+SWEEP, never armed*.
+
 **A break's start notification says what the break RUNS OUT INTO** — one function,
 `SchedulerDomain.screenBreakStartNotificationMessage` over `screenBreakFollowOn`, so the cue sweep and the
 manual "Look away now" cannot word one break two ways. The rule is a pair of coverage questions asked of

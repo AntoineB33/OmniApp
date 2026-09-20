@@ -67,6 +67,10 @@ class CueSweepOrderingTest {
                     assertEquals(c.instant + 20 * SEC, c.endInstant, "a look-away resumes 20 s later")
                 SchedulerDomain.CueKind.RestPoseDue ->
                     assertEquals(c.instant, c.endInstant, "a pose announces only its start")
+                // PRD §14: a reminder is a zero-duration tag, so it announces only its instant too — and
+                // this sweep is asked about no reminder tags at all.
+                SchedulerDomain.CueKind.ReminderDue ->
+                    assertEquals(c.instant, c.endInstant, "a reminder announces only its instant")
                 SchedulerDomain.CueKind.WindDown -> Unit
             }
         }

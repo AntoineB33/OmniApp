@@ -5331,7 +5331,7 @@ private fun alarmDetails(
             if (b.days != a.days) add("days " + dayInitials(b.days) + " -> " + dayInitials(a.days))
             if (b.soundSeconds != a.soundSeconds)
                 add("rings for " + b.soundSeconds + " s -> " + a.soundSeconds + " s")
-            if (b.vibrate != a.vibrate) add("vibrate " + onOff(b.vibrate) + " -> " + onOff(a.vibrate))
+            addAll(alertChanges(b.alert, a.alert))
             if (b.repeats != a.repeats) add("repeat " + onOff(b.repeats) + " -> " + onOff(a.repeats))
             if (b.enabled != a.enabled) add(onOff(b.enabled) + " -> " + onOff(a.enabled))
         }
@@ -5355,9 +5355,33 @@ private fun timerDetails(
             if (b.label != a.label) add("label " + quoted(b.label) + " -> " + quoted(a.label))
             if (b.soundSeconds != a.soundSeconds)
                 add("rings for " + b.soundSeconds + " s -> " + a.soundSeconds + " s")
-            if (b.vibrate != a.vibrate) add("vibrate " + onOff(b.vibrate) + " -> " + onOff(a.vibrate))
+            addAll(alertChanges(b.alert, a.alert))
         }
     }
+}
+
+/**
+ * PRD §11: the lines one row's **alert block** contributes to a History Unit's details — the four channels
+ * and the chosen sound, each named only when it moved.
+ *
+ * One function for the alarms, the timers and the reminders, for the same reason there is one
+ * [org.example.project.scheduler.model.AlertSettings]: three spellings of "vibrate off -> on" would be three
+ * things to keep in step, and the History window is exactly where a drift between them would show.
+ */
+private fun alertChanges(
+    before: org.example.project.scheduler.model.AlertSettings,
+    after: org.example.project.scheduler.model.AlertSettings,
+): List<String> = buildList {
+    if (before.sound != after.sound) add("sound " + onOff(before.sound) + " -> " + onOff(after.sound))
+    // The sound's NAME is worth a line only where the sound is actually on at one end of the change: a row
+    // that is silent at both ends changed nothing the user can hear.
+    if (before.tone != after.tone && (before.sound || after.sound))
+        add("sound " + before.tone.label + " -> " + after.tone.label)
+    if (before.voice != after.voice) add("voice " + onOff(before.voice) + " -> " + onOff(after.voice))
+    if (before.notification != after.notification)
+        add("notification " + onOff(before.notification) + " -> " + onOff(after.notification))
+    if (before.vibrate != after.vibrate)
+        add("vibrate " + onOff(before.vibrate) + " -> " + onOff(after.vibrate))
 }
 
 /**
