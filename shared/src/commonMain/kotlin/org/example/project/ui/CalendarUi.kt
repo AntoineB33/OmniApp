@@ -2054,10 +2054,16 @@ fun HistoryManagerWindow(
 
     // The pair — this window and the row-info window beside it — is what stands among the app's other
     // windows, so the stacking order goes on the Box, not only on the frame inside it ([windowStackZ]).
+    // It reads the TOPMOST of the two, which is what lets a press in the row-info window bring the pair
+    // forward: the info window's own z is confined to this Box, so reading the History window's alone left
+    // a press in that half raising nothing at all.
     // CENTRED content: both frames' offsets are "from centred", and the Box is as big as its larger child, so
     // with the default top-start alignment the info window opening (or being bigger than a shrunken History
     // window) would shift the History window across the screen.
-    Box(modifier.windowStackZ(frame.id), contentAlignment = Alignment.Center) {
+    Box(
+        modifier.windowStackZ(frame.id, infoRow?.let { HISTORY_ENTRY_INFO_WINDOW_ID }),
+        contentAlignment = Alignment.Center,
+    ) {
         AppWindowFrame(
             title = "History",
             state = frame,
@@ -2214,6 +2220,14 @@ fun HistoryManagerWindow(
             HistoryEntryInfoWindow(
                 entry = row,
                 onDismiss = { infoRow = null },
+                // A press in the info window is a press in the PAIR: the app stamps it as the History
+                // window (PRD §6's "the innermost window the user last pressed in" — the content Box's own
+                // raise set the tree on the way in) and raises it, and then the info window takes the focus
+                // back, because it is the innermost of the two and owns the keyboard while it stands there.
+                onRaise = {
+                    onRaise()
+                    windowFrames?.focus(HISTORY_ENTRY_INFO_WINDOW_ID)
+                },
                 initialOffset = frame.offset + Offset(120f, 40f),
             )
         }
@@ -2744,7 +2758,13 @@ private const val HISTORY_ENTRY_INFO_WINDOW_ID = "HistoryEntryInfo"
  * behind whatever is already being said rather than cutting it.
  */
 @Composable
-private fun HistoryEntryInfoWindow(entry: FilteredHistoryEntry, onDismiss: () -> Unit, initialOffset: Offset) {
+private fun HistoryEntryInfoWindow(
+    entry: FilteredHistoryEntry,
+    onDismiss: () -> Unit,
+    /** Raise the History pair this window belongs to — fired on a press anywhere inside it. */
+    onRaise: () -> Unit,
+    initialOffset: Offset,
+) {
     val infos = historyEntryInfos(entry)
     val voice = (entry as? FilteredHistoryEntry.Notification)?.entry?.utterance
     val frame = rememberWindowFrameState(HISTORY_ENTRY_INFO_WINDOW_ID, initialOffset)
@@ -2755,6 +2775,7 @@ private fun HistoryEntryInfoWindow(entry: FilteredHistoryEntry, onDismiss: () ->
         defaultWidth = 480.dp,
         defaultHeight = 420.dp,
         claimsKeyboard = true,
+        onRaise = onRaise,
         // "Copy all" belongs in this window's head rather than its body: it is about the window's whole
         // subject, exactly like the five buttons beside it.
         headTrailing = {

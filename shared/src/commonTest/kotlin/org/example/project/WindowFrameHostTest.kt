@@ -141,6 +141,41 @@ class WindowFrameHostTest {
         assertTrue(host.zOf("TaskEdit") > host.zOf("Categories"))
     }
 
+    // ----- a PAIR: a window and the companion window it opens beside itself ---------------------------
+    //
+    // Both are drawn in ONE wrapper `Box`, and `zIndex` only orders a node among its own siblings — so the
+    // companion's own z never leaves that Box and the WRAPPER is what stands among the app's windows.
+
+    @Test
+    fun `a pair stands where its topmost half does, so a press in the companion brings it forward`() {
+        // The History window and its row-info window. Pressing in the info window raised the info window
+        // and nothing came forward: the pair was drawn at the History window's z, which was still under
+        // the window the user had moved to.
+        val host = WindowFrameHost()
+        register(host, "History")
+        register(host, "HistoryEntryInfo", claimsKeyboard = true)
+        register(host, "Calendar")
+        assertTrue(host.zOf("Calendar") > host.zOf("History", "HistoryEntryInfo"))
+
+        host.focus("HistoryEntryInfo")
+
+        assertTrue(host.zOf("History", "HistoryEntryInfo") > host.zOf("Calendar"))
+        // …and the focus stays with the half the press landed in, which is what keeps its keyboard.
+        assertTrue(host.keyboardClaimed)
+    }
+
+    @Test
+    fun `a pair with no companion open reads as the window itself`() {
+        // Never the closed companion's id: an id that is not in the stack reads as the TOP, so naming it
+        // while it is shut would pin the pair over every other window.
+        val host = WindowFrameHost()
+        register(host, "History")
+        register(host, "Calendar")
+
+        assertEquals(host.zOf("History"), host.zOf("History", null))
+        assertTrue(host.zOf("Calendar") > host.zOf("History", null))
+    }
+
     @Test
     fun `a closed window leaves the stack`() {
         val host = WindowFrameHost()
@@ -250,7 +285,9 @@ class WindowFrameHostTest {
     /**
      * The History window's "info" button pressed on the row whose information window is already open: the
      * press landed in the History window (which took the focus and the top), and the row it asks for changes no
-     * state — so the host has to be told to bring the window back, reduced or not.
+     * state — so the host has to be told to bring the window back, reduced or not. The reduce bar's chip asks
+     * the same way: restoring and RAISING alone left a window that answers keystrokes back on screen with the
+     * tree still holding the keyboard.
      */
     @Test
     fun `presenting an open window restores it, raises it and focuses it`() {

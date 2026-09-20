@@ -83,7 +83,9 @@ fun TaskTreesWindow(
 
     // The pair — this window and a tree's detail window beside it — is what stands among the app's other
     // windows, so the stacking order goes on the Box, not only on the frame inside it ([windowStackZ]).
-    Box(modifier.windowStackZ(frame.id)) {
+    // It reads the TOPMOST of the two: a detail window's own z is confined to this Box, so a press in that
+    // half must raise the PAIR or it brings nothing forward.
+    Box(modifier.windowStackZ(frame.id, detail?.let { taskTreeDetailWindowId(it.id) })) {
         AppWindowFrame(
             title = "All task trees",
             state = frame,
@@ -295,6 +297,13 @@ private fun TaskTreeRow(
 }
 
 /**
+ * The frame id of a tree's detail window. One reading, shared by the window and by the z of the pair it is
+ * the second half of — a second spelling of it would have the list's Box compare against a window that is
+ * not there.
+ */
+private fun taskTreeDetailWindowId(id: TaskTreeId): String = "TaskTreeDetail/" + id.value
+
+/**
  * The little window a tree opens: the date that puts it on the timeline, and the bin that deletes it.
  *
  * Deleting the tree that is currently live is deliberately not destructive — the reducer keeps the live
@@ -310,7 +319,7 @@ private fun TaskTreeDetailWindow(
     onRaise: () -> Unit,
     initialOffset: Offset,
 ) {
-    val frame = rememberWindowFrameState("TaskTreeDetail/" + entry.id.value, initialOffset)
+    val frame = rememberWindowFrameState(taskTreeDetailWindowId(entry.id), initialOffset)
     // Raw text, so a half-typed "2026-1" is not reformatted (or rejected) on every keystroke. Re-seeded
     // when the window switches to another tree, not on every recomposition of this one.
     var dateText by remember(entry.id) {

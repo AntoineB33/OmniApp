@@ -144,8 +144,18 @@ means.
   - **The `Box` centres its content** (`contentAlignment = Alignment.Center`): a frame's offset is "from
     centred", and the `Box` is as big as its larger child, so a top-start `Box` moves the first window
     whenever the companion is the bigger of the two.
+  - **The `Box` takes the z of the TOPMOST of the two** (`windowStackZ(id, companion)` →
+    `WindowFrameHost.zOf(id, companion)`), and names the companion only while it is open. A companion's own
+    `zIndex` never leaves the wrapper, so reading the first window's z alone made a press in the companion
+    raise a window nothing draws with: the History row-info window could not bring its pair back over
+    whatever stood in front of it (2026-09-20). Naming a *closed* companion is the opposite bug — an id that
+    is not in the stack reads as the top, which would pin the pair over every window.
+  - **A press in the companion is a press in the pair**: it goes through the first window's `onRaise` (so
+    `App` stamps `activeHistoryWindow` and raises it), and the companion then takes the focus back, being
+    the innermost window the press landed in — that is what keeps the keyboard it claims.
 - **Asking again for a window that is already open brings it back** (`WindowFrameHost.present`: out of the
-  reduce bar, to the top, into the focus). Opening raises it through `register`, but re-asking for the same
+  reduce bar, to the top, into the focus) — **the reduce bar's chip included**, which raised without
+  focusing and so brought a keyboard-claiming window back with the tree still holding the keyboard. Opening raises it through `register`, but re-asking for the same
   subject changes no state of the caller's, so without it the window stays under whatever the user moved to.
 
 ## What is drawn OVER what

@@ -11,6 +11,29 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A press in a companion window brings its pair forward — 2026-09-20
+
+Anomaly: on some part of a window, a press did not change the focus between windows. The part was a
+**companion** window — the History window's row-info window, opened by a double click on a row. A pair is
+drawn in one wrapper `Box` and `zIndex` only orders a node among its own siblings, so the companion's own z
+never left that `Box` and the wrapper carried the FIRST window's z alone: pressing the info window raised
+`HistoryEntryInfo` in `WindowFrameHost.stackOrder`, which nothing on screen was drawn with, and the pair
+stayed under whatever the user had moved to. Pressing the History half worked, which is what made it read as
+"some part of the window".
+
+- `WindowFrameHost.zOf(id, companion)` + `Modifier.windowStackZ(id, companion)`: a pair stands where its
+  **topmost** half does. The companion is named only while it is open (a closed one is not in the stack, and
+  an id that is not in the stack reads as the top).
+- `HistoryEntryInfoWindow` now takes an `onRaise` and forwards it, as `TaskTreeDetailWindow` already did —
+  so the press is stamped as the History window (PRD §6) — then takes the focus back, keeping the keyboard
+  it claims. The task-trees list/detail pair reads the pair z too, and its detail id has one spelling
+  (`taskTreeDetailWindowId`).
+- Found beside it: the reduce bar's chip restored and **raised** a window without focusing it, so a window
+  that answers keystrokes came back from the bar with the tree still holding the keyboard. It goes through
+  `WindowFrameHost.present` now, like every other way of asking for an open window.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy.
+
 ### An alarm, a timer and a reminder each choose their own channels and their own sound — 2026-09-20
 
 The user's spec: *"For any alarm, timer or reminder, the user can define if there is a sound alarm, a voice, a

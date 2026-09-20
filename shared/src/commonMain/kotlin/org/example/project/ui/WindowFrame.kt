@@ -390,6 +390,20 @@ class WindowFrameHost {
         return if (index < 0) stack.size.toFloat() else index.toFloat()
     }
 
+    /**
+     * Where a **pair** sits — a window and the companion window it opens beside itself (the History window
+     * and its row info, the task-trees list and a tree's detail). The two are drawn in ONE wrapper `Box`, so
+     * the pair stands among the app's windows as a single thing, and that thing sits where its **topmost**
+     * member does: a press in the companion raises the companion, and the pair has to come forward with it.
+     * Reading the first window's z alone is what left the History row-info window unable to bring its pair
+     * back over whatever the user had moved to — the press landed in a window and nothing came forward.
+     *
+     * [companion] is null while the companion is not open. Never its id: an id that is not in the stack
+     * reads as the TOP (see [zOf]), so a closed companion would pin the pair over every other window.
+     */
+    fun zOf(id: String, companion: String?): Float =
+        if (companion == null) zOf(id) else maxOf(zOf(id), zOf(companion))
+
     /** Puts [id] on top. Called when a window opens, on every press inside one, and by `App`'s raises. */
     fun raise(id: String) {
         if (stack.lastOrNull() == id) return
@@ -462,14 +476,18 @@ val LocalWindowFrameHost = staticCompositionLocalOf<WindowFrameHost?> { null }
  * per-object window is centred in) applies it there as well, because `zIndex` only orders a node among its
  * own siblings and the wrapper is what stands beside the other windows.
  *
+ * A wrapper holding a PAIR — a window and the companion window it opens beside itself — names the companion
+ * in [companion] while that companion is open, so that a press in either half brings the pair forward
+ * ([WindowFrameHost.zOf]).
+ *
  * Never a constant: a fixed z passed in from outside is exactly how the priority-weight table and every
  * other per-object window came to stand over whatever the user moved to afterwards. They could, while a
  * window about one object was a thing that left on the next press; nothing leaves any more (ADR 0014).
  */
 @Composable
-fun Modifier.windowStackZ(id: String): Modifier {
+fun Modifier.windowStackZ(id: String, companion: String? = null): Modifier {
     val host = LocalWindowFrameHost.current
-    return this.zIndex(host?.zOf(id) ?: 0f)
+    return this.zIndex(host?.zOf(id, companion) ?: 0f)
 }
 
 /**
@@ -841,7 +859,11 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 overflow = TextOverflow.Ellipsis,
                 // Picking a window back up puts it on top: it is the window the user has just asked for,
                 // exactly as when it was opened.
-                modifier = Modifier.clickable { row.state.restore(); host.raise(row.id) },
+                // …and into the FOCUS, like every other way of asking for a window that is already
+                // open ([WindowFrameHost.present]): raising alone left the app believing the user was
+                // still in whatever they had focused before, so a window that answers keystrokes came
+                // back from the bar without its keyboard.
+                modifier = Modifier.clickable { host.present(row.id) },
             )
             Box(
                 modifier = Modifier.size(20.dp).clip(CircleShape).clickable { row.onClose() },
