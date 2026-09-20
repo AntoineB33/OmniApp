@@ -523,6 +523,34 @@ class DefaultSubtreeTest {
     }
 
     @Test
+    fun a_template_owned_row_is_named_after_the_template_and_not_after_the_tree() {
+        // The other half of the same question: a path only says WHICH task this is if the user can tell
+        // where it starts, and the projection's root is the template. Named by the root task's own title it
+        // read "root / planning / write good prompt" — an account path, for a row the account's tree has
+        // nowhere, which sent the user looking for it in the real tree (2026-09-20, account 3).
+        var s = withTemplate(listOf(node("dst/0", "planning", children = listOf(node("dst/1", "writing")))))
+        val projected = s.projectDefaultSubtree()
+        val planningCell =
+            projected.lists[projected.rootListId]!!.cellIds
+                .first { projected.cells[it]?.taskId != null }
+        val templateWriting =
+            projected.lists[projected.tasks[projected.cells[planningCell]!!.taskId!!]!!.childListId!!]!!
+                .cellIds.mapNotNull { projected.cells[it]?.taskId }.first()
+        val elsewhere = projected.lists[projected.rootListId]!!.cellIds.last()
+
+        val label =
+            SchedulerDomain.changeTaskMenuEntries(projected, elsewhere, "writing", namingSource = s)
+                .first { it.taskId == templateWriting }
+                .label
+        assertEquals("${SchedulerDomain.DEFAULT_SUBTREE_ROOT_LABEL} / planning / writing", label)
+        // ...and the account's own tree still names its own rows from its own root.
+        assertEquals(
+            SchedulerDomain.ROOT_TASK_TITLE,
+            SchedulerDomain.taskPathLabel(s, WellKnownIds.ROOT_TASK),
+        )
+    }
+
+    @Test
     fun a_blank_title_deletes_a_template_row_with_its_children() {
         // PRD §4: the blank title is what deletes, in the template exactly as in the tree — and it is the
         // tree's own rule doing it, not a normalization step of the template's own.

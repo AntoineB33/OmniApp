@@ -261,6 +261,65 @@ class RootTaskMigrationTest {
         assertEquals("task/root", decoded.tasks[renamed]!!.title)
     }
 
+    /**
+     * The trees the payload carries BESIDE the live one — the PRD §4 template's snapshot and every stored
+     * task tree's — hold the root task too, and [SchedulerDomain.withRoot] never sees either of them. So the
+     * rename left both of them titled `main`: on the release account every Change Task row naming a
+     * template-owned task read `main / planning / …`, a path the account's tree has nowhere, and the user
+     * went looking for it there (2026-09-20, account 3).
+     */
+    @Test
+    fun the_template_and_a_stored_tree_come_back_with_no_root_titled_main() {
+        val payload =
+            """
+            {"rootListId":"list/main",
+             "lists":[{"id":"list/main","parentCellId":null,"cellIds":["cell/main/0"]}],
+             "cells":[{"id":"cell/main/0","parentListId":"list/main","taskId":"task/user/0"}],
+             "tasks":[
+               {"id":"task/root","title":"root","childTaskIds":["task/main"]},
+               {"id":"task/main","title":"main","childListId":"list/main",
+                "childTaskIds":["task/user/0"]},
+               {"id":"task/user/0","title":"Book","occurrences":["cell/main/0"]}],
+             "nextTaskCounter":1,"nextCellCounter":1,
+             "defaultSubtreeEnabled":true,
+             "defaultSubtreeTree":{
+               "lists":[{"id":"list/main","parentCellId":null,
+                         "cellIds":["cell/dst/0","cell/dst/1"]}],
+               "cells":[{"id":"cell/dst/0","parentListId":"list/main","taskId":"task/user/9"},
+                        {"id":"cell/dst/1","parentListId":"list/main","taskId":null}],
+               "tasks":[{"id":"task/main","title":"main","childListId":"list/main",
+                         "childTaskIds":["task/user/9"]},
+                        {"id":"task/user/9","title":"planning","occurrences":["cell/dst/0"]}],
+               "nextTaskCounter":10,"nextCellCounter":2},
+             "taskTrees":[{"id":"tree/0","title":"Studies","tree":{
+               "lists":[{"id":"list/main","parentCellId":null,"cellIds":["cell/main/9"]}],
+               "cells":[{"id":"cell/main/9","parentListId":"list/main","taskId":"task/user/5"}],
+               "tasks":[{"id":"task/main","title":"main","childListId":"list/main",
+                         "childTaskIds":["task/user/5"]},
+                        {"id":"task/user/5","title":"Reading","occurrences":["cell/main/9"]}],
+               "nextTaskCounter":6,"nextCellCounter":10}}]}
+            """.trimIndent()
+
+        val s = assertNotNull(SchedulerStateCodec.decode(payload))
+
+        val templateRoot = assertNotNull(s.defaultSubtree.tree.tasks[WellKnownIds.ROOT_TASK])
+        assertEquals(SchedulerDomain.ROOT_TASK_TITLE, templateRoot.title)
+        assertEquals(WellKnownIds.ROOT_LIST, templateRoot.childListId)
+        assertTrue(s.defaultSubtree.tree.tasks.values.none { it.title == "main" })
+        // ...and the template itself came through: the row is still there to be grafted.
+        assertEquals(
+            listOf("planning"),
+            s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds
+                .mapNotNull { s.defaultSubtree.tree.cells[it]?.taskId }
+                .mapNotNull { s.defaultSubtree.tree.tasks[it]?.title },
+        )
+
+        val storedRoot = assertNotNull(s.taskTrees.single().tree.tasks[WellKnownIds.ROOT_TASK])
+        assertEquals(SchedulerDomain.ROOT_TASK_TITLE, storedRoot.title)
+        assertEquals(WellKnownIds.ROOT_LIST, storedRoot.childListId)
+        assertEquals("Reading", s.taskTrees.single().tree.tasks[TaskId("task/user/5")]!!.title)
+    }
+
     /** Turns a payload this build wrote back into the shape the previous build wrote. */
     private fun String.toLegacyShape(): String =
         replace("\"task/root\"", "\"task/main\"")

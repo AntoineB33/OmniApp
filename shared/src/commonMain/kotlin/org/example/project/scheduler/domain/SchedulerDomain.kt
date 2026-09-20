@@ -38,6 +38,7 @@ import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.TaskTreeEntry
+import org.example.project.scheduler.state.TreeSnapshot
 
 /**
  * PRD §6 / `docs/scheduler_requirements.md`: what one run of the scheduler read and what it answered, kept
@@ -172,6 +173,33 @@ object SchedulerDomain {
             // here is open: anything else would hide the whole tree behind an upgrade.
             expanded = healed.expanded + WellKnownIds.ROOT_CELL,
         )
+    }
+
+    /**
+     * [withRoot]'s root **task** alone, for a tree that is not the live one — the PRD §4 template's
+     * [TreeSnapshot] and every stored task tree's. Those carry [WellKnownIds.ROOT_TASK] too (it is what
+     * `projectDefaultSubtree` roots the template at, and what its percentages are a share of), but they are
+     * plain snapshots: [withRoot] never sees them, so before this they kept whatever title the payload had.
+     * On the release account the template's said `main` — the pre-1.6.0 name, which the codec's id
+     * migration cannot reach because a title is not an id — and every Change Task row naming a
+     * template-owned task therefore read `main / …`, a path the account's tree has nowhere (2026-09-20).
+     *
+     * It installs the task and nothing else: a snapshot must **not** grow a root CELL. The template's root
+     * list is parentless by design (`SchedulerDomain.rootCellId`), and a stored tree gets its root cell from
+     * [withRoot] at the moment it is loaded ([SchedulerState.applyTreeWithRecords]).
+     */
+    fun withRootTask(tree: TreeSnapshot): TreeSnapshot {
+        val rootList = tree.lists[WellKnownIds.ROOT_LIST] ?: return tree
+        val rootTask =
+            Task(
+                id = WellKnownIds.ROOT_TASK,
+                title = ROOT_TASK_TITLE,
+                childListId = WellKnownIds.ROOT_LIST,
+                childTaskIds = rootList.cellIds.mapNotNull { tree.cells[it]?.taskId },
+            )
+        if (tree.tasks[WellKnownIds.ROOT_TASK] == rootTask) return tree
+        val tasks = tree.tasks + (WellKnownIds.ROOT_TASK to rootTask)
+        return tree.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks))
     }
 
     /** The root task's title — the one name the tree's own root row, and every "root" label, print. */
@@ -5852,8 +5880,26 @@ object SchedulerDomain {
     fun taskPathLabel(state: SchedulerState, taskId: TaskId): String =
         taskPathLabel(state, shortestTaskTreePath(state, taskId))
 
+    /**
+     * PRD §4: the **name of the root** a path is read against — the root task's own title, except on the §4
+     * template's projection, where it is the template.
+     *
+     * A path says *which* of the tasks of that title this one is, so it is only an answer if the user can
+     * tell where it starts. The template window draws a projection rooted at the template
+     * ([SchedulerState.isDefaultSubtreeProjection]), and a template-owned task is named from that drawing —
+     * so with the root's own title it read exactly like a path through the account's tree, and sent the user
+     * looking for `planning / write good prompt` in a tree that has no such row (2026-09-20, account 3).
+     */
+    const val DEFAULT_SUBTREE_ROOT_LABEL: String = "Default sub-tree"
+
     private fun taskPathLabel(state: SchedulerState, path: List<TaskId>): String =
-        path.mapNotNull { state.tasks[it]?.title }.joinToString(" / ")
+        path.mapNotNull { taskId ->
+            if (taskId == WellKnownIds.ROOT_TASK && state.isDefaultSubtreeProjection) {
+                DEFAULT_SUBTREE_ROOT_LABEL
+            } else {
+                state.tasks[taskId]?.title
+            }
+        }.joinToString(" / ")
 
     /**
      * The titles under [taskId], read from its shared child list — the same structural source of truth

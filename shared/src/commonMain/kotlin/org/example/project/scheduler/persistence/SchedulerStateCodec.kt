@@ -185,11 +185,26 @@ object SchedulerStateCodec {
      * ([SchedulerDomain.unifyNoScreenPeriods]), so a payload a build before that rule wrote — two periods
      * that would draw as two blocks splitting the day column's width — loads as the union rather than
      * surfacing a shape the current invariants forbid (CLAUDE.md § *Persisted-DB compatibility*).
+     *
+     * And the root task of every tree the payload carries **beside** the live one — the §4 template's and
+     * each stored task tree's — is healed with it ([SchedulerDomain.withRootTask]): [SchedulerDomain.withRoot]
+     * only ever sees the live tree, so those kept the pre-1.6.0 `main` title the id migration cannot reach.
      */
     private fun PersistedState.toHealedState(): SchedulerState =
         SchedulerDomain.withRoot(toState()).let { state ->
             val panels = SchedulerDomain.unifyNoScreenPeriods(state.panels)
             if (panels === state.panels) state else state.copy(panels = panels)
+        }.let { state ->
+            val template = SchedulerDomain.withRootTask(state.defaultSubtree.tree)
+            val trees = state.taskTrees.map { entry -> entry.copy(tree = SchedulerDomain.withRootTask(entry.tree)) }
+            if (template === state.defaultSubtree.tree && trees == state.taskTrees) {
+                state
+            } else {
+                state.copy(
+                    defaultSubtree = state.defaultSubtree.copy(tree = template),
+                    taskTrees = trees,
+                )
+            }
         }.let(SchedulerReducer::settleDefaultSubtree)
 
     private fun migrateLegacyRoot(element: JsonElement): JsonElement =

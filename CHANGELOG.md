@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Change Task row that names a template task says so — 2026-09-20
+
+Anomaly: in the Default sub-tree window, the id menu under `planning / write good prompt` offered
+`main / planning / write good prompt (how to measure improvement, planning, why)` — but the account's own
+tree has an EMPTY `planning` at its root. Probed read-only against the release DB (`app_state.payload`
+decoded with `SchedulerStateCodec`): the row is real and correct — `task/user/359` is one of the template's
+own 59 tasks, named, as PRD §4 says, from the tree it is drawn in. What was wrong is the name.
+
+- The template's `TreeSnapshot` carries the root task too, and `SchedulerDomain.withRoot` — the ONE
+  definition of the root shape — only ever sees the LIVE tree. So the pre-1.6.0 title `main` survived there
+  (the codec's id migration cannot reach it: a title is not an id), and every stored task tree's did too.
+  `SchedulerDomain.withRootTask(TreeSnapshot)` heals the task alone — a snapshot must not grow a root CELL —
+  and the codec runs it over `defaultSubtree.tree` and every `taskTrees[].tree` on decode.
+- Healed, the label would have read `root / planning / write good prompt`: still an account path, for a row
+  the account has nowhere. So `taskPathLabel` names the root of a `isDefaultSubtreeProjection` state
+  `Default sub-tree` (`SchedulerDomain.DEFAULT_SUBTREE_ROOT_LABEL`) instead of the root task's own title. A
+  live task keeps being named from the account's tree, as it already was (`namingSource`).
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy. The heal runs on load,
+so the stale `main` leaves the DB at the next save.
+
 ### A press in a companion window brings its pair forward — 2026-09-20
 
 Anomaly: on some part of a window, a press did not change the focus between windows. The part was a

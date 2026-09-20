@@ -37,6 +37,12 @@ Global rules that always apply: `CLAUDE.md`.
   the codec heals every decoded payload with it, `SnapshotMerge.repair` repairs with it, and
   `SchedulerState.applyTree` carries it across a whole-tree swap (`keepingRoot`). A second place that spells
   the root out is a second answer waiting to drift.
+- **The trees stored BESIDE the live one carry the root task, and `withRoot` never sees them**: the §4
+  template's `TreeSnapshot` and every `TaskTreeEntry.tree`. `SchedulerDomain.withRootTask` is their half of
+  the same rule — the root TASK forced to its title and its child list, and no root CELL (the template's root
+  list is parentless by design; a stored tree grows its row from `withRoot` when it is loaded). The codec
+  runs it over both on decode, because the id migration cannot reach a *title*: the release account's
+  template still said `main`, and named every template-owned Change Task row after it (2026-09-20).
 - **The root is DRAWN** (PRD §2): `ROOT_CELL` is a real cell of the tree, alone in `ROOT_CELL_LIST` one level
   **above** `rootListId`, pointing at `ROOT_TASK`. Real, not a synthetic header, so exactly one thing draws a
   task row, one thing decides the visible order, and the expansion set answers for it as for any other parent —
@@ -121,6 +127,12 @@ Global rules that always apply: `CLAUDE.md`.
   release account's tree were named by their bare title**, which turned the 64 tasks called "planning" into
   64 identical rows and flattened the menu's first sort key to the constant 1. It is asked once per menu and
   handed to the sort and to every row's label — it is a whole-tree walk, and the sort asks it per comparison.
+- **A path is read against a named root, and on the §4 template's projection that name is the template**
+  (`DEFAULT_SUBTREE_ROOT_LABEL`, keyed on `SchedulerState.isDefaultSubtreeProjection`). A template-owned task
+  is named from the drawing it lives in, so with the root task's own title its row read exactly like a path
+  through the account's tree — `planning / write good prompt`, which the account's tree has nowhere — and the
+  user went looking for it there (2026-09-20). A task the ACCOUNT holds is still named from the account
+  (`namingSource`), so the two kinds of row now say which tree they are about.
 - A task **the tree does not hold** is named by its child titles, never by a path (PRD §4) — and sorts
   **last**, after every row that has one. "Does not hold" is `shortestTaskTreePaths`, the same predicate the
   "All tasks" rows and the greying of "go to task" use, so it also covers a task stranded *inside* a detached
