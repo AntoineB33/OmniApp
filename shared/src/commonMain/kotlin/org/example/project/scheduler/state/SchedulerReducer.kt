@@ -635,7 +635,30 @@ object SchedulerReducer {
         return state.copy(supabaseUsageLog = capped)
     }
 
+    /**
+     * PRD §4: open a cell's Edit Mode — or, when one is already open on that very cell, take the keystroke
+     * that asked for it into the session that is already running.
+     *
+     * **The letters that open a session and the ones that follow it RACE, and this is where the race is
+     * settled.** `onPreviewKeyEvent` reads the state of the last *composition*, and Compose delivers key
+     * events without recomposing between them, so on a frame the app owes elsewhere (a fill, a big
+     * derivation) the second letter is typed against a snapshot that still says "no session open" and
+     * arrives here as a second [SchedulerIntent.BeginEdit] with its own `initialText`. Starting a fresh
+     * session for it threw away everything typed before it — which is exactly the "the first letters are
+     * missed" a slow frame produced. A live session on the same cell therefore **absorbs** the keystroke:
+     * it is [SchedulerIntent.UpdateEditText] arriving by another route, so it is reduced as one, and the
+     * letters land in the order they were typed however late the frame is.
+     *
+     * The same reasoning makes a re-entry with no text (a second Enter / double-click delivered against the
+     * stale snapshot) a **no-op** rather than a restart: restarting recaptures `treeBefore`, which is the
+     * baseline Escape and Rename revert to — a stale duplicate would quietly make the half-typed title the
+     * thing that "was there before".
+     */
     private fun reduceBeginEdit(state: SchedulerState, intent: SchedulerIntent.BeginEdit): SchedulerState {
+        state.editSession?.takeIf { it.cellId == intent.cellId }?.let { live ->
+            val typed = intent.initialText ?: return state
+            return reduceUpdateEditText(state, live.draftText + typed)
+        }
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
         val cell = state.cells[intent.cellId] ?: return state
         val currentTitle = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()

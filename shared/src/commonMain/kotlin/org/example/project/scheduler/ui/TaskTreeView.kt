@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -209,6 +210,11 @@ internal fun TaskTreeView(
     // Bumped by Ctrl+F so pressing it again re-focuses the field and re-selects it, even while it is open.
     var findFocusTick by remember { mutableStateOf(0) }
     val findFocusRequester = remember { FocusRequester() }
+    // Whether the tree's own focusable Column is the thing holding the focus — as opposed to a field
+    // INSIDE it (a cell's edit field, the find bar). `isFocused` is exactly that question: it goes false
+    // the moment a child takes over, while `hasFocus` would stay true. Read by the key handler to tell
+    // the one window in which an open session's field has not taken the caret yet (below).
+    var treeSelfFocused by remember { mutableStateOf(false) }
     // The tree's scroll, hoisted so a revealed match can be brought into view, plus the viewport's own
     // window band (recorded OUTSIDE the scroll modifier, so it is the viewport and not the scrolled
     // content) to compare the row's band against.
@@ -404,6 +410,7 @@ internal fun TaskTreeView(
     Column(
         modifier = Modifier
             .focusRequester(focusRequester)
+            .onFocusChanged { treeSelfFocused = it.isFocused }
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -443,6 +450,21 @@ internal fun TaskTreeView(
                     if (event.key == Key.Escape) {
                         onIntent(SchedulerIntent.CancelEdit)
                         return@onPreviewKeyEvent true
+                    }
+                    // A session is open but the CARET may not be in it yet: the field is composed and
+                    // focused by the effects that run after the state changed, and Compose delivers key
+                    // events in between. Falling through there hands the letter to whatever is focused —
+                    // which is still this Column, and it does not write text — so it was simply dropped.
+                    // `treeSelfFocused` is the whole of that window (any child holding the focus, the edit
+                    // field included, makes it false), so a printable key typed inside it is taken into the
+                    // live session instead: one more keystroke of the same funnel (see
+                    // [SchedulerReducer]'s reduceBeginEdit), never a second edit path.
+                    if (treeSelfFocused && keyboardOwned) {
+                        val late = event.printableChar()
+                        if (late != null) {
+                            onIntent(SchedulerIntent.BeginEdit(state.editSession.cellId, late))
+                            return@onPreviewKeyEvent true
+                        }
                     }
                     return@onPreviewKeyEvent false
                 }

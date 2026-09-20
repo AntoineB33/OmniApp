@@ -11,6 +11,30 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The first letters typed onto a cell are no longer lost on a slow frame — 2026-09-20
+
+Anomaly: selecting a task cell and typing very often dropped the first letter(s) — "Plan" arriving as "lan"
+or "n" — and it got worse the busier the app was.
+
+- The cause is a race, not slowness itself. `onPreviewKeyEvent` reads the state of the last **composition**,
+  and Compose delivers key events without recomposing between them: on a frame the app owes elsewhere the
+  second and third letters of a burst are typed against a snapshot that still says "no session open", so each
+  reaches the reducer as its own `BeginEdit` with its own `initialText` — and `reduceBeginEdit` started a
+  fresh session for every one of them, throwing away everything typed before it. The burst kept only its last
+  letter. Slowness only widened the window; the loss was unconditional once two keys landed in one frame.
+- `reduceBeginEdit` now **absorbs** a keystroke offered to a session already live on that cell — reduced as
+  the `UpdateEditText` it actually is, so the id menu, the committed title and the single coalesced Edit unit
+  are answered in one place — and makes a text-less re-entry (a stale second Enter or double-click) a
+  **no-op**, so a duplicate can no longer recapture `treeBefore` over a half-typed title.
+- Second window, in the UI: between the session appearing and the cell's field taking the caret, a printable
+  key fell through to the tree's own `Column` and was dropped. `TaskTreeView` now tracks whether that Column
+  is itself the focused thing (`treeSelfFocused`, false the moment any child — the edit field included —
+  takes over) and dispatches such a key as one more `BeginEdit` on the live session.
+- `EditModeKeystrokeRaceTest` pins both: a burst typed entirely as `BeginEdit`s is the same state, histories
+  included, as the same letters typed into the field.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy.
+
 ### An emptied template sub-list is a placeholder, switch and all — 2026-09-20
 
 Anomaly: in the Default sub-tree window, under `how to measure improvement / planning`, the user selected

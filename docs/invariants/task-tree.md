@@ -271,6 +271,24 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   site for it — it would skip the `keyboardOwned` gate.
 - **Clicking the cell that is being edited is not "another cell"**: `applySelectionChange` ends the session
   only for a *different* `clickedCellId`, which is what lets a click back into the field resume the rename.
+- **The first letters typed onto a selected cell are never lost, however late the frame is — and the REDUCER
+  is what guarantees it.** A key handler reads the state of the last *composition*, and Compose delivers key
+  events without recomposing between them, so on a frame the app owes elsewhere (a fill, a derivation, a
+  save) the second and third letters of a burst are typed against a snapshot that still says "no session
+  open" and arrive as further `BeginEdit`s carrying their own `initialText`. Each used to start a FRESH
+  session, so a burst kept only its last letter. `reduceBeginEdit` therefore **absorbs** a keystroke offered
+  to a session already live on that cell — it is `UpdateEditText` by another route, and is reduced as exactly
+  that — and treats a text-less re-entry (a stale second Enter or double-click) as a **no-op**, because
+  restarting would recapture `treeBefore`, the baseline `Escape` and a Rename switch revert to, over the
+  half-typed title. Do not answer this in the UI by comparing snapshots or by throttling: only the reducer
+  sees the true current state, which is the whole reason the rule lives there (`EditModeKeystrokeRaceTest`).
+- **The same race has a second window, and it is the only thing `treeSelfFocused` is for**: between the
+  session appearing in the state and the cell's field taking the caret, a printable key falls through to
+  whatever is focused — still `TaskTreeView`'s own `Column`, which writes no text — and was simply dropped.
+  `Modifier.onFocusChanged { it.isFocused }` on that Column is exactly that window (any child holding the
+  focus, the edit field included, makes it false), and a printable key inside it is dispatched as one more
+  `BeginEdit` on the live session rather than swallowed. It must stay a dispatch of that same intent: a
+  second way to write into a session is a second copy of the rule above.
 
 ### Find & replace (Ctrl+F)
 
