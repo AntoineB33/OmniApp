@@ -311,6 +311,13 @@ data class TreeDiff(
         )
 
     companion object {
+        /** No change at all — what a unit carries for a half of the state its gesture never touched. */
+        val EMPTY: TreeDiff =
+            of(
+                TreeSnapshot(emptyMap(), emptyMap(), emptyMap(), emptyMap(), 0, 0),
+                TreeSnapshot(emptyMap(), emptyMap(), emptyMap(), emptyMap(), 0, 0),
+            )
+
         fun of(before: TreeSnapshot, after: TreeSnapshot, withRecords: Boolean = false): TreeDiff =
             TreeDiff(
                 cells = EntryChanges.of(before.cells, after.cells),

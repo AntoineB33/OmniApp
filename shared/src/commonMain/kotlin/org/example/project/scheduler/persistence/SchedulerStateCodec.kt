@@ -839,6 +839,10 @@ object SchedulerStateCodec {
                     PersistedDefaultSubtree(tree.side(forward = false), expanded.removed.map { it.value }, boundCells.removed.map { it.value }),
                     PersistedDefaultSubtree(tree.side(forward = true), expanded.added.map { it.value }, boundCells.added.map { it.value }),
                     label,
+                    // The account's tree, when the gesture reached it through a row pointing at a live task.
+                    // Left out entirely when it did not, which is every unit a build before this wrote.
+                    liveBefore = if (live.isEmpty()) null else live.side(forward = false),
+                    liveAfter = if (live.isEmpty()) null else live.side(forward = true),
                 )
             // Written as (removed periods, added periods) per task: `RecordChanges.of` gives the change back.
             is RecordDelta ->
@@ -1327,7 +1331,15 @@ object SchedulerStateCodec {
                     label,
                 )
             is PersistedDelta.DefaultSubtreeUnit ->
-                DefaultSubtreeDelta(before.toTemplate(), after.toTemplate(), label)
+                DefaultSubtreeDelta(
+                    before.toTemplate(),
+                    after.toTemplate(),
+                    label,
+                    // Absent in every unit written before the live half existed: such a unit moved only the
+                    // template, so an empty diff is exactly what it meant.
+                    liveBefore = liveBefore?.toSnapshot(),
+                    liveAfter = liveAfter?.toSnapshot(),
+                )
             is PersistedDelta.Record ->
                 RecordDelta(
                     before.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
@@ -2005,6 +2017,13 @@ private sealed interface PersistedDelta {
         val before: PersistedDefaultSubtree,
         val after: PersistedDefaultSubtree,
         val label: String,
+        /**
+         * The ACCOUNT's tree on each side, for the gestures that reach it — a row of the template pointing
+         * at a live task draws that task's own sub-list. Null (the default, and what every unit written
+         * before this carries) means the gesture moved only the template.
+         */
+        val liveBefore: PersistedTreeSnapshot? = null,
+        val liveAfter: PersistedTreeSnapshot? = null,
     ) : PersistedDelta
 
     @Serializable

@@ -11,6 +11,92 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The §4 window can edit a live task's sub-tree again — 2026-09-21
+
+Anomaly: in the Default sub-tree window, a row pointed at a task the tree already holds could not have its
+sub-tree changed. Reproduced: typing under such a row left the row empty, the tree unchanged, and a cell id
+burned. Silent.
+
+- Cause: `withDefaultSubtreeCapturedFrom` stopped its walk at a task the live tree owns and then discarded
+  the projection's whole live half, so the edit — which the reducer really had applied — had nowhere to land.
+- That discard was load-bearing, and for a sharper reason than the note it carried. The projection re-roots
+  at the template, so the live tree's own top level is **unreachable** inside it and `pruneDetachedTree`
+  deletes the entire account tree in there. Writing the live half back wholesale would have written that
+  deletion to disk.
+- Fix: the fold's walk **splits** instead of stopping. What the template owns is captured into
+  `defaultSubtree` as before; a live-owned task and everything below it is written **back to the live tree**,
+  and nothing the walk did not reach is read at all — so the wreckage is still never looked at. A task minted
+  under such a row belongs to the live tree: which side of the walk reached it decides.
+- One gesture is still one unit, so `DefaultSubtreeDelta` gained a `live: TreeDiff` half and the persisted
+  unit two optional fields. Absent = template-only, which is every unit already on disk; covered by a
+  round-trip test and a stripped-payload test per the persisted-DB rule.
+- Two consequences, both now pinned by tests: **renaming** such a row renames the task (it was a silent
+  no-op, and the docs called it an open question), and **emptying** one still only unbinds the cell — a blank
+  title is what deletes, so that one must never reach the account's task.
+- `docs/invariants/task-tree.md`.
+- **Client rebuild only** (`account3-deploy-windows.bat`) — no Supabase change.
+
+### A bound template row the list already holds is skipped, not cloned — 2026-09-21
+
+A bound (switch) template row carries a task id, and Constraint 1 forbids the same task twice in one list —
+so such a row can never be mirrored into a sub-list that already holds its task. It used to take the general
+fallback and **mint a fresh task with the row's title**, leaving two same-titled rows over one real task.
+
+- It now **skips**: there is nothing to add. Asked as `templateTaskId in siblingTaskIds(working, target)`,
+  not as the whole of `canAssignTaskId`, because the other refusals mean the opposite — a task only the
+  template knows, one deleted or one belonging to another tree is *absent* from this list, so the row must
+  still mint or it would vanish silently. Constraint 2 (the bound task's sub-tree holds one of the cell's
+  ancestors) stays a mint for the same reason, and has a test of its own now.
+- Found while answering "the same task id can't appear in the same sub-list, right?" — it could not, and
+  never could; what was wrong was the shape of the refusal. `docs/invariants/task-tree.md`.
+- Noted in passing: the release template has **no** bound rows, so nothing in account 3 takes either path
+  today.
+- **Client rebuild only** (`account3-deploy-windows.bat`) — no Supabase change.
+
+### "add default sub-tree" now lands on the cell it was opened on — 2026-09-21
+
+Anomaly, reported straight after the fix below: **add default sub-tree** on
+`why / how to measure improvement` put the rows under that cell's child `planning`, two levels from the
+right-click.
+
+- Not a regression — `defaultSubtreeApplicationTargets` walked down to the sub-tree's **leaves** by design,
+  on the reading that a template describes how a piece of work breaks down, so asking for it on a cell that
+  is already broken down asks for it on the pieces. Confirmed by probing the release DB: the three template
+  rows sat under `… / how to measure improvement / planning`, the only titled child of the clicked cell.
+- The user's call: the entry acts on **what was clicked**, like every other §13 entry. The walk is gone —
+  the template lands in the clicked cell's own sub-list, beside the children it already had, and to seed a
+  piece you right-click the piece.
+- What that deletes with it: `DefaultSubtreeTargets`, the "targets read off the state before anything is
+  written" cascade guard (there is no traversal left to re-enter what it wrote) and the leaves/branches
+  tests. What survives is the fill-once-by-id guard, which now bites when two *selected* cells point at one
+  task, and the empty-cell skip. `docs/invariants/task-tree.md`.
+- **Client rebuild only** (`account3-deploy-windows.bat`) — no Supabase change.
+
+### "add default sub-tree" did nothing on a row whose only child had been emptied — 2026-09-21
+
+Anomaly: in the Default sub-tree window (account 3), right-clicking `why / how to measure improvement /
+planning` and choosing **add default sub-tree** left the (already expanded) row exactly as it was.
+
+- A probe of the release DB found the shape: that row's sub-list held **one** cell, pointing at a
+  blank-titled task with no `childListId` at all — a row typed once and then **emptied**. Emptying keeps the
+  cell on its now blank-titled task, and `applySetCellTitle` drops the list's real trailing placeholder
+  (the inverse of Auto-Expansion), so the emptied cell *becomes* the placeholder.
+- Four places asked "is this row populated?" as `cell.taskId != null` — the very shorthand
+  `isTitledDefaultSubtreeRow` exists to replace. Two of them made the no-op, and they compounded:
+  `defaultSubtreeApplicationTargets` (then still a walk) called the row a **branch** and took the blank cell
+  for the leaf, whose task has no sub-list to fill; and had the walk got the right leaf,
+  `applyDefaultSubtreeTemplate` looks for the trailing row to type into with the same test and would have
+  found **none**, returning before writing a thing. Either one alone is a silent no-op. (The walk itself was
+  replaced hours later — see the entry above — which leaves the second one carrying this fix.)
+- The other two are the same question asked by the automatic graft — `graftDefaultSubtree`'s "the user
+  already built this sub-list, so there is nothing to add" and `materializeDefaultSubtree`'s drop of an
+  unpaid promise. An emptied row is not something built, so both were refusing the template over a blank.
+- Fix: all four now ask `SchedulerDomain.isTextuallyEmptyCell`, which resolves the title through the tasks
+  exactly as `isTitledDefaultSubtreeRow` does for the template's own rows. Replayed against a copy of the
+  release DB, the gesture now lands the template's three rows under `planning`.
+  `docs/invariants/task-tree.md`.
+- **Client rebuild only** (`account3-deploy-windows.bat`) — no Supabase change.
+
 ### A window behind another could not be clicked — 2026-09-21
 
 Anomaly: in the account-3 Windows app, pressing the **Alarms** window where it stood behind the

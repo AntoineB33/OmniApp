@@ -1184,10 +1184,12 @@ object SchedulerReducer {
      * - the cell's task need not be new;
      * - the cells are expanded, so what was just added is visible rather than folded away.
      *
-     * Where the rows land is [defaultSubtreeApplicationTargets]: the **leaves** of the sub-tree the cell
-     * roots, which is the cell itself when it parents nothing. A template is a description of how a piece of
-     * work is broken down, so asking for it on a cell that is already broken down means asking for it on the
-     * pieces — pushing a second copy of it in beside them is not what "add default sub-tree" reads as.
+     * **It lands under the cell the menu was opened on, and nowhere else** — beside that cell's existing
+     * children where it has some, never descending to them. The rule used to fill the sub-tree's *leaves*
+     * instead, reading a broken-down cell as "then put the template on the pieces"; right-clicking
+     * `why / how to measure improvement` therefore filled a grandchild two levels down, which is not a row
+     * the gesture names (2026-09-21, account 3). To seed a piece, right-click the piece: this entry acts on
+     * what was clicked, as every other entry of the §13 menu does.
      *
      * The rows it lays down are built by [applyDefaultSubtreeTemplate], which drives the editing primitives
      * directly — so a seeded row never seeds in turn, here as in the graft.
@@ -1196,10 +1198,10 @@ object SchedulerReducer {
         if (state.editSession != null) return state
         if (state.defaultSubtreeIsEmpty) return state
         val targets = defaultSubtreeApplicationTargets(state, cellIds)
-        if (targets.leaves.isEmpty()) return state
+        if (targets.isEmpty()) return state
         val before = state.captureTree()
         var working = state
-        for (cellId in targets.leaves) {
+        for (cellId in targets) {
             val childListId = working.cells[cellId]?.taskId?.let { working.tasks[it]?.childListId } ?: continue
             working =
                 applyDefaultSubtreeTemplate(working, childListId, state.defaultSubtree, WellKnownIds.ROOT_LIST)
@@ -1207,9 +1209,9 @@ object SchedulerReducer {
         val after = working.captureTree()
         if (before == after) return state
         return commitDelta(
-            // Everything walked, not only what was filled: the seeded rows sit at the bottom of the sub-tree,
-            // so the ancestors have to be open for them to be visible at all.
-            working.copy(expanded = state.expanded + targets.visited),
+            // The rows land at the bottom of the cell's own sub-list, so a collapsed cell would fold away
+            // the very thing it was just asked for.
+            working.copy(expanded = state.expanded + targets),
             TreeMutationDelta(before = before, after = after, label = "Add default sub-tree"),
         )
     }
@@ -1301,16 +1303,27 @@ object SchedulerReducer {
             return state
         }
         val before = state.defaultSubtree
+        // A row pointing at a live task draws that task's own sub-list, so a gesture in this window can be an
+        // edit to the account's tree ([withDefaultSubtreeCapturedFrom]). The unit has to carry both halves or
+        // Ctrl+Z would put one of them back and leave the other.
+        val liveBefore = state.captureTree()
         val projected = state.projectDefaultSubtree()
         val reduced = reduceIntent(projected, inner)
         if (reduced === projected) return state
         val folded = state.withDefaultSubtreeCapturedFrom(reduced)
-        // A gesture that only moved the window's own caret/selection changes no template and records no unit
+        val liveAfter = folded.captureTree()
+        // A gesture that only moved the window's own caret/selection changes neither tree and records no unit
         // — the same rule the tree follows for a selection-only change.
-        if (folded.defaultSubtree == before) return folded
+        if (folded.defaultSubtree == before && liveAfter == liveBefore) return folded
         return commitDelta(
             folded,
-            DefaultSubtreeDelta(before = before, after = folded.defaultSubtree, label = "Default sub-tree"),
+            DefaultSubtreeDelta(
+                before = before,
+                after = folded.defaultSubtree,
+                liveBefore = liveBefore,
+                liveAfter = liveAfter,
+                label = "Default sub-tree",
+            ),
             HistoryCategory.Main,
         )
     }
@@ -1334,6 +1347,7 @@ object SchedulerReducer {
             if (bound) template.boundCells + cellId else template.boundCells - cellId
         if (next == template.boundCells) return state
         val after = template.copy(boundCells = next)
+        // The switch says what a future GRAFT does; it moves no tree, so the live half of the unit is empty.
         return commitDelta(
             state.copy(defaultSubtree = after),
             DefaultSubtreeDelta(before = template, after = after, label = "Default sub-tree switch"),
@@ -4566,44 +4580,28 @@ private fun setCellTitleDelta(
 }
 
 /**
- * The cells [SchedulerIntent.AddDefaultSubtree] fills, and every cell it walked through to reach them.
- */
-private class DefaultSubtreeTargets(val leaves: List<CellId>, val visited: Set<CellId>)
-
-/**
- * PRD §7/§13 "add default sub-tree": the **leaves** of the sub-trees [cellIds] root — a cell that parents
- * nothing being its own leaf, which is what makes the plain case (an empty cell, one template under it) and
- * the deep case (a cell already broken down, the template under each piece) the same rule.
+ * PRD §7/§13 "add default sub-tree": the cells [SchedulerIntent.AddDefaultSubtree] fills — the ones the menu
+ * was opened on ([SchedulerDomain.contextMenuCopyTargets]) and no others. There is no descent: the gesture
+ * names a row, so the template lands in that row's own sub-list, beside whatever it already parents.
  *
- * Two things this must get right:
+ * Two things it still has to get right:
  *
- * - **The targets are read off the state BEFORE anything is written.** Filling a leaf gives it children, so a
- *   traversal that kept walking a state it was mutating would come back to that task — mirrored elsewhere in
- *   the same sub-tree — find it no longer a leaf, and seed the rows it had just laid down. That is the
- *   cascade the graft avoids by calling the primitives directly, arriving here by another route.
- * - **A task is visited once**, by id. A sub-list belongs to the task id, so every occurrence of a task is
- *   the same sub-list: seeding it once IS seeding all of them, and the id set doubles as the cycle guard.
+ * - **A textually empty cell is skipped.** A row emptied back to nothing keeps pointing at its now
+ *   blank-titled task, so `cell.taskId != null` does not answer "is there a task here to break down?" —
+ *   [SchedulerDomain.isTextuallyEmptyCell] is the question, here as everywhere else the graft asks it.
+ * - **A task is filled once**, by id. A sub-list belongs to the task id, so two of the selected cells
+ *   pointing at one task are one sub-list: filling it once IS filling both occurrences, and walking on
+ *   would write the template into it twice.
  */
 private fun defaultSubtreeApplicationTargets(
     state: SchedulerState,
     cellIds: List<CellId>,
-): DefaultSubtreeTargets {
-    val leaves = mutableListOf<CellId>()
-    val visited = mutableSetOf<CellId>()
+): List<CellId> {
     val seenTasks = mutableSetOf<TaskId>()
-    fun visit(cellId: CellId) {
-        val taskId = state.cells[cellId]?.taskId ?: return
-        if (!seenTasks.add(taskId)) return
-        visited += cellId
-        val children =
-            state.tasks[taskId]?.childListId
-                ?.let { state.lists[it]?.cellIds.orEmpty() }
-                .orEmpty()
-                .filter { state.cells[it]?.taskId != null }
-        if (children.isEmpty()) leaves += cellId else children.forEach(::visit)
+    return cellIds.filter { cellId ->
+        val taskId = state.cells[cellId]?.taskId
+        taskId != null && !SchedulerDomain.isTextuallyEmptyCell(state, cellId) && seenTasks.add(taskId)
     }
-    cellIds.forEach(::visit)
-    return DefaultSubtreeTargets(leaves = leaves, visited = visited)
 }
 
 /**
@@ -4642,8 +4640,9 @@ private fun graftDefaultSubtree(
     if (task.title.isBlank()) return state
     val childListId = task.childListId ?: return state
     val childList = state.lists[childListId] ?: return state
-    // Only a freshly minted, still-empty sub-list is seeded — never one the user (or a paste) already built.
-    if (childList.cellIds.any { state.cells[it]?.taskId != null }) return state
+    // Only a freshly minted, still-empty sub-list is seeded — never one the user (or a paste) already
+    // built. An emptied row is not something built: it still points at its blank-titled task.
+    if (childList.cellIds.any { !SchedulerDomain.isTextuallyEmptyCell(state, it) }) return state
     // The template's ROOT list — and it is read against the TEMPLATE's own tree wherever the promise is
     // paid, never against this state's root list: [WellKnownIds.ROOT_LIST] is every tree's root id.
     return state.owingDefaultSubtree(taskId, listOf(WellKnownIds.ROOT_LIST))
@@ -4681,7 +4680,7 @@ private fun materializeDefaultSubtree(state: SchedulerState, cellId: CellId): Sc
     if (task.pendingDefaultSubtree.isEmpty()) return state
     val childListId = task.childListId ?: return state
     val childList = state.lists[childListId] ?: return state
-    if (childList.cellIds.any { state.cells[it]?.taskId != null }) {
+    if (childList.cellIds.any { !SchedulerDomain.isTextuallyEmptyCell(state, it) }) {
         return state.owingDefaultSubtree(taskId, emptyList())
     }
     if (!state.defaultSubtreeEnabled || state.defaultSubtreeIsEmpty) return state
@@ -4719,9 +4718,11 @@ private fun materializeDefaultSubtree(state: SchedulerState, cellId: CellId): Sc
  * **The switch** ([DefaultSubtreeTemplate.boundCells], off): the row is assigned the template cell's own
  * `taskId`, which is what mirrors that task's sub-tree under the new cell — and the template's children are
  * therefore *not* applied, because a sub-list belongs to the task id. A binding this tree cannot honour (the
- * task is one only the template knows, belongs to another task tree, has since been deleted, or would
- * duplicate a task inside the sub-tree — [SchedulerDomain.canAssignTaskId]) falls back to minting a new task
- * with the row's title, so the row still appears instead of silently vanishing.
+ * task is one only the template knows, belongs to another task tree, or has since been deleted —
+ * [SchedulerDomain.canAssignTaskId]) falls back to minting a new task with the row's title, so the row still
+ * appears instead of silently vanishing. The **one** refusal that is not a fallback is Constraint 1: the
+ * list already holds that very task, so the row is **skipped**. There is nothing to add, and a clone would
+ * put the title in twice over a task already sitting there.
  */
 private fun applyDefaultSubtreeTemplate(
     state: SchedulerState,
@@ -4741,7 +4742,20 @@ private fun applyDefaultSubtreeTemplate(
         // A blank row is the trailing placeholder every list carries, or a row "deleted" by emptying it.
         if (title.isEmpty()) continue
         val list = working.lists[listId] ?: return working
-        val target = list.cellIds.lastOrNull { working.cells[it]?.taskId == null } ?: return working
+        // The trailing row to type into — textually empty, which an emptied row is even though it kept its
+        // task. Reading `taskId == null` here found no row at all in a sub-list whose last one was emptied.
+        val target = list.cellIds.lastOrNull { SchedulerDomain.isTextuallyEmptyCell(working, it) } ?: return working
+
+        // Constraint 1, and the ONE refusal that is not a fallback: a bound row naming a task this list
+        // already holds has nothing to add, so it is skipped. Cloning it under a fresh id would put the
+        // row's title in the list twice over a task that is already there — two rows for one thing.
+        // Every OTHER reason a binding cannot be honoured still mints (below): there the task is absent
+        // from this tree, so dropping the row would lose it silently.
+        if (templateCellId in template.boundCells &&
+            templateTaskId in SchedulerDomain.siblingTaskIds(working, target)
+        ) {
+            continue
+        }
 
         val reuse =
             templateTaskId.takeIf {
@@ -5217,20 +5231,32 @@ internal object NoOpDelta : Delta {
  *
  * The window emits the task tree's own intents, so a single gesture can be several inner reductions; they are
  * collapsed into this one unit — the same thing [TaskTreeDelta] does for a tree switch — so Ctrl+Z in the
- * window undoes what the user just did rather than a fragment of it. Only the template moves: the live tree
- * is not part of either side.
+ * window undoes what the user just did rather than a fragment of it.
+ *
+ * **[live] is the account's tree**, and it is usually empty. A template row pointing at a live task draws
+ * that task's own sub-list — one task id, one sub-list — so editing under such a row edits the real tree
+ * ([withDefaultSubtreeCapturedFrom]). One gesture is still one unit, so the unit carries both halves; undoing
+ * either alone would leave the other standing.
  */
 internal data class DefaultSubtreeDelta(
     val tree: TreeDiff,
     val expanded: SetChanges<CellId>,
     val boundCells: SetChanges<CellId>,
+    val live: TreeDiff,
     override val label: String,
 ) : Delta {
-    constructor(before: DefaultSubtreeTemplate, after: DefaultSubtreeTemplate, label: String) :
+    constructor(
+        before: DefaultSubtreeTemplate,
+        after: DefaultSubtreeTemplate,
+        label: String,
+        liveBefore: TreeSnapshot? = null,
+        liveAfter: TreeSnapshot? = null,
+    ) :
         this(
             TreeDiff.of(before.tree, after.tree),
             SetChanges.of(before.expanded, after.expanded),
             SetChanges.of(before.boundCells, after.boundCells),
+            if (liveBefore == null || liveAfter == null) TreeDiff.EMPTY else TreeDiff.of(liveBefore, liveAfter),
             label,
         )
 
@@ -5245,13 +5271,16 @@ internal data class DefaultSubtreeDelta(
             }
             boundCells.added.forEach { add("switch off: ${it.value}") }
             boundCells.removed.forEach { add("switch on: ${it.value}") }
+            addAll(treeDiffLines(live))
         }
 
     override fun commit(state: SchedulerState): SchedulerState = apply(state, forward = true, exact = true)
 
     private fun apply(state: SchedulerState, forward: Boolean, exact: Boolean = false): SchedulerState {
         val template = state.defaultSubtree
-        return state.copy(
+        // The live half first: it is the ordinary tree change, and it goes through the very same [TreeDiff]
+        // the tree's own units use, so a sub-tree edited through a mirror row undoes like any other.
+        return live.applyTo(state, forward, exact).copy(
             defaultSubtree =
                 template.copy(
                     tree = tree.applyTo(template.tree, forward, exact),

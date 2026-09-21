@@ -6,7 +6,12 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.persistence.HistoryRow
+import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.WellKnownIds
@@ -1348,9 +1353,10 @@ class DefaultSubtreeTest {
     }
 
     @Test
-    fun add_default_sub_tree_goes_to_the_leaves_of_a_cell_that_is_already_broken_down() {
-        // A template says how a piece of work breaks down, so asking for it on a cell that is ALREADY broken
-        // down asks for it on the pieces — not for a second copy of it beside them.
+    fun add_default_sub_tree_lands_under_the_cell_even_when_it_is_already_broken_down() {
+        // The entry acts on the row it was opened on, beside whatever that row already parents — it does NOT
+        // descend to the pieces. It used to fill the sub-tree's leaves instead, so right-clicking a cell two
+        // levels above one wrote the template somewhere the gesture never named (2026-09-21, account 3).
         var s = SchedulerState.empty()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
         val cell = firstCell(s)
@@ -1362,15 +1368,15 @@ class DefaultSubtreeTest {
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
 
-        assertEquals(listOf("Existing"), childTitles(s, cell), "the cell itself is left alone")
-        assertEquals(listOf("Plan"), childTitles(s, existing), "the leaf is where the template lands")
-        assertTrue(cell in s.expanded, "the ancestors are opened, or the new rows are invisible")
-        assertTrue(existing in s.expanded)
+        assertEquals(listOf("Existing", "Plan"), childTitles(s, cell), "beside the children it already had")
+        assertEquals(emptyList(), childTitles(s, existing), "the pieces are left alone")
+        assertTrue(cell in s.expanded, "a collapsed cell would fold away what was just asked for")
     }
 
     @Test
-    fun add_default_sub_tree_reaches_every_leaf_and_no_branch() {
-        // Project { A { A1, A2 }, B } — the leaves are A1, A2 and B; A and Project are branches.
+    fun add_default_sub_tree_touches_only_the_cells_it_is_given() {
+        // Project { A { A1, A2 }, B }. Asked on Project, exactly Project's own sub-list is filled: nothing
+        // below it is walked, so no seeded row seeds in turn and no descendant is written behind the user.
         var s = SchedulerState.empty()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
         val cell = firstCell(s)
@@ -1389,21 +1395,20 @@ class DefaultSubtreeTest {
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
 
-        assertEquals(listOf("Plan"), childTitles(s, cellA1))
-        assertEquals(listOf("Plan"), childTitles(s, cellA2))
-        assertEquals(listOf("Plan"), childTitles(s, cellB))
-        assertEquals(listOf("A1", "A2"), childTitles(s, cellA), "a branch is not a leaf")
-        assertEquals(listOf("A", "B"), childTitles(s, cell))
-        // Exactly one new task per leaf — nothing was seeded twice, and no seeded row seeded in turn.
-        assertEquals(tasksBefore + 3, s.tasks.size)
+        assertEquals(listOf("A", "B", "Plan"), childTitles(s, cell), "beside the children it already had")
+        assertEquals(listOf("A1", "A2"), childTitles(s, cellA), "nothing below the cell is touched")
+        assertEquals(emptyList(), childTitles(s, cellA1))
+        assertEquals(emptyList(), childTitles(s, cellA2))
+        assertEquals(emptyList(), childTitles(s, cellB))
+        // Exactly one new task, and the row it wrote did not seed in turn.
+        assertEquals(tasksBefore + 1, s.tasks.size)
     }
 
     @Test
-    fun add_default_sub_tree_seeds_a_mirrored_leaf_once_and_never_walks_what_it_just_wrote() {
-        // "Shared" appears under both A and B (two root cells, so the mirror is allowed). Its sub-list
-        // belongs to the task id, so seeding it once IS seeding both occurrences — and the second visit must
-        // NOT find it newly non-empty and descend into the rows just written, which would be the cascade by
-        // another route.
+    fun add_default_sub_tree_fills_a_mirrored_task_once_however_many_of_its_cells_are_selected() {
+        // "Shared" appears under both A and B (two root cells, so the mirror is allowed). A sub-list belongs
+        // to the task id, so both occurrences ARE one sub-list: asking on both must write the template into
+        // it once, not twice.
         var s = SchedulerState.empty()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "A"))
         val cellA = firstCell(s)
@@ -1424,11 +1429,11 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
         val tasksBefore = s.tasks.size
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cellA, cellB)))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(sharedUnderA, sharedUnderB)))
 
         assertEquals(listOf("Plan"), childTitles(s, sharedUnderA))
         assertEquals(listOf("Plan"), childTitles(s, sharedUnderB), "one sub-list, seen from both sides")
-        assertEquals(tasksBefore + 1, s.tasks.size, "seeded once, and never re-walked")
+        assertEquals(tasksBefore + 1, s.tasks.size, "filled once, not once per occurrence")
     }
 
     @Test
@@ -1456,6 +1461,318 @@ class DefaultSubtreeTest {
             beforeAdd.captureTree().copy(nextTaskCounter = undoneTree.nextTaskCounter, nextCellCounter = undoneTree.nextCellCounter),
             undoneTree,
         )
+    }
+
+    @Test
+    fun add_default_sub_tree_fills_a_sub_list_whose_only_row_was_emptied() {
+        // A row EMPTIED back to nothing keeps pointing at its now blank-titled task, and becomes its list's
+        // trailing placeholder (`applySetCellTitle` drops the real one — the inverse of Auto-Expansion). So a
+        // sub-list that looks empty on screen can hold a cell with a taskId, and `cell.taskId != null` is not
+        // the question "is this row populated?" (2026-09-21, account 3: the entry did nothing at all).
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val cell = firstCell(s)
+        val childList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
+        val child = s.lists[childList]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(child, "Child"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(child, ""))
+        assertEquals(listOf(child), s.lists[childList]!!.cellIds, "the emptied row IS the trailing placeholder")
+        assertNotNull(s.cells[child]!!.taskId, "and it still points at its blank-titled task")
+        assertEquals(emptyList(), childTitles(s, cell))
+
+        s = withTemplate(listOf(node("dst/0", "Plan")), from = s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        assertEquals(listOf("Plan"), childTitles(s, cell), "the blank row is the one typed into, not skipped")
+    }
+
+    @Test
+    fun add_default_sub_tree_fills_a_template_row_whose_only_child_was_emptied() {
+        // The same shape inside the §4 window, which is where the user met it: `why / how to measure
+        // improvement / planning` had one child cell left over from an emptied row, so the walk called
+        // `planning` a branch, took that blank cell for the leaf, found its task had no sub-list at all, and
+        // the whole reduction wrote nothing.
+        var s = withTemplate(listOf(node("dst/0", "Plan")))
+        val row = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        s = openInTemplate(s, row)
+        val rowList = childListOf(s, row)
+        val under = s.defaultSubtree.tree.lists[rowList]!!.cellIds.first()
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(under, "Sketch"))
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(under, ""))
+        assertEquals(listOf(under), s.defaultSubtree.tree.lists[rowList]!!.cellIds)
+        assertNotNull(s.defaultSubtree.tree.cells[under]!!.taskId)
+        assertFalse(s.isTitledDefaultSubtreeRow(under))
+
+        s = reduceInTemplate(s, SchedulerIntent.AddDefaultSubtree(listOf(row)))
+
+        assertEquals(listOf("Plan"), templateTitles(s, rowList), "the template lands on the row itself")
+    }
+
+    @Test
+    fun add_default_sub_tree_skips_a_bound_row_the_sub_list_already_holds() {
+        // Constraint 1: the same task cannot appear twice in one list. A BOUND template row carries a task
+        // id, so when the clicked cell's sub-list already holds that very task the row has nothing to add
+        // and is SKIPPED — not cloned under a fresh id, which would put the title in the list twice over a
+        // task already sitting there. This is the one refusal that is not the mint fallback.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val cell = firstCell(s)
+        val childList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[childList]!!.cellIds.first(), "Shared"))
+        val sharedCell = s.lists[childList]!!.cellIds.first()
+        val shared = s.cells[sharedCell]!!.taskId!!
+        val tasksBefore = s.tasks.size
+        // A template whose one root row is BOUND to that very task.
+        s = withTemplate(listOf(node("dst/0", "Shared", taskId = shared)), from = s)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        val placed = s.lists[childList]!!.cellIds.mapNotNull { s.cells[it]?.taskId }
+        assertEquals(placed.size, placed.toSet().size, "one task id can never be twice in one list")
+        assertEquals(listOf("Shared"), childTitles(s, cell), "the row is skipped, not cloned")
+        assertEquals(shared, s.cells[sharedCell]!!.taskId, "the cell that was already there is untouched")
+        assertEquals(tasksBefore, s.tasks.size, "and no task was minted for it")
+    }
+
+    @Test
+    fun add_default_sub_tree_still_mints_for_a_binding_refused_by_constraint_2() {
+        // The skip is Constraint 1 ONLY. Constraint 2 — the bound task's own sub-tree holds one of the
+        // cell's ancestors, so mirroring it would make it its own descendant — is still the mint fallback:
+        // the task is not in this list, so dropping the row would lose it silently.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val project = firstCell(s)
+        val projectTask = s.cells[project]!!.taskId!!
+        val projectList = s.tasks[projectTask]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[projectList]!!.cellIds.first(), "Child"))
+        val child = s.lists[projectList]!!.cellIds.first()
+        // A template row bound to the ANCESTOR of the cell we will ask on.
+        s = withTemplate(listOf(node("dst/0", "Project", taskId = projectTask)), from = s)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(child)))
+
+        assertEquals(listOf("Project"), childTitles(s, child), "the row still appears rather than vanishing")
+        val placed = childCells(s, child).first()
+        assertTrue(s.cells[placed]!!.taskId != projectTask, "under a fresh task, never its own ancestor")
+    }
+
+    @Test
+    fun add_default_sub_tree_mirrors_a_bound_row_when_the_sub_list_does_not_already_hold_it() {
+        // The other side of the same rule: nothing to collide with, so the binding IS honoured and the row
+        // mirrors the live task rather than cloning it.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val cell = firstCell(s)
+        val sibling = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(sibling, "Shared"))
+        val shared = s.cells[sibling]!!.taskId!!
+        s = withTemplate(listOf(node("dst/0", "Shared", taskId = shared)), from = s)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddDefaultSubtree(listOf(cell)))
+
+        val childList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
+        val placedCell = s.lists[childList]!!.cellIds.first { s.cells[it]?.taskId != null }
+        assertEquals(shared, s.cells[placedCell]!!.taskId, "the binding is honoured: one task, two cells")
+    }
+
+    // ---- a row pointing at a live task edits the LIVE tree ---------------------------------------
+
+    /**
+     * An account whose tree is `Existing { Kept }` beside `Other { Sibling }`, with one template root row
+     * pointed at `Existing` — PRD §4's "points at one existing task". Returns the state and the ids the
+     * tests below name.
+     */
+    private fun withRowOnLiveTask(): Triple<SchedulerState, CellId, CellListId> {
+        var s = SchedulerState.empty()
+        val root = s.lists[s.rootListId]!!.cellIds.first()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(root, "Existing"))
+        val liveTask = s.cells[root]!!.taskId!!
+        val liveChildList = s.tasks[liveTask]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[liveChildList]!!.cellIds.first(), "Kept"))
+        // A second branch, so the test can see whether the fold damaged the rest of the tree.
+        val other = s.lists[s.rootListId]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(other, "Other"))
+        val otherList = s.tasks[s.cells[other]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[otherList]!!.cellIds.first(), "Sibling"))
+
+        val templateRoot = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        s = reduceInTemplate(s, SchedulerIntent.AssignTaskId(templateRoot, liveTask))
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(templateRoot, "Existing"))
+        return Triple(s, templateRoot, liveChildList)
+    }
+
+    /** The row to type into, inside the sub-list the template window draws under [cellId]. */
+    private fun typingRowUnder(state: SchedulerState, cellId: CellId): CellId {
+        val p = state.projectDefaultSubtree()
+        val listId = p.tasks[p.cells[cellId]!!.taskId!!]!!.childListId!!
+        return p.lists[listId]!!.cellIds.last { SchedulerDomain.isTextuallyEmptyCell(p, it) }
+    }
+
+    @Test
+    fun a_row_pointing_at_a_live_task_edits_that_task_s_own_sub_tree() {
+        // A sub-list belongs to the task id, so the rows drawn under such a row ARE the account's tree's.
+        // Typing there is typing into the tree — the same thing it is under a mirrored cell in the tree
+        // itself. It used to evaporate at the fold instead, silently (2026-09-21, account 3).
+        val (s0, row, liveChildList) = withRowOnLiveTask()
+
+        val s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(typingRowUnder(s0, row), "AddedInWindow"))
+
+        val liveTitles =
+            s.lists[liveChildList]!!.cellIds.mapNotNull { s.cells[it]?.taskId }.mapNotNull { s.tasks[it]?.title }
+        assertTrue("AddedInWindow" in liveTitles, "the edit reaches the account's tree: $liveTitles")
+        assertTrue("Kept" in liveTitles, "beside what the task already had")
+    }
+
+    @Test
+    fun editing_under_such_a_row_leaves_the_rest_of_the_tree_alone() {
+        // The projection re-roots at the template, so the live tree's OWN top level is unreachable inside it
+        // and `pruneDetachedTree` deletes the lot. The fold is what protects the tree: it writes back only
+        // what it reached from the template's root, so nothing else of the live half is even read.
+        val (s0, row, _) = withRowOnLiveTask()
+        val otherCell = s0.lists[s0.rootListId]!!.cellIds.first { s0.cells[it]?.taskId != null && it != s0.lists[s0.rootListId]!!.cellIds.first() }
+
+        val s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(typingRowUnder(s0, row), "AddedInWindow"))
+
+        assertEquals("Other", s.tasks[s.cells[otherCell]!!.taskId!!]!!.title, "the untouched branch survives")
+        assertEquals(listOf("Sibling"), childTitles(s, otherCell), "and so does everything under it")
+        assertEquals(
+            s0.lists[s0.rootListId]!!.cellIds,
+            s.lists[s.rootListId]!!.cellIds,
+            "the tree's own top level is untouched",
+        )
+    }
+
+    @Test
+    fun one_undo_takes_back_an_edit_made_through_such_a_row() {
+        // One gesture is one unit, and the unit now carries both halves — undoing the template alone would
+        // leave the tree change standing.
+        val (s0, row, liveChildList) = withRowOnLiveTask()
+        val before = s0.captureTree()
+
+        var s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(typingRowUnder(s0, row), "AddedInWindow"))
+        assertEquals(
+            1,
+            s.histories.forCategory(HistoryCategory.Main).units.size -
+                s0.histories.forCategory(HistoryCategory.Main).units.size,
+            "one gesture, one unit",
+        )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+
+        val liveTitles =
+            s.lists[liveChildList]!!.cellIds.mapNotNull { s.cells[it]?.taskId }.mapNotNull { s.tasks[it]?.title }
+        assertFalse("AddedInWindow" in liveTitles, "one Ctrl+Z takes the tree change back too: $liveTitles")
+        // Undo never hands an id back, so compare everything but the counters.
+        val undone = s.captureTree()
+        assertEquals(
+            before.copy(nextTaskCounter = undone.nextTaskCounter, nextCellCounter = undone.nextCellCounter),
+            undone,
+        )
+    }
+
+    @Test
+    fun a_template_only_gesture_still_carries_no_live_half() {
+        // The common case must not start writing the tree back: a row of the template's own structure is a
+        // template task, and the account's tree is untouched by it.
+        var s = withTemplate(listOf(node("dst/0", "Plan")))
+        val before = s.captureTree()
+        val row = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        s = openInTemplate(s, row)
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(typingRowUnder(s, row), "Sketch"))
+
+        assertEquals(listOf("Sketch"), templateTitles(s, childListOf(s, row)))
+        val after = s.captureTree()
+        assertEquals(
+            before.copy(nextTaskCounter = after.nextTaskCounter, nextCellCounter = after.nextCellCounter),
+            after,
+            "the account's tree never moved",
+        )
+    }
+
+    @Test
+    fun renaming_such_a_row_renames_the_live_task() {
+        // The same rule one level up, and it settles what used to be an open question: the row draws the live
+        // task's title because it IS that task, so renaming the row renames the task — everywhere it is
+        // drawn. It used to be a silent no-op, for the same reason the sub-tree edit was.
+        val (s0, row, _) = withRowOnLiveTask()
+        val liveTask = s0.defaultSubtree.tree.cells[row]!!.taskId!!
+
+        val s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(row, "RenamedInWindow"))
+
+        assertEquals("RenamedInWindow", s.tasks[liveTask]!!.title)
+        assertFalse(liveTask in s.defaultSubtree.tree.tasks, "the template still copies no part of the task")
+    }
+
+    @Test
+    fun emptying_such_a_row_unbinds_it_and_leaves_the_live_task_alone() {
+        // The one edit that must NOT reach the task. A blank title is what deletes (PRD §4), so blanking it
+        // through the mirror would delete the user's task from the account; emptying unbinds the cell
+        // instead, exactly as it did before the live half was written back at all.
+        val (s0, row, _) = withRowOnLiveTask()
+        val liveTask = s0.defaultSubtree.tree.cells[row]!!.taskId!!
+
+        val s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(row, ""))
+
+        assertEquals("Existing", s.tasks[liveTask]!!.title, "the account's task keeps its title")
+        assertNull(s.defaultSubtree.tree.cells[row]!!.taskId, "and the row lets go of it")
+    }
+
+    @Test
+    fun the_live_half_of_a_unit_round_trips_through_the_store() {
+        val (s0, row, liveChildList) = withRowOnLiveTask()
+        val s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(typingRowUnder(s0, row), "AddedInWindow"))
+
+        val loaded = assertNotNull(SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(s)))
+        val undone = SchedulerReducer.reduce(loaded, SchedulerIntent.Undo)
+
+        val titles =
+            undone.lists[liveChildList]!!.cellIds
+                .mapNotNull { undone.cells[it]?.taskId }
+                .mapNotNull { undone.tasks[it]?.title }
+        assertFalse("AddedInWindow" in titles, "a reloaded unit still undoes its tree half: $titles")
+        assertTrue("Kept" in titles)
+    }
+
+    @Test
+    fun a_unit_written_before_the_live_half_existed_still_loads_and_undoes() {
+        // Persisted-DB compatibility (CLAUDE.md): every `defaultSubtree` unit already on disk was written by
+        // a build that moved only the template, and says so by carrying no live half at all.
+        val (s0, row, liveChildList) = withRowOnLiveTask()
+        val s = reduceInTemplate(s0, SchedulerIntent.SetCellTitle(typingRowUnder(s0, row), "AddedInWindow"))
+
+        val encoded = SchedulerStateCodec.encodeSnapshot(s)
+        val newest = encoded.history.filter { it.category == HistoryCategory.Main.name }.maxBy { it.ordinal }
+        assertTrue("liveAfter" in newest.deltaJson, "the unit this build writes carries the tree half")
+
+        // The previous shape: the same unit with those two fields simply absent.
+        val json = Json { ignoreUnknownKeys = true }
+        val legacyUnit =
+            JsonObject(json.parseToJsonElement(newest.deltaJson).jsonObject - "liveBefore" - "liveAfter").toString()
+        val legacy =
+            PersistedSnapshot(
+                encoded.statePayload,
+                encoded.history.filterNot { it === newest } +
+                    HistoryRow(
+                        newest.category,
+                        newest.ordinal,
+                        newest.timeMillis,
+                        newest.chronoId,
+                        newest.debugTainted,
+                        legacyUnit,
+                        newest.window,
+                    ),
+                encoded.pointers,
+            )
+
+        val loaded = assertNotNull(SchedulerStateCodec.decodeSnapshot(legacy))
+        val undone = SchedulerReducer.reduce(loaded, SchedulerIntent.Undo)
+
+        // It moves the template only — which is exactly what such a unit meant — and undoing it neither
+        // throws nor touches the tree.
+        val titles =
+            undone.lists[liveChildList]!!.cellIds
+                .mapNotNull { undone.cells[it]?.taskId }
+                .mapNotNull { undone.tasks[it]?.title }
+        assertTrue("AddedInWindow" in titles, "a template-only unit leaves the tree where it is: $titles")
     }
 
     @Test

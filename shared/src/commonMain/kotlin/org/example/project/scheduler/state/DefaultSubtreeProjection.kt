@@ -48,10 +48,18 @@ import org.example.project.scheduler.model.WellKnownIds
  *
  * ## Why writing back is safe
  *
- * A reducer pass over the projection may touch the live half — `purgeOrphanTasks` is the one to watch. That
- * half is **discarded**: [withDefaultSubtreeCapturedFrom] keeps only what is reachable from the template's
- * root and copies it into `defaultSubtree`, leaving every live-tree field of the receiver untouched. So no
- * intent dispatched in the template window can damage the real tree, whatever the reducer did on the way.
+ * A reducer pass over the projection touches far more of the live half than the gesture meant to: the
+ * template shadows [WellKnownIds.ROOT_LIST], so the live tree's own top level is **unreachable** in the
+ * projection and `pruneDetachedTree` would take the whole account's tree with it. What protects the tree is
+ * therefore not a promise about the reducer but the shape of the fold: [withDefaultSubtreeCapturedFrom]
+ * writes back only what it can **reach from the template's root**, and nothing else of the live half is
+ * looked at at all. Whatever the reducer did to the rest of it is simply never read.
+ *
+ * Reachable from the template's root, though, is exactly the sub-tree of a row pointing at a live task — and
+ * that sub-tree **is** the live tree's, because a sub-list belongs to the task id (CLAUDE.md). Editing it
+ * here is editing it everywhere, the same way editing under a mirrored cell in the tree is. So the walk
+ * splits in two: what the template owns is captured into `defaultSubtree`, and everything from a live-owned
+ * task downwards is written back to the live tree.
  */
 
 /**
@@ -170,12 +178,13 @@ fun SchedulerState.defaultSubtreePriorities(): Map<TaskId, Double> {
  * task's sub-tree into the template, where it would immediately start going stale. Such a row keeps pointing
  * at the id, and the projection is what resolves it again next time.
  *
- * A task the edit *created* is in neither side's "before" map, so it is owned by the template — which is what
- * makes typing a new row in the window build a template task rather than a live one.
+ * A task the edit *created* is in neither side's "before" map, so it is owned by whichever half of the walk
+ * reached it — the template for a row typed into the template's own structure, the live tree for one typed
+ * under a row that points at a live task.
  */
 fun SchedulerState.withDefaultSubtreeCapturedFrom(projected: SchedulerState): SchedulerState {
     // "Owned by the live tree" is judged on the state as it was BEFORE the edit: anything minted during it
-    // belongs to the template. The root task is shared by every tree and is never a mirror.
+    // belongs to whichever side of the walk reached it. The root task is shared by every tree, never a mirror.
     val ownedByLive =
         tasks.keys - defaultSubtree.tree.tasks.keys -
             setOf(WellKnownIds.ROOT_TASK)
@@ -183,6 +192,28 @@ fun SchedulerState.withDefaultSubtreeCapturedFrom(projected: SchedulerState): Sc
     val cells = LinkedHashMap<CellId, Cell>()
     val lists = LinkedHashMap<CellListId, CellList>()
     val capturedTasks = LinkedHashMap<TaskId, Task>()
+
+    // The live tree's own half of what the template's rows reach: a row pointing at a live task draws that
+    // task's ONE sub-list, so everything from there down belongs to the account's tree and is written back
+    // to it. A task minted under such a row is the live tree's too — which side of the walk reached it is
+    // what decides, and this side never consults [ownedByLive].
+    val liveCells = LinkedHashMap<CellId, Cell>()
+    val liveLists = LinkedHashMap<CellListId, CellList>()
+    val liveTasks = LinkedHashMap<TaskId, Task>()
+
+    fun visitLive(listId: CellListId) {
+        if (listId in liveLists) return // also the cycle guard
+        val list = projected.lists[listId] ?: return
+        liveLists[listId] = list
+        for (cellId in list.cellIds) {
+            val cell = projected.cells[cellId] ?: continue
+            liveCells[cellId] = cell
+            val taskId = cell.taskId ?: continue
+            val task = projected.tasks[taskId] ?: continue
+            liveTasks[taskId] = task
+            task.childListId?.let(::visitLive)
+        }
+    }
 
     fun visitList(listId: CellListId) {
         if (listId in lists) return // also the cycle guard
@@ -192,9 +223,15 @@ fun SchedulerState.withDefaultSubtreeCapturedFrom(projected: SchedulerState): Sc
             val cell = projected.cells[cellId] ?: continue
             cells[cellId] = cell
             val taskId = cell.taskId ?: continue
-            // A mirror of a live task: keep the binding, take nothing else.
-            if (taskId in ownedByLive) continue
             val task = projected.tasks[taskId] ?: continue
+            // A row pointing at a live task: the template keeps the BINDING and copies no part of the task,
+            // which is what stops a mirror going stale inside it. The task and its sub-tree cross to the
+            // live side instead — one task id, one sub-list, edited wherever it is drawn.
+            if (taskId in ownedByLive) {
+                liveTasks[taskId] = task
+                task.childListId?.let(::visitLive)
+                continue
+            }
             capturedTasks[taskId] = task
             task.childListId?.let(::visitList)
         }
@@ -214,7 +251,17 @@ fun SchedulerState.withDefaultSubtreeCapturedFrom(projected: SchedulerState): Sc
             nextCellCounter = maxOf(nextCellCounter, projected.nextCellCounter),
         )
 
+    // The live half is MERGED, never replaced: only the entries the walk reached are written, so every part
+    // of the tree the projection could not see (its whole top level, and everything `pruneDetachedTree`
+    // therefore removed in there) stays exactly as the receiver has it.
+    val mergedTasks = if (liveTasks.isEmpty()) tasks else tasks + liveTasks
+
     return copy(
+        cells = if (liveCells.isEmpty()) this.cells else this.cells + liveCells,
+        lists = if (liveLists.isEmpty()) this.lists else this.lists + liveLists,
+        tasks = mergedTasks,
+        titleToTaskIds =
+            if (liveTasks.isEmpty()) titleToTaskIds else SchedulerDomain.buildTitleIndex(mergedTasks),
         defaultSubtree =
             DefaultSubtreeTemplate(
                 tree = tree,

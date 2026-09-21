@@ -536,14 +536,26 @@ until it is applied to a real cell.
   because `absoluteTaskPriorities` iterates every cell it is given and would otherwise divide the template's
   shares by the whole account. Ids cannot collide (child lists are `{taskId}/children`, cells come off a shared
   counter) except at the root, which the template shadows.
-- **The fold back keeps only what is reachable from the template's root**, stopping at a task the live tree
-  owns — a mirror belongs to the live tree, and copying it in would start it going stale. The live half of the
-  projection is **discarded**, which is what makes it impossible for anything dispatched in that window
-  (`purgeOrphanTasks` included) to damage the real tree. The id **counters** are the one thing written back to
-  both sides.
+- **The fold back keeps only what is reachable from the template's root**, and that reachability is the whole
+  safety property. The projection re-roots at the template, so the live tree's own top level is
+  **unreachable** inside it and `pruneDetachedTree` deletes the account's entire tree in there; what protects
+  the tree is that `withDefaultSubtreeCapturedFrom` never *reads* that wreckage. Do not replace this with a
+  promise that some cleanup behaves — the guarantee is "only what the template's rows reach is written back",
+  nothing weaker.
+- **The walk splits at a task the live tree owns, and the live side is written BACK to the live tree.** A row
+  pointing at an existing task draws that task's own sub-list — one task id, one sub-list — so editing under
+  it is editing the account's tree, exactly as editing under a mirrored cell in the tree is. The template
+  still copies **no part** of such a task (that is what would go stale); it keeps the binding, and the task
+  plus everything below it crosses to the live half. A task minted under such a row is the **live tree's**:
+  which side of the walk reached it is what decides ownership, and the live side never consults
+  `ownedByLive`. The id **counters** are written back to both sides.
 - **Every intent the window raises is wrapped in `InDefaultSubtree`** — except Undo/Redo, which belong to the
   app's stacks where the window's own `DefaultSubtreeDelta` units are waiting. One gesture is **one** Main
-  unit; the inner reductions' units evaporate with the projection.
+  unit; the inner reductions' units evaporate with the projection. That unit carries **both halves**
+  (`DefaultSubtreeDelta.live`, usually empty): a gesture that reached the account's tree through a row
+  pointing at a live task moved two things at once, and undoing one of them alone would leave the other
+  standing. It is a plain `TreeDiff` applied by the tree's own machinery, and it is absent from every unit
+  written before it existed — which is exactly what a template-only unit means.
 - **`defaultSubtreeIsEmpty` lives on the STATE, not on the template.** A bound row's title lives on the *live*
   task it points at, so asking the template alone calls it untitled and skips a template that is anything but
   empty.
@@ -583,21 +595,25 @@ until it is applied to a real cell.
   titled by whichever tree is drawn — and only a task the account's tree does not hold (a template-owned row)
   is named from the drawing, which is where it lives. What is **offered** and what is **filtered** stay
   questions about the drawn tree: the cell, its siblings and its ancestors are the ones the user can see.
-- **A bound row may be re-pointed, moved or emptied — the TASK is not the template's to rename.** The fold
-  keeps the binding and discards the task itself, so any edit expressed as a change to that task evaporates.
-  Emptying one used to be exactly that: it blanked the live task's title, the cleanup then dropped the list's
-  trailing placeholder (an emptied cell becomes its list's bottom one), and the fold put the live title back —
-  the row was still there reading "writing", and the placeholder it had eaten was not (2026-09-17, account 3).
-  So emptying such a row **unbinds the cell**, the same branch a §8 tombstone takes
-  (`applySetCellTitle`'s `keepAsTombstone`, `mirrorsLiveTaskInDefaultSubtree`). Renaming one is still a silent
-  no-op — an open question, not a settled rule.
+- **Renaming such a row renames the TASK** — the row draws the live task's title because it *is* that task,
+  so the rename lands wherever the task is drawn. It was a silent no-op until 2026-09-21, for the same reason
+  the sub-tree edit was, and that is now settled rather than open.
+- **Emptying one is the exception, and must stay one.** A blank title is what deletes (PRD §4), so blanking it
+  through the mirror would delete the user's task out of the account. Emptying **unbinds the cell** instead,
+  the same branch a §8 tombstone takes (`applySetCellTitle`'s `keepAsTombstone`,
+  `mirrorsLiveTaskInDefaultSubtree`). It used to do the damage the other way round: it blanked the live task's
+  title, the cleanup then dropped the list's trailing placeholder (an emptied cell becomes its list's bottom
+  one), and the fold put the live title back — the row was still there reading "writing", and the placeholder
+  it had eaten was not (2026-09-17, account 3).
 - **"Is this cell one of the template's?" is `SchedulerState.isDefaultSubtreeProjection`, never the cell id.**
   The template and the live tree can hold the SAME cell id — both start from the same bare tree, so
   `cell/root/0` is in each of them on a fresh account — and asking `defaultSubtree.tree.cells` alone says yes
   about the account tree's very first cell, which changed what Delete did to the real tree. The flag is set by
   `projectDefaultSubtree()` and by nothing else; it is never encoded, synced or persisted.
 - **A row pointing at an existing task shows that task's OWN sub-tree** — a sub-list belongs to the task id —
-  drawn by the tree as the ordinary mirror it is. Do not "fix" this by writing into the bound task's sub-list.
+  drawn by the tree as the ordinary mirror it is, and **edited** as one (above). What the GRAFT must not do is
+  write the template's children into that task's sub-list: the row mirrors, so the template's own children are
+  not applied under it.
 - The chrome still lives in **one** place — `ui/TaskSheetChrome.kt` (`SheetColors`, `INDENT_STEP_DP`,
   `taskSheetGuideLines`, `TaskSheetExpandArrow`, `TaskSheetTitleBounds`).
 - **The promise is made once, at `endEditSession`**, and only when the session **created** the task
@@ -642,7 +658,11 @@ until it is applied to a real cell.
   - §13's **"add default sub-tree"** writes its round there and then: that one is the asking, so it does
     not wait to be opened. It is one round like any other.
 - A binding the live tree cannot honour (a task only the template knows, deleted, another task tree, or
-  `canAssignTaskId` says no) falls back to a new task.
+  Constraint 2) falls back to a new task — the task is not in this list, so dropping the row would lose it
+  silently. **Constraint 1 is the one exception and it SKIPS**: the list already holds that very task, so the
+  row has nothing to add, and a clone would put its title in twice over a task already sitting there. Asked
+  as `templateTaskId in siblingTaskIds(working, target)`, never as the whole of `canAssignTaskId` — the two
+  refusals mean opposite things here.
 - **Only a paste of FOREIGN text seeds** — the gate is the clipboard's **id**, not `PasteIdentity`. An id
   means the app wrote that text, so what is landing is a task's own content: a copied sub-tree comes back as
   itself whether it lands as a Mirror, a Restore, or a Fresh clone (`canAssignTaskId` refused the id here).
@@ -654,14 +674,24 @@ until it is applied to a real cell.
   this is the asking) and it does not care whether the task is new. It acts on `contextMenuCopyTargets` — the
   whole block inside a multi-selection, exactly as "copy" does — as one Main history unit. Offered only where a
   template exists.
-- **It lands on the LEAVES of the sub-tree, never beside them** (`defaultSubtreeApplicationTargets`): a cell
-  that parents nothing is its own leaf, so the plain case and the deep case are one rule. A template says how
-  a piece of work breaks down, so asking for it on a cell already broken down asks for it on the pieces.
-  Every cell walked is expanded, or rows landing at the bottom would be invisible.
-- **The targets are read off the state BEFORE anything is written.** Filling a leaf gives it children; a
-  traversal of the state it is mutating would meet that task again (mirrored elsewhere in the same sub-tree),
-  find it no longer a leaf, and seed the rows it just wrote — the cascade, by another route. A task is visited
-  **once, by id**: one sub-list serves every occurrence, and the id set doubles as the cycle guard.
+- **"Is this row populated?" is `SchedulerDomain.isTextuallyEmptyCell`, never `cell.taskId != null`** —
+  the whole-tree half of the rule `isTitledDefaultSubtreeRow` states for the template, and it binds every
+  step of the graft: which cell is skipped as empty (`defaultSubtreeApplicationTargets`), which trailing row
+  the template is typed into (`applyDefaultSubtreeTemplate`), and whether a sub-list counts as already built
+  (`graftDefaultSubtree`, `materializeDefaultSubtree`). A row **emptied** keeps pointing at its now
+  blank-titled task and *becomes* its list's trailing placeholder, so the shorthand found no row to type into
+  in a sub-list whose last one had been emptied — and the whole reduction wrote nothing (2026-09-21,
+  account 3: "add default sub-tree" did nothing at all).
+- **It lands under the CELL THE MENU WAS OPENED ON, beside whatever that cell already parents — never on
+  its descendants** (`defaultSubtreeApplicationTargets`, which is now a filter and no longer a walk). It used
+  to fill the sub-tree's *leaves* instead, on the reading that a template says how a piece of work breaks
+  down, so asking for it on a cell already broken down asks for it on the pieces. That is not how the gesture
+  reads: right-clicking `why / how to measure improvement` wrote the rows into a grandchild two levels below
+  it, a row the user never named (2026-09-21, account 3). To seed a piece, right-click the piece — this entry
+  acts on what was clicked, like every other §13 entry. Each target is expanded, or rows landing at the
+  bottom of its sub-list would be invisible.
+- **A task is filled once, by id.** One sub-list serves every occurrence, so two selected cells pointing at
+  one task are one sub-list: filling it twice would write the template in twice.
 
 ### Task trees are live alternatives, not backups
 
