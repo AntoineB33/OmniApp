@@ -77,6 +77,17 @@ means.
   A chip restores its window; its ✕ closes it outright.
 - **A reduced window is still composed, merely not placed** (`Modifier.unplaced`). Not composing it throws
   away everything half-typed in it, which is not what pressing *reduce* asks for.
+- **A WINDOW'S HIT REGION IS ITS DRAWN RECTANGLE, so nothing may hang off it outside the frame's
+  `offset`.** `Modifier.offset` reports its child's size *at its own position* and merely places the child
+  elsewhere, so a pointer-input (or focus) node applied around it answers for the rectangle the window
+  would occupy **undragged** — an invisible region at the centre of the content area, standing at that
+  window's z. Compose stops hit-testing lower siblings the moment one records a hit, so such a ghost eats
+  every press aimed at the window behind it: the Reminders window's "a press on bare chrome leaves Edit
+  mode" `detectTapGestures` made the Alarms window under it impossible to bring forward (2026-09-21).
+  `AppWindowFrame` therefore applies the caller's `modifier` **inside** the offset and the size, below
+  every geometry modifier of its own — `align` is parent data and is read from anywhere in the chain, so
+  a caller loses nothing by it. A window that wants a press handler of its own gets it there, never around
+  the frame.
 - **The head is always reachable.** `WindowFrameState.clampVertical`, fed by the frame's own layout, keeps
   the head between the top of the content area and its lowest row — including for a window taller than the
   area, which centred would put its own head (and all five of its buttons) out of reach. Clamping a fixed

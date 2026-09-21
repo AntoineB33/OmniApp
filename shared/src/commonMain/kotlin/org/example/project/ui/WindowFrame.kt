@@ -565,7 +565,7 @@ fun AppWindowFrame(
     val commit = { onGeometryChange(state.offset, state.size) }
 
     Box(
-        modifier = modifier
+        modifier = Modifier
             // Where this window is in the app's one stacking order — the frame's own business, never the
             // caller's ([windowStackZ]).
             .windowStackZ(state.id)
@@ -577,6 +577,15 @@ fun AppWindowFrame(
             // the content area when that is narrower than it; a FILLED axis is exactly the opposite request.
             .then(if (state.fill.fillsWidth) Modifier.fillMaxWidth() else Modifier.requiredWidth(widthDp))
             .then(if (state.fill.fillsHeight) Modifier.fillMaxHeight() else Modifier.requiredHeight(heightDp))
+            // THE CALLER'S MODIFIER GOES INSIDE THE OFFSET AND THE SIZE, never around them. `offset`
+            // reports its child's size *at its own position* and merely places the child elsewhere, so
+            // anything hung outside it keeps the bounds the window would have had undragged: a hit region
+            // at the centre of the content area that nothing draws, standing at this window's z over every
+            // window behind it. The Reminders window's "a press on bare chrome leaves Edit mode"
+            // `detectTapGestures` was exactly that, and it ate every press aimed at the window underneath
+            // (the Alarms window could not be brought forward at all, 2026-09-21). `align` is parent data
+            // and is read from anywhere in the chain, so nothing is lost by moving the caller down here.
+            .then(modifier)
             // Raise AFTER the offset so the hit region tracks the (possibly dragged) window.
             .raiseOnPress {
                 host?.focus(state.id)

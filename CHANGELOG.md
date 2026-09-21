@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window behind another could not be clicked — 2026-09-21
+
+Anomaly: in the account-3 Windows app, pressing the **Alarms** window where it stood behind the
+**Reminders** window did nothing — it neither came forward nor took the focus.
+
+- Not the stacking order and not `WindowFrameHost.focus`: the press never reached the Alarms window at all.
+- `AppWindowFrame` composed its `Box` as `modifier` *then* its own geometry —
+  `windowStackZ → unplaced → offset → requiredWidth/Height`. `Modifier.offset` reports its child's size **at
+  its own position** and merely places the child elsewhere, so everything the caller hung on `modifier` kept
+  the bounds the window would have had **undragged**: a rectangle of the window's size at the centre of the
+  content area, carrying that window's z and drawing nothing.
+- The Reminders window is the one window that hangs a pointer handler there — PRD §14's "a press on bare
+  chrome leaves Edit mode" `detectTapGestures`. Compose stops hit-testing lower siblings as soon as one
+  records a hit, so that ghost swallowed every press landing in the centre of the app, the visible parts of
+  the Alarms window included.
+- Fix: the frame now applies the caller's `modifier` **inside** the offset and the size, immediately before
+  its own `raiseOnPress`. `align` is parent data and is read from anywhere in the chain, so no caller loses
+  anything; every caller passes only `align`, a `FocusRequester`/`focusable` or a key handler, and those now
+  answer for the window's real rectangle too. `docs/invariants/popups.md`.
+- **Client rebuild only** (`account3-deploy-windows.bat`) — no Supabase change.
+
 ### The default sub-tree is OWED, not written — 2026-09-21
 
 Anomaly: in the Default sub-tree window (account 3), the `planning / AI` row's id menu listed
