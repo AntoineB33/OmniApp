@@ -78,6 +78,25 @@ data class Task(
      * row — which is what lets a merge resolve the categories and the tasks that wear them independently.
      */
     val categoryIds: List<CategoryId> = emptyList(),
+    /**
+     * PRD §4 **Default sub-tree**, the *promise*: the template lists whose rows belong under this task and
+     * have not been written yet. Empty for every task that has none owed.
+     *
+     * The template appears under **every** task id the app creates while the policy switch is on — the rows
+     * the graft itself lays down included — so the structure it describes is endless, and no account can hold
+     * it. What is stored instead is this promise: the ids of the lists (inside
+     * [org.example.project.scheduler.state.DefaultSubtreeTemplate]'s own tree, never this state's) whose rows
+     * are owed here, resolved the first time somebody opens the cell. So the account carries exactly what has
+     * been looked at, and looking is what makes the next round exist.
+     *
+     * Two lists rather than one, in that order: the template row this task was copied from brings **its own
+     * children** first, and then the template's root rows, which is the part that says "this is a new task id
+     * too". A task the user typed owes the root list alone.
+     *
+     * Authoritative — nothing can re-derive "the rows this task has not been shown yet" — so it is persisted
+     * and synced with the rest of the task, and it rides Undo/Redo with the tree that holds it.
+     */
+    val pendingDefaultSubtree: List<CellListId> = emptyList(),
 ) {
     /** This task's multiplier inside a period of [kind]; see [PeriodKinds.resilienceFor]. */
     fun resilienceFor(kind: String): Double = PeriodKinds.resilienceFor(resilience, kind)

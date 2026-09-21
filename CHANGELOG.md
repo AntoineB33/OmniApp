@@ -11,6 +11,47 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The default sub-tree is OWED, not written — 2026-09-21
+
+Anomaly: in the Default sub-tree window (account 3), the `planning / AI` row's id menu listed
+`Default sub-tree / planning / AI (how to measure improvement, planning, why)` **and**
+`Default sub-tree / planning / AI / planning / AI` — a second task of that title the user never wrote.
+
+- A read-only probe of `~/.omniapp-release/scheduler-state.db` found the template holding **41 tasks** where
+  the user had typed about four, nested `planning / AI / planning / AI / …` five levels deep, with
+  `task/user/393` and `task/user/395` both titled `AI`. The second menu row was real, its path was right, and
+  the tree it named was the corrupt one.
+- The cause: the template window dispatches against `projectDefaultSubtree()`, where the template **is** the
+  tree. A row typed there is a new task id, so `endEditSession` grafted the whole template under it — and
+  that copy became part of the template the *next* row pulled in. Not the cascade inside one graft (calling
+  the primitives directly has always ruled that out) but a fractal **across gestures**, doubling with every
+  row typed, and grafted whole under every task created in the real tree.
+- **The rule is now the one the user asked for, and it is universal**: the template appears under every new
+  `taskId` while the switch is on — the task tree, "All tasks" and the template's own window alike, the rows
+  the application itself writes included. That has no bottom, so **nothing is written at creation any more**.
+  A new task records a **promise** (`Task.pendingDefaultSubtree`: the template lists whose rows it owes), and
+  `materializeDefaultSubtree` pays it the first time a gesture **opens** the cell — the expand arrow, `Tab`
+  into the child. Each row written owes its own next round: its template row's child list, then the
+  template's root. One gesture writes one round; the account stores what has been looked at.
+- Three consequences worth knowing:
+  - **a task nobody has opened is still a leaf**, so it is still schedulable — a tree whose every task were
+    born a parent would have no leaves at all, and the scheduler places leaves;
+  - the **switch is read when the rows appear**, not when they were promised (PRD §7's "currently applied"),
+    and a sub-list the user has built drops the promise unpaid;
+  - **opening is two Main units** — the rows, then the toggle — because `ToggleExpandDelta` undoes by
+    expanding again and so can carry no tree mutation.
+- §13's **"add default sub-tree"** still writes its round immediately: that one is the asking.
+- Persisted-DB compatibility: `pendingDefaultSubtree` is a new field on the task (authoritative, synced by
+  row like the rest of it). Absent — every payload written before it — decodes to "owes nothing", which is
+  right for tasks whose rows the eager graft already wrote. Both are tested.
+- Why no test caught the fractal: `DefaultSubtreeTest.withTemplate` builds its rows with the policy switch
+  still off and only turns it on at the end. The window's own gestures are now covered with it **on**.
+- **The 41 tasks are not healed on load**: which of those rows are the user's and which are eager copies is
+  not a question the data answers, so the template has to be pruned by hand in its window. Nothing prunes it
+  automatically, and nothing will write rows like them again.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy.
+
 ### The first letters typed onto a cell are no longer lost on a slow frame — 2026-09-20
 
 Anomaly: selecting a task cell and typing very often dropped the first letter(s) — "Plan" arriving as "lan"

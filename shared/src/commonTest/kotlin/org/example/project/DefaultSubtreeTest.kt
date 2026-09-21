@@ -128,6 +128,17 @@ class DefaultSubtreeTest {
             else SchedulerIntent.InDefaultSubtree(intent),
         )
 
+    /**
+     * The expand arrow — the gesture that PAYS what a cell owes (PRD 4 *Default sub-tree*), so it is what
+     * every test below uses to make the next round of the template exist.
+     */
+    private fun open(state: SchedulerState, cellId: CellId): SchedulerState =
+        SchedulerReducer.reduce(state, SchedulerIntent.ToggleExpand(cellId))
+
+    /** [open], through the template window's own wrapper. */
+    private fun openInTemplate(state: SchedulerState, cellId: CellId): SchedulerState =
+        reduceInTemplate(state, SchedulerIntent.ToggleExpand(cellId))
+
     /** The titles of the template's top-level rows, ignoring the trailing empty placeholder. */
     private fun templateTitles(state: SchedulerState, listId: CellListId = WellKnownIds.ROOT_LIST): List<String> {
         val tree = state.defaultSubtree.tree
@@ -143,7 +154,13 @@ class DefaultSubtreeTest {
     fun naming_an_empty_cell_grafts_the_template_under_the_new_task() {
         val s0 = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")))
         val cell = firstCell(s0)
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+
+        // The rows are OWED, not written: nothing sits under the new task until the cell is opened, which is
+        // what keeps a task nobody has looked into a schedulable leaf.
+        assertEquals(emptyList(), childTitles(s, cell), "the template is a promise until the cell is opened")
+        assertTrue(SchedulerDomain.isLeafTask(s, s.cells[cell]!!.taskId!!))
+        s = open(s, cell)
 
         assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
         // Each row got a task of its own, distinct from the parent's.
@@ -161,36 +178,45 @@ class DefaultSubtreeTest {
                 listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch"), node("dst/2", "Review")))),
             )
         val cell = firstCell(s0)
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        s = open(s, cell)
 
         assertEquals(listOf("Plan"), childTitles(s, cell))
         val plan = childCells(s, cell).single()
-        assertEquals(listOf("Sketch", "Review"), childTitles(s, plan))
+        // One level per gesture: the row's own children are owed until the row is opened in turn.
+        assertEquals(emptyList(), childTitles(s, plan), "a row writes one level, the next is a promise")
+        s = open(s, plan)
+        // Its template children first, then the template's root rows — because a row the graft wrote is a
+        // new task id too, and the policy is about every one of them.
+        assertEquals(listOf("Sketch", "Review", "Plan"), childTitles(s, plan))
     }
 
     @Test
-    fun the_graft_never_seeds_the_tasks_it_just_created() {
-        // The graft is what CREATES these tasks, so re-applying the template under each of them would be an
-        // unbounded cascade (every seeded row seeding the whole template again, for ever). A seeded row gets
-        // the template node's OWN children and nothing else; a leaf node's task gets an empty sub-list.
+    fun one_gesture_writes_one_round_however_deep_the_template_is() {
+        // The template appears under every new task id, the rows the graft itself writes included — so what
+        // the rule describes has no bottom, and writing ONE round is the only thing that can bound a
+        // gesture. Written eagerly, that is the fractal which turned four rows into 41 tasks (2026-09-21).
         val s0 =
             withTemplate(
                 listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch"))), node("dst/2", "Do")),
             )
         val cell = firstCell(s0)
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        s = open(s, cell)
 
         val (plan, do_) = childCells(s, cell)
-        assertEquals(listOf("Sketch"), childTitles(s, plan), "a seeded row keeps its own template children")
-        assertEquals(emptyList(), childTitles(s, do_), "a seeded leaf must not be seeded in turn")
-        val sketch = childCells(s, plan).single()
-        assertEquals(emptyList(), childTitles(s, sketch), "the graft must stop at the bottom of the template")
-        // Exactly the named task plus one per template node — no second round anywhere.
+        assertEquals(emptyList(), childTitles(s, plan), "what is under a written row is owed, not written")
+        assertEquals(emptyList(), childTitles(s, do_))
+        // Exactly the named task plus one per row of the template's ROOT list — one round, nothing deeper.
         assertEquals(
-            s0.tasks.size + 4,
+            s0.tasks.size + 3,
             s.tasks.size,
-            "one task per template node plus the one the user named — nothing more",
+            "one task per root row of the template plus the one the user named",
         )
+        // ...and the round under a row that has no template children of its own is the template itself,
+        // which is what makes the structure endless.
+        s = open(s, do_)
+        assertEquals(listOf("Plan", "Do"), childTitles(s, do_))
     }
 
     @Test
@@ -204,16 +230,16 @@ class DefaultSubtreeTest {
         val cell = firstCell(s0)
         var s = SchedulerReducer.reduce(s0, SchedulerIntent.BeginEdit(cell, initialText = "Project"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+        s = open(s, cell)
 
         assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
         val (plan, do_) = childCells(s, cell)
-        assertEquals(listOf("Sketch"), childTitles(s, plan))
+        assertEquals(emptyList(), childTitles(s, plan))
         assertEquals(emptyList(), childTitles(s, do_))
-        assertEquals(emptyList(), childTitles(s, childCells(s, plan).single()))
         assertEquals(
-            s0.tasks.size + 4,
+            s0.tasks.size + 3,
             s.tasks.size,
-            "one task per template node plus the one the user named — nothing more",
+            "one task per root row of the template plus the one the user named — nothing more",
         )
     }
 
@@ -225,6 +251,7 @@ class DefaultSubtreeTest {
         var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(firstCell(s0), "First"))
         val second = s.lists[s.rootListId]!!.cellIds.last()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(second, "Second"))
+        s = open(open(s, firstCell(s0)), second)
 
         val firstPlan = childCells(s, firstCell(s0)).single().let { s.cells[it]!!.taskId }
         val secondPlan = childCells(s, second).single().let { s.cells[it]!!.taskId }
@@ -251,10 +278,13 @@ class DefaultSubtreeTest {
 
         val target = s.lists[s.rootListId]!!.cellIds.last()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(target, "Project"))
+        s = open(s, target)
 
         val seeded = childCells(s, target).single()
         assertEquals(sharedTask, s.cells[seeded]!!.taskId)
         assertEquals(listOf("Inherited"), childTitles(s, seeded))
+        // A mirror owes nothing: the task is not new, and its sub-list came with the id.
+        assertEquals(emptyList(), s.tasks[sharedTask]!!.pendingDefaultSubtree)
     }
 
     @Test
@@ -263,7 +293,8 @@ class DefaultSubtreeTest {
         // still produce the row rather than silently dropping it.
         val s0 = withTemplate(listOf(node("dst/0", "Plan", TaskId("task/user/999"))))
         val cell = firstCell(s0)
-        val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
+        s = open(s, cell)
 
         assertEquals(listOf("Plan"), childTitles(s, cell))
         assertTrue(s.tasks[TaskId("task/user/999")] == null)
@@ -280,6 +311,107 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Project"))
 
         assertEquals(emptyList(), childTitles(s, cell))
+        assertEquals(emptyList(), s.tasks[s.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree, "nothing is owed")
+        s = open(s, cell)
+        assertEquals(emptyList(), childTitles(s, cell), "and opening it pays nothing either")
+    }
+
+    @Test
+    fun the_switch_is_read_when_the_promise_is_PAID_not_when_it_was_made() {
+        // PRD 7 calls it "whether the policy is CURRENTLY applied", so a promise waits while it is off and
+        // is paid when it comes back on, rather than being spent against a policy nobody has switched on.
+        var s = withTemplate(listOf(node("dst/0", "Plan")))
+        val cell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Project"))
+        val owed = s.tasks[s.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree
+        assertEquals(listOf(WellKnownIds.ROOT_LIST), owed)
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(false))
+        s = open(s, cell)
+        assertEquals(emptyList(), childTitles(s, cell), "the policy is off, so no rows appear")
+        assertEquals(owed, s.tasks[s.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree, "the promise waits")
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetDefaultSubtreeEnabled(true))
+        s = open(open(s, cell), cell) // close, then open again
+        assertEquals(listOf("Plan"), childTitles(s, cell))
+    }
+
+    @Test
+    fun a_sub_list_the_user_has_built_drops_the_promise_unpaid() {
+        // The template has nothing to add to a sub-tree the user wrote — the same condition the graft
+        // checks before promising anything, asked again when the promise would be paid.
+        var s = withTemplate(listOf(node("dst/0", "Plan")))
+        val cell = firstCell(s)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Project"))
+        val childList = s.tasks[s.cells[cell]!!.taskId!!]!!.childListId!!
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[childList]!!.cellIds.first(), "Mine"))
+
+        s = open(s, cell)
+
+        assertEquals(listOf("Mine"), childTitles(s, cell), "the template must not land beside the user's rows")
+        assertEquals(emptyList(), s.tasks[s.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree)
+    }
+
+    @Test
+    fun a_row_typed_in_the_template_window_owes_the_template_like_any_other() {
+        // The rule is the same in all three drawings of the tree: a new task id is a new task id. Inside the
+        // template that is self-referential, which is exactly why the rows are OWED and not written — the
+        // eager graft turned the release account's four-row template into 41 tasks nested
+        // `planning / AI / planning / AI / ...`, doubling with every row typed (2026-09-21, account 3).
+        var s = withTemplate(listOf(node("dst/0", "planning")))
+        assertTrue(s.defaultSubtreeEnabled)
+        val planning = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        val planningList = childListOf(s, planning)
+        val tasksBefore = s.defaultSubtree.tree.tasks.size
+
+        // Type into planning's own trailing placeholder — exactly what the window sends.
+        val target = s.defaultSubtree.tree.lists[planningList]!!.cellIds.last()
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(target, "AI"))
+
+        assertEquals(listOf("AI"), templateTitles(s, planningList))
+        assertEquals(emptyList(), templateTitles(s, childListOf(s, target)), "owed, not written")
+        assertEquals(tasksBefore + 1, s.defaultSubtree.tree.tasks.size, "one task per row typed, and no more")
+        assertEquals(
+            listOf(WellKnownIds.ROOT_LIST),
+            s.defaultSubtree.tree.tasks[s.defaultSubtree.tree.cells[target]!!.taskId!!]!!.pendingDefaultSubtree,
+        )
+
+        // Opening it writes ONE round — the template's root rows — into the template itself.
+        s = openInTemplate(s, target)
+        assertEquals(listOf("planning"), templateTitles(s, childListOf(s, target)))
+        assertEquals(tasksBefore + 2, s.defaultSubtree.tree.tasks.size, "one round, not a copy of everything")
+    }
+
+    @Test
+    fun an_edit_session_in_the_template_window_owes_it_too() {
+        // The route the user actually took: a session, which promises at `endEditSession`.
+        var s = withTemplate(listOf(node("dst/0", "planning")))
+        val planningList = childListOf(s, s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first())
+        val target = s.defaultSubtree.tree.lists[planningList]!!.cellIds.last()
+
+        s = reduceInTemplate(s, SchedulerIntent.BeginEdit(target, initialText = "AI"))
+        s = reduceInTemplate(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
+
+        assertEquals(listOf("AI"), templateTitles(s, planningList))
+        assertEquals(emptyList(), templateTitles(s, childListOf(s, target)))
+        s = openInTemplate(s, target)
+        assertEquals(listOf("planning"), templateTitles(s, childListOf(s, target)))
+    }
+
+    @Test
+    fun add_default_sub_tree_works_inside_the_template_window_too() {
+        // 13's entry is the ASKING, so it writes its round there and then rather than waiting to be opened
+        // — and PRD 4 lists it among the window's own menu entries.
+        var s = withTemplate(listOf(node("dst/0", "planning")))
+        val planning = s.defaultSubtree.tree.lists[WellKnownIds.ROOT_LIST]!!.cellIds.first()
+        val planningList = childListOf(s, planning)
+        val target = s.defaultSubtree.tree.lists[planningList]!!.cellIds.last()
+        s = reduceInTemplate(s, SchedulerIntent.SetCellTitle(target, "AI"))
+        assertEquals(emptyList(), templateTitles(s, childListOf(s, target)), "typing only owes it")
+
+        s = reduceInTemplate(s, SchedulerIntent.AddDefaultSubtree(listOf(target)))
+
+        assertEquals(listOf("planning"), templateTitles(s, childListOf(s, target)), "asking writes it now")
     }
 
     @Test
@@ -288,8 +420,9 @@ class DefaultSubtreeTest {
         val cell = firstCell(s0)
         var s = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cell, "Project renamed"))
+        s = open(s, cell)
 
-        assertEquals(listOf("Plan"), childTitles(s, cell))
+        assertEquals(listOf("Plan"), childTitles(s, cell), "the rename owes nothing of its own")
     }
 
     // ---- the edit session ----------------------------------------------------------------------
@@ -305,7 +438,11 @@ class DefaultSubtreeTest {
         assertEquals(emptyList(), childTitles(s, cell))
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
-        assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
+        assertEquals(
+            listOf(WellKnownIds.ROOT_LIST),
+            s.tasks[s.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree,
+            "the session owes the template once, at its end",
+        )
         // Creating a task is not asking to see the template unfold under it: the cell stays COLLAPSED, so
         // the row just typed keeps its place instead of jumping down behind rows the user did not write.
         assertFalse(cell in s.expanded, "creating a task must not expand its cell")
@@ -326,17 +463,16 @@ class DefaultSubtreeTest {
         val cell = firstCell(s0)
 
         val typed = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(cell, "Project"))
-        assertEquals(listOf("Plan", "Do"), childTitles(typed, cell))
         assertFalse(cell in typed.expanded)
 
         var s = SchedulerReducer.reduce(s0, SchedulerIntent.BeginEdit(cell, initialText = "Project"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.ExitEdit(EditExitNavigation.Down))
-        assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
         assertFalse(cell in s.expanded)
 
-        // And the arrow still opens it afterwards — nothing about the cell is left un-expandable.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cell))
+        // And the arrow still opens it afterwards — which is also what writes the rows it owes.
+        s = open(s, cell)
         assertTrue(cell in s.expanded)
+        assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
     }
 
     @Test
@@ -352,9 +488,10 @@ class DefaultSubtreeTest {
         assertNull(s.editSession, "asking for the sub-tree ends the session")
         assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
         assertTrue(cell in s.expanded, "the click asked for the sub-tree — it must be open")
-        // The graft rode the session's single "Edit" unit; the toggle is the click's own unit on top of it,
-        // exactly as a forced exit followed by any other expand arrow is.
-        assertEquals(2, s.histories.forCategory(HistoryCategory.Main).units.size)
+        // Three units, and each is a gesture of its own: the session ("Edit"), the rows the opening paid
+        // for ("Default sub-tree") and the toggle itself. The rows cannot ride the toggle — a
+        // ToggleExpandDelta undoes by expanding again, so it can carry no tree mutation.
+        assertEquals(3, s.histories.forCategory(HistoryCategory.Main).units.size)
     }
 
     @Test
@@ -367,8 +504,13 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(other))
 
         assertNull(s.editSession)
-        assertEquals(listOf("Plan"), childTitles(s, cell), "the edited cell is seeded by the forced exit")
+        assertEquals(
+            listOf(WellKnownIds.ROOT_LIST),
+            s.tasks[s.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree,
+            "the forced exit made the edited cell owe the template",
+        )
         assertTrue(other in s.expanded, "the arrow that was clicked still opens its own cell")
+        assertEquals(listOf("Plan"), childTitles(s, other), "...and paid what THAT cell owed")
     }
 
     @Test
@@ -384,7 +526,7 @@ class DefaultSubtreeTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cell))
         s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cell))
         assertFalse(cell in s.expanded)
-        assertEquals(listOf("Plan"), childTitles(s, cell), "and nothing is seeded twice")
+        assertEquals(listOf("Plan"), childTitles(s, cell), "and nothing is paid twice")
     }
 
     // ---- the menu / the switch -----------------------------------------------------------------
@@ -926,6 +1068,42 @@ class DefaultSubtreeTest {
     }
 
     @Test
+    fun a_payload_written_before_the_promise_decodes_to_owing_nothing() {
+        // CLAUDE.md persisted-DB compatibility: the previous shape wrote no `pendingDefaultSubtree`, because
+        // the build that wrote it grafted the template eagerly. Absent must decode to "owes nothing" — which
+        // is exactly right for those tasks: their rows are already there.
+        val s = withTemplate(listOf(node("dst/0", "Plan")))
+        val named = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val payload = SchedulerStateCodec.encode(named)
+        assertTrue(payload.contains("pendingDefaultSubtree"), "the fixture must carry the field")
+        // The previous shape: the same payload with every occurrence of the field dropped.
+        val before = payload.replace(Regex(""",\"pendingDefaultSubtree\":\[[^]]*]"""), "")
+        assertFalse(before.contains("pendingDefaultSubtree"))
+
+        val decoded = SchedulerStateCodec.decode(before)
+        assertNotNull(decoded)
+        val task = decoded.cells[firstCell(decoded)]!!.taskId!!
+        assertEquals(emptyList(), decoded.tasks[task]!!.pendingDefaultSubtree)
+    }
+
+    @Test
+    fun what_a_task_owes_survives_a_round_trip() {
+        // Authoritative: nothing can re-derive "the rows this task has not been shown yet", so it is
+        // persisted and synced with the task — and paid after a reload exactly as before one.
+        val s = withTemplate(listOf(node("dst/0", "Plan")))
+        val named = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(firstCell(s), "Project"))
+        val decoded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(named))
+
+        assertNotNull(decoded)
+        val cell = firstCell(decoded)
+        assertEquals(
+            listOf(WellKnownIds.ROOT_LIST),
+            decoded.tasks[decoded.cells[cell]!!.taskId!!]!!.pendingDefaultSubtree,
+        )
+        assertEquals(listOf("Plan"), childTitles(open(decoded, cell), cell))
+    }
+
+    @Test
     fun the_template_round_trips() {
         val nodes =
             listOf(node("dst/0", "Plan", children = listOf(node("dst/1", "Sketch", TaskId("task/user/3")))))
@@ -982,9 +1160,12 @@ class DefaultSubtreeTest {
         assertNotNull(reloaded)
 
         val cell = firstCell(reloaded)
-        val s = SchedulerReducer.reduce(reloaded, SchedulerIntent.SetCellTitle(cell, "Project"))
+        var s = SchedulerReducer.reduce(reloaded, SchedulerIntent.SetCellTitle(cell, "Project"))
+        s = open(s, cell)
         assertEquals(listOf("Plan"), childTitles(s, cell))
-        assertEquals(listOf("Sketch"), childTitles(s, childCells(s, cell).single()))
+        val plan = childCells(s, cell).single()
+        s = open(s, plan)
+        assertEquals(listOf("Sketch", "Plan"), childTitles(s, plan))
     }
 
     @Test
@@ -1052,9 +1233,10 @@ class DefaultSubtreeTest {
         // `endEditSession` here — it has to happen in the paste itself.
         val s0 = withTemplate(listOf(node("dst/0", "Plan"), node("dst/1", "Do")))
         val cell = firstCell(s0)
-        val s = paste(s0, cell, "Project")
+        var s = paste(s0, cell, "Project")
 
         assertEquals("Project", s.tasks[s.cells[cell]!!.taskId!!]!!.title)
+        s = open(s, cell)
         assertEquals(listOf("Plan", "Do"), childTitles(s, cell))
     }
 
@@ -1062,10 +1244,11 @@ class DefaultSubtreeTest {
     fun a_pasted_forest_seeds_every_minted_leaf_and_never_over_the_clipboard_s_own_children() {
         val s0 = withTemplate(listOf(node("dst/0", "Plan")))
         val cell = firstCell(s0)
-        val s = paste(s0, cell, "A\n\tB\n\tC")
+        var s = paste(s0, cell, "A\n\tB\n\tC")
 
         assertEquals(listOf("B", "C"), childTitles(s, cell), "the clipboard's children are the sub-tree")
         val (b, c) = childCells(s, cell)
+        s = open(open(s, b), c)
         assertEquals(listOf("Plan"), childTitles(s, b), "a leaf the paste minted is a task the user created")
         assertEquals(listOf("Plan"), childTitles(s, c))
     }

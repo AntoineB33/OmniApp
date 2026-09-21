@@ -488,6 +488,7 @@ object SchedulerStateCodec {
                         doableDuringBreak = false,
                         resilience = it.resilience,
                         categoryIds = it.categoryIds.map(CategoryId::value),
+                        pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -994,6 +995,7 @@ object SchedulerStateCodec {
                         doableDuringBreak = false,
                         resilience = it.resilience,
                         categoryIds = it.categoryIds.map(CategoryId::value),
+                        pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -1033,6 +1035,7 @@ object SchedulerStateCodec {
                         text = p.text,
                         resilience = decodeResilience(p),
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
+                        pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
                     )
             }
         val cells =
@@ -1411,6 +1414,7 @@ object SchedulerStateCodec {
                         text = p.text,
                         resilience = decodeResilience(p),
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
+                        pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
                     )
             }
         val cells =
@@ -2343,6 +2347,10 @@ private data class PersistedTask(
     // PRD §5: the categories the task carries, by id. Absent (every payload written before categories
     // existed) ⇒ none, which is what a task that has never been given one holds.
     val categoryIds: List<String> = emptyList(),
+    // PRD §4 Default sub-tree: the template lists whose rows are owed here and not written yet. Absent
+    // (every payload written before the promise existed, and every task that owes nothing) ⇒ none, which is
+    // exactly what a build that grafted the template eagerly left behind.
+    val pendingDefaultSubtree: List<String> = emptyList(),
 )
 
 @Serializable

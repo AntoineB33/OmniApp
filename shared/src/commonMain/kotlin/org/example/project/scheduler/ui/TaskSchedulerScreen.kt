@@ -571,6 +571,10 @@ internal fun CellListSection(
                                 },
                             // PRD §7/§13: the template on demand. Like "copy task id", it acts on the whole block
                             // when the right-click lands inside a multi-selection.
+                            // It is offered in the PRD-4 template's own window too, and unlike the
+                            // automatic graft it does not wait to be opened ([graftDefaultSubtree] only
+                            // records what a new task id is owed): this entry is the asking, so it writes
+                            // its round there and then.
                             onAddDefaultSubtree =
                                 if (state.defaultSubtreeIsEmpty) {
                                     null

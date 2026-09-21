@@ -1458,12 +1458,33 @@ object SchedulerReducer {
      * for, and never on a cell the post-edit cleanup has just removed.
      */
     private fun reduceToggleExpand(state: SchedulerState, cellId: CellId): SchedulerState {
-        if (state.editSession == null) return commitDelta(state, ToggleExpandDelta(cellId))
+        if (state.editSession == null) return commitDelta(paidDefaultSubtree(state, cellId), ToggleExpandDelta(cellId))
         val wantExpanded = cellId !in state.expanded
         val exited = endEditSession(state)
         if (exited.cells[cellId] == null) return exited
         if ((cellId in exited.expanded) == wantExpanded) return exited
-        return commitDelta(exited, ToggleExpandDelta(cellId))
+        return commitDelta(paidDefaultSubtree(exited, cellId), ToggleExpandDelta(cellId))
+    }
+
+    /**
+     * PRD §4 *Default sub-tree*: the rows [cellId] is owed ([materializeDefaultSubtree]), written as their
+     * own Main history unit just before the cell opens.
+     *
+     * Two units and not one, because [ToggleExpandDelta] is a **toggle** — it undoes by expanding again —
+     * so it cannot carry a tree mutation. That is the shape a forced exit followed by the expand arrow
+     * already has: one Ctrl+Z closes the row, the next takes the rows it opened onto back.
+     *
+     * Nothing is written when the cell is being COLLAPSED: the promise is paid by opening a row, and a
+     * collapse is the opposite gesture.
+     */
+    private fun paidDefaultSubtree(state: SchedulerState, cellId: CellId): SchedulerState {
+        if (cellId in state.expanded) return state
+        val before = state.captureTree()
+        val paid = materializeDefaultSubtree(state, cellId)
+        if (paid === state) return state
+        val after = paid.captureTree()
+        if (after == before) return paid
+        return commitDelta(paid, TreeMutationDelta(before = before, after = after, label = "Default sub-tree"))
     }
 
     /**
@@ -1825,7 +1846,8 @@ object SchedulerReducer {
                         editingCellId
                     } else {
                         if (editingCellId !in next.expanded) {
-                            next = commitDelta(next, ToggleExpandDelta(editingCellId))
+                            // Tab OPENS the row, so it pays what the row owes exactly as the arrow does.
+                            next = commitDelta(paidDefaultSubtree(next, editingCellId), ToggleExpandDelta(editingCellId))
                         }
                         SchedulerDomain.firstSelectableChild(next, editingCellId) ?: editingCellId
                     }
@@ -4594,6 +4616,18 @@ private fun defaultSubtreeApplicationTargets(
  * to seed. The other guards are ordinary hygiene — the policy must be on, the template non-empty, the new
  * task titled, and its sub-list still untouched (only the placeholder PRD §4 *Auto-Expansion* just made).
  *
+ * **It writes no rows: it records a promise** ([Task.pendingDefaultSubtree]), which
+ * [materializeDefaultSubtree] pays the first time somebody opens the cell. The template appears under every
+ * new task id — the rows the graft itself lays down included — so what the rule describes has no bottom:
+ * grafted eagerly, the release account's four-row template had become 41 tasks nested
+ * `planning / AI / planning / AI / …`, doubling with every row typed into its own window (2026-09-21,
+ * account 3). Deferring is what makes the rule affordable, and what lets it be the SAME rule in all three
+ * drawings of the tree, the §4 template's own window included: an account holds what has been looked at.
+ *
+ * Until it is opened, a task that owes the template has an empty sub-list — so it is still
+ * [SchedulerDomain.isLeafTask], which is what keeps it schedulable. A tree whose every task were born a
+ * parent would have no leaves at all, and the scheduler places leaves.
+ *
  * A no-op returns the same state instance, so every existing edit path is unaffected while the switch is off.
  */
 private fun graftDefaultSubtree(
@@ -4610,7 +4644,53 @@ private fun graftDefaultSubtree(
     val childList = state.lists[childListId] ?: return state
     // Only a freshly minted, still-empty sub-list is seeded — never one the user (or a paste) already built.
     if (childList.cellIds.any { state.cells[it]?.taskId != null }) return state
-    return applyDefaultSubtreeTemplate(state, childListId, state.defaultSubtree, WellKnownIds.ROOT_LIST)
+    // The template's ROOT list — and it is read against the TEMPLATE's own tree wherever the promise is
+    // paid, never against this state's root list: [WellKnownIds.ROOT_LIST] is every tree's root id.
+    return state.owingDefaultSubtree(taskId, listOf(WellKnownIds.ROOT_LIST))
+}
+
+/** [Task.pendingDefaultSubtree] set on [taskId] — the same state instance when it already says that. */
+private fun SchedulerState.owingDefaultSubtree(
+    taskId: TaskId,
+    templateLists: List<CellListId>,
+): SchedulerState {
+    val task = tasks[taskId] ?: return this
+    if (task.pendingDefaultSubtree == templateLists) return this
+    return copy(tasks = tasks + (taskId to task.copy(pendingDefaultSubtree = templateLists)))
+}
+
+/**
+ * PRD §4 **Default sub-tree**: pay what [cellId]'s task owes ([Task.pendingDefaultSubtree]) — the deferred
+ * half of [graftDefaultSubtree], run by the gestures that OPEN a cell (the expand arrow, Tab into the child).
+ *
+ * **One round.** The owed template lists' rows are written here, and each row written owes its own next round
+ * ([applyDefaultSubtreeTemplate]). That is what terminates: a gesture writes one level, and the level under
+ * it is a promise until the user asks for that too. It is also what bounds the account — the old eager graft
+ * wrote the whole template at every creation, and inside the template window that made the template itself
+ * grow by a copy of itself per row typed.
+ *
+ * The switch is read **now**, not when the promise was made: PRD §7 calls it "whether the policy is
+ * *currently* applied", so turning it off stops the rows appearing and turning it back on resumes them, while
+ * the promise waits. The promise is instead dropped **unpaid** once the sub-list holds a row of its own — the
+ * user built that sub-tree, and the template has nothing to add to it (the same condition
+ * [graftDefaultSubtree] checks before promising anything).
+ */
+private fun materializeDefaultSubtree(state: SchedulerState, cellId: CellId): SchedulerState {
+    val taskId = state.cells[cellId]?.taskId ?: return state
+    val task = state.tasks[taskId] ?: return state
+    if (task.pendingDefaultSubtree.isEmpty()) return state
+    val childListId = task.childListId ?: return state
+    val childList = state.lists[childListId] ?: return state
+    if (childList.cellIds.any { state.cells[it]?.taskId != null }) {
+        return state.owingDefaultSubtree(taskId, emptyList())
+    }
+    if (!state.defaultSubtreeEnabled || state.defaultSubtreeIsEmpty) return state
+    var working = state
+    for (templateListId in task.pendingDefaultSubtree) {
+        working = applyDefaultSubtreeTemplate(working, childListId, state.defaultSubtree, templateListId)
+    }
+    if (working === state) return state
+    return working.owingDefaultSubtree(taskId, emptyList())
 }
 
 /**
@@ -4620,11 +4700,15 @@ private fun graftDefaultSubtree(
  * index and auto-expansion are all maintained by the code that already owns them rather than by a second copy
  * of those rules here.
  *
- * Those primitives are called **directly**, never through the `SetCellTitle` intent — which is what makes the
- * graft terminate: a row this builds is a task *the graft* created, not one the user created, so it must not
- * be seeded in turn (that would be an unbounded cascade, every seeded row re-applying the whole template for
- * ever). The only descent is into the template's own child lists, so the recursion is bounded by the
- * template's depth; [visitedTemplateLists] is belt and braces against a template that somehow mirrors itself.
+ * Those primitives are called **directly**, never through the `SetCellTitle` intent — so the rows it writes
+ * are not sessions of their own and nothing here re-enters the reducer.
+ *
+ * **It writes ONE level.** A row it lays down is a new task id like any other, so the template is owed under
+ * it too ([graftDefaultSubtree]) — but as a promise, never as a descent: what each row owes is its template
+ * row's **own child list** and then the template's **root**, in that order, which is the copy of that row's
+ * sub-tree followed by the "it is a new task id too" part. Writing them instead would not terminate, because
+ * the second half of every promise is the template itself. [materializeDefaultSubtree] is what pays the next
+ * round, when the user opens the row.
  *
  * **What a row carries.** The template is a real tree of real tasks, so a grafted row is given everything the
  * cell's §13 Edit window holds — the minimum time, the screen switch, "doable during a screen break", the
@@ -4644,9 +4728,7 @@ private fun applyDefaultSubtreeTemplate(
     listId: CellListId,
     template: DefaultSubtreeTemplate,
     templateListId: CellListId,
-    visitedTemplateLists: MutableSet<CellListId> = mutableSetOf(),
 ): SchedulerState {
-    if (!visitedTemplateLists.add(templateListId)) return state
     val templateList = template.tree.lists[templateListId] ?: return state
     var working = state
     for (templateCellId in templateList.cellIds) {
@@ -4700,15 +4782,12 @@ private fun applyDefaultSubtreeTemplate(
                                 ),
                 )
         }
-        val templateChildListId = templateTask.childListId ?: continue
-        val newChildListId = working.tasks[newTaskId]?.childListId ?: continue
+        // What this row owes in turn: the template row's own children, then the template's root rows,
+        // because a row the graft writes is a new task id and the policy is about every one of them.
         working =
-            applyDefaultSubtreeTemplate(
-                working,
-                newChildListId,
-                template,
-                templateChildListId,
-                visitedTemplateLists,
+            working.owingDefaultSubtree(
+                newTaskId,
+                listOfNotNull(templateTask.childListId, WellKnownIds.ROOT_LIST),
             )
     }
     // PRD §5: the sub-list's weight-column header, written after the rows so nothing the placement did to the

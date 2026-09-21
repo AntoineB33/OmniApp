@@ -583,24 +583,47 @@ until it is applied to a real cell.
   drawn by the tree as the ordinary mirror it is. Do not "fix" this by writing into the bound task's sub-list.
 - The chrome still lives in **one** place — `ui/TaskSheetChrome.kt` (`SheetColors`, `INDENT_STEP_DP`,
   `taskSheetGuideLines`, `TaskSheetExpandArrow`, `TaskSheetTitleBounds`).
-- **It fires once, at `endEditSession`**, and only when the session **created** the task (`taskId !in
-  session.treeBefore.tasks`). Not per keystroke (each one re-runs the naming), and not when the session reused
-  an existing task (its sub-tree already came with the id). A sub-list that already holds a cell is never
-  re-seeded.
+- **The promise is made once, at `endEditSession`**, and only when the session **created** the task
+  (`taskId !in session.treeBefore.tasks`). Not per keystroke (each one re-runs the naming), and not when the
+  session reused an existing task (its sub-tree already came with the id). A sub-list that already holds a
+  cell is never seeded.
 - **Asking for a sub-tree while a cell is being edited ends that session first** (`ToggleExpand` is a PRD §4
   Forced Exit, like clicking another cell). Otherwise the arrow opens the just-named task onto its bare
-  placeholder. The seeding happens in the forced exit, the *opening* in the toggle that follows it — two
-  history units, as a forced exit followed by any other expand arrow already is.
-- **The graft leaves the cell it seeded COLLAPSED.** Creating a task is not asking to see the template unfold
+  placeholder. The promise is made in the forced exit and paid by the toggle that follows it.
+- **The graft leaves the cell it promised COLLAPSED.** Creating a task is not asking to see the template unfold
   under it: the row just typed would jump down the screen behind a block of rows the user did not write, on
   every single creation. `applySetCellTitle` already dropped the cell from `expanded` where it minted the
   sub-list, so `endEditSession` adds nothing back — only the gestures that *mean* to open it do (the arrow,
   Tab into the child, "add default sub-tree", which is the asking and therefore still expands).
 - **The graft drives `applySetCellTitle` / `applyAssignTaskId`**, so occurrences, `childTaskIds`, the title
   index and auto-expansion stay owned by the code that already owns them. Never a second copy of those rules.
-- **A seeded row must never seed in turn** — that is an unbounded cascade, not a deeper template. The graft
-  calls those primitives *directly*, never the `SetCellTitle` intent, so it descends only through the
-  template's own children and stops at its leaves. Never route it through the reducer's intent path.
+- **THE TEMPLATE IS OWED, NOT WRITTEN — and that is the whole of why the rule can be universal.** It
+  appears under **every** new task id, in all three drawings of the tree and including the rows the graft
+  itself lays down, so what it describes has no bottom. What a task stores is therefore a **promise**
+  (`Task.pendingDefaultSubtree`): the template lists whose rows are owed here.
+  `materializeDefaultSubtree` pays it the first time a gesture **opens** the cell (the expand arrow, Tab
+  into the child), so an account holds exactly what has been looked at, and looking is what makes the next
+  round exist.
+  - Written eagerly it does not terminate. The §4 window dispatches against `projectDefaultSubtree()`,
+    where the template **is** the tree, so a row typed there is a new task id and the whole template landed
+    under it — and that copy was part of the template the *next* row pulled in. Four rows had become 41
+    tasks nested `planning / AI / planning / AI / …`, and the `AI` row's id menu offered a second `AI`
+    nobody had written (2026-09-21, account 3). The fixtures never caught it because `withTemplate` builds
+    its rows with the switch still off.
+  - **One gesture writes one round.** `applyDefaultSubtreeTemplate` lays the owed lists' rows and descends
+    no further; each row it writes owes, in order, **its own template row's child list and then the
+    template's root** — the copy of that row's sub-tree, and the "it is a new task id too" part. It calls
+    the editing primitives *directly*, never the `SetCellTitle` intent, so nothing re-enters the reducer.
+  - **A task that owes the template is still a LEAF**, which is what keeps it schedulable. A tree whose
+    every task were born a parent would have no leaves at all, and the scheduler places leaves.
+  - **The switch is read when the promise is PAID**, not when it was made — PRD §7's "whether the policy is
+    *currently* applied". The promise itself waits. It is dropped **unpaid** once the sub-list holds a row
+    of its own: the user built that sub-tree, and the template has nothing to add to it.
+  - **Opening is two history units**: the rows (`TreeMutationDelta`, "Default sub-tree") and then the
+    toggle. `ToggleExpandDelta` undoes by expanding again, so it can carry no tree mutation — the same
+    shape a forced exit followed by the expand arrow already had.
+  - §13's **"add default sub-tree"** writes its round there and then: that one is the asking, so it does
+    not wait to be opened. It is one round like any other.
 - A binding the live tree cannot honour (a task only the template knows, deleted, another task tree, or
   `canAssignTaskId` says no) falls back to a new task.
 - **Only a paste of FOREIGN text seeds** — the gate is the clipboard's **id**, not `PasteIdentity`. An id
