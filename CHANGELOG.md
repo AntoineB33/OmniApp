@@ -52,6 +52,31 @@ Anomaly: in the Default sub-tree window (account 3), the `planning / AI` row's i
 
 Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy.
 
+### The first letters are kept for real: the edit FIELD is composed off the draft — 2026-09-21
+
+Anomaly: the same one, still reported after 2026-09-20's two fixes. Those put the letters in the state
+correctly; the field the user is looking at simply never asked for them.
+
+- `BasicTextField` keeps an internal buffer seeded from the `value` it was **composed** with, and re-seeds it
+  only when a later composition hands it different text. `TaskRow` composed the field with an **empty**
+  `TextFieldValue` and filled it in from a `SideEffect` — which can only publish a frame later, and the field
+  is focusable in that frame (the effect requesting its caret runs on the same one). So the first key to
+  reach the focused field was applied to an empty buffer and `onValueChange` reported *just that key*: the
+  letter that opened the session, plus every letter `reduceBeginEdit` had absorbed after it, were overwritten
+  in one go. A whole burst, not one letter — and invisible to the reducer, which had them all along.
+- The field now owns its **caret and nothing else**. `displayTitle` *is* `editSession.draftText` for the row
+  being edited, so the remembered `TextFieldValue` is seeded from the draft and a mismatch is repaired
+  **during composition**, before the value reaches `BasicTextField` — never from a `SideEffect`. That also
+  carries a keystroke the tree absorbed while the caret was in flight, which the field's buffer had not seen.
+- Named residue: a letter absorbed in the gap between a composition being applied and that composition's
+  focus request running is still one the field can type over. It costs one letter, not a burst, and closing
+  it would mean a second `requestFocus` call site, which `TaskRow`'s one focus effect refuses.
+- No test: the project has no Compose UI test harness, and the rule is a composition-order one that the
+  reducer-level `EditModeKeystrokeRaceTest` cannot see. It is written down in `docs/invariants/task-tree.md`
+  and at the call site instead.
+
+Client-only: needs an app rebuild (`account{1,2,3}-*deploy*.bat`), no Supabase deploy.
+
 ### The first letters typed onto a cell are no longer lost on a slow frame — 2026-09-20
 
 Anomaly: selecting a task cell and typing very often dropped the first letter(s) — "Plan" arriving as "lan"

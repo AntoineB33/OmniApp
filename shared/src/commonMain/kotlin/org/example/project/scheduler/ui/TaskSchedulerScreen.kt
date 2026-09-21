@@ -2922,19 +2922,39 @@ internal fun TaskRow(
             if (compact) {
                 // Nothing after the arrow: the root strip is the arrow and the space around it.
             } else if (isEditing) {
-                var textFieldValue by remember(cellId) { mutableStateOf(TextFieldValue()) }
-                SideEffect {
-                    if (!isEditing) {
-                        textFieldValue = TextFieldValue()
-                        return@SideEffect
-                    }
-                    if (textFieldValue.text != displayTitle) {
-                        textFieldValue =
-                            TextFieldValue(
-                                text = displayTitle,
-                                selection = TextRange(displayTitle.length),
-                            )
-                    }
+                // PRD §4: **the field's TEXT is the session's draft, and it is reconciled HERE — during
+                // composition — never from a SideEffect.** `displayTitle` IS `editSession.draftText` for the
+                // row being edited, so the only thing the field owns is its CARET; that is why this is
+                // seeded from the draft rather than from nothing, and why a mismatch is repaired before the
+                // value reaches `BasicTextField` rather than after.
+                //
+                // A SideEffect could only publish the draft on the NEXT frame, and the field is focusable in
+                // between (the effect that calls `editFocusRequester.requestFocus()` runs on this one). Every
+                // key pressed inside that gap is applied by the field to the buffer it was COMPOSED with, so
+                // it overwrote letters the session already held. Two gaps made that happen, and both close
+                // here:
+                //   - the field's FIRST composition used to hand `BasicTextField` an EMPTY value while the
+                //     session already carried the letter that opened it — plus every letter
+                //     `SchedulerReducer.reduceBeginEdit` absorbed after it — so the first key that reached
+                //     the focused field replaced the whole burst. That is the "the first letters are not
+                //     caught" a busy frame produces, and the reducer alone could never fix it: it had the
+                //     letters, the field just never asked.
+                //   - a key the tree absorbed into the live session while the caret was still on its way to
+                //     the field (`TaskTreeView`'s `treeSelfFocused` branch) is one the field's buffer has
+                //     never seen; composing off the draft is what lets the very next composition carry it.
+                var textFieldValue by remember(cellId) {
+                    mutableStateOf(
+                        TextFieldValue(text = displayTitle, selection = TextRange(displayTitle.length)),
+                    )
+                }
+                if (textFieldValue.text != displayTitle) {
+                    // The draft moved without the field (an absorbed keystroke, a title suggestion, an undo).
+                    // The caret goes to the end, which is where the typing that moved it left off.
+                    textFieldValue =
+                        TextFieldValue(
+                            text = displayTitle,
+                            selection = TextRange(displayTitle.length),
+                        )
                 }
                 // PRD §2: the same priority text column and red overflow arrow apply in Edit Mode.
                 Box(

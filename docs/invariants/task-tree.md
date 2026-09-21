@@ -289,6 +289,23 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   focus, the edit field included, makes it false), and a printable key inside it is dispatched as one more
   `BeginEdit` on the live session rather than swallowed. It must stay a dispatch of that same intent: a
   second way to write into a session is a second copy of the rule above.
+- **The race has a THIRD window, and it is the edit FIELD's own buffer: the field is composed off the
+  draft, during composition, never synced into from a `SideEffect`.** `BasicTextField` keeps an internal
+  buffer seeded from the `value` it was COMPOSED with, and re-seeds it only when a later composition hands
+  it different text — so anything a `SideEffect` publishes arrives a frame late, and the field is focusable
+  in that frame (the effect that requests its caret runs on the same one). The field used to be composed
+  EMPTY and filled in afterwards, so on a late frame the first key to reach the focused field overwrote the
+  letter that opened the session *and* every letter the reducer had absorbed after it — the whole burst, not
+  one letter. The two rules above cannot reach this: they put the letters in the state correctly, and the
+  field simply never asked for them. `displayTitle` **is** `editSession.draftText` for the row being edited,
+  so the field owns its CARET and nothing else: seed the remembered `TextFieldValue` from the draft and
+  repair a mismatch *before* the value reaches `BasicTextField`. A second writer of the same text with its
+  own idea of when to publish is exactly the shape this keeps out.
+- Residue, named so it is not rediscovered as a new bug: a letter the `treeSelfFocused` branch absorbs in
+  the gap between a composition being applied and that composition's focus request running is one the
+  field's buffer has not seen, and the field can overwrite it if the user types again before the next
+  frame. It costs one letter, not a burst, and closing it means a second `requestFocus` call site — which
+  the ONE focus effect in `TaskRow` deliberately refuses.
 
 ### Find & replace (Ctrl+F)
 
