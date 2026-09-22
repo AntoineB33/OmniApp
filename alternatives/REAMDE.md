@@ -1,0 +1,1 @@
+In case the app gets unusable, an alternative is found in Google Sheets, using the App Script code of this folder.
