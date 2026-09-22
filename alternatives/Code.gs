@@ -156,16 +156,29 @@ function remplacerIdParChemin(returnContext) {
         var cId = coord.col - 1;
         
         if (rId >= 0 && rId < donneesArbre.length && cId >= 0 && cId < donneesArbre[0].length) {
-          var noeudVal = donneesArbre[rId][cId];
-          if (noeudVal !== "" && typeof noeudVal === 'string' && noeudVal.trim() !== "") {
-            cheminEvalue = calculerCheminGrille(donneesArbre, coord.row, coord.col);
+          var colTexte = cId;
+          var noeudVal = donneesArbre[rId][colTexte];
+          
+          // NOUVEAU : On recule vers la gauche tant qu'on ne trouve pas de texte valide
+          while (colTexte >= 0) {
+            noeudVal = donneesArbre[rId][colTexte];
+            if (noeudVal !== "" && typeof noeudVal === 'string' && noeudVal.trim() !== "") {
+              break; // On a trouvé le texte du noeud !
+            }
+            colTexte--; // On recule d'une colonne
+          }
+
+          // Si on a bien fini par trouver un texte sur cette ligne
+          if (colTexte >= 0) {
+            // Attention : on utilise colTexte + 1 car calculerCheminGrille utilise des index base 1
+            cheminEvalue = calculerCheminGrille(donneesArbre, coord.row, colTexte + 1);
             estValide = true;
             valeursA[i][0] = cheminEvalue; 
             
             if (dictionnaireFeuilles.has(cheminEvalue)) {
               refCible = dictionnaireFeuilles.get(cheminEvalue).ref;
             } else {
-              refCible = numVersLettreColonne(coord.col + 1) + coord.row;
+              refCible = numVersLettreColonne(colTexte + 2) + coord.row; // On cible la colonne juste à droite du noeud trouvé
             }
           }
         }
