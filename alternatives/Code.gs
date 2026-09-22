@@ -33,27 +33,38 @@ function appliquerFormuleADroiteNomFeuille(isSilent) {
       
       if (typeof celluleActuelle === 'string' && celluleActuelle.trim() !== "") {
         
-        var scanLigne = i - 1; 
-        var decalageLigne = null;
-        
-        while (scanLigne >= 0) {
-          var testValeur = valeurs[scanLigne][j];
-          
-          if (typeof testValeur === 'number') {
-            decalageLigne = scanLigne - i; 
-            break; 
-          }
-          scanLigne--;
-        }
-        
-        if (decalageLigne !== null) {
+        // NOUVEAUTÉ : Si on est dans la première colonne (index 0)
+        if (j === 0) {
           var celluleCible = feuille.getRange(i + 1, j + 2);
-          var formule = "=R[" + decalageLigne + "]C[-1]*RC[1]";
+          var formule = "=RC[1]"; // Formule simple, sans parent
           
           celluleCible.setFormulaR1C1(formule);
           valeurs[i][j + 1] = 0; 
-          
           compteur++;
+        } 
+        // Si on est dans les autres colonnes (index > 0)
+        else {
+          var scanLigne = i - 1; 
+          var decalageLigne = null;
+          
+          while (scanLigne >= 0) {
+            var testValeur = valeurs[scanLigne][j];
+            
+            if (typeof testValeur === 'number') {
+              decalageLigne = scanLigne - i; 
+              break; 
+            }
+            scanLigne--;
+          }
+          
+          if (decalageLigne !== null) {
+            var celluleCible = feuille.getRange(i + 1, j + 2);
+            var formule = "=R[" + decalageLigne + "]C[-1]*RC[1]"; // Formule avec parent
+            
+            celluleCible.setFormulaR1C1(formule);
+            valeurs[i][j + 1] = 0; 
+            compteur++;
+          }
         }
       }
     }
@@ -71,7 +82,6 @@ function remplacerIdParChemin(returnContext) {
   appliquerFormuleADroiteNomFeuille(true);
   
   // Force Google Sheets à calculer les formules qu'on vient d'ajouter 
-  // pour être sûr de lire les bons chiffres à l'étape suivante !
   SpreadsheetApp.flush(); 
 
   var classeur = SpreadsheetApp.getActiveSpreadsheet();
@@ -165,7 +175,6 @@ function remplacerIdParChemin(returnContext) {
         if (cheminsExistants.has(cheminEvalue)) {
           couleursA[i][0] = COULEUR_VERT; 
         } else {
-          
           if (couleursA[i][0] !== COULEUR_BLEU) {
             couleursA[i][0] = null; 
           }
