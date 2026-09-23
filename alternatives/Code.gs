@@ -159,7 +159,7 @@ function remplacerIdParChemin(returnContext) {
           var colTexte = cId;
           var noeudVal = donneesArbre[rId][colTexte];
           
-          // NOUVEAU : On recule vers la gauche tant qu'on ne trouve pas de texte valide
+          // On recule vers la gauche tant qu'on ne trouve pas de texte valide
           while (colTexte >= 0) {
             noeudVal = donneesArbre[rId][colTexte];
             if (noeudVal !== "" && typeof noeudVal === 'string' && noeudVal.trim() !== "") {
@@ -170,16 +170,23 @@ function remplacerIdParChemin(returnContext) {
 
           // Si on a bien fini par trouver un texte sur cette ligne
           if (colTexte >= 0) {
-            // Attention : on utilise colTexte + 1 car calculerCheminGrille utilise des index base 1
-            cheminEvalue = calculerCheminGrille(donneesArbre, coord.row, colTexte + 1);
-            estValide = true;
-            valeursA[i][0] = cheminEvalue; 
             
-            if (dictionnaireFeuilles.has(cheminEvalue)) {
-              refCible = dictionnaireFeuilles.get(cheminEvalue).ref;
-            } else {
-              refCible = numVersLettreColonne(colTexte + 2) + coord.row; // On cible la colonne juste à droite du noeud trouvé
+            // On vérifie que le noeud est bien une feuille de l'arbre
+            if (estFeuille(donneesArbre, rId, colTexte)) {
+              
+              // Attention : on utilise colTexte + 1 car calculerCheminGrille utilise des index base 1
+              cheminEvalue = calculerCheminGrille(donneesArbre, coord.row, colTexte + 1);
+              estValide = true;
+              valeursA[i][0] = cheminEvalue; 
+              
+              if (dictionnaireFeuilles.has(cheminEvalue)) {
+                refCible = dictionnaireFeuilles.get(cheminEvalue).ref;
+              } else {
+                refCible = numVersLettreColonne(colTexte + 2) + coord.row; 
+              }
+              
             }
+            // Si ce n'est pas une feuille, 'estValide' reste false et la cellule passera en rouge
           }
         }
       }
