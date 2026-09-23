@@ -174,20 +174,19 @@ function remplacerIdParChemin(returnContext) {
           // Si on a bien fini par trouver un texte sur cette ligne
           if (colTexte >= 0) {
             
-            // On vérifie que le noeud est bien une feuille de l'arbre
+            // 1. On calcule et remplace l'ID par le chemin DANS TOUS LES CAS (feuille ou simple noeud)
+            cheminEvalue = calculerCheminGrille(donneesArbre, coord.row, colTexte + 1);
+            valeursA[i][0] = cheminEvalue; 
+            
+            // 2. On vérifie que le noeud est bien une feuille pour le valider (sinon il restera estValide = false et passera en rouge)
             if (estFeuille(donneesArbre, rId, colTexte)) {
-              
-              // Attention : on utilise colTexte + 1 car calculerCheminGrille utilise des index base 1
-              cheminEvalue = calculerCheminGrille(donneesArbre, coord.row, colTexte + 1);
               estValide = true;
-              valeursA[i][0] = cheminEvalue; 
               
               if (dictionnaireFeuilles.has(cheminEvalue)) {
                 refCible = dictionnaireFeuilles.get(cheminEvalue).ref;
               } else {
                 refCible = numVersLettreColonne(colTexte + 2) + coord.row; 
               }
-              
             }
           }
         }
