@@ -497,12 +497,14 @@ Global rules that always apply: `CLAUDE.md`.
   that one pixel is two different hours at two zooms. **Guarding is not optional for a new read in one of
   those closures** — and re-keying the modifier instead is not the fix: it cancels the gesture in flight,
   leaving `dragPreview` set and the scroll lock held.
-- **THE MENU NAMES THINGS, NOT EDITORS: EVERY EDIT ENTRY IS ONE "edit…" CHOOSER** (`calendarEditChoices`,
-  fed by the column's `menuHitsAt`). A point on the timeline carries as many truths as are drawn there — a
-  task panel inside a restrictive period under a layer, with a reminder tag on it — and each has an editor,
-  so a menu whose "Edit" silently took the top-most block could reach only one of them. **No edit stands
-  outside it**: the last one that did, "edit task", is the chooser's first row. Seven rules, and
-  `CalendarEditChoicesTest` holds them:
+- **THE MENU NAMES THINGS, NOT EDITORS** (`calendarEditChoices`, fed by the column's `menuHitsAt`). A point
+  on the timeline carries as many truths as are drawn there — a task panel inside a restrictive period under
+  a layer, with a reminder tag on it — and each has an editor, so a menu whose "Edit" silently took the
+  top-most block could reach only one of them. **What "edit…" opens changed on 2026-09-23** (see *THE ONE
+  ADD/EDIT WINDOW* below): one element under the cursor still puts its own name in the menu and opens its own
+  editor, two or more open the one element window on all of them. The table below is still the one reading of
+  what is there — it ranks the rows, it names the three that are not elements, and the double-click goes
+  through it. Seven rules, and `CalendarEditChoicesTest` holds them:
   - **the order is the user's list** (`CALENDAR_EDIT_ROW_ORDER`): **task, task panel, restrictive period,
     reminder, alarm, timer**. It ranks what a row **IS**, not what it reads (`editRowRank` is asked the row) —
     which is what lets a lone period wear its KIND's name and still sit in the restrictive-period slot;
@@ -513,9 +515,11 @@ Global rules that always apply: `CLAUDE.md`.
     drift ADR 0002 feared, because **they rank disjoint sets** — the first ranks the six FAMILIES a top-level
     row can name, the second ranks WHICH KIND inside the one family that has kinds, so no row is ranked by
     both and there is no question they can answer differently;
-  - **a chooser of one is not a chooser**, at either level: one thing under the cursor replaces "edit…" in
-    the menu itself, and a lone restrictive period is named by its KIND rather than by a generic
-    "restrictive period" row that would open a chooser of one;
+  - **a chooser of one is not a chooser**, at either level: one ELEMENT under the cursor
+    (`calendarElementDrafts`) replaces "edit…" in the menu itself with that element's own row, and a lone
+    restrictive period is named by its KIND rather than by a generic "restrictive period" row that would open
+    a chooser of one. It is asked of the ELEMENTS and not of the rows, because a lone task panel grows two
+    rows (`task` and `task panel`) and is still one thing the user right-clicked;
   - **the row names the thing in the user's words, and the KIND *is* those words** — a period row is
     `restrictiveKind` itself, with no label table in between. The 2026-09-12 rename is what removed the
     translation: `no task allowed` became `inactivity` (and `sleep`), `no on-screen task` became `no screen`,
@@ -525,12 +529,18 @@ Global rules that always apply: `CLAUDE.md`.
     the title a period CARRIES on the grid, where it heads a box rather than a menu line;
   - **every name a kind has must RESOLVE BACK to it** (`periodKindNamed`): its own word, its grid title, and
     the pre-rename spellings a stored payload may still hold (`PeriodKinds.migrateStoredKind`). That is what
-    stops the add-window's field offering to CREATE a second kind differing from a built-in only in spelling;
+    stops the element window's kind field offering to CREATE a second kind differing from a built-in only in spelling;
     `PeriodKindNamingTest` holds both directions;
   - **a row is routed to the editor that already OWNS what it names** (`App.kt`'s `onEditChoice`): §13's
     window for `task`, §17's schedule for `sleep`, §18's window for `alarm`/`timer`, the one period editor
     for every kind, §14's for a reminder, the calendar edit window for a task panel. The menu never names a
     window;
+  - **the three rows that are NOT elements stay entries of their own** (`CALENDAR_SIDE_EDIT_LABELS`):
+    `task`, `sleep schedule` and `timer`. Each names an object the calendar does not LAY — the §13 task, the
+    §17 recurring rule, the §18 countdown — so none of them can be a row of a window whose whole subject is
+    what is drawn at a point, and folding their fields in would be a second editor for a thing that already
+    has one. They sit beside "go to task tree", which has always been an entry outside the chooser for the
+    same reason. One list of what the window holds, one of what it does not, and no row in both;
   - **the double-click goes through the same table, minus the `task` row** (`calendarBlockEditChoice`): one
     block is the one-row case, so a double-click and a chooser row can never open two different windows for
     one thing — but the gesture is ON the block, and the task behind a panel is not what was double-clicked.
@@ -539,9 +549,11 @@ Global rules that always apply: `CLAUDE.md`.
   DIFFERENT tasks are two answers to "which task?" and stay two rows. A panel whose title names no task grows
   no `task` row at all — there is nothing to open.
 - **"Remove" IS GONE: DELETING TRAVELS WITH EDITING.** Each editor carries a bin (`EditorBinButton`), absent
-  where there is nothing stored to delete — a derived band, or a window that is still adding. A menu entry
-  that deleted whatever happened to be top-most had exactly the defect that turned "Edit" into the chooser,
-  and one funnel for "get rid of this" is the point: a thing is binned from the window that names it.
+  where there is nothing stored to delete — a derived band, or a row the element window is only ADDING. A
+  menu entry that deleted whatever happened to be top-most had exactly the defect that turned "Edit" into the
+  chooser, and one funnel for "get rid of this" is the point: a thing is binned from the window that names
+  it. In the element window that means **one bin PER ROW of the list**, never one for the window: the window
+  names several things, so a single bin could not say which of them it was about.
 - **A task panel's menu reaches the TASK as well as the panel** — the `task` row opens the §13 window, and
   **"go to task tree"** selects the task's first cell. Both are offered on a task panel only: a period, a
   reminder, an alarm, a sleep band, a screen break and a layer region are not tasks. **"go to task tree" is
@@ -557,23 +569,73 @@ Global rules that always apply: `CLAUDE.md`.
   — depth-first, **each LIST visited once** (a mirrored sub-tree is one list under many parents) — and it
   skips a blank-titled cell entirely: that cell is the deleted one, and the reveal could not expand it
   anyway. The one place that says "not in the task tree" is the handler, once, for every one of those cases.
-- **THE MENU HAS ONE "add…" ENTRY, AND IT OPENS A CHOOSER** (`CalendarAddWindow`) — task panel, restrictive
-  period, or reminder. It replaced four entries, two of which ("add a no-screen period", "add an inactivity
-  period") named a KIND of period by hand: that is a funnel with an exception list, and the exception was
-  visible — `before bed` and every kind the account defines had no way onto the calendar at all, because a
-  menu can only list the kinds somebody typed into it. Three rules hold it:
-  - **the kind is CHOSEN, off `state.allPeriodKinds`** (`PeriodKindField` — the task cell's categories
-    drop-down read for a single value: same rows, same naming field, same "a name the account already holds
-    picks THAT one". Defining a kind from here goes through `AddPeriodKind`, the task edit window's own `+`
-    intent, never a second one);
-  - **the chooser lays nothing.** Each choice opens the editor that already owns that object — the calendar
-    edit window, `PeriodEditWindow`, `ReminderEditWindow` — so "nothing is placed until Save" stays one rule
-    for all three, and the chooser can never acquire a placement path of its own;
-  - **a REMINDER is the third choice because it was the fourth entry.** It is not a panel of any sort (PRD §14:
-    a zero-duration tag with an id), so it is a peer of the two panel families here, not a kind of period.
-    Reducing four entries to one that could not reach it would simply have lost it.
-- **THE PERIOD EDITOR IS ONE WINDOW FOR EVERY KIND** (`PeriodEditWindow`), reached from the chooser and from a
-  period's own "Edit" — it never lays a panel directly. It takes the kind as a **name**, not as an enum of the
+- **THE ONE ADD/EDIT WINDOW: "add…" AND "edit…" OPEN THE SAME THING** (`CalendarElementsWindow`,
+  `CalendarElements`, `CalendarElementsTest`) — a **set** of elements and their configuration grouped by who
+  shares it, rather than a router to one editor at a time. The window it replaced asked *what do you want to
+  add?*, handed off, and every editor asked for its own bounds again: fine for one element, wrong for
+  several — laying a task panel and the period that must cover it meant two windows and the same two instants
+  typed twice, and there was no way at all to say "these three things all start here". Its three sections are
+  the user's own, and eight rules hold them:
+  - **§1 the selection**: a search bar with the id and title menus (`EditModeMenuBlock`, the same control
+    every naming field in the app uses), a drop-down of the KIND, an *add* button greyed until something is
+    selected, and the list of what has been chosen. Each row of that list carries its own bin — the window
+    names several things, so one bin could not say which;
+  - **the four kinds are the four things a hand can put at a point**: `task` (meaning a task PANEL — a block
+    of work), `restrictive period`, `alarm`, `reminder`. Not `task`-the-§13-object, not `sleep schedule`, not
+    `timer`: see `CALENDAR_SIDE_EDIT_LABELS` above for why those three are entries of their own;
+  - **§2 is what EVERY element in the list answers the same way**, asked once, and **§3 is everything else**,
+    one section per set of elements that share it, titled by their names and kinds. The grouping is a
+    **partition of the FIELDS by their owner set** (`calendarConfigSections`): two fields are one section
+    exactly when the same elements own both. It is deliberately not a partition of the ELEMENTS — a panel
+    shares `Start` with an alarm and `End` with a period, so an element belongs to as many sections as it has
+    distinct owner sets, and giving each element one home is what makes the layout impossible rather than
+    merely awkward. **The one-element case needs no branch**: every field is then shared by all, so the
+    window is one untitled section and reads exactly like the single-object editor it replaces;
+  - **which fields a kind owns is `fieldsOf`, asked nowhere else**, so giving a kind a new field is one line
+    and no change at all to the grouping or to the window. `Start` is the one field all four have, which is
+    why §2 is usually it alone: a reminder is zero-duration (PRD §14) and has no `End`;
+  - **AN ALARM'S START IS THE INSTANT IT STARTS RINGING, AND ITS END IS WHERE THAT RING STOPS** (the user's
+    rule). An `AlarmEntry` is a time of day on a set of weekdays, so writing a start writes
+    `timeOfDayMinutes` (`alarmTimeOfDayMinutes`) and writing an end writes `soundSeconds`
+    (`alarmSoundSeconds`) — **the DATE is never written**: it is only where the occurrence the user
+    right-clicked was drawn. Which days it rings on is the `Rings on` field beside the start, asked in its
+    own right, so a start dragged onto another day cannot quietly add a weekday. A **ring is never
+    zero-length** — a silenced alarm is what the *Armed* switch says;
+  - **A VALUE THE ELEMENTS DISAGREE ABOUT IS MIXED AND SHOWS NOTHING** (`sharedValue` returns null). A field
+    seeded with the first element's value would have moved the other two to it the moment the user pressed
+    Save without typing anything. The other half of the rule costs nothing: each draft keeps its own value
+    and the only thing that copies one across a section is an edit (`applyToSection`, which writes by the
+    section's **indices** — a window may hold two equal drafts, and a write matched by value would land on
+    both), so an untouched window writes back exactly what it read;
+  - **a bound mode is offered only where EVERY element in the section can express it** (`offeredBounds`).
+    "∞" and "now" are a period's sentences — `∞ → now` is the period editor's whole reason for existing —
+    and mean nothing about a ring or a tag, so a section mixing a period with any other kind offers an
+    explicit instant alone;
+  - **"edit…" is confined to what is at the mouse.** The window's search bar offers only those elements
+    (`CalendarElementsMode.Edit`), so it can never reach past what was right-clicked — and an element struck
+    off the list can be put back without reopening it. A **derived** band is an element with nothing behind
+    it (`existingId` null), so saving it MATERIALIZES the period it was standing in for, exactly as the
+    period editor's Save always did.
+- **THE WINDOW LAYS, AND ONE SAVE COSTS ONE Ctrl+Z PER UNDO STACK IT TOUCHED — AT MOST TWO.** This is the one
+  thing the old chooser's "it lays nothing" rule bought, and it had to be re-bought rather than kept: the
+  window IS the placement path now. `SchedulerIntent.AddCalendarElements` carries every element that is a
+  PANEL (task panels, periods, reminder tags) and commits them as **one calendar delta**, folding them
+  through `resolveScreenOverrides` one at a time so each is resolved against the calendar the ones before it
+  already changed — a period and the panel inside it laid together leave what drawing them one after the
+  other would, and the id allocator is carried with them so two new panels can never share an id. **Alarms
+  are deliberately outside it**: an alarm is a row of `SetAlarms`, a **Main** history unit, and folding one
+  into the calendar's stack would leave a ring whose only undo is a Ctrl+Z aimed at the calendar. The screen
+  switch is a TASK setting and rides `SetTaskResilience`, once per task and only where the value changed.
+  `CalendarElementsSaveTest` holds all of it.
+- **The kind of a period is CHOSEN, off `state.allPeriodKinds`** (`PeriodKindField` — the task cell's
+  categories drop-down read for a single value: same rows, same naming field, same "a name the account
+  already holds picks THAT one"). Defining a kind from here goes through `AddPeriodKind`, the task edit
+  window's own `+` intent, never a second one. This is what the 2026-09-12 reshape bought and it is
+  unchanged: the menu used to name two KINDS of period by hand ("add a no-screen period", "add an inactivity
+  period"), which is a funnel with an exception list — `before bed` and every kind the account defines had no
+  way onto the calendar at all, because a menu can only list the kinds somebody typed into it.
+- **THE PERIOD EDITOR IS ONE WINDOW FOR EVERY KIND** (`PeriodEditWindow`), the ONE-ELEMENT case of a period
+  — reached from a period's own row of the menu — it never lays a panel directly. It takes the kind as a **name**, not as an enum of the
   two the menu used to offer, which is what made the window itself a place a third kind could not be edited;
   what it *says* about the kind is `periodKindBlurb`, written out of the model (`PeriodKinds.defaultResilience`)
   rather than out of a list of cases. The kind is **shown, not changed**: re-kinding a period is a different

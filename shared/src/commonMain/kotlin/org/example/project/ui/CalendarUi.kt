@@ -148,6 +148,7 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.OmniPage
 import org.example.project.perf.Perf
+import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodKinds
@@ -179,7 +180,7 @@ import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.ui.contextMenuModifier
 
 /** PRD §7: visual language shared by the lateral menu and the calendar. */
-private object CalColors {
+internal object CalColors {
     val accent = Color(0xFF1A73E8) // Google-blue accent
     val today = Color(0xFFE8F0FE)
     val now = Color(0xFFD93025)
@@ -690,6 +691,18 @@ private val CALENDAR_EDIT_ROW_ORDER: List<String> =
     )
 
 /**
+ * PRD §8: **the rows that are NOT elements of the add/edit window**, and therefore stay entries of their own
+ * in the contextual menu.
+ *
+ * Each names an object the calendar does not LAY: the `task` behind a panel (the §13 window), the §17 sleep
+ * SCHEDULE behind a sleep band, and the §18 countdown behind a timer marker. They are the same three
+ * [calendarElementDrafts] drops, read from the other side — one list of what the window holds, one of what
+ * it does not, and no row in both.
+ */
+internal val CALENDAR_SIDE_EDIT_LABELS: Set<String> =
+    setOf(EDIT_LABEL_TASK, EDIT_LABEL_SLEEP_SCHEDULE, EDIT_LABEL_TIMER)
+
+/**
  * Where [choice] sits in [CALENDAR_EDIT_ROW_ORDER] — **asked of the ROW, because a period row wears its
  * kind's name** and would otherwise be unrankable. Anything unlisted (`sleep schedule`) ranks after every
  * listed row.
@@ -883,6 +896,91 @@ fun calendarEditChoices(hits: List<PlacedRecord>): List<CalendarEditChoice> {
     // `periodEditChoices` like any other. Two objects, two rows, exactly as `task` and `task panel` are.
     hits.filter { it.sleep }.forEach { rows += CalendarEditChoice(EDIT_LABEL_SLEEP_SCHEDULE, listOf(it)) }
     return rows.sortedBy(::editRowRank)
+}
+
+/**
+ * PRD §8 **"edit…"**: **the things at the cursor as the elements the one add/edit window edits** — the other
+ * reading of the same [hits] [calendarEditChoices] ranks, and the list that window's search bar is confined
+ * to.
+ *
+ * It is deliberately NOT everything that has a chooser row, and the three it drops are dropped for one
+ * reason each:
+ *  - **a timer** draws its marker from a countdown whose remaining time is DERIVED state (CLAUDE.md's
+ *    table), so there is no start on it to be given;
+ *  - **the `task` and `sleep schedule` rows** name objects the calendar does not lay — the §13 task window
+ *    and the §17 recurring rule — and both keep their own menu entry beside "edit…". Copying their fields in
+ *    here would be a second editor for a thing that already has one;
+ *  - **a screen break and a layer region** are the app's own drawings, not a hand's.
+ *
+ * A DERIVED period (a past Inactivity band, a §17 wind-down hour) IS here, with a null
+ * [CalendarElements.Draft.existingId] — it has no panel behind it, so saving it is what MATERIALIZES it,
+ * exactly as the period editor's Save always did.
+ */
+fun calendarElementDrafts(hits: List<PlacedRecord>): List<CalendarElements.Draft> =
+    hits.mapNotNull { hit ->
+        when {
+            isTaskPanelRecord(hit) ->
+                CalendarElements.Draft(
+                    kind = CalendarElements.Kind.TaskPanel,
+                    existingId = hit.entryId,
+                    name = hit.title,
+                    startMillis = hit.fullStartMillis,
+                    endMillis = hit.fullEndMillis,
+                    taskId = hit.taskId,
+                    pins = hit.pins,
+                )
+            isRestrictivePeriodRecord(hit) ->
+                CalendarElements.Draft(
+                    kind = CalendarElements.Kind.RestrictivePeriod,
+                    existingId = hit.entryId,
+                    name = PeriodKinds.periodTitle(hit.restrictiveKind),
+                    startMillis = hit.fullStartMillis,
+                    endMillis = hit.fullEndMillis,
+                    startBound =
+                        if (SchedulerDomain.isOpenPast(hit.fullStartMillis)) CalendarElements.Bound.Infinite
+                        else CalendarElements.Bound.At,
+                    endBound =
+                        if (SchedulerDomain.isOpenFuture(hit.fullEndMillis)) CalendarElements.Bound.Infinite
+                        else CalendarElements.Bound.At,
+                    periodKind = hit.restrictiveKind,
+                )
+            hit.reminder ->
+                CalendarElements.Draft(
+                    kind = CalendarElements.Kind.Reminder,
+                    existingId = hit.entryId,
+                    name = hit.title,
+                    startMillis = hit.fullStartMillis,
+                    endMillis = hit.fullStartMillis,
+                    // PRD §14: the tag's panel id carries the reminder it is an occurrence of, so the window
+                    // edits the tag without having to be told its identity a second way.
+                    reminderId = reminderIdOfPanel(hit.entryId),
+                    reminderChecked = hit.checked,
+                    reminderPinned = hit.pinned,
+                )
+            // PRD §18: the marker's `entryId` IS the alarm's id (`App.kt` builds it that way), so the ring
+            // the user right-clicked names its rule with no second lookup. Its weekdays, alert and armed
+            // state are read off that alarm by the caller, which holds the list.
+            hit.alarm && !hit.timer && hit.entryId != null ->
+                CalendarElements.Draft(
+                    kind = CalendarElements.Kind.Alarm,
+                    existingId = hit.entryId,
+                    name = hit.title,
+                    startMillis = hit.fullStartMillis,
+                    endMillis = hit.fullStartMillis,
+                )
+            else -> null
+        }
+    }
+
+/**
+ * PRD §14: **the reminder a manual tag's panel id names** — `chore-manual/{reminderId}/{n}` read back. Blank
+ * for anything else (a generated tag, a null id), which is the same answer a blank field gives: mint a fresh
+ * reminder on Save.
+ */
+private fun reminderIdOfPanel(panelId: String?): String {
+    val id = panelId ?: return ""
+    if (!id.startsWith(SchedulerDomain.MANUAL_REMINDER_PREFIX)) return ""
+    return id.removePrefix(SchedulerDomain.MANUAL_REMINDER_PREFIX).substringBeforeLast('/')
 }
 
 /**
@@ -3223,7 +3321,7 @@ fun CalendarFloatingWindow(
      *
      * ONE callback for the one entry that replaced the four the menu used to carry ("add a task", "add a
      * no-screen period", "add an inactivity period", "add reminder"). What is being added is chosen in the
-     * window it opens ([org.example.project.ui.CalendarAddWindow]), which is where the account's own kinds of
+     * window it opens ([org.example.project.ui.CalendarElementsWindow]), which is where the account's own kinds of
      * restrictive period can be offered at all — a menu naming two of them by hand could never list them.
      */
     onAddAt: (Long) -> Unit = {},
@@ -3234,6 +3332,13 @@ fun CalendarFloatingWindow(
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
     /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
     onEditChoice: (CalendarEditChoice) -> Unit = {},
+    /**
+     * PRD §8 **"edit…"** with two or more elements at the cursor: open the one add/edit window on them
+     * ([CalendarElementsWindow]), anchored at that instant. The hits are passed raw — `App.kt` turns them
+     * into drafts through [calendarElementDrafts] and seeds what only it holds (a task's resilience, an
+     * alarm's weekdays).
+     */
+    onEditElementsAt: (millis: Long, hits: List<PlacedRecord>) -> Unit = { _, _ -> },
     /**
      * PRD §8 task contextual menu "go to task tree": requests selecting the first cell showing this
      * panel's task. The panel's task id is `null` when its title names no task at all, which is one of the
@@ -3441,6 +3546,7 @@ fun CalendarFloatingWindow(
                 onAddAt = onAddAt,
                 onCommitBounds = onCommitBounds,
                 onEditChoice = onEditChoice,
+                onEditElementsAt = onEditElementsAt,
                 onGoToTaskTree = onGoToTaskTree,
                 onToggleReminder = onToggleReminder,
                 onAdjustWeights = onAdjustWeights,
@@ -3753,6 +3859,8 @@ private fun WeekView(
     onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditChoice: (CalendarEditChoice) -> Unit,
+    /** PRD §8 "edit…" on two or more elements — see the top-level declaration. */
+    onEditElementsAt: (millis: Long, hits: List<PlacedRecord>) -> Unit,
     onGoToTaskTree: (TaskId?, String) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
     onAdjustWeights: (Map<String, Double>) -> Unit,
@@ -4355,6 +4463,7 @@ private fun WeekView(
                                     onAddAt = onAddAt,
                                     onCommitBounds = onCommitBounds,
                                     onEditChoice = onEditChoice,
+                                    onEditElementsAt = onEditElementsAt,
                                     onGoToTaskTree = onGoToTaskTree,
                                                         onToggleReminder = onToggleReminder,
                                     onLockScroll = { scrollLocked = it },
@@ -4549,6 +4658,8 @@ private fun DayColumn(
     onAddAt: (Long) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onEditChoice: (CalendarEditChoice) -> Unit,
+    /** PRD §8 "edit…" on two or more elements — see the top-level declaration. */
+    onEditElementsAt: (millis: Long, hits: List<PlacedRecord>) -> Unit,
     onGoToTaskTree: (TaskId?, String) -> Unit,
     onToggleReminder: (PlacedRecord) -> Unit,
     onLockScroll: (Boolean) -> Unit,
@@ -5134,16 +5245,39 @@ private fun DayColumn(
                     )
                 }
             } else {
-                when (choices.size) {
+                // PRD §8: **what "edit…" is about — the ELEMENTS drawn here** ([calendarElementDrafts]).
+                //
+                // **A chooser of one is still not a chooser**: one element under the cursor puts its own
+                // name in the menu and opens its own editor, exactly as before, and a double-click is
+                // untouched ([calendarBlockEditChoice] still goes through [calendarEditChoices]). Two or
+                // more open the one window that holds them all, where they are configured together —
+                // which is the thing a chooser could never do: a chooser picks ONE of the truths at a
+                // point, and the reason there are several is that they were placed as a set.
+                val elements = remember(hits) { calendarElementDrafts(hits) }
+                when (elements.size) {
                     0 -> Unit
-                    // One thing under the cursor: its own name replaces "edit…" and opens its editor.
-                    1 -> DropdownMenuItem(
-                        text = { Text("edit ${choices.single().label}") },
-                        onClick = { pickChoice(choices.single()) },
-                    )
+                    1 -> choices.firstOrNull { it.label != EDIT_LABEL_TASK }?.let { single ->
+                        DropdownMenuItem(
+                            text = { Text("edit ${single.label}") },
+                            onClick = { pickChoice(single) },
+                        )
+                    }
                     else -> DropdownMenuItem(
                         text = { Text("edit…") },
-                        onClick = { menuBranch = choices },
+                        onClick = {
+                            anchor?.let { onEditElementsAt(millisAt(it.y), hits) }
+                            closeMenu()
+                        },
+                    )
+                }
+                // PRD §8: **the rows that name something the calendar does not LAY** stay entries of their
+                // own, beside "go to task tree" and for its reason — they are not elements of the window
+                // above, so collapsing them into it would be a second editor for an object that has one.
+                // The §13 task window, PRD §17's sleep schedule and §18's timer, in the user's own order.
+                choices.filter { it.label in CALENDAR_SIDE_EDIT_LABELS }.forEach { side ->
+                    DropdownMenuItem(
+                        text = { Text("edit ${side.label}") },
+                        onClick = { pickChoice(side) },
                     )
                 }
                 // PRD §8: the one entry a TASK panel gets beside the chooser. It is not an edit — the §13
@@ -5171,8 +5305,8 @@ private fun DayColumn(
             // PRD §8: **one "add" entry**, anchored at the right-click time. The four it replaced named
             // two of the kinds of restrictive period by hand, which is a funnel with an exception list —
             // `before bed` and every kind the account defines had no way onto the calendar at all. What is
-            // being added, and (for a period) OF WHICH KIND, is chosen in [CalendarAddWindow]; nothing is
-            // laid until that window's own editor is saved.
+            // being added, of which kind, and with which configuration is all answered in
+            // [CalendarElementsWindow] — the same window "edit…" opens — and nothing is laid until its Save.
             DropdownMenuItem(
                 text = { Text("add…") },
                 onClick = {
@@ -7307,11 +7441,11 @@ private val PROVISIONAL_EDGE_BLUR = 2.dp
 private fun twoDigits(n: Int): String = n.toString().padStart(2, '0')
 
 /** The calendar date of [millis] as the ISO `YYYY-MM-DD` the period editor's date field reads and writes. */
-private fun formatDate(millis: Long, tz: TimeZone): String =
+internal fun formatDate(millis: Long, tz: TimeZone): String =
     Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz).date.toString()
 
 /** `YYYY-MM-DD` + `H:mm`/`HH:mm` -> that local instant; null while either half is not (yet) valid. */
-private fun parseDateTime(dateText: String, timeText: String, tz: TimeZone): Long? {
+internal fun parseDateTime(dateText: String, timeText: String, tz: TimeZone): Long? {
     val date = runCatching { LocalDate.parse(dateText.trim()) }.getOrNull() ?: return null
     val parts = timeText.trim().split(":")
     if (parts.size != 2) return null
@@ -7321,7 +7455,7 @@ private fun parseDateTime(dateText: String, timeText: String, tz: TimeZone): Lon
     return LocalDateTime(date, LocalTime(h, m)).toInstant(tz).toEpochMilliseconds()
 }
 
-private fun formatHm(millis: Long, tz: TimeZone): String {
+internal fun formatHm(millis: Long, tz: TimeZone): String {
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
     return "${twoDigits(dt.hour)}:${twoDigits(dt.minute)}"
 }
@@ -7379,7 +7513,7 @@ private fun parseHmOnDateOf(text: String, refMillis: Long, tz: TimeZone): Long? 
 
 /** PRD §8 one labeled pin-dimension switch row in the calendar edit window. */
 @Composable
-private fun PinSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+internal fun PinSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -7593,116 +7727,6 @@ fun ManualEntryEditWindow(
 }
 
 /**
- * PRD §8 contextual menu **"add…"**: what the one "add" entry opens — *what do you want to put here?*
- *
- * The menu used to name four things to add, two of which were restrictive periods spelled out one kind at a
- * time ("add a no-screen period", "add an inactivity period"). That is a funnel with an exception list, and
- * the exception was visible: `side-dev/README.md`'s model says a period is a start, an end and a KIND, so
- * PRD §17's `before bed` and every kind the account defines are periods exactly as those two are — and
- * neither had any way onto the calendar, because the menu could only ever list the kinds somebody had typed
- * into it. Here the kind is **chosen**, off [org.example.project.scheduler.state.SchedulerState.allPeriodKinds],
- * so defining a kind is all it takes to be able to draw one.
- *
- * It is a router and nothing else: **nothing is laid here.** Each choice opens the editor that already owns
- * that object — the calendar edit window, [PeriodEditWindow], the reminder editor — and it is that window's
- * Save that writes, which is what keeps "nothing is placed until Save" true for all three.
- *
- * A **reminder** is the third choice for the same reason the entry exists at all: it was one of the four
- * things the menu offered to add, and reducing four entries to one that cannot reach it would simply have
- * lost it. It is not a panel of any sort (PRD §14: a zero-duration tag with an id of its own), so it is a
- * peer of the two panel families here rather than a kind of period.
- */
-@Composable
-fun CalendarAddWindow(
-    atMillis: Long,
-    tz: TimeZone,
-    /** Every kind a period can be OF: the three built-ins plus the account's own (`allPeriodKinds`). */
-    periodKinds: List<String>,
-    /** Defines a new kind from this window's own field — the same intent the task edit window's `+` sends. */
-    onCreatePeriodKind: (String) -> Unit,
-    onAddTaskPanel: () -> Unit,
-    onAddPeriod: (kind: String) -> Unit,
-    onAddReminder: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var choice by remember { mutableStateOf(CalendarAddChoice.TaskPanel) }
-    // Seeded with the kind the two old entries between them covered most often, and re-seeded whenever the
-    // account's list changes under an open window (a kind deleted from the task edit window).
-    var kind by remember(periodKinds) {
-        mutableStateOf(periodKinds.firstOrNull { it == PeriodKinds.INACTIVITY } ?: periodKinds.firstOrNull() ?: "")
-    }
-    val frame = rememberWindowFrameState("CalendarAdd")
-
-    TransientPopupLayer(frame.id) {
-        AppWindowFrame(
-            title = "Add at " + formatHm(atMillis, tz),
-            state = frame,
-            onClose = onDismiss,
-            defaultWidth = 340.dp,
-            defaultHeight = 320.dp,
-            claimsKeyboard = true,
-            modifier = Modifier.align(Alignment.Center),
-        ) {
-            Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                EditMenuSectionLabel("What to add")
-                for (option in CalendarAddChoice.entries) {
-                    PeriodBoundChip(option.label, choice == option) { choice = option }
-                }
-
-                // The kind field belongs to the RESTRICTIVE PERIOD choice, so it appears with it and says
-                // nothing while another choice is selected — the window asks one question at a time.
-                if (choice == CalendarAddChoice.RestrictivePeriod) {
-                    PeriodKindField(
-                        kind = kind,
-                        periodKinds = periodKinds,
-                        onPick = { kind = it },
-                        onCreate = { newKind ->
-                            onCreatePeriodKind(newKind)
-                            kind = PeriodKinds.normalize(newKind)
-                        },
-                    )
-                    Text(
-                        text = periodKindBlurb(kind),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        enabled = choice != CalendarAddChoice.RestrictivePeriod || kind.isNotBlank(),
-                        onClick = {
-                            when (choice) {
-                                CalendarAddChoice.TaskPanel -> onAddTaskPanel()
-                                CalendarAddChoice.RestrictivePeriod -> onAddPeriod(kind)
-                                CalendarAddChoice.Reminder -> onAddReminder()
-                            }
-                        },
-                    ) { Text("Continue") }
-                }
-            }
-        }
-    }
-}
-
-/** The three things PRD §8's one "add" entry can put on the calendar. See [CalendarAddWindow]. */
-enum class CalendarAddChoice(val label: String) {
-    /** PRD §8 Manual add: a block of work, opened in the calendar edit window. */
-    TaskPanel("task panel"),
-
-    /** `side-dev/README.md` § *Restrictive Period*: a period of the chosen kind, opened in [PeriodEditWindow]. */
-    RestrictivePeriod("restrictive period"),
-
-    /** PRD §14: a zero-duration reminder tag, opened in the reminder editor. */
-    Reminder("reminder"),
-}
-
-/**
  * **Which kind of restrictive period** — the task cell's categories field ([TaskCategoryCell]) read for a
  * single value instead of a set.
  *
@@ -7717,7 +7741,7 @@ enum class CalendarAddChoice(val label: String) {
  * task*, which is a thing to open from a period that exists, not from the field that is choosing one.
  */
 @Composable
-private fun PeriodKindField(
+internal fun PeriodKindField(
     kind: String,
     periodKinds: List<String>,
     onPick: (String) -> Unit,
@@ -7816,7 +7840,7 @@ private fun PeriodKindField(
  * reads as "only the tasks that need no screen" — and why each of the two one-sided LAYER kinds, being half
  * of that sentence, restricts nothing until the other half is drawn over the same hours.
  */
-private fun periodKindBlurb(kind: String): String =
+internal fun periodKindBlurb(kind: String): String =
     when (kind) {
         PeriodKinds.NO_SCREEN ->
             "Only tasks that need no screen are scheduled here. On-screen task panels and the work banked " +
@@ -7836,16 +7860,9 @@ private fun periodKindBlurb(kind: String): String =
                 "is placed until a task is given a value above zero in the period's own window."
     }
 
-/**
- * PRD §8: how one bound of a period is given — an explicit wall-clock instant, the moving **now**-line, or
- * **∞** (the period is open-ended on that side: it began before anything the calendar can show, or never
- * ends). "Now" is a mode rather than a shortcut that fills the fields, so "from ∞ to now" means the instant
- * the user saves, not the instant they opened the window.
- */
-private enum class PeriodBound { At, Now, Infinite }
 
 /**
- * PRD §8: **the period editor** — reached from [CalendarAddWindow]'s *restrictive period* choice and from a
+ * PRD §8: **the period editor** — the one-element case of a restrictive period, reached from a
  * period's own "Edit". The right-click time only pre-fills it — nothing is laid on the calendar until Save —
  * so a period can be given any span, including the open-ended ones the grid cannot express by dragging:
  * **∞ → now** wipes the recorded past (every task panel and every banked record the period covers is removed,
@@ -7880,10 +7897,10 @@ fun PeriodEditWindow(
     val startSeed = if (SchedulerDomain.isOpenPast(startMillis)) nowMillis else startMillis
     val endSeed = if (SchedulerDomain.isOpenFuture(endMillis)) nowMillis else endMillis
     var startBound by remember {
-        mutableStateOf(if (SchedulerDomain.isOpenPast(startMillis)) PeriodBound.Infinite else PeriodBound.At)
+        mutableStateOf(if (SchedulerDomain.isOpenPast(startMillis)) CalendarElements.Bound.Infinite else CalendarElements.Bound.At)
     }
     var endBound by remember {
-        mutableStateOf(if (SchedulerDomain.isOpenFuture(endMillis)) PeriodBound.Infinite else PeriodBound.At)
+        mutableStateOf(if (SchedulerDomain.isOpenFuture(endMillis)) CalendarElements.Bound.Infinite else CalendarElements.Bound.At)
     }
     var startDateText by remember { mutableStateOf(formatDate(startSeed, tz)) }
     var startTimeText by remember { mutableStateOf(formatHm(startSeed, tz)) }
@@ -7893,15 +7910,15 @@ fun PeriodEditWindow(
     val label = PeriodKinds.periodTitle(kind)
     val resolvedStart =
         when (startBound) {
-            PeriodBound.Infinite -> SchedulerDomain.OPEN_PAST_MILLIS
-            PeriodBound.Now -> nowMillis
-            PeriodBound.At -> parseDateTime(startDateText, startTimeText, tz)
+            CalendarElements.Bound.Infinite -> SchedulerDomain.OPEN_PAST_MILLIS
+            CalendarElements.Bound.Now -> nowMillis
+            CalendarElements.Bound.At -> parseDateTime(startDateText, startTimeText, tz)
         }
     val resolvedEnd =
         when (endBound) {
-            PeriodBound.Infinite -> SchedulerDomain.OPEN_FUTURE_MILLIS
-            PeriodBound.Now -> nowMillis
-            PeriodBound.At -> parseDateTime(endDateText, endTimeText, tz)
+            CalendarElements.Bound.Infinite -> SchedulerDomain.OPEN_FUTURE_MILLIS
+            CalendarElements.Bound.Now -> nowMillis
+            CalendarElements.Bound.At -> parseDateTime(endDateText, endTimeText, tz)
         }
     // Save stays disabled while a field is half-typed or the period runs backwards, so a malformed entry can
     // never be silently rounded into a panel the user did not ask for.
@@ -7987,19 +8004,19 @@ fun PeriodEditWindow(
  * behind it, and a window that is ADDING something has nothing yet.
  */
 @Composable
-private fun EditorBinButton(onRemove: (() -> Unit)?) {
+internal fun EditorBinButton(onRemove: (() -> Unit)?) {
     if (onRemove == null) return
     TextButton(onClick = onRemove) {
         Text("Delete", color = MaterialTheme.colorScheme.error)
     }
 }
 
-/** One bound of [PeriodEditWindow]: the three [PeriodBound] choices, plus the date/time fields "At" uses. */
+/** One bound of [PeriodEditWindow]: the three [CalendarElements.Bound] choices, plus the date/time fields "At" uses. */
 @Composable
 private fun PeriodBoundEditor(
     label: String,
-    bound: PeriodBound,
-    onBoundChange: (PeriodBound) -> Unit,
+    bound: CalendarElements.Bound,
+    onBoundChange: (CalendarElements.Bound) -> Unit,
     infiniteLabel: String,
     dateText: String,
     onDateChange: (String) -> Unit,
@@ -8009,11 +8026,11 @@ private fun PeriodBoundEditor(
 ) {
     EditMenuSectionLabel(label)
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        PeriodBoundChip("date & time", bound == PeriodBound.At) { onBoundChange(PeriodBound.At) }
-        PeriodBoundChip("now", bound == PeriodBound.Now) { onBoundChange(PeriodBound.Now) }
-        PeriodBoundChip(infiniteLabel, bound == PeriodBound.Infinite) { onBoundChange(PeriodBound.Infinite) }
+        PeriodBoundChip("date & time", bound == CalendarElements.Bound.At) { onBoundChange(CalendarElements.Bound.At) }
+        PeriodBoundChip("now", bound == CalendarElements.Bound.Now) { onBoundChange(CalendarElements.Bound.Now) }
+        PeriodBoundChip(infiniteLabel, bound == CalendarElements.Bound.Infinite) { onBoundChange(CalendarElements.Bound.Infinite) }
     }
-    if (bound == PeriodBound.At) {
+    if (bound == CalendarElements.Bound.At) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = dateText,
@@ -8037,7 +8054,7 @@ private fun PeriodBoundEditor(
 
 /** One selectable choice of a [PeriodBoundEditor]. */
 @Composable
-private fun PeriodBoundChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun PeriodBoundChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = label,
         style = MaterialTheme.typography.bodySmall,
@@ -8371,7 +8388,7 @@ private fun EditModeSelector(options: List<EditModeOption>, focusPreserving: Boo
 
 /** Shared section header above an edit-mode menu list ("Mode", "Tasks", "Reminders", "Title suggestions"). */
 @Composable
-private fun EditMenuSectionLabel(text: String) {
+internal fun EditMenuSectionLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelMedium,

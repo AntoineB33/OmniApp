@@ -11,6 +11,62 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar’s "add…" and "edit…" became ONE window over a SET of elements — 2026-09-23
+
+User spec: *"the option calendar → right-click menu → add… directly opens the add window"*, whose first
+section selects the elements to add (a task-cell search bar with its id and title menus, a drop-down of the
+kind — **task, restrictive period, alarm, reminder** — an *add* button, and the list of what has been
+chosen), whose second holds *"all the configurations that are shared by all the elements"*, and whose third
+holds the rest, *"grouped by sharing as much as possible"* and titled by the names and kinds of the elements
+that share each one. *"edit… does the same thing, but in the selection section the only suggested and
+selectable elements are the ones that are at the location of the mouse."*
+
+What it replaced: `CalendarAddWindow`, a **router** — it asked *what do you want to add?* and handed off to
+the one editor that owned that object, each of which asked for its own bounds again. Fine for one element and
+wrong for several: laying a task panel and the period that must cover it meant two windows and the same two
+instants typed twice, and there was no way at all to say "these three things all start here".
+
+- **`CalendarElements`** (new, `scheduler/domain/`) is the whole model and it is pure: the four `Kind`s, the
+  `Field`s each one owns (`fieldsOf`), the bound modes each one can express (`boundsOf`), the `Draft`, and
+  `calendarConfigSections` — which **partitions the FIELDS by their owner set**. Two fields are one section
+  exactly when the same elements own both; the section whose owners are *everybody* is the spec’s §2. It is
+  not a partition of the elements, and cannot be: a panel shares `Start` with an alarm and `End` with a
+  period, so an element belongs to as many sections as it has distinct owner sets.
+- **One element needs no special case**: every field is then shared by all, so the window is one untitled
+  section and reads exactly like the single-object editor it replaces.
+- **An alarm’s `Start` is the instant it starts ringing and its `End` is where the ring stops** (the user’s
+  answer). An `AlarmEntry` is a time of day on a set of weekdays, so a start writes `timeOfDayMinutes` and an
+  end writes `soundSeconds` — **never a date**, which is only where the occurrence was drawn. The weekdays
+  are the `Rings on` field beside it, so a start moved onto another day cannot quietly add one.
+- **Mixed values.** Three things at one point hold three different starts; a field seeded with the first
+  would have moved the other two to it on a Save nobody typed into. `sharedValue` returns null for "they
+  disagree" and the field shows blank; each draft keeps its own value, and `applyToSection` — writing by the
+  section’s **indices**, because a window may hold two equal drafts — is the only thing that copies one
+  across. An untouched window writes back what it read.
+- **`SchedulerIntent.AddCalendarElements`** (new) lays every PANEL element (task panels, periods, reminder
+  tags) as **one calendar history unit**, folding them through `resolveScreenOverrides` one at a time so each
+  resolves against the calendar the ones before it already changed — a period and the panel inside it laid
+  together leave what drawing them one after the other would — and carrying the id allocator so two new
+  panels cannot share an id. **Alarms stay outside it**: they are rows of `SetAlarms`, a *Main* unit. So a
+  Save costs **one Ctrl+Z per undo stack it touched, at most two**, and a ring never lands on the calendar’s
+  stack where only a calendar-aimed Ctrl+Z could reach it.
+- **The menu.** One element under the cursor still reads "edit ‹its name›" and opens its own editor, and the
+  double-click funnel (`calendarBlockEditChoice` → `calendarEditChoices`) is untouched; **two or more** open
+  the element window on all of them, in place of the chooser. The three rows that name something the calendar
+  does not LAY — `task` (§13’s window), `sleep schedule` (§17’s rule), `timer` (a countdown whose remaining
+  time is derived state) — are entries of their own beside "go to task tree", for its reason:
+  `CALENDAR_SIDE_EDIT_LABELS`.
+- `PeriodBound` moved out of `CalendarUi.kt` into `CalendarElements.Bound`, so the period editor and the
+  element window read one enum. `CalendarAddWindow`/`CalendarAddChoice` are deleted, and with them the two
+  now-unreachable "adding" halves of `ManualEntryEditWindow` and `ReminderEditWindow` (both are edit-only
+  now, and always carry their bin).
+- Tests: `CalendarElementsTest` (the grouping, the mixed rule, the bound intersection, the alarm arithmetic,
+  and which drawn things are elements at all), `CalendarElementsSaveTest` (one unit per Save, the fold, the
+  id allocator, the zero-duration tag, the dropped stale id).
+- **Not verified on device**: `:shared:jvmTest` is green and `:shared:compileCommonMainKotlinMetadata`
+  passes, but no build has been run. Client rebuild needed (`account{1,2,3}-*deploy*.bat`); no Supabase
+  change.
+
 ### The id menu stops offering the cell its own task back — 2026-09-23
 
 Account 3, a cell in Edit Mode at `root / planning / AI / most of the AI / writing`: the Tasks menu held "New

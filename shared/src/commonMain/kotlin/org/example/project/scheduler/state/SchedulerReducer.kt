@@ -1,6 +1,7 @@
 package org.example.project.scheduler.state
 
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.TimerDomain
@@ -530,6 +531,7 @@ object SchedulerReducer {
                     ),
                 )
             is SchedulerIntent.AddTaskPanel -> reduceAddTaskPanel(state, intent)
+            is SchedulerIntent.AddCalendarElements -> reduceAddCalendarElements(state, intent.drafts)
             is SchedulerIntent.AddRestrictivePeriod -> reduceAddRestrictivePeriod(state, intent)
             is SchedulerIntent.UpdateTaskPanel -> reduceUpdateTaskPanel(state, intent)
             is SchedulerIntent.PinRecordAsPanel -> reducePinRecord(state, intent)
@@ -2079,6 +2081,152 @@ object SchedulerReducer {
             laid,
         )
     }
+
+    /**
+     * PRD §8 **"add…" / "edit…" window Save**: lay (or re-lay) every element the window holds in **one**
+     * calendar delta — [SchedulerIntent.AddCalendarElements].
+     *
+     * It is the three single-element reducers above folded into one pass, and it must be a fold rather than
+     * a loop of dispatches for a reason the single case cannot show: **each element resolves its overrides
+     * against the calendar the ones before it have already changed.** Adding a `no screen` period and a
+     * panel inside it in one Save has to leave the panel trimmed by the period exactly as drawing them one
+     * after the other would — so the panel list is carried through [resolveScreenOverrides] element by
+     * element and committed once at the end, and the id allocator is carried with it so two new panels can
+     * never be handed the same id.
+     *
+     * The record strip runs AFTER the single commit, once per period laid, because it is not a history unit
+     * at all (see [stripRecordsUnderPeriod]) — it is a side effect on the tasks, and running it inside the
+     * fold would have it read a panel list that is still being built.
+     *
+     * An [CalendarElements.Kind.Alarm] draft is skipped here and nowhere else: an alarm is a row of
+     * [SchedulerIntent.SetAlarms], which is a **Main** history unit (the intent says why).
+     */
+    private fun reduceAddCalendarElements(
+        state: SchedulerState,
+        drafts: List<CalendarElements.Draft>,
+    ): SchedulerState {
+        if (drafts.isEmpty()) return state
+        var working = state
+        var panels = state.panels
+        val laidPeriods = ArrayList<TaskPanel>()
+        for (draft in drafts) {
+            if (draft.kind == CalendarElements.Kind.Alarm) continue
+            // A draft naming a panel that is gone (a sync removed it under the open window) is dropped
+            // rather than re-added: the user was editing a thing that no longer exists.
+            val index = draft.existingId?.let { id -> panels.indexOfFirst { it.id == id } } ?: -1
+            if (draft.existingId != null && index < 0) continue
+            val existing = if (index >= 0) panels[index] else null
+            // A reminder tag is zero-duration by definition (PRD §14), so the minimum-length clamp every
+            // other panel gets would turn every tag into a block.
+            val end =
+                if (draft.kind == CalendarElements.Kind.Reminder) draft.startMillis
+                else maxOf(draft.endMillis, draft.startMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
+            // Editing an auto panel makes it user-authored and re-ids it out of the ephemeral `auto/`
+            // namespace — [reduceUpdateTaskPanel]'s rule, asked here for the same reason.
+            val needsFreshId = existing == null || existing.auto
+            val (allocatedId, allocated) =
+                if (needsFreshId) working.allocatePanelId() else existing!!.id to working
+            working = allocated
+            val panelId =
+                if (draft.kind == CalendarElements.Kind.Reminder && existing == null) {
+                    reminderPanelId(working, draft, allocatedId)
+                } else {
+                    allocatedId
+                }
+            val panel = calendarElementPanel(draft, existing, panelId, end)
+            val nextRaw =
+                if (index >= 0) panels.toMutableList().also { it[index] = panel }
+                else panels + panel
+            val (resolved, resolvedPanels) = resolveScreenOverrides(working, nextRaw, panelId)
+            working = resolved
+            panels = resolvedPanels
+            if (draft.kind == CalendarElements.Kind.RestrictivePeriod) {
+                laidPeriods += resolvedPanels.firstOrNull { it.id == panelId } ?: panel
+            }
+        }
+        var committed = commitPanels(working, panels, label = "Add to calendar")
+        laidPeriods.forEach { committed = stripRecordsUnderPeriod(committed, it) }
+        return committed
+    }
+
+    /**
+     * PRD §14: the id a manual reminder tag's panel carries — `chore-manual/{reminderId}/{n}`, the shape
+     * [reduceAddReminder] mints, so a tag laid by the multi-element window and one laid by the reminder
+     * editor are the same object. A blank draft id mints a fresh reminder, since a blank one decodes to
+     * `null` and would drop the tag out of the id menu entirely.
+     */
+    private fun reminderPanelId(
+        state: SchedulerState,
+        draft: CalendarElements.Draft,
+        allocatedId: String,
+    ): String {
+        val reminderId = draft.reminderId.ifBlank { SchedulerDomain.freshReminderId(state) }
+        return SchedulerDomain.MANUAL_REMINDER_PREFIX + reminderId + "/" + allocatedId.substringAfterLast('/')
+    }
+
+    /**
+     * **One draft as the panel it lays** — the per-kind half of [reduceAddCalendarElements], and the only
+     * `when` over [CalendarElements.Kind] in the reducer.
+     *
+     * Each branch is the body of the single-element reducer it replaces, so the two can never lay two
+     * different panels for one description: a period takes its title and its two legacy flags from
+     * [PeriodKinds], a reminder is a zero-duration `chore` panel whose `checkedAtMillis` anchors the
+     * recurrence, and a task panel is the bounds-and-pins commit. [existing] is non-null on an EDIT, and is
+     * copied rather than rebuilt so everything the window does not ask about (the layout weight, a record's
+     * provenance) survives the Save.
+     */
+    private fun calendarElementPanel(
+        draft: CalendarElements.Draft,
+        existing: TaskPanel?,
+        panelId: String,
+        end: Long,
+    ): TaskPanel =
+        when (draft.kind) {
+            CalendarElements.Kind.TaskPanel ->
+                (existing ?: TaskPanel(id = panelId, taskId = null, title = "", startEpochMillis = draft.startMillis, endEpochMillis = end)).copy(
+                    id = panelId,
+                    taskId = draft.taskId,
+                    title = draft.name,
+                    startEpochMillis = draft.startMillis,
+                    endEpochMillis = end,
+                    pinned = derivePinned(draft.pins),
+                    pins = draft.pins,
+                    auto = false,
+                )
+            CalendarElements.Kind.RestrictivePeriod -> {
+                val kind = PeriodKinds.normalize(draft.periodKind)
+                (existing ?: TaskPanel(id = panelId, taskId = null, title = "", startEpochMillis = draft.startMillis, endEpochMillis = end)).copy(
+                    id = panelId,
+                    taskId = null,
+                    title = PeriodKinds.periodTitle(kind),
+                    startEpochMillis = draft.startMillis,
+                    endEpochMillis = end,
+                    noScreen = PeriodKinds.legacyNoScreenFlag(kind),
+                    inactivity = PeriodKinds.legacyInactivityFlag(kind),
+                    periodKind = kind,
+                    // PRD §8: a period the user drew is a pre-placed thing, so the pin box reads checked —
+                    // `pinned` itself stays false ([derivePinned]'s overload says why).
+                    pins = PanelPins(existence = true),
+                    auto = false,
+                )
+            }
+            CalendarElements.Kind.Reminder ->
+                (existing ?: TaskPanel(id = panelId, taskId = null, title = "", startEpochMillis = draft.startMillis, endEpochMillis = end)).copy(
+                    id = panelId,
+                    taskId = null,
+                    title = draft.name,
+                    startEpochMillis = draft.startMillis,
+                    endEpochMillis = draft.startMillis,
+                    pinned = draft.reminderPinned,
+                    auto = false,
+                    chore = true,
+                    checked = draft.reminderChecked,
+                    // PRD §14: checking freezes the tag where it was placed, which anchors the recurrence.
+                    checkedAtMillis = if (draft.reminderChecked) draft.startMillis else null,
+                )
+            // Never reached: the caller skips alarms, which are rows of `SetAlarms` and not panels at all.
+            CalendarElements.Kind.Alarm -> existing ?: TaskPanel(id = panelId, taskId = null, title = "", startEpochMillis = draft.startMillis, endEpochMillis = end)
+        }
 
     /**
      * `side-dev/README.md` § *Restrictive Period*: **whether a period of [kind] REFUSES the task [panel]

@@ -1110,6 +1110,30 @@ sealed interface SchedulerIntent {
     data class PasteTree(val text: String) : SchedulerIntent
 
     /**
+     * PRD §8 **"add…" / "edit…" window Save**: lay or re-lay every element the window holds, as **ONE
+     * calendar delta**.
+     *
+     * The window puts several things on the calendar at once, and one Save must cost one Ctrl+Z. Dispatching
+     * [AddTaskPanel], [AddRestrictivePeriod] and [AddReminder] in a loop would cost one per element — and
+     * worse, each would resolve its overrides against a calendar the next one is about to change, so
+     * undoing "add a period and the panel inside it" halfway leaves a state the user never saw. The reducer
+     * folds the whole list through the override resolution and commits the panel list once.
+     *
+     * **Alarms are not in it**, and that is the rule rather than an omission: an alarm is not a panel, it is
+     * a row of [SetAlarms] — a **Main** history unit, not a calendar one. So a Save spanning both costs one
+     * Ctrl+Z *per undo stack it touched*, which is at most two, and each stack still undoes exactly what it
+     * owns. Folding alarms in here would put a ring on the calendar's stack, where the one thing that could
+     * undo it is a Ctrl+Z aimed at the calendar.
+     *
+     * A draft with a non-null [org.example.project.scheduler.domain.CalendarElements.Draft.existingId] is an
+     * EDIT of that panel (the bounds/pins commit); one without is an ADD. A draft naming a panel that is
+     * gone is skipped — the window may have been open while a sync removed it.
+     */
+    data class AddCalendarElements(
+        val drafts: List<org.example.project.scheduler.domain.CalendarElements.Draft>,
+    ) : SchedulerIntent
+
+    /**
      * PRD §8 Manual add / edit window "save": add a user-authored panel (`auto = false`) with the
      * given task/title/bounds. [taskId] is null for a calendar-only "New task" (does NOT create a tree
      * task). [pinned] reflects the edit-window pin toggle. Recorded as a calendar delta.

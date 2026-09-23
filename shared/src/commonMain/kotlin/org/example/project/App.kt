@@ -37,6 +37,7 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -83,6 +84,7 @@ import org.example.project.scheduler.state.defaultSubtreePriorities
 import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.PeriodKindEditWindow
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.RelativePriorityWindow
@@ -115,7 +117,9 @@ import org.example.project.ui.IconMenuButton
 import org.example.project.ui.raiseOnPress
 import org.example.project.ui.LateralMenu
 import org.example.project.ui.TaskRelationsWindow
-import org.example.project.ui.CalendarAddWindow
+import org.example.project.ui.CalendarElementsMode
+import org.example.project.ui.CalendarElementsWindow
+import org.example.project.ui.calendarElementDrafts
 import org.example.project.ui.ManualEntryEditWindow
 import org.example.project.ui.CategoriesWindow
 import org.example.project.ui.CategoryEditWindow
@@ -1411,8 +1415,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         entryId = occurrence.entry.id,
                         entryIds = listOf(occurrence.entry.id),
                         alarm = true,
-                        // PRD §8: ORANGE — an alarm is a rule stated in a window off the LEFT MENU, like a §17
-                        // sleep window, not something placed on the calendar (which cannot add one at all).
+                        // PRD §8: ORANGE — an alarm is a RULE (a time of day on a set of weekdays), like a
+                        // §17 sleep window, and this marker is one occurrence of it. The calendar's element
+                        // window can now state one, which does not change what it is: what that window
+                        // writes is the rule, through `SetAlarms`.
                         outline = SchedulerDomain.ringOutline(),
                     )
                 } +
@@ -1605,20 +1611,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §14: the reminder tag the "edit…" chooser's `reminder` row is open on (null = none). A tag had
         // no editor reachable from the calendar at all before the chooser — only "add reminder" did.
         var editingReminder by remember { mutableStateOf<PlacedRecord?>(null) }
-        // PRD §8 Manual add: a not-yet-committed default panel shown in the edit window with a Save
-        // button (null = not adding). Distinct from [editingBlock] so Save knows to add vs. update.
-        var addingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
-        // PRD §14 "add a checked reminder": the right-click epoch-millis at which to open the reminder-check
-        // window (null = closed).
-        var addingReminderAtMillis by remember { mutableStateOf<Long?>(null) }
-        // PRD §8: the period the period editor is open on (null = closed). Both [CalendarAddWindow]'s
-        // "restrictive period" choice and a period's own "Edit" open it — nothing is laid on the
-        // calendar until Save, which is what lets a period be given an open ("∞") bound the grid could
-        // never be dragged to.
+        // PRD §8: the period the period editor is open on (null = closed). A period's own row of the
+        // "edit…" chooser opens it, and it is the one-element case of the element window's period section —
+        // nothing is laid on the calendar until Save, which is what lets a period be given an open ("∞")
+        // bound the grid could never be dragged to.
         var editingPeriod by remember { mutableStateOf<PeriodDraft?>(null) }
-        // PRD §8 contextual menu "add…": the right-click epoch-millis the add CHOOSER is open at (null =
-        // closed). It lays nothing itself — it picks which of the three editors above opens next.
-        var addingAtMillis by remember { mutableStateOf<Long?>(null) }
+        // PRD §8 contextual menu **"add…" / "edit…"**: what the ONE element window is open on (null =
+        // closed) — the instant it is anchored at, and, for "edit…", the elements at the mouse it is
+        // confined to. One slot for both entries, because they are one window
+        // ([org.example.project.ui.CalendarElementsWindow]) and at most one of them is ever open.
+        var elementsAt by remember { mutableStateOf<CalendarElementsDraftSet?>(null) }
 
         // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
@@ -1627,10 +1629,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
 
         // PRD §7: switching focus to another window leaves Edit Mode in any window — close the calendar's
-        // edit / add-reminder surfaces so they don't linger over the newly focused window.
+        // edit surface so it doesn't linger over the newly focused window.
         LaunchedEffect(schedulerState.focusedWindow) {
             editingBlock = null
-            addingReminderAtMillis = null
         }
 
         CompositionLocalProvider(
@@ -2047,10 +2048,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // (e.g. after a click into the tree had handed focus back) and raises it to the
                             // top of the window layers. (onFocus fires inside the window, after its offset.)
                             onFocus = { focusWindow(FloatingWindow.Calendar) },
-                            // PRD §8 contextual menu "add…": the ONE add entry. It opens the chooser and
-                            // nothing else — what is being added, and for a period of which KIND, is
-                            // answered there, and the editor that owns that object is what actually lays it.
-                            onAddAt = { atMillis -> addingAtMillis = atMillis },
+                            // PRD §8 contextual menu "add…": the ONE add entry, opening the one element
+                            // window on an empty list. What is being put here, of which kind, and with
+                            // which configuration is all answered there, and its Save is what lays it.
+                            onAddAt = { atMillis ->
+                                elementsAt = CalendarElementsDraftSet(CalendarElementsMode.Add, atMillis, emptyList())
+                            },
+                            // PRD §8 "edit…" with two or more elements at the cursor: the SAME window,
+                            // seeded with them and confined to them. Seeding is where `App` adds what only
+                            // it holds — a panel's task resilience, an alarm's weekdays and ring length —
+                            // so [calendarElementDrafts] stays a pure reading of what is drawn.
+                            onEditElementsAt = { atMillis, hits ->
+                                elementsAt =
+                                    CalendarElementsDraftSet(
+                                        CalendarElementsMode.Edit,
+                                        atMillis,
+                                        seedCalendarElementDrafts(
+                                            calendarElementDrafts(hits),
+                                            schedulerState,
+                                        ),
+                                    )
+                            },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel. The gesture
                             // itself sets the EXISTENCE pin ([SchedulerDomain.pinsAfterHandPlacement]): the
@@ -2149,11 +2167,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             jumpNonce = calendarJumpNonce,
                         )
 
-                        // PRD §8 edit window, opened over the calendar window and the tree — used for
-                        // both editing an existing block and the Manual-add default panel. A window like any
-                        // other since ADR 0014: no scrim, and it takes its turn in the one stacking order.
-                        (editingBlock ?: addingBlock)?.let { block ->
-                            val isNew = editingBlock == null
+                        // PRD §8 edit window, opened over the calendar window and the tree — the
+                        // one-element case of a TASK PANEL, reached from the "edit…" chooser and from a
+                        // double-click. Adding one goes through [CalendarElementsWindow] now, so this
+                        // window only ever edits something that exists and always carries its bin. A window
+                        // like any other since ADR 0014: no scrim, and it takes its turn in the one
+                        // stacking order.
+                        editingBlock?.let { block ->
                             ManualEntryEditWindow(
                                 initialTitle = block.title,
                                 initialTaskId = block.taskId,
@@ -2170,26 +2190,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 noScreenResilienceForTaskId = { id ->
                                     schedulerState.tasks[id]?.resilienceFor(PeriodKinds.NO_SCREEN)
                                 },
-                                onDismiss = { editingBlock = null; addingBlock = null },
+                                onDismiss = { editingBlock = null },
                                 // PRD §8: the bin — the menu's "Remove" now lives in the window that names
-                                // what it deletes. Absent while ADDING: nothing is laid until Save.
-                                onRemove =
-                                    if (isNew) {
-                                        null
-                                    } else {
-                                        {
-                                            removeBlockIntent(block)?.let(vm::dispatch)
-                                            editingBlock = null
-                                        }
-                                    },
+                                // what it deletes.
+                                onRemove = {
+                                    removeBlockIntent(block)?.let(vm::dispatch)
+                                    editingBlock = null
+                                },
                                 onSave = { taskId, title, startMillis, endMillis, pins, noScreenResilience ->
-                                    val intent =
-                                        if (isNew) {
-                                            SchedulerIntent.AddTaskPanel(taskId, title, startMillis, endMillis, pins)
-                                        } else {
-                                            commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins)
-                                        }
-                                    intent?.let(vm::dispatch)
+                                    commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins)
+                                        ?.let(vm::dispatch)
                                     // `side-dev/README.md`: the task's resilience to "no on-screen task",
                                     // saved alongside the panel — the one thing the old pair of switches
                                     // really said. Only dispatched when it actually changed (no no-op unit).
@@ -2202,7 +2212,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         )
                                     }
                                     editingBlock = null
-                                    addingBlock = null
                                 },
                                 )
                         }
@@ -2264,54 +2273,54 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             )
                         }
 
-                        // PRD §8 "add…": the chooser the one menu entry opens. It writes nothing — each
-                        // choice closes it and opens the editor that owns the object being added, so
-                        // "nothing is placed until Save" holds for all three the same way.
-                        addingAtMillis?.let { atMillis ->
-                            CalendarAddWindow(
-                                atMillis = atMillis,
+                        // PRD §8 "add…" / "edit…": the ONE window both entries open. It holds a LIST of
+                        // elements and their configuration grouped by who shares it, and — unlike the
+                        // chooser it replaced — it is the placement path itself, so its Save is where
+                        // "nothing is placed until Save" and "one Save is one Ctrl+Z" are both owed.
+                        elementsAt?.let { open ->
+                            CalendarElementsWindow(
+                                mode = open.mode,
+                                atMillis = open.atMillis,
+                                nowMillis = nowMillis,
                                 tz = tz,
+                                candidates = open.candidates,
                                 periodKinds = schedulerState.allPeriodKinds,
                                 // The same intent the task edit window's `+` sends — defining a kind is an
                                 // account setting, and this is a second door onto it, not a second rule.
                                 onCreatePeriodKind = { vm.dispatch(SchedulerIntent.AddPeriodKind(it)) },
-                                // PRD §8 Manual add: the edit window pre-filled with the default task
-                                // (highest absolute priority, min-time span) and a Save button.
-                                onAddTaskPanel = {
-                                    val taskId = SchedulerDomain.manualAddTaskId(schedulerState)
-                                    val task = taskId?.let { schedulerState.tasks[it] }
-                                    val span = (task?.minimumMinutes?.toLong() ?: 45L) * 60_000L
-                                    addingBlock = PlacedRecord(
-                                        title = task?.title.orEmpty(),
-                                        startHour = 0f,
-                                        endHour = 0f,
-                                        scheduled = false,
-                                        manual = true,
-                                        entryId = null,
-                                        taskId = taskId,
-                                        // PRD §8: the "pin" button is on by default for a new panel.
-                                        pinned = true,
-                                        // PRD §8: seeds the edit window's switches — Existence on, rest off.
-                                        pins = PanelPins(existence = true),
-                                        fullStartMillis = atMillis,
-                                        fullEndMillis = atMillis + span,
-                                    )
-                                    addingAtMillis = null
+                                taskMenuEntries = { draft, exclude ->
+                                    SchedulerDomain.calendarTaskMenuEntries(schedulerState, draft, exclude)
                                 },
-                                // PRD §8: the period editor, pre-filled with one hour from the right-click
-                                // time. The user picks the real bounds there (including "∞" and "now") and
-                                // Save lays it; it stays adjustable by drag/resize like any block after that.
-                                onAddPeriod = { kind ->
-                                    editingPeriod =
-                                        PeriodDraft(kind, emptyList(), atMillis, atMillis + 3_600_000L)
-                                    addingAtMillis = null
+                                taskTitleSuggestions = {
+                                    SchedulerDomain.placeableTaskTitleSuggestions(schedulerState, it)
                                 },
-                                // PRD §14 "add reminder": the reminder editor at the click.
-                                onAddReminder = {
-                                    addingReminderAtMillis = atMillis
-                                    addingAtMillis = null
+                                taskIdForTitle = { SchedulerDomain.placeableTaskIdForTitle(schedulerState, it) },
+                                titleForTaskId = { schedulerState.tasks[it]?.title },
+                                noScreenResilienceForTaskId = {
+                                    schedulerState.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN)
                                 },
-                                onDismiss = { addingAtMillis = null },
+                                // PRD §8 Manual add: the default task a blank search means.
+                                defaultTaskId = { SchedulerDomain.manualAddTaskId(schedulerState) },
+                                // PRD §8 Manual add: a fresh panel is the task's own minimum time long.
+                                panelSpanMillisFor = { taskId ->
+                                    (schedulerState.tasks[taskId]?.minimumMinutes?.toLong() ?: 45L) * 60_000L
+                                },
+                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                reminderTitleSuggestions = {
+                                    SchedulerDomain.reminderTitleSuggestions(schedulerState, it)
+                                },
+                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                alarms = schedulerState.alarms,
+                                // PRD §8: the bin of one row. A row the window is only ADDING has nothing
+                                // stored behind it, so the window never calls this for one.
+                                onRemove = { draft ->
+                                    removeCalendarElementIntents(draft, schedulerState).forEach(vm::dispatch)
+                                },
+                                onSave = { drafts ->
+                                    saveCalendarElementIntents(drafts, schedulerState, tz).forEach(vm::dispatch)
+                                    elementsAt = null
+                                },
+                                onDismiss = { elementsAt = null },
                             )
                         }
 
@@ -2346,23 +2355,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             )
                         }
 
-                        // PRD §14 "add reminder": the floating reminder editor, the same sort of window as
-                        // the manual edit window above.
-                        addingReminderAtMillis?.let { atMillis ->
-                            ReminderEditWindow(
-                                initialMillis = atMillis,
-                                tz = tz,
-                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                                titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                                titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                                onDismiss = { addingReminderAtMillis = null },
-                                onSave = { reminderId, title, at, checked, pinned ->
-                                    vm.dispatch(SchedulerIntent.AddReminder(reminderId, title, at, checked, pinned))
-                                    addingReminderAtMillis = null
-                                },
-                            )
-                        }
                     }
 
                     // PRD §14 Chores Manager: floating window over the tree (not the lateral menu).
@@ -2925,8 +2917,153 @@ private fun commitBoundsIntent(
 }
 
 /**
+ * PRD §8: **what the one add/edit element window is open on** — which of the two menu entries opened it,
+ * the instant it is anchored at, and (for "edit…") the elements at the mouse it is confined to.
+ *
+ * One slot for both entries because it is one window: "at most one window per subject" (`popups.md`) is held
+ * by the state that opens it, and "add here" and "edit what is here" are one subject — the point of the
+ * calendar that was right-clicked.
+ */
+private data class CalendarElementsDraftSet(
+    val mode: CalendarElementsMode,
+    val atMillis: Long,
+    val candidates: List<CalendarElements.Draft>,
+)
+
+/**
+ * PRD §8: **the elements at the cursor with what only `App` knows added to them.**
+ *
+ * [calendarElementDrafts] reads the drawn records and nothing else, which is what keeps it pure and
+ * testable; two of the four kinds need a value that is not on the record:
+ *  - a **task panel**'s screen switch is the TASK's resilience to `no screen`, not the panel's;
+ *  - an **alarm** marker is one occurrence of a rule, so its weekdays, its alert, whether it is armed, and
+ *    the ring length that makes its `Ends` come off the [AlarmEntry] the marker's id names.
+ */
+private fun seedCalendarElementDrafts(
+    drafts: List<CalendarElements.Draft>,
+    state: SchedulerState,
+): List<CalendarElements.Draft> =
+    drafts.map { draft ->
+        when (draft.kind) {
+            CalendarElements.Kind.TaskPanel ->
+                draft.copy(
+                    noScreenResilience =
+                        draft.taskId?.let { state.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN) } ?: 0.0,
+                )
+            CalendarElements.Kind.Alarm ->
+                state.alarms.firstOrNull { it.id == draft.existingId }?.let { alarm ->
+                    draft.copy(
+                        endMillis = draft.startMillis + alarm.soundSeconds * 1000L,
+                        alarmDays = alarm.days,
+                        alert = alarm.alert,
+                        alarmArmed = alarm.enabled,
+                    )
+                } ?: draft
+            CalendarElements.Kind.RestrictivePeriod, CalendarElements.Kind.Reminder -> draft
+        }
+    }
+
+/**
+ * PRD §8: **what the element window's Save dispatches** — and the one place the "one Save costs one Ctrl+Z
+ * per undo stack it touched" rule is spelt out.
+ *
+ * Three writes at most, and each is the funnel that already owns what it writes:
+ *  - everything that is a PANEL (task panels, periods, reminder tags) goes as ONE
+ *    [SchedulerIntent.AddCalendarElements] — one Calendar history unit, laid against a calendar each element
+ *    has already changed for the next;
+ *  - a panel's **screen switch is a TASK setting**, so it rides [SchedulerIntent.SetTaskResilience] exactly
+ *    as the single-panel editor sent it, once per task and only where the value really changed (no empty
+ *    history unit for a switch put back where it was). Two panels of one task in the list are one write —
+ *    the value is the task's, and dispatching it twice would be two units saying the same thing;
+ *  - the alarms go as ONE [SchedulerIntent.SetAlarms] — a Main history unit, which is where an alarm's undo
+ *    has always lived.
+ */
+private fun saveCalendarElementIntents(
+    drafts: List<CalendarElements.Draft>,
+    state: SchedulerState,
+    tz: TimeZone,
+): List<SchedulerIntent> {
+    val out = mutableListOf<SchedulerIntent>()
+    val panels = drafts.filter { it.kind != CalendarElements.Kind.Alarm }
+    if (panels.isNotEmpty()) out += SchedulerIntent.AddCalendarElements(panels)
+    panels
+        .filter { it.kind == CalendarElements.Kind.TaskPanel }
+        .mapNotNull { draft -> draft.taskId?.let { it to draft.noScreenResilience } }
+        .distinctBy { it.first }
+        .forEach { (taskId, resilience) ->
+            val task = state.tasks[taskId] ?: return@forEach
+            if (task.resilienceFor(PeriodKinds.NO_SCREEN) != resilience) {
+                out += SchedulerIntent.SetTaskResilience(taskId, PeriodKinds.NO_SCREEN, resilience)
+            }
+        }
+    val alarmDrafts = drafts.filter { it.kind == CalendarElements.Kind.Alarm }
+    if (alarmDrafts.isNotEmpty()) {
+        val next = applyAlarmDrafts(state.alarms, alarmDrafts, tz)
+        if (next != state.alarms) out += SchedulerIntent.SetAlarms(next)
+    }
+    return out
+}
+
+/**
+ * PRD §18: **the account's alarms with the window's alarm drafts written into them.**
+ *
+ * The start/end the window asked for reach an alarm as a TIME OF DAY and a RING LENGTH
+ * ([CalendarElements.alarmTimeOfDayMinutes], [CalendarElements.alarmSoundSeconds]) — an alarm has no date,
+ * so the day the user right-clicked is only where the occurrence was shown, never something written back.
+ * Which days it rings on is the `Rings on` field beside the start, asked and answered in its own right; a
+ * brand-new alarm keeps [AlarmEntry]'s own default (every day), the same one the §18 window's `+` gives a
+ * row, with all seven chips lit in front of the user before Save.
+ *
+ * A blank id on a new row is filled in by [SchedulerIntent.SetAlarms]' own reducer, which is the single
+ * place `alarm-{n}` is minted.
+ */
+private fun applyAlarmDrafts(
+    alarms: List<AlarmEntry>,
+    drafts: List<CalendarElements.Draft>,
+    tz: TimeZone,
+): List<AlarmEntry> {
+    var out = alarms
+    drafts.forEach { draft ->
+        val dayStart =
+            Instant.fromEpochMilliseconds(draft.startMillis)
+                .toLocalDateTime(tz).date.atStartOfDayIn(tz).toEpochMilliseconds()
+        val index = out.indexOfFirst { it.id == draft.existingId }
+        val base = out.getOrNull(index) ?: AlarmEntry(id = "")
+        val updated =
+            base.copy(
+                label = draft.name,
+                timeOfDayMinutes = CalendarElements.alarmTimeOfDayMinutes(draft.startMillis, dayStart),
+                soundSeconds = CalendarElements.alarmSoundSeconds(draft.startMillis, draft.endMillis),
+                alert = draft.alert,
+                days = draft.alarmDays,
+                enabled = draft.alarmArmed,
+            )
+        out = if (index >= 0) out.toMutableList().also { it[index] = updated } else out + updated
+    }
+    return out
+}
+
+/**
+ * PRD §8: **the bin of one row of the element window's list.** Empty for a row that is only being ADDED —
+ * there is nothing stored behind it, which is the same rule [EditorBinButton] has always had; the row is
+ * simply dropped from the list.
+ */
+private fun removeCalendarElementIntents(
+    draft: CalendarElements.Draft,
+    state: SchedulerState,
+): List<SchedulerIntent> {
+    val id = draft.existingId ?: return emptyList()
+    return when (draft.kind) {
+        CalendarElements.Kind.Alarm ->
+            listOf(SchedulerIntent.SetAlarms(state.alarms.filterNot { it.id == id }))
+        // A task panel, a period and a reminder tag are all panels, and one intent removes any of them.
+        else -> listOf(SchedulerIntent.RemoveTaskPanel(id))
+    }
+}
+
+/**
  * PRD §8: what the period editor ([PeriodEditWindow]) is open on — the period's KIND (a name off
- * `allPeriodKinds`, chosen in [CalendarAddWindow] when adding and read off the panel when editing), the block
+ * `allPeriodKinds`, read off the panel when editing), the block
  * being edited (null while ADDING one), and the bounds the window opens with. [startMillis]/[endMillis] are
  * the pre-fill only: what is laid comes back from the window's Save, which is where "∞"/"now" are resolved.
  */
