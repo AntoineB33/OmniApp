@@ -22,6 +22,18 @@ every Supabase and SQLite migration, is in `CHANGELOG.md`.
 - Do not kill `org.example.project.exe` or rerun `scripts\account3-deploy-windows.bat` unless the user explicitly asks for a redeploy.
 - Treat the deployed app as production-like state: keep it isolated from experiments and from agent-run builds.
 
+## Agent safety: the screen belongs to the user
+
+Anything that opens a window (`:desktopApp:run`, the `account{1,2,3}-*.bat` scripts) or drives the mouse and
+keyboard steals focus from whatever the user is doing. A `PreToolUse` hook in `.claude/settings.local.json`
+forces a permission prompt on those commands; the protocol around that prompt:
+
+- **Before** asking for it, say in one line what will open and roughly how long the screen will be taken, so
+  the user can approve and then step away.
+- Batch the screen-taking work: do every compile, test and file edit first, then take the screen once.
+- The `Stop` hook chimes at the end of the turn — that is the signal the user can come back. Never leave a
+  second prompt waiting behind the chime; if more approvals are needed, ask for them all up front.
+
 ## Verification
 
 - After any change to shared Kotlin logic, run `:shared:check` before reporting it as done.
