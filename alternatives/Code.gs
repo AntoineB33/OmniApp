@@ -66,6 +66,9 @@ function appliquerFormuleADroiteNomFeuille(isSilent) {
             compteur++;
           }
         }
+        
+        // MODIFICATION CRUCIALE : On a trouvé le nœud de cette ligne, on ignore tout texte éventuel à droite
+        break; 
       }
     }
   }
@@ -114,6 +117,8 @@ function remplacerIdParChemin(returnContext) {
             isNumber: isNumber
           });
         }
+        // MODIFICATION CRUCIALE : On a traité le vrai nœud, on s'arrête pour cette ligne
+        break;
       }
     }
   }
@@ -153,19 +158,17 @@ function remplacerIdParChemin(returnContext) {
       else if (regexId.test(texteCellule)) {
         var coord = idVersCoordonnees(texteCellule);
         var rId = coord.row - 1;
-        var cId = coord.col - 1;
         
-        if (rId >= 0 && rId < donneesArbre.length && cId >= 0 && cId < donneesArbre[0].length) {
-          var colTexte = cId;
-          var noeudVal = donneesArbre[rId][colTexte];
+        if (rId >= 0 && rId < donneesArbre.length) {
+          var colTexte = -1;
           
-          // On recule vers la gauche tant qu'on ne trouve pas de texte valide
-          while (colTexte >= 0) {
-            noeudVal = donneesArbre[rId][colTexte];
+          // MODIFICATION CRUCIALE : On trouve le vrai nœud en scannant la ligne de gauche à droite
+          for (var c = 0; c < donneesArbre[rId].length; c++) {
+            var noeudVal = donneesArbre[rId][c];
             if (noeudVal !== "" && typeof noeudVal === 'string' && noeudVal.trim() !== "") {
-              break; // On a trouvé le texte du noeud !
+              colTexte = c;
+              break; // On a trouvé le texte du nœud !
             }
-            colTexte--; // On recule d'une colonne
           }
 
           // Si on a bien fini par trouver un texte sur cette ligne
@@ -186,7 +189,6 @@ function remplacerIdParChemin(returnContext) {
               }
               
             }
-            // Si ce n'est pas une feuille, 'estValide' reste false et la cellule passera en rouge
           }
         }
       }
