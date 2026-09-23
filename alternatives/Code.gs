@@ -282,15 +282,11 @@ function ajouterNoeudMax() {
     
     // 2. Si le nœud maximal n'est pas déjà dans la colonne A
     if (ligneExistante === -1) {
-      // Insérer une vraie ligne au début (décale les autres vers le bas)
       feuilleTraitement.insertRowBefore(LIGNE_DEBUT_VERIFICATION);
       
-      // Remplir A et B
       feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1).setValue(meilleurChemin);
       feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 2).setFormula("=" + nomFeuilleEchappe + "!" + meilleureRef);
       
-      // Copier la formule de la colonne C (et des colonnes suivantes) depuis la ligne en dessous
-      // La fonction native "copyTo" décale automatiquement la logique des formules (ex: ligne 5 copiée vers ligne 4)
       var currentLastRow = feuilleTraitement.getLastRow();
       if (currentLastRow > LIGNE_DEBUT_VERIFICATION) {
         var rangeToCopy = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION + 1, 3, 1, lastCol - 2);
@@ -298,8 +294,6 @@ function ajouterNoeudMax() {
       }
       
       classeur.toast("Nouveau nœud ajouté. Tri en cours...");
-      
-      // Forcer le calcul des formules pour que la nouvelle cellule en C ait sa soustraction à jour avant le tri
       SpreadsheetApp.flush();
     } else {
       classeur.toast("Mise à jour de l'ordre du tableau...");
@@ -308,26 +302,53 @@ function ajouterNoeudMax() {
     var newLastRow = feuilleTraitement.getLastRow();
     
     if (newLastRow >= LIGNE_DEBUT_VERIFICATION) {
-      // 3. NETTOYAGE : Plus de couleur bleue (on retire les anciens bleus s'il y en a)
+      // 3. NETTOYAGE ET PREPARATION DU TRI
       var rangeA = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, newLastRow - LIGNE_DEBUT_VERIFICATION + 1, 1);
       var bgs = rangeA.getBackgrounds();
-      var changed = false;
+      var valsA = rangeA.getValues();
+      var changedBg = false;
+      
+      var helperValues = []; // Valeurs pour la colonne de tri temporaire
       
       for (var k = 0; k < bgs.length; k++) {
+        // Nettoyage de l'ancienne couleur bleue
         if (bgs[k][0] === COULEUR_BLEU) {
           bgs[k][0] = null;
-          changed = true;
+          changedBg = true;
+        }
+        
+        // Détermination de la validité
+        var valA = valsA[k][0].toString().trim();
+        if (valA === "") {
+          helperValues.push([2]); // Lignes vides -> reléguées à la toute fin
+        } else if (dictionnaireFeuilles.has(valA)) {
+          helperValues.push([0]); // Lignes valides -> prioritaires (en haut)
+        } else {
+          helperValues.push([1]); // Lignes invalides (rouges) -> après les valides
         }
       }
-      if (changed) {
+      
+      if (changedBg) {
         rangeA.setBackgrounds(bgs);
       }
       
-      // 4. TRI DE LA FEUILLE (Soustraction de la colonne C, de la plus haute à la plus basse)
-      // La fonction native ".sort()" ajuste parfaitement toutes les références des formules
-      // (B18 deviendra B4, D$3:17 deviendra D$3:3, etc.)
-      var rangeToSort = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, newLastRow - LIGNE_DEBUT_VERIFICATION + 1, lastCol);
-      rangeToSort.sort({column: 3, ascending: false});
+      // 4. TRI MULTI-CRITÈRES AVEC COLONNE TEMPORAIRE
+      lastCol = Math.max(feuilleTraitement.getLastColumn(), 3);
+      feuilleTraitement.insertColumnAfter(lastCol); // Création de la colonne temporaire tout à droite
+      var tempCol = lastCol + 1;
+      
+      // On écrit nos valeurs de validité (0, 1 ou 2) dans cette nouvelle colonne
+      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, tempCol, helperValues.length, 1).setValues(helperValues);
+      
+      // On trie tout le tableau incluant la colonne temporaire
+      var rangeToSort = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, newLastRow - LIGNE_DEBUT_VERIFICATION + 1, tempCol);
+      rangeToSort.sort([
+        {column: tempCol, ascending: true}, // Critère 1 : Validité (0 d'abord, puis 1, puis 2)
+        {column: 3, ascending: false}       // Critère 2 : Score (Soustraction décroissante)
+      ]);
+      
+      // Suppression de la colonne temporaire (invisible pour l'utilisateur)
+      feuilleTraitement.deleteColumn(tempCol);
     }
     
   } else {
