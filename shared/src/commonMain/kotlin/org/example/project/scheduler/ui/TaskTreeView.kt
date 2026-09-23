@@ -24,6 +24,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.domain.TaskTreeSearch
@@ -176,6 +178,12 @@ internal fun TaskTreeView(
      */
     hueMemo: TaskHueMemo = TaskHueMemo.account,
 ) {
+    Perf.count("recompose.TaskTreeView")
+    // The callbacks this tree hands its rows read the state through HERE, never by capturing it — see the
+    // same holder in [CellListSection]. A lambda that closes over the whole [SchedulerState] is a new
+    // argument on every state change, which reaches every row and makes all of them re-compose for a change
+    // none of them draws.
+    val currentState by rememberUpdatedState(state)
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
     val visibleOccurrences = SchedulerDomain.selectableVisibleOccurrences(state)
     // Each task's own colour (see [org.example.project.scheduler.domain.TaskColorSpace]). Derived here
@@ -323,9 +331,12 @@ internal fun TaskTreeView(
     // renderVia — letting the blue line land in any layer of the tree (PRD §3).
     val rowBounds =
         remember { mutableStateMapOf<VisibleOccurrence, ClosedFloatingPointRange<Float>>() }
+    // Read through the holder for the reason the two above are: this lambda is handed to EVERY row, so a
+    // new instance of it on each pass is a changed argument for every one of them.
+    val currentVisibleOccurrences by rememberUpdatedState(visibleOccurrences)
     val resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>? = resolve@{ windowY ->
         var last: Pair<VisibleOccurrence, Boolean>? = null
-        for (occurrence in visibleOccurrences) {
+        for (occurrence in currentVisibleOccurrences) {
             val bounds = rowBounds[occurrence] ?: continue
             if (windowY < bounds.start) return@resolve last ?: (occurrence to true)
             val mid = (bounds.start + bounds.endInclusive) / 2f
@@ -678,7 +689,8 @@ internal fun TaskTreeView(
                     } else {
                         // Snapshot the value the field opens with so Escape can revert to it (PRD §10).
                         minTimeEditOriginal =
-                            state.cells[cellId]?.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0
+                            currentState.cells[cellId]?.taskId
+                                ?.let { currentState.tasks[it]?.minimumMinutes } ?: 0
                         minTimeEditCellId = cellId
                     }
                 },
@@ -689,8 +701,9 @@ internal fun TaskTreeView(
                 // the whole block, so the menu and Ctrl+C never disagree about what "the cell" means — and
                 // they write the same text, because they are the same gesture.
                 onCopyTaskIdCell = { cellId ->
-                    val targets = SchedulerDomain.contextMenuCopyTargets(state, state.selection, cellId)
-                    val text = SchedulerDomain.taskIdReferenceText(state, targets)
+                    val targets =
+                        SchedulerDomain.contextMenuCopyTargets(currentState, currentState.selection, cellId)
+                    val text = SchedulerDomain.taskIdReferenceText(currentState, targets)
                     if (text.isNotEmpty()) writeSystemClipboardText(text)
                 },
                 // PRD §13 "deep copy": asks for the maximum depth first — the copy happens from its window.
@@ -741,7 +754,7 @@ internal fun TaskTreeView(
                         // PRD §7: clicking into the tree returns focus to it from whichever window held it.
                         // Null for a tree drawn inside a floating window — that window's own raise-on-press
                         // is what focuses it, and the app-wide focus never leaves the surface behind it.
-                        if (refocusWindow != null && state.focusedWindow != refocusWindow) {
+                        if (refocusWindow != null && currentState.focusedWindow != refocusWindow) {
                             onIntent(SchedulerIntent.FocusWindow(refocusWindow))
                         }
                     }

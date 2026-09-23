@@ -54,6 +54,14 @@ above that means a state read in that scope is being written by something other 
 `recompose.DayColumn` divided by seven is how often the calendar itself recomposed — compare it against
 `recompose.App` to tell a derivation problem from a drawing problem.
 
+`recompose.TaskRow` divided by `recompose.App` is **how many task rows re-composed per pass through the app's
+body**, and it is the second thing to look at. It should be about one per row the change actually altered —
+one on a keystroke, none on an engine tick. One per row ON SCREEN (44 on the release account) means a row
+argument Compose cannot prove unchanged is being rebuilt on every pass, which costs ~20 ms a frame and is the
+shape `docs/invariants/display-hot-path.md` names. `compose.TaskSchedulerScreen` and `compose.TaskTreeView`
+are the milliseconds behind that count — the screen's whole composition and the tree's. There is deliberately
+no per-ROW measure: it would instrument the hottest loop in the app to say what the count already says.
+
 `reduce.<IntentName>` is timed per intent class, deliberately. "The reducer costs 30 ms/s" says nothing;
 "`RefreshSchedule` costs 30 ms/s and fires eight times a second" names both the cost and its sender.
 

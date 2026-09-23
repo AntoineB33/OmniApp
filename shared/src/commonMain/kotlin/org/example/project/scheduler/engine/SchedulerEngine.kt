@@ -804,6 +804,9 @@ class SchedulerEngine(
         // `docs/invariants/scheduler.md` § *Progressive Calculation*: what the search of each stage did, so a stage
         // that could not reach the best score stops the next ones from paying for the same attempt.
         SchedulerReducer.planSearchSink = { report, _ -> lastPlanSearch = report }
+        // …and whether the fill running right now is still the one this engine wants (see [planGeneration]).
+        // Generation 0 is the in-reducer re-plans answering a press: never abandoned.
+        SchedulerReducer.planAbandoned = { generation -> generation != 0L && generation != planGeneration }
         launchNoScreenEvidenceScan()
         launchRetroactiveNoScreenStrip()
         launchAdvanceTick()
@@ -1918,9 +1921,33 @@ class SchedulerEngine(
      */
     private fun launchRuleChangeReschedule() = scope.launch {
         vm.state.map { SchedulerDomain.schedulingSignature(it) }.distinctUntilChanged().collectLatest {
+            // THE RULES MOVED, so whatever is being planned is about data nobody holds any more: stop it
+            // where it stands, at once, and let the debounce decide when to ask again (the user's rule:
+            // "if the scheduler was already running, then it stops abruptly and runs again with the new
+            // data"). Abandoning at the EDGE and re-planning after the pause is what stops a typed title
+            // from leaving a fill per keystroke grinding in the background, each one already stale.
+            abandonRunningPlan()
             delay(RESCHEDULE_DEBOUNCE_MILLIS)
             requestReschedule()
         }
+    }
+
+    /**
+     * The generation of the re-plan this engine currently wants. Every plan intent carries the generation it
+     * was asked under ([SchedulerIntent.RefreshSchedule.generation]) and the reducer asks
+     * [SchedulerReducer.planAbandoned] whether it is still this one — which is how a fill already several
+     * frames deep in its own search hears that it has been superseded (`SearchBudget.checkAbandoned`).
+     *
+     * Volatile because it is written on the engine's scope and read on [planDispatcher].
+     */
+    @Volatile
+    private var planGeneration: Long = 0L
+
+    /** Stop whatever is being planned, as abruptly as the fill's own checkpoints allow. */
+    private fun abandonRunningPlan() {
+        planGeneration++
+        progressivePlan?.cancel()
+        progressivePlan = null
     }
 
     /**
@@ -1989,7 +2016,10 @@ class SchedulerEngine(
         lead: ScheduleCoordinator.Lead? = null,
         seeds: List<List<RulePlacement>> = emptyList(),
     ) {
-        progressivePlan?.cancel()
+        // A newer request supersedes the one in flight: the stages it has not reached are cancelled, and the
+        // fill it is INSIDE stops at its next checkpoint instead of running to the end for nobody.
+        abandonRunningPlan()
+        val generation = planGeneration
         // A re-plan is a rule change, which is one of the two things that void a stand-down.
         if (replan) calculationLimitStop = null
         progressivePlan = scope.launch {
@@ -2013,8 +2043,8 @@ class SchedulerEngine(
                 val remaining = calculationLimitMillis - calculationMark.elapsedNow().inWholeMilliseconds
                 val searchMillis = if (searchUseful) stageSearchMillis(span, remaining) else 0L
                 val intent =
-                    if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds)
-                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis)
+                    if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds, generation)
+                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation)
                 lastPlanSearch = null
                 val mark = TimeSource.Monotonic.markNow()
                 runPlan(intent)

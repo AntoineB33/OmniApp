@@ -18,9 +18,37 @@ import kotlin.time.TimeSource
  * devices that planned the same rules differently settle it by the score (`docs/invariants/scheduler.md` § *One
  * device plans*).
  */
-class SearchBudget private constructor(private val deadline: TimeMark?) {
-    /** True once no further time may be spent (always true for [NONE]). */
+/**
+ * Thrown to unwind a fill NOBODY IS WAITING FOR ANY MORE — see [SearchBudget.checkAbandoned].
+ *
+ * It is not an error: it is the one way out of a search that is already several frames deep in its own
+ * recursion. Exactly one place catches it — the reducer that asked for the fill — and what it does there is
+ * return the state it was given, unchanged, so nothing half-planned is ever published. (It keeps the common
+ * constructor: the stackless one is JVM-only, and one stack trace per abandoned fill costs nothing.)
+ */
+class PlanAbandoned internal constructor() : RuntimeException()
+
+class SearchBudget private constructor(
+    private val deadline: TimeMark?,
+    /**
+     * Whether the answer this fill is computing is still wanted. The user's rule: *"if the scheduler was
+     * already running, then it stops abruptly and runs again with the new data"* — so a fill is not merely
+     * cancelled at its next publish (a coroutine `cancel()` cannot interrupt a CPU-bound walk, which is why
+     * an abandoned fill used to run to the end and burn a core on an answer about data nobody holds any more):
+     * it is asked, at every checkpoint it already has, whether to stop where it stands.
+     */
+    private val abandoned: () -> Boolean,
+) {
+    /** True once no further time may be spent (always true for [NONE]). This is DEGRADATION, not abandonment. */
     fun expired(): Boolean = deadline?.hasPassedNow() ?: true
+
+    /** True when the fill has been superseded and must stop where it stands. */
+    fun abandoned(): Boolean = abandoned.invoke()
+
+    /** [abandoned], as the checkpoints spell it: stop by unwinding, so nothing partial can be published. */
+    fun checkAbandoned() {
+        if (abandoned.invoke()) throw PlanAbandoned()
+    }
 
     /** Millis left, 0 when [expired]. */
     fun remainingMillis(): Long {
@@ -31,14 +59,16 @@ class SearchBudget private constructor(private val deadline: TimeMark?) {
 
     /** A budget ending at the earlier of this one and [millis] from now — to give one pass a share of the rest. */
     fun share(millis: Long): SearchBudget =
-        if (deadline == null) NONE else of(minOf(remainingMillis(), millis.coerceAtLeast(0L)))
+        if (deadline == null) SearchBudget(null, abandoned)
+        else of(minOf(remainingMillis(), millis.coerceAtLeast(0L)), abandoned)
 
     companion object {
         /** No time past the step-bounded passes: display fills, adoptions, and the tests that pin the rollout. */
-        val NONE: SearchBudget = SearchBudget(null)
+        val NONE: SearchBudget = SearchBudget(null) { false }
 
-        fun of(millis: Long): SearchBudget =
-            if (millis <= 0L) NONE else SearchBudget(TimeSource.Monotonic.markNow() + millis.milliseconds)
+        fun of(millis: Long, abandoned: () -> Boolean = { false }): SearchBudget =
+            if (millis <= 0L) SearchBudget(null, abandoned)
+            else SearchBudget(TimeSource.Monotonic.markNow() + millis.milliseconds, abandoned)
     }
 }
 

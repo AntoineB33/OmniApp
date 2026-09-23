@@ -158,6 +158,9 @@ internal object ScheduleFill {
     )
 
     fun run(input: Input): Result {
+        // Every entry, the recursion through a rule-state switch included: a fill nobody wants any more stops
+        // here rather than planning the next stretch of a timeline that has already changed.
+        input.budget.checkAbandoned()
         val from = input.startMillis - input.lookbackMillis
         val emitEnd = input.horizonMillis
         val to = maxOf(emitEnd, input.searchUntilMillis ?: emitEnd)

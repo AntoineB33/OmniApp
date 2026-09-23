@@ -494,6 +494,14 @@ placed (`screenBreak`). Pre-placed blocks, user-drawn periods and sleep windows 
 - **`SchedulerDomain.schedulingSignature(state)`** is everything the plan is a function of except `now`.
   `launchRuleChangeReschedule` watches it (1 s debounce) and is the only rule-watching dispatcher of
   `RefreshSchedule`.
+- **A TITLE'S TEXT IS NOT A RULE, so a rename is not a re-plan.** Two things about a title reach the plan and
+  both are in the signature: whether it is BLANK (a blank title deletes, `docs/invariants/task-tree.md`, so the
+  task leaves the schedulable set) and the ORDER titles put the tasks in, which is the tie-break
+  `docs/scheduler_score.md` § *Ties* names — "higher priority first, then title". The text itself is not, and
+  hashing it made every keystroke of a rename a rule change: renaming a task re-planned the whole account once
+  per letter for a plan that could not come out any different (2026-09-22; `RenameIsNotARuleTest`). What the
+  rename DOES do is rename the task's panels, in its own reducer — so the schedule shows the new name at the
+  keystroke instead of waiting for a fill that has no reason to run.
 - **Anything new that wants to re-plan belongs in the signature** (or in `requestReschedule`), not in a fresh
   dispatch site.
 - **Time passing must never re-plan.** The advance tick only banks records; horizon growth and calendar navigation
@@ -504,11 +512,39 @@ placed (`screenBreak`). Pre-placed blocks, user-drawn periods and sleep windows 
   line reaches** (`taskTreeBlendDecisionKey`, ADR 0008) — one fill per run the transition spans, nothing outside one.
   That is the rules being parameterized by the line, not the plan going stale.
 - The signature excludes records deliberately, so `RemoveRecordPeriod` refills inside its own reducer.
+- **A RE-PLAN NOBODY IS WAITING FOR ANY MORE STOPS WHERE IT STANDS** (user rule, 2026-09-23: *"if the
+  scheduler was already running, then it stops abruptly and runs again with the new data"*). A fill is
+  straight-line CPU — tens of milliseconds on a small account, seconds on a real one — so `Job.cancel()`
+  around it stops nothing: it ran to the end, published an answer about data nobody held any more, and (having
+  lost the compare-and-set) started over. So every plan intent carries the **generation** it was asked under
+  (`SchedulerIntent.RefreshSchedule.generation`), the engine answers whether that generation is still the one
+  it wants (`SchedulerReducer.planAbandoned`), and the fill asks at the checkpoints it already has —
+  `SearchBudget.checkAbandoned()` in the rollout, the improver, the exhaustive search and at every entry to
+  `ScheduleFill.run`. An abandoned fill unwinds (`PlanAbandoned`) and the reducer hands back **the very state
+  it was given**, so nothing half-planned is published and `dispatch` does not retry.
+  - **Generation 0 can never be abandoned**, and the reducer holds that rule rather than the seam: it is what
+    the in-reducer re-plans answering a press carry (`ForceTaskStart`, `ForceTaskSwitch`, a sleep edit), and a
+    press must be in the state before it returns.
+  - **The rules moving abandons at the EDGE, and the debounce only decides when to ask again.**
+    `launchRuleChangeReschedule` stops the fill in flight the instant `schedulingSignature` moves, then waits
+    out `RESCHEDULE_DEBOUNCE_MILLIS` before requesting the new one — which is what stops a typed title from
+    leaving a fill per keystroke grinding in the background, each already stale. `PlanAbandonedTest`.
 - **The engine's re-plans are dispatched ASYNCHRONOUSLY** (`SchedulerEngine.dispatchProgressivePlan` →
   `runPlan` → `planDispatcher`): the fill is 25-80 ms and the engine's scope is the main thread on both hosts. The rule
   does not move — same intent, same reducer — but nothing may read the new plan straight off
   `vm.state.value` after asking for one. The in-reducer re-plans (`ForceTaskSwitch`, `ForceTaskStart`,
   `SetSleepSchedule`, `RemoveRecordPeriod`, the no-screen strip) stay synchronous: they answer a press.
+- **A SUPERSEDED FILL STOPS WHERE IT STANDS** (2026-09-22; `PlanAbandonedTest`). The user's rule: *"if the
+  scheduler was already running, then it stops abruptly and runs again with the new data"*. A fill is
+  straight-line CPU, so cancelling the coroutine around it stops nothing. Every engine re-plan carries a
+  **generation** (`RefreshSchedule.generation` / `ExtendSchedule.generation`); the engine bumps it
+  (`abandonRunningPlan`) at the signature EDGE — before the debounce — and on every new dispatch; the reducer asks
+  `SchedulerReducer.planAbandoned`, and the fill asks at the checkpoints it already has
+  (`SearchBudget.checkAbandoned`: every `ScheduleFill.run` entry, the rollout and search every 64 steps, the
+  improver every 64 moves) and unwinds with `PlanAbandoned`. The reducer catches it and returns **the state it was
+  given, the same instance**, so nothing half-planned is published. Generation **0** — the in-reducer re-plans
+  answering a press — is never abandoned. Abandonment is not the budget expiring: an expired budget DEGRADES to
+  the rollout; an abandoned one publishes nothing.
   See `docs/invariants/display-hot-path.md` for the compare-and-set this makes necessary.
 
 ---

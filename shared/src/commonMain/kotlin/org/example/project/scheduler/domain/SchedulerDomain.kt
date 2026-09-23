@@ -5424,7 +5424,15 @@ object SchedulerDomain {
         }
         for (task in tasks.values.sortedBy { it.id.value }) {
             result = 31 * result + task.id.value.hashCode()
-            result = 31 * result + task.title.hashCode()
+            // A TITLE'S TEXT IS NOT A RULE — only two things about it are, and both are here.
+            //
+            // The first is whether it is BLANK: a blank title deletes (`docs/invariants/task-tree.md`), so the
+            // task leaves the schedulable set. The second is the ORDER titles put the tasks in, which is the
+            // tie-break `docs/scheduler_score.md` § *Ties* names — "higher priority first, then title" — and it
+            // is hashed once for the whole tree below rather than per task, because only the RELATIVE order is
+            // read. Hashing the text itself made every keystroke of a rename a rule change, so renaming a task
+            // re-planned the account once per letter for a plan that could not come out any different.
+            result = 31 * result + if (task.title.isBlank()) 1 else 0
             result = 31 * result + task.minimumMinutes
             // `side-dev/README.md`: a resilience IS a scheduling rule — changing one changes the plan, so it
             // belongs in the signature (CLAUDE.md: anything new that wants to re-plan belongs here).
@@ -5432,6 +5440,12 @@ object SchedulerDomain {
                 result = 31 * result + kind.hashCode()
                 result = 31 * result + value.hashCode()
             }
+        }
+        // `docs/scheduler_score.md` § *Ties*: the tasks IN TITLE ORDER, which is the whole of what the fill
+        // takes from the text (it sorts by priority, then title, and hands the search that order). A rename
+        // that does not move a task past another one cannot change the plan, and so must not re-plan.
+        for (task in tasks.values.sortedWith(compareBy({ it.title }, { it.id.value }))) {
+            result = 31 * result + task.id.value.hashCode()
         }
         return result
     }

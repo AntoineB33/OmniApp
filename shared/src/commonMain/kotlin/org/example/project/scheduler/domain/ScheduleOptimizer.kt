@@ -300,18 +300,19 @@ class ScheduleOptimizer(
         firstAmong: Set<Int> = emptySet(),
     ): Plan {
         val pinFirst = forcedFirst >= 0 || refusedFirst >= 0 || firstAmong.isNotEmpty()
-        val built = construct(start, untilU, forcedFirst, refusedFirst, firstAmong)
+        val built = construct(start, untilU, forcedFirst, refusedFirst, firstAmong, budget = budget)
         var runs = built
         var cost = score(start, runs)
         for (seed in seeds) {
-            val completed = complete(start, seed, untilU, forcedFirst, refusedFirst, firstAmong, built) ?: continue
+            val completed =
+                complete(start, seed, untilU, forcedFirst, refusedFirst, firstAmong, built, budget) ?: continue
             val c = score(start, completed)
             if (better(c, cost)) {
                 runs = completed
                 cost = c
             }
         }
-        runs = improve(start, runs, untilU, pinFirst)
+        runs = improve(start, runs, untilU, pinFirst, budget)
         cost = score(start, runs)
 
         var certified = false
@@ -333,7 +334,7 @@ class ScheduleOptimizer(
                 val proposed = runCatching { external.improve(model, start, untilU, runs, pinFirst, budget) }.getOrNull()
                 val checked = proposed?.let { accepted(start, it, untilU, forcedFirst, refusedFirst, firstAmong, runs.firstOrNull()) }
                 if (checked != null) {
-                    val polished = improve(start, checked, untilU, pinFirst)
+                    val polished = improve(start, checked, untilU, pinFirst, budget)
                     val c = score(start, polished)
                     if (better(c, cost)) {
                         runs = polished
@@ -353,9 +354,15 @@ class ScheduleOptimizer(
         return Plan(coalesce(named), cost, certified, report)
     }
 
-    private fun improve(start: ScoreCursor, runs: List<Run>, untilU: Double, pinFirst: Boolean): List<Run> =
+    private fun improve(
+        start: ScoreCursor,
+        runs: List<Run>,
+        untilU: Double,
+        pinFirst: Boolean,
+        budget: SearchBudget,
+    ): List<Run> =
         if (improveBudget <= 0 || runs.isEmpty()) runs
-        else ScheduleImprover(model, start, untilU, pinFirst, improveBudget).improve(runs)
+        else ScheduleImprover(model, start, untilU, pinFirst, improveBudget, budget).improve(runs)
 
     /** Pass 1: the rollout policy's continuation, one run per decision, pre-placed runs kept apart. */
     private fun construct(
@@ -366,6 +373,7 @@ class ScheduleOptimizer(
         firstAmong: Set<Int>,
         prefix: List<Run> = emptyList(),
         firstDecided: Boolean = false,
+        budget: SearchBudget = SearchBudget.NONE,
     ): List<Run> {
         val cursor = start.copy()
         val runs = ArrayList<Run>(prefix)
@@ -373,6 +381,9 @@ class ScheduleOptimizer(
         var first = !firstDecided
         var guard = 0
         while (cursor.u < untilU - ScoreModel.EPS && guard++ < MAX_PLAN_STEPS) {
+            // The rollout is the pass that always runs, so it is where an abandoned fill is stopped: one
+            // decision at a time, asked on the same cadence the search asks the clock on.
+            if (guard % ABANDON_CHECK_STEPS == 0) budget.checkAbandoned()
             val eval = evaluate(cursor, untilU) ?: break
             val from = cursor.u
             if (eval.fixed >= 0) {
@@ -464,6 +475,7 @@ class ScheduleOptimizer(
         refusedFirst: Int,
         firstAmong: Set<Int>,
         built: List<Run>,
+        budget: SearchBudget = SearchBudget.NONE,
     ): List<Run>? {
         val (prefix, decided) = legalPrefix(start, seed, untilU, forcedFirst, refusedFirst, firstAmong) ?: return null
         if (prefix.isEmpty()) return null
@@ -474,7 +486,10 @@ class ScheduleOptimizer(
         }
         // The tail must start where the prefix ends; a pre-placed run the prefix stopped inside is laid again whole.
         if (tail.isEmpty() || abs(tail.first().fromU - end) > ScoreModel.EPS) {
-            return construct(start, untilU, forcedFirst, refusedFirst, firstAmong, prefix = prefix, firstDecided = decided)
+            return construct(
+                start, untilU, forcedFirst, refusedFirst, firstAmong,
+                prefix = prefix, firstDecided = decided, budget = budget,
+            )
         }
         return prefix + tail
     }
@@ -602,6 +617,7 @@ class ScheduleOptimizer(
                 return
             }
             steps++
+            if (steps % CLOCK_CHECK_STEPS == 0L) budget.checkAbandoned()
             if (if (timed) steps % CLOCK_CHECK_STEPS == 0L && budget.expired() else steps > searchBudget) {
                 exhausted = true
                 return
@@ -666,6 +682,13 @@ class ScheduleOptimizer(
         private const val MAX_ROLLOUT_STEPS = 10_000
         private const val MAX_PLAN_STEPS = 100_000
         private const val CLOCK_CHECK_STEPS = 64L
+
+        /**
+         * How often the step-bounded passes ask whether the fill is still wanted
+         * ([SearchBudget.checkAbandoned]). The same cadence the search asks the clock on: often enough that
+         * an abandoned fill stops in well under a frame, seldom enough to cost nothing when it is not.
+         */
+        private const val ABANDON_CHECK_STEPS = 64
         /** The share of the extra time the exhaustive search may use when a platform solver waits behind it. */
         private const val EXACT_SHARE_PERCENT = 60L
 

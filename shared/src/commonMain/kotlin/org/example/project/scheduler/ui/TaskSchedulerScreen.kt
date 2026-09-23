@@ -116,6 +116,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.domain.TaskTreeSearch
@@ -287,6 +288,7 @@ fun TaskSchedulerScreen(
     onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
 ) {
+    Perf.count("recompose.TaskSchedulerScreen")
     val state by vm.state.collectAsState()
     // PRD §5: absolute priority percentage per task, displayed at the right of each populated cell.
     val priorities = SchedulerDomain.absoluteTaskPriorities(state)
@@ -365,6 +367,7 @@ fun TaskSchedulerScreen(
 
         Spacer(Modifier.height(8.dp))
 
+        Perf.measure("compose.TaskTreeView") {
         TaskTreeView(
             state = state,
             priorities = priorities,
@@ -404,6 +407,7 @@ fun TaskSchedulerScreen(
                 }
             },
         )
+        }
     }
 }
 
@@ -458,19 +462,43 @@ internal fun CellListSection(
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val bodyStyle = MaterialTheme.typography.bodyMedium
+    // MEASURED on the titles, not on every pass. Laying out a string is one of the most expensive things
+    // this row does, and this section recomposes for every state change the app sees — a keystroke in
+    // another list, an appended diagnostic row, a moved selection — so measuring here unconditionally
+    // re-laid out every title of every open sub-list, at every one of them (2026-09-21: ~44 rows re-measured
+    // per state change on the release account). The width is a function of the titles and the text style,
+    // so it is cached on exactly those.
+    val cellTitles: List<String> =
+        list.cellIds.map { id -> state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty() }
     val cellTextPx: Map<CellId, Int> =
-        list.cellIds.associateWith { id ->
-            val title = state.cells[id]?.taskId?.let { state.tasks[it]?.title }.orEmpty()
-            if (title.isEmpty()) 0 else textMeasurer.measure(title, bodyStyle).size.width
+        remember(list.cellIds, cellTitles, bodyStyle, textMeasurer) {
+            list.cellIds.mapIndexed { index, id ->
+                val title = cellTitles.getOrElse(index) { "" }
+                id to if (title.isEmpty()) 0 else textMeasurer.measure(title, bodyStyle).size.width
+            }.toMap()
         }
     val priorityColumnWidth: Dp =
         with(density) { (cellTextPx.values.maxOrNull() ?: 0).toDp() }
             .coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
     val priorityColumnPx = with(density) { priorityColumnWidth.toPx() }
 
+    // THE ROW'S CALLBACKS READ THE STATE THROUGH THESE, never by capturing it (CLAUDE.md hot path).
+    //
+    // Compose can only skip a row whose arguments it can tell are unchanged, and a lambda that captures the
+    // whole [SchedulerState] (or the visible order, or a [Cell]) is a NEW argument on every state change
+    // there is — so every visible row re-composed for every keystroke, every engine tick and every appended
+    // log row alike (2026-09-21: ~44 rows, ~20 ms a frame, on the release account). Held in a state holder
+    // the composition keeps, the lambdas capture one stable reference and are remembered once, while still
+    // reading the freshest value at the instant the user presses something.
+    val currentState by rememberUpdatedState(state)
+    val currentVisibleOrder by rememberUpdatedState(visibleOrder)
+
     list.cellIds.forEach { cellId ->
         val cell = state.cells[cellId] ?: return@forEach
-        val title = cell.taskId?.let { state.tasks[it]?.title }.orEmpty()
+        // Captured by the row's callbacks in place of [cell]: a `Cell` carries its weight column, so a
+        // lambda holding one is a new argument whenever any of them moves; the id is what they all mean.
+        val cellTaskId = cell.taskId
+        val title = cellTaskId?.let { state.tasks[it]?.title }.orEmpty()
         val selectable = SchedulerDomain.isSelectableCell(state, cellId)
         // PRD §2: the one inert row the tree is drawn under. It is drawn COMPACT — no title, no percentage,
         // no minimum time, no categories — because it names nothing the user wrote: it stands for the tree
@@ -499,6 +527,71 @@ internal fun CellListSection(
         val isBeingMoved =
             moveDragActive && isInSelectionRange &&
                 SchedulerDomain.canDragMoveSelection(state, state.selection)
+
+        // PRD §13: the row's contextual menu, HELD rather than rebuilt. A fresh holder of callbacks is a
+        // new argument to the row on every pass, and one of those is enough to stop Compose skipping a row
+        // that has not changed — which is why every visible row used to re-compose for every state change.
+        // Rebuilt only when what the menu OFFERS changes; its callbacks read the live state through
+        // [currentState], so a held one is never stale.
+        val menuTaskId = cellTaskId?.takeIf { selectable || isRootRow }
+        val menuStartable = menuTaskId != null && SchedulerDomain.isLeafTask(state, menuTaskId)
+        val menuHasTemplate = !state.defaultSubtreeIsEmpty
+        val cellMenu: TaskCellMenuActions? =
+            if (menuTaskId == null) {
+                null
+            } else {
+                remember(
+                    menuTaskId, cellId, isRootRow, hasChildren, menuStartable, menuHasTemplate,
+                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent,
+                ) {
+                    val taskId = menuTaskId
+                    TaskCellMenuActions(
+                        // PRD §13 "start this task now": the plan puts this task at the now-line. It names
+                        // ONE task however many cells are selected — unlike "copy task id", "start *this*
+                        // task" has no meaning for a block — and only a schedulable leaf can be asked for.
+                        onStartNow =
+                            if (menuStartable) {
+                                { onIntent(SchedulerIntent.ForceTaskStart(taskId)) }
+                            } else {
+                                null
+                            },
+                        onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
+                        // PRD §7/§8: offered only where the surface is NOT the tree — the "All tasks"
+                        // window today. Same entry, same name and the same RevealCell primitive the
+                        // calendar panel's menu uses.
+                        onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
+                        onCopyTaskId = { onCopyTaskIdCell(cellId) },
+                        onDeepCopy = { onDeepCopyCell(cellId) },
+                        onCollapseSubtrees =
+                            if (hasChildren) {
+                                { onIntent(SchedulerIntent.CollapseSubtrees(cellId)) }
+                            } else {
+                                null
+                            },
+                        // PRD §7/§13: the template on demand. Like "copy task id", it acts on the whole
+                        // block when the right-click lands inside a multi-selection. It is offered in the
+                        // PRD-4 template's own window too, and unlike the automatic graft it does not wait
+                        // to be opened ([graftDefaultSubtree] only records what a new task id is owed):
+                        // this entry is the asking, so it writes its round there and then.
+                        onAddDefaultSubtree =
+                            if (!menuHasTemplate) {
+                                null
+                            } else {
+                                {
+                                    onIntent(
+                                        SchedulerIntent.AddDefaultSubtree(
+                                            SchedulerDomain.contextMenuCopyTargets(
+                                                currentState,
+                                                currentState.selection,
+                                                cellId,
+                                            ),
+                                        ),
+                                    )
+                                }
+                            },
+                    )
+                }
+            }
 
         TaskRow(
             depth = depth,
@@ -542,61 +635,11 @@ internal fun CellListSection(
             // reason it is drawn: it is a small right-click target for the actions that are about the tree
             // as a whole ("collapse sub-trees" first among them). What it does not get is "edit task" —
             // see [TaskCellMenuActions.onEdit].
-            cellMenu =
-                cell.taskId
-                    ?.takeIf { selectable || isRootRow }
-                    ?.let { taskId ->
-                        TaskCellMenuActions(
-                            // PRD §13 "start this task now": the plan puts this task at the now-line. It names
-                            // ONE task however many cells are selected — unlike "copy task id", "start *this* task"
-                            // has no meaning for a block — and only a schedulable leaf can be asked for.
-                            onStartNow =
-                                if (SchedulerDomain.isLeafTask(state, taskId)) {
-                                    { onIntent(SchedulerIntent.ForceTaskStart(taskId)) }
-                                } else {
-                                    null
-                                },
-                            onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
-                            // PRD §7/§8: offered only where the surface is NOT the tree — the "All tasks"
-                            // window today. Same entry, same name and the same RevealCell primitive the
-                            // calendar panel's menu uses.
-                            onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
-                            onCopyTaskId = { onCopyTaskIdCell(cellId) },
-                            onDeepCopy = { onDeepCopyCell(cellId) },
-                            onCollapseSubtrees =
-                                if (hasChildren) {
-                                    { onIntent(SchedulerIntent.CollapseSubtrees(cellId)) }
-                                } else {
-                                    null
-                                },
-                            // PRD §7/§13: the template on demand. Like "copy task id", it acts on the whole block
-                            // when the right-click lands inside a multi-selection.
-                            // It is offered in the PRD-4 template's own window too, and unlike the
-                            // automatic graft it does not wait to be opened ([graftDefaultSubtree] only
-                            // records what a new task id is owed): this entry is the asking, so it writes
-                            // its round there and then.
-                            onAddDefaultSubtree =
-                                if (state.defaultSubtreeIsEmpty) {
-                                    null
-                                } else {
-                                    {
-                                        onIntent(
-                                            SchedulerIntent.AddDefaultSubtree(
-                                                SchedulerDomain.contextMenuCopyTargets(
-                                                    state,
-                                                    state.selection,
-                                                    cellId,
-                                                ),
-                                            ),
-                                        )
-                                    }
-                                },
-                        )
-                    },
+            cellMenu = cellMenu,
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onOpenRelativePriority = { onOpenRelativePriority(cellId) },
             onSetMinTime = { minutes ->
-                cell.taskId?.let { onIntent(SchedulerIntent.SetTaskMinimumTime(it, minutes)) }
+                cellTaskId?.let { onIntent(SchedulerIntent.SetTaskMinimumTime(it, minutes)) }
             },
             onActivateMinTime = {
                 // Select this cell so the input persists (PRD §10: it reverts when another cell is
@@ -606,7 +649,7 @@ internal fun CellListSection(
                         cellId = cellId,
                         ctrl = false,
                         shift = false,
-                        visibleOrder = visibleOrder,
+                        visibleOrder = currentVisibleOrder,
                         renderVia = renderVia,
                         forceClearMulti = true,
                     ),
@@ -620,7 +663,7 @@ internal fun CellListSection(
                         cellId = clicked,
                         ctrl = ctrl,
                         shift = shift,
-                        visibleOrder = visibleOrder,
+                        visibleOrder = currentVisibleOrder,
                         renderVia = renderVia,
                         forceClearMulti = forceClearMulti,
                     ),
@@ -631,7 +674,7 @@ internal fun CellListSection(
                     SchedulerIntent.DragSelectCells(
                         anchorCellId = anchor,
                         hoverCellId = hover,
-                        visibleOrder = visibleOrder,
+                        visibleOrder = currentVisibleOrder,
                         renderVia = renderVia,
                     ),
                 )
@@ -662,7 +705,7 @@ internal fun CellListSection(
                 if (isEditing) {
                     { refocusField ->
                         EditModeMenus(
-                            state = state,
+                            state = currentState,
                             cellId = cellId,
                             draftText = editDraft,
                             onIntent = onIntent,
@@ -680,10 +723,10 @@ internal fun CellListSection(
             // handed to the row as a slot — the row itself stays a drawing of a cell and holds no opinion
             // about what a category is.
             categoryCell =
-                cell.taskId?.let { taskId ->
+                cellTaskId?.let { taskId ->
                     {
                         TaskCategoryCell(
-                            state = state,
+                            state = currentState,
                             taskId = taskId,
                             onIntent = onIntent,
                             onOpenCategoryEdit = onOpenCategoryEdit,
@@ -2592,6 +2635,7 @@ internal fun TaskRow(
     /** PRD §4: one extra cell at the end of the row — the default sub-tree's switch. Null in the tree. */
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
 ) {
+    Perf.count("recompose.TaskRow")
     val editFocusRequester = remember { FocusRequester() }
     // Whether this cell's right-click contextual menu ("edit task" / "copy" / "deep copy" / "add default
     // sub-tree") is showing.

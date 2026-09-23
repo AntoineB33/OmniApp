@@ -33,6 +33,8 @@ internal class ScheduleImprover(
     /** PRD §13 / §7: the first run's task is decided by the caller and never changed here. */
     private val pinFirstTask: Boolean,
     private val budget: Int,
+    /** Whether the fill this improves for is still wanted — see [SearchBudget.checkAbandoned]. */
+    private val search: SearchBudget = SearchBudget.NONE,
 ) {
     private data class Seg(val task: Int, val from: Double, val to: Double, val fixed: Boolean) {
         val length: Double get() = to - from
@@ -52,6 +54,9 @@ internal class ScheduleImprover(
 
         fun tryMove(candidate: List<Seg>, affected: IntArray): Boolean {
             if (scored >= budget) return false
+            // The improver is step-bounded, not time-bounded, so this is where it hears that the fill it is
+            // polishing is one nobody is waiting for any more.
+            if (scored % ABANDON_CHECK_MOVES == 0) search.checkAbandoned()
             scored++
             val merged = coalesce(candidate)
             var next = shortfalls(merged)
@@ -201,5 +206,8 @@ internal class ScheduleImprover(
 
     private companion object {
         val SHIFT_STEPS_MILLIS = doubleArrayOf(60_000.0, 5 * 60_000.0, 15 * 60_000.0, 30 * 60_000.0)
+
+        /** Moves between two askings of [SearchBudget.checkAbandoned] — the optimizer's own cadence. */
+        const val ABANDON_CHECK_MOVES = 64
     }
 }

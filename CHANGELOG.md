@@ -11,6 +11,112 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A re-plan nobody waits for any more stops where it stands — 2026-09-22
+
+The user's rule: *"if the scheduler was already running, then it stops abruptly and runs again with the new
+data"*. It did not: `progressivePlan?.cancel()` cancelled the coroutine, but a fill is straight-line CPU, so the
+superseded fill ran to the end, lost the compare-and-set, and burned a core on an answer about data nobody held —
+one per burst of edits.
+
+- Every engine re-plan now carries a **generation**; `SchedulerEngine.abandonRunningPlan` bumps it at the
+  signature edge (ahead of the 1 s debounce) and on every new dispatch.
+- The fill asks `SearchBudget.checkAbandoned` at the checkpoints it already had — each `ScheduleFill.run` entry,
+  the rollout and the search every 64 steps, the improver every 64 moves — and unwinds with `PlanAbandoned`.
+- The reducer catches it and hands back the same state instance, so the ViewModel publishes, saves and retries
+  nothing. Generation 0 (the in-reducer re-plans answering a press) is never abandoned.
+
+`PlanAbandonedTest`. Nothing about what a completed fill produces changed.
+
+### A superseded re-plan now stops where it stands — 2026-09-23
+
+The user's rule: *"the scheduler must be triggered each time a relevant change happens, with a debounce or not
+… if the scheduler was already running, then it stops abruptly and runs again with the new data"*. The first
+half held; the second did not, at all.
+
+- `dispatchProgressivePlan` cancelled the previous job, but a fill is straight-line CPU with **no cancellation
+  check anywhere in `scheduler/domain/`** — so the cancel only took effect at the next suspension point,
+  *after* the fill had run to the end (1.6 s on the release account), published its answer about data nobody
+  held any more, and, having lost the compare-and-set to the keystroke that superseded it, re-run the whole
+  fill against the new state. A typed title could leave several of those grinding at once.
+- Now every plan intent carries the **generation** it was asked under, the engine answers whether that
+  generation is still current, and the fill asks at the checkpoints it already had: the rollout loop, the
+  improver's moves, the exhaustive search's clock check, and every entry to `ScheduleFill.run` — plus once
+  before the advance, so a fill already stale when it reaches the CPU does no work at all. An abandoned fill
+  unwinds and the reducer returns **the same state instance**, so nothing partial is published, nothing is
+  saved, and `dispatch` does not retry.
+- **Generation 0 is never abandoned** — the in-reducer re-plans that answer a press must be in the state
+  before the press returns — and the reducer holds that rule rather than the seam.
+- The rules moving abandons **at the edge**: `launchRuleChangeReschedule` stops the running fill the instant
+  `schedulingSignature` moves, and only then waits out the 1 s debounce before asking for the new one.
+
+`PlanAbandonedTest` pins all of it, including that an abandoned fill costs a small fraction of a whole one.
+1800 tests green. Client rebuild to take effect; no Supabase change.
+
+### A rename is not a re-plan, and the calendar shows it at the keystroke — 2026-09-22
+
+The user's rule: *"the scheduler must run each time the data for the schedule changes … except if it is in
+rename mode, which only renames the task panels in the schedule"*, and *"each time a title is renamed with a
+new keystroke, the titles in the calendar must update at the same time"*. Neither held.
+
+- `schedulingSignature` **hashed every task's title**, so every letter of a rename was a rule change and the
+  account re-planned (debounced) for a plan that could not come out different. What the plan really reads off
+  a title is two things, and both stay: whether it is BLANK (a blank title deletes, so the task leaves the
+  schedulable set) and the ORDER the titles put the tasks in (`docs/scheduler_score.md` § *Ties*: "higher
+  priority first, then title"). Typing "meeting notes for the week" over an existing name now moves the
+  signature **2 times instead of 26** — the two are real, the letters that carried the task past another
+  title. `RenameIsNotARuleTest`.
+- And because the fill is then not what rewrites the panels, **the rename does**: `applySetCellTitle` renames
+  the task's panels, so every block already on the timeline carries the new name on the frame the letter lands
+  in, instead of keeping the old one until some unrelated edit re-planned. (Green record blocks already read
+  the live task title; it was the auto/pinned panels that went stale.)
+- The display then re-labels instead of re-deriving: a change that moves nothing but task titles re-labels the
+  held reading's records from the tasks (`CalendarDisplayCache`), pinned against deriving again by
+  `CalendarRelabelEquivalenceTest`.
+
+Measured on the same account (231 tasks, 967 panels; a task carrying 45 panels renamed): a rename keystroke
+**~95 ms → 16 ms**, and the inert state change from the entry below **79 ms → 14 ms**. A change-task keystroke
+— where a draft task really is created and the tree changes — is 47 ms, and what is left there is the
+derivation the new task genuinely needs plus the tree rows that genuinely changed.
+
+Nothing about what the scheduler considers changed: every task still reaches it, and the fill, the score and
+the search are untouched.
+
+### Typing in a cell no longer re-derives and re-draws the whole app — 2026-09-21
+
+Anomaly: letters typed into a task cell appeared late and in blocks. Measured on a **copy** of the release
+account (231 tasks, 967 panels, 2856 history units), by composing the real `App` into a headless scene and
+timing each frame: an idle frame cost **5 ms**, one keystroke **95 ms** — and *any* state change at all cost
+**79 ms**, including one that drew nothing (an appended diagnostics row). At ~8 letters a second the frame
+budget was gone twice over, so the letters queued.
+
+Four causes, each measured and fixed separately:
+
+- **The calendar's whole derivation ran on every recomposition of `App`'s body**, i.e. for every state change
+  there is — an engine tick, a sync, a log row, a moved selection. It is now held on the values it actually
+  reads (`CalendarDisplayMemo`, two slots because the calendar reads it at the line and one millisecond
+  later), so a change that touches none of them costs nothing and the calendar's own subtree stops
+  recomposing with it.
+- **The heavy halves that do not read a task's TITLE are held separately** — the recurrence bars' environment,
+  the screen-break placement past and future, the reminder regeneration, the derived pauses. A rename rewrites
+  `tasks`, so the whole-derivation memo misses on every letter, but none of those four is a function of a
+  title (`planTasksOf` carries priority, minimum and resilience, and no title).
+- **Every visible task row re-composed on every state change** — ~44 of them, ~20 ms a frame — because
+  arguments Compose compares by instance were rebuilt on each pass: the row's contextual-menu holder, and
+  three callbacks that closed over the whole `SchedulerState`, the visible order or a `Cell`. The state is now
+  read through `rememberUpdatedState` holders and the menu is `remember`ed on what it offers, so rows skip:
+  ~44 recompositions per change became ~6.
+- **`CellListSection` re-measured every cell's title text on every pass** (`cellTextPx`), and
+  **`commitEditText` applied each keystroke twice** (once for the state, once to build the same delta).
+
+Result on the same account: an inert state change **79 ms → ~19 ms**, a keystroke **95 ms → ~60 ms**, idle
+frames unchanged at ~5 ms. Still outstanding: a keystroke's remaining cost is the title-dependent half of the
+derivation (`display.baseCalendarRecords`, ~10 ms) plus the composition of the rows that genuinely changed.
+
+New perf counters for this: `compose.TaskSchedulerScreen`, `compose.TaskTreeView`, `compose.TaskRow`,
+`compose.DefaultSubtreeWindow` and `recompose.TaskRow` / `recompose.TaskTreeView` /
+`recompose.TaskSchedulerScreen` — `recompose.TaskRow` divided by `recompose.App` is the row-skipping number
+above, and the one to watch. No deploy needed for the measurement; the fix needs a client rebuild.
+
 ### The §4 window can edit a live task's sub-tree again — 2026-09-21
 
 Anomaly: in the Default sub-tree window, a row pointed at a task the tree already holds could not have its

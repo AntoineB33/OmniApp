@@ -27,6 +27,38 @@ Global rules that always apply: `CLAUDE.md`.
     exactly like the sync clobbers in ADR 0007. `PlanConcurrencyTest` is that guard; `reduce.contended` in the
     overlay counts the retries, and more than a trickle of them means the re-plan is being asked for far too
     often, which is a rule-change bug upstream and not something to fix at the publish.
+- **THE DERIVATION IS HELD ON WHAT IT READS, and a state change that touches none of it costs nothing**
+  (`App.kt`'s `CalendarDisplayMemo`, 2026-09-21). `App`'s body re-runs for every state change there is — an
+  engine tick, a sync, a log row, a keystroke in the tree — and the derivation is ~25 ms of the frame it
+  lands in, plus the recomposition every equal-but-new record list forces on the calendar. The memo's key
+  names every value the derivation reads and nothing else: a value it reads left out freezes the calendar on
+  the reading taken before that value moved, an extra one only costs a miss. It has **two slots** because the
+  calendar reads the derivation twice — at the line and one millisecond later ([withLineMotion]) — and one
+  slot would make the two readings evict each other.
+  - **The halves that do not read a task's TITLE are held separately** (the recurrence bars' environment, the
+    past and forward screen-break placement, the reminder regeneration, the derived pauses). A rename
+    rewrites `tasks`, so the whole-derivation memo misses on every letter typed into a cell; none of those is
+    a function of a title, and `planTasksOf`'s value — priority, minimum, resilience, no title — is what
+    carries the tasks into them.
+  - **A record is read over the VISIBLE WINDOW, never over the account's history.** `task.record` is every
+    stretch of it ever worked (2333 on the release account against the ~150 a week draws), and clipping and
+    wrapping all of them per reading was the same rule broken one level down.
+  - **A RENAME IS RE-LABELLED, NEVER RE-DERIVED** (`CalendarDisplayCache`). A rename moves exactly two of the
+    derivation's inputs — the task's title and the titles of the panels the reducer renames with it — and no
+    edge at all, so when the only difference is task titles the held reading has its records re-labelled from
+    the tasks instead of being derived again (~0.5 ms against ~15 ms). That is what lets the user's two rules
+    hold together: the calendar's titles change in the frame the letter lands in, and the letter does not pay
+    for a placement nobody moved. The shortcut is refused the moment a title that no task owns moves (a
+    renamed screen break, a hand-drawn period), because only the derivation knows where those are named from.
+    It is pinned against deriving again by `CalendarRelabelEquivalenceTest`.
+- **A ROW THE USER DID NOT TOUCH MUST NOT RE-COMPOSE.** Compose skips a row only when it can see that its
+  arguments are unchanged, and it compares an argument it cannot prove stable BY INSTANCE — so a callback
+  that closes over the whole `SchedulerState`, over the visible order, or over a `Cell`, and any holder of
+  callbacks rebuilt inline (the row's contextual menu), is a changed argument on every state change, for
+  every row. All ~44 visible rows re-composed for every tick, sync and keystroke until 2026-09-21. The state
+  is read inside those callbacks through a `rememberUpdatedState` holder, and per-row holders are
+  `remember`ed on what they offer. `recompose.TaskRow` ÷ `recompose.App` is the number: ~1 per changed row,
+  not one per row on screen.
 - **THE DISPLAY IS NOT POLLED. It is re-derived when the SET OF RULES says the picture changes**
   (`SchedulerDomain.displayResampleDelayMillis`), and the drawn line is not one of the things derived from
   it. The scheduler returns a set of rules and everything `App`'s body builds is read out of it, so the

@@ -50,6 +50,7 @@ import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStore
@@ -846,6 +847,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // keeps showing the previous answer while it runs, so this only ever gates the first one.
         var lockHistoryScanned by remember { mutableStateOf(false) }
 
+        // The heavy halves of the derivation below that do NOT read a task's TITLE, each held on what it
+        // does read. A keystroke in the tree rewrites `tasks`, so the whole-derivation memo further down
+        // misses on every letter — but the screen-break placement, the recurrence bars' environment and the
+        // reminder regeneration are functions of the panels, the breaks, the §17 windows and the PLAN's view
+        // of the tasks ([SchedulerDomain.planTasksOf] carries a task's priority, minimum and resilience, and
+        // no title), none of which a rename moves. Held here, typing pays only what it actually changed.
+        val dynamicBaseMemo = remember { CalendarDisplayMemo<List<RestrictivePeriod>>() }
+        val pastSidePanelsMemo = remember { CalendarDisplayMemo<List<TaskPanel>>() }
+        val sidePanelsMemo = remember { CalendarDisplayMemo<List<TaskPanel>>() }
+        val reminderPanelsMemo = remember { CalendarDisplayMemo<List<TaskPanel>>() }
+        val derivedGapsMemo = remember { CalendarDisplayMemo<List<TaskTimeRange>>() }
+
         // ---- The calendar's derivation, as a function of the now-line -----------------------------------
         //
         // Everything the calendar draws, read out of the set of rules AT ONE INSTANT of the now-line. It is a
@@ -910,6 +923,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // what decides whether a stretch is a REST (nobody can run there) or merely a period somebody is
             // resilient to.
             val displayDynamicBase =
+                dynamicBaseMemo.get(
+                    listOf(
+                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tz,
+                        schedulerState.panels, schedulerState.periodKindStyles, schedulerState.sleep,
+                        inactiveSince, activeSince, observedNoScreenEvidence,
+                    ),
+                ) {
                 Perf.measure("display.dynamicBase") {
                 SchedulerDomain.restrictivePeriodsOf(schedulerState.panels, schedulerState.periodKindConfig) +
                     // The live pause reaches the recurrence bars as the rest stretch it is (see
@@ -933,6 +953,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         tz,
                     )
                 }
+                }
             val displayDynamicTasks =
                 Perf.measure("display.planTasks") { SchedulerDomain.planTasksOf(schedulerState, nowMillis) }
             // `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: the elapsed part of the visible
@@ -951,6 +972,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // total history) and stopping one millisecond short of `now`, so this and the forward projection below
             // can never draw the same occurrence twice.
             val displayPastSidePanels =
+                pastSidePanelsMemo.get(
+                    listOf(
+                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tpMode,
+                        schedulerState.screenBreaks, displayDynamicBase, displayDynamicTasks,
+                    ),
+                ) {
                 Perf.measure("display.pastSidePanels") {
                 SchedulerDomain.takenScreenBreakPanels(
                     schedulerState.screenBreaks,
@@ -961,6 +988,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     tpMillis = nowMillis,
                     mode = tpMode,
                 )
+                }
                 }
             // The three over the visible span. Which half the calendar is looking at decides which question is
             // asked, and the split is the `t_p` line: a span containing the present is the past behind the line
@@ -973,6 +1001,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // tens of thousands of markers pushed through the O(n²) placement scan, which froze the app when a
             // far day was opened. Both branches are bounded by the VISIBLE days.
             val displaySidePanels =
+                sidePanelsMemo.get(
+                    listOf(
+                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tpMode,
+                        schedulerState.screenBreaks, displayDynamicBase, displayDynamicTasks,
+                        displayPastSidePanels,
+                    ),
+                ) {
                 Perf.measure("display.sidePanels") {
                 if (visibleSpanStartMillis <= nowMillis) {
                     displayPastSidePanels +
@@ -992,6 +1027,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         basePeriods = displayDynamicBase,
                         tasks = displayDynamicTasks,
                     )
+                }
                 }
                 }
 
@@ -1031,11 +1067,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val reminderHorizonDays =
                 ((visibleSpanEndMillis - todayStartMillis) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(0)
             val displayReminderPanels =
+                reminderPanelsMemo.get(
+                    listOf(
+                        nowMillis, todayStartMillis, reminderHorizonDays,
+                        schedulerState.panels, schedulerState.chores,
+                    ),
+                ) {
                 Perf.measure("display.reminderPanels") {
                     SchedulerDomain.regenerateChorePanels(
                         schedulerState.panels, schedulerState.chores, todayStartMillis, reminderHorizonDays,
                         nowMillis,
                     ).filter { SchedulerDomain.isReminder(it) }
+                }
                 }
 
             // PRD §18: every ring of every alarm that falls in the WEEK ON SCREEN — past ones included, since an
@@ -1084,12 +1127,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val displayFloorMillis =
                 minOf(nowMillis - SchedulerDomain.SCHEDULE_HORIZON_MILLIS, visibleSpanStartMillis)
             val displayDerivedGaps =
+                derivedGapsMemo.get(listOf(nowMillis, displayFloorMillis, activeSessions)) {
                 Perf.measure("display.derivePauses") {
                     SchedulerDomain.derivePauses(
                         activeSessions.map { TaskTimeRange(it.startMillis, it.endMillis) },
                         displayFloorMillis,
                         nowMillis,
                     )
+                }
                 }
             val displayInactivityGaps =
                 SchedulerDomain.displayInactivityGaps(displayDerivedGaps, inactiveSince, activeSince, nowMillis)
@@ -1175,7 +1220,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 Perf.measure("display.baseCalendarRecords") {
                 (
                 schedulerState.tasks.values.flatMap { task ->
-                    SchedulerDomain.clipRecordsForObservedNoScreen(task.record, task, observedNoScreenRegions)
+                    // BOUNDED BY THE VISIBLE WINDOW, never by the account's history (CLAUDE.md hot path,
+                    // ADR 0009). A task's `record` is every stretch of it ever worked, and this ran over all
+                    // of them on every reading of the line: the release account carried 2333 of them against
+                    // the ~150 a displayed week holds, and each one was clipped, wrapped and handed to the
+                    // calendar to cull again. Nothing outside `[displayFloor, the end of the days on screen]`
+                    // can be drawn, and scrolling re-derives (the span is one of the memo's own keys).
+                    SchedulerDomain.clipRecordsForObservedNoScreen(
+                        task.record.filter {
+                            it.endEpochMillis >= displayFloorMillis && it.startEpochMillis <= visibleSpanEndMillis
+                        },
+                        task,
+                        observedNoScreenRegions,
+                    )
                         .map { CalendarRecord(title = task.title, range = it, taskId = task.id) }
                 } + mergePanelsForDisplay(
                     // PRD §8/§9: an on-screen task's panel is CUT where the devices observed nobody at a screen —
@@ -1387,7 +1444,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 workPlanPanelCount = displayWorkPlanPanels.size,
             )
         }
-        val calendarDisplay = deriveCalendarDisplay(nowMillis)
+        // …and it is asked through a memo on EVERY value it reads (see [CalendarDisplayMemo]). `App`'s body
+        // re-runs for every state change there is, and all but a few of them change nothing this derivation
+        // looks at — an appended diagnostic row, a moved selection, a navigated window. Each entry below is
+        // a value the function above reads; nothing it reads may be left out (a missing one would freeze the
+        // calendar on the reading taken before that value moved), and nothing it does not read belongs here
+        // (an extra one only costs a miss).
+        val displayCache = remember { CalendarDisplayCache() }
+        fun calendarDisplayAt(instantMillis: Long): CalendarDisplay =
+            displayCache.get(
+                key =
+                    listOf(
+                        instantMillis, visibleSpanStartMillis, visibleSpanEndMillis, today, tz, ownLayer,
+                        // What `workPlanPanels` IS, rather than the list itself: past the 168 h ceiling it is
+                        // the far-week fill, and below it `schedulerState.panels` — which is one of the two
+                        // held apart below, so naming the list here would defeat the re-label (a rename
+                        // rewrites it, and the key would miss before the shortcut was ever asked).
+                        visibleSpanBeyondNearHorizon, farWeekPlan,
+                        schedulerState.screenBreaks,
+                        schedulerState.periodKindStyles, schedulerState.timers, schedulerState.alarms,
+                        schedulerState.chores, schedulerState.sleep, schedulerState.sleepingSinceMillis,
+                        schedulerState.showScreenBreaks, schedulerState.showReminders,
+                        inactivityGaps, activeSince, inactiveSince, activeSessions, userAway, accountAway,
+                        declaredAwaySpans, declaredAwaySince, observedNoScreenEvidence,
+                        lockedIntervals, lockHistoryScanned,
+                    ),
+                // The two the RENAME moves, held apart from the rest so a title-only change can be
+                // re-labelled instead of re-derived (see [CalendarDisplayCache]).
+                tasks = schedulerState.tasks,
+                panels = schedulerState.panels,
+            ) { deriveCalendarDisplay(instantMillis) }
+        val calendarDisplay = calendarDisplayAt(nowMillis)
         // ADR 0009: the motion of every edge, read off a second reading one millisecond later — only while the
         // calendar is open (nothing else draws these), and only when the first reading or the instant changed,
         // so a recomposition for an unrelated reason (a keystroke in the tree) pays for one derivation, not two.
@@ -1398,7 +1485,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 } else {
                     withLineMotion(
                         calendarDisplay.records,
-                        deriveCalendarDisplay(nowMillis + LINE_MOTION_PROBE_MILLIS).records,
+                        calendarDisplayAt(nowMillis + LINE_MOTION_PROBE_MILLIS).records,
                     )
                 }
             }
@@ -1694,6 +1781,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ) {
                     when (page) {
                         OmniPage.TaskScheduler ->
+                            Perf.measure("compose.TaskSchedulerScreen") {
                             TaskSchedulerScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 store = store,
@@ -1719,6 +1807,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     deepCopyCellId = it
                                 },
                             )
+                            }
                     }
 
                     // PRD §5: the priority-weight window — about ONE sub-list, so opening it on another
@@ -2561,6 +2650,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // every tree gesture, with one switch per row added. The template and the switch beside
                     // its menu button are authoritative synced state.
                     if (defaultSubtreeWindowOpen) {
+                        Perf.measure("compose.DefaultSubtreeWindow") {
                         DefaultSubtreeWindow(
                             state = schedulerState,
                             enabled = schedulerState.defaultSubtreeEnabled,
@@ -2601,6 +2691,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center),
                         )
+                        }
                     }
 
                     // PRD §7 Keyboard shortcuts: the reference list of every chord, plus what claim the OS
@@ -2898,7 +2989,7 @@ private fun removeBlockIntent(block: PlacedRecord): SchedulerIntent? = when {
  * the derivation (the diagnostics timeline, the lock-history scan) and the perf gauges read off the reading
  * taken AT the line.
  */
-private data class CalendarDisplay(
+internal data class CalendarDisplay(
     val records: List<CalendarRecord>,
     val displayFloorMillis: Long,
     val bandSignature: String,
@@ -2907,6 +2998,125 @@ private data class CalendarDisplay(
     val sidePanelCount: Int,
     val workPlanPanelCount: Int,
 )
+
+/**
+ * ADR 0009 / CLAUDE.md hot path: **the derivation is a pure function of the values listed at its call site,
+ * so a state change that touches none of them cannot have changed the picture** — and re-deriving for one is
+ * ~25 ms of the frame it lands in, on top of the recomposition every equal-but-new record list forces the
+ * calendar into. `App`'s body recomposes for every state change there is (a log row appended, a selection
+ * moved, a window navigated, a keystroke in the tree), so without this the display was re-derived for all of
+ * them: a state change that drew nothing cost a 79 ms frame on the release account (2026-09-21).
+ *
+ * TWO slots, because the calendar reads the derivation TWICE — at the line and one millisecond later, which
+ * is how the motion of each edge is read ([withLineMotion]). One slot would make the two readings evict each
+ * other and the memo would never hit.
+ *
+ * Keyed by VALUE (`==`), not by identity: a reducer that rewrites the state leaves the collections it did not
+ * touch as the same instances, and `AbstractMap`/`AbstractList` equality short-circuits on identity, so an
+ * unchanged key costs a handful of reference comparisons.
+ */
+/**
+ * The top-level hold of [CalendarDisplay], with the one shortcut a RENAME needs.
+ *
+ * `docs/invariants/display-hot-path.md`: the derivation is a pure function of its inputs, so an unchanged key
+ * returns the same instance. A rename moves two of those inputs — the task's title, and the titles of the
+ * panels the rename rewrites ([SchedulerReducer.applySetCellTitle]) — and NOTHING else: not one edge moves,
+ * not one band changes shape. So when the only difference is titles, the held reading is **re-labelled**
+ * rather than derived again: what a block NAMES is its task's title, which is the one thing a rename says.
+ *
+ * That is what lets the user's two rules hold at once — *"each time a title is renamed with a new keystroke,
+ * the titles in the calendar must update at the same time"* and *"it shouldn't affect the writing in the task
+ * cell"*. The titles update in the very frame the letter lands in, and they cost a walk over the records
+ * instead of the ~15 ms the placement costs.
+ *
+ * The shortcut is refused the moment a title that is NOT a task's moved (a renamed screen break, a
+ * hand-drawn period): those are named by the panel itself, and only the derivation knows where they come
+ * from. Two slots, for the two readings of the line ([withLineMotion]).
+ */
+internal class CalendarDisplayCache {
+    private class Slot(
+        var key: List<Any?>,
+        var tasks: Map<TaskId, Task>,
+        var panels: List<TaskPanel>,
+        var value: CalendarDisplay,
+    )
+
+    private val slots = arrayOfNulls<Slot>(2)
+    private var next = 0
+
+    fun get(
+        key: List<Any?>,
+        tasks: Map<TaskId, Task>,
+        panels: List<TaskPanel>,
+        derive: () -> CalendarDisplay,
+    ): CalendarDisplay {
+        for (slot in slots) {
+            if (slot == null || slot.key != key) continue
+            if (slot.tasks == tasks && slot.panels == panels) return slot.value
+            if (!onlyTaskTitlesMoved(slot.tasks, tasks) || !onlyTaskPanelTitlesMoved(slot.panels, panels)) continue
+            val relabelled =
+                slot.value.copy(
+                    records = slot.value.records.map { record ->
+                        val title = record.taskId?.let { tasks[it]?.title }
+                        if (title != null && title != record.title) record.copy(title = title) else record
+                    },
+                )
+            slot.tasks = tasks
+            slot.panels = panels
+            slot.value = relabelled
+            return relabelled
+        }
+        val derived = derive()
+        slots[next] = Slot(key, tasks, panels, derived)
+        next = (next + 1) % slots.size
+        return derived
+    }
+
+    /** True when [now] is [before] with nothing but task TITLES changed. */
+    private fun onlyTaskTitlesMoved(before: Map<TaskId, Task>, now: Map<TaskId, Task>): Boolean {
+        if (before.size != now.size) return false
+        for ((id, previous) in before) {
+            val current = now[id] ?: return false
+            if (current !== previous && current.copy(title = previous.title) != previous) return false
+        }
+        return true
+    }
+
+    /**
+     * The same question about the panels — and a title that moved on a panel holding NO task fails it: a
+     * screen break and a hand-drawn period name themselves, so re-labelling from the tasks would leave them
+     * reading what they were called before.
+     */
+    private fun onlyTaskPanelTitlesMoved(before: List<TaskPanel>, now: List<TaskPanel>): Boolean {
+        if (before.size != now.size) return false
+        for (i in before.indices) {
+            val previous = before[i]
+            val current = now[i]
+            if (current === previous) continue
+            if (current.copy(title = previous.title) != previous) return false
+            if (current.title != previous.title && current.taskId == null) return false
+        }
+        return true
+    }
+}
+
+private class CalendarDisplayMemo<T> {
+    private val keys = arrayOfNulls<List<Any?>>(2)
+    private val values = arrayOfNulls<Any?>(2)
+    private var next = 0
+
+    @Suppress("UNCHECKED_CAST")
+    fun get(key: List<Any?>, derive: () -> T): T {
+        for (slot in keys.indices) {
+            if (keys[slot] == key) return values[slot] as T
+        }
+        val derived = derive()
+        keys[next] = key
+        values[next] = derived
+        next = (next + 1) % keys.size
+        return derived
+    }
+}
 
 private fun diagnosticsBandSignature(
     noScreenPeriods: List<TaskTimeRange>,

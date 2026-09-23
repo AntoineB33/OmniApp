@@ -711,6 +711,12 @@ sealed interface SchedulerIntent {
          * compete with this fill's own search on the score.
          */
         val seeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
+        /**
+         * Which re-plan this is, so a fill the engine has since superseded can stop where it stands
+         * ([org.example.project.scheduler.state.SchedulerReducer.planAbandoned]). `0` means nothing can
+         * supersede it — the in-reducer re-plans that answer a press.
+         */
+        val generation: Long = 0L,
     ) : SchedulerIntent
 
     /**
@@ -736,6 +742,8 @@ sealed interface SchedulerIntent {
         val horizonCapMillis: Long? = null,
         /** As [RefreshSchedule.searchMillis], for the tail this extension searches. */
         val searchMillis: Long = 0,
+        /** As [RefreshSchedule.generation]: which re-plan this is, so a superseded one stops where it stands. */
+        val generation: Long = 0L,
     ) : SchedulerIntent
 
     /**

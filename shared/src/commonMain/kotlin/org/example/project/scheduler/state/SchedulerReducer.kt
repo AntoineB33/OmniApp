@@ -10,6 +10,7 @@ import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
+import org.example.project.scheduler.domain.PlanAbandoned
 import org.example.project.scheduler.domain.SearchBudget
 import org.example.project.scheduler.domain.SearchReport
 import org.example.project.scheduler.model.RulePlacement
@@ -105,6 +106,23 @@ object SchedulerReducer {
      * and to publish the score beside the rules (§ *One device plans*). An output seam, like [recordSchedulerRun].
      */
     var planSearchSink: (SearchReport, Double?) -> Unit = { _, _ -> }
+
+    /**
+     * **Whether the plan reduction of this GENERATION has been superseded** — the user's rule: *"if the
+     * scheduler was already running, then it stops abruptly and runs again with the new data"*.
+     *
+     * A fill is tens of milliseconds to seconds of straight-line CPU, so cancelling the coroutine around it
+     * cannot stop it: it would run to the end and publish an answer about data nobody holds any more (and,
+     * worse, lose the compare-and-set and start over). The engine stamps every re-plan it asks for with a
+     * generation and answers here whether that generation is still the current one; the fill asks at every
+     * checkpoint it already has ([SearchBudget.checkAbandoned]) and unwinds where it stands.
+     *
+     * Generation `0` is *"nobody can supersede this"* — the in-reducer re-plans that answer a press
+     * (`ForceTaskStart`, `ForceTaskSwitch`, a sleep edit) must land in the state before the press returns, so
+     * they are never abandoned. The default never abandons anything, which is every test and every shell
+     * without an engine.
+     */
+    var planAbandoned: (Long) -> Boolean = { false }
 
     /**
      * The device's live ongoing/held pause ([SchedulerDomain.liveRestGap]), folded into screen-break
@@ -454,9 +472,20 @@ object SchedulerReducer {
                 if (state.screenBreaks == intent.screenBreaks) state
                 else state.copy(screenBreaks = intent.screenBreaks)
             is SchedulerIntent.RefreshSchedule ->
-                reduceRefreshSchedule(state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.seeds)
+                // An abandoned fill returns THE STATE IT WAS GIVEN — the same instance, so
+                // [TaskSchedulerViewModel.dispatch] publishes nothing, saves nothing and does not retry.
+                abandonable(state) {
+                    reduceRefreshSchedule(
+                        state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.seeds,
+                        intent.generation,
+                    )
+                }
             is SchedulerIntent.ExtendSchedule ->
-                reduceExtendSchedule(state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis)
+                abandonable(state) {
+                    reduceExtendSchedule(
+                        state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.generation,
+                    )
+                }
             is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
@@ -567,6 +596,25 @@ object SchedulerReducer {
             SchedulerIntent.RedoSelection -> redo(state, HistoryCategory.Selection)
         }
     }
+
+    /**
+     * Whether the fill stamped [generation] has been superseded. Generation **0** never is: it is what the
+     * in-reducer re-plans answering a press carry, and a press must be in the state before it returns — so
+     * that rule is held here, where every fill passes, rather than in whichever seam was installed.
+     */
+    private fun abandoned(generation: Long): Boolean = generation != 0L && planAbandoned(generation)
+
+    /**
+     * Run [plan] unless it is abandoned part-way ([planAbandoned]), in which case [state] is handed back
+     * untouched: a superseded fill leaves no trace at all, not even the records its advance had banked (the
+     * next tick banks them again).
+     */
+    private inline fun abandonable(state: SchedulerState, plan: () -> SchedulerState): SchedulerState =
+        try {
+            plan()
+        } catch (abandoned: PlanAbandoned) {
+            state
+        }
 
     /**
      * PRD §5 context-aware pointer: Ctrl+Z/Y target the Edit Mode stack while editing, the calendar
@@ -740,7 +788,17 @@ object SchedulerReducer {
                     applied.editSession?.copy(draftText = text)
                         ?: session.copy(draftText = text),
             )
-        return commitDelta(withSession, editTextDelta(base, text), HistoryCategory.Edit)
+        // The delta is read off the edit ALREADY APPLIED, never by applying it a second time: this runs on
+        // every keystroke and [applyEditText] is the whole naming path — the id resolution, the sub-list
+        // minting, the weight seeding — so asking for it twice doubled what a letter costs on the frame it
+        // lands in ([editTextDelta] is the same two readings, for the callers that have no applied state).
+        val delta =
+            TreeMutationDelta(
+                before = base.captureTree(),
+                after = applied.captureTree(),
+                label = "Edit text",
+            )
+        return commitDelta(withSession, delta, HistoryCategory.Edit)
     }
 
     private fun reduceSetEditMode(state: SchedulerState, mode: CellEditMode): SchedulerState {
@@ -2294,7 +2352,11 @@ object SchedulerReducer {
         horizonCapMillis: Long? = null,
         searchMillis: Long = 0,
         seeds: List<List<RulePlacement>> = emptyList(),
+        generation: Long = 0L,
     ): SchedulerState {
+        // Superseded before it even got the CPU (a burst of edits, a stage queued behind a longer one):
+        // stop before the advance rather than at the first checkpoint inside the search.
+        if (abandoned(generation)) throw PlanAbandoned()
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val horizon = cappedHorizon(nowMillis, horizonCapMillis)
@@ -2313,7 +2375,7 @@ object SchedulerReducer {
                 horizonMillis = horizon,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
-                searchBudget = SearchBudget.of(searchMillis),
+                searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 extraSeeds = seeds,
                 searchSink = { report, cost ->
                     search = report
@@ -2562,7 +2624,9 @@ object SchedulerReducer {
         nowMillis: Long,
         horizonCapMillis: Long? = null,
         searchMillis: Long = 0,
+        generation: Long = 0L,
     ): SchedulerState {
+        if (abandoned(generation)) throw PlanAbandoned()
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
         if (!advanced.automaticSchedule) return advanced
         val materializedUntil = SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis)
@@ -2583,7 +2647,7 @@ object SchedulerReducer {
                 keepExistingUntilMillis = materializedUntil,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
-                searchBudget = SearchBudget.of(searchMillis),
+                searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 searchSink = { report, cost ->
                     search = report
                     score = cost
@@ -5003,6 +5067,19 @@ private fun applySetCellTitle(
     // fill this cell is just an editing leftover, so without a real binding [purgeOrphanTasks] removes it.
     // Pinned/manual panels and recorded periods are real user data and still keep it alive (a genuinely
     // deleted scheduled task whose history is preserved, PRD §9).
+    // A RENAME RENAMES WHAT THE SCHEDULE ALREADY SHOWS, at the keystroke that renames the task.
+    //
+    // A task panel carries its own title (that is what the calendar draws it with, and what the cue and the
+    // History window read), and the fill is what writes it — so before this, a renamed task kept its old name
+    // on every block already on the timeline until the next re-plan happened to rewrite them. A title is not
+    // a scheduling rule (`SchedulerDomain.schedulingSignature`: only its blankness and the tie order are), so
+    // that re-plan must not be what a rename waits for: the panels are renamed here instead, and the calendar
+    // shows the new name on the frame the letter lands in.
+    if (!keepAsTombstone && previousTitle != null && previousTitle != title) {
+        val renamed = result.panels.map { if (it.taskId == taskId) it.copy(title = title) else it }
+        if (renamed != result.panels) result = result.copy(panels = renamed)
+    }
+
     val vacatedTaskId = cell.taskId
     if (vacatedTaskId != null && vacatedTaskId != taskId) {
         result.tasks[vacatedTaskId]?.let { vacated ->
