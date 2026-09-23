@@ -13,6 +13,7 @@ import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStateCodec
@@ -1439,7 +1440,8 @@ class SchedulerReducerTest {
         assertTrue(SchedulerDomain.isDetachedParentTask(s, abilities))
         assertEquals(childTitles(s, abilities), listOf("drawing", "guitar"))
         val entry = SchedulerDomain.changeTaskMenuEntries(s, parentCell, "abilities").first { it.taskId == abilities }
-        assertEquals("drawing, guitar", entry.label)
+        // ...and marks it, because "no path" is a thing about a row that nobody reads as one (PRD §4).
+        assertEquals("${SchedulerDomain.DEAD_TASK_ROW_PREFIX}drawing, guitar", entry.label)
 
         // Setting the previous id back restores the sub-list.
         s = SchedulerReducer.reduce(s, SchedulerIntent.AssignTaskId(parentCell, abilities))
@@ -2044,11 +2046,10 @@ class SchedulerReducerTest {
     }
 
     @Test
-    fun reenter_edit_selects_current_task_in_change_menu() {
-        // PRD §4: re-entering Edit Mode on an assigned cell makes the current task the *default
-        // selection*, so it must be listed (and highlightable) — only the in-progress "New task" draft
-        // is hidden. (Excluding the current task here was the cause of "the picked task didn't go
-        // purple": with it removed, changeTaskMenuSelectedIndex could not match it and returned -1.)
+    fun reenter_edit_on_the_only_task_of_its_title_shows_no_menu() {
+        // PRD §4 *Appearance* (2026-09-23, account 3): re-entering Edit Mode on an assigned cell whose task
+        // nothing rivals shows NO id menu. The cell's own task is the answer the cell already gives, and the
+        // one row it used to draw — that task's own path — read as a *second*, dead task at the same place.
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
         s =
@@ -2061,10 +2062,11 @@ class SchedulerReducerTest {
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId))
         val session = s.editSession!!
+        // The current task is still the *default selection* (PRD §4) — the menu being gone says nothing
+        // about what Enter commits to.
         assertEquals(taskId, session.selectedAssignTaskId)
         assertEquals("g", session.draftText)
 
-        // The UI builds the menu excluding only the "New task" draft.
         val entries =
             SchedulerDomain.changeTaskMenuEntries(
                 s,
@@ -2072,13 +2074,90 @@ class SchedulerReducerTest {
                 session.draftText,
                 excludeTaskId = session.newTaskDraftId,
             )
-        // "New task" plus the current task "g"; "g" is the selected (purple) element.
+        assertTrue(entries.isEmpty(), "nothing rivals \"g\" and it has no past to abandon: $entries")
+    }
+
+    @Test
+    fun reenter_edit_on_a_task_with_a_past_offers_new_task_alone() {
+        // PRD §4 *Appearance*: same cell, but its task now holds a recorded period. "New task" is then a
+        // real offer — it re-points the cell at a fresh id and leaves this one holding its record — so the
+        // menu appears, as that row and nothing else.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = cellId, initialText = "g"),
+            )
+        val taskId = s.cells[cellId]!!.taskId!!
+        s = s.copy(editSession = null)
+        s =
+            s.copy(
+                tasks =
+                    s.tasks + (taskId to s.tasks[taskId]!!.copy(record = listOf(TaskTimeRange(1_000L, 2_000L)))),
+            )
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId))
+        val session = s.editSession!!
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                cellId,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
+        assertEquals(1, entries.size)
+        assertEquals(null, entries.single().taskId)
+        assertEquals("New task", entries.single().label)
+        // Nothing is selected: the cell's task is not among the choices, and saying otherwise would draw
+        // "New task" as already picked.
+        assertEquals(
+            -1,
+            SchedulerDomain.changeTaskMenuSelectedIndex(entries, session.selectedAssignTaskId),
+        )
+    }
+
+    @Test
+    fun choosing_new_task_brings_the_abandoned_id_back_as_a_row() {
+        // PRD §4 *Appearance*: picking "New task" on a cell whose task has a past leaves that task behind
+        // ([SchedulerDomain.purgeOrphanTasks] keeps it for its record), and it comes straight back as a row
+        // of the same menu — the way back from the choice just made.
+        var s = SchedulerState.empty()
+        val cellId = s.lists[s.rootListId]!!.cellIds.first()
+        s =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.BeginEdit(cellId = cellId, initialText = "g"),
+            )
+        val taskId = s.cells[cellId]!!.taskId!!
+        s = s.copy(editSession = null)
+        s =
+            s.copy(
+                tasks =
+                    s.tasks + (taskId to s.tasks[taskId]!!.copy(record = listOf(TaskTimeRange(1_000L, 2_000L)))),
+            )
+        s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(cellId))
+
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SelectCreateAssignTask)
+        val session = s.editSession!!
+        assertEquals(null, session.selectedAssignTaskId)
+        val draftId = session.newTaskDraftId!!
+        assertEquals(draftId, s.cells[cellId]!!.taskId, "the cell now holds the fresh id")
+
+        val entries =
+            SchedulerDomain.changeTaskMenuEntries(
+                s,
+                cellId,
+                session.draftText,
+                excludeTaskId = session.newTaskDraftId,
+            )
         assertEquals(2, entries.size)
         assertEquals("New task", entries[0].label)
-        assertEquals(taskId, entries[1].taskId)
-        val selectedIndex =
-            SchedulerDomain.changeTaskMenuSelectedIndex(entries, session.selectedAssignTaskId)
-        assertEquals(taskId, entries[selectedIndex].taskId)
+        assertEquals(taskId, entries[1].taskId, "the abandoned id is offered back: $entries")
+        // And it says what it is: the tree does not hold it any more, it is alive on its record alone.
+        assertEquals("${SchedulerDomain.DEAD_TASK_ROW_PREFIX}g", entries[1].label)
+        // "New task" is what is selected now, so the choice reads back off the menu.
+        assertEquals(0, SchedulerDomain.changeTaskMenuSelectedIndex(entries, session.selectedAssignTaskId))
     }
 
     @Test
@@ -2149,8 +2228,7 @@ class SchedulerReducerTest {
                 session.draftText,
                 excludeTaskId = session.newTaskDraftId,
             )
-        assertEquals(1, entries.size)
-        assertEquals("New task", entries.single().label)
+        assertTrue(entries.isEmpty(), "no rival is assignable here, so there is no menu (PRD §4)")
         assertFalse(firstTaskId in entries.mapNotNull { it.taskId })
     }
 
@@ -2177,8 +2255,7 @@ class SchedulerReducerTest {
                 session.draftText,
                 excludeTaskId = session.selectedAssignTaskId ?: session.newTaskDraftId,
             )
-        assertEquals(1, entries.size)
-        assertEquals("New task", entries.single().label)
+        assertTrue(entries.isEmpty(), "an empty cell with an empty draft names nothing (PRD §4)")
     }
 
     @Test
@@ -2236,9 +2313,9 @@ class SchedulerReducerTest {
                 session.draftText,
                 excludeTaskId = session.newTaskDraftId,
             )
-        assertEquals(1, entries.size)
-        assertEquals(null, entries.single().taskId)
-        assertEquals("New task", entries.single().label)
+        // PRD §4 *Appearance*: nothing rivals the draft and the cell had no task to abandon, so there is
+        // no menu at all — not even the lone "New task" row it used to collapse to.
+        assertTrue(entries.isEmpty(), "no menu: \"h\" names nothing but the draft itself")
     }
 
     @Test
@@ -2342,9 +2419,8 @@ class SchedulerReducerTest {
                 session.draftText,
                 excludeTaskId = session.selectedAssignTaskId ?: session.newTaskDraftId,
             )
-        // Only "New task" — "yu" must NOT appear even though it is otherwise assignable.
-        assertEquals(1, entries.size)
-        assertEquals("New task", entries.single().label)
+        // No menu at all — "yu" must NOT appear even though it is otherwise assignable.
+        assertTrue(entries.isEmpty())
         assertFalse(yuTaskId in entries.mapNotNull { it.taskId })
         assertTrue(SchedulerDomain.canAssignTaskId(s, gChild, yuTaskId))
     }
@@ -2373,8 +2449,7 @@ class SchedulerReducerTest {
                 session.draftText,
                 excludeTaskId = session.selectedAssignTaskId ?: session.newTaskDraftId,
             )
-        assertEquals(1, entries.size)
-        assertEquals("New task", entries.single().label)
+        assertTrue(entries.isEmpty())
 
         val suggestions = SchedulerDomain.titleSuggestions(s, "r")
         assertEquals(listOf("root"), suggestions)
@@ -2411,8 +2486,7 @@ class SchedulerReducerTest {
                 // task stays listed so it can render as the selected entry).
                 excludeTaskId = s.editSession!!.newTaskDraftId,
             )
-        assertEquals(1, partialEntries.size)
-        assertEquals("New task", partialEntries.single().label)
+        assertTrue(partialEntries.isEmpty())
         assertFalse(yuTaskId in partialEntries.mapNotNull { it.taskId })
 
         // Typing the full "yu": the "yu" row now appears alongside "New task".

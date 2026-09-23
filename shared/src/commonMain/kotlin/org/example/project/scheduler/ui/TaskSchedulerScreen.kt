@@ -1008,10 +1008,11 @@ internal fun EditModeMenus(
         TaskPalette.sheetColors(rememberTaskHues(namingSource, TaskHueMemo.account))
 
     val modeOptions = cellEditModeOptions(state, cellId, hideModeSelector, onIntent, onModePicked)
-    // The Tasks menu is worth showing only beyond the lone "New task" row (the reminders manager applies the
-    // same rule to its "New Reminder" row).
+    // Whether there is a menu at all is [SchedulerDomain.changeTaskMenuEntries]' own answer, and it hands it
+    // over as an empty list — a lone "New task" row is a real menu here (PRD §4 *Appearance*: the current
+    // task's id has a past to abandon), so no row count can tell the two apart from out here.
     val identityRows =
-        if (taskEntries.size > 1) {
+        if (taskEntries.isNotEmpty()) {
             val selectedIndex =
                 SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, session.selectedAssignTaskId)
             taskEntries.mapIndexed { index, entry ->

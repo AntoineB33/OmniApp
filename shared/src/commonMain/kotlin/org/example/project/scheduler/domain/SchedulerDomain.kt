@@ -1206,6 +1206,26 @@ object SchedulerDomain {
         state.cells.values.any { it.taskId == taskId }
 
     /**
+     * PRD §4/§8: whether the **timeline still holds** [taskId] — a banked record of a period the user spent
+     * on it ([Task.record], §9's bank) or a block the user placed for it by hand ([isUserPlaced]).
+     *
+     * The question the Change Task menu asks before offering "New task" at all ([changeTaskMenuEntries]):
+     * picking that row points the cell at a fresh id and leaves this one behind, which is worth offering
+     * exactly when the id has a past to be left behind with — and it is the same history [purgeOrphanTasks]
+     * keeps the abandoned id alive on, which is what brings it back as a row of that very menu.
+     *
+     * The scheduler's own reading of a task's past ([pastPeriodsForTask]) clips to an instant and counts
+     * every panel; this one takes no `nowMillis` on purpose. It sits on the per-keystroke edit path, where a
+     * `now` argument would re-walk the whole menu on every display resample (`display-hot-path.md`) — and
+     * the AUTO panels it would then count are the schedule's own future, which all but every scheduled leaf
+     * has, so the menu would be back to showing always. A user-placed block still ahead of the now-line
+     * counts, and is the one place the two readings differ.
+     */
+    fun taskHasTimelineHistory(state: SchedulerState, taskId: TaskId): Boolean =
+        state.tasks[taskId]?.record?.isNotEmpty() == true ||
+            state.panels.any { it.taskId == taskId && isUserPlaced(it) }
+
+    /**
      * PRD §4: a **detached parent** — a titled task no cell points at anymore that still owns a populated
      * sub-list. Re-pointing a cell at another task id does NOT delete the task it left: the sub-tree belongs
      * to the *task id*, not to the cell, so the task survives cell-less with its children and the Change Task
@@ -5942,6 +5962,14 @@ object SchedulerDomain {
     )
 
     /**
+     * PRD §4 *Presentation*: what an id row wears when **the tree does not hold its task at all** — a
+     * tombstone kept alive by its calendar records, a detached parent, a task stranded inside one. It is a
+     * real row (assigning the id brings the task, and whatever sub-tree it owns, back where the cell is), so
+     * it is marked rather than dropped — exactly as its "go to task" is greyed rather than hidden.
+     */
+    const val DEAD_TASK_ROW_PREFIX = "[dead] "
+
+    /**
      * [paths] is [shortestTaskTreePaths], taken as an argument rather than recomputed: it is a walk of the
      * whole tree, and the sort below asks it once per COMPARISON. Every entry point that builds a menu
      * computes it once and hands it down.
@@ -5993,6 +6021,12 @@ object SchedulerDomain {
      * inside a *detached parent's* sub-tree still has a cell, but there is no path in the tree to name it
      * by, so it is named by what it holds exactly as the detached parent above it is. A task with nothing
      * under it falls back to its own title, so no row is ever blank.
+     *
+     * Such a row is also marked [DEAD_TASK_ROW_PREFIX]. The absence of a path was already the whole of the
+     * statement — and it is a statement no one reads, because a row saying `planning` and a row saying
+     * `root / planning` differ by something the eye takes for a shorter path, not for "this one is not in
+     * your tree" (2026-09-23: the user took a row for a dead task precisely because they had no way to tell
+     * a live one from one). It is the same rows whose "go to task" is greyed, and they sort last.
      */
     private fun changeTaskMenuLabel(
         state: SchedulerState,
@@ -6002,7 +6036,7 @@ object SchedulerDomain {
         val childLabel = childTitlesLabel(state, taskId)
         val path = paths[taskId]
         if (path == null) {
-            return childLabel.ifEmpty { state.tasks[taskId]?.title.orEmpty() }
+            return DEAD_TASK_ROW_PREFIX + childLabel.ifEmpty { state.tasks[taskId]?.title.orEmpty() }
         }
         val pathLabel = taskPathLabel(state, path)
         return if (childLabel.isNotEmpty()) "$pathLabel ($childLabel)" else pathLabel
@@ -6080,8 +6114,39 @@ object SchedulerDomain {
     }
 
     /**
-     * All rows in the Change Task menu; first row is always "New task" (PRD §4).
-     * Impossible IDs (same list / ancestor path) are hidden, per PRD §4 Filtering.
+     * All rows in the Change Task menu — "New task" first when there is a menu at all, **empty when there
+     * is none** (PRD §4 *Appearance*). Impossible IDs (same list / ancestor path) are hidden, per PRD §4
+     * Filtering.
+     *
+     * **The menu answers "which of the tasks with this title is this cell", so it appears only when that
+     * question has more than one answer** — a *rival*: some other task the typed text names that this cell
+     * could take. The cell's own **unchanged** task is not one: it is the answer already given, and a menu
+     * whose only row was the path the user is looking straight at read as a task the tree no longer holds
+     * (2026-09-23, account 3 — the row was the edited cell's own "writing", and its `(planning)` child
+     * titles made it look like a second, dead one).
+     *
+     * **Unchanged** is the whole of it, and it is why this reads the edit session's own `treeBefore`
+     * rather than just `state.cells[cellId]`: the hidden row is the one the cell arrived with **and** still
+     * holds. Every other id the cell passes through mid-session is a choice the user made or the default
+     * selection made for them, and it has to stay visible and selectable:
+     *  - typing an existing title into an empty cell **reuses** that task (PRD §4 *Default selection*), and
+     *    its row is the only thing that says so — and the only way back to a *new* id of the same title,
+     *    which PRD §4 *Creation* exists to give (the release tree holds five tasks called "planning");
+     *  - a row picked from this very menu must stay listed to render **selected** (purple), or
+     *    [changeTaskMenuSelectedIndex] cannot match it and the menu would vanish under the click;
+     *  - and **picking "New task" brings the abandoned id straight back as a row** with no rule of its own:
+     *    the cell now points at the draft (excluded by [excludeTaskId]) so the previous task is unchanged no
+     *    longer, and it is still there to be listed because [purgeOrphanTasks] keeps a task its timeline
+     *    holds — the same predicate that opened the menu.
+     *
+     * The one thing left to offer when nothing rivals it is the **"New task"** row, and that is worth a menu
+     * exactly when the unchanged id has a past to be abandoned ([taskHasTimelineHistory]): picking it
+     * re-points the cell at a fresh task and leaves this one holding its records. So, with no rival:
+     *  - the unchanged task has timeline history ⇒ the menu is the lone "New task" row (nothing is selected —
+     *    [changeTaskMenuSelectedIndex] finds no row for the current task, which is the truth: the cell's task
+     *    is not among the choices);
+     *  - it has none ⇒ no menu at all, because minting a fresh id under the same title would change nothing
+     *    a user could see.
      *
      * [namingSource] is the state the rows are **named from** when the tree being drawn is not the account's
      * own — `TaskTreeView`'s `colorSource` by another name, and for the same kind of reason.
@@ -6119,9 +6184,27 @@ object SchedulerDomain {
         // order (shortest first) instead of dropping every live task into the pathless tail.
         val paths = if (namingSource === state) drawnPaths else drawnPaths + sourcePaths
         val matching = eligibleAssignTaskIds(state, cellId, draftText, paths, excludeTaskId)
+        // PRD §4 *Appearance* — see above. Both halves are read off the DRAWN tree, like everything else the
+        // menu offers or hides: it is that tree's cell the user is editing, and its own session (the §4
+        // template window and "All tasks" each carry theirs).
+        val sessionEntryTaskId =
+            state.editSession
+                ?.takeIf { it.cellId == cellId }
+                ?.treeBefore?.cells?.get(cellId)?.taskId
+        val unchangedTaskId = state.cells[cellId]?.taskId?.takeIf { it == sessionEntryTaskId }
+        val rivals = matching.filter { it != unchangedTaskId }
+        val rows =
+            when {
+                // A rival exists: every match is listed, the cell's own task included — that row is what
+                // renders selected (purple), and dropping it would leave the menu unable to say which of
+                // the identical-looking paths the cell is on.
+                rivals.isNotEmpty() -> matching
+                unchangedTaskId != null && taskHasTimelineHistory(state, unchangedTaskId) -> emptyList()
+                else -> return emptyList()
+            }
         return buildList {
             add(ChangeTaskMenuEntry(taskId = null, label = "New task"))
-            for (taskId in matching) {
+            for (taskId in rows) {
                 add(
                     ChangeTaskMenuEntry(
                         taskId = taskId,

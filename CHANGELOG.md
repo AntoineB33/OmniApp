@@ -11,6 +11,42 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The id menu stops offering the cell its own task back — 2026-09-23
+
+Account 3, a cell in Edit Mode at `root / planning / AI / most of the AI / writing`: the Tasks menu held "New
+task" and one row, `root / planning / AI / most of the AI / writing (planning)` — the path the user was looking
+straight at, which read as a *second*, dead task of the same name kept alive by the calendar. A read-only probe
+of the release DB said otherwise: one task `task/user/330` titled "writing", alive, mirrored under two parents,
+`(planning)` being its child titles. The row was the edited cell's **own** task, listed because the menu listed
+every title match and only ever hid the in-progress "New task" draft.
+
+The user's rule: *"the id suggestion list must appear only if another task than the current one has the same
+title, or if the current task exists in the past of the timeline"*.
+
+- `SchedulerDomain.changeTaskMenuEntries` now decides **whether there is a menu at all** and says so by
+  returning an **empty list**; `EditModeMenus` renders whatever it gets and no longer reads a row count
+  (`entries.size > 1` could not tell a lone "New task" that must show from one that must not).
+- No rival ⇒ the cell's own task is not a row. With a rival it still is, and still renders selected (purple).
+- No rival, but the cell's task has a past — `taskHasTimelineHistory`: a `Task.record`, or a panel
+  `isUserPlaced` — ⇒ the menu is the lone **"New task"** row, nothing highlighted. No past ⇒ no menu.
+- Choosing "New task" then brings the abandoned id back as an ordinary row, by no rule of its own: the cell
+  holds the draft, so the previous task is a rival again, and `purgeOrphanTasks` keeps it alive on the very
+  past that opened the menu.
+- **"The current one" is read against the session's `treeBefore`**: only the task the cell *arrived with and
+  still holds* is hidden. An id the session passes through is a choice and stays visible — the row that says a
+  typed title was reused (PRD §4 *Creation*, the only route to a second task of an existing title), the row a
+  pick keeps to go purple, and the previous id after "New task".
+- `taskHasTimelineHistory` takes no `nowMillis` on purpose: it sits on the per-keystroke edit path. So auto
+  panels (the schedule's own future, which nearly every scheduled leaf has — the menu would always show) do
+  not count, and a user-placed block ahead of the now-line does.
+- **A row the tree does not hold now says so**: `DEAD_TASK_ROW_PREFIX`, `[dead] ` before the child titles it
+  was already named by. The absence of a path was the whole statement before, and it is not one anybody
+  reads — `planning` beside `root / planning` looks like a shorter path, not like a task that is gone. Same
+  rows whose "go to task" is greyed; they still sort last, and assigning one still brings its sub-tree back.
+
+PRD §4 *Appearance* / *Coming back*, `docs/invariants/task-tree.md`. Three new `SchedulerReducerTest` cases;
+the seven that asserted a "collapsed" menu now assert an empty one. Client rebuild only.
+
 ### A re-plan nobody waits for any more stops where it stands — 2026-09-22
 
 The user's rule: *"if the scheduler was already running, then it stops abruptly and runs again with the new

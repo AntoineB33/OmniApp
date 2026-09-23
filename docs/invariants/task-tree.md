@@ -111,6 +111,19 @@ Global rules that always apply: `CLAUDE.md`.
   the cell where it **mints** that sub-list — a freshly minted sub-list is never shown expanded. A rename mints
   nothing and keeps its children on screen. Nothing puts the cell back: **creating a task never expands it**,
   the default-subtree graft included (below).
+- **Whether there IS a Change Task menu is `changeTaskMenuEntries`' own answer, handed over as an empty
+  list** — no caller may re-derive it from a row count. A lone "New task" row is a real menu (the cell's task
+  has a past to abandon) and a lone "New task" row is also exactly what the old `entries.size > 1` guard read
+  as "collapsed", so the two are indistinguishable from outside. The rule it applies: the menu appears only
+  when some task **other than the cell's own unchanged one** is offered, or — with no such rival — when that
+  unchanged task `taskHasTimelineHistory`, and then as the "New task" row alone. "Unchanged" is read against
+  the session's `treeBefore`, not just `state.cells[cellId]`, and that is the whole of the rule: the id a cell
+  *passes through* mid-session is a choice, and hiding it would take away the row that says a typed title was
+  **reused** (PRD §4 *Creation* — the only way to a second task of an existing title, and the release tree
+  holds five "planning"s), the purple row a **pick** must keep to render as selected, and the previous id that
+  has to come back after "New task". What the row count hid instead was the cell's own path, drawn under a
+  cursor that was pointing straight at it — read on the release account as a second, dead task with the same
+  path (2026-09-23).
 - **What the Change Task menu hides is exactly PRD §4 *Filtering*: the cell's own list, and its ancestor
   PATH** (`assignCollisionScope`). Not the ancestors' whole **sub-trees** — a task already recurring
   elsewhere under the same ancestor is *mirroring* (Constraint 3), not a collision, and Constraint 1 forbids
@@ -133,8 +146,11 @@ Global rules that always apply: `CLAUDE.md`.
   through the account's tree — `planning / write good prompt`, which the account's tree has nowhere — and the
   user went looking for it there (2026-09-20). A task the ACCOUNT holds is still named from the account
   (`namingSource`), so the two kinds of row now say which tree they are about.
-- A task **the tree does not hold** is named by its child titles, never by a path (PRD §4) — and sorts
-  **last**, after every row that has one. "Does not hold" is `shortestTaskTreePaths`, the same predicate the
+- A task **the tree does not hold** is named by its child titles under the `[dead]` mark
+  (`DEAD_TASK_ROW_PREFIX`), never by a path (PRD §4) — and sorts **last**, after every row that has one. The
+  mark carries the whole statement: "no path" is not one a reader makes, and a row reading `planning` next to
+  one reading `root / planning` looks like a shorter path, not like a task that is not in the tree — which is
+  how a live row came to be read as a dead one (2026-09-23). "Does not hold" is `shortestTaskTreePaths`, the same predicate the
   "All tasks" rows and the greying of "go to task" use, so it also covers a task stranded *inside* a detached
   parent (which `taskHasCells` calls present). Those are precisely the rows whose "go to task" is greyed, and
   ranking them by a nominal path length of 1 put them FIRST — under the cursor, offering the one answer that
