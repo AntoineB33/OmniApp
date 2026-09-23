@@ -275,16 +275,22 @@ function ajouterNoeudMax() {
   
   var classeur = SpreadsheetApp.getActiveSpreadsheet();
   var feuilleTraitement = classeur.getActiveSheet(); 
+  var lastCol = Math.max(feuilleTraitement.getLastColumn(), 3);
   
   if (meilleurChemin !== null) {
-    var lastCol = Math.max(feuilleTraitement.getLastColumn(), 3);
     
     // 2. Si le nœud maximal n'est pas déjà dans la colonne A
     if (ligneExistante === -1) {
       feuilleTraitement.insertRowBefore(LIGNE_DEBUT_VERIFICATION);
       
-      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1).setValue(meilleurChemin);
-      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 2).setFormula("=" + nomFeuilleEchappe + "!" + meilleureRef);
+      // CORRECTION : On s'assure d'écraser la couleur rouge héritée lors de l'insertion
+      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1)
+        .setValue(meilleurChemin)
+        .setBackground(COULEUR_BLEU); // On force le bleu pour le nouveau noeud
+        
+      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 2)
+        .setFormula("=" + nomFeuilleEchappe + "!" + meilleureRef)
+        .setBackground(null); // On nettoie le fond au cas où
       
       var currentLastRow = feuilleTraitement.getLastRow();
       if (currentLastRow > LIGNE_DEBUT_VERIFICATION) {
@@ -310,8 +316,10 @@ function ajouterNoeudMax() {
       var helperValues = []; // Valeurs pour la colonne de tri temporaire
       
       for (var k = 0; k < bgs.length; k++) {
-        // Nettoyage de l'ancienne couleur bleue
-        if (bgs[k][0] === COULEUR_BLEU) {
+        var estNouveauNoeud = (ligneExistante === -1 && k === 0);
+        
+        // CORRECTION : Nettoyage de l'ancienne couleur bleue, SAUF pour le nouveau noeud fraîchement ajouté
+        if (bgs[k][0] === COULEUR_BLEU && !estNouveauNoeud) {
           bgs[k][0] = null;
           changedBg = true;
         }
