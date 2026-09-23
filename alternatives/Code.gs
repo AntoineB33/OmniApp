@@ -245,7 +245,6 @@ function ajouterNoeudMax() {
   
   var dictionnaireFeuilles = contexte.dictionnaireFeuilles;
   var infosExistants = contexte.infosExistants;
-  var derniereLigneRemplie = contexte.derniereLigneRemplie;
   var nomFeuilleEchappe = contexte.nomFeuilleEchappe;
   
   var maxScore = -Infinity;
@@ -253,6 +252,7 @@ function ajouterNoeudMax() {
   var meilleureRef = null;
   var ligneExistante = -1; 
   
+  // 1. Déterminer le meilleur nœud (plus haute soustraction ou priorité)
   dictionnaireFeuilles.forEach(function(infos, cheminMap) {
     if (infos.isNumber) {
       var scoreCourant;
@@ -278,38 +278,56 @@ function ajouterNoeudMax() {
   var feuilleTraitement = classeur.getActiveSheet(); 
   
   if (meilleurChemin !== null) {
+    var lastCol = Math.max(feuilleTraitement.getLastColumn(), 3);
     
-    var ligneGagnanteReelle;
-    
-    if (ligneExistante !== -1) {
-      ligneGagnanteReelle = ligneExistante + 1;
-      feuilleTraitement.getRange(ligneGagnanteReelle, 1).setBackground(COULEUR_BLEU);
-      classeur.toast("Le meilleur nœud était déjà listé (Score : " + maxScore + "). Il est en bleu !");
+    // 2. Si le nœud maximal n'est pas déjà dans la colonne A
+    if (ligneExistante === -1) {
+      // Insérer une vraie ligne au début (décale les autres vers le bas)
+      feuilleTraitement.insertRowBefore(LIGNE_DEBUT_VERIFICATION);
+      
+      // Remplir A et B
+      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1).setValue(meilleurChemin);
+      feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 2).setFormula("=" + nomFeuilleEchappe + "!" + meilleureRef);
+      
+      // Copier la formule de la colonne C (et des colonnes suivantes) depuis la ligne en dessous
+      // La fonction native "copyTo" décale automatiquement la logique des formules (ex: ligne 5 copiée vers ligne 4)
+      var currentLastRow = feuilleTraitement.getLastRow();
+      if (currentLastRow > LIGNE_DEBUT_VERIFICATION) {
+        var rangeToCopy = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION + 1, 3, 1, lastCol - 2);
+        rangeToCopy.copyTo(feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 3));
+      }
+      
+      classeur.toast("Nouveau nœud ajouté. Tri en cours...");
+      
+      // Forcer le calcul des formules pour que la nouvelle cellule en C ait sa soustraction à jour avant le tri
+      SpreadsheetApp.flush();
     } else {
-      ligneGagnanteReelle = derniereLigneRemplie + 1;
-      feuilleTraitement.getRange(ligneGagnanteReelle, 1).setValue(meilleurChemin).setBackground(COULEUR_BLEU);
-      feuilleTraitement.getRange(ligneGagnanteReelle, 2).setFormula("=" + nomFeuilleEchappe + "!" + meilleureRef);
-      classeur.toast("Nouveau nœud ajouté (Score : " + maxScore + ") à la ligne " + ligneGagnanteReelle + " !");
+      classeur.toast("Mise à jour de l'ordre du tableau...");
     }
     
-    // --- NETTOYAGE DES ANCIENS BLEUS ---
-    var lastRowA = feuilleTraitement.getLastRow();
-    if (lastRowA >= LIGNE_DEBUT_VERIFICATION) {
-      var rangeA = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, lastRowA - LIGNE_DEBUT_VERIFICATION + 1, 1);
+    var newLastRow = feuilleTraitement.getLastRow();
+    
+    if (newLastRow >= LIGNE_DEBUT_VERIFICATION) {
+      // 3. NETTOYAGE : Plus de couleur bleue (on retire les anciens bleus s'il y en a)
+      var rangeA = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, newLastRow - LIGNE_DEBUT_VERIFICATION + 1, 1);
       var bgs = rangeA.getBackgrounds();
       var changed = false;
       
       for (var k = 0; k < bgs.length; k++) {
-        var actualRow = k + LIGNE_DEBUT_VERIFICATION;
-        if (bgs[k][0] === COULEUR_BLEU && actualRow !== ligneGagnanteReelle) {
+        if (bgs[k][0] === COULEUR_BLEU) {
           bgs[k][0] = null;
           changed = true;
         }
       }
-      
       if (changed) {
         rangeA.setBackgrounds(bgs);
       }
+      
+      // 4. TRI DE LA FEUILLE (Soustraction de la colonne C, de la plus haute à la plus basse)
+      // La fonction native ".sort()" ajuste parfaitement toutes les références des formules
+      // (B18 deviendra B4, D$3:17 deviendra D$3:3, etc.)
+      var rangeToSort = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, newLastRow - LIGNE_DEBUT_VERIFICATION + 1, lastCol);
+      rangeToSort.sort({column: 3, ascending: false});
     }
     
   } else {
