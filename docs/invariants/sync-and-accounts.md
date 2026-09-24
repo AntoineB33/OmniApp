@@ -124,7 +124,8 @@ server holds them after the last reconcile).
 
 ### Working offline
 
-A device can be switched to work **completely offline** (the button beside the sync chip). It is a device-level,
+A device can be switched to work **completely offline** (the **Work offline** switch of the **Online** window,
+`OnlineWindow`, opened from the lateral menu — it replaced the top-right sync chip and its button, 2026-09-24). It is a device-level,
 local-only choice (`network_mode`, schema 14 — never synced, never a History Unit, not per account), remembered
 across launches; a launch with `omniapp.startOffline` / `OMNIAPP_START_OFFLINE` starts offline whatever was chosen,
 without overwriting the choice (`account3-deploy-windows-offline.bat` installs account 3 that way).

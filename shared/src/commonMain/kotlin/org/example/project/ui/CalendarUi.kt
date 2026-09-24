@@ -1251,6 +1251,13 @@ fun LateralMenu(
     /** PRD §7 Keyboard shortcuts: whether the window listing every chord is open + toggle callback. */
     shortcutsWindowOpen: Boolean = false,
     onToggleShortcuts: () -> Unit = {},
+    /**
+     * PRD §5: the Online window (status, work offline, account) — it replaced the top-right chip and offline
+     * button, so its button carries the status they showed ([onlineStatus], e.g. "☁ Synced", "✈ Offline").
+     */
+    onlineWindowOpen: Boolean = false,
+    onToggleOnline: () -> Unit = {},
+    onlineStatus: String? = null,
     /** PRD §7 Search: whether the search window is open + toggle callback. */
     searchWindowOpen: Boolean = false,
     onToggleSearch: () -> Unit = {},
@@ -1545,6 +1552,13 @@ fun LateralMenu(
             label = "Keyboard shortcuts",
             active = shortcutsWindowOpen,
             onClick = onToggleShortcuts,
+        )
+
+        // PRD §5: status, the device's "work offline" switch and the account, in one window.
+        MenuButton(
+            label = "Online" + (onlineStatus?.let { "  $it" } ?: ""),
+            active = onlineWindowOpen,
+            onClick = onToggleOnline,
         )
     }
 }

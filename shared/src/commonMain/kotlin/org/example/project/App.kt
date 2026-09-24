@@ -89,9 +89,8 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.PeriodKindEditWindow
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.RelativePriorityWindow
-import org.example.project.scheduler.ui.SignInDialog
-import org.example.project.scheduler.ui.SyncStatusChip
-import org.example.project.scheduler.ui.WorkOfflineButton
+import org.example.project.scheduler.ui.OnlineWindow
+import org.example.project.scheduler.ui.syncStatusLabel
 import org.example.project.scheduler.ui.TaskSchedulerScreen
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.scheduler.ui.TaskEditWindow
@@ -181,6 +180,8 @@ enum class OmniPage(val label: String) {
 private enum class FloatingWindow {
     Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, Categories,
     DefaultSubtree, Shortcuts, Search,
+    /** PRD §5: status, work offline and the account — what the top-right chip and button used to be. */
+    Online,
     /** PRD §4: the task tree, a window like the others ([TASK_TREE_WINDOW_ID]). */
     TaskTree,
     /** Opened from the Search window; its name is its frame id ([CONFIGURATION_SEARCH_FRAME_ID]). */
@@ -643,6 +644,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var categoriesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Categories)) }
         // PRD §7 Search: whether the search window is open (local UI state).
         var searchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Search)) }
+        // PRD §5: the Online window, and what it and its menu button read — the sync state, the account and the
+        // device's "work offline" choice (null where this build has no sync).
+        var onlineWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Online)) }
+        var onlineOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Online, Offset(140f, -60f))) }
+        var onlineSize by remember { mutableStateOf(savedSize(FloatingWindow.Online)) }
+        LaunchedEffect(onlineWindowOpen) {
+            persistPlacement(FloatingWindow.Online, onlineOffset, onlineSize, onlineWindowOpen)
+        }
+        val syncStateValue = vm.syncState?.collectAsState()?.value
+        val accountValue = vm.account?.collectAsState()?.value
+        val offlineValue = vm.offline?.collectAsState()?.value
         // PRD §4: the task tree's window. OPEN on a first run (nothing kept yet), as it was left after that.
         var taskTreeWindowOpen by remember {
             mutableStateOf(initialPlacements[FloatingWindow.TaskTree.name]?.visible ?: true)
@@ -713,6 +725,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // It edits the Search window's configuration, which commits nothing either.
             FloatingWindow.ConfigSearch -> HistoryWindow.Search
             FloatingWindow.TaskTree -> HistoryWindow.Tree
+            // It commits no History Unit: signing in, out or going offline is not an edit of the account.
+            FloatingWindow.Online -> null
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
         }
@@ -746,6 +760,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Search -> searchWindowOpen
             FloatingWindow.ConfigSearch -> configSearchWindowOpen
             FloatingWindow.TaskTree -> taskTreeWindowOpen
+            FloatingWindow.Online -> onlineWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The FRONT window: the very top of the one stacking order, when that is a lateral-menu window.
@@ -781,6 +796,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.ConfigSearch -> null
             // The tree's keyboard and its Ctrl+Z are the Tree focus target's, as they always were.
             FloatingWindow.TaskTree -> AppWindow.Tree
+            FloatingWindow.Online -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -1948,6 +1964,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     },
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
+                    onlineWindowOpen = onlineWindowOpen,
+                    onToggleOnline = { onMenuWindowClicked(FloatingWindow.Online) { onlineWindowOpen = it } },
+                    onlineStatus = if (vm.syncState == null) null else syncStatusLabel(syncStateValue, accountValue),
                     taskTreeOpen = taskTreeWindowOpen,
                     onToggleTaskTree = {
                         onMenuWindowClicked(FloatingWindow.TaskTree) { taskTreeWindowOpen = it }
@@ -3033,6 +3052,33 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
+                    // PRD §5: every online configuration of this device — status, work offline, the account.
+                    LateralWindow(FloatingWindow.Online, onlineWindowOpen) {
+                        OnlineWindow(
+                            state = syncStateValue,
+                            account = accountValue,
+                            offline = offlineValue,
+                            onSetOffline = vm::setOffline,
+                            onSignIn = { e, p -> vm.signIn(e, p) },
+                            onCreateAccount = { e, p -> vm.createAccount(e, p) },
+                            onSignOut = { vm.signOut() },
+                            // PRD §15: manual server check. The reconcile emits a unified sync moment, which also
+                            // runs the side channels (active sessions, derived pauses, exact pause gaps) — see
+                            // SchedulerEngine.launchSyncMomentSideChannels.
+                            onFetch = { vm.syncNow() },
+                            onDismiss = { onlineWindowOpen = false },
+                            initialOffset = onlineOffset,
+                            initialSize = onlineSize,
+                            onGeometryChange = { windowOffset, windowSize ->
+                                onlineOffset = windowOffset
+                                onlineSize = windowSize
+                                persistPlacement(FloatingWindow.Online, windowOffset, windowSize, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.Online) },
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+
                     // PRD §7 Search: every configuration of the Search window, in sections per kind. It edits
                     // the same `searchConfig` the Search window reads, so its filters narrow that list at once.
                     LateralWindow(FloatingWindow.ConfigSearch, configSearchWindowOpen) {
@@ -3226,41 +3272,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     .offset(x = if (menuCollapsed) 0.dp else menuWidth, y = 12.dp)
                     .zIndex(130f),
             )
-
-            // PRD §5 cross-device sync: account/status chip + sign-in dialog (top-right overlay, above the
-            // floating windows). Renders nothing when sync is disabled (chip hides on a null state).
-            val syncStateValue = vm.syncState?.collectAsState()?.value
-            val accountValue = vm.account?.collectAsState()?.value
-            var showSignIn by remember { mutableStateOf(false) }
-            val offlineValue = vm.offline?.collectAsState()?.value
-            Row(
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).zIndex(120f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // `sync-and-accounts.md` § *Working offline*: the device-wide switch, always one click away.
-                if (offlineValue != null) WorkOfflineButton(offline = offlineValue, onSetOffline = vm::setOffline)
-                SyncStatusChip(
-                    state = syncStateValue,
-                    onClick = { showSignIn = true },
-                    account = accountValue,
-                )
-            }
-            if (showSignIn) {
-                SignInDialog(
-                    state = syncStateValue,
-                    onSignIn = { e, p -> vm.signIn(e, p) },
-                    onCreateAccount = { e, p -> vm.createAccount(e, p) },
-                    onSignOut = { vm.signOut() },
-                    onDismiss = { showSignIn = false },
-                    account = accountValue,
-                    // PRD §15: manual server check. The reconcile emits a unified sync moment, which also
-                    // runs the side channels (active sessions, derived pauses, exact pause gaps) — see
-                    // SchedulerEngine.launchSyncMomentSideChannels.
-                    onFetch = { vm.syncNow() },
-                    offline = offlineValue == true,
-                    onSetOffline = vm::setOffline,
-                )
-            }
 
             // PRD §7 the task picker (`Ctrl+Shift+Alt+T`). It is drawn at the app root like every other
             // overlay, but it is not IN the app: the actual puts it in an OS window of its own at the
