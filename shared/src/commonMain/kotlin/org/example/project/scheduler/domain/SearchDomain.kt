@@ -383,6 +383,41 @@ object SearchDomain {
         return found.mapValues { (_, paths) -> paths.sortedWith(pathOrder) }
     }
 
+    /**
+     * The cell of the LIVE tree standing at [path] for [taskId] — what "go to task tree" reveals when it is
+     * asked from one path of a task's row (its path box, or one line of its list of paths) rather than from the
+     * task as a whole. Null for a path through a stored tree (its first segment is that tree's name, not the
+     * live one's), a stale path, or a task no longer there — the caller then falls back to the task's first
+     * occurrence.
+     *
+     * Walked on demand (a right-click), never per keystroke: depth-first along the path's titles, each (list,
+     * depth) once — titles repeat, so several cells may match a segment and each is tried in reading order.
+     */
+    fun occurrenceAtPath(state: SchedulerState, taskId: TaskId, path: List<String>): SchedulerDomain.TaskOccurrence? {
+        if (path.firstOrNull() != liveRootLabel(state)) return null
+        val titles = path.drop(1)
+        val seen = HashSet<Pair<CellListId, Int>>()
+        fun walk(listId: CellListId, depth: Int, ancestors: List<CellId>): SchedulerDomain.TaskOccurrence? {
+            if (!seen.add(listId to depth)) return null
+            val list = state.lists[listId] ?: return null
+            for (cellId in list.cellIds) {
+                val cellTaskId = state.cells[cellId]?.taskId ?: continue
+                if (depth == titles.size) {
+                    if (cellTaskId == taskId && SchedulerDomain.isSelectableCell(state, cellId)) {
+                        return SchedulerDomain.TaskOccurrence(cellId, ancestors)
+                    }
+                    continue
+                }
+                val task = state.tasks[cellTaskId] ?: continue
+                if (task.title != titles[depth]) continue
+                val childListId = task.childListId ?: continue
+                walk(childListId, depth + 1, ancestors + cellId)?.let { return it }
+            }
+            return null
+        }
+        return walk(state.rootListId, 0, emptyList())
+    }
+
     // ----- The last path --------------------------------------------------------------------------
 
     /**

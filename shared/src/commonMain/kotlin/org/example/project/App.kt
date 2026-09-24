@@ -607,31 +607,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. One notice at a time, like the two above.
         var appMessage by remember { mutableStateOf<String?>(null) }
-        // PRD §8/§13 "go to task tree": select the first cell showing the task, expanding whatever hides it
-        // (RevealCell, the find bar's own primitive), and hand the tree the focus — "going to" the tree is
-        // the tree becoming the focused surface, which is also what re-arms its keyboard.
-        //
-        // Declared once because TWO surfaces offer the entry under that name: a calendar task panel's menu
-        // (PRD §8) and the "All tasks" window's rows (PRD §7), whose rows are the tree's cells shown in the
-        // sorter's order. A panel outlives the cell that laid it (panels are not per-tree, §7), so the task
-        // may be a detached parent, deleted, or another task tree's — and a panel whose title never named a
-        // task has no id at all. All of those are the same answer, said once, here.
-        val goToTaskTree: (TaskId?, String) -> Unit = { taskId, title ->
-            val occurrence = taskId?.let { SchedulerDomain.firstTaskOccurrence(schedulerState, it) }
-            if (occurrence == null) {
-                val name = taskId?.let { schedulerState.tasks[it]?.title }?.ifEmpty { null }
-                    ?: title.ifEmpty { null }
-                appMessage =
-                    if (name == null) {
-                        "This panel's task is not in the task tree."
-                    } else {
-                        "\"$name\" is not in the task tree."
-                    }
-            } else {
-                vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Tree))
-                vm.dispatch(SchedulerIntent.RevealCell(occurrence.cellId, occurrence.ancestors))
-            }
-        }
         // PRD §4/§13: the four per-object windows the tree hoists up here are opened by BOTH trees — the
         // account's and the default sub-tree's. They name a cell/task/list id, and the same id means
         // different things in the two trees, so this records which tree asked. It decides both the state
@@ -882,6 +857,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             }
         }
+        // PRD §8/§13 "go to task tree": select the cell showing the task — [at] when the caller knows which one
+        // (a Search row's path), else the first — expanding whatever hides it (RevealCell, the find bar's own
+        // primitive), and bring the TREE WINDOW to the user: opened if closed, back from the window bar if
+        // reduced, on top, focused. "Going to" the tree is the tree becoming the focused surface, which is also
+        // what re-arms its keyboard.
+        //
+        // Declared once because several surfaces offer the entry under that name: a calendar task panel's menu
+        // (PRD §8), the "All tasks" window's rows and the Search window's task rows (PRD §7). A panel outlives
+        // the cell that laid it (panels are not per-tree, §7), so the task may be a detached parent, deleted, or
+        // another task tree's — and a panel whose title never named a task has no id at all. All of those are the
+        // same answer, said once, here.
+        fun goToTaskTreeAt(taskId: TaskId?, title: String, at: SchedulerDomain.TaskOccurrence?) {
+            val occurrence = at ?: taskId?.let { SchedulerDomain.firstTaskOccurrence(schedulerState, it) }
+            if (occurrence == null) {
+                val name = taskId?.let { schedulerState.tasks[it]?.title }?.ifEmpty { null }
+                    ?: title.ifEmpty { null }
+                appMessage =
+                    if (name == null) {
+                        "This panel's task is not in the task tree."
+                    } else {
+                        "\"$name\" is not in the task tree."
+                    }
+            } else {
+                taskTreeWindowOpen = true
+                windowFrames.present(FloatingWindow.TaskTree.name)
+                focusWindow(FloatingWindow.TaskTree)
+                vm.dispatch(SchedulerIntent.RevealCell(occurrence.cellId, occurrence.ancestors))
+            }
+        }
+        val goToTaskTree: (TaskId?, String) -> Unit = { taskId, title -> goToTaskTreeAt(taskId, title, null) }
         // Lateral-menu click on a window button: open it (and focus) when closed; close it when it is the
         // window being worked in; otherwise bring it back to the front and the focus without closing.
         fun onMenuWindowClicked(id: FloatingWindow, setOpen: (Boolean) -> Unit) {
@@ -2951,13 +2956,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 editTaskId = it
                             },
                             onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
-                            onGoToTaskTree = { taskId ->
-                                goToTaskTree(taskId, schedulerState.tasks[taskId]?.title.orEmpty())
+                            onGoToTaskTree = { taskId, at ->
+                                goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
                             },
                             onDeepCopyCell = {
                                 popupFromDefaultSubtree = false
                                 deepCopyCellId = it
                             },
+                            onIntent = { vm.dispatch(it) },
                             onOpenCategory = {
                                 popupFromDefaultSubtree = false
                                 editCategoryId = it

@@ -63,7 +63,14 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.ui.contextMenuModifier
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.ui.platform.LocalDensity
+import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.ui.TaskCellMenuItems
+import org.example.project.scheduler.ui.TaskCellMenuActions
 
 /** Every row of the result list has this one height, whatever it holds (PRD §7 *Search*). */
 private val RESULT_ROW_HEIGHT: Dp = 34.dp
@@ -97,8 +104,11 @@ private const val NOT_IN_TREE_HINT: String =
  * a cell and cannot grow into an editor: a click selects it, `↑`/`↓` walk the selection, a double-click or
  * `Enter` opens it (a task's "edit task" window, a category's or a period kind's own window, the Alarms or the
  * Reminders window that owns an alarm, a timer or a reminder), `Ctrl + C` on a task copies its id, and a
- * right-click selects it and opens its contextual menu — for a task the §13 menu's entries, with "go to task
- * tree" and "deep copy" greyed where the live tree does not hold the task.
+ * right-click selects it and opens its contextual menu. A task's menu is the TREE CELL's own
+ * ([TaskCellMenuItems]) — "go to task tree" included — on the row, on its path box and on each line of its list
+ * of paths, each speaking for that path's occurrence ([SearchDomain.occurrenceAtPath]). The selection looks
+ * as it does in the tree (the outline, [taskCellOutline]), and moving it scrolls the list only when it would
+ * leave what is shown.
  *
  * The query and the checked kinds are **local-only view state** ([SearchDomain.Config]): `App` keeps them on this
  * device, so the window comes back with them after a close or a restart, and never syncs them — how the user is
@@ -111,9 +121,14 @@ fun SearchWindow(
     state: SchedulerState,
     onOpenTaskEdit: (TaskId) -> Unit,
     onStartTaskNow: (TaskId) -> Unit,
-    /** PRD §8 "go to task tree" — the app's one handler, shared with the calendar and "All tasks". */
-    onGoToTaskTree: (TaskId) -> Unit,
+    /**
+     * PRD §8 "go to task tree" — the app's one handler, shared with the calendar and "All tasks": the task's cell
+     * at the given occurrence (a path the user right-clicked), else its first one.
+     */
+    onGoToTaskTree: (TaskId, SchedulerDomain.TaskOccurrence?) -> Unit,
     onDeepCopyCell: (CellId) -> Unit,
+    /** The tree's own intents, for the cell menu's entries that act on a cell (collapse, add default sub-tree). */
+    onIntent: (SchedulerIntent) -> Unit,
     onOpenCategory: (CategoryId) -> Unit,
     onOpenPeriodKind: (String) -> Unit,
     /** Alarms AND timers live in the one Alarms window (PRD §18). */
@@ -167,30 +182,62 @@ fun SearchWindow(
     val count = results.size
     // A new question starts at its best answer.
     LaunchedEffect(kinds, query, filters) { selected = 0 }
+    // The task tree's rule: the list scrolls only when the selection would leave what is on screen — by just
+    // enough to bring it to the nearer edge. Scrolling the selected row to the top on every move made the list
+    // jump under a selection that was already in view.
+    val rowHeightPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
     LaunchedEffect(selected, count) {
-        if (count > 0) listState.animateScrollToItem(selected.coerceIn(0, count - 1))
+        if (count == 0) return@LaunchedEffect
+        val index = selected.coerceIn(0, count - 1)
+        val info = listState.layoutInfo
+        val top = info.viewportStartOffset
+        val bottom = info.viewportEndOffset
+        val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+        when {
+            item == null ->
+                if (index < (info.visibleItemsInfo.firstOrNull()?.index ?: 0)) {
+                    listState.scrollToItem(index)
+                } else {
+                    // Below what is shown: land it on the bottom edge, as a step down would.
+                    listState.scrollToItem(index)
+                    listState.scrollBy(-((bottom - top) - rowHeightPx).coerceAtLeast(0f))
+                }
+            item.offset < top -> listState.animateScrollBy((item.offset - top).toFloat())
+            item.offset + item.size > bottom -> listState.animateScrollBy((item.offset + item.size - bottom).toFloat())
+        }
     }
 
     val currentState by rememberUpdatedState(state)
-    fun taskActions(result: SearchDomain.TaskResult): TaskResultActions {
-        val live = currentState.tasks[result.taskId]
-        val occurrence = SchedulerDomain.firstTaskOccurrence(currentState, result.taskId)
-        return TaskResultActions(
+    /**
+     * A task row's menu — the TREE CELL's own ([TaskCellMenuActions], drawn by [TaskCellMenuItems]), so the two
+     * offer the same entries. [path] is the one the right-click landed on (the row's shown path, or a line of its
+     * list of paths): "go to task tree" goes to THAT occurrence, and the entries that act on a cell (deep copy,
+     * collapse, add the default sub-tree) act on it. Built on demand, so it never closes over a stale state.
+     */
+    fun taskActions(result: SearchDomain.TaskResult, path: List<String>?): TaskCellMenuActions {
+        val state = currentState
+        val taskId = result.taskId
+        val live = state.tasks[taskId]
+        val atPath = path?.let { SearchDomain.occurrenceAtPath(state, taskId, it) }
+        val occurrence = atPath ?: SchedulerDomain.firstTaskOccurrence(state, taskId)
+        val hasChildren = live?.childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+        return TaskCellMenuActions(
             onStartNow =
-                if (live != null && SchedulerDomain.isPlaceableTask(currentState, result.taskId)) {
-                    { onStartTaskNow(result.taskId) }
+                if (live != null && SchedulerDomain.isPlaceableTask(state, taskId)) {
+                    { onStartTaskNow(taskId) }
                 } else {
                     null
                 },
-            onEdit = if (live != null) ({ onOpenTaskEdit(result.taskId) }) else null,
-            onGoToTaskTree = if (occurrence != null) ({ onGoToTaskTree(result.taskId) }) else null,
-            onCopyTaskId =
-                if (SchedulerDomain.isUserTaskId(result.taskId)) {
-                    { writeSystemClipboardText(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + result.taskId.value) }
-                } else {
-                    null
-                },
+            onEdit = if (live != null) ({ onOpenTaskEdit(taskId) }) else null,
+            // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
+            onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
+            onCopyTaskId = { writeSystemClipboardText(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + taskId.value) },
             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
+            onCollapseSubtrees =
+                occurrence?.takeIf { hasChildren }?.let { { onIntent(SchedulerIntent.CollapseSubtrees(it.cellId)) } },
+            onAddDefaultSubtree =
+                occurrence?.takeIf { !state.defaultSubtreeIsEmpty }
+                    ?.let { { onIntent(SchedulerIntent.AddDefaultSubtree(listOf(it.cellId))) } },
         )
     }
     fun openItem(item: SearchDomain.ItemResult) {
@@ -204,7 +251,7 @@ fun SearchWindow(
     }
     fun openSelected() {
         when (val result = results.getOrNull(selected)) {
-            is SearchDomain.TaskResult -> taskActions(result).onEdit?.invoke()
+            is SearchDomain.TaskResult -> taskActions(result, null).onEdit?.invoke()
             is SearchDomain.ItemResult -> openItem(result)
             null -> Unit
         }
@@ -245,7 +292,7 @@ fun SearchWindow(
                         // A task cell's Ctrl+C — but only when the bar holds nothing to copy itself.
                         event.isCtrlPressed && event.key == Key.C && query.isEmpty() &&
                             results.getOrNull(selected) is SearchDomain.TaskResult -> {
-                            taskActions(results[selected] as SearchDomain.TaskResult).onCopyTaskId?.invoke()
+                            taskActions(results[selected] as SearchDomain.TaskResult, null).onCopyTaskId()
                             true
                         }
                         else -> false
@@ -313,7 +360,7 @@ fun SearchWindow(
                                         result = result,
                                         selected = index == selected,
                                         onSelect = { selected = index },
-                                        actions = { taskActions(result) },
+                                        actions = { path -> taskActions(result, path) },
                                     )
                                 is SearchDomain.ItemResult ->
                                     ItemResultRow(
@@ -434,19 +481,6 @@ private fun resultKey(result: SearchDomain.Result): String =
         is SearchDomain.ItemResult -> result.kind.name + "/" + result.id
     }
 
-/**
- * What a task row's gestures do — PRD §13's cell menu, less the entries that are about a CELL (collapse, add
- * the default sub-tree). A null entry is greyed, never hidden, where it names a place the task has not got
- * (go to task tree, deep copy); hidden where it names an action the task does not take (start now, edit).
- */
-private class TaskResultActions(
-    val onStartNow: (() -> Unit)?,
-    val onEdit: (() -> Unit)?,
-    val onGoToTaskTree: (() -> Unit)?,
-    val onCopyTaskId: (() -> Unit)?,
-    val onDeepCopy: (() -> Unit)?,
-)
-
 /** The press gestures every result row shares: press selects, double-click opens, right-click menus. */
 private fun Modifier.resultRowGestures(
     key: Any,
@@ -468,9 +502,12 @@ private fun resultRowModifier(selected: Boolean): Modifier =
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
-        .background(
-            if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-            RoundedCornerShape(4.dp),
+        // The TASK TREE's selection, not a look of its own: the cell's background, and the selection said by
+        // the OUTLINE alone — the main selection's thick active border ([taskCellOutline], the tree's one rule).
+        .background(SheetColors.cellBackground)
+        .border(
+            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = false).borderWidth,
+            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = false).borderColor,
         )
         .padding(horizontal = 6.dp)
 
@@ -479,21 +516,23 @@ private fun TaskResultRow(
     result: SearchDomain.TaskResult,
     selected: Boolean,
     onSelect: () -> Unit,
-    /** Built on demand, so a row does not hold a callback set that closes over a stale state. */
-    actions: () -> TaskResultActions,
+    /** The cell menu for the path the right-click landed on — built on demand, never over a stale state. */
+    actions: (path: List<String>?) -> TaskCellMenuActions,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    var menuActions by remember { mutableStateOf<TaskResultActions?>(null) }
+    var menuActions by remember { mutableStateOf<TaskCellMenuActions?>(null) }
+    // One menu per row, whichever part was right-clicked: the row, its path box, or a line of its list of paths.
+    val openMenu: (List<String>?) -> Unit = { path ->
+        menuActions = actions(path)
+        menuOpen = true
+    }
     Box(
         modifier = resultRowModifier(selected)
             .resultRowGestures(
                 key = result.taskId,
                 onSelect = onSelect,
-                onOpen = { actions().onEdit?.invoke() },
-                onOpenMenu = {
-                    menuActions = actions()
-                    menuOpen = true
-                },
+                onOpen = { actions(null).onEdit?.invoke() },
+                onOpenMenu = { openMenu(result.shownPath.takeIf { it.isNotEmpty() }) },
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -509,7 +548,7 @@ private fun TaskResultRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                     },
-                    path = { TaskPathBox(result) },
+                    path = { TaskPathBox(result, onSelect = onSelect, onOpenMenu = openMenu) },
                     logo = if (result.inTaskTree) null else ({ NotInTreeLogo() }),
                 )
             }
@@ -522,17 +561,7 @@ private fun TaskResultRow(
                 onDismissRequest = { menuOpen = false },
                 properties = PopupProperties(focusable = false),
             ) {
-                shown.onStartNow?.let { MenuEntry("start this task now") { menuOpen = false; it() } }
-                shown.onEdit?.let { MenuEntry("edit task") { menuOpen = false; it() } }
-                MenuEntry("go to task tree", enabled = shown.onGoToTaskTree != null) {
-                    menuOpen = false
-                    shown.onGoToTaskTree?.invoke()
-                }
-                shown.onCopyTaskId?.let { MenuEntry("copy task id (ctrl c)") { menuOpen = false; it() } }
-                MenuEntry("deep copy", enabled = shown.onDeepCopy != null) {
-                    menuOpen = false
-                    shown.onDeepCopy?.invoke()
-                }
+                TaskCellMenuItems(shown) { menuOpen = false }
             }
         }
     }
@@ -579,15 +608,28 @@ private fun TaskResultRowLayout(
     }
 }
 
-/** The path, in its rectangle — with the arrow that lists every path when the task has several. */
+/**
+ * The path, in its rectangle — with the arrow that lists every path when the task has several. A right-click on
+ * the box, or on one line of the list, opens the row's cell menu for THAT path ([onOpenMenu]): its own gesture,
+ * so it works however the row's is laid out around it.
+ */
 @Composable
-private fun TaskPathBox(result: SearchDomain.TaskResult) {
+private fun TaskPathBox(
+    result: SearchDomain.TaskResult,
+    onSelect: () -> Unit,
+    onOpenMenu: (List<String>?) -> Unit,
+) {
     var listOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(4.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+            .then(
+                contextMenuModifier(enabled = true, key = result.taskId to "path", onSelect = onSelect) {
+                    onOpenMenu(result.shownPath.takeIf { it.isNotEmpty() })
+                },
+            )
             .padding(start = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -627,7 +669,15 @@ private fun TaskPathBox(result: SearchDomain.TaskResult) {
                             Text(
                                 text = SearchDomain.pathLabel(path),
                                 style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(vertical = 3.dp),
+                                modifier = Modifier
+                                    // Opening the row's menu closes this list (one menu at a time), and the
+                                    // menu then speaks for this line's occurrence.
+                                    .then(
+                                        contextMenuModifier(enabled = true, key = path, onSelect = onSelect) {
+                                            onOpenMenu(path)
+                                        },
+                                    )
+                                    .padding(vertical = 3.dp),
                             )
                         }
                     }

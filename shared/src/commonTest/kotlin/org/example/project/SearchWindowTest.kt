@@ -367,6 +367,24 @@ class SearchWindowTest {
     }
 
     @Test
+    fun each_path_of_a_mirrored_task_names_its_own_cell() {
+        val s = mirroredTree()
+        val pie = taskWithTitle(s, "Pie")
+        val row = SearchDomain.taskResults(s, "pie").single()
+        val (underApple, underCrumble) = row.paths
+        // "go to task tree" from one line of the list reveals THAT occurrence, with its ancestors to expand.
+        val a = assertNotNull(SearchDomain.occurrenceAtPath(s, pie, underApple))
+        val b = assertNotNull(SearchDomain.occurrenceAtPath(s, pie, underCrumble))
+        assertTrue(a.cellId != b.cellId)
+        assertEquals(listOf(cellWithTitle(s, "Apple")), a.ancestors)
+        assertEquals(listOf(cellWithTitle(s, "Banana"), cellWithTitle(s, "Crumble")), b.ancestors)
+        assertEquals(setOf(a.cellId, b.cellId), cellsWithTitle(s, "Pie").toSet())
+        // A path through another tree, or one that no longer leads there, names no live cell.
+        assertNull(SearchDomain.occurrenceAtPath(s, pie, listOf("some other tree", "Apple")))
+        assertNull(SearchDomain.occurrenceAtPath(s, pie, listOf(root(s), "Banana")))
+    }
+
+    @Test
     fun the_filters_narrow_their_own_kind_and_nothing_else() {
         val s =
             SchedulerState.empty().copy(

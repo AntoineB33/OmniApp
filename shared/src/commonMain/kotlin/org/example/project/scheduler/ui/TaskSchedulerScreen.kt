@@ -2891,71 +2891,7 @@ internal fun TaskRow(
                     // instead (see [transientMenuDismissal], registered just above).
                     properties = PopupProperties(focusable = false),
                 ) {
-                    // PRD §13: only offered on a schedulable leaf — a parent task is never placed.
-                    cellMenu.onStartNow?.let { startNow ->
-                        DropdownMenuItem(
-                            text = { Text("start this task now") },
-                            onClick = {
-                                contextMenuOpen = false
-                                startNow()
-                            },
-                        )
-                    }
-                    // PRD §13: named "edit task" — the calendar's panel menu offers the very same window
-                    // beside its own panel "Edit" (PRD §8), so the two surfaces must not call it two things.
-                    cellMenu.onEdit?.let { edit ->
-                        DropdownMenuItem(
-                            text = { Text("edit task") },
-                            onClick = {
-                                contextMenuOpen = false
-                                edit()
-                            },
-                        )
-                    }
-                    // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that
-                    // is not the tree itself. Only the "All tasks" window passes it today.
-                    cellMenu.onGoToTaskTree?.let { goToTaskTree ->
-                        DropdownMenuItem(
-                            text = { Text("go to task tree") },
-                            onClick = {
-                                contextMenuOpen = false
-                                goToTaskTree()
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("copy task id (ctrl c)") },
-                        onClick = {
-                            contextMenuOpen = false
-                            cellMenu.onCopyTaskId()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("deep copy") },
-                        onClick = {
-                            contextMenuOpen = false
-                            cellMenu.onDeepCopy()
-                        },
-                    )
-                    cellMenu.onCollapseSubtrees?.let { collapseSubtrees ->
-                        DropdownMenuItem(
-                            text = { Text("collapse sub-trees") },
-                            onClick = {
-                                contextMenuOpen = false
-                                collapseSubtrees()
-                            },
-                        )
-                    }
-                    // PRD §7: only offered where there is a template to add.
-                    cellMenu.onAddDefaultSubtree?.let { addDefaultSubtree ->
-                        DropdownMenuItem(
-                            text = { Text("add default sub-tree") },
-                            onClick = {
-                                contextMenuOpen = false
-                                addDefaultSubtree()
-                            },
-                        )
-                    }
+                    TaskCellMenuItems(cellMenu) { contextMenuOpen = false }
                 }
             }
             if (showExpandArrow) {
@@ -3309,6 +3245,82 @@ internal fun contextMenuModifier(
 }
 
 /**
+ * PRD §13: the entries of a task cell's right-click menu, in their order — the ONE drawing of them, used by the
+ * tree's cells and by the Search window's task rows, so the two menus can never offer different things.
+ * [close] closes the menu the entries stand in.
+ */
+@Composable
+internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit) {
+    // PRD §13: only offered on a schedulable leaf — a parent task is never placed.
+    cellMenu.onStartNow?.let { startNow ->
+        DropdownMenuItem(
+            text = { Text("start this task now") },
+            onClick = {
+                close()
+                startNow()
+            },
+        )
+    }
+    // PRD §13: named "edit task" — the calendar's panel menu offers the very same window
+    // beside its own panel "Edit" (PRD §8), so the two surfaces must not call it two things.
+    cellMenu.onEdit?.let { edit ->
+        DropdownMenuItem(
+            text = { Text("edit task") },
+            onClick = {
+                close()
+                edit()
+            },
+        )
+    }
+    // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that
+    // is not the tree itself — the "All tasks" window and the Search window's task rows.
+    cellMenu.onGoToTaskTree?.let { goToTaskTree ->
+        DropdownMenuItem(
+            text = { Text("go to task tree") },
+            onClick = {
+                close()
+                goToTaskTree()
+            },
+        )
+    }
+    DropdownMenuItem(
+        text = { Text("copy task id (ctrl c)") },
+        onClick = {
+            close()
+            cellMenu.onCopyTaskId()
+        },
+    )
+    DropdownMenuItem(
+        text = { Text("deep copy") },
+        // Greyed, never hidden, where no live cell holds the task (a Search row of another tree's task).
+        enabled = cellMenu.onDeepCopy != null,
+        onClick = {
+            close()
+            cellMenu.onDeepCopy?.invoke()
+        },
+    )
+    cellMenu.onCollapseSubtrees?.let { collapseSubtrees ->
+        DropdownMenuItem(
+            text = { Text("collapse sub-trees") },
+            onClick = {
+                close()
+                collapseSubtrees()
+            },
+        )
+    }
+    // PRD §7: only offered where there is a template to add.
+    cellMenu.onAddDefaultSubtree?.let { addDefaultSubtree ->
+        DropdownMenuItem(
+            text = { Text("add default sub-tree") },
+            onClick = {
+                close()
+                addDefaultSubtree()
+            },
+        )
+    }
+}
+
+/**
  * PRD §13 the actions of a populated cell's right-click contextual menu. Bundled so a cell either has the
  * whole menu or none of it (empty cells and the root/main cell get null).
  *
@@ -3336,7 +3348,8 @@ internal class TaskCellMenuActions(
      * discoverable; there is no menu entry for a sub-tree copy any more, which is what "deep copy" is for.
      */
     val onCopyTaskId: () -> Unit,
-    val onDeepCopy: () -> Unit,
+    /** Null (greyed) only for a Search row whose task no live cell holds — a tree cell always has one. */
+    val onDeepCopy: (() -> Unit)?,
     val onCollapseSubtrees: (() -> Unit)?,
     val onAddDefaultSubtree: (() -> Unit)?,
 )

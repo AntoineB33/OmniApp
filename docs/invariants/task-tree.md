@@ -597,6 +597,15 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.
+- **A task row is a tree cell to the user.** Its right-click menu is the cell's own — `TaskCellMenuItems`, the
+  one drawing of those entries for both surfaces — built for the path the right-click landed on (the row, its
+  path box, or a line of its list of paths): "go to task tree" reveals THAT occurrence
+  (`SearchDomain.occurrenceAtPath`, walked on the right-click, never per keystroke), and deep copy / collapse /
+  add the default sub-tree act on its cell. "Go to task tree" is always offered, like the calendar panel's; the
+  app's one handler (`goToTaskTreeAt`) says so when no cell holds the task, and otherwise opens, un-reduces,
+  raises and focuses the tree WINDOW before revealing the cell.
+- **Every row's selection is the tree's** — the outline (`taskCellOutline`), no fill — and moving it scrolls the
+  list only when it would leave what is shown, by just enough to bring it to the nearer edge.
 - **A right-click on an alarm, a timer or a reminder row opens that ONE element's own window** — the Alarms
   window (`AlarmWindowSubject`) or the Reminders window (`subject`, `REMINDER_EDIT_FRAME_ID`) showing that row
   alone, never a second editor. The Reminders window re-seeds from the list whenever it is not the one it
