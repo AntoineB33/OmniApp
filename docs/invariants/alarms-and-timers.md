@@ -100,7 +100,8 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   the state. Nothing downstream needs a change: `launchAlarmArming` already re-runs on every `state.timers`
   change.
 - **A right-click on a countdown field nudges by THAT field's unit** (±1/5/10 s, min or h), through the same
-  `NudgeTimerRemaining` as the ± buttons, and replaces the text field's own cut/copy/paste menu. The timer's
+  `NudgeTimerRemaining` as the ± buttons, **stays open when an entry is picked** (so a step repeats click after
+  click; it leaves on the first press outside it), and replaces the text field's own cut/copy/paste menu. The timer's
   own window (Search's right-click, `AlarmWindowSubject`) has the menu only — no ± buttons — and an
   **Elapsed** read-only field, the countdown in reverse (`TimerDomain.elapsedMillis`: the run's length − the
   countdown AS SHOWN; 0 when idle; negative once pushed above the run's length). **It mirrors the fields, not the

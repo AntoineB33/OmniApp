@@ -833,7 +833,8 @@ private data class CountdownDraft(
  * A **right-click** opens a menu that adds or takes away this field's OWN unit — seconds on the seconds,
  * minutes on the minutes, hours on the hours — through [onNudge], which moves the time left without
  * changing whether the timer runs. It replaces the text field's own cut/copy/paste menu, which has nothing
- * to offer a two-digit number.
+ * to offer a two-digit number. Picking an entry leaves the menu OPEN, so a step can be repeated click after
+ * click; it closes on the first press outside it, like any menu.
  */
 @Composable
 private fun CountdownField(
@@ -902,10 +903,9 @@ private fun CountdownField(
             NUDGE_STEPS.forEach { step ->
                 DropdownMenuItem(
                     text = { Text((if (step > 0) "+" else "−") + abs(step) + " " + unitLabel(field)) },
-                    onClick = {
-                        menuOpen = false
-                        onNudge(step * field.unitMillis)
-                    },
+                    // The menu STAYS OPEN: "+10 s" three times is three clicks, not three right-clicks. It
+                    // leaves like any menu, on the first press outside it (popups.md).
+                    onClick = { onNudge(step * field.unitMillis) },
                 )
             }
         }
