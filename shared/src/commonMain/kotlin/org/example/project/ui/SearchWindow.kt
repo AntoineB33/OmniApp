@@ -291,7 +291,7 @@ fun SearchWindow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else if (kind == SearchDomain.Kind.Task) {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
                         itemsIndexed(taskResults, key = { _, r -> r.taskId.value }) { index, result ->
                             TaskResultRow(
                                 result = result,
@@ -302,7 +302,7 @@ fun SearchWindow(
                         }
                     }
                 } else {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
                         itemsIndexed(itemResults, key = { _, r -> r.kind.name + "/" + r.id }) { index, item ->
                             ItemResultRow(
                                 item = item,
@@ -313,6 +313,7 @@ fun SearchWindow(
                         }
                     }
                 }
+                if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
         }
     }
