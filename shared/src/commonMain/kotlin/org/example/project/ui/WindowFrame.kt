@@ -31,6 +31,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.compositionLocalOf
@@ -654,6 +658,13 @@ interface WindowChromeMemory {
 
 val LocalWindowChromeMemory = staticCompositionLocalOf<WindowChromeMemory?> { null }
 
+/**
+ * Where something drawn over every window stands, in ROOT coordinates — the lateral menu's collapse toggle. A
+ * window head that runs under it moves its title out from under it ([WindowHead]), live, as the window is moved
+ * or resized, and back when it no longer does. Null = nothing stands over the heads.
+ */
+val LocalHeadObstacle = staticCompositionLocalOf<State<Rect?>?> { null }
+
 /** Height reserved for [WindowBar]; `App` insets the content area by it while it has rows. */
 val MINIMIZED_BAR_HEIGHT: Dp = 38.dp
 
@@ -661,6 +672,9 @@ val MINIMIZED_BAR_HEIGHT: Dp = 38.dp
 private const val HEAD_DOUBLE_CLICK_MILLIS: Long = 350
 
 private val HEAD_BUTTON_SIZE: Dp = 24.dp
+
+/** Where a head's title starts, from the window's left edge. */
+private val HEAD_TITLE_START: Dp = 14.dp
 private val RESIZE_EDGE_THICKNESS: Dp = 6.dp
 
 /** The square each resizable corner takes — larger than the edges' thickness, so a corner is easy to hit. */
@@ -719,6 +733,7 @@ fun AppWindowFrame(
         onDispose { host?.unregister(state.id) }
     }
     SideEffect { host?.retitle(state.id, title) }
+    val headObstacle = LocalHeadObstacle.current?.value
     // Every change of the chrome state is kept at once — the buttons, the head's double-click, the reduce
     // bar's chip — so the window comes back as it was left, whatever closes it or the app.
     val chromeMemory = LocalWindowChromeMemory.current
@@ -781,6 +796,7 @@ fun AppWindowFrame(
                 WindowHead(
                     title = title,
                     state = state,
+                    obstacle = headObstacle,
                     onClose = onClose,
                     onDuplicate = instance?.onDuplicate,
                     canMinimize = canMinimize,
@@ -878,6 +894,8 @@ fun AppWindowFrame(
 private fun WindowHead(
     title: String,
     state: WindowFrameState,
+    /** [LocalHeadObstacle]'s bounds, in root coordinates. */
+    obstacle: Rect?,
     onClose: () -> Unit,
     /** The duplicate button, left of the five; null = none. */
     onDuplicate: (() -> Unit)?,
@@ -886,10 +904,47 @@ private fun WindowHead(
     onHeadHeight: (Float) -> Unit,
     headTrailing: @Composable RowScope.() -> Unit,
 ) {
+    // Where the title must START so none of it is hidden: the head's first point that is both visible (a window
+    // dragged past the content area's edge is cut there) and not under the obstacle, plus a small gap. The title
+    // then takes everything from there to the buttons.
+    //
+    // Measured against the head's REAL left edge ([headLeft], unclipped): the visible bounds ([headVisible]) stop
+    // at the content area's edge, which is exactly where the toggle stands — measured from those, the shift came
+    // out as the toggle's width minus the title margin, a nudge that left the title under the toggle.
+    //
+    // Worked out whenever the head moves (a drag, a resize, a fill) and whenever the obstacle does (the menu
+    // folding away moves the toggle); only the result is state, so a drag recomposes the head only when it changes.
+    val density = LocalDensity.current
+    val titleStartPx = with(density) { HEAD_TITLE_START.toPx() }
+    val gapPx = with(density) { 6.dp.toPx() }
+    val headVisible = remember { arrayOfNulls<Rect>(1) }
+    val headLeft = remember { FloatArray(1) }
+    var titleShiftPx by remember { mutableStateOf(0f) }
+    val latestObstacle by rememberUpdatedState(obstacle)
+    fun updateShift() {
+        val visible = headVisible[0] ?: return
+        val left = headLeft[0]
+        var start = left + titleStartPx
+        // Cut by the content area's edge: start at the first visible point.
+        if (visible.left > left + 0.5f) start = maxOf(start, visible.left + gapPx)
+        // Under the obstacle: start past it.
+        val o = latestObstacle
+        if (o != null && o.bottom > visible.top && o.top < visible.bottom && o.right > visible.left && o.left < visible.right) {
+            start = maxOf(start, o.right + gapPx)
+        }
+        val shift = (start - (left + titleStartPx)).coerceAtLeast(0f)
+        if (shift != titleShiftPx) titleShiftPx = shift
+    }
+    LaunchedEffect(obstacle) { updateShift() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .onSizeChanged { onHeadHeight(it.height.toFloat()) }
+            .onGloballyPositioned {
+                headVisible[0] = it.boundsInRoot()
+                headLeft[0] = it.positionInRoot().x
+                updateShift()
+            }
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .windowHeadGestures(
                 onDrag = { state.moveBy(it) },
@@ -900,7 +955,7 @@ private fun WindowHead(
                 },
             )
             // `end` clears the right resize edge and `top` the top one, so neither covers a head button.
-            .padding(start = 14.dp, end = RESIZE_EDGE_THICKNESS + 2.dp, top = RESIZE_EDGE_THICKNESS, bottom = 6.dp),
+            .padding(start = HEAD_TITLE_START, end = RESIZE_EDGE_THICKNESS + 2.dp, top = RESIZE_EDGE_THICKNESS, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -909,7 +964,7 @@ private fun WindowHead(
             style = MaterialTheme.typography.titleSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).padding(start = with(density) { titleShiftPx.toDp() }),
         )
         headTrailing()
         onDuplicate?.let { WindowHeadButton("⧉", "Duplicate", it) }

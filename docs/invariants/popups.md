@@ -121,6 +121,15 @@ means.
   every geometry modifier of its own — `align` is parent data and is read from anywhere in the chain, so
   a caller loses nothing by it. A window that wants a press handler of its own gets it there, never around
   the frame.
+- **Nothing drawn over the windows may hide a head's title.** The one such thing is the lateral menu's
+  collapse toggle (`IconMenuButton`, z 130): it hangs from the app's ceiling and is shorter than a head, so it
+  can only ever stand over the head of a window at the top of the content area — and it publishes its bounds
+  (`LocalHeadObstacle`), from which every head moves its title just past it, live, as the window is moved or
+  resized, and back once clear. Only the shift is state, so a drag recomposes a head only when it changes.
+  The title starts at the head's first point that is visible AND uncovered, measured from the head's REAL
+  left edge (`positionInRoot`), never its visible bounds (`boundsInRoot` stops at the content area's edge —
+  exactly where the toggle stands — and made the shift a mere nudge). A window hanging past that edge gets its
+  title moved to the edge the same way.
 - **The head is always reachable.** `WindowFrameState.clampVertical`, fed by the frame's own layout, keeps
   the head between the top of the content area and its lowest row — including for a window taller than the
   area, which centred would put its own head (and all five of its buttons) out of reach. Clamping a fixed

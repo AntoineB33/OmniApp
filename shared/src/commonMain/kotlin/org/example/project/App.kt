@@ -100,6 +100,9 @@ import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.AlarmWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import org.example.project.ui.LocalHeadObstacle
 import org.example.project.ui.REMINDER_EDIT_FRAME_ID
 import org.example.project.ui.TASK_TREE_WINDOW_ID
 import org.example.project.ui.TaskTreeWindow
@@ -644,6 +647,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var categoriesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Categories)) }
         // PRD §7 Search: whether the search window is open (local UI state).
         var searchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Search)) }
+        // Where the lateral menu's collapse toggle stands — the one thing drawn over every window's head.
+        val menuToggleBounds = remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
         // PRD §5: the Online window, and what it and its menu button read — the sync state, the account and the
         // device's "work offline" choice (null where this build has no sync).
         var onlineWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Online)) }
@@ -1867,6 +1872,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         CompositionLocalProvider(
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,
+            LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
             // The period edit window's companions + drawings, for everything that draws a period.
             LocalPeriodKindConfig provides schedulerState.periodKindConfig,
@@ -3263,14 +3269,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // straddling into the content (offset by the menu's own fixed width — 188dp). Points « to push
             // the whole menu off-screen; when collapsed the menu is gone and only this bookmark remains,
             // at the far-left edge, now pointing » to pull it back.
+            // At the CEILING and shorter than a window head: all it can stand over is a head at the top of the
+            // content area, whose title moves out from under it (LocalHeadObstacle, published here).
             val menuWidth = 188.dp
             IconMenuButton(
                 label = if (menuCollapsed) "»" else "«",
                 onClick = { menuCollapsed = !menuCollapsed },
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = if (menuCollapsed) 0.dp else menuWidth, y = 12.dp)
-                    .zIndex(130f),
+                    .offset(x = if (menuCollapsed) 0.dp else menuWidth, y = 0.dp)
+                    .zIndex(130f)
+                    .onGloballyPositioned { menuToggleBounds.value = it.boundsInRoot() },
             )
 
             // PRD §7 the task picker (`Ctrl+Shift+Alt+T`). It is drawn at the app root like every other

@@ -3137,18 +3137,23 @@ private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
 }
 
 /**
- * A compact, self-sizing menu button — used for the lateral-menu collapse control (`«`) and its floating
- * re-open button (`☰`). Unlike [MenuButton] it does not stretch to fill its parent's width.
+ * A compact, self-sizing menu button — the lateral-menu collapse control (`«` / `»`). Unlike [MenuButton] it does
+ * not stretch to fill its parent's width.
+ *
+ * It hangs from the app's CEILING (rounded only at the bottom) and is shorter than a window's head, so the one
+ * thing it can ever stand over is the head of a window pushed to the top of the content area — whose title then
+ * moves out from under it ([LocalHeadObstacle]).
  */
 @Composable
 fun IconMenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(shape)
             .background(CalColors.menuBackground)
-            .border(1.dp, CalColors.grid, RoundedCornerShape(8.dp))
+            .border(1.dp, CalColors.grid, shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 3.dp),
     ) {
         Text(
             text = label,
