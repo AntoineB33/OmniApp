@@ -587,6 +587,9 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.
+- **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
+  have their own window and a counter), and the Configuration Search window's never touches the Search
+  window's configuration it lists.
 - **The stored configuration is JSON with every field optional**; `decode` still reads the first shape (a line
   of kind names, then the query), and an unknown value falls back to "any".
 

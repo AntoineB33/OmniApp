@@ -113,6 +113,11 @@ fun ConfigurationSearchWindow(
                     modifier = Modifier.weight(1f),
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
+                // This window's OWN search field and types; the Search window's configuration it lists is
+                // untouched (that window has its own Reset).
+                ResetButton(enabled = own.query.isNotEmpty() || own.kinds.isNotEmpty()) {
+                    onOwnChange(own.copy(query = "", kinds = emptySet()))
+                }
             }
             ToggleChip(
                 text = "Only the types in the Search results",

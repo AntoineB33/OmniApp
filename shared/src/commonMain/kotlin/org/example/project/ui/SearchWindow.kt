@@ -266,6 +266,11 @@ fun SearchWindow(
                     modifier = Modifier.weight(1f).focusRequester(fieldFocus),
                 )
                 KindsDropDown(kinds = kinds, onKindsChange = { onConfigChange(config.copy(kinds = it)) })
+                // Clears the bar and unticks every type. The filters are left alone: they have their own window,
+                // and the button beside it says how many are on.
+                ResetButton(enabled = query.isNotEmpty() || kinds.isNotEmpty()) {
+                    onConfigChange(config.copy(query = "", kinds = emptySet()))
+                }
             }
             // Every configuration of this window, in a window of its own — the filters per kind among them. The
             // count says how many filters are narrowing the list right now, which nothing else here shows.
@@ -347,6 +352,25 @@ private fun KindSection(kind: SearchDomain.Kind) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.width(KIND_SECTION_WIDTH),
+    )
+}
+
+/**
+ * The configuration section's **Reset**: clears the search field and unticks every type. One button for the
+ * Search window and the Configuration Search window; greyed while there is nothing to clear.
+ */
+@Composable
+internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {
+    val color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Text(
+        text = "Reset",
+        style = MaterialTheme.typography.labelLarge,
+        color = color,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, color, RoundedCornerShape(6.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onReset) else Modifier)
+            .padding(horizontal = 10.dp, vertical = 14.dp),
     )
 }
 
