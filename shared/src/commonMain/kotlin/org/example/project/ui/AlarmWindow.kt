@@ -49,6 +49,14 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.isoDayNumber
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.window.PopupProperties
+import kotlin.math.abs
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.state.SchedulerIntent
@@ -72,9 +80,9 @@ import org.example.project.scheduler.model.TimerEntry
  * persists and syncs it, so every device on the account rings at the new time, on the new days. The timer
  * **run-state** writes go through their own callbacks rather than through [onTimersChange], so editing a row's
  * settings while it counts down cannot disturb the instant it is due at — and, the other way round, the
- * countdown is three input fields plus six ± second buttons ([onSetTimerCountdownField] /
- * [onNudgeTimerRemaining]) so the time left can be changed at any moment — before the start as much as during
- * it — without touching the row's settings.
+ * countdown is three input fields (each with a right-click ± menu in its own unit) plus six ± second buttons
+ * ([onSetTimerCountdownField] / [onNudgeTimerRemaining]) so the time left can be changed at any moment — before
+ * the start as much as during it — without touching the row's settings.
  * Only one of those writes ever stops the countdown, and deliberately: typing into the **seconds**, the digit
  * that is itself reading down.
  *
@@ -108,7 +116,7 @@ fun AlarmWindow(
      * PRD §18 Timers: set one component of the timer's countdown. The finer components carry on reading down
      * through the edit; typing into the SECONDS is what pauses the row (see [TimerDomain.withCountdownField]).
      */
-    onSetTimerCountdownField: (String, TimerDomain.TimerField, Int) -> Unit,
+    onSetTimerCountdownField: (String, TimerDomain.TimerField, Int, TimerDomain.TimerCountdown?) -> Unit,
     /**
      * PRD §18 Timers: shift the timer's time left by this many millis, leaving it in the state it is in — the
      * ± second buttons, which are how the seconds move **without** stopping the countdown.
@@ -388,8 +396,14 @@ fun AlarmWindow(
                     onStart = { onStartTimer(row.id) },
                     onPause = { onPauseTimer(row.id) },
                     onReset = { onResetTimer(row.id) },
-                    onSetCountdownField = { field, value -> onSetTimerCountdownField(row.id, field, value) },
+                    onSetCountdownField = { field, value, held ->
+                        onSetTimerCountdownField(row.id, field, value, held)
+                    },
                     onNudge = { onNudgeTimerRemaining(row.id, it) },
+                    // The timer's own window (PRD §7 Search) moves the time by the fields' right-click menu
+                    // alone, and reads the run in reverse beside the countdown.
+                    nudgeButtons = subject == null,
+                    showElapsed = subject != null,
                     onRemove = {
                         timerRows.removeAt(index)
                         pushTimers()
@@ -578,10 +592,15 @@ private fun TimerRowEditor(
     onStart: () -> Unit,
     onPause: () -> Unit,
     onReset: () -> Unit,
-    onSetCountdownField: (TimerDomain.TimerField, Int) -> Unit,
+    /** A typed component, and the countdown the row held still while it was typed (see [CountdownDraft]). */
+    onSetCountdownField: (TimerDomain.TimerField, Int, TimerDomain.TimerCountdown?) -> Unit,
     onNudge: (Long) -> Unit,
     onRemove: () -> Unit,
     onFieldFocus: (String, Boolean) -> Unit,
+    /** The six ± second buttons under the countdown. The fields' right-click menu is there either way. */
+    nudgeButtons: Boolean = true,
+    /** The run in reverse — the elapsed time, going up as the countdown goes down. */
+    showElapsed: Boolean = false,
 ) {
     val running = entry?.running == true
     val paused = entry?.paused == true
@@ -598,7 +617,7 @@ private fun TimerRowEditor(
     // focus and dropped on focus lost, at which point the field goes back to reading down. The fields NOT
     // holding it keep reading down throughout, which is exactly what "editing the hours does not stop the
     // minutes and seconds" looks like on screen. Display-only Compose state, like the window's own clock.
-    var draft by remember(row.id) { mutableStateOf<Pair<TimerDomain.TimerField, String>?>(null) }
+    var draft by remember(row.id) { mutableStateOf<CountdownDraft?>(null) }
     // The countdown is editable in all three states, the idle one included: setting up how long this run is
     // to be BEFORE pressing the button is the ordinary way to use a timer, and it is not the same question as
     // the Duration beside it (that one is the row's setting, what Reset goes back to and what a start from
@@ -651,13 +670,14 @@ private fun TimerRowEditor(
                 }
                 CountdownField(
                     field = field,
-                    shownValue = shown.component(field),
+                    live = shown,
                     // The hours read as a bare number; the two under a coarser component are padded, so the
                     // three fields spell the H:MM:SS the rest of the app prints.
                     pad = if (field == TimerDomain.TimerField.HOURS) 1 else 2,
                     draft = draft,
                     onDraftChange = { draft = it },
-                    onCommit = { onSetCountdownField(field, it) },
+                    onCommit = { value, held -> onSetCountdownField(field, value, held) },
+                    onNudge = onNudge,
                     editable = countdownEditable,
                     running = running,
                 )
@@ -683,7 +703,29 @@ private fun TimerRowEditor(
         // that — the digit is itself reading down, so a typed value only sticks if the row stops — which is
         // precisely why these sit beside it. They work before the start too, where there is nothing to stop:
         // they are then simply how the run about to be started is dialled in a few seconds at a time.
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (showElapsed) {
+            // PRD §7 Search, the timer's own window: the countdown in reverse. Read-only and derived from the
+            // same instant the countdown is (TimerDomain.elapsedMillis), so the two tick together.
+            val elapsed = entry?.let { TimerDomain.elapsedMillis(it, nowMillis) } ?: 0L
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Elapsed", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(6.dp))
+                OutlinedTextField(
+                    value = (if (elapsed < 0L) "−" else "") + TimerDomain.formatCountdown(abs(elapsed)),
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleMedium.copy(
+                        textAlign = TextAlign.Center,
+                        color =
+                            if (running) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                    modifier = Modifier.width(120.dp),
+                )
+            }
+        }
+        if (nudgeButtons) Row(verticalAlignment = Alignment.CenterVertically) {
             NUDGE_SECONDS.forEachIndexed { index, seconds ->
                 if (index != 0) Spacer(Modifier.width(4.dp))
                 TimerActionChip(
@@ -754,59 +796,125 @@ private fun timerRowOf(entry: TimerEntry): TimerRow =
     )
 
 /**
+ * PRD §18 Timers: what the user is typing into the countdown — into WHICH field, and the countdown as it
+ * stood when that field took the caret ([held]). ONE per row, because only one field can hold the focus.
+ *
+ * While it exists, the field it names and **every field to its left** show [held] rather than the live
+ * countdown: a number ticking down under the cursor cannot be typed into, and neither can one whose coarser
+ * neighbour changes while it is edited (the seconds wrapping would otherwise take a minute off the minutes
+ * beside the caret). The fields to its RIGHT go on reading down. The commit is measured against [held]
+ * ([TimerDomain.withCountdownField]), so what lands is what the user saw.
+ */
+private data class CountdownDraft(
+    val field: TimerDomain.TimerField,
+    val text: String,
+    val held: TimerDomain.TimerCountdown,
+)
+
+/**
  * PRD §18 Timers: one of the three countdown components, as a field.
  *
- * The row keeps ONE [draft] because only one field can hold the focus, and it names the field it belongs to —
- * so this one shows the draft when it owns it and the LIVE [shownValue] otherwise. That is what "editing the
- * hours does not stop the minutes and the seconds" is on screen: the two fields not being typed into go on
- * reading down while this one is held still.
- *
- * The draft is seeded on focus (a field that kept moving under the cursor could not be typed into) and dropped
+ * It shows the [draft]'s text when the draft is its own, the draft's held value when the draft belongs to a
+ * finer field (see [CountdownDraft]), and the LIVE value otherwise. The draft is seeded on focus and dropped
  * on focus lost — but only if it is still this field's, since Compose may report the gain before the loss when
  * the focus moves between two of them. Each keystroke that parses commits, like every other field in this
  * window; one that does not shows the error state until it does, so a half-typed value never reaches the
- * state. Every commit is measured against the LIVE value, which is what makes typing "12" into the minutes
- * (committing 1, then 12) land on 12 rather than on 13.
+ * state.
+ *
+ * A **right-click** opens a menu that adds or takes away this field's OWN unit — seconds on the seconds,
+ * minutes on the minutes, hours on the hours — through [onNudge], which moves the time left without
+ * changing whether the timer runs. It replaces the text field's own cut/copy/paste menu, which has nothing
+ * to offer a two-digit number.
  */
 @Composable
 private fun CountdownField(
     field: TimerDomain.TimerField,
-    shownValue: Int,
+    live: TimerDomain.TimerCountdown,
     pad: Int,
-    draft: Pair<TimerDomain.TimerField, String>?,
-    onDraftChange: (Pair<TimerDomain.TimerField, String>?) -> Unit,
-    onCommit: (Int) -> Unit,
+    draft: CountdownDraft?,
+    onDraftChange: (CountdownDraft?) -> Unit,
+    onCommit: (Int, TimerDomain.TimerCountdown) -> Unit,
+    onNudge: (Long) -> Unit,
     editable: Boolean,
     running: Boolean,
 ) {
-    val own = draft?.takeIf { it.first == field }?.second
-    val live = shownValue.toString().padStart(pad, '0')
-    OutlinedTextField(
-        value = own ?: live,
-        onValueChange = { text ->
-            onDraftChange(field to text)
-            parseCountdownComponent(text, field)?.let(onCommit)
-        },
-        readOnly = !editable,
-        singleLine = true,
-        isError = own?.let { parseCountdownComponent(it, field) == null } == true,
-        textStyle = MaterialTheme.typography.titleMedium.copy(
-            textAlign = TextAlign.Center,
-            color =
-                if (running) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-        modifier = Modifier
-            .width(56.dp)
-            .onFocusChanged { state ->
-                if (state.isFocused) {
-                    onDraftChange(field to live)
-                } else if (draft?.first == field) {
-                    onDraftChange(null)
-                }
+    fun padded(value: Int) = value.toString().padStart(pad, '0')
+    val own = draft?.takeIf { it.field == field }
+    val shownText =
+        when {
+            own != null -> own.text
+            draft != null && field.ordinal < draft.field.ordinal -> padded(draft.held.component(field))
+            else -> padded(live.component(field))
+        }
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        OutlinedTextField(
+            value = shownText,
+            onValueChange = { text ->
+                val held = own?.held ?: live
+                onDraftChange(CountdownDraft(field, text, held))
+                parseCountdownComponent(text, field)?.let { onCommit(it, held) }
             },
-    )
+            readOnly = !editable,
+            singleLine = true,
+            isError = own?.let { parseCountdownComponent(it.text, field) == null } == true,
+            textStyle = MaterialTheme.typography.titleMedium.copy(
+                textAlign = TextAlign.Center,
+                color =
+                    if (running) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+            modifier = Modifier
+                .width(56.dp)
+                // Initial pass, and consumed: the right-click is this menu's, never the text field's own.
+                .pointerInput(editable) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                                event.changes.forEach { it.consume() }
+                                if (editable) menuOpen = true
+                            }
+                        }
+                    }
+                }
+                .onFocusChanged { state ->
+                    if (state.isFocused) {
+                        // Held from here on: this field and every one to its left stop reading down.
+                        onDraftChange(CountdownDraft(field, padded(live.component(field)), live))
+                    } else if (draft?.field == field) {
+                        onDraftChange(null)
+                    }
+                },
+        )
+        transientMenuDismissal(menuOpen) { menuOpen = false }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            properties = PopupProperties(focusable = false),
+        ) {
+            NUDGE_STEPS.forEach { step ->
+                DropdownMenuItem(
+                    text = { Text((if (step > 0) "+" else "−") + abs(step) + " " + unitLabel(field)) },
+                    onClick = {
+                        menuOpen = false
+                        onNudge(step * field.unitMillis)
+                    },
+                )
+            }
+        }
+    }
 }
+
+private fun unitLabel(field: TimerDomain.TimerField): String =
+    when (field) {
+        TimerDomain.TimerField.HOURS -> "h"
+        TimerDomain.TimerField.MINUTES -> "min"
+        TimerDomain.TimerField.SECONDS -> "s"
+    }
+
+/** A countdown field's right-click menu, top to bottom — in that field's own unit. */
+private val NUDGE_STEPS: List<Long> = listOf(10L, 5L, 1L, -1L, -5L, -10L)
 
 /** A small outlined text button for a timer's start/pause/reset, in the window's own flat idiom. */
 @Composable

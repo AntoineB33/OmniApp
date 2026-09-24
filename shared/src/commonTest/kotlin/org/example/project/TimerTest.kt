@@ -155,6 +155,44 @@ class TimerTest {
     }
 
     @Test
+    fun an_edit_is_measured_against_the_numbers_held_on_screen_not_the_live_ones() {
+        // The minutes field took the caret at 1:00:02, which the window holds on screen; the seconds ran on,
+        // and the hours quietly ticked to 0 underneath (0:59:58 live). Typing 5 into the minutes is asked of
+        // the 1:0_:__ the user sees: it lands on 1:05, the live seconds unchanged — never 0:05.
+        val running = timer(endsAtMillis = now + 59 * minute + 58 * second)
+        val held = TimerDomain.TimerCountdown(1, 0, 2)
+        val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 5, now, held)
+        assertTrue(edited.running)
+        assertEquals(TimerDomain.TimerCountdown(1, 5, 58), TimerDomain.countdownOf(edited.remainingAtMillis(now)))
+
+        // The seconds snap to the held hours and minutes too.
+        val seconds = TimerDomain.withCountdownField(running, TimerDomain.TimerField.SECONDS, 30, now, held)
+        assertEquals(TimerDomain.TimerCountdown(1, 0, 30), TimerDomain.countdownOf(seconds.remainingAtMillis(now)))
+
+        // With nothing held the edit is the plain shift it always was.
+        assertEquals(
+            TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 5, now),
+            TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 5, now, null),
+        )
+    }
+
+    @Test
+    fun the_elapsed_reading_is_the_countdown_in_reverse() {
+        val running = TimerDomain.started(timer(durationSeconds = 300), now)
+        assertEquals(0L, TimerDomain.elapsedMillis(running, now))
+        // It goes up exactly as the countdown goes down, second for second, and the two add up to the duration.
+        val later = now + 61 * second + 300L
+        assertEquals(61 * second, TimerDomain.elapsedMillis(running, later))
+        assertEquals(
+            300 * second,
+            TimerDomain.elapsedMillis(running, later) + TimerDomain.countdownOf(running.remainingAtMillis(later)).millis,
+        )
+        // Nudged above its duration, the run is "before its start": negative.
+        val nudged = TimerDomain.nudged(running, 10 * second, now)
+        assertEquals(-10 * second, TimerDomain.elapsedMillis(nudged, now))
+    }
+
+    @Test
     fun setting_the_minutes_leaves_the_seconds_running() {
         val running = timer(endsAtMillis = now + 5 * minute + 20 * second)
         val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 2, now)

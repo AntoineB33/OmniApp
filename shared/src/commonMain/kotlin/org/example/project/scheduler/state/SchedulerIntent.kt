@@ -657,6 +657,8 @@ sealed interface SchedulerIntent {
         val field: org.example.project.scheduler.domain.TimerDomain.TimerField,
         val value: Int,
         val nowMillis: Long,
+        /** The countdown the window held still while the field was being edited — see [TimerDomain.withCountdownField]. */
+        val held: org.example.project.scheduler.domain.TimerDomain.TimerCountdown? = null,
     ) : SchedulerIntent
 
     /**

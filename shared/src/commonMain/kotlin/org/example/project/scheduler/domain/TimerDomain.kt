@@ -125,6 +125,17 @@ object TimerDomain {
 
         /** The whole countdown as millis, on the second — what a snapped seconds edit banks. */
         val millis: Long get() = (hours.toLong() * 3600L + minutes.toLong() * 60L + seconds.toLong()) * 1_000L
+
+        /** This countdown with [field] set to [value]. */
+        fun with(field: TimerField, value: Int): TimerCountdown = when (field) {
+            TimerField.HOURS -> copy(hours = value)
+            TimerField.MINUTES -> copy(minutes = value)
+            TimerField.SECONDS -> copy(seconds = value)
+        }
+
+        /** The millis of [field] and every coarser component — what an edit of [field] is a change of. */
+        fun millisDownTo(field: TimerField): Long =
+            TimerField.entries.filter { it.ordinal <= field.ordinal }.sumOf { component(it) * it.unitMillis }
     }
 
     /**
@@ -140,6 +151,16 @@ object TimerDomain {
             seconds = (total % 60).toInt(),
         )
     }
+
+    /**
+     * PRD §7 *Search*, a timer's own window: the countdown **in reverse** — how far the run has come, which goes
+     * up exactly as fast as the countdown goes down: the row's duration minus the time left. Negative when
+     * the time left was nudged above the duration (the window prints that with a minus). Measured against the
+     * countdown **as printed** ([countdownOf], rounded up to the second), so the two readouts always add up to
+     * the duration and tick on the same instant. Derived, never stored.
+     */
+    fun elapsedMillis(entry: TimerEntry, nowMillis: Long): Long =
+        entry.durationMillis - countdownOf(entry.remainingAtMillis(nowMillis)).millis
 
     /**
      * PRD §18 Timers: set one component of [entry]'s countdown to [value] — what the window's three countdown
@@ -159,15 +180,29 @@ object TimerDomain {
      *
      * An **idle** row is edited too — the countdown is set up *before* the start, which is what the row's
      * button then saying **Resume** rather than *Start* means. [withRemaining] is where that is decided.
+     *
+     * [held] is the countdown **as the window showed it when the field took the caret**. While a field is in
+     * edit mode, it and every coarser field are held still on screen (a number that ticks down under the
+     * cursor cannot be typed into), so the edit is measured against those held numbers and not against the
+     * live ones — otherwise typing "5" into the minutes while the hours had quietly ticked from 1 to 0 would
+     * land on 0:05 when the user saw 1:05. The finer components are the live ones either way.
      */
     fun withCountdownField(
         entry: TimerEntry,
         field: TimerField,
         value: Int,
         nowMillis: Long,
+        held: TimerCountdown? = null,
     ): TimerEntry {
         val remaining = entry.remainingAtMillis(nowMillis)
-        val shown = countdownOf(remaining)
+        val live = countdownOf(remaining)
+        // What the user sees: the coarser components held, [field] and the finer ones live.
+        val shown =
+            held?.let {
+                TimerField.entries
+                    .filter { coarser -> coarser.ordinal < field.ordinal }
+                    .fold(live) { acc, coarser -> acc.with(coarser, it.component(coarser)) }
+            } ?: live
         if (field == TimerField.SECONDS) {
             val snapped = shown.copy(seconds = value).millis
                 .coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
@@ -180,7 +215,9 @@ object TimerDomain {
                 withRemaining(entry, snapped, nowMillis)
             }
         }
-        val delta = (value - shown.component(field)).toLong() * field.unitMillis
+        // A shift, so the finer components (and the sub-second part) run on untouched. Without [held] this is
+        // exactly `(value − live) × unit`.
+        val delta = shown.with(field, value).millisDownTo(field) - live.millisDownTo(field)
         return withRemaining(entry, remaining + delta, nowMillis)
     }
 

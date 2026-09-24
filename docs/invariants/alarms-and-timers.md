@@ -89,11 +89,21 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **The row holds ONE DRAFT, naming the field it belongs to** (`draft`, seeded on focus and dropped by
   `onFocusChanged` — only if it is still that field's, since Compose may report the gain before the loss). One,
   because only one field can hold the focus; and a draft at all because the live countdown changes four times a
-  second, so a field bound straight to it cannot be typed into — every tick overwrites the keystroke. **The
-  fields NOT holding the draft go on reading down**, which is what "editing the hours does not stop the minutes
-  and seconds" looks like on screen. Display-only Compose state, like the poll below it; each keystroke that
-  parses commits, one that does not shows the error state, so a half-typed value never reaches the state.
-  Nothing downstream needs a change: `launchAlarmArming` already re-runs on every `state.timers` change.
+  second, so a field bound straight to it cannot be typed into — every tick overwrites the keystroke.
+  **The draft HOLDS the countdown as it stood at focus (`CountdownDraft.held`): the edited field and every
+  field to its LEFT show it and stay still; the fields to its RIGHT go on reading down**, which is what
+  "editing the hours does not stop the minutes and seconds" looks like on screen. The coarser fields are held
+  too because the seconds wrapping would otherwise take a minute off the minutes beside the caret. **A commit
+  is measured against the held numbers** (`SetTimerCountdownField.held` → `withCountdownField`), never the
+  live ones, so what lands is what the user saw. Display-only Compose state, like the poll below it; each
+  keystroke that parses commits, one that does not shows the error state, so a half-typed value never reaches
+  the state. Nothing downstream needs a change: `launchAlarmArming` already re-runs on every `state.timers`
+  change.
+- **A right-click on a countdown field nudges by THAT field's unit** (±1/5/10 s, min or h), through the same
+  `NudgeTimerRemaining` as the ± buttons, and replaces the text field's own cut/copy/paste menu. The timer's
+  own window (Search's right-click, `AlarmWindowSubject`) has the menu only — no ± buttons — and an
+  **Elapsed** read-only field, the countdown in reverse (`TimerDomain.elapsedMillis`: duration − the countdown
+  as printed, so the two always add up to the duration; negative once nudged above it).
 - **The countdown's clock is the window's own**: the engine's now-line ticks once per 30 s production tick, so
   `AlarmWindow` polls `clock.nowMillis()` itself every 250 ms — **only while it is open and something is
   running**. Display-only Compose state, like the calendar's zoom. The transitions dispatch the clock's

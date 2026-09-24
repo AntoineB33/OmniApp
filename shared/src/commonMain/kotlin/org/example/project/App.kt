@@ -2492,9 +2492,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onStartTimer = { vm.dispatch(SchedulerIntent.StartTimer(it, clock.nowMillis())) },
                             onPauseTimer = { vm.dispatch(SchedulerIntent.PauseTimer(it, clock.nowMillis())) },
                             onResetTimer = { vm.dispatch(SchedulerIntent.ResetTimer(it)) },
-                            onSetTimerCountdownField = { id, field, value ->
+                            onSetTimerCountdownField = { id, field, value, held ->
                                 vm.dispatch(
-                                    SchedulerIntent.SetTimerCountdownField(id, field, value, clock.nowMillis()),
+                                    SchedulerIntent.SetTimerCountdownField(id, field, value, clock.nowMillis(), held),
                                 )
                             },
                             onNudgeTimerRemaining = { id, delta ->

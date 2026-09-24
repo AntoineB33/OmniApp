@@ -472,7 +472,7 @@ object SchedulerReducer {
             }
             is SchedulerIntent.ResetTimer -> reduceTimerTransition(state, intent.id, TimerDomain::reset)
             is SchedulerIntent.SetTimerCountdownField -> reduceTimerTransition(state, intent.id) {
-                TimerDomain.withCountdownField(it, intent.field, intent.value, intent.nowMillis)
+                TimerDomain.withCountdownField(it, intent.field, intent.value, intent.nowMillis, intent.held)
             }
             is SchedulerIntent.NudgeTimerRemaining -> reduceTimerTransition(state, intent.id) {
                 TimerDomain.nudged(it, intent.deltaMillis, intent.nowMillis)
