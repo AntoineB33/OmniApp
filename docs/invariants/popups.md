@@ -54,9 +54,14 @@ means.
   back the size *and* position the window had before the first of them — per axis, so releasing "fill width"
   on a window that is also filling its height restores only its width.
 - **Double-clicking the head** maximizes, and un-maximizes when it already is. It is detected inside the
-  head's own gesture (`windowHeadGestures`) — the press is only counted as a click once the touch slop has
-  been awaited and *not* crossed, so a slow drag can never read as a double-click. Two `pointerInput`s on
-  one head race for the press and whichever wins decides whether the other ever sees the gesture.
+  head's own gesture (`windowHeadGestures`) — a press counts as a click only if the pointer came back up
+  without having travelled past the touch slop, so a slow drag can never read as a double-click. Two
+  `pointerInput`s on one head race for the press and whichever wins decides whether the other ever sees the
+  gesture.
+- **The head drag has no dead zone**: the window follows the pointer from its first movement. The slop is
+  only the click test above, never a threshold before moving. That is affordable because the head holds
+  nothing interactive but its own buttons (which consume their press); a window's toggles belong in a menu
+  inside the window (the calendar's "View ▾"), not in the head.
 - **A maximized window fills the content area**, which is the app minus the lateral menu — and grows to the
   whole app when the menu is retracted, because the content area does. Nothing in the frame knows about the
   menu: `fillMaxWidth`/`fillMaxHeight` inside the content `Box` is the entire mechanism.

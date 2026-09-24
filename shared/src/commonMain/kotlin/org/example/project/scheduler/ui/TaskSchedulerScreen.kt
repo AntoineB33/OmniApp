@@ -172,7 +172,6 @@ import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.TaskCategoryCell
 import org.example.project.ui.EditModeOption
 import kotlinx.coroutines.withTimeoutOrNull
-import org.example.project.ui.windowDragHandle
 
 /** Width of one weight-table column (text field + stacked +/- buttons + pin button). */
 private val WEIGHT_COLUMN_WIDTH = 130.dp

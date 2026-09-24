@@ -5,7 +5,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
@@ -47,7 +46,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -755,9 +753,12 @@ private fun ResizeEdge(
  * maximize it (or put it back).
  *
  * One gesture detector, not a drag one beside a tap one: two `pointerInput`s on the same head race for the
- * press, and whichever wins it decides whether the other ever sees the gesture. Here the press is only
- * counted as a click once the slop has been awaited and NOT crossed — i.e. once it is known not to be a
- * drag — so a slow drag can never be read as a double-click.
+ * press, and whichever wins it decides whether the other ever sees the gesture.
+ *
+ * The window follows the pointer from its FIRST movement — there is no dead zone around the press. The touch
+ * slop only decides, once the pointer is up, whether the press was a click: one that travelled past it was a
+ * drag, so a slow drag can never be read as a double-click. The head takes an **unconsumed** press only, so
+ * its buttons (which consume theirs) never move the window; nothing else interactive belongs in the head.
  */
 private fun Modifier.windowHeadGestures(
     onDrag: (Offset) -> Unit,
@@ -767,25 +768,22 @@ private fun Modifier.windowHeadGestures(
     var previousPressMillis = 0L
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = true)
-        var overSlop = Offset.Zero
-        // Named `slopCrossing`, not `drag`: a local of that name would shadow the `drag(...)` gesture
-        // function called just below.
-        var slopCrossing: PointerInputChange?
-        do {
-            slopCrossing = awaitTouchSlopOrCancellation(down.id) { change, over ->
-                change.consume()
-                overSlop = over
+        var travelled = Offset.Zero
+        var moved = false
+        val completed = drag(down.id) { change ->
+            val delta = change.positionChange()
+            travelled += delta
+            if (delta != Offset.Zero) {
+                moved = true
+                onDrag(delta)
             }
-        } while (slopCrossing != null && !slopCrossing.isConsumed)
-        if (slopCrossing != null) {
+            change.consume()
+        }
+        if (moved && completed) onDragEnd()
+        if (!completed) return@awaitEachGesture
+        if (travelled.getDistance() > viewConfiguration.touchSlop) {
             // A drag: it is not a click at all, so it also breaks any double-click in progress.
             previousPressMillis = 0L
-            onDrag(overSlop)
-            val completed = drag(slopCrossing.id) { change ->
-                onDrag(change.positionChange())
-                change.consume()
-            }
-            if (completed) onDragEnd()
             return@awaitEachGesture
         }
         val pressMillis = down.uptimeMillis

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -76,8 +77,8 @@ private const val NOT_IN_TREE_HINT: String =
 
 /**
  * PRD §7 **Search**: a floating window that finds a thing of the account by name. Two sections, top to
- * bottom — the **configuration** (a search bar, and a drop-down naming which kind of thing to look for) and
- * the **result list**.
+ * bottom — the **configuration** (a search bar, and a drop-down with a check box for each kind of thing to
+ * look for — every checked kind is searched at once) and the **result list**.
  *
  * **Every row is the same height and the full width of the list**, whatever it holds. A task row is three
  * sections, left to right: its **title**, its **path** in a rectangle, and — for a task no task tree holds
@@ -95,7 +96,7 @@ private const val NOT_IN_TREE_HINT: String =
  * right-click selects it and opens its contextual menu — for a task the §13 menu's entries, with "go to task
  * tree" and "deep copy" greyed where the live tree does not hold the task.
  *
- * The query, the kind and the selection are **Compose-only state**: how the user is looking for something
+ * The query, the checked kinds and the selection are **Compose-only state**: how the user is looking for something
  * is not a fact about the account. Nothing here writes the state except through the gestures' own intents.
  */
 @Composable
@@ -121,7 +122,7 @@ fun SearchWindow(
 ) {
     val frame = rememberWindowFrameState("Search", initialOffset, initialSize)
     var query by remember { mutableStateOf("") }
-    var kind by remember { mutableStateOf(SearchDomain.Kind.Task) }
+    var kinds by remember { mutableStateOf(setOf(SearchDomain.Kind.Task)) }
     var kindMenuOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -133,21 +134,21 @@ fun SearchWindow(
     // Every path of every task is a walk of every task tree, so it is held on the trees alone — a keystroke
     // in the search bar filters it, it does not redo it. Keyed on the tree fields rather than on the whole
     // state, which every engine tick replaces (records live on the tasks) — ADR 0009.
+    val searchesTasks = SearchDomain.Kind.Task in kinds
     val allPaths =
-        remember(kind, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
-            if (kind == SearchDomain.Kind.Task) SearchDomain.allPathsInAnyTree(state) else emptyMap()
+        remember(searchesTasks, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
+            if (searchesTasks) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
-    val taskResults =
-        remember(kind, query, allPaths, state.tasks, state.taskTrees) {
-            if (kind == SearchDomain.Kind.Task) SearchDomain.taskResults(state, query, allPaths) else emptyList()
+    val results =
+        remember(
+            kinds, query, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
+            state.panels, state.alarms, state.timers, state.chores,
+        ) {
+            SearchDomain.results(state, kinds, query) { allPaths }
         }
-    val itemResults =
-        remember(kind, query, state.categories, state.tasks, state.periodKinds, state.panels, state.alarms, state.timers, state.chores) {
-            SearchDomain.itemResults(state, kind, query)
-        }
-    val count = if (kind == SearchDomain.Kind.Task) taskResults.size else itemResults.size
+    val count = results.size
     // A new question starts at its best answer.
-    LaunchedEffect(kind, query) { selected = 0 }
+    LaunchedEffect(kinds, query) { selected = 0 }
     LaunchedEffect(selected, count) {
         if (count > 0) listState.animateScrollToItem(selected.coerceIn(0, count - 1))
     }
@@ -184,10 +185,10 @@ fun SearchWindow(
         }
     }
     fun openSelected() {
-        if (kind == SearchDomain.Kind.Task) {
-            taskResults.getOrNull(selected)?.let { taskActions(it).onEdit?.invoke() }
-        } else {
-            itemResults.getOrNull(selected)?.let(::openItem)
+        when (val result = results.getOrNull(selected)) {
+            is SearchDomain.TaskResult -> taskActions(result).onEdit?.invoke()
+            is SearchDomain.ItemResult -> openItem(result)
+            null -> Unit
         }
     }
 
@@ -225,8 +226,8 @@ fun SearchWindow(
                         }
                         // A task cell's Ctrl+C — but only when the bar holds nothing to copy itself.
                         event.isCtrlPressed && event.key == Key.C && query.isEmpty() &&
-                            kind == SearchDomain.Kind.Task -> {
-                            taskResults.getOrNull(selected)?.let { taskActions(it).onCopyTaskId?.invoke() }
+                            results.getOrNull(selected) is SearchDomain.TaskResult -> {
+                            taskActions(results[selected] as SearchDomain.TaskResult).onCopyTaskId?.invoke()
                             true
                         }
                         else -> false
@@ -250,7 +251,7 @@ fun SearchWindow(
                 )
                 Box(Modifier.width(170.dp)) {
                     Text(
-                        text = kind.label + "  ▾",
+                        text = kindsLabel(kinds) + "  ▾",
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -267,13 +268,12 @@ fun SearchWindow(
                         onDismissRequest = { kindMenuOpen = false },
                         properties = PopupProperties(focusable = false),
                     ) {
+                        // A check box per kind; ticking one leaves the menu open, so several can be ticked in turn.
                         SearchDomain.Kind.entries.forEach { option ->
                             DropdownMenuItem(
                                 text = { Text(option.label) },
-                                onClick = {
-                                    kind = option
-                                    kindMenuOpen = false
-                                },
+                                leadingIcon = { Checkbox(checked = option in kinds, onCheckedChange = null) },
+                                onClick = { kinds = if (option in kinds) kinds - option else kinds + option },
                             )
                         }
                     }
@@ -286,30 +286,34 @@ fun SearchWindow(
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 if (count == 0) {
                     Text(
-                        text = if (query.isBlank()) "Nothing of this kind yet." else "No ${kind.label} matches.",
+                        text =
+                            when {
+                                kinds.isEmpty() -> "Tick a kind to look for."
+                                query.isBlank() -> "Nothing of these kinds yet."
+                                else -> "Nothing matches."
+                            },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                } else if (kind == SearchDomain.Kind.Task) {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
-                        itemsIndexed(taskResults, key = { _, r -> r.taskId.value }) { index, result ->
-                            TaskResultRow(
-                                result = result,
-                                selected = index == selected,
-                                onSelect = { selected = index },
-                                actions = { taskActions(result) },
-                            )
-                        }
-                    }
                 } else {
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
-                        itemsIndexed(itemResults, key = { _, r -> r.kind.name + "/" + r.id }) { index, item ->
-                            ItemResultRow(
-                                item = item,
-                                selected = index == selected,
-                                onSelect = { selected = index },
-                                onOpen = { openItem(item) },
-                            )
+                        itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
+                            when (result) {
+                                is SearchDomain.TaskResult ->
+                                    TaskResultRow(
+                                        result = result,
+                                        selected = index == selected,
+                                        onSelect = { selected = index },
+                                        actions = { taskActions(result) },
+                                    )
+                                is SearchDomain.ItemResult ->
+                                    ItemResultRow(
+                                        item = result,
+                                        selected = index == selected,
+                                        onSelect = { selected = index },
+                                        onOpen = { openItem(result) },
+                                    )
+                            }
                         }
                     }
                 }
@@ -318,6 +322,20 @@ fun SearchWindow(
         }
     }
 }
+
+/** The drop-down's face: the checked kinds by name, or "every kind" / "no kind". */
+private fun kindsLabel(kinds: Set<SearchDomain.Kind>): String =
+    when (kinds.size) {
+        0 -> "no kind"
+        SearchDomain.Kind.entries.size -> "every kind"
+        else -> SearchDomain.Kind.entries.filter { it in kinds }.joinToString(", ") { it.label }
+    }
+
+private fun resultKey(result: SearchDomain.Result): String =
+    when (result) {
+        is SearchDomain.TaskResult -> SearchDomain.Kind.Task.name + "/" + result.taskId.value
+        is SearchDomain.ItemResult -> result.kind.name + "/" + result.id
+    }
 
 /**
  * What a task row's gestures do — PRD §13's cell menu, less the entries that are about a CELL (collapse, add

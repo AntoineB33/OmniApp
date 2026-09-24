@@ -349,6 +349,33 @@ class SearchWindowTest {
         assertTrue(SearchDomain.itemResults(s, SearchDomain.Kind.Alarm, "nothing like it").isEmpty())
     }
 
+    @Test
+    fun every_checked_kind_is_searched_and_the_best_match_leads_across_kinds() {
+        var s = tree()
+        s = r(s, SchedulerIntent.SetCellTitle(freeRootCell(s), "Wake"))
+        s =
+            s.copy(
+                alarms = listOf(
+                    AlarmEntry(id = "a1", label = "Wake up", timeOfDayMinutes = 7 * 60),
+                    AlarmEntry(id = "a2", label = "wake", timeOfDayMinutes = 8 * 60),
+                ),
+                timers = listOf(TimerEntry(id = "t1", label = "Wake timer", durationSeconds = 60)),
+            )
+        val both = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm)
+        // The two exact names first — the task before the alarm, the drop-down's order — then "Wake up". The
+        // unchecked timer is not a result.
+        assertEquals(
+            listOf(SearchDomain.Kind.Task to "Wake", SearchDomain.Kind.Alarm to "wake", SearchDomain.Kind.Alarm to "Wake up"),
+            SearchDomain.results(s, both, "wake").map { it.kind to it.name },
+        )
+        // One checked kind is exactly that kind's own list; none checked finds nothing.
+        assertEquals(
+            SearchDomain.itemResults(s, SearchDomain.Kind.Timer, "wake"),
+            SearchDomain.results(s, setOf(SearchDomain.Kind.Timer), "wake"),
+        )
+        assertTrue(SearchDomain.results(s, emptySet(), "").isEmpty())
+    }
+
     // ----- Persistence (CLAUDE.md: persisted-DB compatibility) --------------------------------------
 
     @Test

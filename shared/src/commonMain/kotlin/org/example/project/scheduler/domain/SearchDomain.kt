@@ -34,7 +34,10 @@ import org.example.project.scheduler.state.SchedulerState
  */
 object SearchDomain {
 
-    /** The drop-down of the configuration section, in the order the user listed it. */
+    /**
+     * The drop-down of the configuration section, in the order the user listed it. Each kind carries a check
+     * box there: the search looks for every checked kind at once ([results]).
+     */
     enum class Kind(val label: String) {
         Task("task"),
         Category("task category"),
@@ -322,7 +325,9 @@ object SearchDomain {
         val title: String,
         val paths: List<List<String>>,
         val inTaskTree: Boolean,
-    ) {
+    ) : Result {
+        override val kind: Kind get() = Kind.Task
+        override val name: String get() = title
         val shownPath: List<String> get() = paths.firstOrNull().orEmpty()
         val hasSeveralPaths: Boolean get() = paths.size > 1
     }
@@ -381,11 +386,11 @@ object SearchDomain {
      * what the window's gestures act on — the category id, the kind itself, the alarm / timer / reminder id.
      */
     data class ItemResult(
-        val kind: Kind,
+        override val kind: Kind,
         val id: String,
-        val name: String,
+        override val name: String,
         val detail: String,
-    )
+    ) : Result
 
     fun itemResults(state: SchedulerState, kind: Kind, query: String): List<ItemResult> {
         val items =
@@ -429,6 +434,32 @@ object SearchDomain {
             .sortedWith(compareBy({ it.first }, { it.second.name.lowercase() }, { it.second.detail }))
             .map { it.second }
     }
+
+    /** One row of the result list, whatever its kind. */
+    sealed interface Result {
+        val kind: Kind
+        val name: String
+    }
+
+    /**
+     * The result list for every kind in [kinds] (the drop-down's checked boxes): the same name first, then
+     * names starting with the query, then the rest — across kinds, so an exact match is never buried under a
+     * kind listed before it. Within one tier the kinds keep the drop-down's order, and each kind its own order
+     * ([taskResults], [itemResults]). [allPaths] is read only when [Kind.Task] is checked.
+     */
+    fun results(
+        state: SchedulerState,
+        kinds: Set<Kind>,
+        query: String,
+        allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
+    ): List<Result> =
+        Kind.entries
+            .filter { it in kinds }
+            .flatMap { kind ->
+                if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
+            }
+            // Stable: ties keep the kind order and each kind's own order.
+            .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
 
     /**
      * How well [name] answers [query]: 0 = the same name, 1 = starts with it, 2 = contains it, null = not a
