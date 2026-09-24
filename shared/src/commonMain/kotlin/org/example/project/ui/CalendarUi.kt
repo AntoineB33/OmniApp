@@ -1315,7 +1315,11 @@ fun LateralMenu(
             // Scroll when the buttons exceed the available height (e.g. short windows / calendar
             // expanded) so nothing is clipped off the bottom.
             .verticalScroll(rememberScrollState())
-            .padding(12.dp),
+            // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the scrolled
+            // content ends a bar's height lower: scrolled to the end, the last button always clears the bar.
+            // Always, not only while the bar shows — the menu does not jump when a window opens or closes, and
+            // without the bar the last button simply sits that much above the floor.
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp + MINIMIZED_BAR_HEIGHT),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // First element: page navigation (persistent across all feature pages), styled like the buttons below.

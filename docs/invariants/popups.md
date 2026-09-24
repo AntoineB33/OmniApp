@@ -102,6 +102,9 @@ means.
   they were opened. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
   open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
   maximized window stops above it. A tab brings its window back (`present`); its ✕ closes it outright.
+- **The lateral menu's scrolled content ends a bar's height lower** (`LateralMenu`'s bottom padding, `+
+  MINIMIZED_BAR_HEIGHT`), always — so scrolled to the end, its last button clears the bar drawn over it, and
+  the menu does not jump as the bar comes and goes.
 - **Close all is the bar's, at its right corner** — every registered window's own close, over a snapshot. It
   replaced the lateral menu's "Close windows" (2026-09-24), which listed the lateral-menu windows by hand and
   so never closed a per-object window, a copy or a notice.
