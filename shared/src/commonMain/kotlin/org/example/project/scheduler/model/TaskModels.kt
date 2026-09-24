@@ -405,6 +405,14 @@ data class TimerEntry(
     val endsAtMillis: Long? = null,
     /** Paused: how much of the countdown is left. Null when idle or running. */
     val remainingMillis: Long? = null,
+    /**
+     * The length of the CURRENT run — what the elapsed reading counts up against
+     * ([org.example.project.scheduler.domain.TimerDomain.elapsedMillis]). Fixed when the timer leaves idle, to
+     * the [durationSeconds] of that moment, so editing the duration afterwards (it is what Reset goes back to)
+     * leaves the running reading alone, while a change to the countdown shows in it mirrored. Null when idle,
+     * and on a run started by a build before it existed, which then reads against the duration.
+     */
+    val runMillis: Long? = null,
 ) {
     /** Counting down: it has an instant to fire at. */
     val running: Boolean get() = endsAtMillis != null

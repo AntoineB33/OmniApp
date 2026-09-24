@@ -193,6 +193,60 @@ class TimerTest {
     }
 
     @Test
+    fun the_elapsed_reading_stands_still_with_the_countdown_fields_a_caret_holds() {
+        // The seconds field took the caret at 4:00 left and holds it; the timer runs on underneath.
+        val running = TimerDomain.started(timer(durationSeconds = 300), now)
+        val held = TimerDomain.countdownOf(running.remainingAtMillis(now + 60 * second))
+        val later = TimerDomain.countdownOf(running.remainingAtMillis(now + 75 * second))
+
+        // Every field is held while the SECONDS are edited: the countdown shows 4:00, and Elapsed 1:00.
+        val shown = TimerDomain.displayedCountdown(later, held, TimerDomain.TimerField.SECONDS)
+        assertEquals(TimerDomain.TimerCountdown(0, 4, 0), shown)
+        assertEquals(60 * second, TimerDomain.elapsedMillis(running, shown))
+
+        // While the MINUTES are edited the seconds run on — and Elapsed with them.
+        val minutes = TimerDomain.displayedCountdown(later, held, TimerDomain.TimerField.MINUTES)
+        assertEquals(TimerDomain.TimerCountdown(0, 4, 45), minutes)
+        assertEquals(15 * second, TimerDomain.elapsedMillis(running, minutes))
+
+        // With nothing edited it is the live reading.
+        assertEquals(later, TimerDomain.displayedCountdown(later, held, null))
+        assertEquals(TimerDomain.elapsedMillis(running, now + 75 * second), TimerDomain.elapsedMillis(running, later))
+    }
+
+    @Test
+    fun a_countdown_change_is_mirrored_in_the_elapsed_reading_and_the_duration_is_not() {
+        val running = TimerDomain.started(timer(durationSeconds = 300), now)
+        val t = now + 60 * second
+        assertEquals(60 * second, TimerDomain.elapsedMillis(running, t))
+
+        // A minute added to the countdown is a minute taken off the elapsed time — by the menu or typed.
+        val nudged = TimerDomain.nudged(running, 60 * second, t)
+        assertEquals(0L, TimerDomain.elapsedMillis(nudged, t))
+        val typed = TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 2, t)
+        assertEquals(3 * minute, TimerDomain.elapsedMillis(typed, t), "4:00 left typed down to 2:00: two more elapsed")
+
+        // The Duration — what Reset goes back to — does not reach the running reading.
+        val longer = running.copy(durationSeconds = 900)
+        assertEquals(60 * second, TimerDomain.elapsedMillis(longer, t))
+        // A paused run neither.
+        val paused = TimerDomain.paused(running, t)
+        assertEquals(60 * second, TimerDomain.elapsedMillis(paused.copy(durationSeconds = 10), t + hour))
+
+        // An idle row has no run: 0, whatever its duration. A countdown dialled in before the start is a
+        // run, measured against the duration of that moment.
+        val idle = timer(durationSeconds = 300)
+        assertEquals(0L, TimerDomain.elapsedMillis(idle.copy(durationSeconds = 600), now))
+        val dialled = TimerDomain.withCountdownField(idle, TimerDomain.TimerField.MINUTES, 4, now)
+        assertEquals(minute, TimerDomain.elapsedMillis(dialled.copy(durationSeconds = 30), now))
+
+        // Reset ends the run, and a new one starts from the duration as it now is.
+        val reset = TimerDomain.reset(longer)
+        assertNull(reset.runMillis)
+        assertEquals(900 * second, TimerDomain.started(reset, t).runMillis)
+    }
+
+    @Test
     fun setting_the_minutes_leaves_the_seconds_running() {
         val running = timer(endsAtMillis = now + 5 * minute + 20 * second)
         val edited = TimerDomain.withCountdownField(running, TimerDomain.TimerField.MINUTES, 2, now)
@@ -712,6 +766,30 @@ class TimerTest {
         assertEquals(AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS, t.soundSeconds)
         assertTrue(t.alert.vibrate)
         assertTrue(t.idle, "a row that says nothing about running is idle")
+    }
+
+    @Test
+    fun codec_decodes_a_running_timer_written_before_the_run_length_existed() {
+        // Persisted-DB rule: a run started by a build without `runMillis` still loads, still runs, and its
+        // elapsed reading falls back to the duration — exactly what that build showed.
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[{"id":"t0","title":"X"}],
+             "timers":[{"id":"timer-0","durationSeconds":300,"endsAtMillis":${now + 200 * second}}]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        val t = decoded.timers.single()
+        assertTrue(t.running)
+        assertNull(t.runMillis)
+        assertEquals(100 * second, TimerDomain.elapsedMillis(t, now))
+
+        // And the field round-trips once written.
+        val started = TimerDomain.started(timer(durationSeconds = 300), now)
+        val again = SchedulerStateCodec.decode(SchedulerStateCodec.encode(decoded.copy(timers = listOf(started))))
+        assertEquals(300 * second, again!!.timers.single().runMillis)
     }
 
     @Test

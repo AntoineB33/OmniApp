@@ -270,6 +270,7 @@ fun AlarmWindow(
                     alert = row.alert,
                     endsAtMillis = live?.endsAtMillis,
                     remainingMillis = live?.remainingMillis,
+                    runMillis = live?.runMillis,
                 )
             }
         pushedTimerSettings = entries.map(::timerRowOf)
@@ -704,9 +705,17 @@ private fun TimerRowEditor(
         // precisely why these sit beside it. They work before the start too, where there is nothing to stop:
         // they are then simply how the run about to be started is dialled in a few seconds at a time.
         if (showElapsed) {
-            // PRD §7 Search, the timer's own window: the countdown in reverse. Read-only and derived from the
-            // same instant the countdown is (TimerDomain.elapsedMillis), so the two tick together.
-            val elapsed = entry?.let { TimerDomain.elapsedMillis(it, nowMillis) } ?: 0L
+            // PRD §7 Search, the timer's own window: the countdown in reverse. Read-only, and a mirror of the
+            // countdown AS SHOWN: while a field holds the caret the fields it holds stand still, and so does this
+            // — or it would run on beside a countdown that reads as stopped. The field being edited counts with
+            // what is typed in it once that parses.
+            val editing = draft
+            val shownCountdown =
+                TimerDomain.displayedCountdown(shown, editing?.held, editing?.field).let { displayed ->
+                    val typed = editing?.let { parseCountdownComponent(it.text, it.field) }
+                    if (editing != null && typed != null) displayed.with(editing.field, typed) else displayed
+                }
+            val elapsed = entry?.let { TimerDomain.elapsedMillis(it, shownCountdown) } ?: 0L
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(text = "Elapsed", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.width(6.dp))
@@ -840,12 +849,9 @@ private fun CountdownField(
 ) {
     fun padded(value: Int) = value.toString().padStart(pad, '0')
     val own = draft?.takeIf { it.field == field }
+    // The one reading of "what the countdown shows while a field is edited" — the Elapsed field mirrors it too.
     val shownText =
-        when {
-            own != null -> own.text
-            draft != null && field.ordinal < draft.field.ordinal -> padded(draft.held.component(field))
-            else -> padded(live.component(field))
-        }
+        own?.text ?: padded(TimerDomain.displayedCountdown(live, draft?.held, draft?.field).component(field))
     var menuOpen by remember { mutableStateOf(false) }
     Box {
         OutlinedTextField(

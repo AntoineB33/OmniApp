@@ -1800,6 +1800,7 @@ private fun TimerEntry.toPersisted(): PersistedTimer =
         alert = alert.toPersisted(),
         endsAtMillis = endsAtMillis,
         remainingMillis = remainingMillis,
+        runMillis = runMillis,
     )
 
 /** The inverse of [TimerEntry.toPersisted]. The caller heals the run fields ([TimerDomain.healed]). */
@@ -1813,6 +1814,7 @@ private fun PersistedTimer.toTimerEntry(): TimerEntry =
         alert = alert.toAlertSettings(AlertSettings.RING.copy(vibrate = legacyVibrate)),
         endsAtMillis = endsAtMillis,
         remainingMillis = remainingMillis,
+        runMillis = runMillis,
     )
 
 /**
@@ -1874,6 +1876,11 @@ private data class PersistedTimer(
     val endsAtMillis: Long? = null,
     /** Paused: the banked remainder. Null when idle or running. */
     val remainingMillis: Long? = null,
+    /**
+     * The current run's length ([TimerEntry.runMillis]). Null when idle, and in a payload written before the
+     * field existed — whose run then reads its elapsed time against the duration, as it did.
+     */
+    val runMillis: Long? = null,
 )
 
 /**

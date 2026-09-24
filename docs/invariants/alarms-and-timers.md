@@ -102,8 +102,16 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **A right-click on a countdown field nudges by THAT field's unit** (±1/5/10 s, min or h), through the same
   `NudgeTimerRemaining` as the ± buttons, and replaces the text field's own cut/copy/paste menu. The timer's
   own window (Search's right-click, `AlarmWindowSubject`) has the menu only — no ± buttons — and an
-  **Elapsed** read-only field, the countdown in reverse (`TimerDomain.elapsedMillis`: duration − the countdown
-  as printed, so the two always add up to the duration; negative once nudged above it).
+  **Elapsed** read-only field, the countdown in reverse (`TimerDomain.elapsedMillis`: the run's length − the
+  countdown AS SHOWN; 0 when idle; negative once pushed above the run's length). **It mirrors the fields, not the
+  live countdown**: while a field holds the caret, Elapsed counts against `TimerDomain.displayedCountdown` (the
+  held fields, what is typed) — the same function the fields draw from — so it never runs on beside a
+  countdown that reads as stopped.
+- **The run's length is `TimerEntry.runMillis`, fixed as the timer leaves idle** (start, or a countdown dialled
+  in before it) to the duration of that moment, and cleared by Reset (the ring included). So a change to the
+  countdown shows in Elapsed **mirrored**, and editing the Duration — what Reset goes back to — **does not
+  reach it**. Authoritative (it cannot be re-derived once the duration moved): persisted and synced with the
+  timer; a payload without it (a run started by an older build) reads against the duration.
 - **The countdown's clock is the window's own**: the engine's now-line ticks once per 30 s production tick, so
   `AlarmWindow` polls `clock.nowMillis()` itself every 250 ms — **only while it is open and something is
   running**. Display-only Compose state, like the calendar's zoom. The transitions dispatch the clock's

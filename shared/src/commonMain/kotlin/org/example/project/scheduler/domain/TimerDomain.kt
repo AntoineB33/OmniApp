@@ -154,13 +154,38 @@ object TimerDomain {
 
     /**
      * PRD §7 *Search*, a timer's own window: the countdown **in reverse** — how far the run has come, which goes
-     * up exactly as fast as the countdown goes down: the row's duration minus the time left. Negative when
-     * the time left was nudged above the duration (the window prints that with a minus). Measured against the
-     * countdown **as printed** ([countdownOf], rounded up to the second), so the two readouts always add up to
-     * the duration and tick on the same instant. Derived, never stored.
+     * up exactly as fast as the countdown goes down: the run's length ([TimerEntry.runMillis]) minus the time
+     * left. **A change to the countdown shows here mirrored** — a minute added to the time left is a minute
+     * taken off the elapsed time — because the run's length stays put; **the duration does not reach it**, the
+     * run's length having been fixed when the run began. An idle row reads 0. Negative when the time left was
+     * pushed above the run's length (the window prints that with a minus). Measured against the countdown **as
+     * printed** ([countdownOf], rounded up to the second), so the two readouts tick on the same instant.
      */
     fun elapsedMillis(entry: TimerEntry, nowMillis: Long): Long =
-        entry.durationMillis - countdownOf(entry.remainingAtMillis(nowMillis)).millis
+        elapsedMillis(entry, countdownOf(entry.remainingAtMillis(nowMillis)))
+
+    /**
+     * [elapsedMillis] against the countdown **as the window shows it** — which, while a countdown field is being
+     * edited, is not the live one ([displayedCountdown]). The elapsed reading mirrors what is on screen, so it
+     * stops exactly when the countdown fields do, and moves with what is typed into them.
+     */
+    fun elapsedMillis(entry: TimerEntry, shown: TimerCountdown): Long =
+        if (entry.idle) 0L else (entry.runMillis ?: entry.durationMillis) - shown.millis
+
+    /**
+     * The countdown the window shows while [editing] holds the caret: [editing] and every coarser component as
+     * [held] (they stand still while it is edited), the finer ones [live]. With nothing edited, [live].
+     */
+    fun displayedCountdown(live: TimerCountdown, held: TimerCountdown?, editing: TimerField?): TimerCountdown =
+        if (held == null || editing == null) live else live.withHeld(held, through = editing.ordinal)
+
+    /** This countdown with every component down to the one at [through] (an ordinal) taken from [held]. */
+    private fun TimerCountdown.withHeld(held: TimerCountdown, through: Int): TimerCountdown =
+        TimerField.entries.filter { it.ordinal <= through }.fold(this) { acc, f -> acc.with(f, held.component(f)) }
+
+    /** The run's length, fixed as the timer leaves idle ([TimerEntry.runMillis]). */
+    private fun withRunFixed(entry: TimerEntry): TimerEntry =
+        if (entry.runMillis != null) entry else entry.copy(runMillis = entry.durationMillis)
 
     /**
      * PRD §18 Timers: set one component of [entry]'s countdown to [value] — what the window's three countdown
@@ -197,12 +222,7 @@ object TimerDomain {
         val remaining = entry.remainingAtMillis(nowMillis)
         val live = countdownOf(remaining)
         // What the user sees: the coarser components held, [field] and the finer ones live.
-        val shown =
-            held?.let {
-                TimerField.entries
-                    .filter { coarser -> coarser.ordinal < field.ordinal }
-                    .fold(live) { acc, coarser -> acc.with(coarser, it.component(coarser)) }
-            } ?: live
+        val shown = held?.let { live.withHeld(it, through = field.ordinal - 1) } ?: live
         if (field == TimerField.SECONDS) {
             val snapped = shown.copy(seconds = value).millis
                 .coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
@@ -244,7 +264,7 @@ object TimerDomain {
         if (entry.running) return entry
         val remaining = entry.remainingMillis?.coerceAtLeast(0L) ?: entry.durationMillis
         if (remaining <= 0L) return entry
-        return entry.copy(endsAtMillis = nowMillis + remaining, remainingMillis = null)
+        return withRunFixed(entry).copy(endsAtMillis = nowMillis + remaining, remainingMillis = null)
     }
 
     /**
@@ -282,7 +302,7 @@ object TimerDomain {
             entry.running -> entry.copy(endsAtMillis = nowMillis + remaining)
             entry.paused -> entry.copy(remainingMillis = remaining)
             remaining == entry.durationMillis -> entry
-            else -> entry.copy(remainingMillis = remaining)
+            else -> withRunFixed(entry).copy(remainingMillis = remaining)
         }
     }
 
@@ -292,7 +312,8 @@ object TimerDomain {
      * one-off alarm does (there is no on/off switch here to leave off).
      */
     fun reset(entry: TimerEntry): TimerEntry =
-        if (entry.idle) entry else entry.copy(endsAtMillis = null, remainingMillis = null)
+        if (entry.idle && entry.runMillis == null) entry
+        else entry.copy(endsAtMillis = null, remainingMillis = null, runMillis = null)
 
     /**
      * The at-most-one-non-null invariant of [TimerEntry]'s two run fields, applied. A running timer wins over
@@ -307,10 +328,14 @@ object TimerDomain {
     fun healed(entry: TimerEntry): TimerEntry {
         val duration = entry.durationSeconds.coerceIn(1, TimerEntry.MAX_TIMER_SECONDS)
         val remaining = if (entry.endsAtMillis != null) null else entry.remainingMillis?.coerceAtLeast(0L)
-        return if (duration == entry.durationSeconds && remaining == entry.remainingMillis) {
+        // An idle row has no run, so no run length; a negative one is not a length.
+        val run =
+            if (entry.endsAtMillis == null && remaining == null) null
+            else entry.runMillis?.coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
+        return if (duration == entry.durationSeconds && remaining == entry.remainingMillis && run == entry.runMillis) {
             entry
         } else {
-            entry.copy(durationSeconds = duration, remainingMillis = remaining)
+            entry.copy(durationSeconds = duration, remainingMillis = remaining, runMillis = run)
         }
     }
 
