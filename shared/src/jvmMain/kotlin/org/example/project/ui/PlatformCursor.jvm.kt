@@ -115,3 +115,7 @@ private fun triangle(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: 
         lineTo(x3, y3)
         closePath()
     }
+
+/** Desktop: the OS diagonal resize cursors — south-east for the bottom-right corner, south-west for the left. */
+actual fun diagonalResizePointerIcon(bottomRight: Boolean): PointerIcon =
+    PointerIcon(Cursor(if (bottomRight) Cursor.SE_RESIZE_CURSOR else Cursor.SW_RESIZE_CURSOR))

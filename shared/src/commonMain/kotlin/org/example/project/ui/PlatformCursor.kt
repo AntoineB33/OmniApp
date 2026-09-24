@@ -46,3 +46,10 @@ enum class PanelResizeEdge {
  * Only desktop has real cursors; every other platform falls back to a crosshair.
  */
 expect fun panelResizePointerIcon(edge: PanelResizeEdge): PointerIcon
+
+/**
+ * A **window frame** corner ([WindowFrame]): the oblique double arrow that resizes the width and the height at
+ * once. [bottomRight] picks its slant — `↘↖` for the bottom-right corner (and the top-left, on the same
+ * diagonal), `↙↗` for the bottom-left one (and the top-right). The plain OS shape, like the frame's edges.
+ */
+expect fun diagonalResizePointerIcon(bottomRight: Boolean): PointerIcon

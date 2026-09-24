@@ -84,8 +84,8 @@ import kotlin.math.roundToInt
  *    turn therefore lands on the same window as pressing maximize, and un-maximizing puts back the size and
  *    position the window had before the first of them;
  *  - **double-clicking the head** maximizes it, and un-maximizes it when it already is;
- *  - **it is resized by its left, right or bottom edge**. Not the top: the head is there, and a window
- *    whose head moves under the cursor mid-drag is the one edge that cannot be made to feel right;
+ *  - **it is resized by any edge or corner** — the top ones kept inside the head's top padding, so they never
+ *    cover a head button, and growing upward stopping at the content area's top, so the head stays reachable;
  *  - **reduced windows go to the bar along the bottom of the app** ([WindowBar]), which is drawn
  *    over the lateral menu because a window reduced while the menu is open must not be filed behind it.
  *
@@ -245,6 +245,28 @@ class WindowFrameState(
     }
 
     /**
+     * The TOP edge dragged by [dy] px: the bottom edge stays, so the centre moves by half of it — the bottom
+     * edge's mirror. Growing upward stops at the top of the content area (the height [clampVertical] last
+     * saw), never beyond: past it the head would leave the screen, and the clamp would then push the whole
+     * window down — the bottom edge moving instead of the top.
+     */
+    fun resizeTopBy(dy: Float) {
+        if (fill.fillsHeight) return
+        var height = (size.height - dy).coerceAtLeast(minHeight)
+        if (containerHeight > 0f) {
+            val top = (containerHeight - size.height) / 2f + offset.y
+            height = height.coerceAtMost(size.height + top.coerceAtLeast(0f))
+        }
+        val applied = size.height - height
+        if (applied == 0f) return
+        setNormalHeight(height)
+        setNormalOffsetY(offset.y + applied / 2f)
+    }
+
+    /** The content area's height as [clampVertical] last saw it — what bounds [resizeTopBy]. */
+    private var containerHeight: Float = 0f
+
+    /**
      * Keeps the **head reachable**: whatever the window's size and wherever it was dragged, its head stays
      * between the top of the content area and its lowest row. An over-tall window (a small screen, a window
      * dragged up) would otherwise put its own head — and with it every one of its five buttons — out of
@@ -254,6 +276,7 @@ class WindowFrameState(
      * fixed point converges, so re-applying it on every layout pass is safe.
      */
     fun clampVertical(containerHeight: Float, windowHeight: Float, headHeight: Float) {
+        if (containerHeight > 0f) this.containerHeight = containerHeight
         if (minimized || fill.fillsHeight) return
         if (containerHeight <= 0f || windowHeight <= 0f || headHeight <= 0f) return
         val restingTop = (containerHeight - windowHeight) / 2f
@@ -640,6 +663,9 @@ private const val HEAD_DOUBLE_CLICK_MILLIS: Long = 350
 private val HEAD_BUTTON_SIZE: Dp = 24.dp
 private val RESIZE_EDGE_THICKNESS: Dp = 6.dp
 
+/** The square each resizable corner takes — larger than the edges' thickness, so a corner is easy to hit. */
+private val RESIZE_CORNER_SIZE: Dp = 14.dp
+
 /**
  * Draws [content] inside the app's one window frame. Put the caller's `align` in [modifier]; the frame
  * owns everything else about the window's shape and position — **including where it sits in the stack**,
@@ -792,6 +818,54 @@ fun AppWindowFrame(
                 onCommit = commit,
             ) { delta -> state.resizeBottomBy(delta.y) }
         }
+        // The TOP edge. Only as thick as the head's own top padding, so it never covers a head button (the
+        // head is still the drag handle everywhere below it); growing upward stops at the content area's top
+        // ([WindowFrameState.resizeTopBy]), so the head stays reachable.
+        if (!state.fill.fillsHeight) {
+            ResizeEdge(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(RESIZE_EDGE_THICKNESS),
+                icon = verticalResizePointerIcon(),
+                onCommit = commit,
+            ) { delta -> state.resizeTopBy(delta.y) }
+        }
+        // The four corners resize both axes at once, under the oblique double arrow. Drawn after the edges so
+        // they win the square the edges overlap in; offered only while neither axis is filled (a filled axis
+        // has nothing to resize, and the remaining edge already does the other). The TOP two are a strip as
+        // thin as the top edge rather than a square: a square there would cover the head's ✕.
+        if (!state.fill.fillsWidth && !state.fill.fillsHeight) {
+            ResizeEdge(
+                modifier = Modifier.align(Alignment.TopStart).width(RESIZE_CORNER_SIZE).height(RESIZE_EDGE_THICKNESS),
+                icon = diagonalResizePointerIcon(bottomRight = true),
+                onCommit = commit,
+            ) { delta ->
+                state.resizeLeftBy(delta.x)
+                state.resizeTopBy(delta.y)
+            }
+            ResizeEdge(
+                modifier = Modifier.align(Alignment.TopEnd).width(RESIZE_CORNER_SIZE).height(RESIZE_EDGE_THICKNESS),
+                icon = diagonalResizePointerIcon(bottomRight = false),
+                onCommit = commit,
+            ) { delta ->
+                state.resizeRightBy(delta.x)
+                state.resizeTopBy(delta.y)
+            }
+            ResizeEdge(
+                modifier = Modifier.align(Alignment.BottomStart).size(RESIZE_CORNER_SIZE),
+                icon = diagonalResizePointerIcon(bottomRight = false),
+                onCommit = commit,
+            ) { delta ->
+                state.resizeLeftBy(delta.x)
+                state.resizeBottomBy(delta.y)
+            }
+            ResizeEdge(
+                modifier = Modifier.align(Alignment.BottomEnd).size(RESIZE_CORNER_SIZE),
+                icon = diagonalResizePointerIcon(bottomRight = true),
+                onCommit = commit,
+            ) { delta ->
+                state.resizeRightBy(delta.x)
+                state.resizeBottomBy(delta.y)
+            }
+        }
     }
 }
 
@@ -825,7 +899,8 @@ private fun WindowHead(
                     onCommit()
                 },
             )
-            .padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            // `end` clears the right resize edge and `top` the top one, so neither covers a head button.
+            .padding(start = 14.dp, end = RESIZE_EDGE_THICKNESS + 2.dp, top = RESIZE_EDGE_THICKNESS, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {

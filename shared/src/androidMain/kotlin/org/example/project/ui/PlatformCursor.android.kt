@@ -10,3 +10,6 @@ actual fun horizontalResizePointerIcon(): PointerIcon = PointerIcon.Crosshair
 
 /** No OS cursor concept off desktop — every panel edge falls back to the crosshair (PRD §8). */
 actual fun panelResizePointerIcon(edge: PanelResizeEdge): PointerIcon = PointerIcon.Crosshair
+
+/** No OS cursor concept off desktop — a window corner falls back to the crosshair too. */
+actual fun diagonalResizePointerIcon(bottomRight: Boolean): PointerIcon = PointerIcon.Crosshair

@@ -80,8 +80,14 @@ means.
 - **A maximized window fills the content area**, which is the app minus the lateral menu — and grows to the
   whole app when the menu is retracted, because the content area does. Nothing in the frame knows about the
   menu: `fillMaxWidth`/`fillMaxHeight` inside the content `Box` is the entire mechanism.
-- **Resized by the LEFT, RIGHT or BOTTOM edge.** Not the top: the head is there, and a window whose head
-  moves under the cursor mid-drag is the one edge that cannot be made to feel right. A window is centred on
+- **Resized by all four edges and all four corners** (a corner: both axes at once, under the oblique double
+  arrow, `diagonalResizePointerIcon`; drawn over the edges' overlap, and only while neither axis is filled).
+  The TOP was ruled out until 2026-09-24 ("a head moving under the cursor cannot be made to feel right"),
+  which every OS window manager contradicts; what is actually owed there: **growing upward stops at the
+  content area's top** (`resizeTopBy`, from the height `clampVertical` last saw) so the head stays reachable
+  and the clamp never pushes the window down instead; and **no grab zone covers a head button** — the top edge
+  and top corners are only as thick as the head's top padding, and the head's end padding clears the right
+  edge. A window is centred on
   its offset, so growing it by `d` on one edge moves the centre by `d/2` — that is what keeps the *opposite*
   edge where the user left it. The offset moves by the width **actually applied**, so a drag clamped at
   `MIN_WINDOW_WIDTH_PX` does not walk the window sideways.

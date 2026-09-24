@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.example.project.ui.MIN_WINDOW_HEIGHT_PX
 import org.example.project.ui.WindowChrome
 import org.example.project.ui.WindowFill
 import org.example.project.ui.WindowFrameState
@@ -280,5 +281,38 @@ class WindowFrameStateTest {
         s.restore()
         assertFalse(s.minimized)
         assertEquals(WindowChrome(WindowFill.Both, minimized = false), s.chrome)
+    }
+
+    // ----- the top edge -------------------------------------------------------------------------------
+
+    @Test
+    fun `the top edge grows the window upward and leaves the bottom edge where it was`() {
+        val s = state(height = 300f)
+        s.resizeTopBy(-40f)
+        assertEquals(340f, s.size.height)
+        // Centred on its offset: +40 of height moves the centre up by 20, so the bottom edge does not move.
+        assertEquals(-20f, s.offset.y)
+        s.resizeTopBy(1_000f)
+        assertEquals(MIN_WINDOW_HEIGHT_PX, s.size.height, "clamped at the minimum height")
+    }
+
+    @Test
+    fun `the top edge stops at the top of the content area`() {
+        val s = state(height = 300f)
+        // The frame's layout tells the state how tall the content area is.
+        s.clampVertical(containerHeight = 800f, windowHeight = 300f, headHeight = 36f)
+        // The window's top is at (800 - 300) / 2 = 250: it can grow up by 250 and no more.
+        s.resizeTopBy(-400f)
+        assertEquals(550f, s.size.height)
+        val top = (800f - s.size.height) / 2f + s.offset.y
+        assertEquals(0f, top)
+    }
+
+    @Test
+    fun `a window filling its height has no top edge to drag`() {
+        val s = state(height = 300f)
+        s.setFillHeight(true)
+        s.resizeTopBy(-40f)
+        assertEquals(300f, s.size.height)
     }
 }
