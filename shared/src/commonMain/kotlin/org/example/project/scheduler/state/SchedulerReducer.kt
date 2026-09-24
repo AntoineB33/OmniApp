@@ -517,6 +517,8 @@ object SchedulerReducer {
                 else state.copy(notificationsEnabled = intent.enabled)
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
             is SchedulerIntent.InTaskList -> reduceInTaskList(state, intent.inner, intent.rootCells)
+            is SchedulerIntent.InSearchSubtree -> reduceInSearchSubtree(state, intent.inner, intent.listId, intent.readOnly)
+            is SchedulerIntent.RenameTask -> reduceRenameTask(state, intent.taskId, intent.title)
             is SchedulerIntent.CollapseTaskListRows ->
                 if (state.taskListExpanded.isEmpty()) state else state.copy(taskListExpanded = emptySet())
             is SchedulerIntent.SetDefaultSubtreeCellBound ->
@@ -1346,6 +1348,66 @@ object SchedulerReducer {
             TreeMutationDelta(before = before, after = after, label = "All tasks"),
             HistoryCategory.Main,
         )
+    }
+
+    /**
+     * PRD §7 *Search*: run [inner] against the sub-tree an expanded Search row shows ([projectSearchSubtree]) —
+     * [reduceInTaskList]'s shape. [readOnly] (a task cut from the tree and kept by the timeline): Edit Mode is not
+     * opened, and a gesture that would change the tree keeps only what it did to the window's own view state.
+     */
+    private fun reduceInSearchSubtree(
+        state: SchedulerState,
+        inner: SchedulerIntent,
+        listId: CellListId,
+        readOnly: Boolean,
+    ): SchedulerState {
+        if (inner is SchedulerIntent.InSearchSubtree) return state
+        if (
+            inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
+            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection
+        ) {
+            return state
+        }
+        if (readOnly && inner is SchedulerIntent.BeginEdit) return state
+        if (state.lists[listId] == null) return state
+        val projected = state.projectSearchSubtree(listId)
+        val reduced = reduceIntent(projected, inner)
+        if (reduced === projected) return state
+        val before = state.captureTree()
+        if (readOnly) {
+            // Looked through, never modified: whatever the gesture did to the tree is dropped.
+            return if (reduced.captureTree() == before) state.withSearchViewStateFrom(reduced) else state
+        }
+        val folded = state.withSearchSubtreeCapturedFrom(reduced)
+        val after = folded.captureTree()
+        // A gesture that only moved the window's own caret, selection or expansion changes no tree and records
+        // no unit — the tree's own rule for a selection-only change.
+        if (before == after) return folded
+        return commitDelta(
+            folded,
+            TreeMutationDelta(before = before, after = after, label = "Search"),
+            HistoryCategory.Main,
+        )
+    }
+
+    /**
+     * PRD §7 *Search*: [SchedulerIntent.RenameTask]. A task only the live tree holds is the common case and is a
+     * diff-sized [TreeMutationDelta]; one a stored tree carries too needs [TaskTreeDelta], the one unit that
+     * carries the stored trees — kept for that case only, being the larger of the two.
+     */
+    private fun reduceRenameTask(state: SchedulerState, taskId: TaskId, title: String): SchedulerState {
+        if (title.isBlank()) return state
+        val after = SchedulerDomain.withTaskRenamed(state, taskId, title)
+        if (after === state) return state
+        val label = "Rename task \"" + title + "\""
+        return if (after.taskTrees == state.taskTrees) {
+            commitDelta(state, TreeMutationDelta(before = state.captureTree(), after = after.captureTree(), label = label))
+        } else {
+            commitDelta(
+                state,
+                TaskTreeDelta(before = state.captureTaskTreeState(), after = after.captureTaskTreeState(), label = label),
+            )
+        }
     }
 
     /**

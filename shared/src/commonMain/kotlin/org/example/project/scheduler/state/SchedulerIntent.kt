@@ -915,6 +915,31 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 *Search*: rename the task [taskId] to [title] — a task row of the Search window leaving its
+     * rename-only Edit Mode. Task-level, not cell-level: the row may name a task no cell holds (cut from the
+     * tree and kept by the timeline, or only in a stored task tree), and renaming never touches its sub-tree.
+     * One undoable Main unit; a blank [title] is refused (a blank title is how a CELL deletes, and this is not a
+     * cell). See [org.example.project.scheduler.domain.SchedulerDomain.withTaskRenamed].
+     */
+    data class RenameTask(val taskId: TaskId, val title: String) : SchedulerIntent
+
+    /**
+     * PRD §7 *Search*: [inner], raised by the sub-tree an expanded task row of the Search window shows, run
+     * against that sub-tree — the live tree re-rooted at [listId] (the task's own sub-list) with the Search
+     * window's own expansion, selection and edit session ([projectSearchSubtree]). The cells are the live
+     * tree's, so an edit there is an edit to the tree: one Main unit, like [InTaskList].
+     *
+     * [readOnly] is the sub-tree of a task **cut from the tree and kept by the timeline**, which the user may
+     * look through but not modify: the reducer refuses every gesture there that would change the tree, and
+     * Edit Mode — the only view-state change that exists to make one.
+     */
+    data class InSearchSubtree(
+        val inner: SchedulerIntent,
+        val listId: CellListId,
+        val readOnly: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §7 "All tasks": close every row the window has open — the button beside its sorter.
      *
      * Local view state ([org.example.project.scheduler.state.SchedulerState.taskListExpanded]): not

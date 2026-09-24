@@ -366,6 +366,57 @@ class SearchWindowTest {
         )
     }
 
+    // ----- Renaming from a row, and a row's sub-tree ------------------------------------------------
+
+    @Test
+    fun a_row_renames_its_task_everywhere_and_undo_puts_it_back() {
+        var s = withStoredCopy(tree())
+        val pie = taskWithTitle(s, "Pie")
+        s = r(s, SchedulerIntent.RenameTask(pie, "Tart"))
+        assertEquals("Tart", s.tasks.getValue(pie).title)
+        assertEquals(listOf(pie), s.titleToTaskIds["Tart"], "the title index follows")
+        assertEquals("Tart", s.taskTrees.single().tree.tasks.getValue(pie).title, "the stored tree's copy too")
+        s = r(s, SchedulerIntent.Undo)
+        assertEquals("Pie", s.tasks.getValue(pie).title)
+        assertEquals("Pie", s.taskTrees.single().tree.tasks.getValue(pie).title)
+    }
+
+    @Test
+    fun a_task_no_cell_holds_is_renamed_too_and_a_blank_name_is_refused() {
+        var s = tree()
+        val pie = taskWithTitle(s, "Pie")
+        // Cut from the tree, kept by its record.
+        s = r(s, SchedulerIntent.SetCellTitle(cellWithTitle(s, "Pie"), ""))
+        assertTrue(cellsWithTitle(s, "Pie").isEmpty())
+        s = r(s, SchedulerIntent.RenameTask(pie, "Tart"))
+        assertEquals("Tart", s.tasks.getValue(pie).title)
+        assertEquals(s, r(s, SchedulerIntent.RenameTask(pie, "  ")), "a blank title is how a CELL deletes, not a row")
+    }
+
+    @Test
+    fun an_expanded_rows_sub_tree_is_the_live_tree_with_the_windows_own_selection() {
+        var s = tree()
+        val apple = taskWithTitle(s, "Apple")
+        val subList = s.tasks.getValue(apple).childListId!!
+        val pieCell = cellWithTitle(s, "Pie")
+        val treeSelection = s.selection
+        s = r(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.SetCellTitle(pieCell, "Tart"), subList, readOnly = false))
+        assertEquals("Tart", s.tasks.getValue(taskWithTitle(s, "Tart")).title, "an edit there is an edit to the tree")
+        assertEquals(treeSelection, s.selection, "the tree's own selection is untouched")
+        s = r(s, SchedulerIntent.Undo)
+        assertTrue(cellsWithTitle(s, "Pie").isNotEmpty(), "one undoable unit")
+    }
+
+    @Test
+    fun a_cut_tasks_sub_tree_can_be_looked_through_but_not_modified() {
+        val s = tree()
+        val subList = s.tasks.getValue(taskWithTitle(s, "Apple")).childListId!!
+        val pieCell = cellWithTitle(s, "Pie")
+        val renamed = r(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.SetCellTitle(pieCell, "Tart"), subList, readOnly = true))
+        assertEquals(s.captureTree(), renamed.captureTree())
+        assertEquals(s, r(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.BeginEdit(pieCell), subList, readOnly = true)))
+    }
+
     @Test
     fun each_path_of_a_mirrored_task_names_its_own_cell() {
         val s = mirroredTree()

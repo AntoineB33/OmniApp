@@ -65,6 +65,20 @@ import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 import org.example.project.scheduler.ui.contextMenuModifier
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.rememberTextMeasurer
+import org.example.project.scheduler.model.CellListId
+import org.example.project.scheduler.state.projectSearchSubtree
+import org.example.project.scheduler.state.EditExitNavigation
+import org.example.project.scheduler.ui.formatPriorityPercent
+import org.example.project.scheduler.ui.TaskTreeView
+import org.example.project.scheduler.ui.TaskRow
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.platform.LocalDensity
@@ -90,15 +104,19 @@ private const val NOT_IN_TREE_HINT: String =
  * bottom — the **configuration** (a search bar, and a drop-down with a check box for each kind of thing to
  * look for — every checked kind is searched at once) and the **result list**.
  *
- * **Every row is the same height and the full width of the list**, whatever it holds, and **opens on a
- * section naming its kind** (task, restrictive period, …) — one fixed width, so the names line up across
- * kinds ([KindSection]). After it, a task row is three sections, left to right: its **title**, its **path** in a rectangle, and — for a task no task tree holds
- * any more — a **logo** saying so, which explains itself on hover. The path is the shortest one the task
- * has; a task with several carries an arrow at the right of its path box that lists them all. The title and
- * the path share the width, **the title first**: it takes what it needs and the path box the rest, down to a
- * thin box when the title is long — but neither is ever dropped ([TaskResultRowLayout]). A task no tree
- * holds shows the path it had when it left ([org.example.project.scheduler.model.Task.lastTreePath]). Every
- * other kind is its name and one detail ([SearchDomain.itemResults]).
+ * **Every row is the same height and the full width of the list** (an expanded task row's sub-tree hangs
+ * under it), and **opens on a section naming its kind**. A **task row is the task tree's own cell**
+ * ([SearchTaskRow] → [TaskRow]): its colour, its expand arrow, its title and Edit Mode, its percentage, minimum
+ * time and categories, its outline, its menu — with the path box between the title and the percentage (the
+ * shortest path; an arrow lists them all when there are several) and, for a task no task tree holds any more,
+ * a **logo** saying so, last. A task no tree holds shows the path it had when it left
+ * ([org.example.project.scheduler.model.Task.lastTreePath]). Every other kind is its name and one detail
+ * ([SearchDomain.itemResults]).
+ *
+ * **While the user is in the search bar, no row is selected** — the task tree's rule for its selector's field:
+ * ↓ or Enter there moves into the list, a click on a row does too, and ↑ on the first row goes back. **Typing on
+ * a selected task row enters Edit Mode, stuck to Rename** (no mode selector): it commits
+ * [SchedulerIntent.RenameTask], which a task no cell holds takes too.
  *
  * **A row answers the gestures a task cell does** — the fixed-height form of them, since a row here is not
  * a cell and cannot grow into an editor: a click selects it, `↑`/`↓` walk the selection, a double-click or
@@ -127,8 +145,16 @@ fun SearchWindow(
      */
     onGoToTaskTree: (TaskId, SchedulerDomain.TaskOccurrence?) -> Unit,
     onDeepCopyCell: (CellId) -> Unit,
-    /** The tree's own intents, for the cell menu's entries that act on a cell (collapse, add default sub-tree). */
+    /**
+     * The tree's own intents — the cell menu's entries that act on a cell, a row's minimum time and categories,
+     * [SchedulerIntent.RenameTask] from a row's Edit Mode, and an expanded row's sub-tree
+     * ([SchedulerIntent.InSearchSubtree]).
+     */
     onIntent: (SchedulerIntent) -> Unit,
+    /** PRD §5: a row's percentage opens its sub-list's weight table, as a tree cell's does. */
+    onSetWeightWindow: (CellListId?) -> Unit = {},
+    /** PRD §5: the percentage's right-click opens the cell's relative-priority window. */
+    onSetRelativeWindow: (CellId?) -> Unit = {},
     onOpenCategory: (CategoryId) -> Unit,
     onOpenPeriodKind: (String) -> Unit,
     /** Alarms AND timers live in the one Alarms window (PRD §18). */
@@ -160,9 +186,21 @@ fun SearchWindow(
     var selected by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val fieldFocus = remember { FocusRequester() }
-    // The bar holds the focus from the moment the window opens: it is where the user types, and it is what
-    // puts the list's arrow keys (read in the preview pass below) on the path a keystroke takes.
+    val listFocus = remember { FocusRequester() }
+    // The bar holds the focus from the moment the window opens: it is where the user types.
     LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
+    // The task tree's rule (its selector's name field above it): while the user is in the search BAR, no row is
+    // selected. ↓ or Enter there moves into the list, a click on a row does too, and ↑ on the first row goes back.
+    var fieldFocused by remember { mutableStateOf(true) }
+    // A task row in its rename-only Edit Mode (the tree's own field, TaskRow's): the task, and what is typed.
+    var editingTaskId by remember { mutableStateOf<TaskId?>(null) }
+    var editDraft by remember { mutableStateOf("") }
+    // The rows whose sub-tree is open, and the one whose sub-tree holds the keyboard. Compose-only: which rows
+    // are open is a way of looking at the list, like the query itself.
+    var expandedTasks by remember { mutableStateOf(emptySet<TaskId>()) }
+    var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
+    // PRD §10: the row whose minimum time is open as an input — it closes when the selection moves, as in the tree.
+    var minTimeEditTaskId by remember { mutableStateOf<TaskId?>(null) }
 
     // Every path of every task is a walk of every task tree, so it is held on the trees alone — a keystroke
     // in the search bar filters it, it does not redo it. Keyed on the tree fields rather than on the whole
@@ -182,6 +220,7 @@ fun SearchWindow(
     val count = results.size
     // A new question starts at its best answer.
     LaunchedEffect(kinds, query, filters) { selected = 0 }
+    LaunchedEffect(selected) { minTimeEditTaskId = null }
     // The task tree's rule: the list scrolls only when the selection would leave what is on screen — by just
     // enough to bring it to the nearer edge. Scrolling the selected row to the top on every move made the list
     // jump under a selection that was already in view.
@@ -256,6 +295,41 @@ fun SearchWindow(
             null -> Unit
         }
     }
+    /** PRD §4 Edit Mode, stuck to Rename: [initial] is the draft to start from (a typed letter, or the title). */
+    fun beginEdit(result: SearchDomain.TaskResult, initial: String) {
+        editingTaskId = result.taskId
+        editDraft = initial
+    }
+    /**
+     * Leaving Edit Mode: the rename is committed (a blank one is refused by the reducer) unless [cancel], and the
+     * selection takes [step] — Enter's step down, Shift+Enter's up, as in the tree.
+     */
+    fun endEdit(result: SearchDomain.TaskResult, cancel: Boolean, step: Int = 0, refocusList: Boolean = true) {
+        if (!cancel && editDraft != result.title) onIntent(SchedulerIntent.RenameTask(result.taskId, editDraft))
+        editingTaskId = null
+        if (count > 0) selected = (selected + step).coerceIn(0, count - 1)
+        if (refocusList) runCatching { listFocus.requestFocus() }
+    }
+    /** The row being renamed, if any — what a press elsewhere commits first, as leaving a tree cell does. */
+    fun commitOpenEdit(refocusList: Boolean) {
+        val id = editingTaskId ?: return
+        val row = results.firstOrNull { it is SearchDomain.TaskResult && it.taskId == id } as SearchDomain.TaskResult?
+        if (row == null) editingTaskId = null else endEdit(row, cancel = false, refocusList = refocusList)
+    }
+    /** A press on a row: it becomes the selection, and the list — not the bar — holds the keyboard. */
+    fun selectRow(index: Int) {
+        if (editingTaskId != null && (results.getOrNull(index) as? SearchDomain.TaskResult)?.taskId != editingTaskId) {
+            commitOpenEdit(refocusList = false)
+        }
+        selected = index
+        subtreeFocusOwner = null
+        runCatching { listFocus.requestFocus() }
+    }
+    // Back in the search bar: a rename left open is committed, as it is when a tree cell is left.
+    LaunchedEffect(fieldFocused) { if (fieldFocused) commitOpenEdit(refocusList = false) }
+    // The live tree's figures, read as the tree reads them: the absolute priorities and the task colours.
+    val priorities = remember(state.cells, state.lists, state.tasks) { SchedulerDomain.absoluteTaskPriorities(state) }
+    val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
 
     AppWindowFrame(
         title = "Search",
@@ -272,32 +346,6 @@ fun SearchWindow(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                // The list's keys are read BEFORE the search bar, which holds the focus: the arrows and Enter
-                // mean the list, as in the task picker (PRD §7), and every other key types.
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when {
-                        event.key == Key.DirectionDown -> {
-                            if (count > 0) selected = (selected + 1).coerceAtMost(count - 1)
-                            true
-                        }
-                        event.key == Key.DirectionUp -> {
-                            selected = (selected - 1).coerceAtLeast(0)
-                            true
-                        }
-                        event.key == Key.Enter || event.key == Key.NumPadEnter -> {
-                            openSelected()
-                            true
-                        }
-                        // A task cell's Ctrl+C — but only when the bar holds nothing to copy itself.
-                        event.isCtrlPressed && event.key == Key.C && query.isEmpty() &&
-                            results.getOrNull(selected) is SearchDomain.TaskResult -> {
-                            taskActions(results[selected] as SearchDomain.TaskResult, null).onCopyTaskId()
-                            true
-                        }
-                        else -> false
-                    }
-                }
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -312,7 +360,19 @@ fun SearchWindow(
                     onValueChange = { onConfigChange(config.copy(query = it)) },
                     singleLine = true,
                     label = { Text("Search") },
-                    modifier = Modifier.weight(1f).focusRequester(fieldFocus),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(fieldFocus)
+                        .onFocusChanged { fieldFocused = it.isFocused }
+                        // ↓ or Enter leave the bar for the list, onto its first row; every other key types.
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            val intoList =
+                                event.key == Key.DirectionDown || event.key == Key.Enter || event.key == Key.NumPadEnter
+                            if (!intoList || count == 0) return@onPreviewKeyEvent false
+                            selectRow(0)
+                            true
+                        },
                 )
                 KindsDropDown(kinds = kinds, onKindsChange = { onConfigChange(config.copy(kinds = it)) })
                 // Clears the bar and unticks every type. The filters are left alone: they have their own window,
@@ -352,21 +412,104 @@ fun SearchWindow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
+                    // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
+                    val rowSelected = { index: Int -> index == selected && !fieldFocused && subtreeFocusOwner == null }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(end = 12.dp)
+                            .focusRequester(listFocus)
+                            .focusable()
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                // A row's sub-tree reads its own keys (it is the tree's own view).
+                                if (subtreeFocusOwner != null) return@onPreviewKeyEvent false
+                                val current = results.getOrNull(selected)
+                                // In Edit Mode the row's field owns the keys; Escape abandons the rename.
+                                if (editingTaskId != null) {
+                                    if (event.key == Key.Escape && current is SearchDomain.TaskResult) {
+                                        endEdit(current, cancel = true)
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    return@onPreviewKeyEvent false
+                                }
+                                val ctrl = event.isCtrlPressed || event.isMetaPressed
+                                when {
+                                    event.key == Key.DirectionDown -> {
+                                        if (count > 0) selected = (selected + 1).coerceAtMost(count - 1)
+                                        true
+                                    }
+                                    event.key == Key.DirectionUp -> {
+                                        if (selected == 0) runCatching { fieldFocus.requestFocus() }
+                                        else selected -= 1
+                                        true
+                                    }
+                                    event.key == Key.Enter || event.key == Key.NumPadEnter -> {
+                                        openSelected()
+                                        true
+                                    }
+                                    ctrl && event.key == Key.C && current is SearchDomain.TaskResult -> {
+                                        taskActions(current, null).onCopyTaskId()
+                                        true
+                                    }
+                                    // PRD §4: typing on a selected task row enters Edit Mode — renaming, always.
+                                    current is SearchDomain.TaskResult && !ctrl && !event.isAltPressed -> {
+                                        val code = event.utf16CodePoint
+                                        if (code < 32 || code == 127) return@onPreviewKeyEvent false
+                                        beginEdit(current, code.toChar().toString())
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            },
+                    ) {
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
                             when (result) {
                                 is SearchDomain.TaskResult ->
-                                    TaskResultRow(
+                                    SearchTaskRow(
+                                        state = state,
                                         result = result,
-                                        selected = index == selected,
-                                        onSelect = { selected = index },
+                                        query = query,
+                                        selected = rowSelected(index),
+                                        editing = editingTaskId == result.taskId,
+                                        editDraft = editDraft,
+                                        expanded = result.taskId in expandedTasks,
+                                        priorities = priorities,
+                                        taskColor = taskColors[result.taskId],
+                                        minTimeEditing = minTimeEditTaskId == result.taskId,
                                         actions = { path -> taskActions(result, path) },
+                                        onSelect = { selectRow(index) },
+                                        onBeginEdit = { beginEdit(result, result.title) },
+                                        onDraftChange = { editDraft = it },
+                                        onEndEdit = { step -> endEdit(result, cancel = false, step = step) },
+                                        onToggleExpand = {
+                                            expandedTasks =
+                                                if (result.taskId in expandedTasks) expandedTasks - result.taskId
+                                                else expandedTasks + result.taskId
+                                        },
+                                        onActivateMinTime = {
+                                            selectRow(index)
+                                            minTimeEditTaskId = result.taskId
+                                        },
+                                        onIntent = onIntent,
+                                        onSetWeightWindow = onSetWeightWindow,
+                                        onSetRelativeWindow = onSetRelativeWindow,
+                                        onOpenTaskEdit = onOpenTaskEdit,
+                                        onOpenCategory = onOpenCategory,
+                                        onDeepCopyCell = onDeepCopyCell,
+                                        onGoToTaskTree = { taskId -> onGoToTaskTree(taskId, null) },
+                                        subtreeFocused = subtreeFocusOwner == result.taskId,
+                                        onSubtreeFocus = { focused ->
+                                            if (focused) subtreeFocusOwner = result.taskId
+                                            else if (subtreeFocusOwner == result.taskId) subtreeFocusOwner = null
+                                        },
                                     )
                                 is SearchDomain.ItemResult ->
                                     ItemResultRow(
                                         item = result,
-                                        selected = index == selected,
-                                        onSelect = { selected = index },
+                                        selected = rowSelected(index),
+                                        onSelect = { selectRow(index) },
                                         onOpen = { openItem(result) },
                                         // An alarm or a timer has its own window, and the right-click opens
                                         // it straight away: its settings are what the user is asking about.
@@ -511,60 +654,224 @@ private fun resultRowModifier(selected: Boolean): Modifier =
         )
         .padding(horizontal = 6.dp)
 
+/**
+ * A task row: the TASK TREE's own cell ([TaskRow]) — its task colour, its expand arrow, its title and Edit
+ * Mode, its percentage, minimum time and categories, its selection outline, its right-click menu — with the
+ * Search window's sections set into it: the kind before the arrow, the path box between the title and the
+ * percentage, the "in no task tree" logo last. The differences from a tree cell are the window's:
+ *  - **Edit Mode is stuck to Rename** — no mode selector — and commits [SchedulerIntent.RenameTask]: the row IS
+ *    the task, it may have no cell at all, and renaming never touches its sub-tree;
+ *  - **nothing is dragged**, and the multi-selection is the list's single row;
+ *  - **expanding** shows the task's sub-tree under the row as the tree's own cells ([SearchSubtree]).
+ */
 @Composable
-private fun TaskResultRow(
+private fun SearchTaskRow(
+    state: SchedulerState,
     result: SearchDomain.TaskResult,
+    query: String,
     selected: Boolean,
-    onSelect: () -> Unit,
+    editing: Boolean,
+    editDraft: String,
+    expanded: Boolean,
+    priorities: Map<TaskId, Double>,
+    taskColor: Color?,
+    minTimeEditing: Boolean,
     /** The cell menu for the path the right-click landed on — built on demand, never over a stale state. */
     actions: (path: List<String>?) -> TaskCellMenuActions,
+    onSelect: () -> Unit,
+    onBeginEdit: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    /** Leaves Edit Mode, committing; the argument is the step the selection takes (Enter: +1, Shift+Enter: -1). */
+    onEndEdit: (step: Int) -> Unit,
+    onToggleExpand: () -> Unit,
+    onActivateMinTime: () -> Unit,
+    onIntent: (SchedulerIntent) -> Unit,
+    onSetWeightWindow: (CellListId?) -> Unit,
+    onSetRelativeWindow: (CellId?) -> Unit,
+    onOpenTaskEdit: (TaskId) -> Unit,
+    onOpenCategory: (CategoryId) -> Unit,
+    onDeepCopyCell: (CellId) -> Unit,
+    onGoToTaskTree: (TaskId) -> Unit,
+    subtreeFocused: Boolean,
+    onSubtreeFocus: (Boolean) -> Unit,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
-    var menuActions by remember { mutableStateOf<TaskCellMenuActions?>(null) }
-    // One menu per row, whichever part was right-clicked: the row, its path box, or a line of its list of paths.
-    val openMenu: (List<String>?) -> Unit = { path ->
-        menuActions = actions(path)
-        menuOpen = true
-    }
-    Box(
-        modifier = resultRowModifier(selected)
-            .resultRowGestures(
-                key = result.taskId,
-                onSelect = onSelect,
-                onOpen = { actions(null).onEdit?.invoke() },
-                onOpenMenu = { openMenu(result.shownPath.takeIf { it.isNotEmpty() }) },
-            ),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-            KindSection(result.kind)
-            Box(Modifier.weight(1f).fillMaxHeight().padding(start = 10.dp)) {
-                TaskResultRowLayout(
-                    title = {
-                        Text(
-                            text = result.title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+    val taskId = result.taskId
+    val live = state.tasks[taskId]
+    // Where the row's figures and gestures reach the tree: its first cell, when the live tree has one. Walked
+    // when the tree changes, never per keystroke or per tick.
+    val occurrence =
+        remember(taskId, state.cells, state.lists, state.tasks) { SchedulerDomain.firstTaskOccurrence(state, taskId) }
+    // A task cut from the tree and kept by the timeline: its sub-tree can be looked through, not modified.
+    val readOnlySubtree = occurrence == null
+    val childListId = live?.childListId
+    val hasChildren = childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+    val menu = remember(taskId, result.shownPath, state.cells, state.lists, state.tasks) { actions(result.shownPath.takeIf { it.isNotEmpty() }) }
+    // The title column is this row's own text, clamped like the tree's (a row has no sub-list to line up with).
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val bodyStyle = MaterialTheme.typography.bodyMedium
+    val shownTitle = if (editing) editDraft else result.title
+    val titlePx = if (shownTitle.isEmpty()) 0 else textMeasurer.measure(shownTitle, bodyStyle).size.width
+    val columnWidth = with(density) { titlePx.toDp() }.coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
+    val columnPx = with(density) { columnWidth.toPx() }
+    // The query's hits in the title, drawn the way the tree's Ctrl+F draws its own.
+    val hits =
+        remember(result.title, query) {
+            val q = query.trim()
+            if (q.isEmpty()) emptyList()
+            else Regex(Regex.escape(q), RegexOption.IGNORE_CASE).findAll(result.title).map { it.range }.toList()
+        }
+
+    Column(Modifier.fillMaxWidth()) {
+        // The cell IS the row: it takes the list's row height itself (no slot around it, whose bare band
+        // above and below showed as a white gap between two task rows).
+        TaskRow(
+            minHeight = RESULT_ROW_HEIGHT,
+            depth = 0,
+            // A task no live cell holds is still a row: its id stands in for the cell the tree would key on.
+            cellId = occurrence?.cellId ?: CellId("search-row/" + taskId.value),
+            renderVia = null,
+            displayTitle = shownTitle,
+            isMainSelection = selected,
+            isInSelectionRange = false,
+            selectable = true,
+            isEditing = editing,
+            hasChildren = hasChildren,
+            expanded = expanded,
+            moveDropBefore = false,
+            moveDropAfter = false,
+            canMoveFromCell = false,
+            isBeingMoved = false,
+            priorityLabel = formatPriorityPercent(priorities[taskId] ?: 0.0),
+            priorityColumnWidth = columnWidth,
+            taskColor = taskColor,
+            searchRanges = if (editing) emptyList() else hits,
+            currentSearchRange = null,
+            textOverflow = titlePx > columnPx,
+            minMinutes = live?.minimumMinutes ?: 0,
+            minTimeEditing = minTimeEditing && live != null,
+            cellMenu = menu,
+            onTogglePriorityWeights = {
+                occurrence?.let { occ -> state.cells[occ.cellId]?.parentListId?.let(onSetWeightWindow) }
+            },
+            onOpenRelativePriority = { occurrence?.let { onSetRelativeWindow(it.cellId) } },
+            onSetMinTime = { minutes -> onIntent(SchedulerIntent.SetTaskMinimumTime(taskId, minutes)) },
+            onActivateMinTime = { if (live != null) onActivateMinTime() },
+            onClick = { _, _, _, _ -> onSelect() },
+            onDragSelect = { _, _ -> },
+            moveDragActive = false,
+            resolveRowAt = { null },
+            onRowBounds = { _, _, _ -> },
+            onMoveDragStart = {},
+            onMoveDropHover = { _, _, _ -> },
+            onMoveDragEnd = {},
+            // PRD §4: a double-click on the title opens Edit Mode — renaming, always.
+            onDoubleClick = {
+                onSelect()
+                onBeginEdit()
+            },
+            onTextChange = onDraftChange,
+            onExitEdit = { nav ->
+                onEndEdit(
+                    when (nav) {
+                        EditExitNavigation.Down -> 1
+                        EditExitNavigation.Up -> -1
+                        else -> 0
                     },
-                    path = { TaskPathBox(result, onSelect = onSelect, onOpenMenu = openMenu) },
-                    logo = if (result.inTaskTree) null else ({ NotInTreeLogo() }),
                 )
-            }
-        }
-        val shown = menuActions
-        if (shown != null) {
-            transientMenuDismissal(menuOpen) { menuOpen = false }
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                properties = PopupProperties(focusable = false),
-            ) {
-                TaskCellMenuItems(shown) { menuOpen = false }
-            }
+            },
+            onToggleExpand = { if (hasChildren) onToggleExpand() },
+            // Stuck to Rename: no mode selector, no id menu.
+            editMenus = null,
+            categoryCell = live?.let { { TaskCategoryCell(state, taskId, onIntent, onOpenCategory) } },
+            rowLeading = { KindSection(result.kind) },
+            // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
+            afterTitle = {
+                Box(Modifier.fillMaxWidth().height(24.dp).padding(start = 8.dp)) {
+                    TaskPathBox(result, onSelect = onSelect, actions = actions)
+                }
+            },
+            afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
+            rowTrailing = { if (!result.inTaskTree) Box(Modifier.padding(start = 6.dp)) { NotInTreeLogo() } },
+        )
+        if (expanded && hasChildren) {
+            SearchSubtree(
+                state = state,
+                listId = childListId,
+                readOnly = readOnlySubtree,
+                priorities = priorities,
+                focused = subtreeFocused,
+                onFocus = onSubtreeFocus,
+                onIntent = onIntent,
+                onSetWeightWindow = onSetWeightWindow,
+                onSetRelativeWindow = onSetRelativeWindow,
+                onOpenTaskEdit = onOpenTaskEdit,
+                onOpenCategory = onOpenCategory,
+                onDeepCopyCell = onDeepCopyCell,
+                onGoToTaskTree = onGoToTaskTree,
+            )
         }
     }
+}
+
+/**
+ * An expanded task row's sub-tree: the TASK TREE's own view ([TaskTreeView]) over the live tree re-rooted at
+ * the task's sub-list, with the Search window's own expansion, selection and edit session
+ * ([projectSearchSubtree]) — so its cells are real cells, edited and selected as in the tree. Bounded in height:
+ * it scrolls inside the list rather than stretching it. [readOnly] for a task cut from the tree: looked
+ * through, never modified (the reducer refuses it — [SchedulerIntent.InSearchSubtree]).
+ */
+@Composable
+private fun SearchSubtree(
+    state: SchedulerState,
+    listId: CellListId,
+    readOnly: Boolean,
+    priorities: Map<TaskId, Double>,
+    focused: Boolean,
+    onFocus: (Boolean) -> Unit,
+    onIntent: (SchedulerIntent) -> Unit,
+    onSetWeightWindow: (CellListId?) -> Unit,
+    onSetRelativeWindow: (CellId?) -> Unit,
+    onOpenTaskEdit: (TaskId) -> Unit,
+    onOpenCategory: (CategoryId) -> Unit,
+    onDeepCopyCell: (CellId) -> Unit,
+    onGoToTaskTree: (TaskId) -> Unit,
+) {
+    val projected =
+        remember(state.cells, state.lists, state.tasks, state.searchExpanded, state.searchSelection, state.searchEditSession, listId) {
+            state.projectSearchSubtree(listId)
+        }
+    TaskTreeView(
+        state = projected,
+        priorities = priorities,
+        onIntent = { intent ->
+            when (intent) {
+                // App-wide, as in "All tasks": the history stacks and the window focus are no tree's.
+                is SchedulerIntent.Undo, is SchedulerIntent.Redo,
+                is SchedulerIntent.UndoSelection, is SchedulerIntent.RedoSelection,
+                is SchedulerIntent.FocusWindow,
+                -> onIntent(intent)
+                else -> onIntent(SchedulerIntent.InSearchSubtree(intent, listId, readOnly))
+            }
+        },
+        keyboardActive = focused,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = SUBTREE_MAX_HEIGHT)
+            .padding(start = 24.dp)
+            .onFocusChanged { onFocus(it.hasFocus) },
+        onSetWeightWindow = onSetWeightWindow,
+        onSetRelativeWindow = onSetRelativeWindow,
+        onSetEditTask = { it?.let(onOpenTaskEdit) },
+        onSetEditCategory = { it?.let(onOpenCategory) },
+        onSetDeepCopyCell = { it?.let(onDeepCopyCell) },
+        onGoToTaskTree = onGoToTaskTree,
+        refocusWindow = null,
+        // A task is the same colour here, in the tree and on the calendar, and a Change Task row is named from
+        // the tree — both read off the LIVE state, as the "All tasks" window's do.
+        colorSource = state,
+        namingSource = state,
+    )
 }
 
 @Composable
@@ -572,54 +879,33 @@ private fun MenuEntry(label: String, enabled: Boolean = true, onClick: () -> Uni
     DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = onClick)
 }
 
-/**
- * The title / path / logo split of a task row. **The title prevails**: it is measured first, allowed
- * everything but the logo and the thinnest path box, and the path box takes whatever is left — so a long
- * title squeezes the path to a sliver at the right of the row, left of the logo, and neither is ever dropped.
- * A [Row] cannot say this: it measures its unweighted children first, which is the path taking what it needs
- * and the title the rest — the opposite priority.
- */
-@Composable
-private fun TaskResultRowLayout(
-    title: @Composable () -> Unit,
-    path: @Composable () -> Unit,
-    logo: (@Composable () -> Unit)?,
-) {
-    Layout(
-        contents = listOf(title, path, logo ?: {}),
-        modifier = Modifier.fillMaxSize(),
-    ) { (titleM, pathM, logoM), constraints ->
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val gap = 8.dp.roundToPx()
-        val loose = Constraints(maxWidth = width, maxHeight = height)
-        val logoP = logoM.firstOrNull()?.measure(loose)
-        val logoW = logoP?.let { it.width + gap } ?: 0
-        val forBoth = (width - logoW - gap).coerceAtLeast(0)
-        val minPath = MIN_PATH_BOX_WIDTH.roundToPx().coerceAtMost(forBoth)
-        val titleP = titleM.first().measure(Constraints(maxWidth = forBoth - minPath, maxHeight = height))
-        val pathW = (forBoth - titleP.width).coerceAtLeast(minPath)
-        val pathP = pathM.first().measure(Constraints.fixed(pathW, (height - 8.dp.roundToPx()).coerceAtLeast(0)))
-        layout(width, height) {
-            titleP.place(0, (height - titleP.height) / 2)
-            pathP.place(titleP.width + gap, (height - pathP.height) / 2)
-            logoP?.place(width - logoP.width, (height - logoP.height) / 2)
-        }
-    }
-}
+/** The most an expanded row's sub-tree takes of the list before it scrolls inside itself. */
+private val SUBTREE_MAX_HEIGHT: Dp = 320.dp
 
 /**
  * The path, in its rectangle — with the arrow that lists every path when the task has several. A right-click on
- * the box, or on one line of the list, opens the row's cell menu for THAT path ([onOpenMenu]): its own gesture,
- * so it works however the row's is laid out around it.
+ * the box, or on one line of the list, opens the cell menu for THAT path ([actions]): its own gesture and its
+ * own menu, so "go to task tree" there goes to that path's cell.
  */
 @Composable
 private fun TaskPathBox(
     result: SearchDomain.TaskResult,
     onSelect: () -> Unit,
-    onOpenMenu: (List<String>?) -> Unit,
+    actions: (path: List<String>?) -> TaskCellMenuActions,
 ) {
     var listOpen by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf<TaskCellMenuActions?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val onOpenMenu: (List<String>?) -> Unit = { path ->
+        menu = actions(path)
+        menuOpen = true
+    }
+    menu?.let { shown ->
+        transientMenuDismissal(menuOpen) { menuOpen = false }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false)) {
+            TaskCellMenuItems(shown) { menuOpen = false }
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxSize()

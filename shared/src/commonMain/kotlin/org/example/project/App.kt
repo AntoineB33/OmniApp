@@ -2964,6 +2964,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 deepCopyCellId = it
                             },
                             onIntent = { vm.dispatch(it) },
+                            // A row's percentage, as a tree cell's: the weight table and the relative priority.
+                            onSetWeightWindow = {
+                                popupFromDefaultSubtree = false
+                                weightWindowListId = it
+                            },
+                            onSetRelativeWindow = {
+                                popupFromDefaultSubtree = false
+                                relativeWindowCellId = it
+                            },
                             onOpenCategory = {
                                 popupFromDefaultSubtree = false
                                 editCategoryId = it

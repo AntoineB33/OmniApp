@@ -759,6 +759,14 @@ data class SchedulerState(
     val taskListSelection: SchedulerSelection = SchedulerSelection(),
     val taskListEditSession: SchedulerEditSession? = null,
     /**
+     * PRD §7 *Search*: the same three for the sub-trees the Search window's expanded task rows show
+     * ([projectSearchSubtree]) — facts about that window, not about the tree, so a cell open or selected there
+     * is not open or selected in the tree. Not persisted, not synced, for the reason [taskListExpanded] is not.
+     */
+    val searchExpanded: Set<CellId> = emptySet(),
+    val searchSelection: SchedulerSelection = SchedulerSelection(),
+    val searchEditSession: SchedulerEditSession? = null,
+    /**
      * PRD §4/§7: whether the [defaultSubtree] policy is **currently applied** — the switch left of the
      * "Default sub-tree" button in the lateral menu. Off by default (and for every payload written before the
      * feature existed), so an existing account's cells keep behaving exactly as they did. Turning it off

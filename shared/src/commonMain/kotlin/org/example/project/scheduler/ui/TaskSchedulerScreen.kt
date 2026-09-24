@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -69,6 +70,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
@@ -2636,6 +2640,27 @@ internal fun TaskRow(
     categoryCell: (@Composable () -> Unit)? = null,
     /** PRD §4: one extra cell at the end of the row — the default sub-tree's switch. Null in the tree. */
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
+    /**
+     * PRD §7 *Search*: a section drawn INSIDE the cell before its expand arrow — the result row's kind. Inside,
+     * so the cell's background and its selection outline take the whole element. Null in the tree.
+     */
+    rowLeading: (@Composable RowScope.() -> Unit)? = null,
+    /**
+     * PRD §7 *Search*: a section between the title and the percentage — the result row's path box. When given,
+     * the title and it share the row's free width with **the title first** ([TitleThenSection]): the title takes
+     * what it needs, the section the rest — never less than [afterTitleMinWidth], so a long title squeezes it to
+     * a thin box but never drops it, and the title is clipped (with the tree's red arrow) instead. Null in the
+     * tree.
+     */
+    afterTitle: (@Composable () -> Unit)? = null,
+    /** The least [afterTitle] is ever squeezed to. */
+    afterTitleMinWidth: Dp = 0.dp,
+    /**
+     * The cell's minimum height. The tree's rows are 28 dp; the Search window's result rows are its list's one
+     * row height, and the cell must FILL that height — its colour and outline are the element — never sit in
+     * the middle of a taller slot with a bare band above and below.
+     */
+    minHeight: Dp = 28.dp,
 ) {
     Perf.count("recompose.TaskRow")
     val editFocusRequester = remember { FocusRequester() }
@@ -2679,6 +2704,18 @@ internal fun TaskRow(
             isEditing && editFieldFocused -> focusManager.clearFocus()
         }
     }
+
+    // PRD §7 *Search*: with a section after the title, the title's column is at most [priorityColumnWidth] and
+    // may be squeezed below it ([TitleThenSection]); a squeezed title is a clipped one, so it shows the tree's
+    // overflow arrow like a title too long for its column.
+    var titleSqueezed by remember(cellId) { mutableStateOf(false) }
+    val columnPx = with(LocalDensity.current) { priorityColumnWidth.toPx() }
+    val titleWidth =
+        if (afterTitle == null) {
+            Modifier.width(priorityColumnWidth)
+        } else {
+            Modifier.widthIn(max = priorityColumnWidth).onSizeChanged { titleSqueezed = it.width + 0.5f < columnPx }
+        }
 
     val cellBackground =
         when {
@@ -2865,7 +2902,7 @@ internal fun TaskRow(
                 // PRD §2: guide-lines on the left illustrate the parent-child hierarchy.
                 .taskSheetGuideLines(depth)
                 .padding(start = (depth * INDENT_STEP_DP).dp)
-                .defaultMinSize(minHeight = if (compact) COMPACT_ROW_MIN_HEIGHT else 28.dp)
+                .defaultMinSize(minHeight = if (compact) COMPACT_ROW_MIN_HEIGHT else minHeight)
                 .background(cellBackground)
                 .then(cellBorder)
                 .then(selectionPointerModifier())
@@ -2894,6 +2931,7 @@ internal fun TaskRow(
                     TaskCellMenuItems(cellMenu) { contextMenuOpen = false }
                 }
             }
+            rowLeading?.invoke(this)
             if (showExpandArrow) {
                 TaskSheetExpandArrow(
                     hasChildren = hasChildren,
@@ -2938,149 +2976,159 @@ internal fun TaskRow(
                             selection = TextRange(displayTitle.length),
                         )
                 }
-                // PRD §2: the same priority text column and red overflow arrow apply in Edit Mode.
-                Box(
-                    modifier = Modifier
-                        .width(priorityColumnWidth)
-                        .defaultMinSize(minHeight = 20.dp)
-                        .taskSheetTitleBounds(titleBounds),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                BasicTextField(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .defaultMinSize(minHeight = 20.dp)
-                        .focusRequester(editFocusRequester)
-                        // Only tells the effect above whether this field is the one holding the focus it
-                        // may have to release. Losing focus never ends the session (PRD §4).
-                        .onFocusChanged { editFieldFocused = it.isFocused }
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            if (event.key == Key.Delete && !event.isCtrlPressed && !event.isMetaPressed) {
-                                return@onPreviewKeyEvent false
-                            }
-                            when {
-                                event.key == Key.Enter &&
-                                    (event.isCtrlPressed || event.isMetaPressed) -> {
-                                    val selection = textFieldValue.selection
-                                    val insertAt = selection.min
-                                    val newText =
-                                        buildString {
-                                            append(textFieldValue.text.substring(0, insertAt))
-                                            append('\n')
-                                            append(textFieldValue.text.substring(selection.max))
+                val editTitle: @Composable () -> Unit = {
+                    // PRD §2: the same priority text column and red overflow arrow apply in Edit Mode.
+                    Box(
+                        modifier = Modifier
+                            .then(titleWidth)
+                            .defaultMinSize(minHeight = 20.dp)
+                            .taskSheetTitleBounds(titleBounds),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                    BasicTextField(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 20.dp)
+                            .focusRequester(editFocusRequester)
+                            // Only tells the effect above whether this field is the one holding the focus it
+                            // may have to release. Losing focus never ends the session (PRD §4).
+                            .onFocusChanged { editFieldFocused = it.isFocused }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                if (event.key == Key.Delete && !event.isCtrlPressed && !event.isMetaPressed) {
+                                    return@onPreviewKeyEvent false
+                                }
+                                when {
+                                    event.key == Key.Enter &&
+                                        (event.isCtrlPressed || event.isMetaPressed) -> {
+                                        val selection = textFieldValue.selection
+                                        val insertAt = selection.min
+                                        val newText =
+                                            buildString {
+                                                append(textFieldValue.text.substring(0, insertAt))
+                                                append('\n')
+                                                append(textFieldValue.text.substring(selection.max))
+                                            }
+                                        textFieldValue =
+                                            TextFieldValue(
+                                                text = newText,
+                                                selection = TextRange(insertAt + 1),
+                                            )
+                                        onTextChange(newText)
+                                        true
+                                    }
+                                    event.key == Key.DirectionUp -> {
+                                        val lineStart = textFieldValue.text.lastIndexOf('\n', textFieldValue.selection.min - 1)
+                                        if (lineStart < 0) {
+                                            textFieldValue =
+                                                textFieldValue.copy(
+                                                    selection = TextRange(0),
+                                                )
+                                            true
+                                        } else {
+                                            false
                                         }
-                                    textFieldValue =
-                                        TextFieldValue(
-                                            text = newText,
-                                            selection = TextRange(insertAt + 1),
-                                        )
-                                    onTextChange(newText)
-                                    true
-                                }
-                                event.key == Key.DirectionUp -> {
-                                    val lineStart = textFieldValue.text.lastIndexOf('\n', textFieldValue.selection.min - 1)
-                                    if (lineStart < 0) {
-                                        textFieldValue =
-                                            textFieldValue.copy(
-                                                selection = TextRange(0),
-                                            )
-                                        true
-                                    } else {
-                                        false
                                     }
-                                }
-                                event.key == Key.DirectionDown -> {
-                                    val text = textFieldValue.text
-                                    val cursor = textFieldValue.selection.max
-                                    val nextBreak = text.indexOf('\n', cursor)
-                                    if (nextBreak < 0) {
-                                        textFieldValue =
-                                            textFieldValue.copy(
-                                                selection = TextRange(text.length),
-                                            )
-                                        true
-                                    } else {
-                                        false
+                                    event.key == Key.DirectionDown -> {
+                                        val text = textFieldValue.text
+                                        val cursor = textFieldValue.selection.max
+                                        val nextBreak = text.indexOf('\n', cursor)
+                                        if (nextBreak < 0) {
+                                            textFieldValue =
+                                                textFieldValue.copy(
+                                                    selection = TextRange(text.length),
+                                                )
+                                            true
+                                        } else {
+                                            false
+                                        }
                                     }
+                                    event.key == Key.Enter && event.isShiftPressed -> {
+                                        onExitEdit(EditExitNavigation.Up)
+                                        true
+                                    }
+                                    event.key == Key.Enter -> {
+                                        onExitEdit(EditExitNavigation.Down)
+                                        true
+                                    }
+                                    event.key == Key.Tab && event.isShiftPressed -> {
+                                        onExitEdit(EditExitNavigation.Up)
+                                        true
+                                    }
+                                    event.key == Key.Tab -> {
+                                        onExitEdit(EditExitNavigation.TabToChild)
+                                        true
+                                    }
+                                    else -> false
                                 }
-                                event.key == Key.Enter && event.isShiftPressed -> {
-                                    onExitEdit(EditExitNavigation.Up)
-                                    true
-                                }
-                                event.key == Key.Enter -> {
-                                    onExitEdit(EditExitNavigation.Down)
-                                    true
-                                }
-                                event.key == Key.Tab && event.isShiftPressed -> {
-                                    onExitEdit(EditExitNavigation.Up)
-                                    true
-                                }
-                                event.key == Key.Tab -> {
-                                    onExitEdit(EditExitNavigation.TabToChild)
-                                    true
-                                }
-                                else -> false
+                            },
+                        value = textFieldValue,
+                        onValueChange = { newValue ->
+                            textFieldValue = newValue
+                            onTextChange(newValue.text)
+                        },
+                        textStyle = textStyle,
+                        cursorBrush = SolidColor(SheetColors.activeBorder),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                innerTextField()
                             }
                         },
-                    value = textFieldValue,
-                    onValueChange = { newValue ->
-                        textFieldValue = newValue
-                        onTextChange(newValue.text)
-                    },
-                    textStyle = textStyle,
-                    cursorBrush = SolidColor(SheetColors.activeBorder),
-                    decorationBox = { innerTextField ->
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.CenterStart,
-                        ) {
-                            innerTextField()
+                    )
+                        if (textOverflow || titleSqueezed) {
+                            Text(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .background(cellBackground),
+                                text = "▸",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SheetColors.overflowArrow,
+                            )
                         }
-                    },
-                )
-                    if (textOverflow) {
-                        Text(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .background(cellBackground),
-                            text = "▸",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SheetColors.overflowArrow,
-                        )
                     }
                 }
-                Spacer(Modifier.weight(1f))
+                if (afterTitle != null) {
+                    TitleThenSection(editTitle, afterTitle, afterTitleMinWidth)
+                } else {
+                    editTitle()
+                    Spacer(Modifier.weight(1f))
+                }
             } else {
                 // PRD §2 Priority Display: the text occupies a column whose width is shared by the
                 // whole sublist (so percentages line up); the percentage sits just after it. When
                 // the text exceeds the column it is clipped and a little red arrow marks the
                 // hidden overflow on the right.
-                Box(
-                    modifier = Modifier
-                        .width(priorityColumnWidth)
-                        .defaultMinSize(minHeight = 20.dp)
-                        .taskSheetTitleBounds(titleBounds),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = highlightedTitle(displayTitle, searchRanges, currentSearchRange),
-                        style = textStyle,
-                        softWrap = false,
-                        overflow = TextOverflow.Clip,
-                    )
-                    if (textOverflow) {
+                val viewTitle: @Composable () -> Unit = {
+                    Box(
+                        modifier = Modifier
+                            .then(titleWidth)
+                            .defaultMinSize(minHeight = 20.dp)
+                            .taskSheetTitleBounds(titleBounds),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
                         Text(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .background(cellBackground),
-                            text = "▸",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SheetColors.overflowArrow,
+                            modifier = Modifier.fillMaxWidth(),
+                            text = highlightedTitle(displayTitle, searchRanges, currentSearchRange),
+                            style = textStyle,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip,
                         )
+                        if (textOverflow || titleSqueezed) {
+                            Text(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .background(cellBackground),
+                                text = "▸",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SheetColors.overflowArrow,
+                            )
+                        }
                     }
                 }
+                if (afterTitle != null) TitleThenSection(viewTitle, afterTitle, afterTitleMinWidth) else viewTitle()
                 // PRD §5: the percentage occupies a fixed-width column; clicking it opens the sub-list's
                 // priority-weight window (the editable table plus a chart of the sub-list's priorities),
                 // and RIGHT-clicking it opens the percentage's own two-option menu instead of the cell's
@@ -3159,7 +3207,7 @@ internal fun TaskRow(
                 // PRD §4: the default sub-tree's switch, in its own column after the minimum time so both
                 // trees line up down every column they share. Nothing in the account's own tree.
                 rowTrailing?.invoke(cellId)
-                Spacer(Modifier.weight(1f))
+                if (afterTitle == null) Spacer(Modifier.weight(1f))
             }
             rowContent?.invoke()
         }
@@ -3240,6 +3288,34 @@ internal fun contextMenuModifier(
                     if (enabled) onOpen()
                 }
             }
+        }
+    }
+}
+
+/**
+ * PRD §7 *Search*: a cell's title and the section after it, sharing the row's free width with **the title
+ * first**. The title is measured first and allowed everything but the section's minimum; the section takes what
+ * is left, never less than [sectionMinWidth]. A [Row] cannot say this: it measures its unweighted children
+ * first and gives a weighted one what remains — the section vanished to nothing behind a long title.
+ */
+@Composable
+private fun RowScope.TitleThenSection(
+    title: @Composable () -> Unit,
+    section: @Composable () -> Unit,
+    sectionMinWidth: Dp,
+) {
+    Layout(contents = listOf(title, section), modifier = Modifier.weight(1f)) { (titleM, sectionM), constraints ->
+        val width = constraints.maxWidth
+        val minSection = sectionMinWidth.roundToPx().coerceAtMost(width)
+        val titleP =
+            titleM.first().measure(Constraints(maxWidth = (width - minSection).coerceAtLeast(0), maxHeight = constraints.maxHeight))
+        val sectionWidth = (width - titleP.width).coerceAtLeast(minSection)
+        val sectionP =
+            sectionM.first().measure(Constraints(minWidth = sectionWidth, maxWidth = sectionWidth, maxHeight = constraints.maxHeight))
+        val height = maxOf(titleP.height, sectionP.height)
+        layout(width, height) {
+            titleP.place(0, (height - titleP.height) / 2)
+            sectionP.place(titleP.width, (height - sectionP.height) / 2)
         }
     }
 }

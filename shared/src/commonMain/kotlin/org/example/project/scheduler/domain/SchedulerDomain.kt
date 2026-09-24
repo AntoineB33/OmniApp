@@ -6744,6 +6744,31 @@ object SchedulerDomain {
         return purgeOrphanTasks(state.copy(cells = cells, lists = lists, tasks = tasks, expanded = expanded))
     }
 
+    /**
+     * PRD §7 *Search*: [taskId] renamed to [title] wherever the account holds it — the live tree and every
+     * stored task tree carrying that id (a task id is one task across trees). A **task-level** rename, for the
+     * one surface that renames a task it may have no cell for (a task cut from the tree and kept by the timeline,
+     * or one only a stored tree holds). The title index of each tree it touches is rebuilt with it. The receiver
+     * itself when nothing changes; the caller refuses a blank title (a blank title is how a CELL deletes).
+     */
+    fun withTaskRenamed(state: SchedulerState, taskId: TaskId, title: String): SchedulerState {
+        var result = state
+        result.tasks[taskId]?.takeIf { it.title != title }?.let { task ->
+            val tasks = result.tasks + (taskId to task.copy(title = title))
+            result = result.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks))
+        }
+        val trees =
+            result.taskTrees.map { entry ->
+                // The active entry's snapshot is stale by design: the live fields above ARE that tree.
+                if (entry.id == result.activeTaskTreeId) return@map entry
+                val task = entry.tree.tasks[taskId]?.takeIf { it.title != title } ?: return@map entry
+                val tasks = entry.tree.tasks + (taskId to task.copy(title = title))
+                entry.copy(tree = entry.tree.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks)))
+            }
+        if (trees != result.taskTrees) result = result.copy(taskTrees = trees)
+        return result
+    }
+
     fun buildTitleIndex(tasks: Map<TaskId, Task>): Map<String, List<TaskId>> {
         val byTitle = mutableMapOf<String, MutableList<TaskId>>()
         for (task in tasks.values) {

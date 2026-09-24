@@ -597,6 +597,23 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.
+- **A task row IS the tree's cell code** (`SearchTaskRow` → `TaskRow`, with two slots the tree leaves empty:
+  `rowLeading` for the kind, `afterTitle` for the path box). **The title prevails over the path box**
+  (`TitleThenSection`): the title takes what it needs, the path box the rest down to `afterTitleMinWidth` — a
+  long title squeezes it to a thin box, never to nothing, and is itself clipped with the tree's red arrow. A
+  plain `Row` weight cannot say this (it gives the weighted section only what the rest left, which was zero). Its colour and figures are the LIVE tree's
+  (`rememberTaskHues(state)`, `absoluteTaskPriorities`). Its **Edit Mode is stuck to Rename**, opened by typing on
+  the selected row or double-clicking its title, and commits `RenameTask` — **task-level**, so a task no cell
+  holds (cut and kept by the timeline, or only in a stored tree: `withTaskRenamed` renames it in every tree
+  holding the id) is renamed too, and its sub-tree is never touched. A blank rename is refused.
+- **An expanded task row shows its sub-tree as the tree's own cells**: `TaskTreeView` over
+  `projectSearchSubtree(childList)` — the live tree re-rooted at the task's real sub-list, with the window's own
+  `searchExpanded` / `searchSelection` / `searchEditSession` (in memory only, like "All tasks"'s), wrapped in
+  `InSearchSubtree`. **A task with no live cell (cut, kept by the timeline) has a read-only sub-tree**: the
+  reducer refuses Edit Mode there and any gesture that would change the tree. Bounded in height, it scrolls
+  inside the list. A task only a stored tree holds has no live sub-tree to open.
+- **While the search BAR holds the focus, no row is selected** (the tree's rule for its selector's field); ↓ or
+  Enter move into the list, ↑ on its first row goes back. Leaving a row being renamed commits it.
 - **A task row is a tree cell to the user.** Its right-click menu is the cell's own — `TaskCellMenuItems`, the
   one drawing of those entries for both surfaces — built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): "go to task tree" reveals THAT occurrence

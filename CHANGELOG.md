@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search task rows are the tree's own cells — 2026-09-24
+
+User spec: task rows of the Search results use *"the same code used in the task tree"* — the task's background
+colour, the expansion arrow between the type section and the title, the absolute priority, minimum time and
+category between the path section and the dead logo; Edit Mode stuck to Rename, entered by typing; no row
+selected while the user is in the search bar. Settled with the user: the arrow **expands the sub-tree** (real
+cells); a task with no cell **looks the same and can be renamed**, and a task **cut from the tree and kept by the
+timeline** cannot have its sub-tree modified.
+
+- `TaskRow` gains `rowLeading` / `afterTitle`; `SearchTaskRow` draws a row through it.
+- `SchedulerIntent.RenameTask` (task-level; `SchedulerDomain.withTaskRenamed` — live tree + stored trees holding
+  the id; `TreeMutationDelta`, or `TaskTreeDelta` when a stored tree changes) and `SchedulerIntent.InSearchSubtree`
+  (`projectSearchSubtree`, `readOnly` refused by the reducer). `SchedulerState.searchExpanded` /
+  `searchSelection` / `searchEditSession`: in memory only, like "All tasks"'s — no codec change, no migration.
+
 ### The task tree is a window; the window bar and Close all — 2026-09-24
 
 User spec: the task tree *"must be a window too, maximized by default"* with a lateral-menu button; the menu's

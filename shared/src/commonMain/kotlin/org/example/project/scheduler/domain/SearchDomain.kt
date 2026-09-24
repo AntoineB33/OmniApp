@@ -505,8 +505,8 @@ object SearchDomain {
      */
     fun withLastTreePathsStamped(before: SchedulerState, after: SchedulerState): SchedulerState {
         if (before === after) return after
-        if (after.editSession != null || after.taskListEditSession != null) return after
-        val session = before.editSession ?: before.taskListEditSession
+        if (after.editSession != null || after.taskListEditSession != null || after.searchEditSession != null) return after
+        val session = before.editSession ?: before.taskListEditSession ?: before.searchEditSession
         val baseline =
             if (session == null) {
                 before
