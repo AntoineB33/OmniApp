@@ -11,6 +11,44 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Search window, and a task keeps its last path — 2026-09-23
+
+User spec: a lateral-menu button opening a window with *"a configuration section and a result list section
+below"* — a search bar and a drop-down of **task, task category, restrictive period, alarm, timer,
+reminder** — whose rows are *"always presented in the same height and width"*, a task row being its title, its
+path in a rectangle, and a logo for a task *"not in a task tree, but still referenced"*. The title prevails
+over the path when the row runs out of width, several paths get an expansion arrow listing them all, and
+*"if the task is not in a task tree anymore, it keeps its last path"*.
+
+Settled with the user before building: the last path is **kept when a task id ceases to be in a task tree**,
+the **shortest** one when several occurrences are cut at once, and **forgotten when nothing references the task
+any more** (the history cap removing its last panel, for example). A row has **the behaviour of a task cell in
+its fixed-height form** — select, walk, open, right-click menu — not an inline Edit Mode. The other kinds show
+their name and one detail. (A sentence of the first draft about the Change Task menu's paths was withdrawn by
+the user as unrelated.)
+
+- **`Task.lastTreePath`** (new, authoritative, persisted + synced, absent ⇒ none). Titles from the tree's root
+  — named after the tree — to the task's parent, **not ids**: the ancestors are usually purged in the gesture
+  that cuts the task. A payload from before the field decodes to no path, and such a tombstone is a result with
+  an empty path box (`SearchWindowTest`).
+- **`SearchDomain`** (new, `scheduler/domain/`): membership across **every** task tree (the live one and the
+  stored entries, never the stale active entry), all paths per task (bounded), the stamp, and the results.
+  `SchedulerReducer.reduce` runs `withLastTreePathsStamped` after the category settle — on the account's own
+  states only, and **only at edit boundaries**, measured from the session's `treeBefore` when one closes.
+- **Only what cannot be derived is stamped.** The first cut stamped every task that left, and
+  `ServerQuotaTest` caught it: Change Task is the default mode, so the heavy user's renames detach parents, and
+  each rename rewrote the parent AND its whole sub-tree (egress 519.6 MB against a 512 MB budget; 510.6 before
+  the feature). A task stranded under a stamped task now derives its path from it (`strandedPaths`), so a
+  detached parent costs one row: 511.0 MB. **The budget has ~1 MB/month of headroom left at HEAD** — the next
+  synced feature will need it cut elsewhere.
+- **`ui/SearchWindow.kt`** (new), `FloatingWindow.Search` / `HistoryWindow.Search` (the History window's
+  decode already drops a name it does not know, so an older build reading a unit from here is unaffected), the
+  lateral-menu **Search** button (between "Task relations" and "Categories"), and the "✕ Close windows" set.
+- Docs: PRD §7 *Search*, `task-tree.md` § *The Search window, and a task's last path*, the CLAUDE.md
+  authoritative-state row.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`). No Supabase change: the field rides the
+  existing task rows, omitted when empty.
+
 ### The calendar’s "add…" and "edit…" became ONE window over a SET of elements — 2026-09-23
 
 User spec: *"the option calendar → right-click menu → add… directly opens the add window"*, whose first

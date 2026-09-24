@@ -1253,6 +1253,9 @@ fun LateralMenu(
     /** PRD §7 Keyboard shortcuts: whether the window listing every chord is open + toggle callback. */
     shortcutsWindowOpen: Boolean = false,
     onToggleShortcuts: () -> Unit = {},
+    /** PRD §7 Search: whether the search window is open + toggle callback. */
+    searchWindowOpen: Boolean = false,
+    onToggleSearch: () -> Unit = {},
     /**
      * PRD §4/§7 Default sub-tree: whether the policy is **currently applied** — the switch sitting to the LEFT
      * of the "Default sub-tree" button. Off means a newly created task is seeded with nothing, as before the
@@ -1491,6 +1494,14 @@ fun LateralMenu(
             label = "Task relations",
             active = taskRelationsWindowOpen,
             onClick = onToggleTaskRelations,
+        )
+
+        // PRD §7 Search: find a task, a category, a restrictive-period kind, an alarm, a timer or a reminder by
+        // name — including a task no task tree holds any more, which nothing else in the menu can reach.
+        MenuButton(
+            label = "Search",
+            active = searchWindowOpen,
+            onClick = onToggleSearch,
         )
 
         // PRD §5 Categories: every category the account holds, in title order, each saying what carries it

@@ -10,6 +10,7 @@ import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
 import org.example.project.scheduler.domain.PlanAbandoned
 import org.example.project.scheduler.domain.SearchBudget
@@ -195,9 +196,16 @@ object SchedulerReducer {
      * The two projections below deliberately reduce through [reduceIntent] instead: the "All tasks" window
      * and the §4 template are re-rooted trees, so a rule solved against one of them would be solved against
      * the wrong root list — the settle they need is the one this method runs on the folded-back live state.
+     *
+     * The PRD §7 **last path** ([org.example.project.scheduler.model.Task.lastTreePath]) is kept here for the
+     * same reason: whether a task is still in a task tree is a question about the account's own trees, and
+     * inside a projection every task would appear to leave.
      */
     fun reduce(state: SchedulerState, intent: SchedulerIntent): SchedulerState =
-        CategoryRules.settle(state, settleDefaultSubtree(reduceIntent(state, intent)))
+        SearchDomain.withLastTreePathsStamped(
+            state,
+            CategoryRules.settle(state, settleDefaultSubtree(reduceIntent(state, intent))),
+        )
 
     /**
      * PRD §4 **Default sub-tree**: every sub-list of the template is titled task cells ending in ONE empty cell,

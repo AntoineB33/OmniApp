@@ -131,6 +131,7 @@ enum class HistoryWindow(val label: String) {
     Categories("Categories"),
     DefaultSubtree("Default sub-tree"),
     Shortcuts("Shortcuts"),
+    Search("Search"),
 }
 
 /**

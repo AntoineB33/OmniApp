@@ -489,6 +489,7 @@ object SchedulerStateCodec {
                         resilience = it.resilience,
                         categoryIds = it.categoryIds.map(CategoryId::value),
                         pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
+                        lastTreePath = it.lastTreePath,
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -1000,6 +1001,7 @@ object SchedulerStateCodec {
                         resilience = it.resilience,
                         categoryIds = it.categoryIds.map(CategoryId::value),
                         pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
+                        lastTreePath = it.lastTreePath,
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -1040,6 +1042,7 @@ object SchedulerStateCodec {
                         resilience = decodeResilience(p),
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                         pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
+                        lastTreePath = p.lastTreePath,
                     )
             }
         val cells =
@@ -1427,6 +1430,7 @@ object SchedulerStateCodec {
                         resilience = decodeResilience(p),
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                         pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
+                        lastTreePath = p.lastTreePath,
                     )
             }
         val cells =
@@ -2370,6 +2374,10 @@ private data class PersistedTask(
     // (every payload written before the promise existed, and every task that owes nothing) ⇒ none, which is
     // exactly what a build that grafted the template eagerly left behind.
     val pendingDefaultSubtree: List<String> = emptyList(),
+    // PRD §7 Search: where a task in no task tree last sat. Absent (every payload written before the field
+    // existed, and every task a tree still holds) ⇒ none — a task cut from the tree by an older build has no
+    // path to recover, and the search window draws its path box empty.
+    val lastTreePath: List<String> = emptyList(),
 )
 
 @Serializable

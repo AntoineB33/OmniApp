@@ -133,6 +133,7 @@ import org.example.project.ui.ShortcutsWindow
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
 import org.example.project.ui.TaskListWindow
+import org.example.project.ui.SearchWindow
 import org.example.project.ui.ScreenPoint
 import org.example.project.ui.TaskPickerMenu
 import org.example.project.ui.TaskPickerOverlay
@@ -161,7 +162,7 @@ enum class OmniPage(val label: String) {
  */
 private enum class FloatingWindow {
     Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, Categories,
-    DefaultSubtree, Shortcuts, TimeSim
+    DefaultSubtree, Shortcuts, Search, TimeSim
 }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
@@ -577,6 +578,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §5 Categories: whether the account's list of categories is open (local UI state; the
         // categories and their rules are authoritative synced state).
         var categoriesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Categories)) }
+        // PRD §7 Search: whether the search window is open (local UI state; its query, kind and selection are
+        // Compose-only, inside the window).
+        var searchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Search)) }
         // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
         // list is ordered on screen is a way of looking at the tree, not a fact about it — so it is never
         // persisted, never synced, and records no history unit.
@@ -609,6 +613,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Categories -> HistoryWindow.Categories
             FloatingWindow.DefaultSubtree -> HistoryWindow.DefaultSubtree
             FloatingWindow.Shortcuts -> HistoryWindow.Shortcuts
+            FloatingWindow.Search -> HistoryWindow.Search
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
         }
@@ -639,6 +644,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Categories -> categoriesWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
+            FloatingWindow.Search -> searchWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The FRONT window: the very top of the one stacking order, when that is a lateral-menu window.
@@ -670,6 +676,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Categories -> null
             FloatingWindow.DefaultSubtree -> null
             FloatingWindow.Shortcuts -> null
+            FloatingWindow.Search -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -723,6 +730,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var defaultSubtreeSize by remember { mutableStateOf(savedSize(FloatingWindow.DefaultSubtree)) }
         var shortcutsOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Shortcuts, Offset(60f, 60f))) }
         var shortcutsSize by remember { mutableStateOf(savedSize(FloatingWindow.Shortcuts)) }
+        var searchOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Search, Offset(-160f, -80f))) }
+        var searchSize by remember { mutableStateOf(savedSize(FloatingWindow.Search)) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarSize, calendarOpen) }
         LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, remindersSize, choresManagerOpen) }
@@ -742,6 +751,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         LaunchedEffect(shortcutsWindowOpen) {
             persistPlacement(FloatingWindow.Shortcuts, shortcutsOffset, shortcutsSize, shortcutsWindowOpen)
+        }
+        LaunchedEffect(searchWindowOpen) {
+            persistPlacement(FloatingWindow.Search, searchOffset, searchSize, searchWindowOpen)
         }
 
         var selectedDate by remember { mutableStateOf(today) }
@@ -1713,6 +1725,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleShortcuts = {
                         onMenuWindowClicked(FloatingWindow.Shortcuts) { shortcutsWindowOpen = it }
                     },
+                    searchWindowOpen = searchWindowOpen,
+                    onToggleSearch = {
+                        onMenuWindowClicked(FloatingWindow.Search) { searchWindowOpen = it }
+                    },
                     defaultSubtreeEnabled = schedulerState.defaultSubtreeEnabled,
                     onToggleDefaultSubtreeEnabled = {
                         vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it))
@@ -1732,7 +1748,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
                         alarmWindowOpen || taskTreesWindowOpen || taskListWindowOpen ||
                         taskRelationsWindowOpen || categoriesWindowOpen || defaultSubtreeWindowOpen ||
-                        shortcutsWindowOpen,
+                        shortcutsWindowOpen || searchWindowOpen,
                     onCloseAllWindows = {
                         calendarOpen = false
                         choresManagerOpen = false
@@ -1745,6 +1761,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         categoriesWindowOpen = false
                         defaultSubtreeWindowOpen = false
                         shortcutsWindowOpen = false
+                        searchWindowOpen = false
                     },
                 )
 
@@ -2631,6 +2648,57 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 persistPlacement(FloatingWindow.Categories, windowOffset, windowSize, true)
                             },
                             onRaise = { focusWindow(FloatingWindow.Categories) },
+                            modifier = Modifier
+                                .align(Alignment.Center),
+                        )
+                    }
+
+                    // PRD §7 Search: a task, a task category, a restrictive-period kind, an alarm, a timer or a
+                    // reminder, found by name. It reads the LIVE state, and every gesture on a row goes through
+                    // the handler the rest of the app already uses for it — the §13 windows hoisted above, the
+                    // one "go to task tree", the lateral-menu windows that own an alarm or a reminder.
+                    if (searchWindowOpen) {
+                        SearchWindow(
+                            state = schedulerState,
+                            onOpenTaskEdit = {
+                                popupFromDefaultSubtree = false
+                                editTaskId = it
+                            },
+                            onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
+                            onGoToTaskTree = { taskId ->
+                                goToTaskTree(taskId, schedulerState.tasks[taskId]?.title.orEmpty())
+                            },
+                            onDeepCopyCell = {
+                                popupFromDefaultSubtree = false
+                                deepCopyCellId = it
+                            },
+                            onOpenCategory = {
+                                popupFromDefaultSubtree = false
+                                editCategoryId = it
+                            },
+                            onOpenPeriodKind = {
+                                popupFromDefaultSubtree = false
+                                editPeriodKind = it
+                            },
+                            // The window that OWNS an alarm, a timer or a reminder — opened if it is closed and
+                            // brought to the front either way, never closed by this (unlike its menu button).
+                            onOpenAlarms = {
+                                alarmWindowOpen = true
+                                focusWindow(FloatingWindow.Alarms)
+                            },
+                            onOpenReminders = {
+                                choresManagerOpen = true
+                                focusWindow(FloatingWindow.Reminders)
+                            },
+                            onDismiss = { searchWindowOpen = false },
+                            initialOffset = searchOffset,
+                            initialSize = searchSize,
+                            onGeometryChange = { windowOffset, windowSize ->
+                                searchOffset = windowOffset
+                                searchSize = windowSize
+                                persistPlacement(FloatingWindow.Search, windowOffset, windowSize, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.Search) },
                             modifier = Modifier
                                 .align(Alignment.Center),
                         )

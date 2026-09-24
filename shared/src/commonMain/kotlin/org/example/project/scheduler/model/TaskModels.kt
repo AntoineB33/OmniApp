@@ -97,6 +97,26 @@ data class Task(
      * and synced with the rest of the task, and it rides Undo/Redo with the tree that holds it.
      */
     val pendingDefaultSubtree: List<CellListId> = emptyList(),
+    /**
+     * PRD §7 *Search*: **where this task last sat, for a task that is in no task tree any more** — the titles
+     * from the tree's root (named after the tree) down to the task's parent, exactly as the search window's
+     * path section reads a live path. Empty for every task a task tree still holds.
+     *
+     * Stamped by [org.example.project.scheduler.domain.SearchDomain.withLastTreePathsStamped] at the edit
+     * boundary where the task leaves the LAST task tree (the live one and every stored one), and cleared when
+     * it comes back. When several of its occurrences are cut in one gesture it keeps the **shortest** of the
+     * paths it had. A task stranded under a stamped task (the sub-tree of a detached parent) carries none:
+     * its path is derived from that ancestor's, so only what cannot be recomputed is stored. It goes when the
+     * task itself goes: a task nothing references any more is purged
+     * ([org.example.project.scheduler.domain.SchedulerDomain.purgeOrphanTasks]), and this with it.
+     *
+     * **Titles, not ids**: the ancestors are routinely deleted in the very gesture that cuts the task (a
+     * sub-tree removed whole, of which only the tasks holding records survive), so ids would name nothing.
+     *
+     * Authoritative — once the cells are gone nothing can recompute it (the history is capped) — so it is
+     * persisted and synced with the rest of the task.
+     */
+    val lastTreePath: List<String> = emptyList(),
 ) {
     /** This task's multiplier inside a period of [kind]; see [PeriodKinds.resilienceFor]. */
     fun resilienceFor(kind: String): Double = PeriodKinds.resilienceFor(resilience, kind)

@@ -527,6 +527,56 @@ to the task id. Do not add a second row implementation: the flat one this replac
   pinned (Compose-only, like the sorter itself), a task created since is appended and one deleted drops out,
   and the button appears exactly while the pinned order and the fresh one differ.
 
+### The Search window, and a task's last path
+
+→ PRD §7 *Search*. `scheduler/domain/SearchDomain.kt` decides what is found and keeps the last path;
+`ui/SearchWindow.kt` draws it.
+
+- **"In a task tree" means ANY task tree** — the live one and every stored `TaskTreeEntry` — with the live
+  tree's own membership predicate (a title-bearing cell reachable from the root, `shortestTaskTreePaths`'s
+  walk). The **active** entry's snapshot is never read: it is stale by design and the live fields are that
+  tree. A task only a stored tree holds is a result, named from that tree.
+- **A path is the titles from the root down to the PARENT**, and its first segment is the **tree's name** (the
+  active tree's, else the root task's title). The task's own title is the row's first section; repeating it
+  would spend the width the two sections fight over.
+- **`Task.lastTreePath` is AUTHORITATIVE** — once the cells are gone nothing can recompute it (the history is
+  capped) — so it is persisted and synced with the task. It holds **titles, not ids**: the ancestors are
+  routinely purged in the very gesture that cuts the task.
+- **It is stamped in `SchedulerReducer.reduce` and nowhere else** (`SearchDomain.withLastTreePathsStamped`),
+  on the account's own before/after states — never inside `reduceInTaskList`/`reduceInDefaultSubtree`, whose
+  re-rooted trees read as every task leaving. A task in some tree before and in none after gets the
+  **shortest** path it had (so several occurrences cut in one gesture keep the shortest); a task back in a tree
+  loses its stamp; a blank-titled task (a cell being emptied, which the boundary purges) is never stamped.
+- **Only what cannot be derived is stamped.** A task stranded under a stamped task — the sub-tree of a
+  detached parent — reads its path off that ancestor (`SearchDomain.strandedPaths`: the ancestor's stamp, its
+  title, the titles between), so the parent is stamped and the tasks under it are not, unless one's own
+  shortest path was shorter. Stamping them all rewrote every task under a renamed parent — Change Task is the
+  default mode, so a rename detaches — and put `ServerQuotaTest` over its egress budget (519.6 MB against 512;
+  510.6 before the feature, 511.0 with this rule). A stranded task whose derivation breaks later (its
+  ancestor purged or its cell moved) is stamped with the path it could be told at, at that boundary.
+- **Only at edit boundaries.** While `editSession` or `taskListEditSession` is open nothing is stamped, and
+  the reduction that closes one is measured from the session's `treeBefore`. Renaming a parent passes through
+  a blank title between keystrokes; read mid-session, its whole sub-tree would leave and come back, and every
+  task in it would be rewritten — and pushed — twice.
+- **Forgetting is the ordinary purge.** No rule of its own: a task nothing references is removed by
+  `purgeOrphanTasks`, and its path with it. Do not add a second retention rule for the path.
+- **Cheap when nothing structural moved**: the tree fields are compared by identity, the tasks by title and
+  sub-list only, and the membership walk is memoized on the identity of what it reads (each boundary's
+  "after" is the next one's "before"). It runs on every reduction, the off-thread re-plans included.
+- **Listing every path is bounded, membership is not.** `allPathsInAnyTree` walks a shared list once per path
+  reaching it (that is what a mirrored parent's paths are), capped per task and by a visit budget, level by
+  level so a cut drops the longest paths first. It is display-only; the stamp and the "not in any tree" logo
+  read the exact walk. The window holds it on the tree fields, never per keystroke or per tick.
+- **The rows are not cells.** Every row has one fixed height and the list's full width, so a row answers a
+  cell's gestures in the form that fits — select, walk, open (`Enter`/double-click), `Ctrl+C`, the §13 menu's
+  task entries — and never grows into an Edit Mode. Every action goes through the handler the rest of the app
+  already has (`editTaskId`, the one `goToTaskTree`, `deepCopyCellId`, `editCategoryId`, `editPeriodKind`, the
+  Alarms/Reminders windows): the window adds no second path to any of them.
+- **The title prevails over the path** (`TaskResultRowLayout`): the title is measured first against
+  everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
+  this — it measures unweighted children first, which is the opposite priority.
+- **The query, the kind and the selection are Compose-only**, like the "All tasks" sorter.
+
 ### The default sub-tree
 
 PRD §4/§7: one per account, grafted under every task the user **creates**. Off by default
