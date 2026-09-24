@@ -68,6 +68,9 @@ import org.example.project.scheduler.ui.contextMenuModifier
 /** Every row of the result list has this one height, whatever it holds (PRD §7 *Search*). */
 private val RESULT_ROW_HEIGHT: Dp = 34.dp
 
+/** Every row's kind section is this one width, so the names line up whatever the kinds (fits "restrictive period"). */
+private val KIND_SECTION_WIDTH: Dp = 104.dp
+
 /** The narrowest the path box may be squeezed to by a long title — room for its arrow and a sliver of text. */
 private val MIN_PATH_BOX_WIDTH: Dp = 34.dp
 
@@ -80,8 +83,9 @@ private const val NOT_IN_TREE_HINT: String =
  * bottom — the **configuration** (a search bar, and a drop-down with a check box for each kind of thing to
  * look for — every checked kind is searched at once) and the **result list**.
  *
- * **Every row is the same height and the full width of the list**, whatever it holds. A task row is three
- * sections, left to right: its **title**, its **path** in a rectangle, and — for a task no task tree holds
+ * **Every row is the same height and the full width of the list**, whatever it holds, and **opens on a
+ * section naming its kind** (task, restrictive period, …) — one fixed width, so the names line up across
+ * kinds ([KindSection]). After it, a task row is three sections, left to right: its **title**, its **path** in a rectangle, and — for a task no task tree holds
  * any more — a **logo** saying so, which explains itself on hover. The path is the shortest one the task
  * has; a task with several carries an arrow at the right of its path box that lists them all. The title and
  * the path share the width, **the title first**: it takes what it needs and the path box the rest, down to a
@@ -323,7 +327,20 @@ fun SearchWindow(
     }
 }
 
-/** The drop-down's face: the checked kinds by name, or "every kind" / "no kind". */
+/** A row's leftmost section: which kind of thing it is. One fixed width, so every row's name starts alike. */
+@Composable
+private fun KindSection(kind: SearchDomain.Kind) {
+    Text(
+        text = kind.label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.width(KIND_SECTION_WIDTH),
+    )
+}
+
+/** The drop-down's face:the checked kinds by name, or "every kind" / "no kind". */
 private fun kindsLabel(kinds: Set<SearchDomain.Kind>): String =
     when (kinds.size) {
         0 -> "no kind"
@@ -400,18 +417,23 @@ private fun TaskResultRow(
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
-        TaskResultRowLayout(
-            title = {
-                Text(
-                    text = result.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            KindSection(result.kind)
+            Box(Modifier.weight(1f).fillMaxHeight().padding(start = 10.dp)) {
+                TaskResultRowLayout(
+                    title = {
+                        Text(
+                            text = result.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    path = { TaskPathBox(result) },
+                    logo = if (result.inTaskTree) null else ({ NotInTreeLogo() }),
                 )
-            },
-            path = { TaskPathBox(result) },
-            logo = if (result.inTaskTree) null else ({ NotInTreeLogo() }),
-        )
+            }
+        }
         val shown = menuActions
         if (shown != null) {
             transientMenuDismissal(menuOpen) { menuOpen = false }
@@ -580,6 +602,7 @@ private fun ItemResultRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            KindSection(item.kind)
             Text(
                 text = item.name,
                 style = MaterialTheme.typography.bodyMedium,
