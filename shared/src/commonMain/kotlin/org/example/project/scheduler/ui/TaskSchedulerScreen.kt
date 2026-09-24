@@ -271,6 +271,8 @@ private fun highlightedTitle(
 @Composable
 fun TaskSchedulerScreen(
     modifier: Modifier = Modifier,
+    /** False while the tree's window is reduced to the bar: no keystroke may reach a tree nobody sees. */
+    keyboardEnabled: Boolean = true,
     store: SchedulerStore? = null,
     vm: TaskSchedulerViewModel = viewModel { TaskSchedulerViewModel(store = store) },
     // PRD §5: opening/closing the priority-weight window is hoisted to the app so the window can be drawn
@@ -374,7 +376,7 @@ fun TaskSchedulerScreen(
             // PRD §7/§8: the tree only owns the keyboard while it is the focused surface AND the selector's
             // name field above it does not hold it — that field's menus close the moment it loses focus, so
             // the tree's refocus effect must not pull focus back out of it.
-            keyboardActive = state.focusedWindow == AppWindow.Tree && !treeFieldFocused,
+            keyboardActive = keyboardEnabled && state.focusedWindow == AppWindow.Tree && !treeFieldFocused,
             refocusWindow = AppWindow.Tree,
             modifier = Modifier.fillMaxSize(),
             onSetWeightWindow = onSetWeightWindow,

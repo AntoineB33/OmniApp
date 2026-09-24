@@ -60,6 +60,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -85,7 +86,7 @@ import kotlin.math.roundToInt
  *  - **double-clicking the head** maximizes it, and un-maximizes it when it already is;
  *  - **it is resized by its left, right or bottom edge**. Not the top: the head is there, and a window
  *    whose head moves under the cursor mid-drag is the one edge that cannot be made to feel right;
- *  - **reduced windows go to the bar along the bottom of the app** ([MinimizedWindowBar]), which is drawn
+ *  - **reduced windows go to the bar along the bottom of the app** ([WindowBar]), which is drawn
  *    over the lateral menu because a window reduced while the menu is open must not be filed behind it.
  *
  * Why one composable instead of a shared "header" helper: the five buttons and the three edges are not
@@ -511,6 +512,8 @@ fun rememberWindowFrameState(
     id: String,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
+    /** How the window opens when nothing was kept for it — the task tree's maximized first opening. */
+    defaultChrome: WindowChrome? = null,
 ): WindowFrameState {
     val memory = LocalWindowChromeMemory.current
     // A COPY of a window ([LocalWindowInstance]) is the same window under an id of its own, placed where its
@@ -519,7 +522,9 @@ fun rememberWindowFrameState(
     val fullId = id + (instance?.suffix ?: "")
     val offset = instance?.copy?.initialOffset ?: initialOffset
     val size = instance?.copy?.initialSize ?: initialSize
-    return remember(fullId) { WindowFrameState(fullId, offset, size, initialChrome = memory?.saved(fullId)) }
+    return remember(fullId) {
+        WindowFrameState(fullId, offset, size, initialChrome = memory?.saved(fullId) ?: defaultChrome)
+    }
 }
 
 /**
@@ -626,7 +631,7 @@ interface WindowChromeMemory {
 
 val LocalWindowChromeMemory = staticCompositionLocalOf<WindowChromeMemory?> { null }
 
-/** Height reserved for [MinimizedWindowBar]; `App` insets the content area by it while it has rows. */
+/** Height reserved for [WindowBar]; `App` insets the content area by it while it has rows. */
 val MINIMIZED_BAR_HEIGHT: Dp = 38.dp
 
 /** How close two presses on the head must be to count as the double-click that maximizes it. */
@@ -965,39 +970,56 @@ private fun Modifier.unplaced(active: Boolean): Modifier =
     }
 
 /**
- * The bar of reduced windows along the bottom of the app. Drawn at the app ROOT, over the lateral menu:
- * a window reduced while the menu is open must not be filed behind it.
+ * The app's **window bar** along the bottom — its system tray. It appears whenever a window is open and has a
+ * TAB for each one, the reduced ones included, in the order they were opened; drawn at the app ROOT, over the
+ * lateral menu, so a window reduced while the menu is open is not filed behind it.
  *
- * Each chip restores its window; its ✕ closes it outright, so a window put down here is not a window the
- * user has to bring back before they can be rid of it.
+ * A tab brings its window back — out of the bar, to the top, into the focus ([WindowFrameHost.present]); its ✕
+ * closes it outright. **Close all**, at the bar's right corner, closes every window at once (it replaced the
+ * lateral menu's "Close windows").
  */
 @Composable
-fun MinimizedWindowBar(host: WindowFrameHost, modifier: Modifier = Modifier) {
-    val rows = host.minimizedWindows
+fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier) {
+    val rows = host.registrations
     if (rows.isEmpty()) return
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shadowElevation = 12.dp,
         modifier = modifier.fillMaxWidth().height(MINIMIZED_BAR_HEIGHT),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            for (row in rows) MinimizedChip(row, host)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                for (row in rows.toList()) MinimizedChip(row, host)
+            }
+            Text(
+                text = "✕ Close all",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(horizontal = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    // Over a snapshot: each close takes its window out of the list being walked.
+                    .clickable { host.registrations.toList().forEach { it.onClose() } }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
     }
 }
 
 @Composable
 private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHost) {
+    // A reduced window's tab is set back, so the bar tells at a glance which windows are on screen.
+    val reduced = row.state.minimized
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = if (reduced) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
@@ -1008,6 +1030,7 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
             Text(
                 text = row.title,
                 style = MaterialTheme.typography.labelLarge,
+                fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 // Picking a window back up puts it on top: it is the window the user has just asked for,

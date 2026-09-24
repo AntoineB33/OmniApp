@@ -26,6 +26,20 @@ window, a period's, a category's, a notice — is the same thing with the same m
   a single slot apiece — not by an outside-press rule. The one way to have two is to ask for it: the head's
   **duplicate** button (below), whose copies are not in that slot and are never replaced.
 
+## The task tree is a window
+
+Since 2026-09-24 the tree (`TaskSchedulerScreen`) is not the app's background but a lateral-menu window
+(`TaskTreeWindow`, `FloatingWindow.TaskTree`, a "Task tree" button in the lateral menu). It opens **maximized**
+the first time (`rememberWindowFrameState(defaultChrome = …)`), and as it was left after that. `App` draws it
+FIRST, so the windows restored with it come back over it.
+
+- **It does not `claimsKeyboard`**: the tree reads its own keys under its own rule (`keyboardOwned`, below), and a
+  press in its window focuses it and dispatches the `Tree` focus target, as a press in the bare tree did.
+- **Reduced, it is deaf** (`TaskSchedulerScreen(keyboardEnabled = false)`): a reduced window stays composed, and a
+  keystroke would otherwise rename a cell nobody can see.
+- **Not duplicable**: its selection, edit session and scroll are `SchedulerState` view state; a copy would be a
+  mirror. The content area behind every window is bare once the tree window is closed.
+
 ## The one surface that is NOT drawn inside the app
 
 **The task picker** (`ui/TaskPickerOverlay.kt`, `shortcuts.md`) is an OS window of its own — undecorated,
@@ -77,10 +91,14 @@ means.
 - **Every window has an explicit default width AND height**, and its content sits in a `weight(1f)` slot.
   Never `heightIn(max = …)` + wrap: a window whose height is its content's cannot be given a different one
   by dragging its bottom edge, which is the whole point of the edge.
-- **Reduced windows go to the bar along the bottom of the app** (`MinimizedWindowBar`), drawn at the app
-  root and **over the lateral menu** — a window reduced while the menu is open must not be filed behind it.
-  The content area is inset by the bar's height while it has rows, so a maximized window stops above it.
-  A chip restores its window; its ✕ closes it outright.
+- **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
+  open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
+  they were opened. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
+  open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
+  maximized window stops above it. A tab brings its window back (`present`); its ✕ closes it outright.
+- **Close all is the bar's, at its right corner** — every registered window's own close, over a snapshot. It
+  replaced the lateral menu's "Close windows" (2026-09-24), which listed the lateral-menu windows by hand and
+  so never closed a per-object window, a copy or a notice.
 - **A reduced window is still composed, merely not placed** (`Modifier.unplaced`). Not composing it throws
   away everything half-typed in it, which is not what pressing *reduce* asks for.
 - **A WINDOW'S HIT REGION IS ITS DRAWN RECTANGLE, so nothing may hang off it outside the frame's
@@ -126,7 +144,7 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   object it was made from, so re-opening the original on another object leaves the copies alone, and the window
   must close through the `close` it is handed (its Save, bin and ✕ close the copy, not the original). Copies
   live for the session: per-object windows persist nothing, the original included.
-- **Not duplicable**: the **Calendar** — its display pipeline in `App` (records, projections, the schedule
+- **Not duplicable**: the **task tree** (above), the **Calendar** — its display pipeline in `App` (records, projections, the schedule
   horizon handed to the engine) is derived from ONE visible span, so a copy on another week would drag every
   projection to its span and leave the original blank; it needs that pipeline made per-window first
   (`display-hot-path.md` binds each to its visible window). **Notices** (`MessagePopup`) — a message has no

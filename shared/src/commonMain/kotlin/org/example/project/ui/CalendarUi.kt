@@ -1301,9 +1301,9 @@ fun LateralMenu(
      * bubble can never advertise a chord the app is not listening for.
      */
     shortcutBindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap(),
-    /** Whether any floating window is open — gates the "close all windows" button + the callback to do so. */
-    anyWindowOpen: Boolean = false,
-    onCloseAllWindows: () -> Unit = {},
+    /** PRD §4: the task tree is a window like the others, opened and closed from here. */
+    taskTreeOpen: Boolean = false,
+    onToggleTaskTree: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1323,10 +1323,12 @@ fun LateralMenu(
         // visible after the whole menu (this button included) slides off-screen.
         PageNavButton(page = page, onPageSelected = onPageSelected)
 
-        // Shown only while a floating window is open: closes every floating window at once.
-        if (anyWindowOpen) {
-            MenuButton(label = "✕ Close windows", active = false, onClick = onCloseAllWindows)
-        }
+        // Closing every window at once is the window bar's "Close all" now (WindowBar), where the windows are.
+        MenuButton(
+            label = "Task tree",
+            active = taskTreeOpen,
+            onClick = onToggleTaskTree,
+        )
 
         MenuButton(
             label = "Calendar",

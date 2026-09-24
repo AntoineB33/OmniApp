@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The task tree is a window; the window bar and Close all — 2026-09-24
+
+User spec: the task tree *"must be a window too, maximized by default"* with a lateral-menu button; the menu's
+"Close windows" becomes a **close all** button at the right corner of the app's system tray, which *"appears
+when there are opened windows, with a tab for opened windows (minimized included)"*.
+
+- `ui/TaskTreeWindow.kt`, `FloatingWindow.TaskTree` (placement row `TaskTree`, open on a first run),
+  `rememberWindowFrameState(defaultChrome)`, `TaskSchedulerScreen(keyboardEnabled)` (deaf while reduced).
+- `MinimizedWindowBar` → `WindowBar`: every registered window, Close all. `LateralMenu` loses
+  `anyWindowOpen`/`onCloseAllWindows`, gains `taskTreeOpen`/`onToggleTaskTree`.
+
 ### Duplicating a window — 2026-09-24
 
 User spec: *"a duplication button to the header of any window of the app, at the left of the full width

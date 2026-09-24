@@ -101,6 +101,8 @@ import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.AlarmWindow
+import org.example.project.ui.TASK_TREE_WINDOW_ID
+import org.example.project.ui.TaskTreeWindow
 import org.example.project.ui.windowInstanceId
 import org.example.project.ui.WindowInstance
 import org.example.project.ui.WindowCopy
@@ -162,7 +164,7 @@ import org.example.project.ui.WindowChrome
 import org.example.project.ui.WindowChromeMemory
 import org.example.project.ui.WindowFill
 import org.example.project.ui.MINIMIZED_BAR_HEIGHT
-import org.example.project.ui.MinimizedWindowBar
+import org.example.project.ui.WindowBar
 import org.example.project.ui.TransientMenuHost
 import org.example.project.ui.WindowFrameHost
 import org.example.project.ui.transientMenuDismissRoot
@@ -178,6 +180,8 @@ enum class OmniPage(val label: String) {
 private enum class FloatingWindow {
     Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, Categories,
     DefaultSubtree, Shortcuts, Search,
+    /** PRD §4: the task tree, a window like the others ([TASK_TREE_WINDOW_ID]). */
+    TaskTree,
     /** Opened from the Search window; its name is its frame id ([CONFIGURATION_SEARCH_FRAME_ID]). */
     ConfigSearch,
     TimeSim
@@ -661,6 +665,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var categoriesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Categories)) }
         // PRD §7 Search: whether the search window is open (local UI state).
         var searchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Search)) }
+        // PRD §4: the task tree's window. OPEN on a first run (nothing kept yet), as it was left after that.
+        var taskTreeWindowOpen by remember {
+            mutableStateOf(initialPlacements[FloatingWindow.TaskTree.name]?.visible ?: true)
+        }
+        var taskTreeOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTree, Offset.Zero)) }
+        var taskTreeSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskTree)) }
+        LaunchedEffect(taskTreeWindowOpen) {
+            persistPlacement(FloatingWindow.TaskTree, taskTreeOffset, taskTreeSize, taskTreeWindowOpen)
+        }
         // PRD §7 Search: the query, the checked kinds and the filters, kept here rather than in the window —
         // the Configuration Search window edits the same configuration, and it outlives both windows — and on
         // this device's placement row, so they outlive the app. Local-only view state.
@@ -721,6 +734,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Search -> HistoryWindow.Search
             // It edits the Search window's configuration, which commits nothing either.
             FloatingWindow.ConfigSearch -> HistoryWindow.Search
+            FloatingWindow.TaskTree -> HistoryWindow.Tree
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
         }
@@ -753,6 +767,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.Search -> searchWindowOpen
             FloatingWindow.ConfigSearch -> configSearchWindowOpen
+            FloatingWindow.TaskTree -> taskTreeWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The FRONT window: the very top of the one stacking order, when that is a lateral-menu window.
@@ -786,6 +801,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Shortcuts -> null
             FloatingWindow.Search -> null
             FloatingWindow.ConfigSearch -> null
+            // The tree's keyboard and its Ctrl+Z are the Tree focus target's, as they always were.
+            FloatingWindow.TaskTree -> AppWindow.Tree
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -1842,7 +1859,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         ) {
             // The reduce bar is drawn OVER the lateral menu, so the app is inset by its height only where
             // the windows live — the content area below.
-            val minimizedInset = if (windowFrames.hasMinimized) MINIMIZED_BAR_HEIGHT else 0.dp
+            val minimizedInset = if (windowFrames.registrations.isNotEmpty()) MINIMIZED_BAR_HEIGHT else 0.dp
             Row(modifier = Modifier.fillMaxSize()) {
                 // The lateral menu is omitted entirely while collapsed, so the content takes the full width
                 // ("completely disappear to the left"). The collapse toggle lives outside it (see below).
@@ -1923,23 +1940,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     },
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
-                    anyWindowOpen = calendarOpen || choresManagerOpen || historyManagerOpen || sleepWindowOpen ||
-                        alarmWindowOpen || taskTreesWindowOpen || taskListWindowOpen ||
-                        taskRelationsWindowOpen || categoriesWindowOpen || defaultSubtreeWindowOpen ||
-                        shortcutsWindowOpen || searchWindowOpen,
-                    onCloseAllWindows = {
-                        calendarOpen = false
-                        choresManagerOpen = false
-                        historyManagerOpen = false
-                        sleepWindowOpen = false
-                        alarmWindowOpen = false
-                        taskTreesWindowOpen = false
-                        taskListWindowOpen = false
-                        taskRelationsWindowOpen = false
-                        categoriesWindowOpen = false
-                        defaultSubtreeWindowOpen = false
-                        shortcutsWindowOpen = false
-                        searchWindowOpen = false
+                    taskTreeOpen = taskTreeWindowOpen,
+                    onToggleTaskTree = {
+                        onMenuWindowClicked(FloatingWindow.TaskTree) { taskTreeWindowOpen = it }
                     },
                 )
 
@@ -1975,11 +1978,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             windowFrames.blur()
                         },
                 ) {
+                    // PRD §4: the task tree, a window among the others — drawn FIRST, so the windows that were
+                    // open with it come back over it rather than under a maximized tree.
+                    if (taskTreeWindowOpen) TaskTreeWindow(
+                        onDismiss = { taskTreeWindowOpen = false },
+                        modifier = Modifier.align(Alignment.Center),
+                        initialOffset = taskTreeOffset,
+                        initialSize = taskTreeSize,
+                        onGeometryChange = { windowOffset, windowSize ->
+                            taskTreeOffset = windowOffset
+                            taskTreeSize = windowSize
+                            persistPlacement(FloatingWindow.TaskTree, windowOffset, windowSize, true)
+                        },
+                        onRaise = { focusWindow(FloatingWindow.TaskTree) },
+                    ) { treeKeyboardEnabled ->
                     when (page) {
                         OmniPage.TaskScheduler ->
                             Perf.measure("compose.TaskSchedulerScreen") {
                             TaskSchedulerScreen(
                                 modifier = Modifier.fillMaxSize(),
+                                keyboardEnabled = treeKeyboardEnabled,
                                 store = store,
                                 vm = vm,
                                 onSetWeightWindow = {
@@ -2004,6 +2022,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 },
                             )
                             }
+                    }
                     }
 
                     // PRD §5: the priority-weight window — about ONE sub-list, so opening it on another
@@ -3118,7 +3137,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // The bar of REDUCED windows, along the bottom of the app. Drawn at the app root and over the
             // lateral menu — a window reduced while the menu is open must not be filed behind it — and
             // above the floating windows' own z-stack, which is why it is not inside the content Box.
-            MinimizedWindowBar(
+            WindowBar(
                 host = windowFrames,
                 modifier = Modifier.align(Alignment.BottomStart).zIndex(135f),
             )
