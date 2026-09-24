@@ -1881,24 +1881,26 @@ fun ChoresManagerWindow(
     }
 
     // PRD §14 "constrained in": the constraint picker, shown over the manager when a row's button is tapped.
-    val idx = constrainingRowIndex
-    val constrainingRow = idx?.let { rows.getOrNull(it) }
-    if (idx != null && constrainingRow != null) {
-        ReminderConstraintEditWindow(
-            initialReminderId = constrainingRow.constrainedToReminderId,
-            // A reminder can't be constrained to itself, so hide its own identity from the picker.
-            excludeReminderId = resolvedRowIds().getOrNull(idx) ?: constrainingRow.id,
-            reminderMenuEntries = reminderMenuEntries,
-            titleSuggestions = titleSuggestions,
-            reminderIdForTitle = reminderIdForTitle,
-            titleForReminderId = titleForReminderId,
-            onDismiss = { constrainingRowIndex = null },
-            onSave = { reminderId ->
-                rows[idx] = constrainingRow.copy(constrainedToReminderId = reminderId)
-                push()
-                constrainingRowIndex = null
-            },
-        )
+    // Duplicable (the head's ⧉), each copy on the row it was made from.
+    DuplicableWindows(constrainingRowIndex, closeOriginal = { constrainingRowIndex = null }) { idx, close ->
+        val constrainingRow = rows.getOrNull(idx)
+        if (constrainingRow != null) {
+            ReminderConstraintEditWindow(
+                initialReminderId = constrainingRow.constrainedToReminderId,
+                // A reminder can't be constrained to itself, so hide its own identity from the picker.
+                excludeReminderId = resolvedRowIds().getOrNull(idx) ?: constrainingRow.id,
+                reminderMenuEntries = reminderMenuEntries,
+                titleSuggestions = titleSuggestions,
+                reminderIdForTitle = reminderIdForTitle,
+                titleForReminderId = titleForReminderId,
+                onDismiss = close,
+                onSave = { reminderId ->
+                    rows[idx] = constrainingRow.copy(constrainedToReminderId = reminderId)
+                    push()
+                    close()
+                },
+            )
+        }
     }
 }
 
@@ -2108,11 +2110,15 @@ fun HistoryManagerWindow(
     // row itself elides. Opened by a DOUBLE click.
     var infoRow by remember { mutableStateOf<FilteredHistoryEntry?>(null) }
     val windowFrames = LocalWindowFrameHost.current
+    // In a copy of this window, the row-info window is that copy's own ([windowInstanceId]), and the pair is
+    // raised through the copy's wiring rather than the original's.
+    val infoWindowId = windowInstanceId(HISTORY_ENTRY_INFO_WINDOW_ID)
+    val raisePair = LocalWindowInstance.current?.copy?.onRaise ?: onRaise
     val openInfo: (FilteredHistoryEntry) -> Unit = { row ->
         infoRow = row
         // Asking again for the window already open on this row changes no state here, so the host is told
         // to bring it back — out of the reduce bar, to the top, into the focus ([WindowFrameHost.present]).
-        windowFrames?.present(HISTORY_ENTRY_INFO_WINDOW_ID)
+        windowFrames?.present(infoWindowId)
     }
     var filter by remember { mutableStateOf(HistoryFilterConfig()) }
     val rows = filteredHistoryUnits(histories, filter, notificationLog, supabaseUsageLog, schedulerRuns)
@@ -2126,7 +2132,7 @@ fun HistoryManagerWindow(
     // with the default top-start alignment the info window opening (or being bigger than a shrunken History
     // window) would shift the History window across the screen.
     Box(
-        modifier.windowStackZ(frame.id, infoRow?.let { HISTORY_ENTRY_INFO_WINDOW_ID }),
+        modifier.windowStackZ(frame.id, infoRow?.let { infoWindowId }),
         contentAlignment = Alignment.Center,
     ) {
         AppWindowFrame(
@@ -2282,19 +2288,21 @@ fun HistoryManagerWindow(
         // Drawn beside the History frame in this Box — never in a full-screen layer, which would grow the Box
         // to the whole app and move the History window — and opened off its (possibly dragged) position.
         infoRow?.let { row ->
-            HistoryEntryInfoWindow(
-                entry = row,
-                onDismiss = { infoRow = null },
-                // A press in the info window is a press in the PAIR: the app stamps it as the History
-                // window (PRD §6's "the innermost window the user last pressed in" — the content Box's own
-                // raise set the tree on the way in) and raises it, and then the info window takes the focus
-                // back, because it is the innermost of the two and owns the keyboard while it stands there.
-                onRaise = {
-                    onRaise()
-                    windowFrames?.focus(HISTORY_ENTRY_INFO_WINDOW_ID)
-                },
-                initialOffset = frame.offset + Offset(120f, 40f),
-            )
+            CompanionWindowScope {
+                HistoryEntryInfoWindow(
+                    entry = row,
+                    onDismiss = { infoRow = null },
+                    // A press in the info window is a press in the PAIR: the app stamps it as the History
+                    // window (PRD §6's "the innermost window the user last pressed in" — the content Box's own
+                    // raise set the tree on the way in) and raises it, and then the info window takes the focus
+                    // back, because it is the innermost of the two and owns the keyboard while it stands there.
+                    onRaise = {
+                        raisePair()
+                        windowFrames?.focus(infoWindowId)
+                    },
+                    initialOffset = frame.offset + Offset(120f, 40f),
+                )
+            }
         }
     }
 }

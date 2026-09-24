@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Duplicating a window — 2026-09-24
+
+User spec: *"a duplication button to the header of any window of the app, at the left of the full width
+button"*. Settled with the user: an **independent copy** (same view to start, then its own), **kept across
+restarts** like the original, on **every window** (lateral-menu and per-object).
+
+- `LocalWindowInstance` / `WindowCopy` / `DuplicableWindows` / `CompanionWindowScope` (`ui/WindowFrame.kt`);
+  `App.LateralWindow`, `duplicateWindow`, `windowCopies`; per-copy `searchConfigs`, `configSearches`,
+  `taskListSorts`; `ConfigurationSearch.target` (which Search window it edits). Copies of lateral-menu windows are
+  `window_placement` rows `Name#n` — no migration.
+- **Replaces** "at most one window per subject" with "opening another subject replaces the window; copies are
+  asked for". **Not done**: the Calendar (its display pipeline is one visible span — see `popups.md`), and
+  notices.
+
 ### The Configuration Search window and the Search filters — 2026-09-24
 
 User spec: a button in the Search window's configuration opening a window that *"shows all the configurations

@@ -31,6 +31,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -509,8 +513,101 @@ fun rememberWindowFrameState(
     initialSize: Size = Size.Zero,
 ): WindowFrameState {
     val memory = LocalWindowChromeMemory.current
-    return remember(id) { WindowFrameState(id, initialOffset, initialSize, initialChrome = memory?.saved(id)) }
+    // A COPY of a window ([LocalWindowInstance]) is the same window under an id of its own, placed where its
+    // copy says, never where the original's caller says.
+    val instance = LocalWindowInstance.current
+    val fullId = id + (instance?.suffix ?: "")
+    val offset = instance?.copy?.initialOffset ?: initialOffset
+    val size = instance?.copy?.initialSize ?: initialSize
+    return remember(fullId) { WindowFrameState(fullId, offset, size, initialChrome = memory?.saved(fullId)) }
 }
+
+/**
+ * Which copy of a window is being composed — the head's **duplicate** button (`docs/invariants/popups.md`,
+ * *Duplicating a window*). Provided by whoever opens the window: `App` for the lateral-menu windows and the
+ * per-object ones ([DuplicableWindows]).
+ *
+ * [suffix] makes every frame id composed under it unique ("" for the original, `#2`, `#3`… for copies), so a
+ * copy has a place of its own in the stacking order, the reduce bar and the chrome memory — the windows nested
+ * in a copy included, which inherit it. [onDuplicate] is what the head's button does; null = no button. [copy]
+ * is non-null for a copy, and replaces what the ORIGINAL's caller wired to the frame: the copy's placement, and
+ * its close / geometry / raise, which would otherwise close, move or raise the original.
+ */
+class WindowInstance(
+    val suffix: String,
+    val onDuplicate: (() -> Unit)?,
+    val copy: WindowCopy?,
+)
+
+/** A copy's own frame wiring — see [WindowInstance.copy]. */
+class WindowCopy(
+    val initialOffset: Offset,
+    val initialSize: Size,
+    val onClose: () -> Unit,
+    val onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
+    val onRaise: () -> Unit = {},
+)
+
+val LocalWindowInstance = compositionLocalOf<WindowInstance?> { null }
+
+/** [base] as the window composed here names it — with the copy's suffix, like its frame id. */
+@Composable
+fun windowInstanceId(base: String): String = base + (LocalWindowInstance.current?.suffix ?: "")
+
+/**
+ * A companion window drawn beside its window, in the same wrapper (the History row info, a task tree's
+ * detail): it keeps the id suffix of the window it belongs to, but none of that window's copy wiring — its
+ * close is its own — and it has no duplicate button: duplicating the window duplicates the pair.
+ */
+@Composable
+fun CompanionWindowScope(content: @Composable () -> Unit) {
+    val suffix = LocalWindowInstance.current?.suffix ?: ""
+    CompositionLocalProvider(LocalWindowInstance provides WindowInstance(suffix, null, null), content = content)
+}
+
+/**
+ * A per-object window and its copies: the original while [subject] is set, plus every copy the head's button
+ * made, each holding the object it was made from — so opening the original on another object leaves the
+ * copies where they are. A copy lives for the session (per-object windows persist nothing, the original
+ * included). [window] draws one of them; it must close through the `close` it is handed, which is the
+ * original's [closeOriginal] or the copy's own.
+ */
+@Composable
+fun <T : Any> DuplicableWindows(
+    subject: T?,
+    closeOriginal: () -> Unit,
+    window: @Composable (subject: T, close: () -> Unit) -> Unit,
+) {
+    val parentSuffix = LocalWindowInstance.current?.suffix ?: ""
+    val copies = remember { mutableStateListOf<Pair<Int, T>>() }
+    var next by remember { mutableIntStateOf(2) }
+    fun duplicate(of: T) {
+        copies.add(next to of)
+        next++
+    }
+    if (subject != null) {
+        CompositionLocalProvider(
+            LocalWindowInstance provides WindowInstance(parentSuffix, onDuplicate = { duplicate(subject) }, copy = null),
+        ) { window(subject, closeOriginal) }
+    }
+    for ((n, of) in copies.toList()) {
+        key(n) {
+            val close = { copies.removeAll { it.first == n }; Unit }
+            // Cascaded off the centre, so the copy does not sit exactly over the window it was made from.
+            val cascade = COPY_CASCADE_PX * ((n - 2) % 6 + 1)
+            CompositionLocalProvider(
+                LocalWindowInstance provides WindowInstance(
+                    suffix = "$parentSuffix#$n",
+                    onDuplicate = { duplicate(of) },
+                    copy = WindowCopy(Offset(cascade, cascade), Size.Zero, onClose = close),
+                ),
+            ) { window(of, close) }
+        }
+    }
+}
+
+/** How far each copy is set off the one before it. */
+const val COPY_CASCADE_PX: Float = 32f
 
 /** A window's chrome state: which axes it fills (both = maximized), and whether it is reduced to the bar. */
 data class WindowChrome(val fill: WindowFill, val minimized: Boolean)
@@ -570,6 +667,13 @@ fun AppWindowFrame(
 ) {
     val host = LocalWindowFrameHost.current
     val density = LocalDensity.current
+    // A copy closes, moves and raises ITSELF — the caller's wiring is the original's ([WindowInstance.copy]).
+    val instance = LocalWindowInstance.current
+    val copy = instance?.copy
+    val onClose = copy?.onClose ?: onClose
+    val onGeometryChange = copy?.onGeometryChange ?: onGeometryChange
+    val onRaise = copy?.onRaise ?: onRaise
+    val title = if (copy != null) title + " (" + instance.suffix.substringAfterLast('#') + ")" else title
     val latestClose by rememberUpdatedState(onClose)
     val latestTitle by rememberUpdatedState(title)
     DisposableEffect(host, state.id, claimsKeyboard) {
@@ -647,13 +751,18 @@ fun AppWindowFrame(
                     title = title,
                     state = state,
                     onClose = onClose,
+                    onDuplicate = instance?.onDuplicate,
                     canMinimize = canMinimize,
                     onCommit = commit,
                     onHeadHeight = { headHeight[0] = it },
                     headTrailing = headTrailing,
                 )
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                content()
+                // What is drawn inside keeps the suffix (a window nested in a copy is that copy's) but not the
+                // copy's wiring or its button, which are this frame's alone.
+                CompositionLocalProvider(
+                    LocalWindowInstance provides instance?.let { WindowInstance(it.suffix, null, null) },
+                ) { content() }
             }
         }
 
@@ -691,6 +800,8 @@ private fun WindowHead(
     title: String,
     state: WindowFrameState,
     onClose: () -> Unit,
+    /** The duplicate button, left of the five; null = none. */
+    onDuplicate: (() -> Unit)?,
     canMinimize: Boolean,
     onCommit: () -> Unit,
     onHeadHeight: (Float) -> Unit,
@@ -721,6 +832,7 @@ private fun WindowHead(
             modifier = Modifier.weight(1f),
         )
         headTrailing()
+        onDuplicate?.let { WindowHeadButton("⧉", "Duplicate", it) }
         WindowHeadButton("↔", "Fill the width") {
             state.setFillWidth(!state.fill.fillsWidth)
             onCommit()

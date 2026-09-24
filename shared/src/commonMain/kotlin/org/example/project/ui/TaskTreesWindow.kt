@@ -85,7 +85,9 @@ fun TaskTreesWindow(
     // windows, so the stacking order goes on the Box, not only on the frame inside it ([windowStackZ]).
     // It reads the TOPMOST of the two: a detail window's own z is confined to this Box, so a press in that
     // half must raise the PAIR or it brings nothing forward.
-    Box(modifier.windowStackZ(frame.id, detail?.let { taskTreeDetailWindowId(it.id) })) {
+    // In a copy of this window, the detail window is that copy's own, raised through the copy's wiring.
+    val raisePair = LocalWindowInstance.current?.copy?.onRaise ?: onRaise
+    Box(modifier.windowStackZ(frame.id, detail?.let { windowInstanceId(taskTreeDetailWindowId(it.id)) })) {
         AppWindowFrame(
             title = "All task trees",
             state = frame,
@@ -133,7 +135,7 @@ fun TaskTreesWindow(
         }
 
         // Clicking a tree opens its own little window: the date that puts it on the timeline, and the bin.
-        if (detail != null) {
+        if (detail != null) CompanionWindowScope {
             TaskTreeDetailWindow(
                 entry = detail,
                 timeZone = timeZone,
@@ -143,7 +145,7 @@ fun TaskTreesWindow(
                     openDetail = null
                 },
                 onDismiss = { openDetail = null },
-                onRaise = onRaise,
+                onRaise = raisePair,
                 // Opens down-right of the list window's own (possibly dragged) position, so it reads as
                 // belonging to it rather than floating loose.
                 initialOffset = frame.offset + Offset(360f, 150f),

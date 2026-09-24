@@ -20,10 +20,11 @@ window, a period's, a category's, a notice — is the same thing with the same m
   (`TransientMenuHost`, below).
 - **A window is still not modal.** No scrim, nothing blocked. The press that lands behind a window does its
   normal job (focusing the calendar, selecting a cell); it simply does not close anything.
-- **At most one window per subject is open at a time.** "The edit window of task A" and "of task B" are two
+- **Opening a window on another subject replaces it.** "The edit window of task A" and "of task B" are two
   windows and the user only ever means the one they just asked for, so opening the second **replaces** the
   first. This is held by the state that opens them (`App`'s `editTaskId`, `weightWindowListId`, …), which is
-  a single slot apiece — not by an outside-press rule.
+  a single slot apiece — not by an outside-press rule. The one way to have two is to ask for it: the head's
+  **duplicate** button (below), whose copies are not in that slot and are never replaced.
 
 ## The one surface that is NOT drawn inside the app
 
@@ -46,9 +47,9 @@ Nothing else may follow it out of the app: every other surface, per-object windo
 read five ways. A second copy of that arithmetic is how two windows come to disagree about what "maximized"
 means.
 
-- **A head**, which is the handle the window is dragged by, carrying — in this order — **fill width, fill
-  height, reduce, maximize, close**. The order is fixed here and not per window, so every window's ✕ is
-  under the same pixel.
+- **A head**, which is the handle the window is dragged by, carrying — in this order — **duplicate, fill
+  width, fill height, reduce, maximize, close**. The order is fixed here and not per window, so every window's
+  ✕ is under the same pixel. Duplicate (⧉) shows only where the window can be duplicated (below).
 - **Maximize is exactly "fill both axes"** (`WindowFill.Both`), never a sixth state of its own. Pressing the
   two fill buttons in turn therefore lands on the same window as pressing maximize, and un-maximizing puts
   back the size *and* position the window had before the first of them — per axis, so releasing "fill width"
@@ -98,6 +99,40 @@ means.
   area, which centred would put its own head (and all five of its buttons) out of reach. Clamping a fixed
   point converges, so re-applying it on every layout pass is safe. This lives in the frame, not in the
   calendar window that first needed it.
+
+## Duplicating a window
+
+The head's **⧉** opens an **independent copy** of the window (2026-09-24): the same window, starting from the
+same view (the Search window's query, types and filters; the "All tasks" sort), which then changes on its own.
+The account's data is shared, of course — an alarm edited in one copy shows in the other.
+
+- **One mechanism, not one per window.** `LocalWindowInstance` (`ui/WindowFrame.kt`) tells a window which copy
+  it is. `rememberWindowFrameState` appends the copy's suffix to the frame id (`Search#2`), so a copy has its own
+  place in the stacking order, the reduce bar and the chrome memory — and so do the windows nested in it, which
+  inherit the suffix. `AppWindowFrame` takes a copy's **close, geometry and raise** from `WindowCopy`, never
+  from the caller: the call site is the original's, and wiring it straight through would close, move or raise
+  the original. The copy's title carries its number, `Search (2)`.
+- **Inside the frame the copy wiring is stripped** (the suffix kept), so nothing nested picks up a copy's close.
+  A companion drawn beside its window in the same wrapper (the History row info, a task tree's detail) is put
+  in `CompanionWindowScope` for the same reason, and raises the pair through the copy's wiring. It has no ⧉:
+  duplicating the window duplicates the pair.
+- **A copy's view configuration is read by FRAME id** (`windowInstanceId`), never from one `App` variable:
+  `searchConfigs`, `configSearches`, `taskListSorts`. A window whose keyboard ownership was
+  `focusedWindow() == X` reads `windowFrames.frontId == windowInstanceId(X)`, or no copy could ever own it.
+- **Lateral-menu windows**: `App.LateralWindow` draws the one call site for the original and each copy. A copy
+  is its own `window_placement` row (`Name#n`) — position, size, chrome, config — so it comes back at startup
+  like the original; closing it clears the row's `visible`. The copy of a copy is a new top-level copy.
+- **Per-object windows**: `DuplicableWindows(subject, closeOriginal) { subject, close -> }`. Each copy keeps the
+  object it was made from, so re-opening the original on another object leaves the copies alone, and the window
+  must close through the `close` it is handed (its Save, bin and ✕ close the copy, not the original). Copies
+  live for the session: per-object windows persist nothing, the original included.
+- **Not duplicable**: the **Calendar** — its display pipeline in `App` (records, projections, the schedule
+  horizon handed to the engine) is derived from ONE visible span, so a copy on another week would drag every
+  projection to its span and leave the original blank; it needs that pipeline made per-window first
+  (`display-hot-path.md` binds each to its visible window). **Notices** (`MessagePopup`) — a message has no
+  second view. The debug time-sim panel wears no frame.
+- **Known sharing**: the "All tasks" window's expansion, selection and edit session, and the default sub-tree's
+  tree state, are `SchedulerState` view state, not the window's — their copies share them.
 
 ## Geometry is local-only view state
 

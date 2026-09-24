@@ -483,8 +483,10 @@ class SearchWindowTest {
         )
         assertNull(SearchDomain.Config.decode("{not json"))
 
-        val own = SearchDomain.ConfigurationSearch("rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true)
+        val own = SearchDomain.ConfigurationSearch("rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2")
         assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
+        // Stored before copies existed: it edits the original Search window.
+        assertEquals("Search", SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.target)
     }
 
     @Test

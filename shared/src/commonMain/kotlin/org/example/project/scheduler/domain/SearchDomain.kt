@@ -129,11 +129,16 @@ object SearchDomain {
         val query: String = "",
         val kinds: Set<Kind> = Kind.entries.toSet(),
         val onlyResultKinds: Boolean = false,
+        /**
+         * The frame id of the Search window whose configurations this window lists and edits — the original's
+         * (`Search`) or a copy's (`Search#2`): the one whose button opened it last.
+         */
+        val target: String = "Search",
     ) {
         fun encode(): String =
             configJson.encodeToString(
                 StoredConfigurationSearch.serializer(),
-                StoredConfigurationSearch(query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds),
+                StoredConfigurationSearch(query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target),
             )
 
         companion object {
@@ -146,6 +151,7 @@ object SearchDomain {
                     stored.query,
                     stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet(),
                     stored.onlyResultKinds,
+                    stored.target,
                 )
             }
         }
@@ -245,6 +251,7 @@ object SearchDomain {
         val query: String = "",
         val kinds: List<String> = Kind.entries.map { it.name },
         val onlyResultKinds: Boolean = false,
+        val target: String = "Search",
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }
