@@ -575,9 +575,20 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The title prevails over the path** (`TaskResultRowLayout`): the title is measured first against
   everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
   this — it measures unweighted children first, which is the opposite priority.
-- **The query and the checked kinds are local-only view state** (`SearchDomain.Config`, kept by `App` on the
-  window's placement row — `popups.md`): the window reopens with them after a close and a restart, and they
-  never sync. The selection is Compose-only, like the "All tasks" sorter.
+- **The query, the checked kinds and the filters are local-only view state** (`SearchDomain.Config`, kept by
+  `App` on the window's placement row — `popups.md`): the window reopens with them after a close and a
+  restart, and they never sync. The selection is Compose-only, like the "All tasks" sorter.
+- **ONE configuration, held by `App`, edited by two windows.** The Search window shows its text and types;
+  the **Configuration Search** window (`ui/ConfigurationSearchWindow.kt`, opened from the Search window) lists
+  every configuration of it — those two and the per-kind **filters** (`SearchDomain.Filters`) — in a General
+  section and one section per kind (`SearchDomain.configurations`). Neither window keeps a copy, so a filter set
+  in one narrows the other's list at once. A filter applies to its own kind's rows only, and every one has an
+  "any" that filters nothing; the Search window's button counts the ones that are on.
+- **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
+  over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
+  results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.
+- **The stored configuration is JSON with every field optional**; `decode` still reads the first shape (a line
+  of kind names, then the query), and an unknown value falls back to "any".
 
 ### The default sub-tree
 

@@ -2,6 +2,7 @@ package org.example.project.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -121,10 +122,14 @@ fun SearchWindow(
     onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
     onOpenReminders: () -> Unit,
     onDismiss: () -> Unit,
-    /** The configuration the window was last left with — local-only view state, kept by `App`. */
-    initialConfig: SearchDomain.Config = SearchDomain.Config(),
-    /** Every change of the query or the checked kinds, for `App` to keep. */
-    onConfigChange: (SearchDomain.Config) -> Unit = {},
+    /**
+     * The configuration — query, checked kinds, filters. Held by `App`, not here: the Configuration Search
+     * window edits the same one, and it outlives this window (local-only view state, kept across restarts).
+     */
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    /** Opens the Configuration Search window, which lists every configuration of this window. */
+    onOpenConfigurations: () -> Unit,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -132,11 +137,9 @@ fun SearchWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState("Search", initialOffset, initialSize)
-    var query by remember { mutableStateOf(initialConfig.query) }
-    var kinds by remember { mutableStateOf(initialConfig.kinds) }
-    val latestOnConfigChange by rememberUpdatedState(onConfigChange)
-    LaunchedEffect(query, kinds) { latestOnConfigChange(SearchDomain.Config(query, kinds)) }
-    var kindMenuOpen by remember { mutableStateOf(false) }
+    val query = config.query
+    val kinds = config.kinds
+    val filters = config.filters
     var selected by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val fieldFocus = remember { FocusRequester() }
@@ -154,14 +157,14 @@ fun SearchWindow(
         }
     val results =
         remember(
-            kinds, query, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
+            kinds, query, filters, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chores,
         ) {
-            SearchDomain.results(state, kinds, query) { allPaths }
+            SearchDomain.results(state, kinds, query, { allPaths }, filters)
         }
     val count = results.size
     // A new question starts at its best answer.
-    LaunchedEffect(kinds, query) { selected = 0 }
+    LaunchedEffect(kinds, query, filters) { selected = 0 }
     LaunchedEffect(selected, count) {
         if (count > 0) listState.animateScrollToItem(selected.coerceIn(0, count - 1))
     }
@@ -257,41 +260,26 @@ fun SearchWindow(
             ) {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = { onConfigChange(config.copy(query = it)) },
                     singleLine = true,
                     label = { Text("Search") },
                     modifier = Modifier.weight(1f).focusRequester(fieldFocus),
                 )
-                Box(Modifier.width(170.dp)) {
-                    Text(
-                        text = kindsLabel(kinds) + "  ▾",
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                            .menuToggleClickable(kindMenuOpen) { kindMenuOpen = it }
-                            .padding(horizontal = 10.dp, vertical = 14.dp),
-                    )
-                    transientMenuDismissal(kindMenuOpen) { kindMenuOpen = false }
-                    DropdownMenu(
-                        expanded = kindMenuOpen,
-                        onDismissRequest = { kindMenuOpen = false },
-                        properties = PopupProperties(focusable = false),
-                    ) {
-                        // A check box per kind; ticking one leaves the menu open, so several can be ticked in turn.
-                        SearchDomain.Kind.entries.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(option.label) },
-                                leadingIcon = { Checkbox(checked = option in kinds, onCheckedChange = null) },
-                                onClick = { kinds = if (option in kinds) kinds - option else kinds + option },
-                            )
-                        }
-                    }
-                }
+                KindsDropDown(kinds = kinds, onKindsChange = { onConfigChange(config.copy(kinds = it)) })
             }
+            // Every configuration of this window, in a window of its own — the filters per kind among them. The
+            // count says how many filters are narrowing the list right now, which nothing else here shows.
+            val active = filters.activeCount
+            Text(
+                text = "⚙ All configurations" + if (active > 0) "  ·  $active filter" + (if (active == 1) "" else "s") + " on" else "",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+                    .clickable(onClick = onOpenConfigurations)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
 
             HorizontalDivider()
 
@@ -302,6 +290,7 @@ fun SearchWindow(
                         text =
                             when {
                                 kinds.isEmpty() -> "Tick a kind to look for."
+                                filters.activeCount > 0 -> "Nothing passes the filters."
                                 query.isBlank() -> "Nothing of these kinds yet."
                                 else -> "Nothing matches."
                             },
@@ -359,6 +348,47 @@ private fun KindSection(kind: SearchDomain.Kind) {
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.width(KIND_SECTION_WIDTH),
     )
+}
+
+/**
+ * The kind drop-down of a search's configuration — a check box per kind; ticking one leaves the menu open, so
+ * several can be ticked in turn. One drop-down for the Search window and the Configuration Search window.
+ */
+@Composable
+internal fun KindsDropDown(
+    kinds: Set<SearchDomain.Kind>,
+    onKindsChange: (Set<SearchDomain.Kind>) -> Unit,
+    modifier: Modifier = Modifier.width(170.dp),
+) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Text(
+            text = kindsLabel(kinds) + "  ▾",
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                .menuToggleClickable(open) { open = it }
+                .padding(horizontal = 10.dp, vertical = 14.dp),
+        )
+        transientMenuDismissal(open) { open = false }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            properties = PopupProperties(focusable = false),
+        ) {
+            SearchDomain.Kind.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    leadingIcon = { Checkbox(checked = option in kinds, onCheckedChange = null) },
+                    onClick = { onKindsChange(if (option in kinds) kinds - option else kinds + option) },
+                )
+            }
+        }
+    }
 }
 
 /** The drop-down's face:the checked kinds by name, or "every kind" / "no kind". */

@@ -102,6 +102,8 @@ import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.AlarmWindow
 import org.example.project.ui.AlarmWindowSubject
+import org.example.project.ui.CONFIGURATION_SEARCH_FRAME_ID
+import org.example.project.ui.ConfigurationSearchWindow
 import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.ReminderEditSeed
@@ -169,7 +171,10 @@ enum class OmniPage(val label: String) {
  */
 private enum class FloatingWindow {
     Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, Categories,
-    DefaultSubtree, Shortcuts, Search, TimeSim
+    DefaultSubtree, Shortcuts, Search,
+    /** Opened from the Search window; its name is its frame id ([CONFIGURATION_SEARCH_FRAME_ID]). */
+    ConfigSearch,
+    TimeSim
 }
 
 // Debug "simulate pause + leap": pressing a break chip INSTANTLY jumps the sim clock forward by the whole
@@ -626,15 +631,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §5 Categories: whether the account's list of categories is open (local UI state; the
         // categories and their rules are authoritative synced state).
         var categoriesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Categories)) }
-        // PRD §7 Search: whether the search window is open (local UI state; its query, kind and selection are
-        // Compose-only, inside the window).
+        // PRD §7 Search: whether the search window is open (local UI state).
         var searchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Search)) }
-        // PRD §7 Search: the query and the checked kinds, kept here rather than in the window so they outlive
-        // it — and on this device's placement row, so they outlive the app. Local-only view state.
+        // PRD §7 Search: the query, the checked kinds and the filters, kept here rather than in the window —
+        // the Configuration Search window edits the same configuration, and it outlives both windows — and on
+        // this device's placement row, so they outlive the app. Local-only view state.
         var searchConfig by remember {
             mutableStateOf(
                 SearchDomain.Config.decode(initialPlacements[FloatingWindow.Search.name]?.config)
                     ?: SearchDomain.Config(),
+            )
+        }
+        fun setSearchConfig(config: SearchDomain.Config) {
+            if (config == searchConfig) return
+            searchConfig = config
+            updatePlacement(FloatingWindow.Search) { it.copy(config = config.encode()) }
+        }
+        // The Configuration Search window: open or not, and its OWN configuration (which configurations it lists).
+        var configSearchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.ConfigSearch)) }
+        var configSearch by remember {
+            mutableStateOf(
+                SearchDomain.ConfigurationSearch.decode(initialPlacements[FloatingWindow.ConfigSearch.name]?.config)
+                    ?: SearchDomain.ConfigurationSearch(),
             )
         }
         // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
@@ -670,6 +688,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.DefaultSubtree -> HistoryWindow.DefaultSubtree
             FloatingWindow.Shortcuts -> HistoryWindow.Shortcuts
             FloatingWindow.Search -> HistoryWindow.Search
+            // It edits the Search window's configuration, which commits nothing either.
+            FloatingWindow.ConfigSearch -> HistoryWindow.Search
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
         }
@@ -701,6 +721,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.Search -> searchWindowOpen
+            FloatingWindow.ConfigSearch -> configSearchWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // The FRONT window: the very top of the one stacking order, when that is a lateral-menu window.
@@ -733,6 +754,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.DefaultSubtree -> null
             FloatingWindow.Shortcuts -> null
             FloatingWindow.Search -> null
+            FloatingWindow.ConfigSearch -> null
             FloatingWindow.TimeSim -> null
         }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
@@ -788,6 +810,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var shortcutsSize by remember { mutableStateOf(savedSize(FloatingWindow.Shortcuts)) }
         var searchOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Search, Offset(-160f, -80f))) }
         var searchSize by remember { mutableStateOf(savedSize(FloatingWindow.Search)) }
+        var configSearchOffset by remember { mutableStateOf(savedOffset(FloatingWindow.ConfigSearch, Offset(200f, -40f))) }
+        var configSearchSize by remember { mutableStateOf(savedSize(FloatingWindow.ConfigSearch)) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarSize, calendarOpen) }
         LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, remindersSize, choresManagerOpen) }
@@ -810,6 +834,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         LaunchedEffect(searchWindowOpen) {
             persistPlacement(FloatingWindow.Search, searchOffset, searchSize, searchWindowOpen)
+        }
+        LaunchedEffect(configSearchWindowOpen) {
+            persistPlacement(FloatingWindow.ConfigSearch, configSearchOffset, configSearchSize, configSearchWindowOpen)
         }
 
         var selectedDate by remember { mutableStateOf(today) }
@@ -2795,10 +2822,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 focusWindow(FloatingWindow.Reminders)
                             },
                             onDismiss = { searchWindowOpen = false },
-                            initialConfig = searchConfig,
-                            onConfigChange = { config ->
-                                searchConfig = config
-                                updatePlacement(FloatingWindow.Search) { it.copy(config = config.encode()) }
+                            config = searchConfig,
+                            onConfigChange = ::setSearchConfig,
+                            // Opened if closed, brought to the front either way.
+                            onOpenConfigurations = {
+                                configSearchWindowOpen = true
+                                focusWindow(FloatingWindow.ConfigSearch)
                             },
                             initialOffset = searchOffset,
                             initialSize = searchSize,
@@ -2810,6 +2839,33 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRaise = { focusWindow(FloatingWindow.Search) },
                             modifier = Modifier
                                 .align(Alignment.Center),
+                        )
+                    }
+
+                    // PRD §7 Search: every configuration of the Search window, in sections per kind. It edits
+                    // the same `searchConfig` the Search window reads, so its filters narrow that list at once.
+                    if (configSearchWindowOpen) {
+                        ConfigurationSearchWindow(
+                            state = schedulerState,
+                            config = searchConfig,
+                            onConfigChange = ::setSearchConfig,
+                            own = configSearch,
+                            onOwnChange = { own ->
+                                if (own != configSearch) {
+                                    configSearch = own
+                                    updatePlacement(FloatingWindow.ConfigSearch) { it.copy(config = own.encode()) }
+                                }
+                            },
+                            onDismiss = { configSearchWindowOpen = false },
+                            initialOffset = configSearchOffset,
+                            initialSize = configSearchSize,
+                            onGeometryChange = { windowOffset, windowSize ->
+                                configSearchOffset = windowOffset
+                                configSearchSize = windowSize
+                                persistPlacement(FloatingWindow.ConfigSearch, windowOffset, windowSize, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.ConfigSearch) },
+                            modifier = Modifier.align(Alignment.Center),
                         )
                     }
 

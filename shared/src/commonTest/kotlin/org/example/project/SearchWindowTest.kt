@@ -6,6 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.datetime.DayOfWeek
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.model.AlarmEntry
@@ -363,6 +364,127 @@ class SearchWindowTest {
             SearchDomain.Config(query = "x", kinds = setOf(SearchDomain.Kind.Timer)),
             SearchDomain.Config.decode("Timer,Wormhole\nx"),
         )
+    }
+
+    @Test
+    fun the_filters_narrow_their_own_kind_and_nothing_else() {
+        val s =
+            SchedulerState.empty().copy(
+                alarms = listOf(
+                    AlarmEntry(id = "a1", label = "Weekday", timeOfDayMinutes = 7 * 60, days = setOf(DayOfWeek.MONDAY)),
+                    AlarmEntry(id = "a2", label = "Off", timeOfDayMinutes = 8 * 60, enabled = false),
+                ),
+                timers = listOf(
+                    TimerEntry(id = "t1", label = "Idle"),
+                    TimerEntry(id = "t2", label = "Running", endsAtMillis = 5_000L),
+                ),
+                chores = listOf(
+                    ChoreEntry(title = "Once", spanDays = 0.0, id = "c1"),
+                    ChoreEntry(title = "Weekly", spanDays = 7.0, id = "c2"),
+                ),
+            )
+        val all = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Reminder)
+        fun names(filters: SearchDomain.Filters) =
+            SearchDomain.results(s, all, "", { emptyMap() }, filters).map { it.name }.toSet()
+
+        assertEquals(setOf("Weekday", "Off", "Idle", "Running", "Once", "Weekly"), names(SearchDomain.Filters()))
+        // An alarm filter removes alarms only — the timers and reminders are untouched.
+        assertEquals(
+            setOf("Weekday", "Idle", "Running", "Once", "Weekly"),
+            names(SearchDomain.Filters(alarmState = SearchDomain.AlarmState.On)),
+        )
+        // "Rings on Monday": the Monday-only alarm; the off alarm rings every day, Monday included.
+        assertEquals(
+            setOf("Weekday", "Off"),
+            names(SearchDomain.Filters(alarmDays = setOf(DayOfWeek.MONDAY))).intersect(setOf("Weekday", "Off")),
+        )
+        assertEquals(
+            setOf("Off"),
+            names(SearchDomain.Filters(alarmDays = setOf(DayOfWeek.SUNDAY))).intersect(setOf("Weekday", "Off")),
+        )
+        assertEquals(
+            setOf("Running"),
+            names(SearchDomain.Filters(timerState = SearchDomain.TimerState.Running)).intersect(setOf("Idle", "Running")),
+        )
+        assertEquals(
+            setOf("Once"),
+            names(SearchDomain.Filters(reminderRepeats = SearchDomain.ReminderRepeats.OneOff)).intersect(setOf("Once", "Weekly")),
+        )
+        assertEquals(2, SearchDomain.Filters(alarmState = SearchDomain.AlarmState.On, alarmDays = setOf(DayOfWeek.MONDAY)).activeCount)
+    }
+
+    @Test
+    fun a_task_filter_reads_the_tree_and_the_category() {
+        var s = tree()
+        s = r(s, SchedulerIntent.CreateCategory("Deep work"))
+        val deep = s.categories.single().id
+        val pie = taskWithTitle(s, "Pie")
+        s = s.copy(tasks = s.tasks + (pie to s.tasks.getValue(pie).copy(categoryIds = listOf(deep))))
+        val tasks = setOf(SearchDomain.Kind.Task)
+        val inCategory = SearchDomain.results(s, tasks, "", filters = SearchDomain.Filters(taskCategory = deep))
+        assertEquals(listOf("Pie"), inCategory.map { it.name })
+        val outOfTrees = SearchDomain.results(s, tasks, "", filters = SearchDomain.Filters(taskInTree = SearchDomain.Tri.No))
+        assertTrue(outOfTrees.isEmpty(), "every task of this tree is in it")
+    }
+
+    @Test
+    fun the_configuration_search_lists_sections_by_kind_and_finds_by_name() {
+        val every = SearchDomain.Kind.entries.toSet()
+        val sections = SearchDomain.configurations("", every)
+        // The general section first, then one per kind, in the drop-down's order.
+        assertEquals(listOf<SearchDomain.Kind?>(null) + SearchDomain.Kind.entries, sections.map { it.first })
+        assertEquals(
+            listOf(SearchDomain.Setting.SearchText, SearchDomain.Setting.Types),
+            sections.first().second,
+        )
+        // The bar finds configurations by name; a section with nothing left is dropped.
+        val state = SearchDomain.configurations("state", every)
+        assertEquals(listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), state.map { it.first })
+        // The kind selector, and the "only the Search results' kinds" button, cut the per-kind sections only.
+        assertEquals(
+            listOf<SearchDomain.Kind?>(null, SearchDomain.Kind.Timer),
+            SearchDomain.configurations("", setOf(SearchDomain.Kind.Timer, SearchDomain.Kind.Alarm), setOf(SearchDomain.Kind.Timer))
+                .map { it.first },
+        )
+    }
+
+    @Test
+    fun the_kinds_in_the_results_are_the_kinds_with_a_row() {
+        val s = SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = "a1", label = "Wake", timeOfDayMinutes = 60)))
+        val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer))
+        assertEquals(setOf(SearchDomain.Kind.Alarm), SearchDomain.kindsInResults(s, config))
+        val filtered = config.copy(filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
+        assertEquals(emptySet(), SearchDomain.kindsInResults(s, filtered))
+    }
+
+    @Test
+    fun the_stored_configuration_keeps_its_filters_and_still_reads_the_first_shape() {
+        val config =
+            SearchDomain.Config(
+                query = "wake",
+                kinds = setOf(SearchDomain.Kind.Alarm),
+                filters = SearchDomain.Filters(
+                    alarmState = SearchDomain.AlarmState.On,
+                    alarmDays = setOf(DayOfWeek.MONDAY, DayOfWeek.FRIDAY),
+                    taskCategory = org.example.project.scheduler.model.CategoryId("cat-1"),
+                    timerState = SearchDomain.TimerState.Paused,
+                ),
+            )
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        // Local-DB compatibility: the previous build stored "kinds line, then the query" — it still opens.
+        assertEquals(
+            SearchDomain.Config(query = "wake", kinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm)),
+            SearchDomain.Config.decode("Task,Alarm\nwake"),
+        )
+        // A value this build does not know falls back to "any"; an unreadable text to nothing stored.
+        assertEquals(
+            SearchDomain.AlarmState.Any,
+            SearchDomain.Config.decode("""{"alarmState":"Sometimes"}""")!!.filters.alarmState,
+        )
+        assertNull(SearchDomain.Config.decode("{not json"))
+
+        val own = SearchDomain.ConfigurationSearch("rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true)
+        assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
     }
 
     @Test

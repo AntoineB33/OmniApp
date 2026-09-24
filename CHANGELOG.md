@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Configuration Search window and the Search filters — 2026-09-24
+
+User spec: a button in the Search window's configuration opening a window that *"shows all the configurations
+of every possible element, separated in sections"*, itself a configuration section (search bar + type selector)
+above a result section, with a button keeping *"only those related to the elements appearing in the result of
+the Search window"*. Settled with the user: the configurations are **search filters** that narrow the Search
+window live, and the window's bar searches the configurations' **names**.
+
+- `SearchDomain.Filters` (per kind, each with an "any"), `Setting`/`configurations`, `kindsInResults`,
+  `ConfigurationSearch`; `ui/ConfigurationSearchWindow.kt`; `FloatingWindow.ConfigSearch` (placement, chrome and
+  its own configuration kept locally like the Search window's).
+- The Search window no longer holds its query and kinds: `App`'s `searchConfig` is the one copy, edited by both
+  windows. The stored config became JSON; the first shape still decodes (tested). No SQLite migration.
+
 ### A window comes back as it was left; Search keeps its configuration — 2026-09-24
 
 User spec: the Search window's configuration *"must be preserved locally"*, restored when the window comes back

@@ -1,6 +1,11 @@
 package org.example.project.scheduler.domain
 
 import kotlin.concurrent.Volatile
+import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.isoDayNumber
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
@@ -48,28 +53,201 @@ object SearchDomain {
     }
 
     /**
-     * The window's configuration: what is typed in the bar and which kinds are checked. **Local-only view
-     * state** — kept on this device with the window's placement, so the window comes back as it was left
-     * after a close or a restart, and never synced: how the user is looking for something is not a fact about
-     * the account.
+     * The window's configuration: what is typed in the bar, which kinds are checked, and the per-kind
+     * [Filters] the Configuration Search window edits. **Local-only view state** — kept on this device with the
+     * window's placement, so the window comes back as it was left after a close or a restart, and never
+     * synced: how the user is looking for something is not a fact about the account.
      */
-    data class Config(val query: String = "", val kinds: Set<Kind> = setOf(Kind.Task)) {
-        /** The first line names the checked kinds, the rest is the query exactly as typed. */
-        fun encode(): String = Kind.entries.filter { it in kinds }.joinToString(",") { it.name } + "\n" + query
+    data class Config(
+        val query: String = "",
+        val kinds: Set<Kind> = setOf(Kind.Task),
+        val filters: Filters = Filters(),
+    ) {
+        /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */
+        fun encode(): String =
+            configJson.encodeToString(
+                StoredConfig.serializer(),
+                StoredConfig(
+                    query = query,
+                    kinds = Kind.entries.filter { it in kinds }.map { it.name },
+                    taskInTree = filters.taskInTree.name,
+                    taskCategory = filters.taskCategory?.value,
+                    categoryHasRules = filters.categoryHasRules.name,
+                    periodOrigin = filters.periodOrigin.name,
+                    alarmState = filters.alarmState.name,
+                    alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
+                    timerState = filters.timerState.name,
+                    reminderRepeats = filters.reminderRepeats.name,
+                ),
+            )
 
         companion object {
             /**
-             * [encode]'s reverse, or null for nothing stored. A kind this build does not know is dropped
-             * rather than failing the whole configuration, so a config written by a later build still opens.
+             * [encode]'s reverse, or null for nothing stored. Also reads the first stored shape (a line of kind
+             * names, then the query), which predates the filters. A kind or a value this build does not know is
+             * dropped to its default rather than failing the whole configuration.
              */
             fun decode(text: String?): Config? {
                 if (text == null) return null
-                val lines = text.split('\n', limit = 2)
-                val kinds = lines[0].split(',').mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }
-                return Config(query = lines.getOrElse(1) { "" }, kinds = kinds.toSet())
+                if (!text.startsWith("{")) {
+                    val lines = text.split('\n', limit = 2)
+                    return Config(query = lines.getOrElse(1) { "" }, kinds = kindsNamed(lines[0].split(',')))
+                }
+                val stored = runCatching { configJson.decodeFromString(StoredConfig.serializer(), text) }.getOrNull()
+                    ?: return null
+                return Config(
+                    query = stored.query,
+                    kinds = kindsNamed(stored.kinds),
+                    filters = Filters(
+                        taskInTree = enumNamed(stored.taskInTree, Tri.Any),
+                        taskCategory = stored.taskCategory?.let { CategoryId(it) },
+                        categoryHasRules = enumNamed(stored.categoryHasRules, Tri.Any),
+                        periodOrigin = enumNamed(stored.periodOrigin, PeriodOrigin.Any),
+                        alarmState = enumNamed(stored.alarmState, AlarmState.Any),
+                        alarmDays = stored.alarmDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
+                            .toSet(),
+                        timerState = enumNamed(stored.timerState, TimerState.Any),
+                        reminderRepeats = enumNamed(stored.reminderRepeats, ReminderRepeats.Any),
+                    ),
+                )
+            }
+
+            private fun kindsNamed(names: List<String>): Set<Kind> =
+                names.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet()
+
+            private inline fun <reified E : Enum<E>> enumNamed(name: String?, default: E): E =
+                enumValues<E>().firstOrNull { it.name == name } ?: default
+        }
+    }
+
+    /**
+     * The Configuration Search window's OWN configuration: what its bar finds among the configurations' names,
+     * which kinds' sections it shows, and whether it keeps only the kinds the Search window's results hold.
+     * Local-only view state, kept like [Config].
+     */
+    data class ConfigurationSearch(
+        val query: String = "",
+        val kinds: Set<Kind> = Kind.entries.toSet(),
+        val onlyResultKinds: Boolean = false,
+    ) {
+        fun encode(): String =
+            configJson.encodeToString(
+                StoredConfigurationSearch.serializer(),
+                StoredConfigurationSearch(query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds),
+            )
+
+        companion object {
+            fun decode(text: String?): ConfigurationSearch? {
+                if (text == null) return null
+                val stored =
+                    runCatching { configJson.decodeFromString(StoredConfigurationSearch.serializer(), text) }.getOrNull()
+                        ?: return null
+                return ConfigurationSearch(
+                    stored.query,
+                    stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet(),
+                    stored.onlyResultKinds,
+                )
             }
         }
     }
+
+    /** "Any", "yes" or "no" — a filter that can also be left off. */
+    enum class Tri(val label: String) { Any("any"), Yes("yes"), No("no") }
+
+    enum class PeriodOrigin(val label: String) { Any("any"), BuiltIn("built-in"), Yours("yours") }
+
+    enum class AlarmState(val label: String) { Any("any"), On("on"), Off("off") }
+
+    enum class TimerState(val label: String) { Any("any"), Idle("idle"), Running("running"), Paused("paused") }
+
+    enum class ReminderRepeats(val label: String) { Any("any"), OneOff("one-off"), Repeating("repeating") }
+
+    /**
+     * The per-kind filters of the Search window, which the Configuration Search window edits. Every one has an
+     * "any" value, and a filter of a kind applies to that kind's rows only — so the defaults filter nothing.
+     */
+    data class Filters(
+        val taskInTree: Tri = Tri.Any,
+        /** Null = any category. */
+        val taskCategory: CategoryId? = null,
+        val categoryHasRules: Tri = Tri.Any,
+        val periodOrigin: PeriodOrigin = PeriodOrigin.Any,
+        val alarmState: AlarmState = AlarmState.Any,
+        /** Empty = any day; else the alarm rings on at least one of them. */
+        val alarmDays: Set<DayOfWeek> = emptySet(),
+        val timerState: TimerState = TimerState.Any,
+        val reminderRepeats: ReminderRepeats = ReminderRepeats.Any,
+    ) {
+        /** How many filters are set to something other than "any" — the Search window's button shows it. */
+        val activeCount: Int
+            get() = listOf(
+                taskInTree != Tri.Any, taskCategory != null, categoryHasRules != Tri.Any,
+                periodOrigin != PeriodOrigin.Any, alarmState != AlarmState.Any, alarmDays.isNotEmpty(),
+                timerState != TimerState.Any, reminderRepeats != ReminderRepeats.Any,
+            ).count { it }
+    }
+
+    /**
+     * Every configuration of the Search window, which the Configuration Search window lists — one section per
+     * kind, after the [section]-less ones that are about the search as a whole (the two the Search window
+     * itself shows). The window finds them by [label] ([configurations]).
+     */
+    enum class Setting(val section: Kind?, val label: String) {
+        SearchText(null, "Search text"),
+        Types(null, "Types"),
+        TaskInTree(Kind.Task, "In a task tree"),
+        TaskCategory(Kind.Task, "Category"),
+        CategoryHasRules(Kind.Category, "Has rules"),
+        PeriodOriginSetting(Kind.RestrictivePeriod, "Origin"),
+        AlarmStateSetting(Kind.Alarm, "State"),
+        AlarmDays(Kind.Alarm, "Rings on"),
+        TimerStateSetting(Kind.Timer, "State"),
+        ReminderRepeatsSetting(Kind.Reminder, "Repeats"),
+    }
+
+    /**
+     * What the Configuration Search window lists, section by section: the general settings first, then one
+     * section per kind in the drop-down's order, each holding the settings whose label contains [query]. A kind
+     * outside [kinds] has no section, and neither has one outside [onlyKinds] when that is given (the "only
+     * the kinds of the Search window's results" button). The general section is about the whole search, so it
+     * is never cut by kind. An empty section is dropped.
+     */
+    fun configurations(query: String, kinds: Set<Kind>, onlyKinds: Set<Kind>? = null): List<Pair<Kind?, List<Setting>>> {
+        val sections = listOf<Kind?>(null) + Kind.entries.filter { it in kinds && (onlyKinds == null || it in onlyKinds) }
+        return sections.mapNotNull { section ->
+            val settings = Setting.entries.filter { it.section == section && matchRank(it.label, query) != null }
+            if (settings.isEmpty()) null else section to settings
+        }
+    }
+
+    /** The kinds that have at least one row in the Search window's results for [config]. */
+    fun kindsInResults(state: SchedulerState, config: Config): Set<Kind> =
+        // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
+        results(state, config.kinds, config.query, { emptyMap() }, config.filters).mapTo(HashSet()) { it.kind }
+
+    /** The stored form of a [Config] — strings, so an unknown value decodes to its default. */
+    @Serializable
+    private data class StoredConfig(
+        val query: String = "",
+        val kinds: List<String> = listOf(Kind.Task.name),
+        val taskInTree: String? = null,
+        val taskCategory: String? = null,
+        val categoryHasRules: String? = null,
+        val periodOrigin: String? = null,
+        val alarmState: String? = null,
+        val alarmDays: List<Int> = emptyList(),
+        val timerState: String? = null,
+        val reminderRepeats: String? = null,
+    )
+
+    @Serializable
+    private data class StoredConfigurationSearch(
+        val query: String = "",
+        val kinds: List<String> = Kind.entries.map { it.name },
+        val onlyResultKinds: Boolean = false,
+    )
+
+    private val configJson = Json { ignoreUnknownKeys = true }
 
     const val PATH_SEPARATOR: String = " / "
 
@@ -476,14 +654,65 @@ object SearchDomain {
         kinds: Set<Kind>,
         query: String,
         allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
+        filters: Filters = Filters(),
     ): List<Result> =
         Kind.entries
             .filter { it in kinds }
             .flatMap { kind ->
                 if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
             }
+            .filter { passes(state, it, filters) }
             // Stable: ties keep the kind order and each kind's own order.
             .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
+
+    /** Whether [result] passes its own kind's [filters]; another kind's filters never touch it. */
+    private fun passes(state: SchedulerState, result: Result, filters: Filters): Boolean {
+        fun tri(value: Tri, actual: Boolean) = value == Tri.Any || (value == Tri.Yes) == actual
+        return when (result) {
+            is TaskResult -> {
+                val task = state.tasks[result.taskId]
+                    ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[result.taskId] }
+                tri(filters.taskInTree, result.inTaskTree) &&
+                    (filters.taskCategory == null || task?.categoryIds?.contains(filters.taskCategory) == true)
+            }
+            is ItemResult -> when (result.kind) {
+                Kind.Task -> true
+                Kind.Category ->
+                    tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
+                Kind.RestrictivePeriod -> when (filters.periodOrigin) {
+                    PeriodOrigin.Any -> true
+                    PeriodOrigin.BuiltIn -> !PeriodKinds.isUserDefined(result.id)
+                    PeriodOrigin.Yours -> PeriodKinds.isUserDefined(result.id)
+                }
+                Kind.Alarm -> {
+                    val alarm = state.alarms.firstOrNull { it.id == result.id } ?: return true
+                    val onOff = when (filters.alarmState) {
+                        AlarmState.Any -> true
+                        AlarmState.On -> alarm.enabled
+                        AlarmState.Off -> !alarm.enabled
+                    }
+                    onOff && (filters.alarmDays.isEmpty() || alarm.days.any { it in filters.alarmDays })
+                }
+                Kind.Timer -> {
+                    val timer = state.timers.firstOrNull { it.id == result.id } ?: return true
+                    when (filters.timerState) {
+                        TimerState.Any -> true
+                        TimerState.Idle -> timer.idle
+                        TimerState.Running -> timer.running
+                        TimerState.Paused -> timer.paused
+                    }
+                }
+                Kind.Reminder -> {
+                    val chore = state.chores.firstOrNull { it.id.ifEmpty { it.title } == result.id } ?: return true
+                    when (filters.reminderRepeats) {
+                        ReminderRepeats.Any -> true
+                        ReminderRepeats.OneOff -> chore.spanDays <= 0.0
+                        ReminderRepeats.Repeating -> chore.spanDays > 0.0
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * How well [name] answers [query]: 0 = the same name, 1 = starts with it, 2 = contains it, null = not a
