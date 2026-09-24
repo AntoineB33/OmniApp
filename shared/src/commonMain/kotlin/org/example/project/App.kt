@@ -2993,6 +2993,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 choresManagerOpen = true
                                 focusWindow(FloatingWindow.Reminders)
                             },
+                            onOpenHistory = {
+                                historyManagerOpen = true
+                                focusWindow(FloatingWindow.History)
+                            },
+                            onOpenTaskTrees = {
+                                taskTreesWindowOpen = true
+                                focusWindow(FloatingWindow.TaskTrees)
+                            },
+                            onOpenTaskRelations = {
+                                taskRelationsWindowOpen = true
+                                focusWindow(FloatingWindow.TaskRelations)
+                            },
+                            onOpenShortcuts = {
+                                shortcutsWindowOpen = true
+                                focusWindow(FloatingWindow.Shortcuts)
+                            },
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfigOf(searchId),
                             onConfigChange = { setSearchConfig(searchId, it) },

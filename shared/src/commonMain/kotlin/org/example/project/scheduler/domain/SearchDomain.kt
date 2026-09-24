@@ -1,6 +1,15 @@
 package org.example.project.scheduler.domain
 
 import kotlin.concurrent.Volatile
+import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.model.TaskRelationKey
+import org.example.project.scheduler.state.HistoryUnit
+import org.example.project.scheduler.state.HistoryWindow
+import org.example.project.scheduler.state.HistoryCategory
+import kotlinx.datetime.number
+import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlin.time.Instant
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.isoDayNumber
 import kotlinx.serialization.Serializable
@@ -50,6 +59,10 @@ object SearchDomain {
         Alarm("alarm"),
         Timer("timer"),
         Reminder("reminder"),
+        HistoryUnit("history unit"),
+        TaskTree("task tree"),
+        TaskRelation("task relation"),
+        Shortcut("keyboard shortcut"),
     }
 
     /**
@@ -78,6 +91,13 @@ object SearchDomain {
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     timerState = filters.timerState.name,
                     reminderRepeats = filters.reminderRepeats.name,
+                    historyCategory = filters.historyCategory?.name,
+                    historyWindow = filters.historyWindow?.name,
+                    historyUndone = filters.historyUndone.name,
+                    taskTreeOpen = filters.taskTreeOpen.name,
+                    taskTreeDated = filters.taskTreeDated.name,
+                    relationSection = filters.relationSection?.name,
+                    shortcutRebound = filters.shortcutRebound.name,
                 ),
             )
 
@@ -108,6 +128,14 @@ object SearchDomain {
                             .toSet(),
                         timerState = enumNamed(stored.timerState, TimerState.Any),
                         reminderRepeats = enumNamed(stored.reminderRepeats, ReminderRepeats.Any),
+                        historyCategory = HistoryCategory.entries.firstOrNull { it.name == stored.historyCategory },
+                        historyWindow = HistoryWindow.entries.firstOrNull { it.name == stored.historyWindow },
+                        historyUndone = enumNamed(stored.historyUndone, Tri.Any),
+                        taskTreeOpen = enumNamed(stored.taskTreeOpen, Tri.Any),
+                        taskTreeDated = enumNamed(stored.taskTreeDated, Tri.Any),
+                        relationSection =
+                            TaskRelationsDomain.Section.entries.firstOrNull { it.name == stored.relationSection },
+                        shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
                     ),
                 )
             }
@@ -183,6 +211,20 @@ object SearchDomain {
         val alarmDays: Set<DayOfWeek> = emptySet(),
         val timerState: TimerState = TimerState.Any,
         val reminderRepeats: ReminderRepeats = ReminderRepeats.Any,
+        /** Null = any category (PRD §5's stacks: edit, selection, calendar, main, window navigation). */
+        val historyCategory: HistoryCategory? = null,
+        /** Null = any window the unit was made in. */
+        val historyWindow: HistoryWindow? = null,
+        /** Yes = undone on its device (still redoable there). */
+        val historyUndone: Tri = Tri.Any,
+        /** Yes = the task tree that is open (the live one). */
+        val taskTreeOpen: Tri = Tri.Any,
+        /** Yes = put on the timeline at a date. */
+        val taskTreeDated: Tri = Tri.Any,
+        /** Null = any of the Task relations window's four sections. */
+        val relationSection: TaskRelationsDomain.Section? = null,
+        /** Yes = bound to another chord than the one it ships with. */
+        val shortcutRebound: Tri = Tri.Any,
     ) {
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
@@ -190,6 +232,9 @@ object SearchDomain {
                 taskInTree != Tri.Any, taskCategory != null, categoryHasRules != Tri.Any,
                 periodOrigin != PeriodOrigin.Any, alarmState != AlarmState.Any, alarmDays.isNotEmpty(),
                 timerState != TimerState.Any, reminderRepeats != ReminderRepeats.Any,
+                historyCategory != null, historyWindow != null, historyUndone != Tri.Any,
+                taskTreeOpen != Tri.Any, taskTreeDated != Tri.Any, relationSection != null,
+                shortcutRebound != Tri.Any,
             ).count { it }
     }
 
@@ -209,6 +254,13 @@ object SearchDomain {
         AlarmDays(Kind.Alarm, "Rings on"),
         TimerStateSetting(Kind.Timer, "State"),
         ReminderRepeatsSetting(Kind.Reminder, "Repeats"),
+        HistoryCategorySetting(Kind.HistoryUnit, "Category"),
+        HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
+        HistoryUndoneSetting(Kind.HistoryUnit, "Undone"),
+        TaskTreeOpenSetting(Kind.TaskTree, "Open"),
+        TaskTreeDatedSetting(Kind.TaskTree, "On the timeline"),
+        RelationSectionSetting(Kind.TaskRelation, "Section"),
+        ShortcutReboundSetting(Kind.Shortcut, "Rebound"),
     }
 
     /**
@@ -244,6 +296,13 @@ object SearchDomain {
         val alarmDays: List<Int> = emptyList(),
         val timerState: String? = null,
         val reminderRepeats: String? = null,
+        val historyCategory: String? = null,
+        val historyWindow: String? = null,
+        val historyUndone: String? = null,
+        val taskTreeOpen: String? = null,
+        val taskTreeDated: String? = null,
+        val relationSection: String? = null,
+        val shortcutRebound: String? = null,
     )
 
     @Serializable
@@ -636,7 +695,13 @@ object SearchDomain {
         val detail: String,
     ) : Result
 
-    fun itemResults(state: SchedulerState, kind: Kind, query: String): List<ItemResult> {
+    fun itemResults(
+        state: SchedulerState,
+        kind: Kind,
+        query: String,
+        /** For the history units' date and time: the device's own. */
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): List<ItemResult> {
         val items =
             when (kind) {
                 Kind.Task -> emptyList()
@@ -671,6 +736,35 @@ object SearchDomain {
                 }
                 Kind.Reminder -> state.chores.map { chore ->
                     ItemResult(kind, chore.id.ifEmpty { chore.title }, chore.title, reminderDetail(chore))
+                }
+                // Every stack's units, as the History window lists them. The id is the unit's place in its stack,
+                // which is what [historyUnitOf] reads back for the filters.
+                Kind.HistoryUnit -> HistoryCategory.entries.flatMap { category ->
+                    state.histories.forCategory(category).units.mapIndexed { index, unit ->
+                        val where = unit.window?.label ?: category.name
+                        val undone = if (unit.undone) " · undone" else ""
+                        ItemResult(kind, category.name + "#" + index, unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
+                    }
+                }
+                Kind.TaskTree -> state.taskTrees.map { entry ->
+                    val open = entry.id == state.activeTaskTreeId
+                    val size = if (open) state.tasks.size else entry.tree.tasks.size
+                    val date = entry.dateMillis?.let { dateTime(it, timeZone).substringBefore(' ') } ?: "no date"
+                    ItemResult(kind, entry.id.value, entry.title.ifBlank { "tree" }, (if (open) "open · " else "") + date + " · " + plural(size, "task"))
+                }
+                // The Task relations window's own rows — the same pairs, the same sections, never a second reading.
+                Kind.TaskRelation -> TaskRelationsDomain.rows(state).map { row ->
+                    ItemResult(
+                        kind,
+                        relationId(row.key),
+                        row.taskTitle + " in " + row.targetTitle,
+                        relationSectionLabel(row.section) + (row.broken?.let { " · " + brokenLabel(it) } ?: ""),
+                    )
+                }
+                Kind.Shortcut -> GlobalShortcut.entries.map { shortcut ->
+                    val binding = state.shortcutBindings[shortcut] ?: shortcut.defaultBinding
+                    val rebound = binding != shortcut.defaultBinding
+                    ItemResult(kind, shortcut.name, shortcut.action, binding.chord + if (rebound) " · rebound" else "")
                 }
             }
         return items
@@ -752,8 +846,57 @@ object SearchDomain {
                         ReminderRepeats.Repeating -> chore.spanDays > 0.0
                     }
                 }
+                Kind.HistoryUnit -> {
+                    val unit = historyUnitOf(state, result.id) ?: return true
+                    (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&
+                        (filters.historyWindow == null || unit.window == filters.historyWindow) &&
+                        tri(filters.historyUndone, unit.undone)
+                }
+                Kind.TaskTree -> {
+                    val entry = state.taskTrees.firstOrNull { it.id.value == result.id } ?: return true
+                    tri(filters.taskTreeOpen, entry.id == state.activeTaskTreeId) && tri(filters.taskTreeDated, entry.dateMillis != null)
+                }
+                Kind.TaskRelation ->
+                    filters.relationSection == null ||
+                        result.detail.substringBefore(" · ") == relationSectionLabel(filters.relationSection)
+                Kind.Shortcut -> {
+                    val shortcut = GlobalShortcut.entries.firstOrNull { it.name == result.id } ?: return true
+                    val binding = state.shortcutBindings[shortcut] ?: shortcut.defaultBinding
+                    tri(filters.shortcutRebound, binding != shortcut.defaultBinding)
+                }
             }
         }
+    }
+
+    /** The id of a task relation's row: its two task ids. */
+    fun relationId(key: TaskRelationKey): String = key.taskId.value + "|" + key.relativeTo.value
+
+    /** The history unit a [Kind.HistoryUnit] row's id names (its stack, and its place in it), or null. */
+    fun historyUnitOf(state: SchedulerState, id: String): HistoryUnit? {
+        val category = HistoryCategory.entries.firstOrNull { it.name == id.substringBefore('#') } ?: return null
+        val index = id.substringAfter('#').toIntOrNull() ?: return null
+        return state.histories.forCategory(category).units.getOrNull(index)
+    }
+
+    fun relationSectionLabel(section: TaskRelationsDomain.Section): String =
+        when (section) {
+            TaskRelationsDomain.Section.Kept -> "kept"
+            TaskRelationsDomain.Section.Edited -> "edited"
+            TaskRelationsDomain.Section.Opened -> "opened"
+            TaskRelationsDomain.Section.Broken -> "broken"
+        }
+
+    private fun brokenLabel(reason: TaskRelationsDomain.Break): String =
+        when (reason) {
+            TaskRelationsDomain.Break.TaskGone -> "the task is gone"
+            TaskRelationsDomain.Break.TargetGone -> "the target is gone"
+            TaskRelationsDomain.Break.Moved -> "no longer under it"
+        }
+
+    private fun dateTime(millis: Long, timeZone: TimeZone): String {
+        val t = Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone)
+        fun two(n: Int) = n.toString().padStart(2, '0')
+        return "${t.year}-${two(t.month.number)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}"
     }
 
     /**

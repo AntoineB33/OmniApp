@@ -38,6 +38,9 @@ import androidx.compose.ui.window.PopupProperties
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.isoDayNumber
 import org.example.project.scheduler.domain.SearchDomain
+import org.example.project.scheduler.domain.TaskRelationsDomain
+import org.example.project.scheduler.state.HistoryWindow
+import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.SchedulerState
 
 /**
@@ -223,6 +226,24 @@ private fun SettingEditor(
             Choices(SearchDomain.ReminderRepeats.entries, f.reminderRepeats, { it.label }) {
                 filters(f.copy(reminderRepeats = it))
             }
+        SearchDomain.Setting.HistoryCategorySetting ->
+            EnumPicker(HistoryCategory.entries, f.historyCategory, { historyCategoryLabel(it) }) {
+                filters(f.copy(historyCategory = it))
+            }
+        SearchDomain.Setting.HistoryWindowSetting ->
+            EnumPicker(HistoryWindow.entries, f.historyWindow, { it.label }) { filters(f.copy(historyWindow = it)) }
+        SearchDomain.Setting.HistoryUndoneSetting ->
+            Choices(SearchDomain.Tri.entries, f.historyUndone, { it.label }) { filters(f.copy(historyUndone = it)) }
+        SearchDomain.Setting.TaskTreeOpenSetting ->
+            Choices(SearchDomain.Tri.entries, f.taskTreeOpen, { it.label }) { filters(f.copy(taskTreeOpen = it)) }
+        SearchDomain.Setting.TaskTreeDatedSetting ->
+            Choices(SearchDomain.Tri.entries, f.taskTreeDated, { it.label }) { filters(f.copy(taskTreeDated = it)) }
+        SearchDomain.Setting.RelationSectionSetting ->
+            EnumPicker(TaskRelationsDomain.Section.entries, f.relationSection, { SearchDomain.relationSectionLabel(it) }) {
+                filters(f.copy(relationSection = it))
+            }
+        SearchDomain.Setting.ShortcutReboundSetting ->
+            Choices(SearchDomain.Tri.entries, f.shortcutRebound, { it.label }) { filters(f.copy(shortcutRebound = it)) }
     }
 }
 
@@ -248,6 +269,42 @@ private fun ToggleChip(text: String, on: Boolean, onToggle: (Boolean) -> Unit) {
             .clickable { onToggle(!on) }
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
+}
+
+/** A history stack as the History window names it. */
+private fun historyCategoryLabel(category: HistoryCategory): String =
+    when (category) {
+        HistoryCategory.Edit -> "edit"
+        HistoryCategory.Selection -> "selection"
+        HistoryCategory.Calendar -> "calendar"
+        HistoryCategory.Main -> "main"
+        HistoryCategory.WindowNav -> "window navigation"
+    }
+
+/** "any", or one of [options] — a drop-down, for the choices too many to lay out as chips. */
+@Composable
+private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String, onSelect: (T?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Text(
+            text = (selected?.let(label) ?: "any") + "  ▾",
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                .menuToggleClickable(open) { open = it }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+        transientMenuDismissal(open) { open = false }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+            DropdownMenuItem(text = { Text("any") }, onClick = { open = false; onSelect(null) })
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(label(option)) }, onClick = { open = false; onSelect(option) })
+            }
+        }
+    }
 }
 
 /** "any", or one of the account's categories. */

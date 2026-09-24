@@ -164,6 +164,11 @@ fun SearchWindow(
     /** The per-object window of ONE reminder (by id), with every setting it has — a right-click on its row. */
     onEditReminder: (String) -> Unit,
     onOpenReminders: () -> Unit,
+    /** The lateral-menu windows that own a history unit, a task tree, a task relation and a keyboard shortcut. */
+    onOpenHistory: () -> Unit = {},
+    onOpenTaskTrees: () -> Unit = {},
+    onOpenTaskRelations: () -> Unit = {},
+    onOpenShortcuts: () -> Unit = {},
     onDismiss: () -> Unit,
     /**
      * The configuration — query, checked kinds, filters. Held by `App`, not here: the Configuration Search
@@ -213,7 +218,8 @@ fun SearchWindow(
     val results =
         remember(
             kinds, query, filters, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
-            state.panels, state.alarms, state.timers, state.chores,
+            state.panels, state.alarms, state.timers, state.chores, state.histories, state.taskRelations,
+            state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists,
         ) {
             SearchDomain.results(state, kinds, query, { allPaths }, filters)
         }
@@ -286,6 +292,10 @@ fun SearchWindow(
             SearchDomain.Kind.RestrictivePeriod -> onOpenPeriodKind(item.id)
             SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer -> onOpenAlarms()
             SearchDomain.Kind.Reminder -> onOpenReminders()
+            SearchDomain.Kind.HistoryUnit -> onOpenHistory()
+            SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
+            SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
+            SearchDomain.Kind.Shortcut -> onOpenShortcuts()
         }
     }
     fun openSelected() {
@@ -1046,6 +1056,10 @@ private fun ItemResultRow(
                 when (item.kind) {
                     SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer -> "open in Alarms"
                     SearchDomain.Kind.Reminder -> "open in Reminders"
+                    SearchDomain.Kind.HistoryUnit -> "open in History"
+                    SearchDomain.Kind.TaskTree -> "open in All task trees"
+                    SearchDomain.Kind.TaskRelation -> "open in Task relations"
+                    SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
                     else -> "edit " + item.kind.label
                 },
             ) {

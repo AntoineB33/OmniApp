@@ -594,6 +594,10 @@ to the task id. Do not add a second row implementation: the flat one this replac
   section and one section per kind (`SearchDomain.configurations`). Neither window keeps a copy, so a filter set
   in one narrows the other's list at once. A filter applies to its own kind's rows only, and every one has an
   "any" that filters nothing; the Search window's button counts the ones that are on.
+- **A history unit, a task tree, a task relation, a keyboard shortcut** are kinds too (`itemResults`): the
+  unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
+  window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and
+  chord. Opening one opens the window that owns it.
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.

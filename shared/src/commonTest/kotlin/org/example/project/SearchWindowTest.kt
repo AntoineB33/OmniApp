@@ -435,6 +435,86 @@ class SearchWindowTest {
         assertNull(SearchDomain.occurrenceAtPath(s, pie, listOf(root(s), "Banana")))
     }
 
+    // ----- History units, task trees, task relations, keyboard shortcuts -----------------------------
+
+    @Test
+    fun history_units_are_found_by_their_label_and_filtered_by_their_stack_and_state() {
+        var s = tree()
+        s = r(s, SchedulerIntent.RenameTask(taskWithTitle(s, "Pie"), "Tart"))
+        val units = setOf(SearchDomain.Kind.HistoryUnit)
+        val rename = SearchDomain.results(s, units, "rename").map { it as SearchDomain.ItemResult }
+        assertTrue(rename.isNotEmpty(), "the rename is a unit of the Main stack")
+        assertNotNull(SearchDomain.historyUnitOf(s, rename.first().id))
+        val mainOnly = SearchDomain.Filters(historyCategory = org.example.project.scheduler.state.HistoryCategory.Main)
+        assertTrue(SearchDomain.results(s, units, "", filters = mainOnly).all { it.name.isNotEmpty() })
+        val calendarOnly = SearchDomain.Filters(historyCategory = org.example.project.scheduler.state.HistoryCategory.Calendar)
+        assertTrue(SearchDomain.results(s, units, "rename", filters = calendarOnly).isEmpty())
+        // Undone on its device: the filter follows.
+        s = r(s, SchedulerIntent.Undo)
+        val undone = SearchDomain.Filters(historyUndone = SearchDomain.Tri.Yes)
+        assertTrue(SearchDomain.results(s, units, "rename", filters = undone).isNotEmpty())
+    }
+
+    @Test
+    fun task_trees_are_listed_with_the_open_one_and_filtered() {
+        val s = withStoredCopy(tree())
+        val trees = setOf(SearchDomain.Kind.TaskTree)
+        val rows = SearchDomain.results(s, trees, "").map { it as SearchDomain.ItemResult }
+        assertEquals(listOf("Studies"), rows.map { it.name })
+        assertTrue(rows.single().detail.startsWith("no date"), "a stored tree, not on the timeline")
+        assertTrue(SearchDomain.results(s, trees, "", filters = SearchDomain.Filters(taskTreeOpen = SearchDomain.Tri.Yes)).isEmpty())
+        assertEquals(1, SearchDomain.results(s, trees, "", filters = SearchDomain.Filters(taskTreeDated = SearchDomain.Tri.No)).size)
+    }
+
+    @Test
+    fun keyboard_shortcuts_show_their_chord_and_a_rebound_one_says_so() {
+        val shortcut = org.example.project.scheduler.platform.GlobalShortcut.entries.first()
+        val other = shortcut.defaultBinding.copy(alt = !shortcut.defaultBinding.alt)
+        val s = SchedulerState.empty().copy(shortcutBindings = mapOf(shortcut to other))
+        val kinds = setOf(SearchDomain.Kind.Shortcut)
+        val rows = SearchDomain.results(s, kinds, "").map { it as SearchDomain.ItemResult }
+        assertEquals(org.example.project.scheduler.platform.GlobalShortcut.entries.size, rows.size)
+        val row = rows.single { it.id == shortcut.name }
+        assertEquals(other.chord + " · rebound", row.detail)
+        val rebound = SearchDomain.results(s, kinds, "", filters = SearchDomain.Filters(shortcutRebound = SearchDomain.Tri.Yes))
+        assertEquals(listOf(shortcut.action), rebound.map { it.name })
+    }
+
+    @Test
+    fun task_relations_are_the_windows_own_rows_and_filtered_by_section() {
+        var s = tree()
+        val key = org.example.project.scheduler.model.TaskRelationKey(taskWithTitle(s, "Pie"), taskWithTitle(s, "Apple"))
+        s = s.copy(taskRelations = mapOf(key to org.example.project.scheduler.model.TaskRelationMark(kept = true)))
+        val kinds = setOf(SearchDomain.Kind.TaskRelation)
+        val rows = SearchDomain.results(s, kinds, "pie").map { it as SearchDomain.ItemResult }
+        assertEquals(SearchDomain.relationId(key), rows.single().id)
+        assertEquals("Pie in Apple", rows.single().name)
+        assertEquals(
+            org.example.project.scheduler.domain.TaskRelationsDomain.rows(s).single { it.key == key }.section,
+            org.example.project.scheduler.domain.TaskRelationsDomain.Section.Kept,
+        )
+        val broken = SearchDomain.Filters(relationSection = org.example.project.scheduler.domain.TaskRelationsDomain.Section.Broken)
+        assertTrue(SearchDomain.results(s, kinds, "pie", filters = broken).isEmpty())
+    }
+
+    @Test
+    fun the_new_filters_survive_their_local_encoding() {
+        val config =
+            SearchDomain.Config(
+                kinds = setOf(SearchDomain.Kind.HistoryUnit, SearchDomain.Kind.Shortcut),
+                filters = SearchDomain.Filters(
+                    historyCategory = org.example.project.scheduler.state.HistoryCategory.Main,
+                    historyWindow = org.example.project.scheduler.state.HistoryWindow.Search,
+                    historyUndone = SearchDomain.Tri.No,
+                    taskTreeOpen = SearchDomain.Tri.Yes,
+                    taskTreeDated = SearchDomain.Tri.No,
+                    relationSection = org.example.project.scheduler.domain.TaskRelationsDomain.Section.Edited,
+                    shortcutRebound = SearchDomain.Tri.Yes,
+                ),
+            )
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+    }
+
     @Test
     fun the_filters_narrow_their_own_kind_and_nothing_else() {
         val s =
