@@ -597,6 +597,10 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.
+- **A right-click on an alarm, a timer or a reminder row opens that ONE element's own window** — the Alarms
+  window (`AlarmWindowSubject`) or the Reminders window (`subject`, `REMINDER_EDIT_FRAME_ID`) showing that row
+  alone, never a second editor. The Reminders window re-seeds from the list whenever it is not the one it
+  last pushed (the Alarms window's rule), which is what lets it stand beside another Reminders window.
 - **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
   have their own window and a counter), and the Configuration Search window's never touches the Search
   window's configuration it lists.

@@ -1569,6 +1569,12 @@ fun Modifier.raiseOnPress(onPress: () -> Unit): Modifier =
  * of day. Like the §7 calendar window it floats over the tree, not the lateral menu; grab the title bar
  * to move it. Rows are edited live: every change pushes the parsed list up via [onChange]. Each row has a
  * bin button (remove) and a `+` (insert above); a trailing `+` appends a row.
+ *
+ * Given a [subject] (a reminder id), the same window is the **per-object window of one reminder** (PRD §7
+ * *Search*: a right-click on its row) — that row's editor alone, every setting it has, nothing to add. It is
+ * this window and not a second editor for the reason the Alarms window gives: a second copy of a row's
+ * fields, parsing and push rule is the copy that drifts. The rows it does not draw are held and pushed back
+ * unchanged, and it closes itself when its row is gone.
  */
 @Composable
 fun ChoresManagerWindow(
@@ -1613,8 +1619,12 @@ fun ChoresManagerWindow(
     reminderIdForTitle: (String) -> String? = { null },
     /** PRD §14 "constrained in": the title of a known reminder id (shown beside the "constrained in" button). */
     titleForReminderId: (String) -> String? = { null },
+    /** The one reminder (by id) this window is about, or null for the lateral-menu window listing them all. */
+    subject: String? = null,
 ) {
-    val frame = rememberWindowFrameState("Reminders", initialOffset, initialSize)
+    val frame = rememberWindowFrameState(if (subject != null) REMINDER_EDIT_FRAME_ID else "Reminders", initialOffset, initialSize)
+    // The subject row's id as it now stands: the id menu can make the row adopt another reminder's id.
+    var subjectId by remember { mutableStateOf(subject) }
     val focusManager = LocalFocusManager.current
     // PRD §14 "constrained in": the index of the row whose constraint picker is open, or null when closed.
     var constrainingRowIndex by remember { mutableStateOf<Int?>(null) }
@@ -1625,30 +1635,38 @@ fun ChoresManagerWindow(
     var editMode by remember(focusedIndex) { mutableStateOf(ReminderEditMode.Change) }
     // Per-row editable text (title, days, time-of-day) so an in-progress "3." / "9:" isn't reformatted
     // each keystroke. Seeded once from the incoming chores; live edits drive both this and the pushed list.
-    val rows = remember {
-        mutableStateListOf<ChoreRow>().apply {
-            // PRD §14: the recurrence field shows the raw formula the user typed (e.g. "31/21") in its unit;
-            // fall back to the numeric span (in days) for reminders saved before formulas existed.
-            addAll(
-                chores.map {
-                    ChoreRow(
-                        title = it.title,
-                        daysText = it.daysFormula.ifBlank { formatDays(it.recurrenceUnit.fromDays(it.spanDays)) },
-                        timeText = formatTimeOfDay(it.timeOfDayMinutes),
-                        unit = it.recurrenceUnit,
-                        id = it.id,
-                        constrainedToReminderId = it.constrainedToReminderId,
-                        alert = it.alert,
-                    )
-                },
-            )
-        }
-    }
+    // PRD §14: the recurrence field shows the raw formula the user typed (e.g. "31/21") in its unit; fall back
+    // to the numeric span (in days) for reminders saved before formulas existed.
+    fun rowOf(it: ChoreEntry) = ChoreRow(
+        title = it.title,
+        daysText = it.daysFormula.ifBlank { formatDays(it.recurrenceUnit.fromDays(it.spanDays)) },
+        timeText = formatTimeOfDay(it.timeOfDayMinutes),
+        unit = it.recurrenceUnit,
+        id = it.id,
+        constrainedToReminderId = it.constrainedToReminderId,
+        alert = it.alert,
+    )
+    val rows = remember { mutableStateListOf<ChoreRow>().apply { addAll(chores.map(::rowOf)) } }
     // PRD §14: reminder ids that already exist — the rows seeded from `chores` when the window opened, plus
     // any id a row later adopts from the id menu. A row whose id is NOT here is still *being created*, so
     // (like the "add a checked reminder" window) it shows no Mode selector: it is always in Change Reminder
     // mode, with no prior title to Rename yet.
     val existingReminderIds = remember { chores.mapTo(mutableSetOf<String>()) { it.id } }
+    // What this window last pushed — the Alarms window's rule. The rows above are the truth for what the FIELDS
+    // show, so they cannot simply follow [chores] (a half-typed "9:" would be reformatted under the caret by the
+    // round-trip of its own push); but they must not ignore it either: another Reminders window (a copy, or a
+    // single reminder's window), an undo or a peer's sync changes the list without going through this one, and a
+    // copy that never heard of it would push its stale rows back over that change at the next keystroke. So:
+    // re-seed exactly when the incoming list is not the one this window last sent.
+    var pushedChores by remember { mutableStateOf(chores) }
+    LaunchedEffect(chores) {
+        if (chores != pushedChores) {
+            pushedChores = chores
+            rows.clear()
+            rows.addAll(chores.map(::rowOf))
+            chores.mapTo(existingReminderIds) { it.id }
+        }
+    }
     // A new row gets a stable, locally-unique id right away (mirroring the reducer's `reminder-{n}` scheme)
     // so it has an identity before the round-trip through onChange — the id menu can then exclude the row
     // being edited (otherwise a brand-new reminder would suggest itself). The minted id must also dodge ids
@@ -1684,7 +1702,9 @@ fun ChoresManagerWindow(
     }
     fun push() {
         val ids = resolvedRowIds()
-        onChange(
+        // The subject row follows its id through the id menu's adoption of another reminder.
+        if (subject != null) rows.forEachIndexed { index, row -> if (row.id == subjectId) subjectId = ids[index] }
+        val entries =
             rows.mapIndexed { index, row ->
                 // PRD §14: the chosen unit maps the entered number to a cadence in days (interval vs rate units).
                 val number = SchedulerDomain.evaluateDayFormula(row.daysText) ?: 0.0
@@ -1698,12 +1718,17 @@ fun ChoresManagerWindow(
                     constrainedToReminderId = row.constrainedToReminderId,
                     alert = row.alert,
                 )
-            },
-        )
+            }
+        pushedChores = entries
+        onChange(entries)
     }
+    // A single reminder's window whose row is gone (its own bin, another window, an undo, a peer) closes.
+    val latestDismiss by rememberUpdatedState(onDismiss)
+    val subjectGone = subject != null && rows.none { it.id == subjectId }
+    LaunchedEffect(subjectGone) { if (subjectGone) latestDismiss() }
 
     AppWindowFrame(
-        title = "Reminders",
+        title = if (subject != null) "Reminder" else "Reminders",
         state = frame,
         onClose = onDismiss,
         defaultWidth = 560.dp,
@@ -1726,6 +1751,7 @@ fun ChoresManagerWindow(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             rows.forEachIndexed { index, row ->
+              if (subject != null && row.id != subjectId) return@forEachIndexed
               // The row is a focus group so that opening the Mode dropdown (a focusable anchor) keeps the
               // editor open rather than collapsing it. Entering Edit mode still requires focusing the
               // *title* field (set below); the group only governs *staying* in edit mode — the menus
@@ -1785,8 +1811,8 @@ fun ChoresManagerWindow(
                     )
                     // Bin: remove this row.
                     TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
-                    // Plus: insert a new row above this one.
-                    TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
+                    // Plus: insert a new row above this one. Not in a single reminder's window, which adds nothing.
+                    if (subject == null) TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
                 }
 
                 // PRD §14 "constrained in": a button opening the constraint picker, with the chosen
@@ -1882,7 +1908,7 @@ fun ChoresManagerWindow(
               }
             }
             // Trailing single plus: append a new row at the end of the list.
-            TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
+            if (subject == null) TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
         }
     }
 
@@ -1909,6 +1935,9 @@ fun ChoresManagerWindow(
         }
     }
 }
+
+/** The frame id of a single reminder's window (Search's right-click) — one at a time, and its copies. */
+const val REMINDER_EDIT_FRAME_ID: String = "ReminderEdit"
 
 /**
  * PRD §5/§6: what the History window's configuration menu is currently asking for. Compose-only state, like

@@ -101,6 +101,7 @@ import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.AlarmWindow
+import org.example.project.ui.REMINDER_EDIT_FRAME_ID
 import org.example.project.ui.TASK_TREE_WINDOW_ID
 import org.example.project.ui.TaskTreeWindow
 import org.example.project.ui.windowInstanceId
@@ -600,6 +601,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var editCategoryId by remember { mutableStateOf<CategoryId?>(null) }
         // PRD §7 Search: the one alarm or timer whose own window is open — one slot, like the category's.
         var editAlarmOrTimer by remember { mutableStateOf<AlarmWindowSubject?>(null) }
+        // PRD §7 Search: the one reminder (by id) whose own window is open — one slot, like the alarm's.
+        var editReminderId by remember { mutableStateOf<String?>(null) }
         var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. One notice at a time, like the two above.
@@ -2572,14 +2575,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
 
                     // PRD §14 Chores Manager: floating window over the tree (not the lateral menu).
-                    LateralWindow(FloatingWindow.Reminders, choresManagerOpen) {
+                    // The Reminders window and the per-object window of ONE reminder (PRD §7 Search) are the same
+                    // component over the same callbacks, so they are wired once, here — AccountAlarmWindow's rule.
+                    @Composable
+                    fun AccountRemindersWindow(
+                        subject: String?,
+                        onDismiss: () -> Unit,
+                        modifier: Modifier,
+                        initialOffset: Offset = Offset.Zero,
+                        initialSize: Size = Size.Zero,
+                        onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
+                        onRaise: () -> Unit = {},
+                    ) {
                         // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
                         val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
                         ChoresManagerWindow(
                             chores = schedulerState.chores,
                             // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
                             onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
-                            onDismiss = { choresManagerOpen = false },
+                            onDismiss = onDismiss,
                             // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
                             newRowTimeOfDayMinutes = {
                                 val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
@@ -2597,6 +2611,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
                             reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
                             titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
+                            initialOffset = initialOffset,
+                            initialSize = initialSize,
+                            onGeometryChange = onGeometryChange,
+                            onRaise = onRaise,
+                            modifier = modifier,
+                            subject = subject,
+                        )
+                    }
+
+                    LateralWindow(FloatingWindow.Reminders, choresManagerOpen) {
+                        AccountRemindersWindow(
+                            subject = null,
+                            onDismiss = { choresManagerOpen = false },
                             // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
                             initialOffset = remindersOffset,
                             initialSize = remindersSize,
@@ -2606,9 +2633,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 persistPlacement(FloatingWindow.Reminders, windowOffset, windowSize, true)
                             },
                             onRaise = { focusWindow(FloatingWindow.Reminders) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
+                            modifier = Modifier.align(Alignment.Center),
                         )
+                    }
+
+                    // PRD §7 Search: the per-object window of one reminder. One slot, like the alarm's; it closes
+                    // itself when its row is gone (ChoresManagerWindow), and it is duplicable like every window.
+                    // No existence check here: the window follows its row even when the id menu makes it adopt
+                    // another reminder's id, and closes itself once the row is gone — one rule, in one place.
+                    DuplicableWindows(editReminderId, closeOriginal = { editReminderId = null }) { reminderId, close ->
+                        TransientPopupLayer(windowInstanceId(REMINDER_EDIT_FRAME_ID)) {
+                            // Keyed on the reminder: another one REPLACES the window, and its rows must not carry
+                            // over.
+                            key(reminderId) {
+                                AccountRemindersWindow(
+                                    subject = reminderId,
+                                    onDismiss = close,
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
+                            }
+                        }
                     }
 
                     // PRD §5/§6 History Manager: floating window listing every category's history units.
@@ -2934,6 +2978,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 focusWindow(FloatingWindow.Alarms)
                             },
                             onEditAlarmOrTimer = { editAlarmOrTimer = it },
+                            onEditReminder = { editReminderId = it },
                             onOpenReminders = {
                                 choresManagerOpen = true
                                 focusWindow(FloatingWindow.Reminders)

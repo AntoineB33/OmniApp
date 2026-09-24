@@ -120,6 +120,8 @@ fun SearchWindow(
     onOpenAlarms: () -> Unit,
     /** The per-object window of ONE alarm or timer, with every setting it has — a right-click on its row. */
     onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
+    /** The per-object window of ONE reminder (by id), with every setting it has — a right-click on its row. */
+    onEditReminder: (String) -> Unit,
     onOpenReminders: () -> Unit,
     onDismiss: () -> Unit,
     /**
@@ -328,6 +330,9 @@ fun SearchWindow(
                                                 }
                                                 SearchDomain.Kind.Timer -> {
                                                     { onEditAlarmOrTimer(AlarmWindowSubject(result.id, isAlarm = false)) }
+                                                }
+                                                SearchDomain.Kind.Reminder -> {
+                                                    { onEditReminder(result.id) }
                                                 }
                                                 else -> null
                                             },
