@@ -100,6 +100,8 @@ import org.example.project.time.AppClock
 import org.example.project.time.SimAppClock
 import org.example.project.time.SystemAppClock
 import org.example.project.ui.AlarmWindow
+import org.example.project.ui.AlarmWindowSubject
+import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.CalendarFloatingWindow
 import org.example.project.ui.ReminderEditSeed
 import org.example.project.ui.EDIT_LABEL_ALARM
@@ -515,6 +517,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §5: the category whose own window is open — one slot, like the task and period windows,
         // hoisted here so it draws on the top layer above every floating window.
         var editCategoryId by remember { mutableStateOf<CategoryId?>(null) }
+        // PRD §7 Search: the one alarm or timer whose own window is open — one slot, like the category's.
+        var editAlarmOrTimer by remember { mutableStateOf<AlarmWindowSubject?>(null) }
         var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. One notice at a time, like the two above.
@@ -2460,7 +2464,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // length, vibration) and, in its second section, its timers. Both lists are authoritative
                     // synced state, so saving one here arms every phone — and starting a timer starts it for
                     // the account, not for this device.
-                    if (alarmWindowOpen) {
+                    // The Alarms window and the per-object window of ONE alarm or timer (PRD §7 Search) are the
+                    // same component over the same callbacks, so they are wired once, here.
+                    @Composable
+                    fun AccountAlarmWindow(
+                        subject: AlarmWindowSubject?,
+                        onDismiss: () -> Unit,
+                        modifier: Modifier,
+                        initialOffset: Offset = Offset.Zero,
+                        initialSize: Size = Size.Zero,
+                        onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
+                        onRaise: () -> Unit = {},
+                    ) {
                         AlarmWindow(
                             alarms = schedulerState.alarms,
                             onChange = { entries, editKey ->
@@ -2489,7 +2504,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // itself while a timer runs — the engine's now-line only advances once per
                             // production tick, which is far too coarse for a countdown.
                             nowMillis = { clock.nowMillis() },
-                            onDismiss = { alarmWindowOpen = false },
                             // PRD §5: the window's own lists are undoable, so the chord has to work from
                             // inside it — the tree's and the calendar's handlers never see a keystroke aimed
                             // at a floating window.
@@ -2500,6 +2514,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
                                 t.hour * 60 + t.minute
                             },
+                            onDismiss = onDismiss,
+                            initialOffset = initialOffset,
+                            initialSize = initialSize,
+                            onGeometryChange = onGeometryChange,
+                            onRaise = onRaise,
+                            modifier = modifier,
+                            subject = subject,
+                        )
+                    }
+
+                    if (alarmWindowOpen) {
+                        AccountAlarmWindow(
+                            subject = null,
+                            onDismiss = { alarmWindowOpen = false },
                             // Cascade: open down-left of center so the other windows stay reachable.
                             initialOffset = alarmOffset,
                             initialSize = alarmSize,
@@ -2509,9 +2537,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 persistPlacement(FloatingWindow.Alarms, windowOffset, windowSize, true)
                             },
                             onRaise = { focusWindow(FloatingWindow.Alarms) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
+                            modifier = Modifier.align(Alignment.Center),
                         )
+                    }
+
+                    // PRD §7 Search: the per-object window of one alarm or one timer. One slot, like the
+                    // category's; it closes itself when the row is gone (its own bin, a peer, an undo).
+                    editAlarmOrTimer?.let { subject ->
+                        val exists =
+                            if (subject.isAlarm) schedulerState.alarms.any { it.id == subject.id }
+                            else schedulerState.timers.any { it.id == subject.id }
+                        if (!exists) {
+                            editAlarmOrTimer = null
+                        } else {
+                            TransientPopupLayer(AlarmWindowSubject.FRAME_ID) {
+                                // Keyed on the subject: asking for another alarm REPLACES the window, and
+                                // its local copy of the rows must not carry over.
+                                key(subject) {
+                                    AccountAlarmWindow(
+                                        subject = subject,
+                                        onDismiss = { editAlarmOrTimer = null },
+                                        modifier = Modifier.align(Alignment.Center),
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // All task trees: the account's named task trees over a timeline of the dated ones.
@@ -2686,6 +2736,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 alarmWindowOpen = true
                                 focusWindow(FloatingWindow.Alarms)
                             },
+                            onEditAlarmOrTimer = { editAlarmOrTimer = it },
                             onOpenReminders = {
                                 choresManagerOpen = true
                                 focusWindow(FloatingWindow.Reminders)

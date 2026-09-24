@@ -350,6 +350,30 @@ class SearchWindowTest {
     }
 
     @Test
+    fun every_alarm_and_every_timer_has_a_row_when_their_kinds_are_checked() {
+        val s =
+            SchedulerState.empty().copy(
+                alarms = listOf(
+                    AlarmEntry(id = "a1", label = "Wake up", timeOfDayMinutes = 7 * 60),
+                    // Unlabelled, and switched off: still an alarm of the account.
+                    AlarmEntry(id = "a2", label = "", timeOfDayMinutes = 8 * 60, enabled = false),
+                    // The same label twice is two alarms, two rows.
+                    AlarmEntry(id = "a3", label = "Wake up", timeOfDayMinutes = 9 * 60),
+                ),
+                timers = listOf(
+                    TimerEntry(id = "t1", label = "Tea", durationSeconds = 180),
+                    TimerEntry(id = "t2", label = "", durationSeconds = 60),
+                ),
+            )
+        val rows = SearchDomain.results(s, setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), "")
+        assertEquals(
+            setOf("Alarm/a1", "Alarm/a2", "Alarm/a3", "Timer/t1", "Timer/t2"),
+            rows.map { it as SearchDomain.ItemResult }.map { it.kind.name + "/" + it.id }.toSet(),
+        )
+        assertEquals(5, rows.size)
+    }
+
+    @Test
     fun every_checked_kind_is_searched_and_the_best_match_leads_across_kinds() {
         var s = tree()
         s = r(s, SchedulerIntent.SetCellTitle(freeRootCell(s), "Wake"))

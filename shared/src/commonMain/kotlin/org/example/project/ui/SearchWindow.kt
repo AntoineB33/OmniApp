@@ -115,6 +115,8 @@ fun SearchWindow(
     onOpenPeriodKind: (String) -> Unit,
     /** Alarms AND timers live in the one Alarms window (PRD §18). */
     onOpenAlarms: () -> Unit,
+    /** The per-object window of ONE alarm or timer, with every setting it has — a right-click on its row. */
+    onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
     onOpenReminders: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -315,6 +317,18 @@ fun SearchWindow(
                                         selected = index == selected,
                                         onSelect = { selected = index },
                                         onOpen = { openItem(result) },
+                                        // An alarm or a timer has its own window, and the right-click opens
+                                        // it straight away: its settings are what the user is asking about.
+                                        onRightClick =
+                                            when (result.kind) {
+                                                SearchDomain.Kind.Alarm -> {
+                                                    { onEditAlarmOrTimer(AlarmWindowSubject(result.id, isAlarm = true)) }
+                                                }
+                                                SearchDomain.Kind.Timer -> {
+                                                    { onEditAlarmOrTimer(AlarmWindowSubject(result.id, isAlarm = false)) }
+                                                }
+                                                else -> null
+                                            },
                                     )
                             }
                         }
@@ -584,6 +598,8 @@ private fun ItemResultRow(
     selected: Boolean,
     onSelect: () -> Unit,
     onOpen: () -> Unit,
+    /** What a right-click does instead of the contextual menu, for a row whose kind has one (alarm, timer). */
+    onRightClick: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Box(
@@ -592,7 +608,7 @@ private fun ItemResultRow(
                 key = item.kind.name + "/" + item.id,
                 onSelect = onSelect,
                 onOpen = onOpen,
-                onOpenMenu = { menuOpen = true },
+                onOpenMenu = { if (onRightClick != null) onRightClick() else menuOpen = true },
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
