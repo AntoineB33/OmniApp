@@ -4,6 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.gestures.ScrollableDefaults
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -227,6 +231,8 @@ internal fun TaskTreeView(
     // window band (recorded OUTSIDE the scroll modifier, so it is the viewport and not the scrolled
     // content) to compare the row's band against.
     val treeScroll = rememberScrollState()
+    // Hoisted (not remembered inline on the column) so the whole tree AREA can drive it — see the Box below.
+    val treeHorizontalScroll = rememberScrollState()
     var treeViewport by remember { mutableStateOf<ClosedFloatingPointRange<Float>?>(null) }
 
     // Only computed while the bar is open: it walks the whole tree, and the tree's state object is replaced
@@ -417,7 +423,25 @@ internal fun TaskTreeView(
     }
 
     CompositionLocalProvider(LocalTreeKeyboardOwned provides keyboardOwned) {
-    Box(modifier = modifier) {
+    // The wheel scrolls the tree wherever the pointer is in its area, not only over a cell. The scrolling
+    // column below is exactly as wide as its widest row (it must not stretch the rows), so the area beside
+    // and below the cells is outside it; these two drive the SAME scroll states from the whole area. Over a
+    // cell the column takes the wheel first (the innermost scrollable consumes it), so nothing scrolls twice.
+    // The directions are the ones verticalScroll/horizontalScroll themselves pass to `scrollable`.
+    val layoutDirection = LocalLayoutDirection.current
+    Box(
+        modifier = modifier
+            .scrollable(
+                treeScroll,
+                Orientation.Vertical,
+                reverseDirection = ScrollableDefaults.reverseDirection(layoutDirection, Orientation.Vertical, false),
+            )
+            .scrollable(
+                treeHorizontalScroll,
+                Orientation.Horizontal,
+                reverseDirection = ScrollableDefaults.reverseDirection(layoutDirection, Orientation.Horizontal, false),
+            ),
+    ) {
     Column(
         modifier = Modifier
             .focusRequester(focusRequester)
@@ -649,7 +673,7 @@ internal fun TaskTreeView(
                 // vertical scroll above. width(IntrinsicSize.Max) sizes the column to its widest row so the
                 // rows' fillMaxWidth resolves against that natural width instead of the (infinite) scroll
                 // constraint, and every cell border stays aligned to the same right edge.
-                .horizontalScroll(rememberScrollState())
+                .horizontalScroll(treeHorizontalScroll)
                 // PRD §3: deliberately NO tap handler on the tree's empty space. The selection and Edit
                 // Mode are moved by a press on another task CELL and by nothing else — a press beside the
                 // cells (or in another window) leaves both untouched, so a rename survives reaching for

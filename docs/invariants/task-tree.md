@@ -323,6 +323,16 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   frame. It costs one letter, not a burst, and closing it means a second `requestFocus` call site — which
   the ONE focus effect in `TaskRow` deliberately refuses.
 
+### The tree scrolls from its whole area
+
+The wheel scrolls the tree wherever the pointer is in its area (`TaskTreeView`), not only over a cell. The
+scrolling column is deliberately exactly as wide as its widest row — the rows must not stretch to the window —
+so the space beside and below the cells is outside it: the enclosing `Box` carries two `scrollable`s driving
+the SAME two scroll states (`treeScroll`, `treeHorizontalScroll`), in the directions `verticalScroll` /
+`horizontalScroll` themselves use. Over a cell the column takes the wheel first, so nothing scrolls twice.
+Never make the column `fillMaxSize` to get this: that stretches every row. One rule, so all three drawings of
+the tree (the tree window, "All tasks", the default sub-tree) have it.
+
 ### Find & replace (Ctrl+F)
 
 → PRD §4. `TaskTreeSearch` is the whole of it; the bar (`ui/TaskTreeFindBar.kt`) is Compose-only state, like
