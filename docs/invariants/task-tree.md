@@ -601,6 +601,9 @@ to the task id. Do not add a second row implementation: the flat one this replac
   window (`AlarmWindowSubject`) or the Reminders window (`subject`, `REMINDER_EDIT_FRAME_ID`) showing that row
   alone, never a second editor. The Reminders window re-seeds from the list whenever it is not the one it
   last pushed (the Alarms window's rule), which is what lets it stand beside another Reminders window.
+  **Its subject is the window's own state**: the "+ New …" button at the bottom adds an element of the same
+  kind through the list window's own add (`addAlarm` / `addTimer` / `newRow`) and moves the window on to it;
+  so the window, not `App`, closes itself when the element it shows is gone.
 - **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
   have their own window and a counter), and the Configuration Search window's never touches the Search
   window's configuration it lists.

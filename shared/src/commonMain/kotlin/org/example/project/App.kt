@@ -2780,23 +2780,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     // PRD §7 Search: the per-object window of one alarm or one timer. One slot, like the
                     // category's; it closes itself when the row is gone (its own bin, a peer, an undo).
+                    // No existence check here: the window moves on to an element its "+ New" button made, and closes
+                    // itself once the element it shows is gone — one rule, in one place (AlarmWindow).
                     DuplicableWindows(editAlarmOrTimer, closeOriginal = { editAlarmOrTimer = null }) { subject, close ->
-                        val exists =
-                            if (subject.isAlarm) schedulerState.alarms.any { it.id == subject.id }
-                            else schedulerState.timers.any { it.id == subject.id }
-                        if (!exists) {
-                            close()
-                        } else {
-                            TransientPopupLayer(windowInstanceId(AlarmWindowSubject.FRAME_ID)) {
-                                // Keyed on the subject: asking for another alarm REPLACES the window, and
-                                // its local copy of the rows must not carry over.
-                                key(subject) {
-                                    AccountAlarmWindow(
-                                        subject = subject,
-                                        onDismiss = { close() },
-                                        modifier = Modifier.align(Alignment.Center),
-                                    )
-                                }
+                        TransientPopupLayer(windowInstanceId(AlarmWindowSubject.FRAME_ID)) {
+                            // Keyed on the subject: asking for another alarm REPLACES the window, and its local
+                            // copy of the rows must not carry over.
+                            key(subject) {
+                                AccountAlarmWindow(
+                                    subject = subject,
+                                    onDismiss = { close() },
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
                             }
                         }
                     }

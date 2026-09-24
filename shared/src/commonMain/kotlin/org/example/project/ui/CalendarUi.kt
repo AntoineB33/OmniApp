@@ -1909,6 +1909,19 @@ fun ChoresManagerWindow(
             }
             // Trailing single plus: append a new row at the end of the list.
             if (subject == null) TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
+            // The single reminder's window: a new reminder at the bottom — and the window moves on to it, the one
+            // the user means to set up now (the Alarms window's "+ New" rule).
+            if (subject != null) {
+                TextButton(
+                    onClick = {
+                        val row = newRow()
+                        rows.add(row)
+                        subjectId = row.id
+                        // push() carries subjectId along if the new row resolves to another reminder's id.
+                        push()
+                    },
+                ) { Text("+ New reminder") }
+            }
         }
     }
 

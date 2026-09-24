@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -151,6 +152,9 @@ fun AlarmWindow(
     subject: AlarmWindowSubject? = null,
 ) {
     val frame = rememberWindowFrameState(subject?.frameId ?: "Alarms", initialOffset, initialSize)
+    // The alarm or timer the window shows now: [subject] to begin with, and the one its "+ New" button makes
+    // after that — the window moves on to the element just created, which is the one the user means to set up.
+    var shown by remember { mutableStateOf(subject) }
     // Per-row editable text for the parsed fields, so an in-progress "7:" / "" isn't reformatted on each
     // keystroke. Seeded from the incoming alarms; live edits drive both this and the pushed list.
     val rows = remember { mutableStateListOf<AlarmRow>().apply { addAll(alarms.map(::alarmRowOf)) } }
@@ -277,8 +281,35 @@ fun AlarmWindow(
         onTimersChange(entries, editKey)
     }
 
+    /** Adds an alarm row, pushes it, and returns its id — the list's "+ Add alarm" and "+ New alarm". */
+    fun addAlarm(): String {
+        // A locally-unique id right away, so the row has an identity before the round-trip through onChange
+        // (the reducer mints one for a blank id too).
+        val id = AlarmDomain.mintAlarmId(rows.map { it.id })
+        rows.add(AlarmRow(id = id, timeText = formatAlarmTime(newRowTimeOfDayMinutes())))
+        push()
+        return id
+    }
+
+    /** Adds a timer row, pushes it, and returns its id — the list's "+ Add timer" and "+ New timer". */
+    fun addTimer(): String {
+        val id = TimerDomain.mintTimerId(timerRows.map { it.id })
+        timerRows.add(TimerRow(id = id))
+        pushTimers()
+        return id
+    }
+
+    // A single element's window whose row is gone (its own bin, another window, an undo, a peer) closes — the
+    // window's own rule, as the Reminders window has it, so it holds whichever element [shown] names now.
+    val latestDismiss by rememberUpdatedState(onDismiss)
+    val shownGone =
+        shown?.let { current ->
+            if (current.isAlarm) rows.none { it.id == current.id } else timerRows.none { it.id == current.id }
+        } == true
+    LaunchedEffect(shownGone) { if (shownGone) latestDismiss() }
+
     AppWindowFrame(
-        title = subject?.title ?: "Alarms",
+        title = shown?.title ?: "Alarms",
         state = frame,
         onClose = onDismiss,
         defaultWidth = 440.dp,
@@ -317,8 +348,8 @@ fun AlarmWindow(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (subject == null) SectionHeader("Alarms")
-            if (subject == null && rows.isEmpty()) {
+            if (shown == null) SectionHeader("Alarms")
+            if (shown == null && rows.isEmpty()) {
                 Text(
                     text = "No alarm yet.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -326,7 +357,7 @@ fun AlarmWindow(
                 )
             }
             rows.forEachIndexed { index, row ->
-                if (subject != null && (!subject.isAlarm || subject.id != row.id)) return@forEachIndexed
+                if (shown?.let { !it.isAlarm || it.id != row.id } == true) return@forEachIndexed
                 AlarmRowEditor(
                     row = row,
                     onRowChange = { updated, field ->
@@ -339,29 +370,19 @@ fun AlarmWindow(
                     },
                     onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
                 )
-                if (subject == null && index != rows.lastIndex) {
+                if (shown == null && index != rows.lastIndex) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 }
             }
 
-            if (subject == null) {
+            if (shown == null) {
                 Text(
                     text = "+ Add alarm",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .clickable {
-                            rows.add(
-                                AlarmRow(
-                                    // A locally-unique id right away, so the row has an identity before the
-                                    // round-trip through onChange (the reducer mints one for a blank id too).
-                                    id = AlarmDomain.mintAlarmId(rows.map { it.id }),
-                                    timeText = formatAlarmTime(newRowTimeOfDayMinutes()),
-                                ),
-                            )
-                            push()
-                        }
+                        .clickable { addAlarm() }
                         .padding(vertical = 4.dp, horizontal = 2.dp),
                 )
                 Text(
@@ -375,7 +396,7 @@ fun AlarmWindow(
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 SectionHeader("Timers")
             }
-            if (subject == null && timerRows.isEmpty()) {
+            if (shown == null && timerRows.isEmpty()) {
                 Text(
                     text = "No timer yet.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -383,7 +404,7 @@ fun AlarmWindow(
                 )
             }
             timerRows.forEachIndexed { index, row ->
-                if (subject != null && (subject.isAlarm || subject.id != row.id)) return@forEachIndexed
+                if (shown?.let { it.isAlarm || it.id != row.id } == true) return@forEachIndexed
                 TimerRowEditor(
                     row = row,
                     // The live entry, which is where the run state lives; null only for the instant
@@ -403,32 +424,27 @@ fun AlarmWindow(
                     onNudge = { onNudgeTimerRemaining(row.id, it) },
                     // The timer's own window (PRD §7 Search) moves the time by the fields' right-click menu
                     // alone, and reads the run in reverse beside the countdown.
-                    nudgeButtons = subject == null,
-                    showElapsed = subject != null,
+                    nudgeButtons = shown == null,
+                    showElapsed = shown != null,
                     onRemove = {
                         timerRows.removeAt(index)
                         pushTimers()
                     },
                     onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
                 )
-                if (subject == null && index != timerRows.lastIndex) {
+                if (shown == null && index != timerRows.lastIndex) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 }
             }
 
-            if (subject == null) {
+            if (shown == null) {
                 Text(
                     text = "+ Add timer",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .clickable {
-                            timerRows.add(
-                                TimerRow(id = TimerDomain.mintTimerId(timerRows.map { it.id })),
-                            )
-                            pushTimers()
-                        }
+                        .clickable { addTimer() }
                         .padding(vertical = 4.dp, horizontal = 2.dp),
                 )
                 Text(
@@ -436,6 +452,23 @@ fun AlarmWindow(
                         "when it ends.",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // The single element's window: a new one of the same kind, at the bottom — and the window moves on
+            // to it (the list window has its "+ Add" links above instead).
+            shown?.let { current ->
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                Text(
+                    text = if (current.isAlarm) "+ New alarm" else "+ New timer",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                            val id = if (current.isAlarm) addAlarm() else addTimer()
+                            shown = AlarmWindowSubject(id, isAlarm = current.isAlarm)
+                        }
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
                 )
             }
         }
