@@ -2,7 +2,6 @@ package org.example.project.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -263,7 +262,7 @@ fun SearchWindow(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(4.dp))
                             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                            .clickable { kindMenuOpen = true }
+                            .menuToggleClickable(kindMenuOpen) { kindMenuOpen = it }
                             .padding(horizontal = 10.dp, vertical = 14.dp),
                     )
                     transientMenuDismissal(kindMenuOpen) { kindMenuOpen = false }
@@ -528,7 +527,7 @@ private fun TaskPathBox(result: SearchDomain.TaskResult) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
                         .fillMaxHeight()
-                        .clickable { listOpen = !listOpen }
+                        .menuToggleClickable(listOpen) { listOpen = it }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
                 transientMenuDismissal(listOpen) { listOpen = false }

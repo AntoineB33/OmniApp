@@ -1,5 +1,6 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -124,6 +125,34 @@ fun transientMenuDismissal(open: Boolean, onDismiss: () -> Unit) {
         if (open) host?.open(key) { latestDismiss() }
         onDispose { host?.close(key) }
     }
+}
+
+/**
+ * The press handler of the field a **drop-down hangs from**: a click opens the menu, and a click while it is
+ * open closes it. A plain `clickable { open = true }` cannot say the second half — the field is outside the
+ * menu, so [transientMenuDismissRoot] has already closed it on the press (Initial pass, ancestor first), and
+ * the click then opens it straight back. So the field reads whether the menu was open **as last composed**
+ * when the press lands, which the root's dismissal cannot have changed yet, and the click honours that.
+ */
+@Composable
+fun Modifier.menuToggleClickable(open: Boolean, onOpenChange: (Boolean) -> Unit): Modifier {
+    val composedOpen by rememberUpdatedState(open)
+    val openAtPress = remember { booleanArrayOf(false) }
+    return this
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.type == PointerEventType.Press) openAtPress[0] = composedOpen
+                }
+            }
+        }
+        .clickable {
+            // `open` too, for a click that is not a press (the keyboard's), which no dismissal preceded.
+            val wasOpen = openAtPress[0] || open
+            openAtPress[0] = false
+            onOpenChange(!wasOpen)
+        }
 }
 
 /**

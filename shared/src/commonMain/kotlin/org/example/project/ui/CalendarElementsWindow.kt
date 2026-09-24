@@ -1,7 +1,6 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -186,7 +185,7 @@ fun CalendarElementsWindow(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
                                 .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
-                                .clickable { kindMenuOpen = true }
+                                .menuToggleClickable(kindMenuOpen) { kindMenuOpen = it }
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
                             text = kind.label + "  ▾",
                             style = MaterialTheme.typography.bodySmall,

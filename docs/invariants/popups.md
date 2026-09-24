@@ -140,6 +140,10 @@ means.
   is selected in the same gesture. **Wherever a menu is given `focusable = false`, the
   `transientMenuDismissal` registration must come with it** — a non-focusable menu nobody registered never
   closes at all.
+- **The field a drop-down hangs from toggles it** (`Modifier.menuToggleClickable`): a click while the menu is
+  open closes it. A plain `clickable { open = true }` reopens it instead, because the root observer has
+  already closed it on the press and the click lands after; the field reads the menu's state as last
+  composed at the press. Every drop-down field uses it, never a hand-rolled toggle.
 - Registering the menu also makes the tree deaf while it is up, which is why the edited cell hands its caret
   back for as long as a menu stands over it (`task-tree.md`, *The selection and Edit Mode belong to the
   TREE*).
