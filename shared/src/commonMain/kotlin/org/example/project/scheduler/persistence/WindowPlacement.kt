@@ -5,9 +5,13 @@ package org.example.project.scheduler.persistence
  * persisted **locally only**. This is intentionally separate from [PersistedSnapshot]/[SchedulerState]:
  * window placement must never sync across devices and never produce an Undo/Redo History Unit.
  *
- * [x]/[y] are the window's drag offset (in px) from its centered resting position. [width]/[height] of 0
- * mean "use the window's intrinsic size" — most windows are fixed-size today, so the size columns exist
- * for forward-compatibility with resizable windows rather than being actively varied.
+ * [x]/[y] are the window's drag offset (in px) from its centered resting position, and [width]/[height] its
+ * size; 0 means "use the window's default size". Both are the window's NORMAL geometry — what it has with no
+ * axis filled — which is what un-filling it goes back to.
+ *
+ * [fillWidth]/[fillHeight] (both = maximized) and [minimized] (reduced to the bar along the bottom of the app)
+ * are the window's chrome state, so a window comes back the way it was left. [config] is the window's OWN
+ * configuration, serialized by that window's owner (the Search window's query and kinds), or null.
  */
 data class WindowPlacement(
     val x: Float,
@@ -15,6 +19,10 @@ data class WindowPlacement(
     val width: Float = 0f,
     val height: Float = 0f,
     val visible: Boolean,
+    val fillWidth: Boolean = false,
+    val fillHeight: Boolean = false,
+    val minimized: Boolean = false,
+    val config: String? = null,
 )
 
 /**

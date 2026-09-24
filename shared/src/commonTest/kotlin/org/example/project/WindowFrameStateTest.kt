@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.example.project.ui.WindowChrome
 import org.example.project.ui.WindowFill
 import org.example.project.ui.WindowFrameState
 
@@ -248,5 +249,36 @@ class WindowFrameStateTest {
         s.setFillHeight(true)
         s.clampVertical(containerHeight = 800f, windowHeight = 300f, headHeight = 36f)
         assertEquals(-10_000f, s.offset.y)
+    }
+
+    // ----- coming back as it was left (WindowChromeMemory) ----------------------------------------------
+
+    @Test
+    fun `a window left full width comes back full width and un-fills to its normal geometry`() {
+        // What the placement row keeps: the NORMAL geometry, and the chrome state on top of it.
+        val s =
+            WindowFrameState(
+                "test", Offset(40f, -25f), Size(400f, 300f),
+                initialChrome = WindowChrome(WindowFill.Width, minimized = false),
+            )
+        assertEquals(WindowFill.Width, s.fill)
+        assertEquals(Offset(0f, -25f), s.appliedOffset, "the filled axis is pinned to the container")
+        s.setFillWidth(false)
+        assertEquals(Offset(40f, -25f), s.appliedOffset)
+        assertEquals(Size(400f, 300f), s.size)
+    }
+
+    @Test
+    fun `a window left reduced comes back reduced and restores as it was`() {
+        val s =
+            WindowFrameState(
+                "test", Offset.Zero, Size(400f, 300f),
+                initialChrome = WindowChrome(WindowFill.Both, minimized = true),
+            )
+        assertTrue(s.minimized)
+        assertTrue(s.maximized)
+        s.restore()
+        assertFalse(s.minimized)
+        assertEquals(WindowChrome(WindowFill.Both, minimized = false), s.chrome)
     }
 }

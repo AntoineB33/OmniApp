@@ -575,7 +575,9 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The title prevails over the path** (`TaskResultRowLayout`): the title is measured first against
   everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
   this — it measures unweighted children first, which is the opposite priority.
-- **The query, the kind and the selection are Compose-only**, like the "All tasks" sorter.
+- **The query and the checked kinds are local-only view state** (`SearchDomain.Config`, kept by `App` on the
+  window's placement row — `popups.md`): the window reopens with them after a close and a restart, and they
+  never sync. The selection is Compose-only, like the "All tasks" sorter.
 
 ### The default sub-tree
 

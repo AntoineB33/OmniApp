@@ -60,6 +60,7 @@ import org.example.project.scheduler.persistence.DeviceSleepGapStore
 import org.example.project.scheduler.persistence.DeclaredAwayStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
 import org.example.project.scheduler.persistence.SyncMetaStore
+import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.WindowPlacementStore
 import org.example.project.scheduler.debug.TimeLink
@@ -147,7 +148,11 @@ import org.example.project.perf.Perf
 import org.example.project.ui.PerfOverlay
 import org.example.project.ui.TimeSimPanel
 import org.example.project.ui.LocalTransientMenuHost
+import org.example.project.ui.LocalWindowChromeMemory
 import org.example.project.ui.LocalWindowFrameHost
+import org.example.project.ui.WindowChrome
+import org.example.project.ui.WindowChromeMemory
+import org.example.project.ui.WindowFill
 import org.example.project.ui.MINIMIZED_BAR_HEIGHT
 import org.example.project.ui.MinimizedWindowBar
 import org.example.project.ui.TransientMenuHost
@@ -267,17 +272,56 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun savedSize(id: FloatingWindow): Size =
             initialPlacements[id.name]?.let { Size(it.width, it.height) } ?: Size.Zero
         fun savedVisible(id: FloatingWindow): Boolean = initialPlacements[id.name]?.visible == true
+        // Every window's row as last written, so a write about ONE thing (the geometry, the chrome state, the
+        // Search window's configuration) keeps the others: the store's upsert replaces the whole row. The one
+        // funnel every placement write goes through. Plain, not Compose state — nothing is drawn from it.
+        val placements = remember(placementStore) { initialPlacements.toMutableMap() }
+        fun updatePlacement(id: FloatingWindow, change: (WindowPlacement) -> WindowPlacement) {
+            val previous = placements[id.name] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
+            val next = change(previous)
+            if (next == previous && id.name in placements) return
+            placements[id.name] = next
+            placementStore?.savePlacement(id.name, next)
+        }
         fun persistPlacement(id: FloatingWindow, offset: Offset, size: Size, visible: Boolean) =
-            placementStore?.savePlacement(
-                id.name,
-                WindowPlacement(
+            updatePlacement(id) {
+                it.copy(
                     x = offset.x,
                     y = offset.y,
                     width = size.width,
                     height = size.height,
                     visible = visible,
-                ),
-            )
+                    // A CLOSED window is not reduced: opening it again from the lateral menu shows it. Its
+                    // filled axes are kept — the window reopens full width if it was left full width.
+                    minimized = it.minimized && visible,
+                )
+            }
+        // The lateral-menu windows come back filled and reduced as they were left, across a close and a
+        // restart (popups.md, *Geometry is local-only view state*). A per-object window is not one of them.
+        val windowChromeMemory =
+            remember(placements) {
+                object : WindowChromeMemory {
+                    private fun windowOf(id: String) = FloatingWindow.entries.firstOrNull { it.name == id }
+
+                    override fun saved(id: String): WindowChrome? =
+                        windowOf(id)?.let { window ->
+                            placements[window.name]?.let {
+                                WindowChrome(WindowFill.of(it.fillWidth, it.fillHeight), it.minimized)
+                            }
+                        }
+
+                    override fun save(id: String, chrome: WindowChrome) {
+                        val window = windowOf(id) ?: return
+                        updatePlacement(window) {
+                            it.copy(
+                                fillWidth = chrome.fill.fillsWidth,
+                                fillHeight = chrome.fill.fillsHeight,
+                                minimized = chrome.minimized,
+                            )
+                        }
+                    }
+                }
+            }
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
         // so a change made within the debounce window survives a normal close.
@@ -585,6 +629,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7 Search: whether the search window is open (local UI state; its query, kind and selection are
         // Compose-only, inside the window).
         var searchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Search)) }
+        // PRD §7 Search: the query and the checked kinds, kept here rather than in the window so they outlive
+        // it — and on this device's placement row, so they outlive the app. Local-only view state.
+        var searchConfig by remember {
+            mutableStateOf(
+                SearchDomain.Config.decode(initialPlacements[FloatingWindow.Search.name]?.config)
+                    ?: SearchDomain.Config(),
+            )
+        }
         // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
         // list is ordered on screen is a way of looking at the tree, not a fact about it — so it is never
         // persisted, never synced, and records no history unit.
@@ -1653,6 +1705,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         CompositionLocalProvider(
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,
+            LocalWindowChromeMemory provides windowChromeMemory,
             // The period edit window's companions + drawings, for everything that draws a period.
             LocalPeriodKindConfig provides schedulerState.periodKindConfig,
         ) {
@@ -2742,6 +2795,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 focusWindow(FloatingWindow.Reminders)
                             },
                             onDismiss = { searchWindowOpen = false },
+                            initialConfig = searchConfig,
+                            onConfigChange = { config ->
+                                searchConfig = config
+                                updatePlacement(FloatingWindow.Search) { it.copy(config = config.encode()) }
+                            },
                             initialOffset = searchOffset,
                             initialSize = searchSize,
                             onGeometryChange = { windowOffset, windowSize ->

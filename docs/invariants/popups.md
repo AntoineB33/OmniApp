@@ -104,8 +104,19 @@ means.
 - The **position and size** of a lateral-menu window persist locally (`WindowPlacement`: `x`, `y`, `width`,
   `height`, `visible`) and are **never synced** — `CLAUDE.md`'s local-only view state, unchanged. They are
   written at the END of a move or resize gesture (`onGeometryChange`), never mid-drag.
-- **Reduced / filled / maximized are session-scoped**: not persisted, deliberately, so no schema migration
-  rides on a window chrome change. A window comes back where and at what size it was left, un-reduced.
+- **Reduced / filled / maximized persist too, locally** (`fill_width`, `fill_height`, `minimized` on the same
+  row — 14.sqm, 2026-09-24; they were session-scoped before). A lateral-menu window comes back as it was left —
+  full width, full height, full size, reduced to the bar — after a close and after a restart. The frame reads
+  it on creation and writes every change (`WindowChromeMemory`, provided by `App`); nothing else touches it.
+  The row keeps the NORMAL geometry, so un-filling a restored window goes back to it.
+- **A CLOSED window is not reduced**: closing one clears its `minimized`, so opening it from the lateral menu
+  shows it. Its filled axes are kept.
+- **Every write goes through `App.updatePlacement`**, which keeps the columns it is not changing — the store's
+  upsert replaces the whole row, so a geometry write that rebuilt it from scratch would wipe the chrome state
+  and the window's config.
+- **A window may keep its own configuration on its row** (`config`, serialized by the window's owner): the
+  Search window's query and checked kinds (`SearchDomain.Config`), so it reopens with them. Local-only view
+  state like the rest of the row.
 - The windows a per-object pop-up opens (`TaskEdit`, `CategoryEdit`, …) persist nothing at all: they live
   exactly as long as they are on screen.
 

@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window comes back as it was left; Search keeps its configuration — 2026-09-24
+
+User spec: the Search window's configuration *"must be preserved locally"*, restored when the window comes back
+from the bottom bar, from full width / full height / full size, from closed to open, and when the app starts;
+and *"the states full width, full height, full size, in the system tray and the position"* are preserved
+locally too.
+
+- SQLite migration **`14.sqm`**: `window_placement` gains `fill_width`, `fill_height`, `minimized` and
+  `config`. Local-only, never synced. Test: `upgrades_pre_window_chrome_v14_db_and_preserves_placements`.
+- **Reverses** the earlier *"reduced / filled / maximized are session-scoped"* rule for every lateral-menu
+  window, not only Search — one frame, one rule (`WindowChromeMemory`). A closed window is not reduced.
+- The Search window's query and checked kinds (`SearchDomain.Config`) are kept by `App` on the Search row. Being
+  reduced or filled never lost them (a reduced window stays composed); closing and restarting did.
+
 ### A Search window, and a task keeps its last path — 2026-09-23
 
 User spec: a lateral-menu button opening a window with *"a configuration section and a result list section

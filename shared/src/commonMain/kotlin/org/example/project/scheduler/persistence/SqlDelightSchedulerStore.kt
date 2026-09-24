@@ -275,6 +275,10 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                     width = row.width.toFloat(),
                     height = row.height.toFloat(),
                     visible = row.visible != 0L,
+                    fillWidth = row.fill_width != 0L,
+                    fillHeight = row.fill_height != 0L,
+                    minimized = row.minimized != 0L,
+                    config = row.config,
                 )
         }
 
@@ -286,6 +290,10 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             width = placement.width.toDouble(),
             height = placement.height.toDouble(),
             visible = if (placement.visible) 1L else 0L,
+            fill_width = if (placement.fillWidth) 1L else 0L,
+            fill_height = if (placement.fillHeight) 1L else 0L,
+            minimized = if (placement.minimized) 1L else 0L,
+            config = placement.config,
         )
     }
 

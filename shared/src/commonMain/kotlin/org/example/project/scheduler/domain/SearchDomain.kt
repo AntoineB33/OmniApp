@@ -47,6 +47,30 @@ object SearchDomain {
         Reminder("reminder"),
     }
 
+    /**
+     * The window's configuration: what is typed in the bar and which kinds are checked. **Local-only view
+     * state** — kept on this device with the window's placement, so the window comes back as it was left
+     * after a close or a restart, and never synced: how the user is looking for something is not a fact about
+     * the account.
+     */
+    data class Config(val query: String = "", val kinds: Set<Kind> = setOf(Kind.Task)) {
+        /** The first line names the checked kinds, the rest is the query exactly as typed. */
+        fun encode(): String = Kind.entries.filter { it in kinds }.joinToString(",") { it.name } + "\n" + query
+
+        companion object {
+            /**
+             * [encode]'s reverse, or null for nothing stored. A kind this build does not know is dropped
+             * rather than failing the whole configuration, so a config written by a later build still opens.
+             */
+            fun decode(text: String?): Config? {
+                if (text == null) return null
+                val lines = text.split('\n', limit = 2)
+                val kinds = lines[0].split(',').mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }
+                return Config(query = lines.getOrElse(1) { "" }, kinds = kinds.toSet())
+            }
+        }
+    }
+
     const val PATH_SEPARATOR: String = " / "
 
     fun pathLabel(path: List<String>): String = path.joinToString(PATH_SEPARATOR)

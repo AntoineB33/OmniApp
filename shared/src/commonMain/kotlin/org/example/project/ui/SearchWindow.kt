@@ -99,8 +99,10 @@ private const val NOT_IN_TREE_HINT: String =
  * right-click selects it and opens its contextual menu — for a task the §13 menu's entries, with "go to task
  * tree" and "deep copy" greyed where the live tree does not hold the task.
  *
- * The query, the checked kinds and the selection are **Compose-only state**: how the user is looking for something
- * is not a fact about the account. Nothing here writes the state except through the gestures' own intents.
+ * The query and the checked kinds are **local-only view state** ([SearchDomain.Config]): `App` keeps them on this
+ * device, so the window comes back with them after a close or a restart, and never syncs them — how the user is
+ * looking for something is not a fact about the account. The selection is Compose-only. Nothing here writes the
+ * state except through the gestures' own intents.
  */
 @Composable
 fun SearchWindow(
@@ -119,6 +121,10 @@ fun SearchWindow(
     onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
     onOpenReminders: () -> Unit,
     onDismiss: () -> Unit,
+    /** The configuration the window was last left with — local-only view state, kept by `App`. */
+    initialConfig: SearchDomain.Config = SearchDomain.Config(),
+    /** Every change of the query or the checked kinds, for `App` to keep. */
+    onConfigChange: (SearchDomain.Config) -> Unit = {},
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -126,8 +132,10 @@ fun SearchWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState("Search", initialOffset, initialSize)
-    var query by remember { mutableStateOf("") }
-    var kinds by remember { mutableStateOf(setOf(SearchDomain.Kind.Task)) }
+    var query by remember { mutableStateOf(initialConfig.query) }
+    var kinds by remember { mutableStateOf(initialConfig.kinds) }
+    val latestOnConfigChange by rememberUpdatedState(onConfigChange)
+    LaunchedEffect(query, kinds) { latestOnConfigChange(SearchDomain.Config(query, kinds)) }
     var kindMenuOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()

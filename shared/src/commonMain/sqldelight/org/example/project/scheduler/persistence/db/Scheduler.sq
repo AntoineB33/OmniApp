@@ -99,14 +99,19 @@ CREATE TABLE account_sync (
 -- NOT part of `app_state`/PersistedSnapshot: it must never sync across devices and never produce an
 -- Undo/Redo History Unit. One row per managed window, keyed by the `FloatingWindow` enum name. `width`/
 -- `height` of 0 means "use the window's intrinsic size" (most windows are fixed-size today). Added in
--- migration 2.sqm; existing DBs (schema v2) gain it on upgrade.
+-- migration 2.sqm; existing DBs (schema v2) gain it on upgrade. The chrome state (`fill_width`, `fill_height`,
+-- `minimized`) and the window's own `config` were added by 14.sqm.
 CREATE TABLE window_placement (
     window_id TEXT NOT NULL PRIMARY KEY,
     x REAL NOT NULL,
     y REAL NOT NULL,
     width REAL NOT NULL DEFAULT 0,
     height REAL NOT NULL DEFAULT 0,
-    visible INTEGER NOT NULL
+    visible INTEGER NOT NULL,
+    fill_width INTEGER NOT NULL DEFAULT 0,
+    fill_height INTEGER NOT NULL DEFAULT 0,
+    minimized INTEGER NOT NULL DEFAULT 0,
+    config TEXT
 );
 
 -- PRD §15 device-sleep gaps: the exact `[sleep_start, sleep_end]` intervals (epoch millis) a device was
@@ -260,11 +265,11 @@ INSERT OR REPLACE INTO account_sync(account_id, last_known_revision, dirty, ackn
 VALUES (?, ?, ?, ?, ?);
 
 selectAllPlacements:
-SELECT window_id, x, y, width, height, visible FROM window_placement;
+SELECT window_id, x, y, width, height, visible, fill_width, fill_height, minimized, config FROM window_placement;
 
 upsertPlacement:
-INSERT OR REPLACE INTO window_placement(window_id, x, y, width, height, visible)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO window_placement(window_id, x, y, width, height, visible, fill_width, fill_height, minimized, config)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectAllSleepGaps:
 SELECT device_id, sleep_start, sleep_end, recorded_at FROM device_sleep_gap ORDER BY sleep_start;

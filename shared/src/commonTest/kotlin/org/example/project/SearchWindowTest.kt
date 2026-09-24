@@ -350,6 +350,22 @@ class SearchWindowTest {
     }
 
     @Test
+    fun the_configuration_survives_its_local_encoding() {
+        val config = SearchDomain.Config(query = "a, b\nc", kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Task))
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        // Nothing checked is a configuration too, and so is an empty query.
+        val empty = SearchDomain.Config(query = "", kinds = emptySet())
+        assertEquals(empty, SearchDomain.Config.decode(empty.encode()))
+        // Nothing stored: the window's own default.
+        assertEquals(null, SearchDomain.Config.decode(null))
+        // A kind a later build added is dropped, not the whole configuration.
+        assertEquals(
+            SearchDomain.Config(query = "x", kinds = setOf(SearchDomain.Kind.Timer)),
+            SearchDomain.Config.decode("Timer,Wormhole\nx"),
+        )
+    }
+
+    @Test
     fun every_alarm_and_every_timer_has_a_row_when_their_kinds_are_checked() {
         val s =
             SchedulerState.empty().copy(

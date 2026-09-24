@@ -1235,6 +1235,131 @@ class SchedulerStoreTest {
         }
     }
 
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v14 — `window_placement`
+     * with position, size and visibility only) must still load, with 14.sqm adding the chrome-state and config
+     * columns on open: the existing placement kept, not filled, not reduced, no config — and the new columns
+     * usable at once.
+     */
+    @Test
+    fun upgrades_pre_window_chrome_v14_db_and_preserves_placements() {
+        val dbFile = File.createTempFile("scheduler-v14", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            // The v14 shape, exactly as 13.sqm left it.
+            raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "seq INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
+                    "debug_tainted INTEGER NOT NULL, delta_length INTEGER NOT NULL DEFAULT -1, " +
+                    "delta_hash INTEGER, delta TEXT NOT NULL, window TEXT, " +
+                    "PRIMARY KEY (account_id, category, seq))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "acknowledged_logout_at INTEGER, base_payload TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                    "PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "CREATE TABLE device_away_span (start_ms INTEGER NOT NULL PRIMARY KEY, end_ms INTEGER NOT NULL)", 0)
+            raw.execute(null, "INSERT INTO device_away_span(start_ms, end_ms) VALUES (5000, 6000)", 0)
+            raw.execute(null, "CREATE TABLE network_mode (id INTEGER NOT NULL PRIMARY KEY, offline INTEGER NOT NULL)", 0)
+            raw.execute(null, "INSERT INTO network_mode(id, offline) VALUES (0, 1)", 0)
+            raw.execute(
+                null,
+                "INSERT INTO window_placement(window_id, x, y, width, height, visible) " +
+                    "VALUES ('Search', 12.5, -40.0, 520.0, 560.0, 1)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(account_id, payload) VALUES ('user-1', ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(
+                null,
+                "INSERT INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email) " +
+                    "VALUES (0, 'dev-1', 'at', 'rt', 'user-1', 'u1@x.y')",
+                0,
+            )
+            raw.execute(
+                null,
+                "INSERT INTO device_active_session(device_id, start_ms, end_ms, updated_at, kind) " +
+                    "VALUES ('dev-1', 1000, 2000, 9000, 'desktop')",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 14", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload, "the upgrade kept the state")
+            assertEquals(
+                ActiveSessionRecord("dev-1", 1_000, 2_000, 9_000, kind = "desktop"),
+                store.loadActiveSessions().single(),
+                "the upgrade kept the activity history",
+            )
+            assertEquals(true, store.loadOfflineChoice(), "the upgrade kept the offline choice")
+            // The placement is kept, and reads as a window left at its normal size, not reduced, with no config.
+            assertEquals(
+                WindowPlacement(x = 12.5f, y = -40f, width = 520f, height = 560f, visible = true),
+                store.loadPlacements()["Search"],
+            )
+            // The new columns are usable at once.
+            val left =
+                WindowPlacement(
+                    x = 1f, y = 2f, width = 300f, height = 400f, visible = true,
+                    fillWidth = true, fillHeight = false, minimized = true, config = "Task,Alarm\nwake",
+                )
+            store.savePlacement("Search", left)
+            assertEquals(left, store.loadPlacements()["Search"])
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
     @Test
     fun file_backed_db_persists_across_reopen() {
         val dbFile = File.createTempFile("scheduler-test", ".db").also { it.delete() }

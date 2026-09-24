@@ -1,0 +1,12 @@
+-- Schema v14 -> v15: a window's chrome state and its own configuration, kept with its placement.
+--
+-- Added 2026-09-24: the user wants a window to come back as it was left - full width, full height, full size,
+-- reduced to the bottom bar - after a close/reopen and after a restart, and the Search window to come back with
+-- its query and its checked kinds. All of it is LOCAL-ONLY view state (never synced, never a History Unit), so it
+-- rides on window_placement, the table that already keeps each window's position, size and visibility. `config`
+-- is the window's own serialized configuration, NULL for a window that keeps none.
+
+ALTER TABLE window_placement ADD COLUMN fill_width INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE window_placement ADD COLUMN fill_height INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE window_placement ADD COLUMN minimized INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE window_placement ADD COLUMN config TEXT;

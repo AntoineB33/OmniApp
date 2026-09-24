@@ -32,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -142,6 +143,11 @@ class WindowFrameState(
     initialSize: Size = Size.Zero,
     val minWidth: Float = MIN_WINDOW_WIDTH_PX,
     val minHeight: Float = MIN_WINDOW_HEIGHT_PX,
+    /**
+     * The chrome state the window was last left in ([WindowChromeMemory]), or null for none. [initialOffset]
+     * and [initialSize] are then its NORMAL geometry, which is what un-filling an axis goes back to.
+     */
+    initialChrome: WindowChrome? = null,
 ) {
     var offset: Offset by mutableStateOf(initialOffset)
         private set
@@ -149,11 +155,14 @@ class WindowFrameState(
     var size: Size by mutableStateOf(initialSize)
         private set
 
-    var fill: WindowFill by mutableStateOf(WindowFill.None)
+    var fill: WindowFill by mutableStateOf(initialChrome?.fill ?: WindowFill.None)
         private set
 
-    var minimized: Boolean by mutableStateOf(false)
+    var minimized: Boolean by mutableStateOf(initialChrome?.minimized ?: false)
         private set
+
+    /** What [WindowChromeMemory] keeps of this window: its filled axes, and whether it is reduced. */
+    val chrome: WindowChrome get() = WindowChrome(fill, minimized)
 
     private var normalOffset: Offset = initialOffset
     private var normalSize: Size = initialSize
@@ -491,13 +500,34 @@ fun Modifier.windowStackZ(id: String, companion: String? = null): Modifier {
 /**
  * The frame's state, remembered for as long as the window is composed. [id] must be unique among the
  * windows that can be open at once — it is the key the reduce bar and the focus answer are kept under.
+ * A window [WindowChromeMemory] knows comes back filled and reduced as it was left.
  */
 @Composable
 fun rememberWindowFrameState(
     id: String,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
-): WindowFrameState = remember(id) { WindowFrameState(id, initialOffset, initialSize) }
+): WindowFrameState {
+    val memory = LocalWindowChromeMemory.current
+    return remember(id) { WindowFrameState(id, initialOffset, initialSize, initialChrome = memory?.saved(id)) }
+}
+
+/** A window's chrome state: which axes it fills (both = maximized), and whether it is reduced to the bar. */
+data class WindowChrome(val fill: WindowFill, val minimized: Boolean)
+
+/**
+ * Where a window's [WindowChrome] is kept LOCALLY between one opening and the next, and across restarts —
+ * local-only view state, never synced (`docs/invariants/popups.md`). `App` provides it for the lateral-menu
+ * windows, whose placement it already persists; a window it does not know (a per-object window) gets null
+ * from [saved] and has [save] ignored, so it opens at its normal size, as it always did.
+ */
+interface WindowChromeMemory {
+    fun saved(id: String): WindowChrome?
+
+    fun save(id: String, chrome: WindowChrome)
+}
+
+val LocalWindowChromeMemory = staticCompositionLocalOf<WindowChromeMemory?> { null }
 
 /** Height reserved for [MinimizedWindowBar]; `App` insets the content area by it while it has rows. */
 val MINIMIZED_BAR_HEIGHT: Dp = 38.dp
@@ -554,6 +584,10 @@ fun AppWindowFrame(
         onDispose { host?.unregister(state.id) }
     }
     SideEffect { host?.retitle(state.id, title) }
+    // Every change of the chrome state is kept at once — the buttons, the head's double-click, the reduce
+    // bar's chip — so the window comes back as it was left, whatever closes it or the app.
+    val chromeMemory = LocalWindowChromeMemory.current
+    LaunchedEffect(chromeMemory, state, state.fill, state.minimized) { chromeMemory?.save(state.id, state.chrome) }
 
     // The head's measured height, for the clamp that keeps it reachable. Written from the layout phase and
     // read from another layout pass, so deliberately not Compose state — nothing should recompose on it.
