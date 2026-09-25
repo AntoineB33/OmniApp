@@ -4,7 +4,6 @@ const NOM_FEUILLE_ARBRE = "task tree";
 const LIGNE_DEBUT_VERIFICATION = 4;
 
 // Définition centralisée des couleurs
-const COULEUR_BLEU = "#4a86e8";
 const COULEUR_ROUGE = "#ff0000";
 const COULEUR_VERT = "#00ff00";
 
@@ -196,10 +195,7 @@ function remplacerIdParChemin(returnContext) {
         if (cheminsExistants.has(cheminEvalue)) {
           couleursA[i][0] = COULEUR_VERT; 
         } else {
-          if (couleursA[i][0] !== COULEUR_BLEU) {
-            couleursA[i][0] = null; 
-          }
-          
+          couleursA[i][0] = null; // Nettoyage de la couleur
           cheminsExistants.add(cheminEvalue);
           
           var valC = parseFloat(valeursC[i][0]);
@@ -214,9 +210,7 @@ function remplacerIdParChemin(returnContext) {
         couleursA[i][0] = COULEUR_ROUGE; 
       }
     } else {
-      if (couleursA[i][0] !== COULEUR_BLEU) {
-        couleursA[i][0] = null;
-      }
+      couleursA[i][0] = null; // Nettoyage de la couleur
     }
   }
   
@@ -283,10 +277,10 @@ function ajouterNoeudMax() {
     if (ligneExistante === -1) {
       feuilleTraitement.insertRowBefore(LIGNE_DEBUT_VERIFICATION);
       
-      // CORRECTION : On s'assure d'écraser la couleur rouge héritée lors de l'insertion
+      // On s'assure d'écraser la couleur rouge héritée lors de l'insertion
       feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1)
         .setValue(meilleurChemin)
-        .setBackground(COULEUR_BLEU); // On force le bleu pour le nouveau noeud
+        .setBackground(null); // On nettoie le fond
         
       feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 2)
         .setFormula("=" + nomFeuilleEchappe + "!" + meilleureRef)
@@ -309,21 +303,11 @@ function ajouterNoeudMax() {
     if (newLastRow >= LIGNE_DEBUT_VERIFICATION) {
       // 3. NETTOYAGE ET PREPARATION DU TRI
       var rangeA = feuilleTraitement.getRange(LIGNE_DEBUT_VERIFICATION, 1, newLastRow - LIGNE_DEBUT_VERIFICATION + 1, 1);
-      var bgs = rangeA.getBackgrounds();
       var valsA = rangeA.getValues();
-      var changedBg = false;
       
       var helperValues = []; // Valeurs pour la colonne de tri temporaire
       
-      for (var k = 0; k < bgs.length; k++) {
-        var estNouveauNoeud = (ligneExistante === -1 && k === 0);
-        
-        // CORRECTION : Nettoyage de l'ancienne couleur bleue, SAUF pour le nouveau noeud fraîchement ajouté
-        if (bgs[k][0] === COULEUR_BLEU && !estNouveauNoeud) {
-          bgs[k][0] = null;
-          changedBg = true;
-        }
-        
+      for (var k = 0; k < valsA.length; k++) {
         // Détermination de la validité
         var valA = valsA[k][0].toString().trim();
         if (valA === "") {
@@ -333,10 +317,6 @@ function ajouterNoeudMax() {
         } else {
           helperValues.push([1]); // Lignes invalides (rouges) -> après les valides
         }
-      }
-      
-      if (changedBg) {
-        rangeA.setBackgrounds(bgs);
       }
       
       // 4. TRI MULTI-CRITÈRES AVEC COLONNE TEMPORAIRE
