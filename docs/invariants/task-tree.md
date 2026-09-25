@@ -608,7 +608,9 @@ to the task id. Do not add a second row implementation: the flat one this replac
   chord. Opening one opens the window that owns it.
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
-  results", `SearchDomain.kindsInResults`), local-only like the rest. The General section is never cut by kind.
+  results", `SearchDomain.kindsInResults`, and "show the filters that are on", which keeps a filter that is on listed
+  where that cut would drop its type), local-only like the rest. The General section is never cut by kind. "On" is
+  `Filters.isOn`, the one statement the Search window's filter count reads too.
 - **A task row IS the tree's cell code** (`SearchTaskRow` → `TaskRow`, with two slots the tree leaves empty:
   `rowLeading` for the kind, `afterTitle` for the path box). **The title prevails over the path box**
   (`TitleThenSection`): the title takes what it needs, the path box the rest down to `afterTitleMinWidth` — a

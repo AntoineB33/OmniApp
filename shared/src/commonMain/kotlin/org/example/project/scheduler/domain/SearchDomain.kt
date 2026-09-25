@@ -191,11 +191,19 @@ object SearchDomain {
          * (`Search`) or a copy's (`Search#2`): the one whose button opened it last.
          */
         val target: String = "Search",
+        /**
+         * Keep the filters that are ON listed even where [onlyResultKinds] would drop their type: a filter that
+         * empties its own type out of the results would otherwise vanish the moment it is set, taking with it
+         * the one control that turns it back off.
+         */
+        val showFiltersOn: Boolean = false,
     ) {
         fun encode(): String =
             configJson.encodeToString(
                 StoredConfigurationSearch.serializer(),
-                StoredConfigurationSearch(query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target),
+                StoredConfigurationSearch(
+                    query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target, showFiltersOn,
+                ),
             )
 
         companion object {
@@ -209,6 +217,7 @@ object SearchDomain {
                     stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet(),
                     stored.onlyResultKinds,
                     stored.target,
+                    stored.showFiltersOn,
                 )
             }
         }
@@ -257,14 +266,32 @@ object SearchDomain {
     ) {
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
-            get() = listOf(
-                taskInTree != Tri.Any, taskCategory != null, categoryHasRules != Tri.Any,
-                periodOrigin != PeriodOrigin.Any, alarmState != AlarmState.Any, alarmDays.isNotEmpty(),
-                timerState != TimerState.Any, reminderRepeats != ReminderRepeats.Any,
-                historyCategory != null, historyWindow != null, historyUndone != Tri.Any,
-                taskTreeOpen != Tri.Any, taskTreeDated != Tri.Any, relationSection != null,
-                shortcutRebound != Tri.Any,
-            ).count { it }
+            get() = Setting.entries.count { isOn(it) }
+
+        /**
+         * Whether [setting] is a filter set to something other than "any" — the one statement of it, read by the
+         * count above and by the Configuration Search window's "filters that are on". A setting that is not a
+         * filter (the search text, the types, a Sort by) is never on.
+         */
+        fun isOn(setting: Setting): Boolean =
+            when (setting) {
+                Setting.TaskInTree -> taskInTree != Tri.Any
+                Setting.TaskCategory -> taskCategory != null
+                Setting.CategoryHasRules -> categoryHasRules != Tri.Any
+                Setting.PeriodOriginSetting -> periodOrigin != PeriodOrigin.Any
+                Setting.AlarmStateSetting -> alarmState != AlarmState.Any
+                Setting.AlarmDays -> alarmDays.isNotEmpty()
+                Setting.TimerStateSetting -> timerState != TimerState.Any
+                Setting.ReminderRepeatsSetting -> reminderRepeats != ReminderRepeats.Any
+                Setting.HistoryCategorySetting -> historyCategory != null
+                Setting.HistoryWindowSetting -> historyWindow != null
+                Setting.HistoryUndoneSetting -> historyUndone != Tri.Any
+                Setting.TaskTreeOpenSetting -> taskTreeOpen != Tri.Any
+                Setting.TaskTreeDatedSetting -> taskTreeDated != Tri.Any
+                Setting.RelationSectionSetting -> relationSection != null
+                Setting.ShortcutReboundSetting -> shortcutRebound != Tri.Any
+                else -> false
+            }
     }
 
     /**
@@ -382,19 +409,26 @@ object SearchDomain {
      * What the Configuration Search window lists, section by section: the general settings first, then one
      * section per kind in the drop-down's order, each holding the settings whose label contains [query]. A kind
      * outside [kinds] has no section, and neither has one outside [onlyKinds] when that is given (the "only
-     * the kinds of the Search window's results" button). The general section is about the whole search, so it
-     * is never cut by kind. An empty section is dropped.
+     * the kinds of the Search window's results" button) — except, when [filtersOn] is given (the "filters that
+     * are on" button), for the filters of that kind that are on: those stay listed, alone in their section, so
+     * the filter that emptied its own type out of the results can still be turned back off. The general section
+     * is about the whole search, so it is never cut by kind. An empty section is dropped.
      */
-    fun configurations(query: String, kinds: Set<Kind>, onlyKinds: Set<Kind>? = null): List<Pair<Kind?, List<Setting>>> {
-        val sections = listOf<Kind?>(null) + Kind.entries.filter { it in kinds && (onlyKinds == null || it in onlyKinds) }
-        return sections.mapNotNull { section ->
+    fun configurations(
+        query: String,
+        kinds: Set<Kind>,
+        onlyKinds: Set<Kind>? = null,
+        filtersOn: Filters? = null,
+    ): List<Pair<Kind?, List<Setting>>> =
+        (listOf<Kind?>(null) + Kind.entries.filter { it in kinds }).mapNotNull { section ->
+            val cut = section != null && onlyKinds != null && section !in onlyKinds
             // The kind's settings first, its order last: what is kept, then how it is laid out.
             val settings = Setting.entries
                 .filter { it.section == section && matchRank(it.label, query) != null }
+                .filter { !cut || filtersOn?.isOn(it) == true }
                 .sortedBy { it.sorts }
             if (settings.isEmpty()) null else section to settings
         }
-    }
 
     /** The kinds that have at least one row in the Search window's results for [config]. */
     fun kindsInResults(state: SchedulerState, config: Config): Set<Kind> =
@@ -441,6 +475,8 @@ object SearchDomain {
         val kinds: List<String> = Kind.entries.map { it.name },
         val onlyResultKinds: Boolean = false,
         val target: String = "Search",
+        /** New 2026-09-25: absent from what an older build stored, which reads as off. */
+        val showFiltersOn: Boolean = false,
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }

@@ -601,6 +601,39 @@ class SearchWindowTest {
     }
 
     @Test
+    fun a_filter_that_empties_its_own_type_stays_listed_while_the_filters_that_are_on_are_shown() {
+        // The case the button is for: "only the types in the Search results" is on, and the user sets the alarms'
+        // State to "off" — no alarm is off, so the alarms leave the results, and their section with them.
+        val s = SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = "a1", label = "Wake", timeOfDayMinutes = 60)))
+        val config =
+            SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Alarm), filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
+        val resultKinds = SearchDomain.kindsInResults(s, config)
+        assertEquals(emptySet(), resultKinds)
+        val every = SearchDomain.Kind.entries.toSet()
+        assertEquals(listOf<SearchDomain.Kind?>(null), SearchDomain.configurations("", every, resultKinds).map { it.first })
+        // With the button: the filter that is on is back, alone in its section — the ones left at "any" are not.
+        assertEquals(
+            listOf(SearchDomain.Kind.Alarm to listOf(SearchDomain.Setting.AlarmStateSetting)),
+            SearchDomain.configurations("", every, resultKinds, config.filters).drop(1),
+        )
+        // A type the results do hold keeps its whole section either way, and the name search still applies.
+        assertEquals(
+            SearchDomain.configurations("", every, every),
+            SearchDomain.configurations("", every, every, config.filters),
+        )
+        // "Rings on" is an alarm filter left at "any": the button does not bring it back.
+        assertEquals(emptyList(), SearchDomain.configurations("rings", every, resultKinds, config.filters))
+        assertEquals(
+            listOf(SearchDomain.Kind.Alarm to listOf(SearchDomain.Setting.AlarmStateSetting)),
+            SearchDomain.configurations("state", every, resultKinds, config.filters),
+        )
+        // "On" is the same statement the Search window's count reads.
+        assertEquals(1, config.filters.activeCount)
+        assertTrue(config.filters.isOn(SearchDomain.Setting.AlarmStateSetting))
+        assertFalse(config.filters.isOn(SearchDomain.Setting.SortResults))
+    }
+
+    @Test
     fun the_kinds_in_the_results_are_the_kinds_with_a_row() {
         val s = SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = "a1", label = "Wake", timeOfDayMinutes = 60)))
         val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer))
@@ -635,8 +668,12 @@ class SearchWindowTest {
         )
         assertNull(SearchDomain.Config.decode("{not json"))
 
-        val own = SearchDomain.ConfigurationSearch("rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2")
+        val own = SearchDomain.ConfigurationSearch(
+            "rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2", showFiltersOn = true,
+        )
         assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
+        // Stored before the "filters that are on" button: it is off.
+        assertFalse(SearchDomain.ConfigurationSearch.decode("""{"query":"x","onlyResultKinds":true}""")!!.showFiltersOn)
         // Stored before copies existed: it edits the original Search window.
         assertEquals("Search", SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.target)
     }

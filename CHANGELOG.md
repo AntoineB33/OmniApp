@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Show the filters that are on" in the Configuration Search window — 2026-09-25
+
+User spec: a button showing the filters that are on even when their type is not in the results and "Only the
+types in the Search results" is on, so a filter that removes its own type can be set off right after.
+`ConfigurationSearch.showFiltersOn` (local JSON, absent = off, tested), `SearchDomain.configurations(filtersOn =)`,
+`Filters.isOn` (now also what `activeCount` counts). Client apps only.
+
 ### Select all / Deselect all in every drop-down of check boxes — 2026-09-25
 
 User spec: an option without a check box at the start of every such drop-down, checking every box and turning

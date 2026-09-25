@@ -97,7 +97,7 @@ fun ConfigurationSearchWindow(
                 state.alarms, state.timers, state.chores,
             ) { SearchDomain.kindsInResults(state, config) }
         }
-    val sections = SearchDomain.configurations(own.query, own.kinds, resultKinds)
+    val sections = SearchDomain.configurations(own.query, own.kinds, resultKinds, config.filters.takeIf { own.showFiltersOn })
 
     AppWindowFrame(
         title = "Search configurations",
@@ -134,11 +134,20 @@ fun ConfigurationSearchWindow(
                     onOwnChange(own.copy(query = "", kinds = emptySet()))
                 }
             }
-            ToggleChip(
-                text = "Only the types in the Search results",
-                on = own.onlyResultKinds,
-                onToggle = { onOwnChange(own.copy(onlyResultKinds = it)) },
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ToggleChip(
+                    text = "Only the types in the Search results",
+                    on = own.onlyResultKinds,
+                    onToggle = { onOwnChange(own.copy(onlyResultKinds = it)) },
+                )
+                // A filter that empties its own type out of the results would vanish with it under the button
+                // beside; this keeps every filter that is on in view, so it can be set off right after.
+                ToggleChip(
+                    text = "Show the filters that are on",
+                    on = own.showFiltersOn,
+                    onToggle = { onOwnChange(own.copy(showFiltersOn = it)) },
+                )
+            }
 
             HorizontalDivider()
 
