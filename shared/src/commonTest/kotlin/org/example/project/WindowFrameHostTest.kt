@@ -22,7 +22,7 @@ class WindowFrameHostTest {
         onClose: () -> Unit = {},
     ): WindowFrameState {
         val state = WindowFrameState(id)
-        host.register(WindowFrameHost.Registration(id, id, state, claimsKeyboard, onClose))
+        host.register(WindowFrameHost.Registration(id, id, state, claimsKeyboard, null, onClose))
         return state
     }
 

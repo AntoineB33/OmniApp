@@ -117,7 +117,10 @@ import org.example.project.ui.windowInstanceId
 import org.example.project.ui.WindowInstance
 import org.example.project.ui.WindowCopy
 import org.example.project.ui.LocalWindowInstance
-import org.example.project.ui.DuplicableWindows
+import org.example.project.ui.ObjectWindowKey
+import org.example.project.ui.ObjectWindows
+import org.example.project.ui.ObjectWindowsHost
+import org.example.project.ui.TreeObject
 import org.example.project.ui.COPY_CASCADE_PX
 import org.example.project.ui.AlarmWindowSubject
 import org.example.project.ui.CONFIGURATION_SEARCH_FRAME_ID
@@ -199,6 +202,15 @@ private enum class FloatingWindow {
 }
 
 /** The lateral-menu window a frame id names: its own name, or a copy's (`Search#2`); null for anything else. */
+/**
+ * What a tree drawing's `onSet…Window(id)` asks of the windows of one kind, from the tree [template] names: open
+ * the window on [id] (or bring it back), or — `null`, which the tree sends when one of its cells enters Edit
+ * Mode — close every window of that kind open on an object of that tree.
+ */
+private fun <T> ObjectWindows<TreeObject<T>>.setFrom(template: Boolean, id: T?) {
+    if (id == null) closeAll { it.template == template } else open(TreeObject(id, template))
+}
+
 private fun lateralWindowOf(id: String): FloatingWindow? {
     val base = id.substringBefore('#')
     val suffix = id.substringAfter('#', "")
@@ -372,15 +384,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
 
         // PRD §7: the buttons the user made at the bottom of the lateral menu, one per window (its head's ☆).
-        // Local-only, on a placement row of their own — they name windows of this device, copies included. A
-        // button for a window this build no longer has ("All tasks" and the list of reminders, removed 2026-09-25)
-        // is not shown.
+        // Local-only, on a placement row of their own — they name windows of this device, copies included, and
+        // per-object windows by their object ([ObjectWindowKey]).
         var menuButtons by remember(placements) {
-            mutableStateOf(
-                CustomMenuButtons.decode(placements[CustomMenuButtons.PLACEMENT_ID]?.config)
-                    .filter { lateralWindowOf(it.windowId) != null },
-            )
+            mutableStateOf(CustomMenuButtons.decode(placements[CustomMenuButtons.PLACEMENT_ID]?.config))
         }
+        // The ones drawn. A button whose window this build no longer has ("All tasks" and the list of reminders,
+        // removed 2026-09-25) or whose object is gone is not shown — but kept, so an undo brings it back.
+        fun menuButtonShown(button: CustomMenuButton): Boolean =
+            ObjectWindowKey.decode(button.windowId)?.exists(schedulerState) ?: (lateralWindowOf(button.windowId) != null)
         // The one whose title is being typed: a new button opens so, and so does "Rename". Compose-only.
         var editingMenuButton by remember { mutableStateOf<String?>(null) }
         // The menu's scroll, held here so a new button can be brought into view: the menu is scrolled to its
@@ -618,41 +630,52 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // …and every framed WINDOW registers here, which is what draws the bar of reduced windows along the
         // bottom of the app and what answers "does the tree still own the keyboard?" (see `WindowFrame.kt`).
         val windowFrames = remember { WindowFrameHost() }
-        // PRD §5: the sub-list whose priority-weight window is open (opened by clicking a percentage in the
-        // tree), or null when closed. Like every window below, it is about ONE object, so opening it on another
-        // sub-list replaces it — and, like every window, it stays until it is closed (`popups.md`).
-        var weightWindowListId by remember { mutableStateOf<CellListId?>(null) }
-        // PRD §5: the cell whose relative-priority window is open (the percentage's right-click menu), or
-        // null when closed. The two are mutually exclusive, now by construction (the host closes the other).
-        var relativeWindowCellId by remember { mutableStateOf<CellId?>(null) }
-        // PRD §13: the task whose "edit task" window is open, and the cell whose "deep copy" window is open.
-        // Both are raised out of TaskSchedulerScreen so they draw ABOVE the floating windows rather than
-        // under whichever one happens to be stacked over the tree.
-        var editTaskId by remember { mutableStateOf<TaskId?>(null) }
-        // The period edit window's subject: one KIND of restrictive period. Opened from a resilience
-        // row's pencil in the task edit window. One slot, so opening it on another kind replaces it.
-        var editPeriodKind by remember { mutableStateOf<String?>(null) }
-        // PRD §5: the category whose own window is open — one slot, like the task and period windows,
-        // hoisted here so it draws on the top layer above every floating window.
-        var editCategoryId by remember { mutableStateOf<CategoryId?>(null) }
-        // PRD §7 Search: the one alarm or timer whose own window is open — one slot, like the category's.
-        var editAlarmOrTimer by remember { mutableStateOf<AlarmWindowSubject?>(null) }
-        // PRD §7 Search: the one reminder (by id) whose own window is open — one slot, like the alarm's.
-        var editReminderId by remember { mutableStateOf<String?>(null) }
-        var deepCopyCellId by remember { mutableStateOf<CellId?>(null) }
+        // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
+        // windows ([ObjectWindows]) — opening one on another object opens a second window, and the first stays.
+        // All are hoisted here so they draw on the top layer, above whichever window stands over the tree. The
+        // ones a TREE cell opens carry which tree the object is in ([TreeObject]): the account's or the default
+        // sub-tree's, where the same id means something else — it decides the state they read and where their
+        // intents go. Each kind whose object has a stable id gives its windows a ☆ ([ObjectWindowKey]).
+        fun <T> treeKey(kind: ObjectWindowKey.Kind, id: (T) -> String): (TreeObject<T>) -> String =
+            { ObjectWindowKey(kind, id(it.id), it.template).encode() }
+        // PRD §5: a sub-list's priority-weight table (a click on a percentage) and a cell's relative-priority
+        // window (the percentage's right-click menu).
+        val weightWindows = remember {
+            ObjectWindows(treeKey<CellListId>(ObjectWindowKey.Kind.PriorityWeights) { it.value })
+        }
+        val relativeWindows = remember {
+            ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.RelativePriority) { it.value })
+        }
+        // PRD §13: a task's "edit task" window, and a cell's "deep copy" window.
+        val taskEditWindows = remember { ObjectWindows(treeKey<TaskId>(ObjectWindowKey.Kind.TaskEdit) { it.value }) }
+        val deepCopyWindows = remember { ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.DeepCopy) { it.value }) }
+        // The period edit window: one KIND of restrictive period, opened from a resilience row's pencil in the
+        // task edit window (of either tree) and from the Search window.
+        val periodKindWindows = remember {
+            ObjectWindows(treeKey<String>(ObjectWindowKey.Kind.PeriodKindEdit) { it })
+        }
+        // PRD §5: a category's own window.
+        val categoryWindows = remember {
+            ObjectWindows(treeKey<CategoryId>(ObjectWindowKey.Kind.CategoryEdit) { it.value })
+        }
+        // PRD §7 Search: one alarm's or one timer's own window, and one reminder's.
+        val alarmWindows = remember {
+            ObjectWindows<AlarmWindowSubject> {
+                ObjectWindowKey(if (it.isAlarm) ObjectWindowKey.Kind.Alarm else ObjectWindowKey.Kind.Timer, it.id).encode()
+            }
+        }
+        val reminderWindows = remember {
+            ObjectWindows<String> { ObjectWindowKey(ObjectWindowKey.Kind.Reminder, it).encode() }
+        }
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
-        // "go to task tree" on a panel whose task no cell holds. One notice at a time, like the two above.
+        // "go to task tree" on a panel whose task no cell holds. One notice at a time.
         var appMessage by remember { mutableStateOf<String?>(null) }
-        // PRD §4/§13: the four per-object windows the tree hoists up here are opened by BOTH trees — the
-        // account's and the default sub-tree's. They name a cell/task/list id, and the same id means
-        // different things in the two trees, so this records which tree asked. It decides both the state
-        // they read and where their intents are sent.
-        var popupFromDefaultSubtree by remember { mutableStateOf(false) }
-        // PRD §5: the window closes when any cell enters Edit Mode (its sub-list typing context is gone).
+        // PRD §5: the account tree's weight and relative-priority windows close when any of its cells enters
+        // Edit Mode (their sub-list typing context is gone).
         LaunchedEffect(schedulerState.editSession) {
             if (schedulerState.editSession != null) {
-                weightWindowListId = null
-                relativeWindowCellId = null
+                weightWindows.closeAll { !it.template }
+                relativeWindows.closeAll { !it.template }
             }
         }
         // PRD §5/§6 History Manager: whether the floating history window is open (local UI state).
@@ -949,28 +972,57 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
 
         // PRD §7: a button made from a window's head (☆): at the bottom of the menu, its title open for typing
-        // with the window's own title all selected. A copy's is named after its number, like its frame id.
-        fun addMenuButton(frameId: String, title: String) {
-            val number = frameId.substringAfter('#', "")
-            val (list, id) = CustomMenuButtons.added(menuButtons, frameId, if (number.isEmpty()) title else "$title #$number")
+        // with a default name all selected — a lateral-menu window's own title (a copy's followed by its number,
+        // like its frame id), a per-object window's object and what it is ("Tea timer").
+        fun addMenuButton(key: String, title: String) {
+            val objectKey = ObjectWindowKey.decode(key)
+            val number = if (objectKey == null) key.substringAfter('#', "") else ""
+            val name = objectKey?.buttonTitle(schedulerState) ?: if (number.isEmpty()) title else "$title #$number"
+            val (list, id) = CustomMenuButtons.added(menuButtons, key, name)
             setMenuButtons(list)
             editingMenuButton = id
             // The field has to be seen to be typed in: the menu opens, scrolled to its end.
             menuCollapsed = false
             menuButtonAdded++
         }
-        // Every window the app can open by its frame id gets the ☆: the lateral-menu windows and their copies.
+        // Every window the app can open by its frame id gets the ☆: the lateral-menu windows and their copies. A
+        // per-object window about an object with a stable id brings its own key ([ObjectWindowKey]).
         val menuButtonHost = remember {
             MenuButtonHost(canAdd = { lateralWindowOf(it) != null }, add = { id, title -> addMenuButton(id, title) })
         }
         fun isFrameOpen(frameId: String): Boolean {
+            if (ObjectWindowKey.decode(frameId) != null) return windowFrames.registrations.any { it.menuKey == frameId }
             val kind = lateralWindowOf(frameId) ?: return false
             return if ('#' in frameId) frameId in windowCopies else isWindowOpen(kind)
+        }
+        // A per-object window's button: its window is closed when it is the one being worked in, opened on its
+        // object otherwise — or brought back, when one is open on it ([ObjectWindows.open]).
+        fun onObjectMenuButtonClicked(key: ObjectWindowKey) {
+            val front = windowFrames.registrations.firstOrNull { it.id == windowFrames.frontId }
+            if (front != null && front.menuKey == key.encode()) {
+                front.onClose()
+                return
+            }
+            when (key.kind) {
+                ObjectWindowKey.Kind.TaskEdit -> taskEditWindows.open(TreeObject(TaskId(key.id), key.template))
+                ObjectWindowKey.Kind.CategoryEdit -> categoryWindows.open(TreeObject(CategoryId(key.id), key.template))
+                ObjectWindowKey.Kind.PeriodKindEdit -> periodKindWindows.open(TreeObject(key.id, key.template))
+                ObjectWindowKey.Kind.PriorityWeights -> weightWindows.open(TreeObject(CellListId(key.id), key.template))
+                ObjectWindowKey.Kind.RelativePriority -> relativeWindows.open(TreeObject(CellId(key.id), key.template))
+                ObjectWindowKey.Kind.DeepCopy -> deepCopyWindows.open(TreeObject(CellId(key.id), key.template))
+                ObjectWindowKey.Kind.Alarm -> alarmWindows.open(AlarmWindowSubject(key.id, isAlarm = true))
+                ObjectWindowKey.Kind.Timer -> alarmWindows.open(AlarmWindowSubject(key.id, isAlarm = false))
+                ObjectWindowKey.Kind.Reminder -> reminderWindows.open(key.id)
+            }
         }
         // A button the user made does what its window's own menu button does — for a copy too: opened (a closed
         // copy comes back from its row, with its own configuration) and focused when closed, closed when it is the
         // one being worked in, brought back to the front otherwise.
         fun onMenuButtonClicked(frameId: String) {
+            ObjectWindowKey.decode(frameId)?.let { key ->
+                onObjectMenuButtonClicked(key)
+                return
+            }
             val kind = lateralWindowOf(frameId) ?: return
             if ('#' !in frameId) {
                 onMenuWindowClicked(kind) { setWindowOpen(kind, it) }
@@ -1905,21 +1957,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The same hues read the other way, for the windows that NAME a task on an ordinary light surface
         // rather than drawing it on the timeline ([org.example.project.ui.TaskTitleLabel]).
         val taskSheetColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
-        // PRD §8 edit window: the calendar block currently being edited (null = closed).
-        var editingBlock by remember { mutableStateOf<PlacedRecord?>(null) }
-        // PRD §14: the reminder tag the "edit…" chooser's `reminder` row is open on (null = none). A tag had
-        // no editor reachable from the calendar at all before the chooser — only "add reminder" did.
-        var editingReminder by remember { mutableStateOf<PlacedRecord?>(null) }
-        // PRD §8: the period the period editor is open on (null = closed). A period's own row of the
-        // "edit…" chooser opens it, and it is the one-element case of the element window's period section —
-        // nothing is laid on the calendar until Save, which is what lets a period be given an open ("∞")
-        // bound the grid could never be dragged to.
-        var editingPeriod by remember { mutableStateOf<PeriodDraft?>(null) }
-        // PRD §8 contextual menu **"add…" / "edit…"**: what the ONE element window is open on (null =
-        // closed) — the instant it is anchored at, and, for "edit…", the elements at the mouse it is
-        // confined to. One slot for both entries, because they are one window
-        // ([org.example.project.ui.CalendarElementsWindow]) and at most one of them is ever open.
-        var elementsAt by remember { mutableStateOf<CalendarElementsDraftSet?>(null) }
+        // The calendar's per-object windows — about something transient (a draft, a spot), so no ☆.
+        // PRD §8 edit window: the calendar blocks being edited.
+        val blockEditWindows = remember { ObjectWindows<PlacedRecord>() }
+        // PRD §14: the reminder tags the "edit…" chooser's `reminder` row is open on. A tag had no editor
+        // reachable from the calendar at all before the chooser — only "add reminder" did.
+        val reminderTagWindows = remember { ObjectWindows<PlacedRecord>() }
+        // PRD §8: the periods the period editor is open on. A period's own row of the "edit…" chooser opens it,
+        // and it is the one-element case of the element window's period section — nothing is laid on the
+        // calendar until Save, which is what lets a period be given an open ("∞") bound the grid could never be
+        // dragged to.
+        val periodDraftWindows = remember { ObjectWindows<PeriodDraft>() }
+        // PRD §8 contextual menu **"add…" / "edit…"**: what the element window is open on — the instant it is
+        // anchored at, and, for "edit…", the elements at the mouse it is confined to. Both entries open the one
+        // window ([org.example.project.ui.CalendarElementsWindow]).
+        val elementsWindows = remember { ObjectWindows<CalendarElementsDraftSet>() }
 
         // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
@@ -1930,7 +1982,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7: switching focus to another window leaves Edit Mode in any window — close the calendar's
         // edit surface so it doesn't linger over the newly focused window.
         LaunchedEffect(schedulerState.focusedWindow) {
-            editingBlock = null
+            blockEditWindows.closeAll()
         }
 
         CompositionLocalProvider(
@@ -2032,7 +2084,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     scrollState = menuScroll,
                     customSection = {
                         CustomMenuSection(
-                            buttons = menuButtons,
+                            buttons = menuButtons.filter(::menuButtonShown),
                             isOpen = ::isFrameOpen,
                             onClick = { onMenuButtonClicked(it.windowId) },
                             editingId = editingMenuButton,
@@ -2046,10 +2098,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                 // PRD §4: a pop-up opened from the default-sub-tree window reads the TEMPLATE and writes
                 // back into it; one opened from the tree reads and writes the live state as it always did.
-                val popupState =
-                    if (popupFromDefaultSubtree) schedulerState.projectDefaultSubtree() else schedulerState
-                val popupDispatch: (SchedulerIntent) -> Unit =
-                    if (popupFromDefaultSubtree) {
+                // Projected once per state, and only if a window asks for it.
+                val templateState = remember(schedulerState) { lazy { schedulerState.projectDefaultSubtree() } }
+                fun popupStateOf(template: Boolean): SchedulerState =
+                    if (template) templateState.value else schedulerState
+                fun popupDispatchOf(template: Boolean): (SchedulerIntent) -> Unit =
+                    if (template) {
                         { intent -> vm.dispatch(SchedulerIntent.InDefaultSubtree(intent)) }
                     } else {
                         { intent -> vm.dispatch(intent) }
@@ -2093,35 +2147,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 keyboardEnabled = treeKeyboardEnabled,
                                 store = store,
                                 vm = vm,
-                                onSetWeightWindow = {
-                                    popupFromDefaultSubtree = false
-                                    weightWindowListId = it
-                                },
-                                onSetRelativeWindow = {
-                                    popupFromDefaultSubtree = false
-                                    relativeWindowCellId = it
-                                },
-                                onSetEditTask = {
-                                    popupFromDefaultSubtree = false
-                                    editTaskId = it
-                                },
-                                onSetEditCategory = {
-                                    popupFromDefaultSubtree = false
-                                    editCategoryId = it
-                                },
-                                onSetDeepCopyCell = {
-                                    popupFromDefaultSubtree = false
-                                    deepCopyCellId = it
-                                },
+                                onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
+                                onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
+                                onSetEditTask = { taskEditWindows.setFrom(template = false, it) },
+                                onSetEditCategory = { categoryWindows.setFrom(template = false, it) },
+                                onSetDeepCopyCell = { deepCopyWindows.setFrom(template = false, it) },
                             )
                             }
                     }
                     }
 
-                    // PRD §5: the priority-weight window — about ONE sub-list, so opening it on another
-                    // replaces it. It opens on top like every window and, like every window, goes UNDER the
-                    // next one the user presses in: it is in the same stacking order as all the rest.
-                    DuplicableWindows(weightWindowListId, closeOriginal = { weightWindowListId = null }) { listId, close ->
+                    // PRD §5: the priority-weight window — about ONE sub-list; opening it on another opens a
+                    // second. It opens on top like every window and, like every window, goes UNDER the next one
+                    // the user presses in: it is in the same stacking order as all the rest.
+                    ObjectWindowsHost(weightWindows) { w ->
+                        val (listId, template) = w.subject
+                        val close = w::close
+                        val popupState = popupStateOf(template)
+                        val popupDispatch = popupDispatchOf(template)
                         if (popupState.lists[listId] == null) {
                             close()
                         } else {
@@ -2131,7 +2174,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 // The template's shares are its own (defaultSubtreePriorities), so the chart
                                 // beside the table reads the tree the window was opened from.
                                 priorities =
-                                    if (popupFromDefaultSubtree) schedulerState.defaultSubtreePriorities()
+                                    if (template) schedulerState.defaultSubtreePriorities()
                                     else SchedulerDomain.absoluteTaskPriorities(schedulerState),
                                 onIntent = popupDispatch,
                                 onDismiss = { close() },
@@ -2142,7 +2185,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     // PRD §5: the relative-priority window, the same sort of window. Opened from the
                     // percentage's right-click menu; also cleared when the cell goes away under it (an undo).
-                    DuplicableWindows(relativeWindowCellId, closeOriginal = { relativeWindowCellId = null }) { cellId, close ->
+                    ObjectWindowsHost(relativeWindows) { w ->
+                        val (cellId, template) = w.subject
+                        val close = w::close
+                        val popupState = popupStateOf(template)
+                        val popupDispatch = popupDispatchOf(template)
                         if (popupState.cells[cellId]?.taskId == null) {
                             close()
                         } else {
@@ -2153,18 +2200,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 onDismiss = { close() },
                                 // PRD §5: its chain cells are task cells, so their percentage column does
                                 // what the tree's does — a click opens that sub-list's weight window, a
-                                // right-click re-opens this one on the chain cell. The two share one slot,
-                                // so opening either closes the other. `popupFromDefaultSubtree` is
-                                // deliberately left alone: it says which tree the pop-up is about, and the
-                                // chain cell belongs to the same one.
-                                onOpenWeightWindow = { listId ->
-                                    close()
-                                    weightWindowListId = listId
-                                },
-                                onOpenRelativePriority = { chainCellId ->
-                                    weightWindowListId = null
-                                    relativeWindowCellId = chainCellId
-                                },
+                                // right-click opens this window on the chain cell. Both in the same tree as
+                                // this one: the chain cell belongs to it.
+                                onOpenWeightWindow = { weightWindows.open(TreeObject(it, template)) },
+                                onOpenRelativePriority = { relativeWindows.open(TreeObject(it, template)) },
                                 modifier = Modifier.align(Alignment.Center),
                             )
                         }
@@ -2174,7 +2213,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // panel's. Raised out of TaskSchedulerScreen so it is a window among the others: inside
                     // the tree it could never be drawn over a floating window stacked above the tree, whatever
                     // the stacking order said.
-                    DuplicableWindows(editTaskId, closeOriginal = { editTaskId = null }) { taskId, close ->
+                    ObjectWindowsHost(taskEditWindows) { w ->
+                        val (taskId, template) = w.subject
+                        val close = w::close
+                        val popupState = popupStateOf(template)
+                        val popupDispatch = popupDispatchOf(template)
                         val task = popupState.tasks[taskId]
                         if (task == null) {
                             close()
@@ -2187,7 +2230,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 isLeaf = SchedulerDomain.isLeafTask(popupState, taskId),
                                 periodKinds = popupState.allPeriodKinds,
                                 onAddPeriodKind = { popupDispatch(SchedulerIntent.AddPeriodKind(it)) },
-                                onEditPeriodKind = { editPeriodKind = it },
+                                onEditPeriodKind = { periodKindWindows.open(TreeObject(it, template)) },
                                 onSave = { resilience, entries, text ->
                                     // One intent per section, and only for what actually changed — so
                                     // Save on an untouched window adds nothing to the Undo/Redo history
@@ -2217,9 +2260,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     // `side-dev/README.md` § *Restrictive Period*: the PERIOD edit window — one kind, and
                     // every task's resilience to it. The task edit window's resilience section read the
-                    // other way round, and the one place a period is deleted. The same sort of window as
-                    // the one it is opened from, which is why opening it closes that one.
-                    DuplicableWindows(editPeriodKind, closeOriginal = { editPeriodKind = null }) { kind, close ->
+                    // other way round, and the one place a period is deleted.
+                    ObjectWindowsHost(periodKindWindows) { w ->
+                        val (kind, template) = w.subject
+                        val close = w::close
+                        val popupState = popupStateOf(template)
+                        val popupDispatch = popupDispatchOf(template)
                         if (kind !in popupState.allPeriodKinds) {
                             // Deleted under it (from here, from a peer's sync, or by an undo).
                             close()
@@ -2255,7 +2301,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // PRD §5: the CATEGORY edit window — one category, its rules and everything carrying
                     // it. The task cell's categories drop-down opens it from its ✎, exactly as the task
                     // edit window's resilience row opens the period's. The same sort of window.
-                    DuplicableWindows(editCategoryId, closeOriginal = { editCategoryId = null }) { categoryId, close ->
+                    ObjectWindowsHost(categoryWindows) { w ->
+                        val (categoryId, template) = w.subject
+                        val close = w::close
+                        val popupState = popupStateOf(template)
+                        val popupDispatch = popupDispatchOf(template)
                         if (popupState.categoryById(categoryId) == null) {
                             // Deleted under it (from here, from a peer's sync, or by an undo).
                             close()
@@ -2295,7 +2345,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     // PRD §13: "deep copy" asks for its maximum depth here, then copies (DeepCopyWindow).
                     // Raised for the same reason as the edit window above.
-                    DuplicableWindows(deepCopyCellId, closeOriginal = { deepCopyCellId = null }) { cellId, close ->
+                    ObjectWindowsHost(deepCopyWindows) { w ->
+                        val (cellId, template) = w.subject
+                        val close = w::close
+                        val popupState = popupStateOf(template)
+                        val popupDispatch = popupDispatchOf(template)
                         if (popupState.cells[cellId] == null) {
                             close()
                         } else {
@@ -2359,14 +2413,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // window on an empty list. What is being put here, of which kind, and with
                             // which configuration is all answered there, and its Save is what lays it.
                             onAddAt = { atMillis ->
-                                elementsAt = CalendarElementsDraftSet(CalendarElementsMode.Add, atMillis, emptyList())
+                                elementsWindows.open(CalendarElementsDraftSet(CalendarElementsMode.Add, atMillis, emptyList()))
                             },
                             // PRD §8 "edit…" with two or more elements at the cursor: the SAME window,
                             // seeded with them and confined to them. Seeding is where `App` adds what only
                             // it holds — a panel's task resilience, an alarm's weekdays and ring length —
                             // so [calendarElementDrafts] stays a pure reading of what is drawn.
                             onEditElementsAt = { atMillis, hits ->
-                                elementsAt =
+                                elementsWindows.open(
                                     CalendarElementsDraftSet(
                                         CalendarElementsMode.Edit,
                                         atMillis,
@@ -2374,7 +2428,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             calendarElementDrafts(hits),
                                             schedulerState,
                                         ),
-                                    )
+                                    ),
+                                )
                             },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel. The gesture
@@ -2415,23 +2470,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 val head = choice.records.firstOrNull()
                                 when {
                                     choice.label == EDIT_LABEL_TASK ->
-                                        head?.taskId?.let { taskId ->
-                                            popupFromDefaultSubtree = false
-                                            editTaskId = taskId
-                                        }
+                                        head?.taskId?.let { taskId -> taskEditWindows.open(TreeObject(taskId)) }
                                     choice.label == EDIT_LABEL_SLEEP_SCHEDULE -> sleepWindowOpen = true
                                     choice.label == EDIT_LABEL_ALARM ||
                                         choice.label == EDIT_LABEL_TIMER -> alarmWindowOpen = true
-                                    choice.label == EDIT_LABEL_REMINDER -> editingReminder = head
+                                    choice.label == EDIT_LABEL_REMINDER -> head?.let(reminderTagWindows::open)
                                     choice.periodKind.isNotBlank() && head != null ->
-                                        editingPeriod =
+                                        periodDraftWindows.open(
                                             PeriodDraft(
                                                 kind = choice.periodKind,
                                                 blocks = choice.records,
                                                 startMillis = head.fullStartMillis,
                                                 endMillis = head.fullEndMillis,
-                                            )
-                                    head != null -> editingBlock = head
+                                            ),
+                                        )
+                                    head != null -> blockEditWindows.open(head)
                                 }
                             },
                             // PRD §8 "go to task tree" — the app's one handler, shared with the "All
@@ -2480,7 +2533,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // window only ever edits something that exists and always carries its bin. A window
                         // like any other since ADR 0014: no scrim, and it takes its turn in the one
                         // stacking order.
-                        DuplicableWindows(editingBlock, closeOriginal = { editingBlock = null }) { block, close ->
+                        ObjectWindowsHost(blockEditWindows) { w ->
+                            val block = w.subject
+                            val close = w::close
                             ManualEntryEditWindow(
                                 initialTitle = block.title,
                                 initialTaskId = block.taskId,
@@ -2525,7 +2580,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                         // PRD §8: the period editor — one window for every kind, reached from the "add…"
                         // chooser and from a period's own row of the "edit…" chooser.
-                        DuplicableWindows(editingPeriod, closeOriginal = { editingPeriod = null }) { draft, close ->
+                        ObjectWindowsHost(periodDraftWindows) { w ->
+                            val draft = w.subject
+                            val close = w::close
                             PeriodEditWindow(
                                 kind = draft.kind,
                                 isNew = draft.blocks.isEmpty(),
@@ -2584,7 +2641,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // elements and their configuration grouped by who shares it, and — unlike the
                         // chooser it replaced — it is the placement path itself, so its Save is where
                         // "nothing is placed until Save" and "one Save is one Ctrl+Z" are both owed.
-                        DuplicableWindows(elementsAt, closeOriginal = { elementsAt = null }) { open, close ->
+                        ObjectWindowsHost(elementsWindows) { w ->
+                            val open = w.subject
+                            val close = w::close
                             CalendarElementsWindow(
                                 mode = open.mode,
                                 atMillis = open.atMillis,
@@ -2635,7 +2694,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // `reminder` row. A tag had no way of being edited from the calendar before the
                         // chooser — only added, and only checked off — so the row is what made this window
                         // need a seed and a bin.
-                        DuplicableWindows(editingReminder, closeOriginal = { editingReminder = null }) { tag, close ->
+                        ObjectWindowsHost(reminderTagWindows) { w ->
+                            val tag = w.subject
+                            val close = w::close
                             ReminderEditWindow(
                                 initialMillis = tag.fullStartMillis,
                                 tz = tz,
@@ -2665,43 +2726,40 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
 
                     // PRD §14 / PRD §7 Search: the per-object window of one reminder — opened from its Search row.
-                    // One slot, like the alarm's; it closes itself when its row is gone (ChoresManagerWindow), and
-                    // it is duplicable like every window. No existence check here: the window follows its row even
-                    // when the id menu makes it adopt another reminder's id, and closes itself once the row is
-                    // gone — one rule, in one place.
-                    DuplicableWindows(editReminderId, closeOriginal = { editReminderId = null }) { reminderId, close ->
+                    // It closes itself when its row is gone (ChoresManagerWindow). No existence check here: the
+                    // window follows its row even when the id menu makes it adopt another reminder's id (and its
+                    // "+ New reminder" moves it on), and closes itself once the row is gone — one rule, in one place.
+                    ObjectWindowsHost(reminderWindows) { w ->
                         TransientPopupLayer(windowInstanceId(REMINDER_EDIT_FRAME_ID)) {
-                            // Keyed on the reminder: another one REPLACES the window, and its rows must not carry
-                            // over.
-                            key(reminderId) {
-                                // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
-                                val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
-                                ChoresManagerWindow(
-                                    chores = schedulerState.chores,
-                                    // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
-                                    onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
-                                    onDismiss = close,
-                                    subject = reminderId,
-                                    // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
-                                    newRowTimeOfDayMinutes = {
-                                        val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
-                                        t.hour * 60 + t.minute
-                                    },
-                                    // PRD §14: title/id suggestion menus under the focused reminder name field —
-                                    // existing reminders matching the draft, and distinct reminder titles.
-                                    reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                                    titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                                    // A new row's id must avoid every known reminder id (including calendar-only ones).
-                                    knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
-                                    // PRD §14: reminder ids kept alive by a checked or pinned tag — the focused row
-                                    // shows its own id in the menu only when it is one of these (independently referenced).
-                                    referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
-                                    // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
-                                    reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                                    titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                                    modifier = Modifier.align(Alignment.Center),
-                                )
-                            }
+                            // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
+                            val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
+                            ChoresManagerWindow(
+                                chores = schedulerState.chores,
+                                // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
+                                onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
+                                onDismiss = w::close,
+                                subject = w.subject,
+                                // What the window shows now, for asking for it again and for its ☆.
+                                onSubjectChange = w::retarget,
+                                // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
+                                newRowTimeOfDayMinutes = {
+                                    val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
+                                    t.hour * 60 + t.minute
+                                },
+                                // PRD §14: title/id suggestion menus under the focused reminder name field —
+                                // existing reminders matching the draft, and distinct reminder titles.
+                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                                // A new row's id must avoid every known reminder id (including calendar-only ones).
+                                knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
+                                // PRD §14: reminder ids kept alive by a checked or pinned tag — the focused row
+                                // shows its own id in the menu only when it is one of these (independently referenced).
+                                referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
+                                // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
+                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
+                                modifier = Modifier.align(Alignment.Center),
+                            )
                         }
                     }
 
@@ -2713,7 +2771,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             supabaseUsageLog = schedulerState.supabaseUsageLog,
                             schedulerRuns = schedulerRuns,
                             onDismiss = { historyManagerOpen = false },
-                            // Cascade: open down-right of center so the Reminders / calendar windows stay reachable.
+                            // Cascade: open down-right of center so the calendar window stays reachable.
                             initialOffset = historyOffset,
                             initialSize = historySize,
                             onGeometryChange = { windowOffset, windowSize ->
@@ -2758,6 +2816,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         subject: AlarmWindowSubject?,
                         onDismiss: () -> Unit,
                         modifier: Modifier,
+                        onShownChange: (AlarmWindowSubject) -> Unit = {},
                         initialOffset: Offset = Offset.Zero,
                         initialSize: Size = Size.Zero,
                         onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
@@ -2808,6 +2867,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRaise = onRaise,
                             modifier = modifier,
                             subject = subject,
+                            onShownChange = onShownChange,
                         )
                     }
 
@@ -2828,21 +2888,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    // PRD §7 Search: the per-object window of one alarm or one timer. One slot, like the
-                    // category's; it closes itself when the row is gone (its own bin, a peer, an undo).
-                    // No existence check here: the window moves on to an element its "+ New" button made, and closes
-                    // itself once the element it shows is gone — one rule, in one place (AlarmWindow).
-                    DuplicableWindows(editAlarmOrTimer, closeOriginal = { editAlarmOrTimer = null }) { subject, close ->
+                    // PRD §7 Search: the per-object window of one alarm or one timer; it closes itself when the
+                    // row is gone (its own bin, a peer, an undo). No existence check here: the window moves on to
+                    // an element its "+ New" button made, and closes itself once the element it shows is gone —
+                    // one rule, in one place (AlarmWindow).
+                    ObjectWindowsHost(alarmWindows) { w ->
                         TransientPopupLayer(windowInstanceId(AlarmWindowSubject.FRAME_ID)) {
-                            // Keyed on the subject: asking for another alarm REPLACES the window, and its local
-                            // copy of the rows must not carry over.
-                            key(subject) {
-                                AccountAlarmWindow(
-                                    subject = subject,
-                                    onDismiss = { close() },
-                                    modifier = Modifier.align(Alignment.Center),
-                                )
-                            }
+                            AccountAlarmWindow(
+                                subject = w.subject,
+                                onDismiss = w::close,
+                                // What the window shows now, for asking for it again and for its ☆.
+                                onShownChange = w::retarget,
+                                modifier = Modifier.align(Alignment.Center),
+                            )
                         }
                     }
 
@@ -2907,12 +2965,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         CategoriesWindow(
                             state = schedulerState,
                             onIntent = { vm.dispatch(it) },
-                            onOpenCategoryEdit = {
-                                // The account's own categories, never the template's projection — this
-                                // window is about the live state, so the pop-up it opens must be too.
-                                popupFromDefaultSubtree = false
-                                editCategoryId = it
-                            },
+                            // The account's own categories, never the template's projection — this window is
+                            // about the live state, so the pop-up it opens must be too.
+                            onOpenCategoryEdit = { categoryWindows.open(TreeObject(it)) },
                             onDismiss = { categoriesWindowOpen = false },
                             initialOffset = categoriesOffset,
                             initialSize = categoriesSize,
@@ -2935,38 +2990,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         val searchId = windowInstanceId(FloatingWindow.Search.name)
                         SearchWindow(
                             state = schedulerState,
-                            onOpenTaskEdit = {
-                                popupFromDefaultSubtree = false
-                                editTaskId = it
-                            },
+                            onOpenTaskEdit = { taskEditWindows.open(TreeObject(it)) },
                             onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                             onGoToTaskTree = { taskId, at ->
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
                             },
-                            onDeepCopyCell = {
-                                popupFromDefaultSubtree = false
-                                deepCopyCellId = it
-                            },
+                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
                             onIntent = { vm.dispatch(it) },
                             // A row's percentage, as a tree cell's: the weight table and the relative priority.
-                            onSetWeightWindow = {
-                                popupFromDefaultSubtree = false
-                                weightWindowListId = it
-                            },
-                            onSetRelativeWindow = {
-                                popupFromDefaultSubtree = false
-                                relativeWindowCellId = it
-                            },
-                            onOpenCategory = {
-                                popupFromDefaultSubtree = false
-                                editCategoryId = it
-                            },
-                            onOpenPeriodKind = {
-                                popupFromDefaultSubtree = false
-                                editPeriodKind = it
-                            },
-                            onEditAlarmOrTimer = { editAlarmOrTimer = it },
-                            onEditReminder = { editReminderId = it },
+                            onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
+                            onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
+                            onOpenCategory = { categoryWindows.open(TreeObject(it)) },
+                            onOpenPeriodKind = { periodKindWindows.open(TreeObject(it)) },
+                            onEditAlarmOrTimer = { alarmWindows.open(it) },
+                            onEditReminder = { reminderWindows.open(it) },
                             // The windows that own a history unit, a task tree, a task relation or a shortcut —
                             // opened if closed and brought to the front either way, never closed by this.
                             onOpenHistory = {
@@ -3077,26 +3114,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             focused = windowFrames.frontId == windowInstanceId(FloatingWindow.DefaultSubtree.name),
                             // PRD §5/§13: the same four per-object windows the account's tree opens, drawn by
                             // the app on the top layer — a template row's "edit task" is the ordinary §13 window.
-                            onSetWeightWindow = {
-                                popupFromDefaultSubtree = true
-                                weightWindowListId = it
-                            },
-                            onSetRelativeWindow = {
-                                popupFromDefaultSubtree = true
-                                relativeWindowCellId = it
-                            },
-                            onSetEditTask = {
-                                popupFromDefaultSubtree = true
-                                editTaskId = it
-                            },
-                            onSetEditCategory = {
-                                popupFromDefaultSubtree = true
-                                editCategoryId = it
-                            },
-                            onSetDeepCopyCell = {
-                                popupFromDefaultSubtree = true
-                                deepCopyCellId = it
-                            },
+                            onSetWeightWindow = { weightWindows.setFrom(template = true, it) },
+                            onSetRelativeWindow = { relativeWindows.setFrom(template = true, it) },
+                            onSetEditTask = { taskEditWindows.setFrom(template = true, it) },
+                            onSetEditCategory = { categoryWindows.setFrom(template = true, it) },
+                            onSetDeepCopyCell = { deepCopyWindows.setFrom(template = true, it) },
                             onDismiss = { defaultSubtreeWindowOpen = false },
                             initialOffset = defaultSubtreeOffset,
                             initialSize = defaultSubtreeSize,

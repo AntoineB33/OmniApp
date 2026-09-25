@@ -1556,13 +1556,17 @@ fun ChoresManagerWindow(
     reminderIdForTitle: (String) -> String? = { null },
     /** PRD §14 "constrained in": the title of a known reminder id (shown beside the "constrained in" button). */
     titleForReminderId: (String) -> String? = { null },
+    /** The reminder the window shows now — the id menu's adoption or "+ New reminder" moved it on. */
+    onSubjectChange: (String) -> Unit = {},
 ) {
     val frame = rememberWindowFrameState(REMINDER_EDIT_FRAME_ID)
     // The subject row's id as it now stands: the id menu can make the row adopt another reminder's id.
     var subjectId by remember { mutableStateOf(subject) }
+    val latestSubjectChange by rememberUpdatedState(onSubjectChange)
+    LaunchedEffect(subjectId) { if (subjectId != subject) latestSubjectChange(subjectId) }
     val focusManager = LocalFocusManager.current
-    // PRD §14 "constrained in": the index of the row whose constraint picker is open, or null when closed.
-    var constrainingRowIndex by remember { mutableStateOf<Int?>(null) }
+    // PRD §14 "constrained in": the constraint pickers open, by the index of their row.
+    val constraintWindows = remember { ObjectWindows<Int>() }
     // PRD §14: which row's title field currently holds focus — drives the edit-mode menus shown beneath it.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
     // PRD §14: the focused row's edit mode (Change vs Rename), reset to Change whenever focus moves to a
@@ -1753,7 +1757,7 @@ fun ChoresManagerWindow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    TextButton(onClick = { constrainingRowIndex = index }) { Text("constrained in") }
+                    TextButton(onClick = { constraintWindows.open(index) }) { Text("constrained in") }
                     val constrainedName =
                         row.constrainedToReminderId.takeIf { it.isNotBlank() }?.let(titleForReminderId)
                     if (constrainedName != null) {
@@ -1854,7 +1858,9 @@ fun ChoresManagerWindow(
 
     // PRD §14 "constrained in": the constraint picker, shown over the manager when a row's button is tapped.
     // Duplicable (the head's ⧉), each copy on the row it was made from.
-    DuplicableWindows(constrainingRowIndex, closeOriginal = { constrainingRowIndex = null }) { idx, close ->
+    ObjectWindowsHost(constraintWindows) { w ->
+        val idx = w.subject
+        val close = w::close
         val constrainingRow = rows.getOrNull(idx)
         if (constrainingRow != null) {
             ReminderConstraintEditWindow(
@@ -1876,7 +1882,7 @@ fun ChoresManagerWindow(
     }
 }
 
-/** The frame id of a single reminder's window (Search's right-click) — one at a time, and its copies. */
+/** The frame id of a single reminder's window (opened from its Search row), before its number (`#n`). */
 const val REMINDER_EDIT_FRAME_ID: String = "ReminderEdit"
 
 /**

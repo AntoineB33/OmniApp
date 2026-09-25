@@ -671,19 +671,10 @@ internal fun TaskTreeView(
                 priorities = priorities,
                 taskColors = taskColors,
                 searchHighlight = searchHighlight,
-                onTogglePriorityWeights = { listId ->
-                    // PRD §5: clicking a percentage opens that sub-list's window. Closing is by clicking
-                    // anywhere else (the app's outside-press interceptor), not by re-clicking here — so
-                    // this is deterministic regardless of when the interceptor runs during the gesture.
-                    onSetRelativeWindow(null)
-                    onSetWeightWindow(listId)
-                },
-                // PRD §5: the percentage's right-click menu opens the relative-priority window instead.
-                // The two windows share the top layer, so opening one closes the other.
-                onOpenRelativePriority = { clickedCellId ->
-                    onSetWeightWindow(null)
-                    onSetRelativeWindow(clickedCellId)
-                },
+                // PRD §5: clicking a percentage opens that sub-list's window; its right-click menu opens the
+                // cell's relative-priority window instead. Neither closes the other (`popups.md`).
+                onTogglePriorityWeights = { listId -> onSetWeightWindow(listId) },
+                onOpenRelativePriority = { clickedCellId -> onSetRelativeWindow(clickedCellId) },
                 minTimeEditCellId = minTimeEditCellId,
                 onToggleMinTimeEdit = { cellId ->
                     if (minTimeEditCellId == cellId) {

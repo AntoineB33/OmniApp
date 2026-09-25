@@ -231,8 +231,8 @@ relative-priority window's number said once and then **kept**.
   and the resilience row both make; and the **same naming field** the "add" option is, whose identity rows
   here **open** a category (there is no task to attach one to) so that `CreateCategory` only ever mints a
   name the account has not got. A lateral-menu window like any other; the row's ✎ opens the window of ONE
-  category, which is why pressing it on another row replaces it rather than stacking beside it
-  (`popups.md`).
+  category — pressing it on another row opens that category's window beside it, and on a row whose window is
+  open brings that window back (`popups.md`).
 - **The "add" option is a task cell in Edit Mode, minus the Mode selector** — the same `EditModeMenuBlock`,
   with the account's categories as the **identity** rows and their titles as the **suggestions**. There is no
   Mode selector because neither of its questions exists here: naming a category IS pointing at it. The row's

@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.key
@@ -365,8 +366,16 @@ class WindowFrameHost {
         val state: WindowFrameState,
         /** Whether this window takes the keyboard off the task tree while it is the focused one. */
         val claimsKeyboard: Boolean,
+        /**
+         * What a lateral-menu button made from this window's ☆ names it by: the frame id of a lateral-menu
+         * window, the [WindowInstance.menuKey] of a per-object one, null for a window no button can reopen.
+         */
+        menuKey: String?,
         val onClose: () -> Unit,
     ) {
+        /** Observable for the reason [title] is: a per-object window moves on to another object while it stands. */
+        var menuKey: String? by mutableStateOf(menuKey)
+
         /**
          * What the reduce bar's chip reads. Observable and mutable rather than a `val` re-registered on
          * every change: a window titled after its subject (a task's edit window is titled with the task)
@@ -475,6 +484,11 @@ class WindowFrameHost {
         entries.firstOrNull { it.id == id }?.title = title
     }
 
+    /** The window's ☆ key changed (it moved on to another object) — see [Registration.menuKey]. */
+    fun rekey(id: String, menuKey: String?) {
+        entries.firstOrNull { it.id == id }?.menuKey = menuKey
+    }
+
     fun unregister(id: String) {
         entries.removeAll { it.id == id }
         stack.remove(id)
@@ -557,37 +571,50 @@ fun rememberWindowFrameState(
 /**
  * Which copy of a window is being composed — the head's **duplicate** button (`docs/invariants/popups.md`,
  * *Duplicating a window*). Provided by whoever opens the window: `App` for the lateral-menu windows and the
- * per-object ones ([DuplicableWindows]).
+ * per-object ones ([ObjectWindowsHost]).
  *
  * [suffix] makes every frame id composed under it unique ("" for the original, `#2`, `#3`… for copies), so a
  * copy has a place of its own in the stacking order, the reduce bar and the chrome memory — the windows nested
  * in a copy included, which inherit it. [onDuplicate] is what the head's button does; null = no button. [copy]
  * is non-null for a copy, and replaces what the ORIGINAL's caller wired to the frame: the copy's placement, and
  * its close / geometry / raise, which would otherwise close, move or raise the original.
+ *
+ * [menuKey] is what the head's ☆ makes a button for, for a per-object window ([ObjectWindows]): the window kind
+ * and its object, which `App` reopens it from. Null = the frame id itself, which `App` can reopen only for a
+ * lateral-menu window. [presentRequests] counts the times the window was asked for again while open: each one
+ * brings it back ([WindowFrameHost.present]).
  */
 class WindowInstance(
     val suffix: String,
     val onDuplicate: (() -> Unit)?,
     val copy: WindowCopy?,
+    val menuKey: String? = null,
+    val presentRequests: Int = 0,
 )
 
 /**
  * PRD §7: the head's ☆ — a button for THIS window (the copy, for a copy) at the bottom of the lateral menu. `App`
  * answers which frame ids it can reopen from a button ([canAdd]: the lateral-menu windows and their copies, the
- * ones it opens by id) and makes the button ([add], handed the frame id and the window's title as its first name).
- * One host for every window, so no window has to be wired for it and none can be forgotten.
+ * ones it opens by id) and makes the button ([add], handed the window's key and its title as its first name). A
+ * per-object window names itself by its [WindowInstance.menuKey] instead, and needs no [canAdd]: its
+ * [ObjectWindows] made the key because `App` can reopen it. One host for every window, so no window has to be
+ * wired for it and none can be forgotten.
  */
-class MenuButtonHost(val canAdd: (frameId: String) -> Boolean, val add: (frameId: String, title: String) -> Unit)
+class MenuButtonHost(val canAdd: (frameId: String) -> Boolean, val add: (key: String, title: String) -> Unit)
 
 val LocalMenuButtonHost = staticCompositionLocalOf<MenuButtonHost?> { null }
 
-/** A copy's own frame wiring — see [WindowInstance.copy]. */
+/**
+ * A copy's own frame wiring — see [WindowInstance.copy]. [number] is put after the title (`Search (2)`) — null
+ * for a per-object window that is no one's copy, only one of several open on different objects.
+ */
 class WindowCopy(
     val initialOffset: Offset,
     val initialSize: Size,
     val onClose: () -> Unit,
     val onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
     val onRaise: () -> Unit = {},
+    val number: Int? = null,
 )
 
 val LocalWindowInstance = compositionLocalOf<WindowInstance?> { null }
@@ -608,42 +635,88 @@ fun CompanionWindowScope(content: @Composable () -> Unit) {
 }
 
 /**
- * A per-object window and its copies: the original while [subject] is set, plus every copy the head's button
- * made, each holding the object it was made from — so opening the original on another object leaves the
- * copies where they are. A copy lives for the session (per-object windows persist nothing, the original
- * included). [window] draws one of them; it must close through the `close` it is handed, which is the
- * original's [closeOriginal] or the copy's own.
+ * The open windows of ONE kind of per-object window — the edit window of a task, of a category, of an alarm… —
+ * each about one object (PRD §7, `popups.md`). **Opening one on another object opens a second window**: the
+ * one already open stays. Asking again for an object whose window is open brings that window back instead of
+ * opening a second on it ([open]); the head's ⧉ is the one way to have two on the same object.
+ *
+ * Plain state, held by `App` (`remember`) and drawn by [ObjectWindowsHost]. Every window persists nothing: they
+ * live for the session. [menuKeyOf] is the ☆'s key for a window on that object (the kind and the object's id,
+ * which `App` reopens it from), or null for a kind no button can reopen — a window about something transient.
+ */
+@Stable
+class ObjectWindows<T : Any>(private val menuKeyOf: ((T) -> String?)? = null) {
+    /** One open window. [subject] follows the window when it moves on to another object ([retarget]). */
+    inner class Window internal constructor(val number: Int, subject: T, internal val duplicated: Boolean) {
+        var subject: T by mutableStateOf(subject)
+            private set
+        internal var presentRequests: Int by mutableIntStateOf(0)
+
+        fun close() {
+            windows.remove(this)
+        }
+
+        /** The window now shows [to] (an alarm window's "+ New" moved it on): what [open] and the ☆ now name. */
+        fun retarget(to: T) {
+            subject = to
+        }
+
+        internal val menuKey: String? get() = menuKeyOf?.invoke(subject)
+    }
+
+    private val windows = mutableStateListOf<Window>()
+    private var next = 1
+
+    internal val open: List<Window> get() = windows
+
+    /** The objects the open windows are about, in the order they were opened. */
+    val subjects: List<T> get() = windows.map { it.subject }
+
+    /** Open a window on [subject], or bring back the one already open on it. */
+    fun open(subject: T) {
+        val existing = windows.firstOrNull { it.subject == subject }
+        if (existing != null) existing.presentRequests++ else windows.add(Window(next++, subject, duplicated = false))
+    }
+
+    /** Close every window on an object [which] names — every window, by default. */
+    fun closeAll(which: (T) -> Boolean = { true }) {
+        windows.removeAll { which(it.subject) }
+    }
+
+    internal fun duplicate(of: Window) {
+        windows.add(Window(next++, of.subject, duplicated = true))
+    }
+}
+
+/**
+ * Draws every open window of [windows], each under a frame id of its own (`TaskEdit#3`) so it has its own place
+ * in the stacking order and the reduce bar, cascaded off the centre so two do not sit exactly over each other.
+ * [window] draws one; it must close through [ObjectWindows.Window.close] (its Save, bin and ✕), and read its
+ * object off [ObjectWindows.Window.subject].
  */
 @Composable
-fun <T : Any> DuplicableWindows(
-    subject: T?,
-    closeOriginal: () -> Unit,
-    window: @Composable (subject: T, close: () -> Unit) -> Unit,
+fun <T : Any> ObjectWindowsHost(
+    windows: ObjectWindows<T>,
+    window: @Composable (ObjectWindows<T>.Window) -> Unit,
 ) {
     val parentSuffix = LocalWindowInstance.current?.suffix ?: ""
-    val copies = remember { mutableStateListOf<Pair<Int, T>>() }
-    var next by remember { mutableIntStateOf(2) }
-    fun duplicate(of: T) {
-        copies.add(next to of)
-        next++
-    }
-    if (subject != null) {
-        CompositionLocalProvider(
-            LocalWindowInstance provides WindowInstance(parentSuffix, onDuplicate = { duplicate(subject) }, copy = null),
-        ) { window(subject, closeOriginal) }
-    }
-    for ((n, of) in copies.toList()) {
-        key(n) {
-            val close = { copies.removeAll { it.first == n }; Unit }
-            // Cascaded off the centre, so the copy does not sit exactly over the window it was made from.
-            val cascade = COPY_CASCADE_PX * ((n - 2) % 6 + 1)
+    for (w in windows.open.toList()) {
+        key(w.number) {
+            val cascade = COPY_CASCADE_PX * ((w.number - 1) % 6)
             CompositionLocalProvider(
                 LocalWindowInstance provides WindowInstance(
-                    suffix = "$parentSuffix#$n",
-                    onDuplicate = { duplicate(of) },
-                    copy = WindowCopy(Offset(cascade, cascade), Size.Zero, onClose = close),
+                    suffix = "$parentSuffix#${w.number}",
+                    onDuplicate = { windows.duplicate(w) },
+                    copy = WindowCopy(
+                        Offset(cascade, cascade),
+                        Size.Zero,
+                        onClose = { w.close() },
+                        number = w.number.takeIf { w.duplicated },
+                    ),
+                    menuKey = w.menuKey,
+                    presentRequests = w.presentRequests,
                 ),
-            ) { window(of, close) }
+            ) { window(w) }
         }
     }
 }
@@ -728,12 +801,15 @@ fun AppWindowFrame(
     val onClose = copy?.onClose ?: onClose
     val onGeometryChange = copy?.onGeometryChange ?: onGeometryChange
     val onRaise = copy?.onRaise ?: onRaise
-    val title = if (copy != null) title + " (" + instance.suffix.substringAfterLast('#') + ")" else title
+    val title = copy?.number?.let { "$title ($it)" } ?: title
+    // The ☆'s key: a per-object window's own, else the frame id where `App` can reopen the window by it.
+    val menuButtons = LocalMenuButtonHost.current
+    val menuKey = instance?.menuKey ?: state.id.takeIf { id -> menuButtons?.canAdd?.invoke(id) == true }
     val latestClose by rememberUpdatedState(onClose)
     val latestTitle by rememberUpdatedState(title)
     DisposableEffect(host, state.id, claimsKeyboard) {
         host?.register(
-            WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard) { latestClose() },
+            WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard, menuKey) { latestClose() },
         )
         // A window that answers keystrokes takes the keyboard the moment it OPENS — the press that opened
         // it landed in the tree, so nothing else would hand it over, and PRD §4's "type a letter to rename"
@@ -742,7 +818,13 @@ fun AppWindowFrame(
         if (claimsKeyboard) host?.focus(state.id)
         onDispose { host?.unregister(state.id) }
     }
-    SideEffect { host?.retitle(state.id, title) }
+    SideEffect {
+        host?.retitle(state.id, title)
+        host?.rekey(state.id, menuKey)
+    }
+    // Asked for again while open (a per-object window re-opened on its object): it comes back to the user.
+    val presentRequests = instance?.presentRequests ?: 0
+    LaunchedEffect(host, presentRequests) { if (presentRequests > 0) host?.present(state.id) }
     val headObstacle = LocalHeadObstacle.current?.value
     // Every change of the chrome state is kept at once — the buttons, the head's double-click, the reduce
     // bar's chip — so the window comes back as it was left, whatever closes it or the app.
@@ -809,8 +891,7 @@ fun AppWindowFrame(
                     obstacle = headObstacle,
                     onClose = onClose,
                     onDuplicate = instance?.onDuplicate,
-                    onAddToMenu = LocalMenuButtonHost.current?.takeIf { it.canAdd(state.id) }
-                        ?.let { host -> { title: String -> host.add(state.id, title) } },
+                    onAddToMenu = menuKey?.let { key -> menuButtons?.let { { title: String -> it.add(key, title) } } },
                     canMinimize = canMinimize,
                     onCommit = commit,
                     onHeadHeight = { headHeight[0] = it },

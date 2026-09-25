@@ -20,11 +20,19 @@ window, a period's, a category's, a notice — is the same thing with the same m
   (`TransientMenuHost`, below).
 - **A window is still not modal.** No scrim, nothing blocked. The press that lands behind a window does its
   normal job (focusing the calendar, selecting a cell); it simply does not close anything.
-- **Opening a window on another subject replaces it.** "The edit window of task A" and "of task B" are two
-  windows and the user only ever means the one they just asked for, so opening the second **replaces** the
-  first. This is held by the state that opens them (`App`'s `editTaskId`, `weightWindowListId`, …), which is
-  a single slot apiece — not by an outside-press rule. The one way to have two is to ask for it: the head's
-  **duplicate** button (below), whose copies are not in that slot and are never replaced.
+- **Opening a window on another subject opens a second window; the first stays** (user rule, 2026-09-25 — it
+  used to replace it). "The edit window of timer A" and "of timer B" are two windows, and asking for B says
+  nothing about being done with A. **Asking again for a subject whose window is open brings that window back**
+  (`WindowFrameHost.present`) rather than opening a second on it. Held by `ObjectWindows` (`ui/WindowFrame.kt`),
+  one per kind in `App` (`taskEditWindows`, `weightWindows`, `alarmWindows`, …): the list of that kind's open
+  windows, each under a frame id of its own (`TaskEdit#3`), cascaded off the centre. The one way to have two
+  windows on ONE subject is the head's **duplicate** button (below). Nothing couples two kinds either: a click
+  on a percentage no longer closes a relative-priority window. What still closes windows of a kind is a
+  rule about their subject — a tree's weight and relative-priority windows when one of ITS cells enters Edit
+  Mode, the calendar block editors when the focus moves.
+- **A window opened from a tree names the tree** (`TreeObject`: the account's, or the default sub-tree's —
+  PRD §4): several may stand open at once, from both trees, so each reads its own tree's state and sends its
+  intents back into it. There is no app-wide "which tree asked" any more.
 
 ## The task tree is a window
 
@@ -66,9 +74,18 @@ means.
 - **A head**, which is the handle the window is dragged by, carrying — in this order — **add to the menu, duplicate,
   fill width, fill height, reduce, maximize, close**. The order is fixed here and not per window, so every window's
   ✕ is under the same pixel. Duplicate (⧉) shows only where the window can be duplicated (below). Add to the menu
-  (☆) shows only where `App` can reopen the window by its frame id — the lateral-menu windows and their copies
-  (`MenuButtonHost.canAdd`, one host for every frame, so no window is wired for it one by one): it puts a button
-  for that very window (that copy) at the bottom of the lateral menu (`ui/CustomMenuButtons.kt`).
+  (☆) puts a button for that very window (that copy) at the bottom of the lateral menu (`ui/CustomMenuButtons.kt`),
+  and shows wherever `App` can open the window again from a button: a **lateral-menu window** or copy, by its
+  frame id (`MenuButtonHost.canAdd`), and a **per-object window about an object with a stable id** — a task's edit
+  window, a category's, a period kind's, a weight table, a relative priority, a deep copy, an alarm's, a timer's,
+  a reminder's — by its `ObjectWindowKey` (the kind, the tree and the id; `ObjectWindows`' `menuKeyOf`, handed to
+  the frame on `WindowInstance.menuKey`). One host for every frame, so no window is wired for it one by one.
+  A window about something transient (a calendar edit draft, the elements at a spot, the constraint picker, a
+  companion, a notice) has no ☆: a saved button would have nothing to come back to.
+  - **The key follows what the window shows**: the alarm, timer and reminder windows move on to the element their
+    "+ New …" made (`ObjectWindows.Window.retarget`), and the registration's `menuKey` is kept current
+    (`WindowFrameHost.rekey`), which is what the button's "close it when it is the window being worked in" reads.
+  - **A button whose object is gone is hidden, not deleted** (`ObjectWindowKey.exists`), so an undo brings it back.
 - **Maximize is exactly "fill both axes"** (`WindowFill.Both`), never a sixth state of its own. Pressing the
   two fill buttons in turn therefore lands on the same window as pressing maximize, and un-maximizing puts
   back the size *and* position the window had before the first of them — per axis, so releasing "fill width"
@@ -163,10 +180,10 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - **Lateral-menu windows**: `App.LateralWindow` draws the one call site for the original and each copy. A copy
   is its own `window_placement` row (`Name#n`) — position, size, chrome, config — so it comes back at startup
   like the original; closing it clears the row's `visible`. The copy of a copy is a new top-level copy.
-- **Per-object windows**: `DuplicableWindows(subject, closeOriginal) { subject, close -> }`. Each copy keeps the
-  object it was made from, so re-opening the original on another object leaves the copies alone, and the window
-  must close through the `close` it is handed (its Save, bin and ✕ close the copy, not the original). Copies
-  live for the session: per-object windows persist nothing, the original included.
+- **Per-object windows**: `ObjectWindowsHost(windows) { w -> }` draws every open window of an `ObjectWindows`;
+  a copy is one more window on the same subject, titled with its number. A window must close through
+  `w.close()` (its Save, bin and ✕ close that window, not another), and read its object off `w.subject`. They
+  live for the session: per-object windows persist nothing.
 - **Not duplicable**: the **task tree** (above), the **Calendar** — its display pipeline in `App` (records, projections, the schedule
   horizon handed to the engine) is derived from ONE visible span, so a copy on another week would drag every
   projection to its span and leave the original blank; it needs that pipeline made per-window first

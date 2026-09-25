@@ -150,6 +150,8 @@ fun AlarmWindow(
     newRowTimeOfDayMinutes: () -> Int = { 0 },
     /** The one alarm or timer this window is about, or null for the lateral-menu window listing them all. */
     subject: AlarmWindowSubject? = null,
+    /** The element the single element's window shows now — its "+ New" moved it on to [AlarmWindowSubject]. */
+    onShownChange: (AlarmWindowSubject) -> Unit = {},
 ) {
     val frame = rememberWindowFrameState(subject?.frameId ?: "Alarms", initialOffset, initialSize)
     // The alarm or timer the window shows now: [subject] to begin with, and the one its "+ New" button makes
@@ -466,7 +468,9 @@ fun AlarmWindow(
                         .clip(RoundedCornerShape(6.dp))
                         .clickable {
                             val id = if (current.isAlarm) addAlarm() else addTimer()
-                            shown = AlarmWindowSubject(id, isAlarm = current.isAlarm)
+                            val next = AlarmWindowSubject(id, isAlarm = current.isAlarm)
+                            shown = next
+                            onShownChange(next)
                         }
                         .padding(vertical = 4.dp, horizontal = 2.dp),
                 )

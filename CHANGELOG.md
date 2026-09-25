@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Per-object windows: one per object, and a ☆ on every one with a stable id — 2026-09-25
+
+User spec: every window has the ☆ in its head (the timer window opened from Search had none), and opening
+another timer's window must not close the one already open. Settled with the user: the "no replace" rule for
+EVERY per-object window, and the ☆ on the ones whose object has a stable id (not on calendar drafts, the
+elements at a spot, the constraint picker, companions or notices).
+
+- `DuplicableWindows` (one slot per kind) → `ObjectWindows` + `ObjectWindowsHost` (`ui/WindowFrame.kt`): the
+  list of a kind's open windows, each its own frame id (`TaskEdit#3`); re-asking for an open object presents its
+  window (`WindowInstance.presentRequests`). The tree's percentage click no longer closes a relative-priority
+  window (and vice versa); a tree's cell entering Edit Mode still closes that tree's weight/relative windows.
+- The global `popupFromDefaultSubtree` → `TreeObject(id, template)` per window, since windows from both trees
+  can now stand open together.
+- ☆: `ObjectWindowKey` (`object:<Kind>:<live|template>:<id>`, `ui/ObjectWindowKey.kt`), handed to the frame
+  through `WindowInstance.menuKey` and kept on `WindowFrameHost.Registration.menuKey` (`rekey` when an alarm,
+  timer or reminder window moves on — `AlarmWindow(onShownChange)`, `ChoresManagerWindow(onSubjectChange)`).
+  A button whose object is gone is hidden, not deleted. Local-only, like every user-made button.
+- A per-object window's button is named "<object name> <noun>" by default ("Tea timer", "Writing task"; "Timer"
+  when unnamed) — `ObjectWindowKey.buttonTitle`.
+  `ObjectWindowsTest`.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
+
 ### Lateral-menu buttons trimmed; the "All tasks" window removed — 2026-09-25
 
 User spec: remove the Reminders, Alarms, History, All task trees, All tasks, Task relations and Keyboard shortcuts

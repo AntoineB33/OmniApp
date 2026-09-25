@@ -498,8 +498,8 @@ titles" figure: the Search window and the per-object windows its rows open repla
 - **The rows are not cells.** Every row has one fixed height and the list's full width, so a row answers a
   cell's gestures in the form that fits — select, walk, open (`Enter`/double-click), `Ctrl+C`, the §13 menu's
   task entries — and never grows into an Edit Mode. Every action goes through the handler the rest of the app
-  already has (`editTaskId`, the one `goToTaskTree`, `deepCopyCellId`, `editCategoryId`, `editPeriodKind`,
-  `editAlarmOrTimer`, `editReminderId`): the window adds no second path to any of them.
+  already has (`taskEditWindows`, the one `goToTaskTree`, `deepCopyWindows`, `categoryWindows`,
+  `periodKindWindows`, `alarmWindows`, `reminderWindows`): the window adds no second path to any of them.
 - **The title prevails over the path** (`TaskResultRowLayout`): the title is measured first against
   everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
   this — it measures unweighted children first, which is the opposite priority.

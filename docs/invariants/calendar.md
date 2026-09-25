@@ -560,7 +560,7 @@ Global rules that always apply: `CLAUDE.md`.
   the one entry left beside the chooser that concerns a task, and it is there because it is not an EDIT** — it
   navigates, as "move" (phone) is a gesture and "add…" creates. Two things they must not become: **the §13
   window is the tree cell menu's own, under its own name** — one window for the task, so the tree's entry was
-  renamed "edit" → "edit task" rather than the calendar growing a second way in (`App.kt` sets `editTaskId`
+  renamed "edit" → "edit task" rather than the calendar growing a second way in (`App.kt` opens `taskEditWindows`
   from the `task` row and from nowhere else); and **"go to task tree" goes through `RevealCell`**, the find
   bar's primitive (expand the way in as ONE unit, then select), never a fresh selection path.
 - **`firstTaskOccurrence` is where "the first occurrence" is decided**, and `null` is a real answer, not an
