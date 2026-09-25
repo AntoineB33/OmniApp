@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -81,6 +82,11 @@ import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.ui.undoRedoIntentFor
+import org.example.project.ui.CustomMenuButton
+import org.example.project.ui.CustomMenuButtons
+import org.example.project.ui.CustomMenuSection
+import org.example.project.ui.LocalMenuButtonHost
+import org.example.project.ui.MenuButtonHost
 import androidx.compose.ui.input.key.onKeyEvent
 import org.example.project.scheduler.state.defaultSubtreePriorities
 import org.example.project.scheduler.state.projectDefaultSubtree
@@ -364,6 +370,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         .keys.sortedWith(compareBy({ it.substringBefore('#') }, { it.substringAfter('#').toIntOrNull() ?: 0 })),
                 )
             }
+        }
+
+        // PRD §7: the buttons the user made at the bottom of the lateral menu, one per window (its head's ☆).
+        // Local-only, on a placement row of their own — they name windows of this device, copies included.
+        var menuButtons by remember(placements) {
+            mutableStateOf(CustomMenuButtons.decode(placements[CustomMenuButtons.PLACEMENT_ID]?.config))
+        }
+        // The one whose title is being typed: a new button opens so, and so does "Rename". Compose-only.
+        var editingMenuButton by remember { mutableStateOf<String?>(null) }
+        // The menu's scroll, held here so a new button can be brought into view: the menu is scrolled to its
+        // very end once the button is laid out (a frame after it is added — the end is not known before).
+        val menuScroll = rememberScrollState()
+        var menuButtonAdded by remember { mutableIntStateOf(0) }
+        LaunchedEffect(menuButtonAdded) {
+            if (menuButtonAdded == 0) return@LaunchedEffect
+            withFrameNanos { }
+            menuScroll.animateScrollTo(menuScroll.maxValue)
+        }
+        fun setMenuButtons(list: List<CustomMenuButton>) {
+            menuButtons = list
+            updatePlacementById(CustomMenuButtons.PLACEMENT_ID) { it.copy(config = CustomMenuButtons.encode(list)) }
         }
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
@@ -932,6 +959,49 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 focusedWindow() == id -> setOpen(false)
                 else -> focusWindow(id)
             }
+        }
+
+        // PRD §7: a button made from a window's head (☆): at the bottom of the menu, its title open for typing
+        // with the window's own title all selected. A copy's is named after its number, like its frame id.
+        fun addMenuButton(frameId: String, title: String) {
+            val number = frameId.substringAfter('#', "")
+            val (list, id) = CustomMenuButtons.added(menuButtons, frameId, if (number.isEmpty()) title else "$title #$number")
+            setMenuButtons(list)
+            editingMenuButton = id
+            // The field has to be seen to be typed in: the menu opens, scrolled to its end.
+            menuCollapsed = false
+            menuButtonAdded++
+        }
+        // Every window the app can open by its frame id gets the ☆: the lateral-menu windows and their copies.
+        val menuButtonHost = remember {
+            MenuButtonHost(canAdd = { lateralWindowOf(it) != null }, add = { id, title -> addMenuButton(id, title) })
+        }
+        fun isFrameOpen(frameId: String): Boolean {
+            val kind = lateralWindowOf(frameId) ?: return false
+            return if ('#' in frameId) frameId in windowCopies else isWindowOpen(kind)
+        }
+        // A button the user made does what its window's own menu button does — for a copy too: opened (a closed
+        // copy comes back from its row, with its own configuration) and focused when closed, closed when it is the
+        // one being worked in, brought back to the front otherwise.
+        fun onMenuButtonClicked(frameId: String) {
+            val kind = lateralWindowOf(frameId) ?: return
+            if ('#' !in frameId) {
+                onMenuWindowClicked(kind) { setWindowOpen(kind, it) }
+                return
+            }
+            when {
+                frameId !in windowCopies -> {
+                    updatePlacementById(frameId) { it.copy(visible = true, minimized = false) }
+                    windowCopies.add(frameId)
+                    windowFrames.focus(frameId)
+                }
+                windowFrames.frontId == frameId -> {
+                    closeWindowCopy(frameId)
+                    return
+                }
+                else -> windowFrames.present(frameId)
+            }
+            historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, frameId.removePrefix(kind.name))) }
         }
 
         // Local-only persisted drag positions for the managed windows. The defaults reproduce the previous
@@ -1887,6 +1957,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             LocalWindowFrameHost provides windowFrames,
             LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
+            LocalMenuButtonHost provides menuButtonHost,
             // The period edit window's companions + drawings, for everything that draws a period.
             LocalPeriodKindConfig provides schedulerState.periodKindConfig,
         ) {
@@ -1998,6 +2069,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     taskTreeOpen = taskTreeWindowOpen,
                     onToggleTaskTree = {
                         onMenuWindowClicked(FloatingWindow.TaskTree) { taskTreeWindowOpen = it }
+                    },
+                    scrollState = menuScroll,
+                    customSection = {
+                        CustomMenuSection(
+                            buttons = menuButtons,
+                            isOpen = ::isFrameOpen,
+                            onClick = { onMenuButtonClicked(it.windowId) },
+                            editingId = editingMenuButton,
+                            onStartRename = { editingMenuButton = it },
+                            onRename = { id, title -> setMenuButtons(CustomMenuButtons.renamed(menuButtons, id, title)) },
+                            onEditDone = { editingMenuButton = null },
+                            onRemove = { setMenuButtons(CustomMenuButtons.removed(menuButtons, it)) },
+                        )
                     },
                 )
 

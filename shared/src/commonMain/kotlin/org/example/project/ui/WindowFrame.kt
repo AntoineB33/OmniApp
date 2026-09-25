@@ -571,6 +571,16 @@ class WindowInstance(
     val copy: WindowCopy?,
 )
 
+/**
+ * PRD §7: the head's ☆ — a button for THIS window (the copy, for a copy) at the bottom of the lateral menu. `App`
+ * answers which frame ids it can reopen from a button ([canAdd]: the lateral-menu windows and their copies, the
+ * ones it opens by id) and makes the button ([add], handed the frame id and the window's title as its first name).
+ * One host for every window, so no window has to be wired for it and none can be forgotten.
+ */
+class MenuButtonHost(val canAdd: (frameId: String) -> Boolean, val add: (frameId: String, title: String) -> Unit)
+
+val LocalMenuButtonHost = staticCompositionLocalOf<MenuButtonHost?> { null }
+
 /** A copy's own frame wiring — see [WindowInstance.copy]. */
 class WindowCopy(
     val initialOffset: Offset,
@@ -799,6 +809,8 @@ fun AppWindowFrame(
                     obstacle = headObstacle,
                     onClose = onClose,
                     onDuplicate = instance?.onDuplicate,
+                    onAddToMenu = LocalMenuButtonHost.current?.takeIf { it.canAdd(state.id) }
+                        ?.let { host -> { title: String -> host.add(state.id, title) } },
                     canMinimize = canMinimize,
                     onCommit = commit,
                     onHeadHeight = { headHeight[0] = it },
@@ -899,6 +911,8 @@ private fun WindowHead(
     onClose: () -> Unit,
     /** The duplicate button, left of the five; null = none. */
     onDuplicate: (() -> Unit)?,
+    /** The ☆ left of the duplicate button: a lateral-menu button for this window, named [title]; null = none. */
+    onAddToMenu: ((String) -> Unit)?,
     canMinimize: Boolean,
     onCommit: () -> Unit,
     onHeadHeight: (Float) -> Unit,
@@ -967,6 +981,7 @@ private fun WindowHead(
             modifier = Modifier.weight(1f).padding(start = with(density) { titleShiftPx.toDp() }),
         )
         headTrailing()
+        onAddToMenu?.let { WindowHeadButton("☆", "Add a button for this window to the left menu") { it(title) } }
         onDuplicate?.let { WindowHeadButton("⧉", "Duplicate", it) }
         WindowHeadButton("↔", "Fill the width") {
             state.setFillWidth(!state.fill.fillsWidth)

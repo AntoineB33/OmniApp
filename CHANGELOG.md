@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Buttons the user makes in the lateral menu — 2026-09-25
+
+User spec: a section at the bottom of the left menu for custom buttons, and in every window's head, left of
+duplicate, a button creating a menu button for that window, whose title opens in edit mode with its default name
+all selected. Settled with the user: the lateral-menu windows (the ones `App` reopens by frame id, their copies
+and Search configurations included) — not the per-object windows; a right-click renames or removes one.
+
+- `ui/CustomMenuButtons.kt` (`CustomMenuButton`, `CustomMenuButtons` pure list ops + JSON, `CustomMenuSection`),
+  `MenuButtonHost` / `LocalMenuButtonHost` (`WindowFrame.kt`, the head's ☆), `LateralMenu(customSection)`,
+  `App.addMenuButton` / `onMenuButtonClicked` (reopens a closed copy from its row). `MenuButton` is shared now.
+- Adding one opens the menu if it was retracted and scrolls it to its very end (the scroll is held by `App`,
+  `LateralMenu(scrollState)`), a frame after the button is laid out.
+- Local-only: the list is the `config` of a reserved `LateralMenu` placement row — no SQLite migration, no sync.
+  `CustomMenuButtonsTest`.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
+
 ### "Show the filters that are on" in the Configuration Search window — 2026-09-25
 
 User spec: a button showing the filters that are on even when their type is not in the results and "Only the

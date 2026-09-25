@@ -63,9 +63,12 @@ Nothing else may follow it out of the app: every other surface, per-object windo
 read five ways. A second copy of that arithmetic is how two windows come to disagree about what "maximized"
 means.
 
-- **A head**, which is the handle the window is dragged by, carrying — in this order — **duplicate, fill
-  width, fill height, reduce, maximize, close**. The order is fixed here and not per window, so every window's
-  ✕ is under the same pixel. Duplicate (⧉) shows only where the window can be duplicated (below).
+- **A head**, which is the handle the window is dragged by, carrying — in this order — **add to the menu, duplicate,
+  fill width, fill height, reduce, maximize, close**. The order is fixed here and not per window, so every window's
+  ✕ is under the same pixel. Duplicate (⧉) shows only where the window can be duplicated (below). Add to the menu
+  (☆) shows only where `App` can reopen the window by its frame id — the lateral-menu windows and their copies
+  (`MenuButtonHost.canAdd`, one host for every frame, so no window is wired for it one by one): it puts a button
+  for that very window (that copy) at the bottom of the lateral menu (`ui/CustomMenuButtons.kt`).
 - **Maximize is exactly "fill both axes"** (`WindowFill.Both`), never a sixth state of its own. Pressing the
   two fill buttons in turn therefore lands on the same window as pressing maximize, and un-maximizing puts
   back the size *and* position the window had before the first of them — per axis, so releasing "fill width"

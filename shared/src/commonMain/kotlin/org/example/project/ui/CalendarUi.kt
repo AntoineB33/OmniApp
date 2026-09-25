@@ -1311,6 +1311,10 @@ fun LateralMenu(
     /** PRD §4: the task tree is a window like the others, opened and closed from here. */
     taskTreeOpen: Boolean = false,
     onToggleTaskTree: () -> Unit = {},
+    /** The buttons the user made for one window each ([CustomMenuSection]), at the very bottom. */
+    customSection: @Composable () -> Unit = {},
+    /** Held by the caller, which scrolls the menu to its end when it adds a button there. */
+    scrollState: ScrollState = rememberScrollState(),
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1321,7 +1325,7 @@ fun LateralMenu(
             .border(1.dp, CalColors.grid)
             // Scroll when the buttons exceed the available height (e.g. short windows / calendar
             // expanded) so nothing is clipped off the bottom.
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the scrolled
             // content ends a bar's height lower: scrolled to the end, the last button always clears the bar.
             // Always, not only while the bar shows — the menu does not jump when a window opens or closes, and
@@ -1560,6 +1564,9 @@ fun LateralMenu(
             active = onlineWindowOpen,
             onClick = onToggleOnline,
         )
+
+        // PRD §7: the user's own buttons, one per window they asked for from its head's ☆.
+        customSection()
     }
 }
 
@@ -3169,10 +3176,16 @@ fun IconMenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modi
  * `GlobalShortcut.defaultChord`.
  */
 @Composable
-private fun MenuButton(label: String, active: Boolean, onClick: () -> Unit, chord: String? = null) {
+internal fun MenuButton(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    chord: String? = null,
+    modifier: Modifier = Modifier,
+) {
     ShortcutHint(chord, modifier = Modifier.fillMaxWidth()) {
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(if (active) CalColors.today else Color.Transparent)
