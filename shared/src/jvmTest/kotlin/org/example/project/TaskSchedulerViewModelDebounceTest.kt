@@ -7,7 +7,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStore
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import kotlin.test.Test
@@ -35,9 +35,9 @@ class TaskSchedulerViewModelDebounceTest {
             val vm = TaskSchedulerViewModel(store = store, saveDispatcher = dispatcher)
 
             // Three state-changing intents in quick succession (each window focus differs).
-            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Calendar))
-            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Reminders))
-            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.History))
+            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
+            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Reminders))
+            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.History))
 
             // Before the debounce window elapses, nothing is written.
             runCurrent()
@@ -57,7 +57,7 @@ class TaskSchedulerViewModelDebounceTest {
             val store = RecordingStore()
             val vm = TaskSchedulerViewModel(store = store, saveDispatcher = dispatcher)
 
-            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Calendar))
+            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
             vm.flush()
             assertEquals(1, store.saveCount)
 

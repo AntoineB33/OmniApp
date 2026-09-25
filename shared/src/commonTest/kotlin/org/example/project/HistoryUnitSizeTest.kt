@@ -14,7 +14,7 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.HistoryRow
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStateCodec
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -95,7 +95,7 @@ class HistoryUnitSizeTest {
         val clicked = SchedulerReducer.reduce(s0, SchedulerIntent.ClickCell(cells[9], ctrl = false, shift = false, visibleOrder = cells))
         check("selecting a cell", s0, clicked, HistoryCategory.Selection)
 
-        val focused = SchedulerReducer.reduce(s0, SchedulerIntent.FocusWindow(AppWindow.Calendar))
+        val focused = SchedulerReducer.reduce(s0, SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
         check("focusing a window", s0, focused, HistoryCategory.WindowNav)
     }
 

@@ -267,8 +267,8 @@ private fun SettingEditor(
 }
 
 /**
- * A Sort by: a drop-down with a check box per sorting method of [kind]'s rows (null = every row). Checking one
- * adds it at the bottom of [sorts]; unchecking removes it. The menu stays open, so several can be checked in
+ * A Sort by: a drop-down with a check box per sorting method of [kind]'s rows (null = every row), after a
+ * [SelectAllMenuItem]. Checking one adds it at the bottom of [sorts]; unchecking removes it. The menu stays open, so several can be checked in
  * turn, each landing below the last.
  */
 @Composable
@@ -294,6 +294,13 @@ private fun SortMethodPicker(
         )
         transientMenuDismissal(open) { open = false }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+            // Checking them all adds the unchecked ones at the bottom, in the menu's order — what checking each
+            // in turn would do; unchecking them all takes this section's methods out and leaves the others'.
+            SelectAllMenuItem(
+                allChecked = methods.all(::inList),
+                onSelectAll = { onChange(methods.fold(sorts) { list, m -> if (inList(m)) list else SearchDomain.withSortMethod(list, m, on = true) }) },
+                onDeselectAll = { onChange(methods.fold(sorts) { list, m -> SearchDomain.withSortMethod(list, m, on = false) }) },
+            )
             methods.forEach { method ->
                 val checked = inList(method)
                 DropdownMenuItem(

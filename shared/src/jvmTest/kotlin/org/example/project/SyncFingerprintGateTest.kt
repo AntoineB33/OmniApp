@@ -17,7 +17,7 @@ import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerSelection
@@ -64,7 +64,7 @@ class SyncFingerprintGateTest {
 
         // PRD §7 window navigation is per-device view state — focusing a floating window (and the WindowNav
         // history unit it records) must not move the fingerprint.
-        val navigated = SchedulerReducer.reduce(base, SchedulerIntent.FocusWindow(AppWindow.Calendar))
+        val navigated = SchedulerReducer.reduce(base, SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
         assertNotEquals(base.focusedWindow, navigated.focusedWindow, "sanity: navigation changed the state")
         assertEquals(fp(base), fp(navigated), "navigating windows must not move the sync fingerprint")
 
@@ -173,7 +173,7 @@ class SyncFingerprintGateTest {
 
             // Local-only view state (window navigation + the calendar display switches) is per-device and must
             // NOT push — it is neutralized in the sync fingerprint (CLAUDE.md reconstructibility rule).
-            vm.dispatch(SchedulerIntent.FocusWindow(AppWindow.Calendar))
+            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
             advanceTimeBy(500)
             runCurrent()
             assertNotEquals(true, meta.loadSyncMeta()?.dirty, "navigating windows must not push")

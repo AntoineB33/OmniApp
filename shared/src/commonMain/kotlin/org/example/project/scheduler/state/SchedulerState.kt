@@ -49,72 +49,55 @@ data class SchedulerHistory(
 /**
  * PRD §5 History Architecture: history is split into independent categories, each with its own list
  * of units and pointer — changes made in Edit Mode, selection-state changes, calendar edits, and
- * "the rest" (tree/expansion mutations). Selection history is undone/redone separately (Alt+Left /
- * Alt+Right) from the content categories (Ctrl+Z / Ctrl+Y).
+ * "the rest" (tree/expansion mutations), and the moves of the focus between windows. Which chord walks
+ * which is [chords].
  *
- * The content categories implement PRD §5's "pointer navigates by context": Ctrl+Z/Y target [Edit]
- * while an Edit-Mode session is open (so it only touches that session's text changes, skipping every
- * other unit), [Calendar] while the calendar is focused (skipping non-calendar units — and non-focus
- * Ctrl+Z skips calendar units), and otherwise [Main].
+ * Ctrl+Z/Y target [Edit] while an Edit-Mode session is open (so it only touches that session's text
+ * changes), and otherwise the units of [Main] and [Calendar] **made in the focused window** — the unit's
+ * window, not its category, is what "relative to the focused window" reads (`SchedulerReducer.undoIn`).
  */
 enum class HistoryCategory { Edit, Selection, Calendar, Main, WindowNav }
 
 /**
- * PRD §5/§6: the two undo/redo chords, as the History window's third filter dimension — "show me only what
- * `Ctrl+Z` walks", "only what `Alt+←`/`Alt+→` walks", or both.
+ * PRD §5/§6: the three history chords, as the History window's third filter dimension — "show me only what
+ * `Ctrl+Z` walks", "only what `Alt+←`/`Alt+→` walks", "only what `Shift+Alt+←`/`Shift+Alt+→` walks".
  *
- * There are exactly two because there are exactly two pointers a keystroke moves: the **content** pointer
- * (`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`, which picks its category by context — see [HistoryCategory]) and the
- * **selection** pointer (`Alt+←` / `Alt+→`). A category walked by neither answers to [HistoryCategory.chord]
- * with `null` and is not "both".
+ * Each is relative to where the user is (`SchedulerReducer.undoIn` / `undoPosition`): the first walks the
+ * **changes** made in the focused window, the second the **selections** of the focused window, and the third
+ * **every position** — every selection of every window and every move of the focus between windows.
  */
 enum class HistoryChord(val label: String) {
-    /** The content stacks: `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`. */
+    /** The changes of the focused window: `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`. */
     Undo("Ctrl+Z"),
 
-    /** The selection stack, walked separately: `Alt+←` / `Alt+→`. */
+    /** The selections of the focused window: `Alt+←` / `Alt+→`. */
     Selection("Alt+arrows"),
+
+    /** Every selection and every focus move, whatever the window: `Shift+Alt+←` / `Shift+Alt+→`. */
+    Position("Shift+Alt+arrows"),
 }
 
 /**
- * PRD §5/§6: **which chord walks this category's units**, or `null` for a category no undo/redo command
- * reaches — today only [HistoryCategory.WindowNav], which is recorded for the History window and nothing
- * else (PRD §7).
- *
- * This is the one statement of that mapping, and `SchedulerReducer`'s `contentCategory` — which picks WHICH
- * of the [HistoryChord.Undo] categories a given `Ctrl+Z` lands on — must stay inside it: every category that
- * function can return has to answer [HistoryChord.Undo] here, or the History window's chord filter would
- * promise something the keyboard does not do. `HistoryChordFilterTest` pins it.
+ * PRD §5/§6: **which chords walk this category's units** — the one statement of that mapping, which the
+ * History window's chord filter reads and `SchedulerReducer`'s undo routing must stay inside.
+ * `HistoryChordFilterTest` pins it.
  */
-val HistoryCategory.chord: HistoryChord?
+val HistoryCategory.chords: Set<HistoryChord>
     get() = when (this) {
-        HistoryCategory.Edit, HistoryCategory.Calendar, HistoryCategory.Main -> HistoryChord.Undo
-        HistoryCategory.Selection -> HistoryChord.Selection
-        HistoryCategory.WindowNav -> null
+        HistoryCategory.Edit, HistoryCategory.Calendar, HistoryCategory.Main -> setOf(HistoryChord.Undo)
+        HistoryCategory.Selection -> setOf(HistoryChord.Selection, HistoryChord.Position)
+        HistoryCategory.WindowNav -> setOf(HistoryChord.Position)
     }
 
 /**
- * PRD §7: the focus targets the user navigates between — the task tree plus the floating windows. The
- * focused window is the top layer except when the task tree is focused. Persisted with the rest of the
- * app state.
+ * PRD §6/§7: **the windows of the app** — where a History Unit was made (the History window's first filter
+ * dimension) AND the window the user is focused on ([SchedulerState.focusedWindow]). They are one list since
+ * every window claims the focus (user rule, 2026-09-25): the history chords are relative to the focused window,
+ * so a window that could not be focused would have no `Ctrl+Z` of its own. It used to be two enums — five
+ * focus targets beside this list — and every window outside the five filed its focus under the tree.
  *
- * A floating window earns an entry here when it owns the keyboard or has History Units of its own to walk:
- * [Alarms] has both — Ctrl+Z inside it must reach the Main stack its alarm/timer units are on, and
- * SchedulerReducer.contentCategory only lands there while the focus is on neither an Edit session nor the
- * calendar. The windows not listed claim no app-wide focus and leave it where it was.
- */
-enum class AppWindow { Tree, Calendar, Reminders, History, Alarms }
-
-/**
- * PRD §6: **which window of the app a History Unit was made in** — the History window's first filter
- * dimension, and the one the drop-down lists.
- *
- * It is deliberately a different question from [AppWindow], which is the set of *focus targets* (PRD §7):
- * only five windows claim the app-wide focus, but the user authors History Units in every one of them — a
- * category rule is written in the Categories window, a relation struck off in Task relations, a chord
- * rebound in Shortcuts — and none of those three moves [SchedulerState.focusedWindow]. Filtering by the
- * focused window would therefore file every one of those under [Tree]. The two enums answer "who owns the
- * keyboard?" and "where was this change made?", which are not the same set.
+ * Persisted by NAME (the focused window, each unit's window, each focus move): a name this build does not know
+ * decodes to the tree (focus) or to no window (a unit), and an entry must never be renamed.
  *
  * The debug time-simulation panel is not here: it is not a window of the app, and it commits nothing.
  */
@@ -132,6 +115,8 @@ enum class HistoryWindow(val label: String) {
     DefaultSubtree("Default sub-tree"),
     Shortcuts("Shortcuts"),
     Search("Search"),
+    ConfigSearch("Search configurations"),
+    Online("Online"),
 }
 
 /**
@@ -610,11 +595,17 @@ data class SchedulerState(
      */
     val automaticSchedule: Boolean = true,
     /**
-     * PRD §7 the window the user is currently focused on (the task tree or a floating window). Routes
-     * Ctrl+Z/Y to that window's history (PRD §5/§6) and gates which surface catches letter typing
-     * (PRD §8). Persisted with the rest of the app state.
+     * PRD §7 the window the user is currently focused on — any window of the app, the task tree included.
+     * Every history chord is relative to it (PRD §5/§6), each unit is stamped with it, and it gates which
+     * surface catches letter typing (PRD §8). Persisted with the rest of the app state.
      */
-    val focusedWindow: AppWindow = AppWindow.Tree,
+    val focusedWindow: HistoryWindow = HistoryWindow.Tree,
+    /**
+     * Which copy of [focusedWindow] has the focus: `""` for the window itself, else the copy's suffix (`"#2"`,
+     * the head's ⧉). Only a window whose selection is per copy (the Search window's rows) reads it. In memory
+     * only: a restart reopens on the window, not on the copy.
+     */
+    val focusedInstance: String = "",
     /**
      * PRD §8 Overlap Mode: whether `O` has armed "allow overlap" for the next calendar move/resize.
      * Transient session state, not persisted and not undoable.
@@ -766,6 +757,13 @@ data class SchedulerState(
     val searchExpanded: Set<CellId> = emptySet(),
     val searchSelection: SchedulerSelection = SchedulerSelection(),
     val searchEditSession: SchedulerEditSession? = null,
+    /**
+     * PRD §5 the selection of a window that is not drawn as a tree — the Search window's selected row (its
+     * result key), the Task trees window's open entry (its id) — by [windowSelectionKey]. In the state rather
+     * than in the window so `Alt+←` can put it back ([WindowSelectionDelta]); in memory only, like the other
+     * windows' selections above.
+     */
+    val windowSelections: Map<String, String> = emptyMap(),
     /**
      * PRD §4/§7: whether the [defaultSubtree] policy is **currently applied** — the switch left of the
      * "Default sub-tree" button in the lateral menu. Off by default (and for every payload written before the
@@ -960,7 +958,7 @@ data class SchedulerState(
     val isDefaultSubtreeProjection: Boolean = false,
 ) {
     /** PRD §8: the calendar catches letter typing / routes Ctrl+Z/Y only while it is the focused window. */
-    val calendarFocused: Boolean get() = focusedWindow == AppWindow.Calendar
+    val calendarFocused: Boolean get() = focusedWindow == HistoryWindow.Calendar
 
     /**
      * Sleep/Work toggle: true when the user has pressed **Sleep** and the scheduled wake instant
@@ -989,6 +987,8 @@ data class SchedulerState(
     fun withLocalViewStateFrom(other: SchedulerState): SchedulerState =
         copy(
             focusedWindow = other.focusedWindow,
+            focusedInstance = other.focusedInstance,
+            windowSelections = other.windowSelections,
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
             showReminders = other.showReminders,
@@ -1003,7 +1003,9 @@ data class SchedulerState(
     /** See [withLocalViewStateFrom]: the local-only view state reset to canonical constants for the fingerprint. */
     fun withLocalViewStateNeutralized(): SchedulerState =
         copy(
-            focusedWindow = AppWindow.Tree,
+            focusedWindow = HistoryWindow.Tree,
+            focusedInstance = "",
+            windowSelections = emptyMap(),
             selection = SchedulerSelection(),
             showScreenBreaks = false,
             showReminders = true,
@@ -1271,3 +1273,6 @@ data class SchedulerState(
         }
     }
 }
+
+/** The key of a window's entry in [SchedulerState.windowSelections]: the window, and the copy (`""`, `"#2"`). */
+fun windowSelectionKey(window: HistoryWindow, instance: String = ""): String = window.name + instance

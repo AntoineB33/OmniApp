@@ -18,7 +18,6 @@ import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.persistence.PersistedSnapshot
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
-import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistorySource
@@ -96,14 +95,15 @@ class SchedulerReducerTest {
     @Test
     fun history_window_filter_matches_the_window_field_and_the_text_query() {
         // PRD §6: the first field is a WINDOW drop-down, defaulting to "all windows" (null). The unit is
-        // stamped at commit from SchedulerReducer.activeWindow, which the shell feeds from its window stack.
-        val previous = SchedulerReducer.activeWindow
-        SchedulerReducer.activeWindow = { HistoryWindow.Tree }
+        // stamped at commit with the focused window, once the shell turns stamping on. The focus is set
+        // directly: a move of it would be a unit of its own.
+        val previous = SchedulerReducer.stampsWindow
+        SchedulerReducer.stampsWindow = true
         try {
             var s = SchedulerState.empty()
             val cellId = s.lists[s.rootListId]!!.cellIds.first()
             s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Daily"))
-            SchedulerReducer.activeWindow = { HistoryWindow.Alarms }
+            s = s.copy(focusedWindow = HistoryWindow.Alarms)
             s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(cellId))
 
             // "All windows": both units, whichever window they were made in.
@@ -134,7 +134,7 @@ class SchedulerReducerTest {
                 ).size,
             )
         } finally {
-            SchedulerReducer.activeWindow = previous
+            SchedulerReducer.stampsWindow = previous
         }
     }
 
@@ -164,22 +164,22 @@ class SchedulerReducerTest {
     fun one_gesture_keeps_the_window_it_began_in() {
         // PRD §5/§6: a live-edited field commits per keystroke and coalesces into ONE unit. The merged unit
         // keeps the first keystroke's timestamp and `before` side, so it must keep its window too.
-        val previous = SchedulerReducer.activeWindow
-        SchedulerReducer.activeWindow = { HistoryWindow.Alarms }
+        val previous = SchedulerReducer.stampsWindow
+        SchedulerReducer.stampsWindow = true
         try {
             val key = "alarm-0/label@1"
             fun alarm(label: String) =
                 AlarmEntry(id = "alarm-0", label = label, timeOfDayMinutes = 7 * 60, enabled = true)
-            var s = SchedulerState.empty()
+            var s = SchedulerState.empty().copy(focusedWindow = HistoryWindow.Alarms)
             s = SchedulerReducer.reduce(s, SchedulerIntent.SetAlarms(listOf(alarm("Wa")), editKey = key))
-            SchedulerReducer.activeWindow = { HistoryWindow.Tree }
+            s = s.copy(focusedWindow = HistoryWindow.Tree)
             s = SchedulerReducer.reduce(s, SchedulerIntent.SetAlarms(listOf(alarm("Wake")), editKey = key))
 
             val units = s.histories.forCategory(HistoryCategory.Main).units
             assertEquals(1, units.size, "the two keystrokes are one gesture")
             assertEquals(HistoryWindow.Alarms, units.single().window)
         } finally {
-            SchedulerReducer.activeWindow = previous
+            SchedulerReducer.stampsWindow = previous
         }
     }
 
@@ -361,27 +361,31 @@ class SchedulerReducerTest {
         assertNotNull(s.selection.main)
         assertNotNull(s.editSession)
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(AppWindow.Calendar))
-        assertEquals(AppWindow.Calendar, s.focusedWindow)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
+        assertEquals(HistoryWindow.Calendar, s.focusedWindow)
         assertNotNull(s.editSession) // still in Edit Mode
         assertEquals(cellId, s.editSession!!.cellId)
         assertEquals("x", s.editSession!!.draftText) // …with the draft it was holding
         assertEquals(cellId, s.selection.main) // …and the selection it had
 
         // Coming back is just as inert: focus returns, and neither of the two is touched on the way.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(AppWindow.Tree))
-        assertEquals(AppWindow.Tree, s.focusedWindow)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Tree))
+        assertEquals(HistoryWindow.Tree, s.focusedWindow)
         assertNotNull(s.editSession)
         assertEquals(cellId, s.selection.main)
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(AppWindow.Calendar))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
         val nav = s.histories.windowNav
         assertEquals(3, nav.units.size) // one per move: Calendar, Tree, Calendar
         assertEquals("Focus Calendar", nav.units.last().delta.label)
 
-        // The WindowNav unit is not walked by any undo/redo command, so Ctrl+Z does not revert focus.
+        // Ctrl+Z walks changes, not positions: it does not revert the focus...
         val undone = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
-        assertEquals(AppWindow.Calendar, undone.focusedWindow)
+        assertEquals(HistoryWindow.Calendar, undone.focusedWindow)
+        // ...Shift+Alt+← does, one move at a time, and Shift+Alt+→ takes it forward again.
+        val back = SchedulerReducer.reduce(s, SchedulerIntent.UndoPosition)
+        assertEquals(HistoryWindow.Tree, back.focusedWindow)
+        assertEquals(HistoryWindow.Calendar, SchedulerReducer.reduce(back, SchedulerIntent.RedoPosition).focusedWindow)
     }
 
     @Test

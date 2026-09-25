@@ -162,7 +162,7 @@ import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.state.CalendarEdge
 import org.example.project.scheduler.state.HistoryCategory
-import org.example.project.scheduler.state.chord
+import org.example.project.scheduler.state.chords
 import org.example.project.scheduler.state.HistoryChord
 import org.example.project.scheduler.state.HistorySource
 import org.example.project.scheduler.state.HistoryUnit
@@ -1984,11 +1984,10 @@ const val REMINDER_EDIT_FRAME_ID: String = "ReminderEdit"
  * keeps the default view — every window's units — from being drowned by the Supabase log, which is one row
  * per HTTP call and would otherwise bury the units it sits beside.
  *
- * [chords] is the third field, and it narrows the same half [window] does: **which undo/redo chord walks the
- * unit**. `null` is "any" and admits every unit, including the window-navigation ones no chord walks (PRD §7
- * — recorded for this window and nothing else). The three named entries are `setOf(Undo)`, `setOf(Selection)`
- * and both together; a unit whose category answers no chord ([HistoryCategory.chord] `null`) is in none of
- * them, so "both" means "everything some chord walks" rather than "everything".
+ * [chords] is the third field, and it narrows the same half [window] does: **which history chord walks the
+ * unit** ([HistoryCategory.chords]). `null` is "any". A unit is in a named entry when ONE of the chords that
+ * walk it is in the entry's set: a selection is under both `Alt+arrows` and `Shift+Alt+arrows`, a move of the
+ * focus under `Shift+Alt+arrows` alone — so it is not in "Ctrl+Z or Alt+arrows".
  *
  * [query] is free text and applies whichever fields are active, matched against everything the row *shows*.
  */
@@ -2096,9 +2095,8 @@ fun filteredHistoryUnits(
                     }
                 }
                 .filter { filter.window == null || it.unit.window == filter.window }
-                // The chord field narrows the same half. A WindowNav unit answers no chord, so it is in
-                // "any" and in none of the three named entries — never silently in "both".
-                .filter { filter.chords == null || it.category.chord in filter.chords }
+                // The chord field narrows the same half: a unit is in when one of the chords walking it is.
+                .filter { filter.chords == null || it.category.chords.any { chord -> chord in filter.chords } }
                 .filter { entry ->
                     matches(entry.unit.delta.label, entry.unit.delta.details.joinToString("\n"))
                 }
@@ -2426,15 +2424,16 @@ const val ANY_CHORD_LABEL = "Any"
 
 /**
  * PRD §5/§6: the chord field's entries, in the order the drop-down lists them — no restriction, then each
- * chord on its own, then both. "Both" is the union and not "everything": a window-navigation unit is walked
- * by neither chord, so only [ANY_CHORD_LABEL] reaches it.
+ * chord on its own, then the two chords relative to the focused window together. That last one is not
+ * "everything": a move of the focus is walked by `Shift+Alt+arrows` alone, so it is not in it.
  */
 private val CHORD_FILTER_OPTIONS: List<Pair<String, Set<HistoryChord>?>> =
     listOf(
         ANY_CHORD_LABEL to null,
         HistoryChord.Undo.label to setOf(HistoryChord.Undo),
         HistoryChord.Selection.label to setOf(HistoryChord.Selection),
-        "${HistoryChord.Undo.label} or ${HistoryChord.Selection.label}" to HistoryChord.entries.toSet(),
+        HistoryChord.Position.label to setOf(HistoryChord.Position),
+        "${HistoryChord.Undo.label} or ${HistoryChord.Selection.label}" to setOf(HistoryChord.Undo, HistoryChord.Selection),
     )
 
 /** What the chord field shows for [chords] — read out of [CHORD_FILTER_OPTIONS] so the two cannot drift. */

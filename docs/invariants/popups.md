@@ -34,7 +34,9 @@ the first time (`rememberWindowFrameState(defaultChrome = …)`), and as it was 
 FIRST, so the windows restored with it come back over it.
 
 - **It does not `claimsKeyboard`**: the tree reads its own keys under its own rule (`keyboardOwned`, below), and a
-  press in its window focuses it and dispatches the `Tree` focus target, as a press in the bare tree did.
+  press in its window focuses it and dispatches the `Tree` focus, as a press in the bare tree did. The content
+  Box behind every window claims NO scheduler focus (it only blurs the frames): it is every window's ancestor,
+  so claiming one there recorded a move to the tree and back on every press in another window.
 - **Reduced, it is deaf** (`TaskSchedulerScreen(keyboardEnabled = false)`): a reduced window stays composed, and a
   keystroke would otherwise rename a cell nobody can see.
 - **Not duplicable**: its selection, edit session and scroll are `SchedulerState` view state; a copy would be a

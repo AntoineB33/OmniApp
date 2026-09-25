@@ -23,7 +23,7 @@ import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.SyncMetaStore
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerSelection
@@ -113,7 +113,7 @@ class SyncPayloadTest {
                 TaskPanel(id = "sleep/0", taskId = null, title = "Sleep", startEpochMillis = 2_000, endEpochMillis = 3_000, sleep = true),
                 TaskPanel(id = "pin/0", taskId = null, title = "user pin", startEpochMillis = 3_000, endEpochMillis = 4_000, pinned = true),
             ),
-            focusedWindow = AppWindow.Calendar,
+            focusedWindow = HistoryWindow.Calendar,
             selection = SchedulerSelection(main = base.cells.keys.first()),
             showScreenBreaks = true,
         )
@@ -153,7 +153,7 @@ class SyncPayloadTest {
             assertTrue(pushed.panels.none(SchedulerDomain::isRegeneratedPanel))
 
             // Per-device view state is neutralized, not shipped.
-            assertEquals(AppWindow.Tree, pushed.focusedWindow, "the focused window is local-only")
+            assertEquals(HistoryWindow.Tree, pushed.focusedWindow, "the focused window is local-only")
             assertEquals(SchedulerSelection(), pushed.selection, "the tree selection is local-only")
             assertEquals(false, pushed.showScreenBreaks, "the calendar display switches are local-only")
 

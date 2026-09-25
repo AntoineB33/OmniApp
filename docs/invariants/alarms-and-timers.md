@@ -145,8 +145,8 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 
 - **Everything the user does to either LIST is one Main History Unit** — a row added, a row struck off with
   the bin, and every settings field of both sections (`AlarmsDelta` / `TimersDelta`, committed by
-  `reduceSetAlarms` / `reduceSetTimers`). Ctrl+Z, therefore, and never Alt+←/→: that pair walks the
-  *Selection* stack, and this window has no selection.
+  `reduceSetAlarms` / `reduceSetTimers`). Ctrl+Z in this window, therefore, and never Alt+←/→: that pair
+  walks the focused window's *selections*, and this window has none.
 - **The five run-state writes are not units, and that is the rule.** `StartTimer` / `PauseTimer` /
   `ResetTimer` / `SetTimerCountdownField` / `NudgeTimerRemaining` write `endsAtMillis`, an ABSOLUTE instant
   measured against a now-line that keeps moving: a delta replayed later does not mean what it meant when it

@@ -137,7 +137,7 @@ import org.example.project.scheduler.persistence.SchedulerStore
 import org.example.project.scheduler.platform.isDeadKey
 import org.example.project.scheduler.platform.readSystemClipboardText
 import org.example.project.scheduler.platform.writeSystemClipboardText
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
@@ -380,8 +380,8 @@ fun TaskSchedulerScreen(
             // PRD §7/§8: the tree only owns the keyboard while it is the focused surface AND the selector's
             // name field above it does not hold it — that field's menus close the moment it loses focus, so
             // the tree's refocus effect must not pull focus back out of it.
-            keyboardActive = keyboardEnabled && state.focusedWindow == AppWindow.Tree && !treeFieldFocused,
-            refocusWindow = AppWindow.Tree,
+            keyboardActive = keyboardEnabled && state.focusedWindow == HistoryWindow.Tree && !treeFieldFocused,
+            refocusWindow = HistoryWindow.Tree,
             modifier = Modifier.fillMaxSize(),
             onSetWeightWindow = onSetWeightWindow,
             onSetRelativeWindow = onSetRelativeWindow,

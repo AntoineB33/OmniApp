@@ -11,6 +11,44 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Select all / Deselect all in every drop-down of check boxes — 2026-09-25
+
+User spec: an option without a check box at the start of every such drop-down, checking every box and turning
+into "Deselect all", then back. `SelectAllMenuItem` (`ui/SearchWindow.kt`), used by the two there are: the kind
+drop-down (Search and Search configurations) and each section's Sort by (select all appends the unchecked methods
+at the bottom in the menu's order). Its label follows the boxes, not its last press. Client apps only.
+
+### Every window takes the focus; the history chords are relative to it — 2026-09-25
+
+Anomaly (account 3, release app): the Search window listing history units, sorted by date, showed no new unit when
+the user clicked from window to window. Cause: only five windows (tree, calendar, reminders, history, alarms)
+could take the focus — a press in any other recorded nothing. User rule: *"ctrl+z or ctrl+y or ctrl+shift+z
+navigates in changes relative to the focused window, alt+arrow keys navigates in positions/selections relative to
+the focused window, and shift+alt+arrow keys navigates in all positions/selections."* Settled with the user: a
+position is **the focused window and what is selected in it**; every window with a selection records it.
+
+- **`AppWindow` deleted**: `SchedulerState.focusedWindow` is a `HistoryWindow` (+ `ConfigSearch`, `Online`), with
+  `focusedInstance` for a copy. Every window's raise dispatches `FocusWindow` (a WindowNav unit). `App`'s
+  Compose-side `activeHistoryWindow` is gone: a unit is stamped with the focused window (`stampsWindow`).
+- **Routing** (`SchedulerReducer.undoIn`/`redoIn` over a `HistoryWalk`): Ctrl+Z = Main+Calendar units made in the
+  focused window; Alt+arrows = the focused window's selections (window read off the delta); Shift+Alt+arrows
+  (`UndoPosition`/`RedoPosition`, new) = every selection and focus move, by `deviceSeq`. `chronoId` is now
+  counted across every category so one device's units are totally ordered.
+- **New selection units**: `ViewSelectionDelta` (All tasks, Default sub-tree, Search sub-trees) and
+  `WindowSelectionDelta` (`SelectInWindow`: the Search row — moved from Compose into the state, per copy — and the
+  Task trees window's open entry). Walking back a focus move re-presents that window (`App`, never dispatching).
+- **One reading of the chords**: `undoRedoIntentFor` takes Alt; the tree's own Alt-arrow branch is gone; an
+  app-root `onKeyEvent` answers the chords in every window that does not itself.
+- History window: the chord field gains `Shift+Alt+arrows`; "both" is now "Ctrl+Z or Alt+arrows".
+- **Second half of the anomaly** (still seen after the deploy above): a probe of a copy of the release DB showed the
+  focus moves WERE recorded (922 WindowNav units, the newest at the click) and ranked first by the saved
+  configuration — the Search window's keyed `LazyColumn` anchors its scroll on the first VISIBLE row, so each new
+  row sorted first landed just above the view. A list read at its top now stays at its top.
+- Persisted: `focus` units gain two optional instances; `viewSelection` / `windowSelection` are new delta types
+  (an older build skips a unit it cannot read). Focused-window names of the old enum all decode. No SQLite
+  migration, no Supabase change.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
+
 ### Sorting in the Configuration Search window — 2026-09-25
 
 User spec: *"In the Search configurations window, add sorting configurations"*, then: a list of sorting

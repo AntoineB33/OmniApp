@@ -22,7 +22,8 @@ class UndoRedoChordTest {
         ctrlOrMeta: Boolean = true,
         shift: Boolean = false,
         keyDown: Boolean = true,
-    ): SchedulerIntent? = undoRedoIntentFor(key, keyDown = keyDown, ctrlOrMeta = ctrlOrMeta, shift = shift)
+        alt: Boolean = false,
+    ): SchedulerIntent? = undoRedoIntentFor(key, keyDown = keyDown, ctrlOrMeta = ctrlOrMeta, shift = shift, alt = alt)
 
     @Test
     fun ctrl_z_undoes() {
@@ -48,6 +49,22 @@ class UndoRedoChordTest {
         assertNull(chord(Key.Z, ctrlOrMeta = false, shift = true))
         assertNull(chord(Key.Y, ctrlOrMeta = false))
         assertNull(chord(Key.A))
+    }
+
+    /** User rule, 2026-09-25: Alt+arrows walk the focused window's selections, Shift+Alt+arrows every position. */
+    @Test
+    fun alt_arrows_walk_the_selections_and_shift_alt_arrows_every_position() {
+        assertEquals(SchedulerIntent.UndoSelection, chord(Key.DirectionLeft, ctrlOrMeta = false, alt = true))
+        assertEquals(SchedulerIntent.RedoSelection, chord(Key.DirectionRight, ctrlOrMeta = false, alt = true))
+        assertEquals(SchedulerIntent.UndoPosition, chord(Key.DirectionLeft, ctrlOrMeta = false, shift = true, alt = true))
+        assertEquals(SchedulerIntent.RedoPosition, chord(Key.DirectionRight, ctrlOrMeta = false, shift = true, alt = true))
+        // Not an arrow, or Ctrl held as well (the system-wide chords are Ctrl+Shift+Alt): not a history chord.
+        assertNull(chord(Key.DirectionUp, ctrlOrMeta = false, alt = true))
+        assertNull(chord(Key.DirectionLeft, alt = true))
+        assertNull(chord(Key.Z, shift = true, alt = true))
+        // A bare arrow moves a selection; it walks nothing.
+        assertNull(chord(Key.DirectionLeft, ctrlOrMeta = false))
+        assertNull(chord(Key.DirectionLeft, ctrlOrMeta = false, alt = true, keyDown = false))
     }
 
     /** Key-up must not fire it a second time — the surfaces preview both edges of every stroke. */

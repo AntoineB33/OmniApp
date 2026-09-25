@@ -14,7 +14,7 @@ import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.WindowPlacement
 import org.example.project.scheduler.persistence.migrateLegacyJsonPayload
 import org.example.project.scheduler.persistence.db.SchedulerDatabase
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.FocusDelta
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.NoOpDelta
@@ -49,7 +49,7 @@ class SchedulerStoreTest {
                                 HistoryUnit(
                                     timeMillis = 200,
                                     chronoId = 1,
-                                    delta = FocusDelta(AppWindow.Tree, AppWindow.Calendar),
+                                    delta = FocusDelta(HistoryWindow.Tree, HistoryWindow.Calendar),
                                     debugTainted = true,
                                 ),
                             ),

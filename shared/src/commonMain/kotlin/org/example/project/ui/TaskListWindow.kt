@@ -266,6 +266,8 @@ private fun SchedulerIntent.forTaskList(rootCells: List<CellId>): SchedulerInten
         is SchedulerIntent.Redo,
         is SchedulerIntent.UndoSelection,
         is SchedulerIntent.RedoSelection,
+        is SchedulerIntent.UndoPosition,
+        is SchedulerIntent.RedoPosition,
         is SchedulerIntent.FocusWindow,
         -> this
         else -> SchedulerIntent.InTaskList(this, rootCells)

@@ -65,19 +65,14 @@ object SchedulerReducer {
     var debugTainting: () -> Boolean = { false }
 
     /**
-     * PRD §6: **which window of the app the user is acting in**, stamped onto every History Unit this
-     * reducer commits ([HistoryUnit.window]) so the History window can filter by window.
+     * PRD §6: whether this reducer stamps each History Unit with **the window it was made in**
+     * ([HistoryUnit.window]) — which is [SchedulerState.focusedWindow], the one answer to "where is the user"
+     * now that every window claims the focus (it used to be a second, Compose-side answer beside the focus).
      *
-     * Injected, like [tpMode] and [noScreenEvidence], because the answer is the shell's: `App.kt` owns the
-     * floating-window stack and is the ONE place a window is raised (`bringWindowToFront`), so that is the
-     * one place this is fed from. It is deliberately NOT read off [SchedulerState.focusedWindow] — that is
-     * the PRD §7 *focus target*, which only five windows claim, so the seven that do not (Categories, Task
-     * relations, Shortcuts, …) would file their units under the tree.
-     *
-     * Defaults to `{ null }`: a shell that names no window (a headless host, a test) stamps nothing, and
-     * such a unit answers only to the drop-down's "All windows".
+     * Off by default: a shell with no windows (a headless host, a test) stamps nothing, and such a unit answers
+     * only to the History window's "All windows". `App.kt` turns it on.
      */
-    var activeWindow: () -> HistoryWindow? = { null }
+    var stampsWindow: Boolean = false
 
     /**
      * `docs/invariants/persistence.md` § *One history, per-device undo*: this device's id, stamped on every unit it
@@ -551,9 +546,10 @@ object SchedulerReducer {
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
             is SchedulerIntent.StripNoScreenRecords -> reduceStripNoScreenRecords(state, intent.ranges)
-            is SchedulerIntent.FocusWindow -> reduceFocusWindow(state, intent.window)
+            is SchedulerIntent.FocusWindow -> reduceFocusWindow(state, intent.window, intent.instance)
             is SchedulerIntent.SetCalendarFocus ->
-                reduceFocusWindow(state, if (intent.focused) AppWindow.Calendar else AppWindow.Tree)
+                reduceFocusWindow(state, if (intent.focused) HistoryWindow.Calendar else HistoryWindow.Tree, "")
+            is SchedulerIntent.SelectInWindow -> reduceSelectInWindow(state, intent)
             SchedulerIntent.ToggleCalendarOverlap -> state.copy(overlapArmed = !state.overlapArmed)
             is SchedulerIntent.BeginEdit -> reduceBeginEdit(state, intent)
             is SchedulerIntent.UpdateEditText -> reduceUpdateEditText(state, intent.text)
@@ -602,10 +598,14 @@ object SchedulerReducer {
             is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
             is SchedulerIntent.RecordSupabaseUsage -> reduceRecordSupabaseUsage(state, intent)
             is SchedulerIntent.MergePeerHistory -> reduceMergePeerHistory(state, intent)
-            SchedulerIntent.Undo -> undo(state, contentCategory(state))
-            SchedulerIntent.Redo -> redo(state, contentCategory(state))
-            SchedulerIntent.UndoSelection -> undo(state, HistoryCategory.Selection)
-            SchedulerIntent.RedoSelection -> redo(state, HistoryCategory.Selection)
+            SchedulerIntent.Undo ->
+                if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoIn(state, changesOf(state))
+            SchedulerIntent.Redo ->
+                if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoIn(state, changesOf(state))
+            SchedulerIntent.UndoSelection -> undoIn(state, selectionsOf(state))
+            SchedulerIntent.RedoSelection -> redoIn(state, selectionsOf(state))
+            SchedulerIntent.UndoPosition -> undoIn(state, POSITIONS)
+            SchedulerIntent.RedoPosition -> redoIn(state, POSITIONS)
         }
     }
 
@@ -629,15 +629,51 @@ object SchedulerReducer {
         }
 
     /**
-     * PRD §5 context-aware pointer: Ctrl+Z/Y target the Edit Mode stack while editing, the calendar
-     * stack while the calendar is focused, otherwise "the rest". Each stack's pointer only walks its
-     * own units, so the active context skips every history unit that does not belong to it.
+     * PRD §5: what one history chord walks — the categories it may take a unit from, and which of their units
+     * are its own. `HistoryCategory.chords` is the statement of the same mapping the History window filters on.
      */
-    private fun contentCategory(state: SchedulerState): HistoryCategory =
-        when {
-            state.editSession != null -> HistoryCategory.Edit
-            state.calendarFocused -> HistoryCategory.Calendar
-            else -> HistoryCategory.Main
+    private class HistoryWalk(
+        val categories: List<HistoryCategory>,
+        val accepts: (HistoryCategory, HistoryUnit) -> Boolean = { _, _ -> true },
+    )
+
+    /**
+     * `Ctrl+Z` outside an Edit Mode session: the **changes made in the focused window** — the units of
+     * [HistoryCategory.Main] and [HistoryCategory.Calendar] stamped with it. A unit stamped with no window was
+     * written before units knew theirs (or by a headless host): a calendar unit is the calendar's, any other the
+     * tree's, which is where each was undone from then.
+     */
+    private fun changesOf(state: SchedulerState): HistoryWalk =
+        HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { category, unit ->
+            (unit.window ?: if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree) ==
+                state.focusedWindow
+        }
+
+    /**
+     * `Alt+arrows`: the **selections of the focused window**. Which window a selection belongs to is read off
+     * the delta ([positionOf]), never off the stamp: "go to task tree" pressed in the Search window selects a
+     * cell of the TREE, and `Alt+←` in Search must not move the tree.
+     */
+    private fun selectionsOf(state: SchedulerState): HistoryWalk =
+        HistoryWalk(listOf(HistoryCategory.Selection)) { _, unit ->
+            val (window, instance) = positionOf(unit.delta)
+            window == state.focusedWindow && (instance == null || instance == state.focusedInstance)
+        }
+
+    /** `Shift+Alt+arrows`: every selection of every window and every move of the focus, in the order made. */
+    private val POSITIONS = HistoryWalk(listOf(HistoryCategory.Selection, HistoryCategory.WindowNav))
+
+    /**
+     * The window (and, for a per-copy selection, the copy) a selection unit is about. The tree's own selection
+     * delta is the tree's; the others name their window.
+     */
+    private fun positionOf(delta: Delta): Pair<HistoryWindow?, String?> =
+        when (delta) {
+            is SetSelectionDelta -> HistoryWindow.Tree to null
+            is ViewSelectionDelta -> delta.window to null
+            is WindowSelectionDelta -> delta.window to delta.instance
+            is FocusDelta -> delta.after to delta.afterInstance
+            else -> null to null
         }
 
     /**
@@ -1322,7 +1358,8 @@ object SchedulerReducer {
         if (inner is SchedulerIntent.InTaskList) return state
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
-            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection
+            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
+            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition
         ) {
             return state
         }
@@ -1340,11 +1377,13 @@ object SchedulerReducer {
         val folded = state.withTaskListCapturedFrom(reduced)
         val before = state.captureTree()
         val after = folded.captureTree()
+        // The window's selection is a position of its own (PRD §5), recorded like the tree's.
+        val selected = withViewSelectionUnit(folded, HistoryWindow.TaskList, state.taskListSelection, folded.taskListSelection)
         // A gesture that only moved the window's own caret, selection or expansion changes no tree and
         // records no unit — the same rule the tree follows for a selection-only change.
-        if (before == after) return folded
+        if (before == after) return selected
         return commitDelta(
-            folded,
+            selected,
             TreeMutationDelta(before = before, after = after, label = "All tasks"),
             HistoryCategory.Main,
         )
@@ -1364,7 +1403,8 @@ object SchedulerReducer {
         if (inner is SchedulerIntent.InSearchSubtree) return state
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
-            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection
+            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
+            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition
         ) {
             return state
         }
@@ -1376,9 +1416,14 @@ object SchedulerReducer {
         val before = state.captureTree()
         if (readOnly) {
             // Looked through, never modified: whatever the gesture did to the tree is dropped.
-            return if (reduced.captureTree() == before) state.withSearchViewStateFrom(reduced) else state
+            if (reduced.captureTree() != before) return state
+            val looked = state.withSearchViewStateFrom(reduced)
+            return withViewSelectionUnit(looked, HistoryWindow.Search, state.searchSelection, looked.searchSelection)
         }
-        val folded = state.withSearchSubtreeCapturedFrom(reduced)
+        val folded =
+            state.withSearchSubtreeCapturedFrom(reduced).let {
+                withViewSelectionUnit(it, HistoryWindow.Search, state.searchSelection, it.searchSelection)
+            }
         val after = folded.captureTree()
         // A gesture that only moved the window's own caret, selection or expansion changes no tree and records
         // no unit — the tree's own rule for a selection-only change.
@@ -1428,7 +1473,8 @@ object SchedulerReducer {
         if (inner is SchedulerIntent.InDefaultSubtree) return state
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
-            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection
+            inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
+            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition
         ) {
             return state
         }
@@ -1440,7 +1486,10 @@ object SchedulerReducer {
         val projected = state.projectDefaultSubtree()
         val reduced = reduceIntent(projected, inner)
         if (reduced === projected) return state
-        val folded = state.withDefaultSubtreeCapturedFrom(reduced)
+        val folded =
+            state.withDefaultSubtreeCapturedFrom(reduced).let {
+                withViewSelectionUnit(it, HistoryWindow.DefaultSubtree, state.defaultSubtreeSelection, it.defaultSubtreeSelection)
+            }
         val liveAfter = folded.captureTree()
         // A gesture that only moved the window's own caret/selection changes neither tree and records no unit
         // — the same rule the tree follows for a selection-only change.
@@ -1955,14 +2004,36 @@ object SchedulerReducer {
      * The navigation is recorded as a WindowNav History Unit (shown in the History Manager but, for now,
      * not walked by any undo/redo command). A no-op when focus does not actually change.
      */
-    private fun reduceFocusWindow(state: SchedulerState, window: AppWindow): SchedulerState {
-        if (state.focusedWindow == window) return state
+    private fun reduceFocusWindow(state: SchedulerState, window: HistoryWindow, instance: String): SchedulerState {
+        if (state.focusedWindow == window && state.focusedInstance == instance) return state
         return commitDelta(
             state,
-            FocusDelta(before = state.focusedWindow, after = window),
+            FocusDelta(before = state.focusedWindow, after = window, beforeInstance = state.focusedInstance, afterInstance = instance),
             HistoryCategory.WindowNav,
         )
     }
+
+    /** PRD §5: [SchedulerIntent.SelectInWindow] — a [WindowSelectionDelta] unless it is a reset or no change. */
+    private fun reduceSelectInWindow(state: SchedulerState, intent: SchedulerIntent.SelectInWindow): SchedulerState {
+        val key = windowSelectionKey(intent.window, intent.instance)
+        val before = state.windowSelections[key]
+        if (before == intent.key) return state
+        val delta = WindowSelectionDelta(intent.window, intent.instance, before, intent.key)
+        // A reset (a new search starting on its first row) is not a position the user took.
+        return if (intent.record) commitDelta(state, delta, HistoryCategory.Selection) else delta.redo(state)
+    }
+
+    /**
+     * PRD §5: the selection unit of a window drawn as a tree ([ViewSelectionDelta]) — committed beside whatever
+     * the gesture did to the tree, when the window's selection moved.
+     */
+    private fun withViewSelectionUnit(
+        folded: SchedulerState,
+        window: HistoryWindow,
+        before: SchedulerSelection,
+        after: SchedulerSelection,
+    ): SchedulerState =
+        if (before == after) folded else commitDelta(folded, ViewSelectionDelta(window, before, after), HistoryCategory.Selection)
 
     private fun reduceExitEdit(
         state: SchedulerState,
@@ -3046,6 +3117,42 @@ object SchedulerReducer {
         return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
     }
 
+    /**
+     * Undo THIS device's newest applied unit among [walk]'s — across its categories, in the order the units were
+     * made ([HistoryUnit.deviceSeq], which orders one device's units whatever their category).
+     */
+    private fun undoIn(state: SchedulerState, walk: HistoryWalk): SchedulerState {
+        val me = deviceId()
+        val newest =
+            walk.categories.mapNotNull { category ->
+                val units = state.histories.forCategory(category).units
+                val index = units.indexOfLast { it.ownedBy(me) && !it.undone && walk.accepts(category, it) }
+                if (index < 0) null else Triple(category, index, units[index].deviceSeq)
+            }.maxByOrNull { it.third } ?: return state
+        return walkUnit(state, newest.first, newest.second, undo = true)
+    }
+
+    /** Redo THIS device's oldest undone unit among [walk]'s. */
+    private fun redoIn(state: SchedulerState, walk: HistoryWalk): SchedulerState {
+        val me = deviceId()
+        val oldest =
+            walk.categories.mapNotNull { category ->
+                val units = state.histories.forCategory(category).units
+                val index = units.indexOfFirst { it.ownedBy(me) && it.undone && walk.accepts(category, it) }
+                if (index < 0) null else Triple(category, index, units[index].deviceSeq)
+            }.minByOrNull { it.third } ?: return state
+        return walkUnit(state, oldest.first, oldest.second, undo = false)
+    }
+
+    /** Undo or redo the unit at [index] of [category] — [undo] and [redo]'s one step. */
+    private fun walkUnit(state: SchedulerState, category: HistoryCategory, index: Int, undo: Boolean): SchedulerState {
+        val history = state.histories.forCategory(category)
+        val unit = history.units[index]
+        val walked = if (undo) unit.delta.undo(state) else unit.delta.redo(state)
+        val units = history.units.toMutableList().also { it[index] = unit.copy(undone = undo, changedAtMillis = clock.nowMillis()) }
+        return walked.copy(histories = state.histories.withCategory(category, historyOf(units, deviceId())))
+    }
+
     /** Redo THIS device's oldest undone unit of [category]. */
     private fun redo(state: SchedulerState, category: HistoryCategory): SchedulerState {
         val history = state.histories.forCategory(category)
@@ -3344,10 +3451,13 @@ object SchedulerReducer {
             }
         }
 
-        // PRD §6: stamp the change's wall-clock time; chronoId stays 0 unless an already-retained unit
-        // shares this exact timestamp, in which case it is the next tie-break index (1, 2, …).
+        // PRD §6: stamp the change's wall-clock time; chronoId stays 0 unless a unit already shares this exact
+        // timestamp, in which case it is the next tie-break index (1, 2, …). Counted across EVERY category, so a
+        // device's units are totally ordered by `deviceSeq` whatever their category: Shift+Alt+arrows walk two
+        // stacks at once, and a press that moves the focus and selects commits one unit in each in the same
+        // millisecond — which must still be walked back selection first, focus second.
         val now = clock.nowMillis()
-        val chronoId = retained.count { it.timeMillis == now }.toLong()
+        val chronoId = state.histories.all().sumOf { (_, h) -> h.units.count { it.timeMillis == now } }.toLong()
         val newUnit =
             HistoryUnit(
                 timeMillis = now,
@@ -3356,7 +3466,7 @@ object SchedulerReducer {
                 debugTainted = debugTainting(),
                 // PRD §6: where the change was made. A merged gesture above keeps the previous unit's
                 // window along with its timestamp — one gesture is one window.
-                window = activeWindow(),
+                window = if (stampsWindow) newState.focusedWindow else null,
                 deviceId = me,
                 deviceSeq = deviceSeqOf(now, chronoId),
                 changedAtMillis = now,
@@ -5356,19 +5466,78 @@ internal data class SetSelectionDelta(
     override fun redo(state: SchedulerState): SchedulerState = state.copy(selection = after)
 }
 
-/** PRD §7: a window-navigation unit — the focus moving from one window to another. */
+/**
+ * PRD §7: a window-navigation unit — the focus moving from one window (and copy) to another. `Shift+Alt+←`
+ * walks it back, which refocuses the window it left (`App` raises whatever [SchedulerState.focusedWindow] names).
+ */
 internal data class FocusDelta(
-    val before: AppWindow,
-    val after: AppWindow,
+    val before: HistoryWindow,
+    val after: HistoryWindow,
+    val beforeInstance: String = "",
+    val afterInstance: String = "",
 ) : Delta {
-    override val label: String = "Focus ${after.name}"
+    override val label: String = "Focus ${after.name}$afterInstance"
 
     override val details: List<String>
-        get() = listOf("focus: ${before.name} → ${after.name}")
+        get() = listOf("focus: ${before.name}$beforeInstance → ${after.name}$afterInstance")
 
-    override fun undo(state: SchedulerState): SchedulerState = state.copy(focusedWindow = before)
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(focusedWindow = before, focusedInstance = beforeInstance)
 
-    override fun redo(state: SchedulerState): SchedulerState = state.copy(focusedWindow = after)
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(focusedWindow = after, focusedInstance = afterInstance)
+}
+
+/**
+ * PRD §5: the selection of a window drawn as a tree — All tasks, the Default sub-tree, the Search window's
+ * sub-trees — before and after a gesture there. The tree's own is [SetSelectionDelta].
+ */
+internal data class ViewSelectionDelta(
+    val window: HistoryWindow,
+    val before: SchedulerSelection,
+    val after: SchedulerSelection,
+) : Delta {
+    override val label: String = "Selection (${window.label})"
+
+    override val details: List<String>
+        get() = selectionDiffLines(before, after)
+
+    override fun undo(state: SchedulerState): SchedulerState = apply(state, before)
+
+    override fun redo(state: SchedulerState): SchedulerState = apply(state, after)
+
+    private fun apply(state: SchedulerState, selection: SchedulerSelection): SchedulerState =
+        when (window) {
+            HistoryWindow.TaskList -> state.copy(taskListSelection = selection)
+            HistoryWindow.DefaultSubtree -> state.copy(defaultSubtreeSelection = selection)
+            HistoryWindow.Search -> state.copy(searchSelection = selection)
+            else -> state
+        }
+}
+
+/**
+ * PRD §5: the selection of a window not drawn as a tree ([SchedulerState.windowSelections]) — the Search
+ * window's row, the Task trees window's open entry — in one copy of the window ([instance]).
+ */
+internal data class WindowSelectionDelta(
+    val window: HistoryWindow,
+    val instance: String,
+    val before: String?,
+    val after: String?,
+) : Delta {
+    override val label: String = "Selection (${window.label}$instance)"
+
+    override val details: List<String>
+        get() = listOf("selected: ${before ?: "nothing"} → ${after ?: "nothing"}")
+
+    override fun undo(state: SchedulerState): SchedulerState = apply(state, before)
+
+    override fun redo(state: SchedulerState): SchedulerState = apply(state, after)
+
+    private fun apply(state: SchedulerState, key: String?): SchedulerState {
+        val slot = windowSelectionKey(window, instance)
+        return state.copy(windowSelections = if (key == null) state.windowSelections - slot else state.windowSelections + (slot to key))
+    }
 }
 
 /**

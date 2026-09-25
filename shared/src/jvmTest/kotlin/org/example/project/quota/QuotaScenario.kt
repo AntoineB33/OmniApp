@@ -21,7 +21,7 @@ import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.db.SchedulerDatabase
 import org.example.project.scheduler.platform.DeviceKind
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -194,7 +194,7 @@ class HeavyUser(private val device: QuotaScenario.Device, private val editsPerMi
             device.dispatch(SchedulerIntent.ExitEdit(EditExitNavigation.Down))
             // Selection and window changes are several times more frequent than edits.
             repeat(4) { j -> device.dispatch(SchedulerIntent.ClickCell(cells[(k + j * 7) % cells.size], ctrl = false, shift = false, visibleOrder = cells)) }
-            device.dispatch(SchedulerIntent.FocusWindow(if ((k and 1) == 0) AppWindow.Calendar else AppWindow.Tree))
+            device.dispatch(SchedulerIntent.FocusWindow(if ((k and 1) == 0) HistoryWindow.Calendar else HistoryWindow.Tree))
         }
         val any = device.state.cells[cells[(minute * 13 + seed) % cells.size]]!!.taskId!!
         if (minute % 5 == 0) device.dispatch(SchedulerIntent.ToggleExpand(cells[(minute + seed) % cells.size]))

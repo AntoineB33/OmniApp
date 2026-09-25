@@ -29,8 +29,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -83,6 +83,8 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.platform.LocalDensity
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.HistoryWindow
+import org.example.project.scheduler.state.windowSelectionKey
 import org.example.project.scheduler.ui.TaskCellMenuItems
 import org.example.project.scheduler.ui.TaskCellMenuActions
 
@@ -189,7 +191,8 @@ fun SearchWindow(
     val kinds = config.kinds
     val filters = config.filters
     val sorts = config.sorts
-    var selected by remember { mutableIntStateOf(0) }
+    // Which copy of the window this is: its selection is its own (PRD §5, `Alt+←` walks it back).
+    val instance = LocalWindowInstance.current?.suffix ?: ""
     val listState = rememberLazyListState()
     val fieldFocus = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
@@ -225,8 +228,27 @@ fun SearchWindow(
             SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts)
         }
     val count = results.size
+    // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
+    // among the results (the question changed, the thing was deleted) reads as the first row.
+    val selectedKey = state.windowSelections[windowSelectionKey(HistoryWindow.Search, instance)]
+    val selected = results.indexOfFirst { resultKey(it) == selectedKey }.coerceAtLeast(0)
+    /** Select the row at [index]; [record] false is the window's own reset, not a position the user took. */
+    fun select(index: Int, record: Boolean = true) {
+        val key = results.getOrNull(index)?.let(::resultKey)
+        if (key != selectedKey) onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, record))
+    }
     // A new question starts at its best answer.
-    LaunchedEffect(kinds, query, filters, sorts) { selected = 0 }
+    LaunchedEffect(kinds, query, filters, sorts) { select(0, record = false) }
+    // A list read at its top stays at its top when rows arrive above it. The rows are keyed, and a keyed lazy
+    // list anchors its scroll on the first VISIBLE row: a new history unit sorted first (a move of the focus,
+    // newest on top) landed just above the view, so the list looked frozen while it was growing (anomaly,
+    // 2026-09-25). Whether it was at the top is read before the new rows are laid out — here, in composition —
+    // and only as a boolean, so scrolling does not recompose the window.
+    val atTop by remember {
+        derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
+    }
+    val stayAtTop = atTop
+    LaunchedEffect(results.firstOrNull()?.let(::resultKey)) { if (stayAtTop) listState.scrollToItem(0) }
     LaunchedEffect(selected) { minTimeEditTaskId = null }
     // The task tree's rule: the list scrolls only when the selection would leave what is on screen — by just
     // enough to bring it to the nearer edge. Scrolling the selected row to the top on every move made the list
@@ -318,7 +340,7 @@ fun SearchWindow(
     fun endEdit(result: SearchDomain.TaskResult, cancel: Boolean, step: Int = 0, refocusList: Boolean = true) {
         if (!cancel && editDraft != result.title) onIntent(SchedulerIntent.RenameTask(result.taskId, editDraft))
         editingTaskId = null
-        if (count > 0) selected = (selected + step).coerceIn(0, count - 1)
+        if (count > 0) select((selected + step).coerceIn(0, count - 1))
         if (refocusList) runCatching { listFocus.requestFocus() }
     }
     /** The row being renamed, if any — what a press elsewhere commits first, as leaving a tree cell does. */
@@ -332,7 +354,7 @@ fun SearchWindow(
         if (editingTaskId != null && (results.getOrNull(index) as? SearchDomain.TaskResult)?.taskId != editingTaskId) {
             commitOpenEdit(refocusList = false)
         }
-        selected = index
+        select(index)
         subtreeFocusOwner = null
         runCatching { listFocus.requestFocus() }
     }
@@ -448,12 +470,12 @@ fun SearchWindow(
                                 val ctrl = event.isCtrlPressed || event.isMetaPressed
                                 when {
                                     event.key == Key.DirectionDown -> {
-                                        if (count > 0) selected = (selected + 1).coerceAtMost(count - 1)
+                                        if (count > 0) select((selected + 1).coerceAtMost(count - 1))
                                         true
                                     }
                                     event.key == Key.DirectionUp -> {
                                         if (selected == 0) runCatching { fieldFocus.requestFocus() }
-                                        else selected -= 1
+                                        else select(selected - 1)
                                         true
                                     }
                                     event.key == Key.Enter || event.key == Key.NumPadEnter -> {
@@ -610,6 +632,11 @@ internal fun KindsDropDown(
             onDismissRequest = { open = false },
             properties = PopupProperties(focusable = false),
         ) {
+            SelectAllMenuItem(
+                allChecked = kinds.containsAll(SearchDomain.Kind.entries),
+                onSelectAll = { onKindsChange(SearchDomain.Kind.entries.toSet()) },
+                onDeselectAll = { onKindsChange(emptySet()) },
+            )
             SearchDomain.Kind.entries.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option.label) },
@@ -619,6 +646,20 @@ internal fun KindsDropDown(
             }
         }
     }
+}
+
+/**
+ * The first entry of every drop-down whose entries carry a check box: no box of its own, it reads **Select all**
+ * until every box is checked and checks them all, then **Deselect all**, which unchecks them all. Driven by the
+ * boxes rather than by its own last press, so it says the right thing whatever was ticked by hand in between.
+ * The menu stays open, as it does for a box.
+ */
+@Composable
+internal fun SelectAllMenuItem(allChecked: Boolean, onSelectAll: () -> Unit, onDeselectAll: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(if (allChecked) "Deselect all" else "Select all") },
+        onClick = { if (allChecked) onDeselectAll() else onSelectAll() },
+    )
 }
 
 /** The drop-down's face:the checked kinds by name, or "every kind" / "no kind". */
@@ -860,6 +901,7 @@ private fun SearchSubtree(
                 // App-wide, as in "All tasks": the history stacks and the window focus are no tree's.
                 is SchedulerIntent.Undo, is SchedulerIntent.Redo,
                 is SchedulerIntent.UndoSelection, is SchedulerIntent.RedoSelection,
+                is SchedulerIntent.UndoPosition, is SchedulerIntent.RedoPosition,
                 is SchedulerIntent.FocusWindow,
                 -> onIntent(intent)
                 else -> onIntent(SchedulerIntent.InSearchSubtree(intent, listId, readOnly))

@@ -79,8 +79,9 @@ import org.example.project.scheduler.platform.ringAlarmPlatform
 import org.example.project.scheduler.platform.scheduleLocalPauseCuePlatform
 import org.example.project.scheduler.sync.RemoteSnapshotClient
 import org.example.project.scheduler.sync.SchedulerSyncEngine
-import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.ui.undoRedoIntentFor
+import androidx.compose.ui.input.key.onKeyEvent
 import org.example.project.scheduler.state.defaultSubtreePriorities
 import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.HistoryWindow
@@ -710,10 +711,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // the app, lateral-menu and per-object alike, raised when a window opens and on every press inside
         // it. Each framed window applies its own place in it (`AppWindowFrame`), so the only thing left
         // here is the debug time-sim panel, which wears no frame.
-        // PRD §6: which window of the app a change made here belongs to — "where was this change made?",
-        // which every window answers, not just the five that claim the app-wide focus (appWindowOf
-        // below). The two are deliberately separate enums (see [HistoryWindow]); this is the one place
-        // the mapping between them lives, so a window added to the app is added to both or to neither.
+        // PRD §6/§7: the window of the app a floating window IS — the one the focus lands on when the user
+        // presses in it, and so the one every change made there is stamped with and every history chord in it
+        // is relative to. The one place the mapping lives, so a window added to the app is added to both
+        // enums or to neither.
         fun historyWindowOf(id: FloatingWindow): HistoryWindow? = when (id) {
             FloatingWindow.Calendar -> HistoryWindow.Calendar
             FloatingWindow.Reminders -> HistoryWindow.Reminders
@@ -727,27 +728,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.DefaultSubtree -> HistoryWindow.DefaultSubtree
             FloatingWindow.Shortcuts -> HistoryWindow.Shortcuts
             FloatingWindow.Search -> HistoryWindow.Search
-            // It edits the Search window's configuration, which commits nothing either.
-            FloatingWindow.ConfigSearch -> HistoryWindow.Search
+            FloatingWindow.ConfigSearch -> HistoryWindow.ConfigSearch
             FloatingWindow.TaskTree -> HistoryWindow.Tree
-            // It commits no History Unit: signing in, out or going offline is not an edit of the account.
-            FloatingWindow.Online -> null
+            FloatingWindow.Online -> HistoryWindow.Online
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
         }
-        // PRD §6: the window every History Unit committed from now on is stamped with — the innermost
-        // window the user last pressed in. Compose-only, like the window stack it rides: where a change was
-        // made is a fact about THIS device's session, and the unit it lands on is what carries it onward.
-        //
-        // It is fed by the two raise funnels and nothing else: [bringWindowToFront] below (every floating
-        // window's press goes through it, via onRaise / onFocus) and the content Box's own raise-on-press
-        // for the task tree. Both observe the press on [PointerEventPass.Initial], which travels parent →
-        // child, so a press inside a floating window sets `Tree` on the way in and is corrected to that
-        // window immediately after — the innermost window wins, which is the one the user is acting in.
-        var activeHistoryWindow by remember { mutableStateOf(HistoryWindow.Tree) }
-        SideEffect { SchedulerReducer.activeWindow = { activeHistoryWindow } }
+        // PRD §6: every History Unit is stamped with the window it was made in, which is the focused one
+        // ([SchedulerState.focusedWindow]) — every window claims the focus, so there is one answer to "where is
+        // the user", held by the state, and not a second one here beside it.
+        SideEffect { SchedulerReducer.stampsWindow = true }
         fun bringWindowToFront(id: FloatingWindow) {
-            historyWindowOf(id)?.let { activeHistoryWindow = it }
             windowFrames.raise(id.name)
         }
         fun isWindowOpen(id: FloatingWindow): Boolean = when (id) {
@@ -768,6 +759,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Online -> onlineWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
+        // [isWindowOpen]'s other half, for the one caller that opens a window by name: the focus following a
+        // walked-back move (below). The debug panel is not a window of the app and has no switch here.
+        fun setWindowOpen(id: FloatingWindow, open: Boolean) {
+            when (id) {
+                FloatingWindow.Calendar -> calendarOpen = open
+                FloatingWindow.Reminders -> choresManagerOpen = open
+                FloatingWindow.History -> historyManagerOpen = open
+                FloatingWindow.Sleep -> sleepWindowOpen = open
+                FloatingWindow.Alarms -> alarmWindowOpen = open
+                FloatingWindow.TaskTrees -> taskTreesWindowOpen = open
+                FloatingWindow.TaskList -> taskListWindowOpen = open
+                FloatingWindow.TaskRelations -> taskRelationsWindowOpen = open
+                FloatingWindow.Categories -> categoriesWindowOpen = open
+                FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen = open
+                FloatingWindow.Shortcuts -> shortcutsWindowOpen = open
+                FloatingWindow.Search -> searchWindowOpen = open
+                FloatingWindow.ConfigSearch -> configSearchWindowOpen = open
+                FloatingWindow.TaskTree -> taskTreeWindowOpen = open
+                FloatingWindow.Online -> onlineWindowOpen = open
+                FloatingWindow.TimeSim -> Unit
+            }
+        }
         // The FRONT window: the very top of the one stacking order, when that is a lateral-menu window.
         //
         // It has to be the top of the WHOLE stack, per-object windows included, and not the topmost
@@ -780,30 +793,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowFrames.frontId
                 ?.let { id -> FloatingWindow.entries.firstOrNull { it.name == id } }
                 ?.takeIf { isWindowOpen(it) }
-        // PRD §7: the scheduler-state focus target for a floating window (null for the debug TimeSim panel,
-        // which is not a navigable app window).
-        fun appWindowOf(id: FloatingWindow): AppWindow? = when (id) {
-            FloatingWindow.Calendar -> AppWindow.Calendar
-            FloatingWindow.Reminders -> AppWindow.Reminders
-            FloatingWindow.History -> AppWindow.History
-            FloatingWindow.Sleep -> null
-            // PRD §5/§7: the Alarms window commits History Units of its own (its lists are authoritative
-            // user state), so it has to claim the app-wide focus — that is what routes its Ctrl+Z to the
-            // Main stack rather than to the calendar's, and what hands it the keyboard.
-            FloatingWindow.Alarms -> AppWindow.Alarms
-            FloatingWindow.TaskTrees -> null
-            FloatingWindow.TaskList -> null
-            FloatingWindow.TaskRelations -> null
-            FloatingWindow.Categories -> null
-            FloatingWindow.DefaultSubtree -> null
-            FloatingWindow.Shortcuts -> null
-            FloatingWindow.Search -> null
-            FloatingWindow.ConfigSearch -> null
-            // The tree's keyboard and its Ctrl+Z are the Tree focus target's, as they always were.
-            FloatingWindow.TaskTree -> AppWindow.Tree
-            FloatingWindow.Online -> null
-            FloatingWindow.TimeSim -> null
-        }
         // PRD §7 window navigation: raise [id] to the top layer AND move scheduler focus onto it, which
         // clears the tree selection, forcibly exits tree Edit Mode, and records a WindowNav history unit.
         // A copy of [kind] made from the window [fromId] (the original's name or another copy's): the first free
@@ -835,7 +824,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // would leave the app believing the user was still in whatever window they had focused, so
             // the lateral-menu button below could never read as "you are already here".
             windowFrames.focus(id.name)
-            appWindowOf(id)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it)) }
+            historyWindowOf(id)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it)) }
+        }
+        // PRD §5: `Shift+Alt+←/→` walks the moves of the focus, so the state can name a window the frames are not
+        // on. Bring that window to the user — opened again if it was closed since — WITHOUT dispatching a move of
+        // the focus: that would record a new one, and a new position drops the ones ahead of it. A press on a
+        // window already has its frame focused by the time the state follows, so this does nothing then. The
+        // first value is the one the app started on: it is not a move, and the window it names may be closed.
+        var focusSeen by remember { mutableStateOf(false) }
+        LaunchedEffect(schedulerState.focusedWindow, schedulerState.focusedInstance) {
+            if (!focusSeen) {
+                focusSeen = true
+                return@LaunchedEffect
+            }
+            val kind = FloatingWindow.entries.firstOrNull { historyWindowOf(it) == schedulerState.focusedWindow }
+                ?: return@LaunchedEffect
+            val id = kind.name + schedulerState.focusedInstance
+            if (windowFrames.focusedId == id) return@LaunchedEffect
+            if (schedulerState.focusedInstance.isEmpty()) {
+                if (!isWindowOpen(kind)) setWindowOpen(kind, true)
+            } else if (id !in windowCopies) {
+                // A copy closed since cannot be brought back: its configuration went with it.
+                return@LaunchedEffect
+            }
+            windowFrames.present(id)
         }
         // A lateral-menu window and its copies (the head's ⧉). [content] is the window's ONE call site, drawn once
         // for the original (while [open]) and once per copy, each under its [WindowInstance]: a copy's frame id,
@@ -868,8 +880,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 // The frame already raised and focused the copy itself; what is left is the
                                 // app's own notion of where the user is (history stamping, keyboard routing).
                                 onRaise = {
-                                    historyWindowOf(kind)?.let { activeHistoryWindow = it }
-                                    appWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it)) }
+                                    historyWindowOf(kind)?.let {
+                                        vm.dispatch(SchedulerIntent.FocusWindow(it, copyId.removePrefix(kind.name)))
+                                    }
                                 },
                             ),
                         ),
@@ -1886,6 +1899,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // menu button opens or focuses a window, which is exactly "the user asked for something
                 // else". Windows are not dismissed by it: nothing takes a window away (`PopupWindows.kt`).
                 .transientMenuDismissRoot(transientMenus)
+                // PRD §5: the history chords in EVERY window. A key event bubbles from the focused element up
+                // to here, so this only sees a chord no window answered itself (the tree, the calendar and the
+                // Alarms window do; a text field keeps its own Ctrl+Z) — and the reducer makes it relative to
+                // the focused window, whichever that is.
+                .onKeyEvent { event ->
+                    val intent = undoRedoIntentFor(event) ?: return@onKeyEvent false
+                    vm.dispatch(intent)
+                    true
+                }
         ) {
             // The reduce bar is drawn OVER the lateral menu, so the app is inset by its height only where
             // the windows live — the content area below.
@@ -2000,16 +2022,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // fills what is left, not what the bar is covering.
                         .padding(bottom = minimizedInset)
                         .clipToBounds()
-                        // PRD §6: the task tree's own raise. This Box is the ancestor of every floating
-                        // window, and the press is observed on the Initial pass (parent → child), so a
-                        // press inside one of them lands here first and is corrected by that window's own
-                        // raise a moment later. See [activeHistoryWindow]. The same press hands the
-                        // KEYBOARD back to the tree; a window that answers keystrokes takes it again on
-                        // the way in ([WindowFrameHost]).
-                        .raiseOnPress {
-                            activeHistoryWindow = HistoryWindow.Tree
-                            windowFrames.blur()
-                        },
+                        // A press on the background drops the frame focus; a press in a window (the task tree's
+                        // included) takes it back on the way in ([WindowFrameHost]). It moves no SCHEDULER focus:
+                        // this Box is every window's ancestor, so claiming one here would record a move to the
+                        // tree and back on every press in another window (PRD §7 — each is a WindowNav unit).
+                        .raiseOnPress { windowFrames.blur() },
                 ) {
                     // PRD §4: the task tree, a window among the others — drawn FIRST, so the windows that were
                     // open with it come back over it rather than under a maximized tree.
@@ -2842,6 +2859,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onDelete = { vm.dispatch(SchedulerIntent.DeleteTaskTree(it)) },
                             onDismiss = { taskTreesWindowOpen = false },
+                            windowSelections = schedulerState.windowSelections,
+                            onSelectInWindow = { vm.dispatch(it) },
                             initialOffset = taskTreesOffset,
                             initialSize = taskTreesSize,
                             onGeometryChange = { windowOffset, windowSize ->

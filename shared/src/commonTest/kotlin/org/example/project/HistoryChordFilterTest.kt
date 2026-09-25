@@ -2,15 +2,14 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryChord
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.scheduler.state.chord
+import org.example.project.scheduler.state.chords
 import org.example.project.ui.FilteredHistoryEntry
 import org.example.project.ui.HistoryFilterConfig
 import org.example.project.ui.filteredHistoryUnits
@@ -34,20 +33,20 @@ class HistoryChordFilterTest {
             s,
             SchedulerIntent.ClickCell(cellId, ctrl = false, shift = false, visibleOrder = listOf(cellId)),
         )
-        // WindowNav — walked by nothing (PRD §7): recorded for this window and no other reason.
-        // Reminders and not the calendar: focusing the CALENDAR is what points Ctrl+Z at the (here empty)
-        // calendar stack, which is PRD §5's "pointer navigates by context" and would be testing that instead.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(AppWindow.Reminders))
+        // WindowNav — walked by Shift+Alt+arrows alone. The focus goes back to the tree, where the two units
+        // above were made, because Ctrl+Z and Alt+arrows are relative to the focused window.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Reminders))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Tree))
         return s
     }
 
     @Test
     fun every_category_names_the_chord_that_walks_it() {
-        assertEquals(HistoryChord.Undo, HistoryCategory.Edit.chord)
-        assertEquals(HistoryChord.Undo, HistoryCategory.Calendar.chord)
-        assertEquals(HistoryChord.Undo, HistoryCategory.Main.chord)
-        assertEquals(HistoryChord.Selection, HistoryCategory.Selection.chord)
-        assertNull(HistoryCategory.WindowNav.chord, "no undo/redo command walks window navigation")
+        assertEquals(setOf(HistoryChord.Undo), HistoryCategory.Edit.chords)
+        assertEquals(setOf(HistoryChord.Undo), HistoryCategory.Calendar.chords)
+        assertEquals(setOf(HistoryChord.Undo), HistoryCategory.Main.chords)
+        assertEquals(setOf(HistoryChord.Selection, HistoryChord.Position), HistoryCategory.Selection.chords)
+        assertEquals(setOf(HistoryChord.Position), HistoryCategory.WindowNav.chords)
     }
 
     @Test
@@ -68,6 +67,13 @@ class HistoryChordFilterTest {
             selectionPointer - 1,
             selectionUndone.histories.forCategory(HistoryCategory.Selection).pointer,
         )
+
+        // Shift+Alt+← takes the newest position, which is the last move of the focus — never a change.
+        val navPointer = s.histories.forCategory(HistoryCategory.WindowNav).pointer
+        val positionUndone = SchedulerReducer.reduce(s, SchedulerIntent.UndoPosition)
+        assertEquals(mainPointer, positionUndone.histories.forCategory(HistoryCategory.Main).pointer)
+        assertEquals(selectionPointer, positionUndone.histories.forCategory(HistoryCategory.Selection).pointer)
+        assertEquals(navPointer - 1, positionUndone.histories.forCategory(HistoryCategory.WindowNav).pointer)
     }
 
     private fun categoriesUnder(chords: Set<HistoryChord>?): List<HistoryCategory> =
@@ -81,15 +87,19 @@ class HistoryChordFilterTest {
     fun the_field_isolates_each_chord() {
         assertEquals(listOf(HistoryCategory.Main), categoriesUnder(setOf(HistoryChord.Undo)))
         assertEquals(listOf(HistoryCategory.Selection), categoriesUnder(setOf(HistoryChord.Selection)))
+        assertEquals(
+            listOf(HistoryCategory.Selection, HistoryCategory.WindowNav),
+            categoriesUnder(setOf(HistoryChord.Position)),
+        )
     }
 
     @Test
     fun both_means_everything_a_chord_walks_and_any_means_everything() {
-        // "Both" is the union of the two chords, NOT "no restriction": a window-navigation unit is walked by
-        // neither, so it must not be smuggled in under a label that names two chords.
+        // "Ctrl+Z or Alt+arrows" is the union of those two chords, NOT "no restriction": a move of the focus is
+        // walked by neither, so it must not be smuggled in under a label that names two chords.
         assertEquals(
             listOf(HistoryCategory.Selection, HistoryCategory.Main),
-            categoriesUnder(HistoryChord.entries.toSet()),
+            categoriesUnder(setOf(HistoryChord.Undo, HistoryChord.Selection)),
         )
         // "Any" is the field's default and admits it, so nothing is ever unreachable.
         assertEquals(

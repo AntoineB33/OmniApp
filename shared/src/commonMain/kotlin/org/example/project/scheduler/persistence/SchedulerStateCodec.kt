@@ -52,11 +52,12 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.state.AlarmsDelta
-import org.example.project.scheduler.state.AppWindow
 import org.example.project.scheduler.state.CellEditMode
 import org.example.project.scheduler.state.Delta
 import org.example.project.scheduler.state.EmptyCellsDelta
 import org.example.project.scheduler.state.FocusDelta
+import org.example.project.scheduler.state.ViewSelectionDelta
+import org.example.project.scheduler.state.WindowSelectionDelta
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.HistoryWindow
@@ -357,7 +358,7 @@ object SchedulerStateCodec {
                 chronoId = chronoId,
                 delta = decodeMigrating<PersistedDelta>(text).toDelta(),
                 debugTainted = tainted,
-                window = window?.let { name -> runCatching { HistoryWindow.valueOf(name) }.getOrNull() },
+                window = window?.let { name -> windowNamed(name) },
                 deviceId = deviceId,
                 deviceSeq = deviceSeq,
                 undone = undone,
@@ -416,7 +417,7 @@ object SchedulerStateCodec {
                             // An unknown name (a window this build no longer has) heals to "no window":
                             // the unit is still listed, under the drop-down's "All windows".
                             window = row.window?.let { name ->
-                                runCatching { HistoryWindow.valueOf(name) }.getOrNull()
+                                windowNamed(name)
                             },
                         ).also {
                             // Seed the memo from the text we were just handed: re-serializing a unit the
@@ -823,7 +824,9 @@ object SchedulerStateCodec {
                     selectionAfter.toPersisted(),
                 )
             is SetSelectionDelta -> PersistedDelta.SetSelection(before.toPersisted(), after.toPersisted())
-            is FocusDelta -> PersistedDelta.Focus(before.name, after.name)
+            is FocusDelta -> PersistedDelta.Focus(before.name, after.name, beforeInstance, afterInstance)
+            is ViewSelectionDelta -> PersistedDelta.ViewSelection(window.name, before.toPersisted(), after.toPersisted())
+            is WindowSelectionDelta -> PersistedDelta.WindowSelection(window.name, instance, before, after)
             is PanelDelta ->
                 PersistedDelta.Panels(
                     changes.before.values.map { it.toPersistedPanel() },
@@ -1237,7 +1240,9 @@ object SchedulerStateCodec {
             // whatever the payload's own categories used even if the field itself is missing or stale.
             nextCategoryCounter =
                 maxOf(nextCategoryCounter, categories.maxOfOrNull { categoryIdSuffix(it.id) + 1 } ?: 0),
-            focusedWindow = runCatching { AppWindow.valueOf(focusedWindow) }.getOrDefault(AppWindow.Tree),
+            // By name: the five focus targets an older build wrote are all windows of the list, and a name this
+            // build does not know is the tree.
+            focusedWindow = windowNamed(focusedWindow) ?: HistoryWindow.Tree,
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
             sleepingUntilMillis = sleepingUntilMillis,
@@ -1289,7 +1294,7 @@ object SchedulerStateCodec {
                         delta = u.delta.toDelta(),
                         debugTainted = u.debugTainted,
                         window = u.window?.let { name ->
-                            runCatching { HistoryWindow.valueOf(name) }.getOrNull()
+                            windowNamed(name)
                         },
                     )
                 },
@@ -1316,9 +1321,16 @@ object SchedulerStateCodec {
             is PersistedDelta.SetSelection -> SetSelectionDelta(before.toSelection(), after.toSelection())
             is PersistedDelta.Focus ->
                 FocusDelta(
-                    runCatching { AppWindow.valueOf(before) }.getOrDefault(AppWindow.Tree),
-                    runCatching { AppWindow.valueOf(after) }.getOrDefault(AppWindow.Tree),
+                    windowNamed(before) ?: HistoryWindow.Tree,
+                    windowNamed(after) ?: HistoryWindow.Tree,
+                    beforeInstance,
+                    afterInstance,
                 )
+            // A window this build does not know cannot be put back: the unit decodes to a selection of nothing.
+            is PersistedDelta.ViewSelection ->
+                ViewSelectionDelta(windowNamed(window) ?: HistoryWindow.Tree, before.toSelection(), after.toSelection())
+            is PersistedDelta.WindowSelection ->
+                WindowSelectionDelta(windowNamed(window) ?: HistoryWindow.Tree, instance, before, after)
             is PersistedDelta.Panels -> PanelDelta(before.map { it.toPanel() }, after.map { it.toPanel() }, label)
             is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
             is PersistedDelta.SetExpanded ->
@@ -1986,9 +1998,30 @@ private sealed interface PersistedDelta {
     @SerialName("setSelection")
     data class SetSelection(val before: PersistedSelection, val after: PersistedSelection) : PersistedDelta
 
+    /** The two instances are new (2026-09-25): a focus move written before them is between two originals. */
     @Serializable
     @SerialName("focus")
-    data class Focus(val before: String, val after: String) : PersistedDelta
+    data class Focus(
+        val before: String,
+        val after: String,
+        val beforeInstance: String = "",
+        val afterInstance: String = "",
+    ) : PersistedDelta
+
+    /** New 2026-09-25: the selection of All tasks, the Default sub-tree or the Search window's sub-trees. */
+    @Serializable
+    @SerialName("viewSelection")
+    data class ViewSelection(val window: String, val before: PersistedSelection, val after: PersistedSelection) : PersistedDelta
+
+    /** New 2026-09-25: the Search window's row, the Task trees window's open entry. */
+    @Serializable
+    @SerialName("windowSelection")
+    data class WindowSelection(
+        val window: String,
+        val instance: String = "",
+        val before: String? = null,
+        val after: String? = null,
+    ) : PersistedDelta
 
     @Serializable
     @SerialName("panels")
@@ -2398,3 +2431,10 @@ private data class PersistedTimeRange(
     val start: Long,
     val end: Long,
 )
+
+/**
+ * A window read back by the name it was persisted under — a unit's window, the focused window, a focus move's two
+ * ends — or null for a name this build does not know (a newer build's window). The one reading, so the three
+ * cannot disagree about what an unknown name means.
+ */
+private fun windowNamed(name: String): HistoryWindow? = HistoryWindow.entries.firstOrNull { it.name == name }

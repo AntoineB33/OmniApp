@@ -39,6 +39,9 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.TaskTreeId
+import org.example.project.scheduler.state.HistoryWindow
+import org.example.project.scheduler.state.SchedulerIntent
+import org.example.project.scheduler.state.windowSelectionKey
 import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.domain.SchedulerDomain
 
@@ -65,6 +68,12 @@ fun TaskTreesWindow(
     onSetDate: (TaskTreeId, Long?) -> Unit,
     onDelete: (TaskTreeId) -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * PRD §5: every window's selection ([SchedulerState.windowSelections]) — this one's is the tree whose detail
+     * is open — and where a new one is sent, so `Alt+←` can put it back.
+     */
+    windowSelections: Map<String, String>,
+    onSelectInWindow: (SchedulerIntent.SelectInWindow) -> Unit,
     modifier: Modifier = Modifier,
     /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
     initialOffset: Offset = Offset.Zero,
@@ -76,9 +85,13 @@ fun TaskTreesWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState("TaskTrees", initialOffset, initialSize)
-    // Which tree's detail window is open. Held by id, not by entry, so it survives the list changing
-    // under it (a rename, a date edit); a tree deleted out from under it closes the detail below.
-    var openDetail by remember { mutableStateOf<TaskTreeId?>(null) }
+    // Which tree's detail window is open — this window's selection (per copy), held in the state by id, not
+    // by entry, so it survives the list changing under it (a rename, a date edit); a tree deleted out from
+    // under it closes the detail below.
+    val instance = LocalWindowInstance.current?.suffix ?: ""
+    val openDetail = windowSelections[windowSelectionKey(HistoryWindow.TaskTrees, instance)]?.let(::TaskTreeId)
+    fun openDetail(id: TaskTreeId?, record: Boolean = true) =
+        onSelectInWindow(SchedulerIntent.SelectInWindow(HistoryWindow.TaskTrees, instance, id?.value, record))
     val detail = trees.firstOrNull { it.id == openDetail }
 
     // The pair — this window and a tree's detail window beside it — is what stands among the app's other
@@ -101,7 +114,7 @@ fun TaskTreesWindow(
                 dated = trees.filter { it.dateMillis != null }.sortedBy { it.dateMillis },
                 nowMillis = nowMillis,
                 timeZone = timeZone,
-                onSelect = { openDetail = it },
+                onSelect = { openDetail(it) },
             )
             Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
 
@@ -128,7 +141,7 @@ fun TaskTreesWindow(
                         active = entry.id == activeId,
                         selected = entry.id == openDetail,
                         timeZone = timeZone,
-                        onClick = { openDetail = if (openDetail == entry.id) null else entry.id },
+                        onClick = { openDetail(if (openDetail == entry.id) null else entry.id) },
                     )
                 }
             }
@@ -142,9 +155,10 @@ fun TaskTreesWindow(
                 onSetDate = { onSetDate(detail.id, it) },
                 onDelete = {
                     onDelete(detail.id)
-                    openDetail = null
+                    // The tree is gone: nothing to go back to, so the detail closing is not a position.
+                    openDetail(null, record = false)
                 },
-                onDismiss = { openDetail = null },
+                onDismiss = { openDetail(null) },
                 onRaise = raisePair,
                 // Opens down-right of the list window's own (possibly dragged) position, so it reads as
                 // belonging to it rather than floating loose.

@@ -1301,11 +1301,11 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §7 window navigation: move focus to [window] (the task tree or a floating window). Focusing a
-     * floating window forcibly exits any tree Edit Mode and clears the tree selection (PRD §4); the
-     * navigation itself is recorded as a (currently non-undoable) WindowNav History Unit (PRD §7).
+     * PRD §7 window navigation: move focus to [window] — any window of the app — and to its copy [instance]
+     * (`""` for the window itself, `"#2"` for a copy). Recorded as a WindowNav History Unit, which
+     * `Shift+Alt+arrows` walks (PRD §5).
      */
-    data class FocusWindow(val window: AppWindow) : SchedulerIntent
+    data class FocusWindow(val window: HistoryWindow, val instance: String = "") : SchedulerIntent
 
     /**
      * PRD §5/§7: shorthand for focusing the calendar (true) or returning focus to the task tree (false);
@@ -1361,12 +1361,36 @@ sealed interface SchedulerIntent {
         val timeMillis: Long,
     ) : SchedulerIntent
 
-    /** Ctrl+Z / Ctrl+Y — undo/redo the content history (Edit Mode while editing, else "the rest"). */
+    /**
+     * Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo the **changes made in the focused window** (the Edit Mode
+     * session's own stack while one is open). PRD §5.
+     */
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent
 
-    /** Alt+Left / Alt+Right — undo/redo the independent selection-state history (PRD §5). */
+    /** Alt+Left / Alt+Right — undo/redo the **selections of the focused window** (PRD §5). */
     data object UndoSelection : SchedulerIntent
     data object RedoSelection : SchedulerIntent
+
+    /**
+     * Shift+Alt+Left / Shift+Alt+Right — undo/redo **every position**: each selection of every window and each
+     * move of the focus between windows, in the order they happened (PRD §5). Walking a focus move back
+     * refocuses the window it left.
+     */
+    data object UndoPosition : SchedulerIntent
+    data object RedoPosition : SchedulerIntent
+
+    /**
+     * PRD §5: the selection of a window not drawn as a tree ([SchedulerState.windowSelections]) — the Search
+     * window's row, the Task trees window's open entry. [key] null = nothing selected. [record] false is a
+     * reset the window makes on its own (a new search starts on its first row), which is not a position the
+     * user took and records no unit.
+     */
+    data class SelectInWindow(
+        val window: HistoryWindow,
+        val instance: String,
+        val key: String?,
+        val record: Boolean = true,
+    ) : SchedulerIntent
 }
 

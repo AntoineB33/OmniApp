@@ -60,7 +60,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.platform.isDeadKey
 import org.example.project.scheduler.platform.readSystemClipboardText
 import org.example.project.scheduler.platform.writeSystemClipboardText
-import org.example.project.scheduler.state.AppWindow
+import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.ui.undoRedoIntentFor
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
@@ -131,7 +131,7 @@ internal fun TaskTreeView(
     aboveTreeKeyHandler: (KeyEvent) -> Boolean? = { null },
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
     /** The app-wide focus a click into this tree claims, or null for a tree inside a floating window. */
-    refocusWindow: AppWindow? = null,
+    refocusWindow: HistoryWindow? = null,
     /**
      * PRD §8/§13 "go to task tree" on a row's contextual menu, or null where the entry has no meaning —
      * the account's own tree (you are already there) and the §4 template. PRD §7's "All tasks" window is
@@ -450,7 +450,7 @@ internal fun TaskTreeView(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val mod = event.isCtrlPressed || event.isMetaPressed
-                // PRD §5: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, read by the app's ONE interpreter of them.
+                // PRD §5: the five history chords, read by the app's ONE interpreter of them.
                 undoRedoIntentFor(event)?.let {
                     onIntent(it)
                     return@onPreviewKeyEvent true
@@ -464,18 +464,9 @@ internal fun TaskTreeView(
                     findFocusTick++
                     return@onPreviewKeyEvent true
                 }
-                // PRD §5: selection history is undone/redone independently from content history.
-                if (event.isAltPressed && event.key == Key.DirectionLeft) {
-                    onIntent(SchedulerIntent.UndoSelection)
-                    return@onPreviewKeyEvent true
-                }
-                if (event.isAltPressed && event.key == Key.DirectionRight) {
-                    onIntent(SchedulerIntent.RedoSelection)
-                    return@onPreviewKeyEvent true
-                }
                 // Anything sitting above the tree that can hold the keyboard — the task-tree selector's
                 // name field — gets first refusal, so the tree never turns a letter typed there into a cell
-                // Edit Mode nor Ctrl+A into "select every cell". Global Ctrl+Z/Y and Alt+arrow above still
+                // Edit Mode nor Ctrl+A into "select every cell". The history chords above still
                 // apply either way.
                 aboveTreeKeyHandler(event)?.let { return@onPreviewKeyEvent it }
                 if (state.editSession != null) {
