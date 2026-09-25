@@ -39,6 +39,11 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
         Alarm("alarm", AlarmWindowSubject.FRAME_ID),
         Timer("timer", AlarmWindowSubject.FRAME_ID),
         Reminder("reminder", REMINDER_EDIT_FRAME_ID),
+
+        /** The account's default configuration of a new alarm / timer / reminder: one each, always there. */
+        AlarmDefaults("default alarm", ALARM_DEFAULTS_FRAME_ID),
+        TimerDefaults("default timer", ALARM_DEFAULTS_FRAME_ID),
+        ReminderDefaults("default reminder", REMINDER_DEFAULTS_FRAME_ID),
     }
 
     fun encode(): String = PREFIX + kind.name + ":" + (if (template) TEMPLATE else LIVE) + ":" + id
@@ -60,6 +65,7 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
             Kind.Alarm -> state.alarms.any { it.id == id }
             Kind.Timer -> state.timers.any { it.id == id }
             Kind.Reminder -> state.chores.any { it.id == id }
+            Kind.AlarmDefaults, Kind.TimerDefaults, Kind.ReminderDefaults -> true
         }
     }
 
@@ -81,6 +87,8 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
             Kind.Alarm -> state.alarms.firstOrNull { it.id == id }?.label
             Kind.Timer -> state.timers.firstOrNull { it.id == id }?.label
             Kind.Reminder -> state.chores.firstOrNull { it.id == id }?.title
+            // Named by the noun alone: "Default alarm".
+            Kind.AlarmDefaults, Kind.TimerDefaults, Kind.ReminderDefaults -> null
         }?.trim().orEmpty()
         return if (name.isEmpty()) kind.noun.replaceFirstChar { it.uppercaseChar() } else "$name ${kind.noun}"
     }

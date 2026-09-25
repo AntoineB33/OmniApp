@@ -292,6 +292,9 @@ fun TaskSchedulerScreen(
     /** PRD §5: opens a category's own edit window — hoisted to the app like [onSetEditTask]. */
     onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
     onSetDeepCopyCell: (CellId?) -> Unit = {},
+    /** PRD §4: whether the default sub-tree's window is open, and its toggle — the button atop the configuration. */
+    defaultSubtreeWindowOpen: Boolean = false,
+    onToggleDefaultSubtree: () -> Unit = {},
 ) {
     Perf.count("recompose.TaskSchedulerScreen")
     val state by vm.state.collectAsState()
@@ -351,6 +354,17 @@ fun TaskSchedulerScreen(
             // anywhere else (here, the tree's empty space, another window) leaves both the selection and
             // Edit Mode exactly as they were.
             modifier = Modifier.padding(start = 40.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // PRD §4: the top of the configuration section — the default sub-tree grafted under every new task, its
+        // switch and its window (the lateral menu's button until 2026-09-25).
+        org.example.project.ui.DefaultSubtreeControl(
+            enabled = state.defaultSubtreeEnabled,
+            onEnabledChange = { vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it)) },
+            windowOpen = defaultSubtreeWindowOpen,
+            onToggleWindow = onToggleDefaultSubtree,
+            modifier = Modifier.padding(start = 40.dp).widthIn(max = 320.dp),
         )
         Spacer(Modifier.height(8.dp))
 

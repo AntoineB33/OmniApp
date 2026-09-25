@@ -161,6 +161,12 @@ object SnapshotMerge {
                     pick(base.copyIncludePriorityPercentages, local.copyIncludePriorityPercentages, remote.copyIncludePriorityPercentages),
                 copyIncludeMinimumTime = pick(base.copyIncludeMinimumTime, local.copyIncludeMinimumTime, remote.copyIncludeMinimumTime),
                 copyExcludeTitle = pick(base.copyExcludeTitle, local.copyExcludeTitle, remote.copyExcludeTitle),
+                // PRD §14/§18: each default configuration is ONE value — a whole setting the user shaped in its
+                // window, not fields for two devices to interleave.
+                newAlarmDefaults = pick(base.newAlarmDefaults, local.newAlarmDefaults, remote.newAlarmDefaults),
+                newTimerDefaults = pick(base.newTimerDefaults, local.newTimerDefaults, remote.newTimerDefaults),
+                newReminderDefaults =
+                    pick(base.newReminderDefaults, local.newReminderDefaults, remote.newReminderDefaults),
                 // PRD §7 Keyboard shortcuts: the chord overrides merge PER SHORTCUT — rebinding "I'm away" on
                 // the desktop while the laptop rebinds "Switch task" keeps both — but one shortcut's chord is
                 // a whole value, never a key from one device wearing the other's modifiers. Resetting is a

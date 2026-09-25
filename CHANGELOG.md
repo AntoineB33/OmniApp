@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Default configurations of a new alarm, timer and reminder; the default sub-tree leaves the menu — 2026-09-25
+
+User spec: at the bottom of a timer's window (opened from Search), a button defining the default configuration a
+new timer is created with; the same for alarms and reminders; and the "Default sub-tree" button moves from the
+lateral menu to the top of the task tree window's configuration section (settled with the user: the task tree
+window, not the calendar).
+
+- `SchedulerState.newAlarmDefaults` / `newTimerDefaults` / `newReminderDefaults` (settings only), set by
+  `SetNew{Alarm,Timer,Reminder}Defaults` (no history unit), persisted with defaults (a payload without them
+  decodes to the built-ins; a stored one carrying an identity is healed), merged whole in `SnapshotMerge`, synced
+  as one field row each (`EntityRows`, no sync code). No SQLite or Supabase migration.
+- `NewElementDefaults` is the one funnel a new alarm/timer/reminder is built through — "+ New …", "+ Add …", the
+  calendar's new alarm draft (`seedDraft`) and its save (`applyAlarmDrafts`).
+- The default windows are the element's own editor in a settings-only mode (`AlarmWindow`/`ChoresManagerWindow`
+  `defaults = true`), per-object windows of their own (`ObjectWindowKey.Kind.*Defaults`: ☆, kept across restarts),
+  opened by "Default … configuration" under "+ New …".
+- `DefaultSubtreeControl` (switch + button) is drawn atop `TaskSchedulerScreen`'s configuration, above the
+  task-tree name field; `LateralMenu` lost it. `NewElementDefaultsTest`.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
+
 ### The desktop app's own window keeps its size — 2026-09-25
 
 User ask: preserve the size of the whole app. The OS window's normal position + size and its maximized state are

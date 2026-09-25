@@ -764,6 +764,19 @@ data class SchedulerState(
     val deepCopyMaxDepth: Int = SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH,
     val deepCopyUnlimited: Boolean = false,
     /**
+     * PRD §14/§18: **what a new alarm, timer and reminder start with** — the account's default configuration of
+     * each ([org.example.project.scheduler.domain.NewElementDefaults], which is the one place a new element is
+     * built from them). Kept as elements of their kind, but settings only: no id, no name, no time of day, no
+     * run. Authoritative user-authored settings: persisted + synced, and — like the deep-copy depth beside them
+     * — not an Undo/Redo unit. A payload written before they existed decodes to the built-in defaults.
+     */
+    val newAlarmDefaults: org.example.project.scheduler.model.AlarmEntry =
+        org.example.project.scheduler.domain.NewElementDefaults.ALARM,
+    val newTimerDefaults: org.example.project.scheduler.model.TimerEntry =
+        org.example.project.scheduler.domain.NewElementDefaults.TIMER,
+    val newReminderDefaults: org.example.project.scheduler.model.ChoreEntry =
+        org.example.project.scheduler.domain.NewElementDefaults.REMINDER,
+    /**
      * PRD §13 deep copy: **what** a copy carries, beside how deep it goes — the three switches in the
      * deep-copy window (see [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]). Like
      * [deepCopyMaxDepth] these are **one answer for the whole account**, so §4's Ctrl+C / Ctrl+X and the

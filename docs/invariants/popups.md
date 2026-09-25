@@ -78,7 +78,7 @@ means.
   and shows wherever `App` can open the window again from a button: a **lateral-menu window** or copy, by its
   frame id (`MenuButtonHost.canAdd`), and a **per-object window about an object with a stable id** — a task's edit
   window, a category's, a period kind's, a weight table, a relative priority, a deep copy, an alarm's, a timer's,
-  a reminder's — by its `ObjectWindowKey` (the kind, the tree and the id; `ObjectWindows`' `menuKeyOf`, handed to
+  a reminder's, and the default alarm, timer and reminder — by its `ObjectWindowKey` (the kind, the tree and the id; `ObjectWindows`' `menuKeyOf`, handed to
   the frame on `WindowInstance.menuKey`). One host for every frame, so no window is wired for it one by one.
   A window about something transient (a calendar edit draft, the elements at a spot, the constraint picker, a
   companion, a notice) has no ☆: a saved button would have nothing to come back to.

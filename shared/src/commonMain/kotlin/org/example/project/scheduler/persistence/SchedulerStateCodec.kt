@@ -18,6 +18,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.CategoryRules
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.AlertSettings
@@ -530,12 +531,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
-            chores = chores.map {
-                PersistedChoreEntry(
-                    it.title, it.spanDays, it.timeOfDayMinutes, it.daysFormula, it.recurrenceUnit, it.id,
-                    it.constrainedToReminderId, it.alert.toPersisted(),
-                )
-            },
+            chores = chores.map { it.toPersisted() },
             alarms = alarms.map { it.toPersisted() },
             // PRD §18 Timers: the run state rides along with the settings — `endsAtMillis` is an absolute
             // instant nothing else can recompute, so it is authoritative and belongs on the wire (CLAUDE.md
@@ -613,6 +609,10 @@ object SchedulerStateCodec {
             copyIncludePriorityPercentages = copyIncludePriorityPercentages,
             copyIncludeMinimumTime = copyIncludeMinimumTime,
             copyExcludeTitle = copyExcludeTitle,
+            // PRD §14/§18: what a new alarm / timer / reminder starts with.
+            newAlarmDefaults = newAlarmDefaults.toPersisted(),
+            newTimerDefaults = newTimerDefaults.toPersisted(),
+            newReminderDefaults = newReminderDefaults.toPersisted(),
             // PRD §7 Keyboard shortcuts: the account's system-wide chord OVERRIDES, sorted by shortcut so
             // one binding table has exactly one encoding (the fingerprint is this payload, byte for byte).
             shortcutBindings = shortcutBindings.toPersistedRows(),
@@ -1135,20 +1135,7 @@ object SchedulerStateCodec {
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             chores = SchedulerDomain.assignReminderIds(
-                chores.map {
-                    ChoreEntry(
-                        title = it.title,
-                        spanDays = it.spanDays,
-                        timeOfDayMinutes = it.timeOfDayMinutes,
-                        daysFormula = it.daysFormula,
-                        recurrenceUnit = it.recurrenceUnit,
-                        id = it.id,
-                        constrainedToReminderId = it.constrainedToReminderId,
-                        // PRD §11: a payload written before a reminder had an alert says nothing here, and a
-                        // reminder that said nothing is exactly what [AlertSettings.REMINDER] is.
-                        alert = it.alert.toAlertSettings(AlertSettings.REMINDER),
-                    )
-                },
+                chores.map { it.toChoreEntry() },
             ),
             // PRD §18 Alarms: a payload written before alarms existed decodes to an empty list; a row whose
             // id was somehow blank gets one minted here (the same healing the reminders get above).
@@ -1212,6 +1199,14 @@ object SchedulerStateCodec {
             copyIncludePriorityPercentages = copyIncludePriorityPercentages,
             copyIncludeMinimumTime = copyIncludeMinimumTime,
             copyExcludeTitle = copyExcludeTitle,
+            // PRD §14/§18: healed to settings only — no id, name, time of day or run survives in a default.
+            newAlarmDefaults =
+                newAlarmDefaults?.toAlarmEntry()?.let(NewElementDefaults::alarmDefaults) ?: NewElementDefaults.ALARM,
+            newTimerDefaults =
+                newTimerDefaults?.toTimerEntry()?.let(NewElementDefaults::timerDefaults) ?: NewElementDefaults.TIMER,
+            newReminderDefaults =
+                newReminderDefaults?.toChoreEntry()?.let(NewElementDefaults::reminderDefaults)
+                    ?: NewElementDefaults.REMINDER,
             // PRD §7 Keyboard shortcuts: a payload written before the window could rebind anything has no
             // entries at all, which is exactly "every chord is the one it ships with". A row naming a
             // shortcut or a key this build does not have is DROPPED rather than surfaced (that shortcut
@@ -1575,6 +1570,11 @@ private data class PersistedState(
     val copyIncludePriorityPercentages: Boolean = true,
     val copyIncludeMinimumTime: Boolean = true,
     val copyExcludeTitle: String = "",
+    // PRD §14/§18: what a new alarm / timer / reminder starts with. Missing = a payload written before the
+    // defaults existed, which decodes to the built-in defaults every new element had then.
+    val newAlarmDefaults: PersistedAlarm? = null,
+    val newTimerDefaults: PersistedTimer? = null,
+    val newReminderDefaults: PersistedChoreEntry? = null,
     // PRD §7 Keyboard shortcuts: the account's system-wide chord overrides. A missing value decodes to none,
     // i.e. every chord is the one it ships with — which is what every payload written before the window could
     // rebind anything behaved as.
@@ -1772,6 +1772,25 @@ private data class PersistedTaskRelation(
  * places now — the account's live list and the before/after sides of an [AlarmsDelta] History Unit — and two
  * spellings of it would be two shapes to keep in step.
  */
+private fun ChoreEntry.toPersisted(): PersistedChoreEntry =
+    PersistedChoreEntry(
+        title, spanDays, timeOfDayMinutes, daysFormula, recurrenceUnit, id, constrainedToReminderId, alert.toPersisted(),
+    )
+
+private fun PersistedChoreEntry.toChoreEntry(): ChoreEntry =
+    ChoreEntry(
+        title = title,
+        spanDays = spanDays,
+        timeOfDayMinutes = timeOfDayMinutes,
+        daysFormula = daysFormula,
+        recurrenceUnit = recurrenceUnit,
+        id = id,
+        constrainedToReminderId = constrainedToReminderId,
+        // PRD §11: a payload written before a reminder had an alert says nothing here, and a reminder that said
+        // nothing is exactly what [AlertSettings.REMINDER] is.
+        alert = alert.toAlertSettings(AlertSettings.REMINDER),
+    )
+
 private fun AlarmEntry.toPersisted(): PersistedAlarm =
     PersistedAlarm(
         id = id,

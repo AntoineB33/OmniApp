@@ -23,6 +23,23 @@ cross-device presence.
   identically with no loadable resource. Android falls back to the system alarm ringtone if the PCM track
   fails — an alarm must never fail silently. The desktop uses its own thread, never the voice-cue worker.
 
+### A new alarm, timer or reminder is built in ONE place, from the account's default
+
+`scheduler/domain/NewElementDefaults.kt`. `SchedulerState.newAlarmDefaults` / `newTimerDefaults` /
+`newReminderDefaults` are whole elements of their kind, but settings only — the setters (`SetNew…Defaults`)
+and the codec strip the id, the name, the time of day and a timer's run. Every creation path goes through
+`NewElementDefaults.newAlarm/newTimer/newReminder`: the windows' "+ New …" / "+ Add …" (`AlarmWindow`'s
+`addAlarm`/`addTimer`, the reminder window's `newRow`) and the calendar's "add…" (the new alarm draft in
+`seedDraft`, the saved alarm's base in `applyAlarmDrafts`). A new creation path that builds an element from
+`AlarmEntry(id = …)` directly is the second funnel this exists to prevent.
+
+- The defaults are **authoritative account settings**, synced as one field row each and merged as whole values
+  (`SnapshotMerge`); like the deep-copy depth they are not Undo/Redo units.
+- They are edited in the element's own editor in its settings-only mode (`AlarmWindow(defaults = true)`,
+  `ChoresManagerWindow(defaults = true)`, one row under `DEFAULT_CONFIGURATION_ROW_ID`), a per-object window of
+  its own (`ObjectWindowKey.Kind.AlarmDefaults` / `TimerDefaults` / `ReminderDefaults` — ☆ and kept across
+  restarts), opened from the link at the foot of any alarm's, timer's or reminder's own window.
+
 ### A timer is an alarm at an ABSOLUTE instant, and that is the whole difference
 
 The Alarms window's second section (`SchedulerState.timers`, `TimerEntry`, `TimerDomain`). An alarm's due

@@ -118,6 +118,10 @@ import org.example.project.ui.WindowInstance
 import org.example.project.ui.WindowCopy
 import org.example.project.ui.LocalWindowInstance
 import org.example.project.ui.ObjectWindowKey
+import org.example.project.ui.ALARM_DEFAULTS_FRAME_ID
+import org.example.project.ui.DEFAULT_CONFIGURATION_ROW_ID
+import org.example.project.ui.REMINDER_DEFAULTS_FRAME_ID
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.ui.ObjectWindowMemory
 import org.example.project.ui.ObjectWindows
 import org.example.project.ui.ObjectWindowsHost
@@ -703,6 +707,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val reminderWindows = remember {
             ObjectWindows<String>({ ObjectWindowKey(ObjectWindowKey.Kind.Reminder, it).encode() }, objectWindowMemory)
         }
+        // PRD §14/§18: the default configuration of a new alarm, timer and reminder — one window each, opened from
+        // the bottom of any such element's own window. The subject is the kind ([ObjectWindowKey.Kind.AlarmDefaults]…).
+        val defaultsWindows = remember {
+            ObjectWindows<ObjectWindowKey.Kind>({ ObjectWindowKey(it, "").encode() }, objectWindowMemory)
+        }
         // A per-object window named by its key: opened on its object (or brought back when one is open on it) — or,
         // at startup, reopened under the [number] it had. The one reading of a key, for the ☆ buttons and the
         // restore alike.
@@ -718,6 +727,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ObjectWindowKey.Kind.Alarm -> alarmWindows.openOn(AlarmWindowSubject(key.id, isAlarm = true))
                 ObjectWindowKey.Kind.Timer -> alarmWindows.openOn(AlarmWindowSubject(key.id, isAlarm = false))
                 ObjectWindowKey.Kind.Reminder -> reminderWindows.openOn(key.id)
+                ObjectWindowKey.Kind.AlarmDefaults, ObjectWindowKey.Kind.TimerDefaults, ObjectWindowKey.Kind.ReminderDefaults ->
+                    defaultsWindows.openOn(key.kind)
             }
         }
         // Startup: the per-object windows open when the app last stopped come back, on their objects, under their
@@ -2107,17 +2118,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onToggleCategories = {
                         onMenuWindowClicked(FloatingWindow.Categories) { categoriesWindowOpen = it }
                     },
-                    defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
-                    onToggleDefaultSubtree = {
-                        onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
-                    },
                     searchWindowOpen = searchWindowOpen,
                     onToggleSearch = {
                         onMenuWindowClicked(FloatingWindow.Search) { searchWindowOpen = it }
-                    },
-                    defaultSubtreeEnabled = schedulerState.defaultSubtreeEnabled,
-                    onToggleDefaultSubtreeEnabled = {
-                        vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it))
                     },
                     sleeping = schedulerState.isSleeping(nowMillis),
                     onToggleSleepWork = {
@@ -2204,6 +2207,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 keyboardEnabled = treeKeyboardEnabled,
                                 store = store,
                                 vm = vm,
+                                // PRD §4: the default sub-tree's window, opened from the top of this window's
+                                // configuration section — what the lateral menu's button did.
+                                defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
+                                onToggleDefaultSubtree = {
+                                    onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
+                                },
                                 onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
                                 onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
                                 onSetEditTask = { taskEditWindows.setFrom(template = false, it) },
@@ -2734,6 +2743,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 },
                                 reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
                                 alarms = schedulerState.alarms,
+                                // PRD §18: what an alarm added here starts with — the account's defaults.
+                                newAlarm = schedulerState.newAlarmDefaults,
                                 // PRD §8: the bin of one row. A row the window is only ADDING has nothing
                                 // stored behind it, so the window never calls this for one.
                                 onRemove = { draft ->
@@ -2798,6 +2809,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 subject = w.subject,
                                 // What the window shows now, for asking for it again and for its ☆.
                                 onSubjectChange = w::retarget,
+                                newReminder = schedulerState.newReminderDefaults,
+                                onOpenDefaults = { defaultsWindows.open(ObjectWindowKey.Kind.ReminderDefaults) },
                                 // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
                                 newRowTimeOfDayMinutes = {
                                     val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
@@ -2874,19 +2887,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         onDismiss: () -> Unit,
                         modifier: Modifier,
                         onShownChange: (AlarmWindowSubject) -> Unit = {},
+                        // PRD §18: the window of the default configuration of a new alarm or timer ([subject]
+                        // names its one row): it edits the account's defaults, not its alarms.
+                        defaults: Boolean = false,
                         initialOffset: Offset = Offset.Zero,
                         initialSize: Size = Size.Zero,
                         onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
                         onRaise: () -> Unit = {},
                     ) {
                         AlarmWindow(
-                            alarms = schedulerState.alarms,
+                            alarms =
+                                if (defaults) listOf(schedulerState.newAlarmDefaults.copy(id = DEFAULT_CONFIGURATION_ROW_ID))
+                                else schedulerState.alarms,
                             onChange = { entries, editKey ->
-                                vm.dispatch(SchedulerIntent.SetAlarms(entries, editKey))
+                                if (defaults) {
+                                    entries.firstOrNull()?.let { vm.dispatch(SchedulerIntent.SetNewAlarmDefaults(it)) }
+                                } else {
+                                    vm.dispatch(SchedulerIntent.SetAlarms(entries, editKey))
+                                }
                             },
-                            timers = schedulerState.timers,
+                            timers =
+                                if (defaults) listOf(schedulerState.newTimerDefaults.copy(id = DEFAULT_CONFIGURATION_ROW_ID))
+                                else schedulerState.timers,
                             onTimersChange = { entries, editKey ->
-                                vm.dispatch(SchedulerIntent.SetTimers(entries, editKey))
+                                if (defaults) {
+                                    entries.firstOrNull()?.let { vm.dispatch(SchedulerIntent.SetNewTimerDefaults(it)) }
+                                } else {
+                                    vm.dispatch(SchedulerIntent.SetTimers(entries, editKey))
+                                }
                             },
                             // The run-state writes are dispatched with the clock's instant, not the display
                             // now-line: a countdown started at 17:00:00.4 must end 5 minutes after that, not
@@ -2925,6 +2953,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = modifier,
                             subject = subject,
                             onShownChange = onShownChange,
+                            newAlarm = schedulerState.newAlarmDefaults,
+                            newTimer = schedulerState.newTimerDefaults,
+                            onOpenDefaults = { isAlarm ->
+                                defaultsWindows.open(
+                                    if (isAlarm) ObjectWindowKey.Kind.AlarmDefaults else ObjectWindowKey.Kind.TimerDefaults,
+                                )
+                            },
+                            defaults = defaults,
                         )
                     }
 
@@ -2958,6 +2994,42 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 onShownChange = w::retarget,
                                 modifier = Modifier.align(Alignment.Center),
                             )
+                        }
+                    }
+
+                    // PRD §14/§18: the default configuration of a new alarm / timer / reminder — the element's own
+                    // editor, settings only, writing the account's defaults (NewElementDefaults).
+                    ObjectWindowsHost(defaultsWindows) { w ->
+                        if (w.subject == ObjectWindowKey.Kind.ReminderDefaults) {
+                            TransientPopupLayer(windowInstanceId(REMINDER_DEFAULTS_FRAME_ID)) {
+                                ChoresManagerWindow(
+                                    chores = listOf(schedulerState.newReminderDefaults.copy(id = DEFAULT_CONFIGURATION_ROW_ID)),
+                                    onChange = { entries ->
+                                        entries.firstOrNull()?.let { vm.dispatch(SchedulerIntent.SetNewReminderDefaults(it)) }
+                                    },
+                                    onDismiss = w::close,
+                                    subject = DEFAULT_CONFIGURATION_ROW_ID,
+                                    defaults = true,
+                                    // "constrained in" is a setting too: its picker names the account's reminders.
+                                    reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                    titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                                    reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                    titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
+                            }
+                        } else {
+                            TransientPopupLayer(windowInstanceId(ALARM_DEFAULTS_FRAME_ID)) {
+                                AccountAlarmWindow(
+                                    subject = AlarmWindowSubject(
+                                        DEFAULT_CONFIGURATION_ROW_ID,
+                                        isAlarm = w.subject == ObjectWindowKey.Kind.AlarmDefaults,
+                                    ),
+                                    onDismiss = w::close,
+                                    modifier = Modifier.align(Alignment.Center),
+                                    defaults = true,
+                                )
+                            }
                         }
                     }
 
@@ -3471,7 +3543,7 @@ private fun saveCalendarElementIntents(
         }
     val alarmDrafts = drafts.filter { it.kind == CalendarElements.Kind.Alarm }
     if (alarmDrafts.isNotEmpty()) {
-        val next = applyAlarmDrafts(state.alarms, alarmDrafts, tz)
+        val next = applyAlarmDrafts(state, alarmDrafts, tz)
         if (next != state.alarms) out += SchedulerIntent.SetAlarms(next)
     }
     return out
@@ -3491,17 +3563,17 @@ private fun saveCalendarElementIntents(
  * place `alarm-{n}` is minted.
  */
 private fun applyAlarmDrafts(
-    alarms: List<AlarmEntry>,
+    state: SchedulerState,
     drafts: List<CalendarElements.Draft>,
     tz: TimeZone,
 ): List<AlarmEntry> {
-    var out = alarms
+    var out = state.alarms
     drafts.forEach { draft ->
         val dayStart =
             Instant.fromEpochMilliseconds(draft.startMillis)
                 .toLocalDateTime(tz).date.atStartOfDayIn(tz).toEpochMilliseconds()
         val index = out.indexOfFirst { it.id == draft.existingId }
-        val base = out.getOrNull(index) ?: AlarmEntry(id = "")
+        val base = out.getOrNull(index) ?: NewElementDefaults.newAlarm(state.newAlarmDefaults, id = "", timeOfDayMinutes = 0)
         val updated =
             base.copy(
                 label = draft.name,

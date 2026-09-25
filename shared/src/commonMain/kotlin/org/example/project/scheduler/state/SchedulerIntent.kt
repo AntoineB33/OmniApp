@@ -1074,6 +1074,16 @@ sealed interface SchedulerIntent {
     data class SetDeepCopyUnlimited(val unlimited: Boolean) : SchedulerIntent
 
     /**
+     * PRD §14/§18: the account's default configuration of a new alarm / timer / reminder, set from its "Default …"
+     * window ([SchedulerState.newAlarmDefaults] …). Only the element's settings are kept; not an Undo/Redo unit.
+     */
+    data class SetNewAlarmDefaults(val defaults: org.example.project.scheduler.model.AlarmEntry) : SchedulerIntent
+
+    data class SetNewTimerDefaults(val defaults: org.example.project.scheduler.model.TimerEntry) : SchedulerIntent
+
+    data class SetNewReminderDefaults(val defaults: org.example.project.scheduler.model.ChoreEntry) : SchedulerIntent
+
+    /**
      * PRD §13 deep copy: the account's three **what does a copy carry** switches (see
      * [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]), set from the deep-copy window
      * when it copies. Like the depth, one answer for the whole account and not an Undo/Redo unit.

@@ -36,6 +36,7 @@ import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.CalendarElements.sharedValue
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.TaskId
@@ -97,6 +98,8 @@ fun CalendarElementsWindow(
     reminderIdForTitle: (String) -> String?,
     /** The account's alarms — their labels are what the alarm search suggests. */
     alarms: List<AlarmEntry>,
+    /** PRD §18: what a new alarm starts with — the account's default configuration ([NewElementDefaults]). */
+    newAlarm: AlarmEntry = NewElementDefaults.ALARM,
     onSave: (List<CalendarElements.Draft>) -> Unit,
     /** PRD §8: the bin, per row of the list — see [EditorBinButton] for why deleting travels with editing. */
     onRemove: (CalendarElements.Draft) -> Unit,
@@ -211,7 +214,7 @@ fun CalendarElementsWindow(
                         enabled = pick != null,
                         onClick = {
                             pick?.let { chosen ->
-                                drafts = drafts + seedDraft(chosen, atMillis, panelSpanMillisFor, noScreenResilienceForTaskId)
+                                drafts = drafts + seedDraft(chosen, atMillis, panelSpanMillisFor, noScreenResilienceForTaskId, newAlarm)
                                 search = ""
                             }
                         },
@@ -356,6 +359,7 @@ private fun seedDraft(
     atMillis: Long,
     panelSpanMillisFor: (TaskId?) -> Long,
     noScreenResilienceForTaskId: (TaskId) -> Double?,
+    newAlarm: AlarmEntry,
 ): CalendarElements.Draft =
     // An element already on the calendar (the "edit…" list) keeps its own bounds: the window is showing what
     // is there, and re-anchoring it at the click would move it before the user asked for anything.
@@ -369,12 +373,16 @@ private fun seedDraft(
                 CalendarElements.Kind.TaskPanel -> panelSpanMillisFor(pick.taskId)
                 CalendarElements.Kind.RestrictivePeriod -> 3_600_000L
                 // PRD §18: the default ring length, so `end - start` is a real `soundSeconds` from the start.
-                CalendarElements.Kind.Alarm -> AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS * 1000L
+                CalendarElements.Kind.Alarm -> newAlarm.soundSeconds * 1000L
                 // PRD §14: a tag has no duration at all.
                 CalendarElements.Kind.Reminder -> 0L
             },
             noScreenResilience = pick.taskId?.let(noScreenResilienceForTaskId) ?: 0.0,
-        )
+        ).let { seeded ->
+            // PRD §18: a new alarm's own settings are the account's default configuration of one.
+            if (pick.kind != CalendarElements.Kind.Alarm) seeded
+            else seeded.copy(alarmDays = newAlarm.days, alert = newAlarm.alert, alarmArmed = newAlarm.enabled)
+        }
     }
 
 /**

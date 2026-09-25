@@ -59,6 +59,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.model.AlarmEntry
@@ -152,8 +153,26 @@ fun AlarmWindow(
     subject: AlarmWindowSubject? = null,
     /** The element the single element's window shows now — its "+ New" moved it on to [AlarmWindowSubject]. */
     onShownChange: (AlarmWindowSubject) -> Unit = {},
+    /** PRD §18: what a new alarm and a new timer start with ([NewElementDefaults]) — "+ New …" and "+ Add …". */
+    newAlarm: AlarmEntry = NewElementDefaults.ALARM,
+    newTimer: TimerEntry = NewElementDefaults.TIMER,
+    /**
+     * The single element's window: open the default configuration of its kind (true = the alarms'), at the bottom
+     * under "+ New …". Null = no such button.
+     */
+    onOpenDefaults: ((isAlarm: Boolean) -> Unit)? = null,
+    /**
+     * This window IS a default configuration ([subject] names its one row, [DEFAULT_CONFIGURATION_ROW_ID]): the
+     * element's editor with only its settings — no name, no time of day, no run, no bin, nothing to add.
+     */
+    defaults: Boolean = false,
 ) {
-    val frame = rememberWindowFrameState(subject?.frameId ?: "Alarms", initialOffset, initialSize)
+    val frame =
+        rememberWindowFrameState(
+            if (defaults) ALARM_DEFAULTS_FRAME_ID else subject?.frameId ?: "Alarms",
+            initialOffset,
+            initialSize,
+        )
     // The alarm or timer the window shows now: [subject] to begin with, and the one its "+ New" button makes
     // after that — the window moves on to the element just created, which is the one the user means to set up.
     var shown by remember { mutableStateOf(subject) }
@@ -288,7 +307,7 @@ fun AlarmWindow(
         // A locally-unique id right away, so the row has an identity before the round-trip through onChange
         // (the reducer mints one for a blank id too).
         val id = AlarmDomain.mintAlarmId(rows.map { it.id })
-        rows.add(AlarmRow(id = id, timeText = formatAlarmTime(newRowTimeOfDayMinutes())))
+        rows.add(alarmRowOf(NewElementDefaults.newAlarm(newAlarm, id, newRowTimeOfDayMinutes())))
         push()
         return id
     }
@@ -296,7 +315,7 @@ fun AlarmWindow(
     /** Adds a timer row, pushes it, and returns its id — the list's "+ Add timer" and "+ New timer". */
     fun addTimer(): String {
         val id = TimerDomain.mintTimerId(timerRows.map { it.id })
-        timerRows.add(TimerRow(id = id))
+        timerRows.add(timerRowOf(NewElementDefaults.newTimer(newTimer, id)))
         pushTimers()
         return id
     }
@@ -311,7 +330,7 @@ fun AlarmWindow(
     LaunchedEffect(shownGone) { if (shownGone) latestDismiss() }
 
     AppWindowFrame(
-        title = shown?.title ?: "Alarms",
+        title = shown?.let { if (defaults) "Default " + it.title.lowercase() else it.title } ?: "Alarms",
         state = frame,
         onClose = onDismiss,
         defaultWidth = 440.dp,
@@ -371,6 +390,7 @@ fun AlarmWindow(
                         push()
                     },
                     onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                    settingsOnly = defaults,
                 )
                 if (shown == null && index != rows.lastIndex) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
@@ -433,6 +453,7 @@ fun AlarmWindow(
                         pushTimers()
                     },
                     onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                    settingsOnly = defaults,
                 )
                 if (shown == null && index != timerRows.lastIndex) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
@@ -457,23 +478,21 @@ fun AlarmWindow(
                 )
             }
             // The single element's window: a new one of the same kind, at the bottom — and the window moves on
-            // to it (the list window has its "+ Add" links above instead).
-            shown?.let { current ->
+            // to it (the list window has its "+ Add" links above instead) — and, under it, the default
+            // configuration every new one of that kind starts with.
+            shown?.takeIf { !defaults }?.let { current ->
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                Text(
-                    text = if (current.isAlarm) "+ New alarm" else "+ New timer",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable {
-                            val id = if (current.isAlarm) addAlarm() else addTimer()
-                            val next = AlarmWindowSubject(id, isAlarm = current.isAlarm)
-                            shown = next
-                            onShownChange(next)
-                        }
-                        .padding(vertical = 4.dp, horizontal = 2.dp),
-                )
+                WindowLink(if (current.isAlarm) "+ New alarm" else "+ New timer") {
+                    val id = if (current.isAlarm) addAlarm() else addTimer()
+                    val next = AlarmWindowSubject(id, isAlarm = current.isAlarm)
+                    shown = next
+                    onShownChange(next)
+                }
+                onOpenDefaults?.let { open ->
+                    WindowLink(if (current.isAlarm) "Default alarm configuration" else "Default timer configuration") {
+                        open(current.isAlarm)
+                    }
+                }
             }
         }
     }
@@ -519,32 +538,39 @@ private fun AlarmRowEditor(
     onRemove: () -> Unit,
     /** A text field of this row gained (true) or lost (false) the focus — one History Unit per session. */
     onFieldFocus: (String, Boolean) -> Unit,
+    /** A default configuration: the settings alone — no time of day, no label, no bin ([NewElementDefaults]). */
+    settingsOnly: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = row.enabled, onCheckedChange = { onRowChange(row.copy(enabled = it), null) })
-            Spacer(Modifier.width(8.dp))
-            OutlinedTextField(
-                value = row.timeText,
-                onValueChange = { onRowChange(row.copy(timeText = it), FIELD_TIME) },
-                singleLine = true,
-                isError = parseAlarmTime(row.timeText) == null,
-                modifier = Modifier.width(92.dp).editSession(FIELD_TIME, onFieldFocus),
-            )
-            Spacer(Modifier.width(8.dp))
-            OutlinedTextField(
-                value = row.label,
-                onValueChange = { onRowChange(row.copy(label = it), FIELD_LABEL) },
-                singleLine = true,
-                placeholder = { Text("Label", style = MaterialTheme.typography.bodySmall) },
-                modifier = Modifier.weight(1f).editSession(FIELD_LABEL, onFieldFocus),
-            )
-            Spacer(Modifier.width(4.dp))
-            Box(
-                modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onRemove),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            if (settingsOnly) {
+                Spacer(Modifier.width(8.dp))
+                Text(text = "Armed", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = row.timeText,
+                    onValueChange = { onRowChange(row.copy(timeText = it), FIELD_TIME) },
+                    singleLine = true,
+                    isError = parseAlarmTime(row.timeText) == null,
+                    modifier = Modifier.width(92.dp).editSession(FIELD_TIME, onFieldFocus),
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = row.label,
+                    onValueChange = { onRowChange(row.copy(label = it), FIELD_LABEL) },
+                    singleLine = true,
+                    placeholder = { Text("Label", style = MaterialTheme.typography.bodySmall) },
+                    modifier = Modifier.weight(1f).editSession(FIELD_LABEL, onFieldFocus),
+                )
+                Spacer(Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onRemove),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                }
             }
         }
         // PRD §18: the days this alarm is triggered on — every day by default. Tapping a letter toggles that
@@ -639,6 +665,8 @@ private fun TimerRowEditor(
     nudgeButtons: Boolean = true,
     /** The run in reverse — the elapsed time, going up as the countdown goes down. */
     showElapsed: Boolean = false,
+    /** A default configuration: the settings alone — no label, no bin, no countdown or run ([NewElementDefaults]). */
+    settingsOnly: Boolean = false,
 ) {
     val running = entry?.running == true
     val paused = entry?.paused == true
@@ -673,23 +701,28 @@ private fun TimerRowEditor(
                 isError = parseDurationSeconds(row.durationText) == null,
                 modifier = Modifier.width(92.dp).editSession(FIELD_DURATION, onFieldFocus),
             )
-            Spacer(Modifier.width(8.dp))
-            OutlinedTextField(
-                value = row.label,
-                onValueChange = { onRowChange(row.copy(label = it), FIELD_LABEL) },
-                singleLine = true,
-                placeholder = { Text("Label", style = MaterialTheme.typography.bodySmall) },
-                modifier = Modifier.weight(1f).editSession(FIELD_LABEL, onFieldFocus),
-            )
-            Spacer(Modifier.width(4.dp))
-            Box(
-                modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onRemove),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            if (settingsOnly) {
+                Spacer(Modifier.width(8.dp))
+                Text(text = "Duration", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = row.label,
+                    onValueChange = { onRowChange(row.copy(label = it), FIELD_LABEL) },
+                    singleLine = true,
+                    placeholder = { Text("Label", style = MaterialTheme.typography.bodySmall) },
+                    modifier = Modifier.weight(1f).editSession(FIELD_LABEL, onFieldFocus),
+                )
+                Spacer(Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onRemove),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                }
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (!settingsOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             // The countdown, as three INPUTS: derived from the end instant and the now-line, never stored, but
             // writable at any moment — before the start as much as during it. Each field moves the countdown
             // by its OWN unit, so typing into the hours leaves the minutes and seconds reading down
@@ -741,7 +774,7 @@ private fun TimerRowEditor(
         // that — the digit is itself reading down, so a typed value only sticks if the row stops — which is
         // precisely why these sit beside it. They work before the start too, where there is nothing to stop:
         // they are then simply how the run about to be started is dialled in a few seconds at a time.
-        if (showElapsed) {
+        if (showElapsed && !settingsOnly) {
             // PRD §7 Search, the timer's own window: the countdown in reverse. Read-only, and a mirror of the
             // countdown AS SHOWN: while a field holds the caret the fields it holds stand still, and so does this
             // — or it would run on beside a countdown that reads as stopped. The field being edited counts with
@@ -771,7 +804,7 @@ private fun TimerRowEditor(
                 )
             }
         }
-        if (nudgeButtons) Row(verticalAlignment = Alignment.CenterVertically) {
+        if (nudgeButtons && !settingsOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             NUDGE_SECONDS.forEachIndexed { index, seconds ->
                 if (index != 0) Spacer(Modifier.width(4.dp))
                 TimerActionChip(
@@ -814,6 +847,29 @@ private const val FIELD_TIME = "time"
 private const val FIELD_LABEL = "label"
 private const val FIELD_SOUND = "sound"
 private const val FIELD_DURATION = "duration"
+
+/**
+ * The row id a default configuration's window edits its one element under ([AlarmWindow]'s and the reminder
+ * window's `defaults`) — never an id an element can have, and never stored (the defaults keep no id).
+ */
+const val DEFAULT_CONFIGURATION_ROW_ID: String = "default-configuration"
+
+/** The frame id of the default alarm's and default timer's window, before its number — [ObjectWindowKey.Kind]. */
+const val ALARM_DEFAULTS_FRAME_ID: String = "AlarmOrTimerDefaults"
+
+/** A link at the foot of a window: "+ New …", "Default … configuration". */
+@Composable
+internal fun WindowLink(text: String, onClick: () -> Unit) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp, horizontal = 2.dp),
+    )
+}
 
 /** The editable text row an alarm shows as — the seeding both the first composition and a re-seed use. */
 private fun alarmRowOf(entry: AlarmEntry): AlarmRow =

@@ -9,6 +9,7 @@ import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
@@ -565,6 +566,18 @@ object SchedulerReducer {
                 val depth = intent.depth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE)
                 if (state.deepCopyMaxDepth == depth) state else state.copy(deepCopyMaxDepth = depth)
             }
+            is SchedulerIntent.SetNewAlarmDefaults ->
+                NewElementDefaults.alarmDefaults(intent.defaults).let {
+                    if (it == state.newAlarmDefaults) state else state.copy(newAlarmDefaults = it)
+                }
+            is SchedulerIntent.SetNewTimerDefaults ->
+                NewElementDefaults.timerDefaults(intent.defaults).let {
+                    if (it == state.newTimerDefaults) state else state.copy(newTimerDefaults = it)
+                }
+            is SchedulerIntent.SetNewReminderDefaults ->
+                NewElementDefaults.reminderDefaults(intent.defaults).let {
+                    if (it == state.newReminderDefaults) state else state.copy(newReminderDefaults = it)
+                }
             is SchedulerIntent.SetDeepCopyUnlimited ->
                 if (state.deepCopyUnlimited == intent.unlimited) state
                 else state.copy(deepCopyUnlimited = intent.unlimited)

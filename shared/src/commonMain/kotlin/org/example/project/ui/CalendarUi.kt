@@ -150,6 +150,7 @@ import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.ChoreEntry
@@ -1227,9 +1228,6 @@ fun LateralMenu(
     /** PRD §5 Categories: whether the account's list of categories is open + toggle callback. */
     categoriesWindowOpen: Boolean = false,
     onToggleCategories: () -> Unit = {},
-    /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
-    defaultSubtreeWindowOpen: Boolean = false,
-    onToggleDefaultSubtree: () -> Unit = {},
     /**
      * PRD §5: the Online window (status, work offline, account) — it replaced the top-right chip and offline
      * button, so its button carries the status they showed ([onlineStatus], e.g. "☁ Synced", "✈ Offline").
@@ -1240,13 +1238,6 @@ fun LateralMenu(
     /** PRD §7 Search: whether the search window is open + toggle callback. */
     searchWindowOpen: Boolean = false,
     onToggleSearch: () -> Unit = {},
-    /**
-     * PRD §4/§7 Default sub-tree: whether the policy is **currently applied** — the switch sitting to the LEFT
-     * of the "Default sub-tree" button. Off means a newly created task is seeded with nothing, as before the
-     * template existed; the template itself is kept either way.
-     */
-    defaultSubtreeEnabled: Boolean = false,
-    onToggleDefaultSubtreeEnabled: (Boolean) -> Unit = {},
     /**
      * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
      * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
@@ -1461,27 +1452,6 @@ fun LateralMenu(
             onClick = onToggleCategories,
         )
 
-        // PRD §4 Default sub-tree: the template grafted under every newly created task. The switch to the
-        // button's left says whether that policy is applied right now — the button opens the template's own
-        // window either way, so the user can build it before switching it on.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Switch(
-                checked = defaultSubtreeEnabled,
-                onCheckedChange = onToggleDefaultSubtreeEnabled,
-            )
-            Spacer(Modifier.width(8.dp))
-            Box(Modifier.weight(1f)) {
-                MenuButton(
-                    label = "Default sub-tree",
-                    active = defaultSubtreeWindowOpen,
-                    onClick = onToggleDefaultSubtree,
-                )
-            }
-        }
-
         // PRD §5: status, the device's "work offline" switch and the account, in one window.
         MenuButton(
             label = "Online" + (onlineStatus?.let { "  $it" } ?: ""),
@@ -1515,7 +1485,11 @@ fun Modifier.raiseOnPress(onPress: () -> Unit): Modifier =
  * floating-point number) and a time of day, its constraint and its alert. Edits are live: every change pushes
  * the whole parsed list up via [onChange] — the rows it does not draw are held and pushed back unchanged. Its
  * bin removes the reminder, and the window closes itself when its row is gone; **"+ New reminder"** adds one
- * and moves the window on to it (the Alarms window's "+ New" rule).
+ * and moves the window on to it (the Alarms window's "+ New" rule), starting from the account's default
+ * configuration ([newReminder]), which the link under it opens.
+ *
+ * With [defaults], the window IS that default configuration ([subject] = [DEFAULT_CONFIGURATION_ROW_ID]): the
+ * reminder's settings alone — no title, no time of day, no bin, nothing to add.
  *
  * (It was also the lateral menu's list of every reminder, removed 2026-09-25: the Search window lists them.)
  */
@@ -1558,8 +1532,14 @@ fun ChoresManagerWindow(
     titleForReminderId: (String) -> String? = { null },
     /** The reminder the window shows now — the id menu's adoption or "+ New reminder" moved it on. */
     onSubjectChange: (String) -> Unit = {},
+    /** PRD §14: what a new reminder starts with ([NewElementDefaults]). */
+    newReminder: ChoreEntry = NewElementDefaults.REMINDER,
+    /** Open the default configuration of a reminder, at the bottom under "+ New reminder". Null = no such link. */
+    onOpenDefaults: (() -> Unit)? = null,
+    /** This window IS the default configuration of a new reminder (see the class note). */
+    defaults: Boolean = false,
 ) {
-    val frame = rememberWindowFrameState(REMINDER_EDIT_FRAME_ID)
+    val frame = rememberWindowFrameState(if (defaults) REMINDER_DEFAULTS_FRAME_ID else REMINDER_EDIT_FRAME_ID)
     // The subject row's id as it now stands: the id menu can make the row adopt another reminder's id.
     var subjectId by remember { mutableStateOf(subject) }
     val latestSubjectChange by rememberUpdatedState(onSubjectChange)
@@ -1611,16 +1591,19 @@ fun ChoresManagerWindow(
     // being edited (otherwise a brand-new reminder would suggest itself). The minted id must also dodge ids
     // owned by calendar-only "add a checked reminder" reminders: colliding with one would make the id menu
     // filter that reminder out (it appears in `rowIds`), so it would never be offered for adoption.
-    fun newRow() = ChoreRow(
-        timeText = formatTimeOfDay(newRowTimeOfDayMinutes()),
-        id = run {
+    fun newRow(): ChoreRow {
+        val id = run {
             val used = rows.mapTo(mutableSetOf()) { it.id }
             used.addAll(knownReminderIds())
             var n = 0
             while (used.contains("reminder-$n")) n++
             "reminder-$n"
-        },
-    )
+        }
+        // The account's default configuration, with this reminder's own id; its time is the one the click
+        // happened at (a blank field when none is given).
+        return rowOf(NewElementDefaults.newReminder(newReminder, id, 0))
+            .copy(timeText = formatTimeOfDay(newRowTimeOfDayMinutes()))
+    }
     // PRD §14: the reminder id each row resolves to. A row still being created (its minted id is not yet an
     // existing reminder) and not explicitly marked "New Reminder" adopts the reminder its id menu shows
     // selected by default — the first title-matching calendar-only reminder not already taken by an earlier
@@ -1667,7 +1650,7 @@ fun ChoresManagerWindow(
     LaunchedEffect(subjectGone) { if (subjectGone) latestDismiss() }
 
     AppWindowFrame(
-        title = "Reminder",
+        title = if (defaults) "Default reminder" else "Reminder",
         state = frame,
         onClose = onDismiss,
         defaultWidth = 560.dp,
@@ -1704,7 +1687,7 @@ fun ChoresManagerWindow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    OutlinedTextField(
+                    if (!defaults) OutlinedTextField(
                         value = row.title,
                         // Editing the title reverts an explicit "New Reminder" pick so the id resolves from
                         // the title again (mirrors the "add a checked reminder" window, PRD §14).
@@ -1739,15 +1722,17 @@ fun ChoresManagerWindow(
                         unit = row.unit,
                         onSelect = { rows[index] = row.copy(unit = it); push() },
                     )
-                    OutlinedTextField(
-                        value = row.timeText,
-                        onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
-                        singleLine = true,
-                        label = { Text("Time") },
-                        modifier = Modifier.width(80.dp),
-                    )
-                    // Bin: remove this reminder (the window then closes itself).
-                    TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
+                    if (!defaults) {
+                        OutlinedTextField(
+                            value = row.timeText,
+                            onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
+                            singleLine = true,
+                            label = { Text("Time") },
+                            modifier = Modifier.width(80.dp),
+                        )
+                        // Bin: remove this reminder (the window then closes itself).
+                        TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
+                    }
                 }
 
                 // PRD §14 "constrained in": a button opening the constraint picker, with the chosen
@@ -1843,16 +1828,17 @@ fun ChoresManagerWindow(
               }
             }
             // A new reminder at the bottom — and the window moves on to it, the one the user means to set up
-            // now (the Alarms window's "+ New" rule).
-            TextButton(
-                onClick = {
+            // now (the Alarms window's "+ New" rule) — and, under it, the configuration every new one starts with.
+            if (!defaults) {
+                WindowLink("+ New reminder") {
                     val row = newRow()
                     rows.add(row)
                     subjectId = row.id
                     // push() carries subjectId along if the new row resolves to another reminder's id.
                     push()
-                },
-            ) { Text("+ New reminder") }
+                }
+                onOpenDefaults?.let { WindowLink("Default reminder configuration", it) }
+            }
         }
     }
 
@@ -1881,6 +1867,9 @@ fun ChoresManagerWindow(
         }
     }
 }
+
+/** The frame id of the default reminder's window, before its number — see [ObjectWindowKey.Kind.frameBase]. */
+const val REMINDER_DEFAULTS_FRAME_ID: String = "ReminderDefaults"
 
 /** The frame id of a single reminder's window, before its number (`ReminderEdit#2`) — see [ObjectWindowKey.Kind.frameBase]. */
 const val REMINDER_EDIT_FRAME_ID: String = "ReminderEdit"
@@ -3082,10 +3071,33 @@ fun IconMenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modi
 }
 
 /**
- * One lateral-menu button. [chord] is the keyboard shortcut that fires the **same** action, or null where the
- * button is the only way to it — hovering a button that has one shows it in an info bubble ([ShortcutHint]).
- * For the system-wide chords it must be read live off the account's bindings, never off
- * `GlobalShortcut.defaultChord`.
+ * PRD §4 Default sub-tree: the template grafted under every newly created task — the switch saying whether that
+ * policy is applied right now, and the button opening the template's own window either way (so the user can build
+ * it before switching it on). At the top of the task tree window's configuration section (it left the lateral
+ * menu, 2026-09-25).
+ */
+@Composable
+internal fun DefaultSubtreeControl(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    windowOpen: Boolean,
+    onToggleWindow: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.weight(1f)) {
+            MenuButton(label = "Default sub-tree", active = windowOpen, onClick = onToggleWindow)
+        }
+    }
+}
+
+/**
+ * One lateral-menu button (and the task tree window's "Default sub-tree", which was one). [chord] is the keyboard
+ * shortcut that fires the **same** action, or null where the button is the only way to it — hovering a button
+ * that has one shows it in an info bubble ([ShortcutHint]). For the system-wide chords it must be read live off
+ * the account's bindings, never off `GlobalShortcut.defaultChord`.
  */
 @Composable
 internal fun MenuButton(
