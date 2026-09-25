@@ -1882,7 +1882,7 @@ fun ChoresManagerWindow(
     }
 }
 
-/** The frame id of a single reminder's window (opened from its Search row), before its number (`#n`). */
+/** The frame id of a single reminder's window, before its number (`ReminderEdit#2`) — see [ObjectWindowKey.Kind.frameBase]. */
 const val REMINDER_EDIT_FRAME_ID: String = "ReminderEdit"
 
 /**

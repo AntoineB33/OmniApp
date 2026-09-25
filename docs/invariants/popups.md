@@ -182,8 +182,7 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   like the original; closing it clears the row's `visible`. The copy of a copy is a new top-level copy.
 - **Per-object windows**: `ObjectWindowsHost(windows) { w -> }` draws every open window of an `ObjectWindows`;
   a copy is one more window on the same subject, titled with its number. A window must close through
-  `w.close()` (its Save, bin and ✕ close that window, not another), and read its object off `w.subject`. They
-  live for the session: per-object windows persist nothing.
+  `w.close()` (its Save, bin and ✕ close that window, not another), and read its object off `w.subject`.
 - **Not duplicable**: the **task tree** (above), the **Calendar** — its display pipeline in `App` (records, projections, the schedule
   horizon handed to the engine) is derived from ONE visible span, so a copy on another week would drag every
   projection to its span and leave the original blank; it needs that pipeline made per-window first
@@ -210,8 +209,26 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - **A window may keep its own configuration on its row** (`config`, serialized by the window's owner): the
   Search window's query and checked kinds (`SearchDomain.Config`), so it reopens with them. Local-only view
   state like the rest of the row.
-- The windows a per-object pop-up opens (`TaskEdit`, `CategoryEdit`, …) persist nothing at all: they live
-  exactly as long as they are on screen.
+- **A per-object window about an object with a stable id comes back after a restart** (2026-09-25 — they used
+  to persist nothing, and two open timer windows were gone after a rebuild). Each keeps a row of its own, by frame
+  id (`TaskEdit#3`, `AlarmOrTimerEdit#2`), whose `config` is its `ObjectWindowKey`: written when it opens (a fresh
+  row), when it moves on to another object, at the end of a move or resize, and on close (`visible` off) —
+  `ObjectWindowMemory`, implemented by `App` over the same rows. At startup `App` reopens every open row on its
+  object under the same number (`ObjectWindows.restore`), so its geometry and chrome come back with it; one whose
+  object is gone since closes itself as it draws. The app STOPPING closes nothing: only the user's close clears a
+  row. The frame id's base is the window's own constant (`TASK_EDIT_FRAME_ID`, …), which `ObjectWindowKey.Kind`
+  reads — the row and the window must agree on it.
+- **The desktop app's OWN window comes back as it was left too** — its normal position and size (dp), and
+  whether it was maximized — on the reserved row `AppWindow` (`rememberPersistedAppWindow` +
+  `KeepAppWindowPlacement` inside the window, `ui/AppWindowPlacement.jvm.kt`, used by `desktopApp`'s `main`).
+  Written once a move, resize or maximize has settled (½ s), never per pixel, never while minimized. **The normal
+  bounds are read off the OS window, never off `WindowState.position`**, which stays `PlatformDefault` for a
+  window never moved — so a first launch maximized at once was never kept (2026-09-25); maximized before any
+  normal bounds were seen, it is kept maximized over the default size centred on its screen; the normal bounds are kept under a maximize, so un-maximizing after a restart
+  goes back to them. A saved place no screen shows a grabbable stretch of its title bar on (a monitor unplugged
+  since) is dropped for the platform default. Minimized is not kept.
+- A per-object window about something transient (a calendar edit draft, the elements at a spot, the constraint
+  picker) persists nothing: it lives exactly as long as it is on screen.
 
 ## The keyboard
 

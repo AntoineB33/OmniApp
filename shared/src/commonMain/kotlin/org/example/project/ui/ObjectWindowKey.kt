@@ -6,6 +6,11 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.projectDefaultSubtree
+import org.example.project.scheduler.ui.DEEP_COPY_FRAME_ID
+import org.example.project.scheduler.ui.PERIOD_KIND_EDIT_FRAME_ID
+import org.example.project.scheduler.ui.PRIORITY_WEIGHTS_FRAME_ID
+import org.example.project.scheduler.ui.RELATIVE_PRIORITY_FRAME_ID
+import org.example.project.scheduler.ui.TASK_EDIT_FRAME_ID
 
 /**
  * PRD §7: what a lateral-menu button made from a **per-object** window's ☆ names — the kind of window and the
@@ -19,17 +24,21 @@ import org.example.project.scheduler.state.projectDefaultSubtree
  * Kept, like every user-made button, on the device only ([CustomMenuButton.windowId] holds [encode]).
  */
 data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean = false) {
-    /** [noun] is what a button made from such a window calls it, after the object's name ([buttonTitle]). */
-    enum class Kind(val noun: String) {
-        TaskEdit("task"),
-        CategoryEdit("category"),
-        PeriodKindEdit("period"),
-        PriorityWeights("weights"),
-        RelativePriority("relative priority"),
-        DeepCopy("deep copy"),
-        Alarm("alarm"),
-        Timer("timer"),
-        Reminder("reminder"),
+    /**
+     * [noun] is what a button made from such a window calls it, after the object's name ([buttonTitle]).
+     * [frameBase] is the window's frame id before its number (`TaskEdit#3`): the id its placement row is kept
+     * under across restarts, the window's own constant.
+     */
+    enum class Kind(val noun: String, val frameBase: String) {
+        TaskEdit("task", TASK_EDIT_FRAME_ID),
+        CategoryEdit("category", CATEGORY_EDIT_FRAME_ID),
+        PeriodKindEdit("period", PERIOD_KIND_EDIT_FRAME_ID),
+        PriorityWeights("weights", PRIORITY_WEIGHTS_FRAME_ID),
+        RelativePriority("relative priority", RELATIVE_PRIORITY_FRAME_ID),
+        DeepCopy("deep copy", DEEP_COPY_FRAME_ID),
+        Alarm("alarm", AlarmWindowSubject.FRAME_ID),
+        Timer("timer", AlarmWindowSubject.FRAME_ID),
+        Reminder("reminder", REMINDER_EDIT_FRAME_ID),
     }
 
     fun encode(): String = PREFIX + kind.name + ":" + (if (template) TEMPLATE else LIVE) + ":" + id

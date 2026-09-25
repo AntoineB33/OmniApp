@@ -640,12 +640,18 @@ fun CompanionWindowScope(content: @Composable () -> Unit) {
  * one already open stays. Asking again for an object whose window is open brings that window back instead of
  * opening a second on it ([open]); the head's ⧉ is the one way to have two on the same object.
  *
- * Plain state, held by `App` (`remember`) and drawn by [ObjectWindowsHost]. Every window persists nothing: they
- * live for the session. [menuKeyOf] is the ☆'s key for a window on that object (the kind and the object's id,
- * which `App` reopens it from), or null for a kind no button can reopen — a window about something transient.
+ * Plain state, held by `App` (`remember`) and drawn by [ObjectWindowsHost]. [menuKeyOf] is the ☆'s key for a
+ * window on that object (the kind and the object's id, which `App` reopens it from), or null for a kind no button
+ * can reopen — a window about something transient. A window WITH a key is also kept across restarts, in
+ * [memory] under its frame id: open, where it stands and how big it is (the chrome goes through
+ * [WindowChromeMemory] like any window's), and `App` reopens it on its object at startup ([restore]). One
+ * without — a calendar draft — lives for the session.
  */
 @Stable
-class ObjectWindows<T : Any>(private val menuKeyOf: ((T) -> String?)? = null) {
+class ObjectWindows<T : Any>(
+    private val menuKeyOf: ((T) -> String?)? = null,
+    private val memory: ObjectWindowMemory? = null,
+) {
     /** One open window. [subject] follows the window when it moves on to another object ([retarget]). */
     inner class Window internal constructor(val number: Int, subject: T, internal val duplicated: Boolean) {
         var subject: T by mutableStateOf(subject)
@@ -653,15 +659,34 @@ class ObjectWindows<T : Any>(private val menuKeyOf: ((T) -> String?)? = null) {
         internal var presentRequests: Int by mutableIntStateOf(0)
 
         fun close() {
-            windows.remove(this)
+            if (windows.remove(this)) frameId?.let { memory?.closed(it) }
         }
 
         /** The window now shows [to] (an alarm window's "+ New" moved it on): what [open] and the ☆ now name. */
         fun retarget(to: T) {
+            if (to == subject) return
             subject = to
+            val key = menuKey ?: return
+            frameId?.let { memory?.retargeted(it, key) }
         }
 
         internal val menuKey: String? get() = menuKeyOf?.invoke(subject)
+
+        /** Its frame id (`TaskEdit#3`) — the row it is kept under — for a window with a key. */
+        internal val frameId: String?
+            get() = menuKey?.let(ObjectWindowKey::decode)?.let { "${it.kind.frameBase}#$number" }
+
+        /** Set off the centre by its number, so two windows opened afresh do not sit exactly over each other. */
+        internal val cascade: Offset
+            get() = (COPY_CASCADE_PX * ((number - 1) % 6)).let { Offset(it, it) }
+
+        /** Where it opens: where it was left, for one kept across restarts, else [cascade] at its default size. */
+        internal val initialPlacement: Pair<Offset, Size>
+            get() = frameId?.let { memory?.placement(it) } ?: (cascade to Size.Zero)
+
+        internal fun moved(offset: Offset, size: Size) {
+            frameId?.let { memory?.moved(it, offset, size) }
+        }
     }
 
     private val windows = mutableStateListOf<Window>()
@@ -675,22 +700,61 @@ class ObjectWindows<T : Any>(private val menuKeyOf: ((T) -> String?)? = null) {
     /** Open a window on [subject], or bring back the one already open on it. */
     fun open(subject: T) {
         val existing = windows.firstOrNull { it.subject == subject }
-        if (existing != null) existing.presentRequests++ else windows.add(Window(next++, subject, duplicated = false))
+        if (existing != null) existing.presentRequests++ else add(Window(next++, subject, duplicated = false))
+    }
+
+    /**
+     * Reopen, at startup, the window numbered [number] on [subject] that was open when the app last stopped — under
+     * the same frame id, so it comes back where it was left and as it was left.
+     */
+    fun restore(number: Int, subject: T) {
+        if (windows.any { it.number == number }) return
+        windows.add(Window(number, subject, duplicated = false))
+        next = maxOf(next, number + 1)
     }
 
     /** Close every window on an object [which] names — every window, by default. */
     fun closeAll(which: (T) -> Boolean = { true }) {
-        windows.removeAll { which(it.subject) }
+        windows.filter { which(it.subject) }.forEach { it.close() }
     }
 
     internal fun duplicate(of: Window) {
-        windows.add(Window(next++, of.subject, duplicated = true))
+        add(Window(next++, of.subject, duplicated = true))
+    }
+
+    private fun add(window: Window) {
+        windows.add(window)
+        val frameId = window.frameId ?: return
+        val key = window.menuKey ?: return
+        memory?.opened(frameId, key, window.cascade)
     }
 }
 
 /**
+ * Where the per-object windows with a key are kept between runs — `App`'s placement rows, local-only view state
+ * like a lateral-menu window's (`popups.md`, *Geometry is local-only view state*). Keyed by frame id.
+ */
+interface ObjectWindowMemory {
+    /** Where the window was left and its size (`Size.Zero` = never resized), or null when it has no open row. */
+    fun placement(frameId: String): Pair<Offset, Size>?
+
+    /** A window opened afresh, at [offset]: its row starts over, open, naming [menuKey]. */
+    fun opened(frameId: String, menuKey: String, offset: Offset)
+
+    /** The window moved on to another object (its "+ New …"): the row names [menuKey] now. */
+    fun retargeted(frameId: String, menuKey: String)
+
+    /** The end of a move or resize gesture. */
+    fun moved(frameId: String, offset: Offset, size: Size)
+
+    /** Closed by the user (not by the app stopping): it does not come back. */
+    fun closed(frameId: String)
+}
+
+/**
  * Draws every open window of [windows], each under a frame id of its own (`TaskEdit#3`) so it has its own place
- * in the stacking order and the reduce bar, cascaded off the centre so two do not sit exactly over each other.
+ * in the stacking order and the reduce bar — where it was left, for one kept across restarts, else cascaded off
+ * the centre so two do not sit exactly over each other.
  * [window] draws one; it must close through [ObjectWindows.Window.close] (its Save, bin and ✕), and read its
  * object off [ObjectWindows.Window.subject].
  */
@@ -702,15 +766,16 @@ fun <T : Any> ObjectWindowsHost(
     val parentSuffix = LocalWindowInstance.current?.suffix ?: ""
     for (w in windows.open.toList()) {
         key(w.number) {
-            val cascade = COPY_CASCADE_PX * ((w.number - 1) % 6)
+            val (offset, size) = remember { w.initialPlacement }
             CompositionLocalProvider(
                 LocalWindowInstance provides WindowInstance(
                     suffix = "$parentSuffix#${w.number}",
                     onDuplicate = { windows.duplicate(w) },
                     copy = WindowCopy(
-                        Offset(cascade, cascade),
-                        Size.Zero,
+                        offset,
+                        size,
                         onClose = { w.close() },
+                        onGeometryChange = w::moved,
                         number = w.number.takeIf { w.duplicated },
                     ),
                     menuKey = w.menuKey,

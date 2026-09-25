@@ -118,6 +118,7 @@ import org.example.project.ui.WindowInstance
 import org.example.project.ui.WindowCopy
 import org.example.project.ui.LocalWindowInstance
 import org.example.project.ui.ObjectWindowKey
+import org.example.project.ui.ObjectWindowMemory
 import org.example.project.ui.ObjectWindows
 import org.example.project.ui.ObjectWindowsHost
 import org.example.project.ui.TreeObject
@@ -346,13 +347,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 )
             }
         // The lateral-menu windows come back filled and reduced as they were left, across a close and a
-        // restart (popups.md, *Geometry is local-only view state*). A per-object window is not one of them.
+        // restart (popups.md, *Geometry is local-only view state*) — and so do the per-object windows kept
+        // across restarts (below).
         val windowChromeMemory =
             remember(placements) {
                 object : WindowChromeMemory {
-                    // A lateral-menu window or one of its copies (`Search#2`) — never a per-object window,
-                    // whose copies live for the session only.
-                    private fun isLateral(id: String) = lateralWindowOf(id) != null
+                    // A lateral-menu window or one of its copies (`Search#2`), or a per-object window whose row
+                    // names its object (`TaskEdit#3`) — never one that lives for the session only.
+                    private fun isLateral(id: String) =
+                        lateralWindowOf(id) != null || placements[id]?.config?.let(ObjectWindowKey::decode) != null
 
                     override fun saved(id: String): WindowChrome? =
                         if (!isLateral(id)) null
@@ -368,6 +371,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             )
                         }
                     }
+                }
+            }
+
+        // The per-object windows about an object with a stable id are kept across restarts on a placement row of
+        // their own, by frame id (`TaskEdit#3`), naming their object in `config` ([ObjectWindowKey]); the ones
+        // open when the app stopped are reopened at startup, further down. Local-only, never synced.
+        val objectWindowMemory =
+            remember(placements) {
+                object : ObjectWindowMemory {
+                    override fun placement(frameId: String): Pair<Offset, Size>? =
+                        placements[frameId]?.takeIf { it.visible }?.let { Offset(it.x, it.y) to Size(it.width, it.height) }
+
+                    override fun opened(frameId: String, menuKey: String, offset: Offset) =
+                        updatePlacementById(frameId) {
+                            WindowPlacement(x = offset.x, y = offset.y, visible = true, config = menuKey)
+                        }
+
+                    override fun retargeted(frameId: String, menuKey: String) =
+                        updatePlacementById(frameId) { it.copy(config = menuKey) }
+
+                    override fun moved(frameId: String, offset: Offset, size: Size) =
+                        updatePlacementById(frameId) {
+                            it.copy(x = offset.x, y = offset.y, width = size.width, height = size.height)
+                        }
+
+                    // As a lateral-menu window's close: a closed window is not reduced.
+                    override fun closed(frameId: String) =
+                        updatePlacementById(frameId) { it.copy(visible = false, minimized = false) }
                 }
             }
 
@@ -641,31 +672,67 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §5: a sub-list's priority-weight table (a click on a percentage) and a cell's relative-priority
         // window (the percentage's right-click menu).
         val weightWindows = remember {
-            ObjectWindows(treeKey<CellListId>(ObjectWindowKey.Kind.PriorityWeights) { it.value })
+            ObjectWindows(treeKey<CellListId>(ObjectWindowKey.Kind.PriorityWeights) { it.value }, objectWindowMemory)
         }
         val relativeWindows = remember {
-            ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.RelativePriority) { it.value })
+            ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.RelativePriority) { it.value }, objectWindowMemory)
         }
         // PRD §13: a task's "edit task" window, and a cell's "deep copy" window.
-        val taskEditWindows = remember { ObjectWindows(treeKey<TaskId>(ObjectWindowKey.Kind.TaskEdit) { it.value }) }
-        val deepCopyWindows = remember { ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.DeepCopy) { it.value }) }
+        val taskEditWindows = remember {
+            ObjectWindows(treeKey<TaskId>(ObjectWindowKey.Kind.TaskEdit) { it.value }, objectWindowMemory)
+        }
+        val deepCopyWindows = remember {
+            ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.DeepCopy) { it.value }, objectWindowMemory)
+        }
         // The period edit window: one KIND of restrictive period, opened from a resilience row's pencil in the
         // task edit window (of either tree) and from the Search window.
         val periodKindWindows = remember {
-            ObjectWindows(treeKey<String>(ObjectWindowKey.Kind.PeriodKindEdit) { it })
+            ObjectWindows(treeKey<String>(ObjectWindowKey.Kind.PeriodKindEdit) { it }, objectWindowMemory)
         }
         // PRD §5: a category's own window.
         val categoryWindows = remember {
-            ObjectWindows(treeKey<CategoryId>(ObjectWindowKey.Kind.CategoryEdit) { it.value })
+            ObjectWindows(treeKey<CategoryId>(ObjectWindowKey.Kind.CategoryEdit) { it.value }, objectWindowMemory)
         }
         // PRD §7 Search: one alarm's or one timer's own window, and one reminder's.
         val alarmWindows = remember {
-            ObjectWindows<AlarmWindowSubject> {
-                ObjectWindowKey(if (it.isAlarm) ObjectWindowKey.Kind.Alarm else ObjectWindowKey.Kind.Timer, it.id).encode()
-            }
+            ObjectWindows<AlarmWindowSubject>(
+                { ObjectWindowKey(if (it.isAlarm) ObjectWindowKey.Kind.Alarm else ObjectWindowKey.Kind.Timer, it.id).encode() },
+                objectWindowMemory,
+            )
         }
         val reminderWindows = remember {
-            ObjectWindows<String> { ObjectWindowKey(ObjectWindowKey.Kind.Reminder, it).encode() }
+            ObjectWindows<String>({ ObjectWindowKey(ObjectWindowKey.Kind.Reminder, it).encode() }, objectWindowMemory)
+        }
+        // A per-object window named by its key: opened on its object (or brought back when one is open on it) — or,
+        // at startup, reopened under the [number] it had. The one reading of a key, for the ☆ buttons and the
+        // restore alike.
+        fun openObjectWindow(key: ObjectWindowKey, number: Int? = null) {
+            fun <T : Any> ObjectWindows<T>.openOn(subject: T) = if (number == null) open(subject) else restore(number, subject)
+            when (key.kind) {
+                ObjectWindowKey.Kind.TaskEdit -> taskEditWindows.openOn(TreeObject(TaskId(key.id), key.template))
+                ObjectWindowKey.Kind.CategoryEdit -> categoryWindows.openOn(TreeObject(CategoryId(key.id), key.template))
+                ObjectWindowKey.Kind.PeriodKindEdit -> periodKindWindows.openOn(TreeObject(key.id, key.template))
+                ObjectWindowKey.Kind.PriorityWeights -> weightWindows.openOn(TreeObject(CellListId(key.id), key.template))
+                ObjectWindowKey.Kind.RelativePriority -> relativeWindows.openOn(TreeObject(CellId(key.id), key.template))
+                ObjectWindowKey.Kind.DeepCopy -> deepCopyWindows.openOn(TreeObject(CellId(key.id), key.template))
+                ObjectWindowKey.Kind.Alarm -> alarmWindows.openOn(AlarmWindowSubject(key.id, isAlarm = true))
+                ObjectWindowKey.Kind.Timer -> alarmWindows.openOn(AlarmWindowSubject(key.id, isAlarm = false))
+                ObjectWindowKey.Kind.Reminder -> reminderWindows.openOn(key.id)
+            }
+        }
+        // Startup: the per-object windows open when the app last stopped come back, on their objects, under their
+        // numbers — so where they stood and how they were left (their rows) come back with them. One whose object
+        // is gone since closes itself as it draws, as it would have while open.
+        remember(placements) {
+            placements.entries
+                .filter { (_, row) -> row.visible }
+                .mapNotNull { (frameId, row) ->
+                    val key = row.config?.let(ObjectWindowKey::decode) ?: return@mapNotNull null
+                    val number = frameId.removePrefix(key.kind.frameBase + "#").toIntOrNull() ?: return@mapNotNull null
+                    Triple(key, number, frameId)
+                }
+                .sortedBy { it.second }
+                .forEach { (key, number, _) -> openObjectWindow(key, number) }
         }
         // The one message the app has to say back to a gesture it could not carry out — today only PRD §8's
         // "go to task tree" on a panel whose task no cell holds. One notice at a time.
@@ -1003,17 +1070,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 front.onClose()
                 return
             }
-            when (key.kind) {
-                ObjectWindowKey.Kind.TaskEdit -> taskEditWindows.open(TreeObject(TaskId(key.id), key.template))
-                ObjectWindowKey.Kind.CategoryEdit -> categoryWindows.open(TreeObject(CategoryId(key.id), key.template))
-                ObjectWindowKey.Kind.PeriodKindEdit -> periodKindWindows.open(TreeObject(key.id, key.template))
-                ObjectWindowKey.Kind.PriorityWeights -> weightWindows.open(TreeObject(CellListId(key.id), key.template))
-                ObjectWindowKey.Kind.RelativePriority -> relativeWindows.open(TreeObject(CellId(key.id), key.template))
-                ObjectWindowKey.Kind.DeepCopy -> deepCopyWindows.open(TreeObject(CellId(key.id), key.template))
-                ObjectWindowKey.Kind.Alarm -> alarmWindows.open(AlarmWindowSubject(key.id, isAlarm = true))
-                ObjectWindowKey.Kind.Timer -> alarmWindows.open(AlarmWindowSubject(key.id, isAlarm = false))
-                ObjectWindowKey.Kind.Reminder -> reminderWindows.open(key.id)
-            }
+            openObjectWindow(key)
         }
         // A button the user made does what its window's own menu button does — for a copy too: opened (a closed
         // copy comes back from its row, with its own configuration) and focused when closed, closed when it is the

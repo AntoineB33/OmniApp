@@ -4,7 +4,10 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.persistence.WindowPlacementStore
 import org.example.project.scheduler.persistence.createDefaultSchedulerStore
+import org.example.project.ui.KeepAppWindowPlacement
+import org.example.project.ui.rememberPersistedAppWindow
 
 /**
  * The `omniapp.break.<name>.*` property prefix of each screen break, by its stable [ScreenBreak.key]. The
@@ -45,12 +48,18 @@ fun main() {
     BREAK_PROPERTY_PREFIXES.forEach { (key, prefix) ->
         DebugFlags.mergeScreenBreakOverride(key, screenBreakOverrideFrom(prefix))
     }
+    // Opened once, before the window: the window's own placement is read from it, and the app runs on it.
+    val store = createDefaultSchedulerStore()
     application {
+        // The app's own window comes back where, and as big as, it was left (local-only, like its windows).
+        val appWindow = rememberPersistedAppWindow(store as? WindowPlacementStore)
         Window(
             onCloseRequest = ::exitApplication,
             title = "OmniApp",
+            state = appWindow.state,
         ) {
-            App(store = createDefaultSchedulerStore())
+            KeepAppWindowPlacement(appWindow)
+            App(store = store)
         }
     }
 }

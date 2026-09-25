@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The desktop app's own window keeps its size — 2026-09-25
+
+User ask: preserve the size of the whole app. The OS window's normal position + size and its maximized state are
+kept on the reserved placement row `AppWindow` (`rememberPersistedAppWindowState`, written ½ s after a change
+settles) and restored at launch, falling back to the platform default where no screen shows its title bar.
+`main` now opens the store ONCE, before the window (it was opened inside the window's content). No migration.
+Then (anomaly: built, maximized, rebuilt — not maximized): a window never moved kept `WindowState.position` at
+`PlatformDefault`, so no normal bounds were known and a maximize saved nothing. The bounds are now read off the OS
+window inside it (`KeepAppWindowPlacement`), and a maximize with none known yet keeps the default size centred.
+`AppWindowPlacementTest`. **Deploy:** client apps only (`account3-deploy-windows.bat` for the desktop release).
+
 ### Per-object windows: one per object, and a ☆ on every one with a stable id — 2026-09-25
 
 User spec: every window has the ☆ in its head (the timer window opened from Search had none), and opening
@@ -28,6 +39,11 @@ elements at a spot, the constraint picker, companions or notices).
   through `WindowInstance.menuKey` and kept on `WindowFrameHost.Registration.menuKey` (`rekey` when an alarm,
   timer or reminder window moves on — `AlarmWindow(onShownChange)`, `ChoresManagerWindow(onSubjectChange)`).
   A button whose object is gone is hidden, not deleted. Local-only, like every user-made button.
+- Then (same day, anomaly: two open timer windows gone after a rebuild): a per-object window with a key is kept
+  across restarts on a placement row of its own, by frame id (`AlarmOrTimerEdit#2`), `config` = its key —
+  `ObjectWindowMemory` (App over the rows), `ObjectWindows.restore` at startup, frame-id bases as constants the
+  windows own and `ObjectWindowKey.Kind.frameBase` reads. No SQLite migration: the `window_placement` row
+  already had `config`. Calendar drafts still live for the session.
 - A per-object window's button is named "<object name> <noun>" by default ("Tea timer", "Writing task"; "Timer"
   when unnamed) — `ObjectWindowKey.buttonTitle`.
   `ObjectWindowsTest`.

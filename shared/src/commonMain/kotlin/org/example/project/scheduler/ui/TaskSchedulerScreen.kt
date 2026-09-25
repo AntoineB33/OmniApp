@@ -1742,7 +1742,7 @@ internal fun PriorityWeightWindow(
     val keyboardFocus = remember(listId) { FocusRequester() }
     LaunchedEffect(listId) { keyboardFocus.requestFocus() }
     val tableRows = priorityWeightTableRows(state, listId, optionalTaskIds)
-    val frame = rememberWindowFrameState("PriorityWeights")
+    val frame = rememberWindowFrameState(PRIORITY_WEIGHTS_FRAME_ID)
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
     // PRD §5: the pins are the ACCOUNT's, not this window session's — they outlive the window and reach
@@ -2147,7 +2147,7 @@ internal fun RelativePriorityWindow(
     val taskColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
     val value = RelativePriorityDomain.relativePriority(state, taskId, relativeTo)
     val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
-    val frame = rememberWindowFrameState("RelativePriority")
+    val frame = rememberWindowFrameState(RELATIVE_PRIORITY_FRAME_ID)
 
     // PRD §5 the **task relations** window: opening this window on a (task, `t_r`) pair is what puts that
     // pair on the account's relations list, and whether it ends up in that window's "edited" or "opened"
@@ -3497,7 +3497,7 @@ internal fun TaskEditWindow(
     val sum = SchedulerDomain.scheduleUnitSumMinutes(entries)
     // A parent task's schedule unit is not editable here, so it can never block its own Save.
     val canSave = !isLeaf || SchedulerDomain.canSaveScheduleUnit(entries, minimumMinutes)
-    val frame = rememberWindowFrameState("TaskEdit")
+    val frame = rememberWindowFrameState(TASK_EDIT_FRAME_ID)
 
     TransientPopupLayer(frame.id) {
         AppWindowFrame(
@@ -3762,7 +3762,7 @@ internal fun PeriodKindEditWindow(
     val checked = selected.intersect(present)
     val common = SchedulerDomain.commonResilience(rows, checked)
     val allChecked = rows.isNotEmpty() && checked.size == rows.size
-    val frame = rememberWindowFrameState("PeriodKindEdit")
+    val frame = rememberWindowFrameState(PERIOD_KIND_EDIT_FRAME_ID)
 
     TransientPopupLayer(frame.id) {
         AppWindowFrame(
@@ -3981,7 +3981,7 @@ internal fun DeepCopyWindow(
     fun setDepth(value: Int) {
         depthText = value.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE).toString()
     }
-    val frame = rememberWindowFrameState("DeepCopy")
+    val frame = rememberWindowFrameState(DEEP_COPY_FRAME_ID)
 
     TransientPopupLayer(frame.id) {
         AppWindowFrame(
@@ -4194,3 +4194,14 @@ private fun DeepCopyPathRow(path: List<String>) {
         }
     }
 }
+
+/**
+ * The frame ids of the per-object windows drawn here, before their number (`TaskEdit#3`). `App` keeps an open one
+ * across restarts under that id ([org.example.project.ui.ObjectWindowKey.Kind.frameBase]), so the window and the
+ * row must agree on it — hence one constant, not a literal in each.
+ */
+const val PRIORITY_WEIGHTS_FRAME_ID: String = "PriorityWeights"
+const val RELATIVE_PRIORITY_FRAME_ID: String = "RelativePriority"
+const val TASK_EDIT_FRAME_ID: String = "TaskEdit"
+const val PERIOD_KIND_EDIT_FRAME_ID: String = "PeriodKindEdit"
+const val DEEP_COPY_FRAME_ID: String = "DeepCopy"

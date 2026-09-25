@@ -11,7 +11,10 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import org.example.project.ui.ObjectWindowKey
+import org.example.project.ui.ObjectWindowMemory
 import org.example.project.ui.ObjectWindows
 import org.example.project.ui.WindowFrameHost
 import org.example.project.ui.WindowFrameState
@@ -74,7 +77,7 @@ class ObjectWindowsTest {
 
     @Test
     fun a_window_that_moved_on_is_found_and_starred_by_what_it_shows_now() {
-        val windows = ObjectWindows<String> { ObjectWindowKey(ObjectWindowKey.Kind.Timer, it).encode() }
+        val windows = ObjectWindows<String>({ ObjectWindowKey(ObjectWindowKey.Kind.Timer, it).encode() })
         windows.open("timer-1")
         val window = windows.open.single()
         // Its "+ New timer" moved it on to the timer it made.
@@ -143,6 +146,88 @@ class ObjectWindowsTest {
         assertEquals("Tea timer", ObjectWindowKey(ObjectWindowKey.Kind.Timer, "timer-1").buttonTitle(s))
         // Unlabelled: the noun alone.
         assertEquals("Timer", ObjectWindowKey(ObjectWindowKey.Kind.Timer, "timer-2").buttonTitle(s))
+    }
+
+    // ----- kept across restarts ---------------------------------------------------------------------------------
+
+    /** A placement store in miniature: frame id → (open, key, offset, size). */
+    private class Rows : ObjectWindowMemory {
+        data class Row(val open: Boolean, val key: String, val offset: Offset, val size: Size = Size.Zero)
+
+        val rows = mutableMapOf<String, Row>()
+
+        override fun placement(frameId: String) = rows[frameId]?.takeIf { it.open }?.let { it.offset to it.size }
+
+        override fun opened(frameId: String, menuKey: String, offset: Offset) {
+            rows[frameId] = Row(true, menuKey, offset)
+        }
+
+        override fun retargeted(frameId: String, menuKey: String) {
+            rows[frameId] = rows.getValue(frameId).copy(key = menuKey)
+        }
+
+        override fun moved(frameId: String, offset: Offset, size: Size) {
+            rows[frameId] = rows.getValue(frameId).copy(offset = offset, size = size)
+        }
+
+        override fun closed(frameId: String) {
+            rows[frameId] = rows.getValue(frameId).copy(open = false)
+        }
+    }
+
+    private fun timerKey(id: String) = ObjectWindowKey(ObjectWindowKey.Kind.Timer, id).encode()
+
+    private fun timers(rows: Rows) = ObjectWindows<String>({ timerKey(it) }, rows)
+
+    @Test
+    fun an_open_window_with_a_key_is_kept_under_its_frame_id_until_the_user_closes_it() {
+        val rows = Rows()
+        val windows = timers(rows)
+        windows.open("timer-1")
+        windows.open("timer-2")
+        assertEquals(setOf("AlarmOrTimerEdit#1", "AlarmOrTimerEdit#2"), rows.rows.keys)
+        assertEquals(timerKey("timer-2"), rows.rows.getValue("AlarmOrTimerEdit#2").key)
+
+        // Moved on by its "+ New timer": the row names what it shows now.
+        windows.open.first().retarget("timer-3")
+        assertEquals(timerKey("timer-3"), rows.rows.getValue("AlarmOrTimerEdit#1").key)
+
+        windows.open.first().close()
+        assertFalse(rows.rows.getValue("AlarmOrTimerEdit#1").open)
+        assertTrue(rows.rows.getValue("AlarmOrTimerEdit#2").open)
+    }
+
+    @Test
+    fun a_restart_reopens_the_windows_left_open_where_they_stood() {
+        val rows = Rows()
+        timers(rows).apply {
+            open("timer-1")
+            open("timer-2")
+        }
+        rows.moved("AlarmOrTimerEdit#2", Offset(120f, -40f), Size(400f, 300f))
+
+        // The app stops (nothing is closed) and starts again: what `App` does with the rows it finds open.
+        val restarted = timers(rows)
+        for ((frameId, row) in rows.rows.filterValues { it.open }.entries.sortedBy { it.key }) {
+            val key = ObjectWindowKey.decode(row.key)!!
+            restarted.restore(frameId.removePrefix(key.kind.frameBase + "#").toInt(), key.id)
+        }
+        assertEquals(listOf("timer-1", "timer-2"), restarted.subjects)
+        val second = restarted.open.single { it.subject == "timer-2" }
+        assertEquals(2, second.number)
+        assertEquals(Offset(120f, -40f) to Size(400f, 300f), second.initialPlacement)
+        // A window opened afterwards takes a number of its own, not one of the restored ones.
+        restarted.open("timer-4")
+        assertEquals(3, restarted.open.last().number)
+    }
+
+    @Test
+    fun a_window_without_a_key_is_never_kept() {
+        val rows = Rows()
+        val drafts = ObjectWindows<String>(memory = rows)
+        drafts.open("draft")
+        drafts.open.single().close()
+        assertTrue(rows.rows.isEmpty())
     }
 
     // ----- the frame host keeps each window's key current ----------------------------------------------------

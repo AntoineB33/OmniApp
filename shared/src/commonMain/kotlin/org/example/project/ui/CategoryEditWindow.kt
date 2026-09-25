@@ -81,7 +81,7 @@ fun CategoryEditWindow(
 
     val rows = CategoryRules.ruleRows(state, categoryId)
     val carriers = CategoryRules.tasksWith(state, categoryId)
-    val frame = rememberWindowFrameState("CategoryEdit")
+    val frame = rememberWindowFrameState(CATEGORY_EDIT_FRAME_ID)
 
     TransientPopupLayer(frame.id) {
         AppWindowFrame(
@@ -311,3 +311,6 @@ private fun formatShareNumber(value: Double): String {
     val rounded = (value * 1000.0).roundToInt() / 10.0
     return if (rounded == rounded.toInt().toDouble()) rounded.toInt().toString() else rounded.toString()
 }
+
+/** The category window's frame id, before its number (`CategoryEdit#2`) — see [ObjectWindowKey.Kind.frameBase]. */
+const val CATEGORY_EDIT_FRAME_ID: String = "CategoryEdit"
