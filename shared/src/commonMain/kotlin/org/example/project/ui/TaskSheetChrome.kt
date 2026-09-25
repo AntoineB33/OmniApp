@@ -70,8 +70,8 @@ internal object SheetColors {
  * `Main` share the active colour and differ in weight, and `Editing` differs from both in colour, because it
  * is not a third degree of selection but the state where the keyboard writes into the cell.
  *
- * One decision, in one place: three surfaces draw task cells (the tree, the "All tasks" window and the
- * default sub-tree template) and a second copy of this rule is how two of them come to disagree about what
+ * One decision, in one place: three surfaces draw task cells (the tree, the Search window's sub-trees
+ * and the default sub-tree template) and a second copy of this rule is how two of them come to disagree about what
  * "selected" looks like.
  */
 internal enum class TaskCellOutline {

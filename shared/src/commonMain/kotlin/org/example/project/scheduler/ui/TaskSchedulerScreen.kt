@@ -193,8 +193,8 @@ private val COMPACT_ROW_MIN_HEIGHT = 20.dp
 /**
  * Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%.
  *
- * `internal`, not private: the "All tasks" window prints the very same absolute priority, and a second
- * copy of this rounding is how two readouts of one number start disagreeing at the first decimal.
+ * `internal`, not private: every readout of an absolute priority prints it through this one rounding — a
+ * second copy is how two readouts of one number start disagreeing at the first decimal.
  */
 internal fun formatPriorityPercent(fraction: Double): String {
     val tenths = (fraction * 1000).roundToInt()
@@ -455,8 +455,6 @@ internal fun CellListSection(
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
     /** PRD §7/§8: "go to task tree" on the row's §13 menu, or null where the entry has no meaning. */
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
-    /** PRD §7 "All tasks": [depth] 0 rows carry no Mode selector — they are always renaming. */
-    rootRenameOnly: Boolean = false,
     /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [EditModeMenus]. */
     namingSource: SchedulerState = state,
 ) {
@@ -561,8 +559,8 @@ internal fun CellListSection(
                                 null
                             },
                         onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
-                        // PRD §7/§8: offered only where the surface is NOT the tree — the "All tasks"
-                        // window today. Same entry, same name and the same RevealCell primitive the
+                        // PRD §7/§8: offered only where the surface is NOT the tree — the Search
+                        // window's sub-trees today. Same entry, same name and the same RevealCell primitive the
                         // calendar panel's menu uses.
                         onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
                         onCopyTaskId = { onCopyTaskIdCell(cellId) },
@@ -715,9 +713,6 @@ internal fun CellListSection(
                             draftText = editDraft,
                             onIntent = onIntent,
                             onModePicked = refocusField,
-                            // PRD §7: a root row of the "All tasks" window is always renaming, so it is
-                            // offered no choice (the reducer opens its session in Rename mode to match).
-                            hideModeSelector = rootRenameOnly && depth == 0,
                             namingSource = namingSource,
                         )
                     }
@@ -748,7 +743,7 @@ internal fun CellListSection(
                 listId = childListId,
                 // The PRD §2 root cell is not a render-via ([SchedulerDomain.renderViaOf]): its children are
                 // the tree's top-level rows and keep the null via that means "the root viewport", so the
-                // same selection highlights here, in the "All tasks" window and in the template window.
+                // same selection highlights here, in a Search sub-tree and in the template window.
                 renderVia = SchedulerDomain.renderViaOf(state, cellId),
                 depth = depth + 1,
                 visibleOrder = visibleOrder,
@@ -773,7 +768,6 @@ internal fun CellListSection(
                 onIntent = onIntent,
                 rowTrailing = rowTrailing,
                 onGoToTaskTree = onGoToTaskTree,
-                rootRenameOnly = rootRenameOnly,
                 namingSource = namingSource,
             )
         }
@@ -927,8 +921,7 @@ private fun TaskTreeSelector(
 
 /**
  * PRD §4: the **Mode** selector's two options for [cellId]'s edit session, or none where the selector is not
- * offered — a cell being *created* (it had no task before this edit began, so there is no title to Rename)
- * and the "All tasks" window's roots ([hideModeSelector]).
+ * offered — a cell being *created* (it had no task before this edit began, so there is no title to Rename).
  *
  * **Every pick ends in [onModePicked]**, the one that already holds the mode included: after a pick the user
  * can type straight away, so the caret has to go back into the field the drop-down took it from. It is a
@@ -938,13 +931,12 @@ private fun TaskTreeSelector(
 internal fun cellEditModeOptions(
     state: SchedulerState,
     cellId: CellId,
-    hideModeSelector: Boolean,
     onIntent: (SchedulerIntent) -> Unit,
     onModePicked: () -> Unit,
 ): List<EditModeOption> {
     val session = state.editSession ?: return emptyList()
     val isBeingCreated = session.treeBefore.cells[cellId]?.taskId == null
-    if (isBeingCreated || hideModeSelector) return emptyList()
+    if (isBeingCreated) return emptyList()
     fun option(label: String, mode: CellEditMode) =
         EditModeOption(
             label = label,
@@ -971,18 +963,11 @@ internal fun EditModeMenus(
     cellId: CellId,
     draftText: String,
     onIntent: (SchedulerIntent) -> Unit,
-    /**
-     * PRD §7 "All tasks": hide the Change Task / Rename selector, because in that window's root the answer
-     * is fixed — the row IS the task, so it is always renaming. Hiding it is only half the rule: the session
-     * is *opened* in Rename mode by `SchedulerReducer.reduceInTaskList`, which is the one place that knows
-     * which cells are that window's roots.
-     */
-    hideModeSelector: Boolean = false,
     /** Hands the caret back to the cell's field after a Mode pick — see [cellEditModeOptions]. */
     onModePicked: () -> Unit = {},
     /**
      * The state the id rows are NAMED from, when the tree being drawn is a projection — the account's own
-     * state in PRD §4's template window and PRD §7's "All tasks", exactly as `colorSource` is for the
+     * state in PRD §4's template window and PRD §7's Search sub-trees, exactly as `colorSource` is for the
      * colours. See [SchedulerDomain.changeTaskMenuEntries].
      */
     namingSource: SchedulerState = state,
@@ -1007,12 +992,12 @@ internal fun EditModeMenus(
 
     // An id row NAMES a task, so it is drawn in that task's colour like every other place one is named
     // ([org.example.project.ui.TaskTitleLabel]). Off `namingSource` and not `state`, for the reason the
-    // label itself is: in the template and the "All tasks" window the rows name the ACCOUNT's tasks, and a
+    // label itself is: in the template and a Search sub-tree the rows name the ACCOUNT's tasks, and a
     // colour solved over the projection would be a second answer for the task the tree already colours.
     val menuTaskColors =
         TaskPalette.sheetColors(rememberTaskHues(namingSource, TaskHueMemo.account))
 
-    val modeOptions = cellEditModeOptions(state, cellId, hideModeSelector, onIntent, onModePicked)
+    val modeOptions = cellEditModeOptions(state, cellId, onIntent, onModePicked)
     // Whether there is a menu at all is [SchedulerDomain.changeTaskMenuEntries]' own answer, and it hands it
     // over as an empty list — a lone "New task" row is a real menu here (PRD §4 *Appearance*: the current
     // task's id has a past to abandon), so no row count can tell the two apart from out here.
@@ -1027,8 +1012,8 @@ internal fun EditModeMenus(
                 // and the reveal ends this edit session first (a §4 Forced Exit, like clicking another cell).
                 //
                 // Nothing is focused: the surface being edited IS the tree the row is revealed in, whichever
-                // of the three drawings of it this is — the reveal follows `state`/`onIntent`, so in the
-                // "All tasks" window and the §4 template it lands on that window's own rows, not the
+                // of the three drawings of it this is — the reveal follows `state`/`onIntent`, so in a
+                // Search sub-tree and the §4 template it lands on that window's own rows, not the
                 // account tree's, which is exactly what "go to task" can mean there.
                 //
                 // Greyed (a null handler) wherever no cell shows the task: the "New task" row, a detached
@@ -3349,7 +3334,7 @@ internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit)
         )
     }
     // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that
-    // is not the tree itself — the "All tasks" window and the Search window's task rows.
+    // is not the tree itself — the Search window's task rows and their sub-trees.
     cellMenu.onGoToTaskTree?.let { goToTaskTree ->
         DropdownMenuItem(
             text = { Text("go to task tree") },
@@ -3414,8 +3399,8 @@ internal class TaskCellMenuActions(
     val onEdit: (() -> Unit)?,
     /**
      * PRD §7/§8 **"go to task tree"** — null in the account's own tree (you are already there) and in the §4
-     * template, non-null in the "All tasks" window, whose rows are the tree's cells shown in the sorter's
-     * order rather than the tree's.
+     * template, non-null in the Search window's sub-trees, whose rows are the tree's cells shown outside
+     * the tree.
      */
     val onGoToTaskTree: (() -> Unit)?,
     /**

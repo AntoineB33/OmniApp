@@ -58,8 +58,8 @@ Global rules that always apply: `CLAUDE.md`.
 - **`rootListId` did not move onto it.** That field names the list of the tree's *top-level tasks*, and it is
   what the priority walk, the colour ring, the category scopes and the path labels all mean by "the root".
   The root cell is reached the other way round — it is the root list's `parentCellId`, and a **null** there is
-  exactly what says "this drawing has no root row" (PRD §4's template and PRD §7's "All tasks", both re-rooted
-  at parentless lists of their own).
+  exactly what says "this drawing has no root row" (PRD §4's template, re-rooted at a parentless list of its
+  own).
 - **A real cell at the top is the whole danger**: every walk that climbs to the top of the tree now finds one
   more level whose sub-tree is *the whole tree*. Three answers must not change because of it, and each is a
   bug that shipped for the length of one test run:
@@ -71,7 +71,7 @@ Global rules that always apply: `CLAUDE.md`.
     tasks dividing that `1.0` up, and everything summing the map counts the tree twice.
   - It is **not a render-via** (`renderViaOf`). A render-via names *which occurrence of a mirrored parent* a row
     is drawn under, and the root can never be mirrored; the top-level rows keep the `null` via they always had,
-    which is what lets the tree, the "All tasks" window and the template highlight one selection alike.
+    which is what lets the tree, a Search sub-tree and the template highlight one selection alike.
 - `pruneDetachedTree` seeds `ROOT_CELL_LIST` as well: the root cell hangs above `rootListId` and off every
   detached parent, so without that seed the first edit boundary prunes the row the tree is drawn under.
 - **The id rename is a load-time migration, and it runs on the parsed JSON** (`SchedulerStateCodec`), not on
@@ -150,8 +150,8 @@ Global rules that always apply: `CLAUDE.md`.
   (`DEAD_TASK_ROW_PREFIX`), never by a path (PRD §4) — and sorts **last**, after every row that has one. The
   mark carries the whole statement: "no path" is not one a reader makes, and a row reading `planning` next to
   one reading `root / planning` looks like a shorter path, not like a task that is not in the tree — which is
-  how a live row came to be read as a dead one (2026-09-23). "Does not hold" is `shortestTaskTreePaths`, the same predicate the
-  "All tasks" rows and the greying of "go to task" use, so it also covers a task stranded *inside* a detached
+  how a live row came to be read as a dead one (2026-09-23). "Does not hold" is `shortestTaskTreePaths`, the same predicate
+  `tasksInTree` and the greying of "go to task" use, so it also covers a task stranded *inside* a detached
   parent (which `taskHasCells` calls present). Those are precisely the rows whose "go to task" is greyed, and
   ranking them by a nominal path length of 1 put them FIRST — under the cursor, offering the one answer that
   cannot work.
@@ -164,7 +164,7 @@ Global rules that always apply: `CLAUDE.md`.
   suggestion** — a title several tasks share names no one task to go to). Three things it must not become: it
   goes through **`RevealCell`** like §8's "go to task tree" and the find bar, never a fresh selection path; the
   secondary press is **consumed** by `contextMenuModifier`, so opening the menu never also *picks* the id under
-  it; and the reveal follows the surface's own `state`/`onIntent`, so in the "All tasks" window and the §4
+  it; and the reveal follows the surface's own `state`/`onIntent`, so in a Search sub-tree and the §4
   template it lands on that window's rows — which is why it is named "go to task" and not "go to task tree".
 - **Neither edit-mode menu may bury the one under it, and the two answer that differently**
   (`EditModeMenuBlock`, the one block every naming field renders through — so no caller decides this). The
@@ -331,7 +331,7 @@ so the space beside and below the cells is outside it: the enclosing `Box` carri
 the SAME two scroll states (`treeScroll`, `treeHorizontalScroll`), in the directions `verticalScroll` /
 `horizontalScroll` themselves use. Over a cell the column takes the wheel first, so nothing scrolls twice.
 Never make the column `fillMaxSize` to get this: that stretches every row. One rule, so all three drawings of
-the tree (the tree window, "All tasks", the default sub-tree) have it.
+the tree (the tree window, a Search sub-tree, the default sub-tree) have it.
 
 ### Find & replace (Ctrl+F)
 
@@ -440,102 +440,20 @@ disagreeing about what colour a task is.
   screen break repaints the task panels such a period may legitimately hold, and costs the palette a corner of
   the circle.
 
-### The "All tasks" list
+### Which tasks the tree holds
 
-→ PRD §7. `SchedulerDomain.taskListEntries` decides which tasks and in what order; `ui/TaskListWindow.kt`
-draws them **as task cells**.
+→ PRD §7. `SchedulerDomain.tasksInTree` — what the period edit window's rows (`periodKindTaskRows`) are drawn
+from. (It was the membership of the "All tasks" window, removed 2026-09-25 with its sorter and its "similar
+titles" figure: the Search window and the per-object windows its rows open replace it.)
 
-- **It is a readout of the LIVE tree**: `absoluteTaskPriorities` (the identity the tree's own percentage column
-  keeps), never `blendedTaskPriorities`. `formatPriorityPercent` is shared with the tree — a second copy is how
-  two readouts of one number start disagreeing at the first decimal.
-- **A mirrored task is ONE row.** Occurrences are counted off `state.cells` through `isPopulatedCell`, exactly
-  as `absoluteTaskPriorities` and `RelativePriority.occurrenceChains` count them, so the two columns can never
-  disagree about what an occurrence is. A blank-titled (deleted) task and a detached parent are not in the list.
-- **"In the tree" is `firstTaskOccurrences`, NOT "has a cell" — one predicate, for the rows here, for
-  `periodKindTaskRows`, and for what "go to task" is greyed on.** They are different answers, and the gap is
-  not exotic: a **detached parent keeps its whole sub-tree**, so the tasks inside it still have cells the tree
-  can reach from nowhere. Counting cells listed those, and `TaskListWindow`'s `mapNotNull` — asking this very
-  walk for their row cell — then dropped them again: the sort counted a task the window could not show (5 of
-  them on the release account, all inside 4 detached parents). Membership is the walk; the **count** is still
-  every populated cell, unreachable ones included, because that is the occurrence the percentage divides over
-  and the two columns must agree. Do not "fix" the count to match the walk.
-- **Ties fall back to the title then the id, and the tie-break is NOT reversed with the direction** — otherwise
-  a block of tasks sharing one percentage re-shuffles every time the arrow is flipped.
-- **The sorter is Compose-only state**, like the calendar's zoom and the find bar: an ordering is a way of
-  looking at the tree, never a fact about it. Not persisted, not synced, no history unit.
-
-#### "Similar titles" is a figure about the LIST, not about a task
-
-→ PRD §7, `TitleSimilarity`. The third sorter figure answers *what have I written down twice?* — so what
-matters about a task is its **single closest** neighbour, never its average distance from the tree.
-
-- **The order is two figures deep, and the second is part of the FIGURE, not of the alphabetical fallback**:
-  the **best** score a task reaches against any other listed task leads, and tasks sharing one best score are
-  ranked by **how many other tasks they reach it against**. Both follow the direction toggle; the
-  title-then-id fallback below them still does not.
-- **The score is a whole percent, and that is load-bearing.** The order is defined by "the same maximum", and
-  a Dice ratio is a `Double` — two pairs alike in exactly the same way would compare unequal at the
-  seventeenth digit, so the tie-break would never fire and `matches` would always be 1. Quantizing is what
-  makes "the same maximum" a real answer.
-- **The metric is Sørensen–Dice over character bigrams** of the case-folded, alphanumerics-only, single-spaced
-  title. Bigrams because the near-duplicates this is for are near-*spellings* (`Write report` / `Write
-  reports`), which a word-set measure calls strangers; Dice rather than an edit distance because it is
-  symmetric, needs no matrix, and does not care about the word order two writings of one task rarely share.
-  Titles that normalize to the same non-empty text score `PERFECT`; one with no bigram left matches only its
-  own twin, and one with nothing alphanumeric at all matches nothing.
-- **A zero is "not alike", never a tie at zero.** `matches` is 0 exactly when `best` is 0 — otherwise every
-  task in an account of strangers would report a match against every other one.
-- **It is measured ONLY when it is the sort asked for** (`TaskListEntry.similarity` is `null` otherwise). It
-  is a pass over every PAIR of titles, and `taskListEntries` is also what `periodKindTaskRows` walks — ADR
-  0009: nothing that size belongs on a path something else gets for free. `TitleSimilarity.of` fills both
-  sides of each pair from one measurement, because the relation is symmetric.
-- **The row prints both halves** (`≈96 % (2)`), because both order the list: percentages alone would leave a
-  block of equally-alike tasks looking arbitrarily ordered when the bracket is exactly what ranks them.
-
-#### The rows ARE task cells — the THIRD drawing of the tree
-
-**The window is the task tree — the same code, not the same look**, exactly as the default sub-tree window is
-(`TaskTreeView` is now drawn three times). `projectTaskList(rootCells)` hands it the **live** state re-rooted at
-a synthetic list holding, in the sorter's order, the **first occurrence cell** of every listed task, and
-`SchedulerIntent.InTaskList` is what points its intents there. So the rows carry the tree's chrome, its
-percentage and minimum-time columns, Edit Mode, the selection and keyboard, drag-move, Ctrl+C/X/V, Ctrl+F and
-the full §13 contextual menu — plus **"go to task tree"**, the calendar panel's own entry under its own name and
-through the same `RevealCell` primitive. Expanding a row shows that task's sub-tree, because a sub-list belongs
-to the task id. Do not add a second row implementation: the flat one this replaced is exactly what drifts.
-
-- **A root row is a REAL cell of the live tree, never a synthetic one.** That is what makes an edit here an
-  edit to the tree with no translation — and what keeps every count honest: occurrences and percentages are
-  read off `state.cells`, and a synthetic cell per task would silently double all of them. A task no cell
-  reachable from the root holds has no row, which is the same answer "go to task tree" gives.
-  `firstTaskOccurrences` is the one walk that finds them all (one walk, not one per row — ADR 0009), and it is
-  the *same* walk as `firstTaskOccurrence`.
-- **Re-rooting is the whole of the projection**, so every navigation the tree does — visible order, `Ctrl+A`,
-  the arrows, Ctrl+F's walk — follows the window's rows for free. Two root walks must NOT follow it, and do
-  not: `pruneDetachedTree` seeds `WellKnownIds.ROOT_LIST` and `ROOT_CELL_LIST` **as well as** `rootListId` (a
-  real root cell that is not a first occurrence is reachable from neither the synthetic root nor a detached
-  parent, and without that seed the first edit boundary here would delete it), and the **colours** are solved
-  over the live state
-  (`TaskTreeView`'s `colorSource`) so a task is one colour in the list, the tree and the calendar (ADR 0013).
-- **The synthetic list never escapes the projection.** `withTaskListCapturedFrom` drops it, which is what keeps
-  it out of every history delta, out of the persisted payload and off the wire.
-- **The window's expansion, selection and edit session are its own** (`taskListExpanded` /
-  `taskListSelection` / `taskListEditSession`) — local view state, not persisted, not synced, no history unit.
-  A row open here is not a row open in the tree, and an edit here never moves the tree's caret. **"Collapse
-  all"** is the button that closes them; the flat list is what the window is for.
-- **One gesture is ONE Main history unit** (a `TreeMutationDelta` labelled "All tasks"), like the template
-  window's; the inner reduction's units evaporate with the projection. It edits the live tree, so it re-plans
-  and syncs like any other tree edit.
-- **Nothing may be moved into the root**: the order is the sorter's, so a drop there would be a reordering the
-  next re-sort silently undoes. The blue line never appears at root level (`allowRootDrop = false`) and
-  `reduceInTaskList` refuses such a move as the backstop.
-- **A root row has NO Mode selector — it is always renaming.** The row IS the task, so "change task" there
-  could only re-point a cell the user is not looking at. `reduceInTaskList` opens the session in
-  `CellEditMode.Rename` (the one place that knows which cells are roots) and the window hides the selector; a
-  cell that is not one of the rows opens on §4's default, as anywhere else.
-- **The order is HELD STILL while it is edited, and "update order" is what re-sorts it.** Editing a row is
-  what the rows being cells is for, so the list must not re-sort from under the cursor: the displayed order is
-  pinned (Compose-only, like the sorter itself), a task created since is appended and one deleted drops out,
-  and the button appears exactly while the pinned order and the fresh one differ.
+- **A mirrored task is held ONCE.** Cells are read off `state.cells` through `isPopulatedCell`, exactly as
+  `absoluteTaskPriorities` and `RelativePriority.occurrenceChains` count them. A blank-titled (deleted) task and
+  a detached parent are not held.
+- **"In the tree" is `firstTaskOccurrences`, NOT "has a cell" — one predicate, for `tasksInTree` and for what
+  "go to task" is greyed on.** They are different answers, and the gap is not exotic: a **detached parent keeps
+  its whole sub-tree**, so the tasks inside it still have cells the tree can reach from nowhere (5 of them on the
+  release account, all inside 4 detached parents). `firstTaskOccurrences` is one walk for every task (ADR 0009),
+  and the *same* walk as `firstTaskOccurrence`.
 
 ### The Search window, and a task's last path
 
@@ -553,7 +471,7 @@ to the task id. Do not add a second row implementation: the flat one this replac
   capped) — so it is persisted and synced with the task. It holds **titles, not ids**: the ancestors are
   routinely purged in the very gesture that cuts the task.
 - **It is stamped in `SchedulerReducer.reduce` and nowhere else** (`SearchDomain.withLastTreePathsStamped`),
-  on the account's own before/after states — never inside `reduceInTaskList`/`reduceInDefaultSubtree`, whose
+  on the account's own before/after states — never inside `reduceInSearchSubtree`/`reduceInDefaultSubtree`, whose
   re-rooted trees read as every task leaving. A task in some tree before and in none after gets the
   **shortest** path it had (so several occurrences cut in one gesture keep the shortest); a task back in a tree
   loses its stamp; a blank-titled task (a cell being emptied, which the boundary purges) is never stamped.
@@ -564,7 +482,7 @@ to the task id. Do not add a second row implementation: the flat one this replac
   default mode, so a rename detaches — and put `ServerQuotaTest` over its egress budget (519.6 MB against 512;
   510.6 before the feature, 511.0 with this rule). A stranded task whose derivation breaks later (its
   ancestor purged or its cell moved) is stamped with the path it could be told at, at that boundary.
-- **Only at edit boundaries.** While `editSession` or `taskListEditSession` is open nothing is stamped, and
+- **Only at edit boundaries.** While `editSession` or `searchEditSession` is open nothing is stamped, and
   the reduction that closes one is measured from the session's `treeBefore`. Renaming a parent passes through
   a blank title between keystrokes; read mid-session, its whole sub-tree would leave and come back, and every
   task in it would be rewritten — and pushed — twice.
@@ -580,14 +498,14 @@ to the task id. Do not add a second row implementation: the flat one this replac
 - **The rows are not cells.** Every row has one fixed height and the list's full width, so a row answers a
   cell's gestures in the form that fits — select, walk, open (`Enter`/double-click), `Ctrl+C`, the §13 menu's
   task entries — and never grows into an Edit Mode. Every action goes through the handler the rest of the app
-  already has (`editTaskId`, the one `goToTaskTree`, `deepCopyCellId`, `editCategoryId`, `editPeriodKind`, the
-  Alarms/Reminders windows): the window adds no second path to any of them.
+  already has (`editTaskId`, the one `goToTaskTree`, `deepCopyCellId`, `editCategoryId`, `editPeriodKind`,
+  `editAlarmOrTimer`, `editReminderId`): the window adds no second path to any of them.
 - **The title prevails over the path** (`TaskResultRowLayout`): the title is measured first against
   everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
   this — it measures unweighted children first, which is the opposite priority.
 - **The query, the checked kinds and the filters are local-only view state** (`SearchDomain.Config`, kept by
   `App` on the window's placement row — `popups.md`): the window reopens with them after a close and a
-  restart, and they never sync. The selection is Compose-only, like the "All tasks" sorter.
+  restart, and they never sync. The selection is Compose-only.
 - **ONE configuration, held by `App`, edited by two windows.** The Search window shows its text and types;
   the **Configuration Search** window (`ui/ConfigurationSearchWindow.kt`, opened from the Search window) lists
   every configuration of it — those two and the per-kind **filters** (`SearchDomain.Filters`) — in a General
@@ -622,7 +540,7 @@ to the task id. Do not add a second row implementation: the flat one this replac
   holding the id) is renamed too, and its sub-tree is never touched. A blank rename is refused.
 - **An expanded task row shows its sub-tree as the tree's own cells**: `TaskTreeView` over
   `projectSearchSubtree(childList)` — the live tree re-rooted at the task's real sub-list, with the window's own
-  `searchExpanded` / `searchSelection` / `searchEditSession` (in memory only, like "All tasks"'s), wrapped in
+  `searchExpanded` / `searchSelection` / `searchEditSession` (in memory only), wrapped in
   `InSearchSubtree`. **A task with no live cell (cut, kept by the timeline) has a read-only sub-tree**: the
   reducer refuses Edit Mode there and any gesture that would change the tree. Bounded in height, it scrolls
   inside the list. A task only a stored tree holds has no live sub-tree to open.
@@ -637,12 +555,14 @@ to the task id. Do not add a second row implementation: the flat one this replac
   raises and focuses the tree WINDOW before revealing the cell.
 - **Every row's selection is the tree's** — the outline (`taskCellOutline`), no fill — and moving it scrolls the
   list only when it would leave what is shown, by just enough to bring it to the nearer edge.
-- **A right-click on an alarm, a timer or a reminder row opens that ONE element's own window** — the Alarms
-  window (`AlarmWindowSubject`) or the Reminders window (`subject`, `REMINDER_EDIT_FRAME_ID`) showing that row
-  alone, never a second editor. The Reminders window re-seeds from the list whenever it is not the one it
-  last pushed (the Alarms window's rule), which is what lets it stand beside another Reminders window.
-  **Its subject is the window's own state**: the "+ New …" button at the bottom adds an element of the same
-  kind through the list window's own add (`addAlarm` / `addTimer` / `newRow`) and moves the window on to it;
+- **Opening an alarm, a timer or a reminder row — double-click, `Enter` or right-click alike — opens that ONE
+  element's own window** (`ItemResultRow`'s `opensOnRightClick`: those rows have no contextual menu) — the Alarms
+  window (`AlarmWindowSubject`) or the reminder window (`ChoresManagerWindow`, `REMINDER_EDIT_FRAME_ID`)
+  showing that row alone, never a second editor. There is no list of every reminder (removed 2026-09-25); the
+  full Alarms window is still the calendar's alarm/timer edit entry. The reminder window re-seeds from the list
+  whenever it is not the one it last pushed (the Alarms window's rule), which is what lets it stand beside a
+  copy of itself. **Its subject is the window's own state**: the "+ New …" button at the bottom adds an element
+  of the same kind (`addAlarm` / `addTimer` / `newRow`) and moves the window on to it;
   so the window, not `App`, closes itself when the element it shows is gone.
 - **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
   have their own window and a counter), and the Configuration Search window's never touches the Search
@@ -662,8 +582,8 @@ until it is applied to a real cell.
   task" has nowhere to write.
 - **The window IS the task tree — the same code, not the same look.** `scheduler/ui/TaskTreeView.kt` is the
   ONE tree, drawn **three times**: by `TaskSchedulerScreen` over the account's state, by
-  `ui/DefaultSubtreeWindow.kt` over `projectDefaultSubtree()`, and by `ui/TaskListWindow.kt` over
-  `projectTaskList()`. So it has every gesture, Ctrl+F included, and the **full five-entry §13 menu**. A second
+  `ui/DefaultSubtreeWindow.kt` over `projectDefaultSubtree()`, and by `ui/SearchWindow.kt` over
+  `projectSearchSubtree()`. So it has every gesture, Ctrl+F included, and the **full five-entry §13 menu**. A second
   implementation is what shipped before, and it silently lacked the menu entirely. Add a tree feature in
   `TaskTreeView` and all three get it.
 - **Nothing is dropped but the switch is added**: the percentage (the row's share **within the template**) and
@@ -725,8 +645,8 @@ until it is applied to a real cell.
   (`changeTaskMenuEntries`' `namingSource`, `TaskTreeView`'s parameter of the same name — the shape
   `colorSource` already has, for the same kind of reason). A path answers *which* task of this title this is,
   which is a fact about the account; both projections re-root the state, so read off the drawing every live
-  task is pathless — PRD §7's "All tasks" roots at its synthetic list, and the template shadows `ROOT_LIST`
-  — and falls back to its child titles or its bare title. On the release account that is **sixty-odd rows all
+  task is named by where the drawing puts it — PRD §7's Search roots at a task's own sub-list, and the template
+  shadows `ROOT_LIST` — or falls back to its child titles or its bare title. On the release account that is **sixty-odd rows all
   reading "planning"** (2026-09-17), the very flattening the path exists to prevent, and the row bound to the
   user's own task was labelled `main / planning / writing` after its place in the TEMPLATE instead of
   `root / long term / socialize / english / writing`, where it lives. So the path **and the titles along it**

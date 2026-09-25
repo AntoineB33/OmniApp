@@ -142,7 +142,7 @@ fun SearchWindow(
     onOpenTaskEdit: (TaskId) -> Unit,
     onStartTaskNow: (TaskId) -> Unit,
     /**
-     * PRD §8 "go to task tree" — the app's one handler, shared with the calendar and "All tasks": the task's cell
+     * PRD §8 "go to task tree" — the app's one handler, shared with the calendar: the task's cell
      * at the given occurrence (a path the user right-clicked), else its first one.
      */
     onGoToTaskTree: (TaskId, SchedulerDomain.TaskOccurrence?) -> Unit,
@@ -159,13 +159,13 @@ fun SearchWindow(
     onSetRelativeWindow: (CellId?) -> Unit = {},
     onOpenCategory: (CategoryId) -> Unit,
     onOpenPeriodKind: (String) -> Unit,
-    /** Alarms AND timers live in the one Alarms window (PRD §18). */
-    onOpenAlarms: () -> Unit,
-    /** The per-object window of ONE alarm or timer, with every setting it has — a right-click on its row. */
+    /**
+     * The per-object window of ONE alarm or timer, with every setting it has — what opening its row does (a
+     * double-click, Enter or a right-click).
+     */
     onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
-    /** The per-object window of ONE reminder (by id), with every setting it has — a right-click on its row. */
+    /** The per-object window of ONE reminder (by id), with every setting it has — opened like an alarm's. */
     onEditReminder: (String) -> Unit,
-    onOpenReminders: () -> Unit,
     /** The lateral-menu windows that own a history unit, a task tree, a task relation and a keyboard shortcut. */
     onOpenHistory: () -> Unit = {},
     onOpenTaskTrees: () -> Unit = {},
@@ -313,8 +313,9 @@ fun SearchWindow(
             SearchDomain.Kind.Task -> Unit
             SearchDomain.Kind.Category -> onOpenCategory(CategoryId(item.id))
             SearchDomain.Kind.RestrictivePeriod -> onOpenPeriodKind(item.id)
-            SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer -> onOpenAlarms()
-            SearchDomain.Kind.Reminder -> onOpenReminders()
+            SearchDomain.Kind.Alarm -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, isAlarm = true))
+            SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, isAlarm = false))
+            SearchDomain.Kind.Reminder -> onEditReminder(item.id)
             SearchDomain.Kind.HistoryUnit -> onOpenHistory()
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
@@ -544,21 +545,13 @@ fun SearchWindow(
                                         selected = rowSelected(index),
                                         onSelect = { selectRow(index) },
                                         onOpen = { openItem(result) },
-                                        // An alarm or a timer has its own window, and the right-click opens
-                                        // it straight away: its settings are what the user is asking about.
-                                        onRightClick =
-                                            when (result.kind) {
-                                                SearchDomain.Kind.Alarm -> {
-                                                    { onEditAlarmOrTimer(AlarmWindowSubject(result.id, isAlarm = true)) }
-                                                }
-                                                SearchDomain.Kind.Timer -> {
-                                                    { onEditAlarmOrTimer(AlarmWindowSubject(result.id, isAlarm = false)) }
-                                                }
-                                                SearchDomain.Kind.Reminder -> {
-                                                    { onEditReminder(result.id) }
-                                                }
-                                                else -> null
-                                            },
+                                        // An alarm, a timer or a reminder has its own window, and the
+                                        // right-click opens it straight away, as opening the row does: its
+                                        // settings are what the user is asking about.
+                                        opensOnRightClick =
+                                            result.kind == SearchDomain.Kind.Alarm ||
+                                                result.kind == SearchDomain.Kind.Timer ||
+                                                result.kind == SearchDomain.Kind.Reminder,
                                     )
                             }
                         }
@@ -898,7 +891,7 @@ private fun SearchSubtree(
         priorities = priorities,
         onIntent = { intent ->
             when (intent) {
-                // App-wide, as in "All tasks": the history stacks and the window focus are no tree's.
+                // App-wide: the history stacks and the window focus are no tree's.
                 is SchedulerIntent.Undo, is SchedulerIntent.Redo,
                 is SchedulerIntent.UndoSelection, is SchedulerIntent.RedoSelection,
                 is SchedulerIntent.UndoPosition, is SchedulerIntent.RedoPosition,
@@ -921,7 +914,7 @@ private fun SearchSubtree(
         onGoToTaskTree = onGoToTaskTree,
         refocusWindow = null,
         // A task is the same colour here, in the tree and on the calendar, and a Change Task row is named from
-        // the tree — both read off the LIVE state, as the "All tasks" window's do.
+        // the tree — both read off the LIVE state, not off the sub-tree this row re-roots it at.
         colorSource = state,
         namingSource = state,
     )
@@ -1054,8 +1047,8 @@ private fun ItemResultRow(
     selected: Boolean,
     onSelect: () -> Unit,
     onOpen: () -> Unit,
-    /** What a right-click does instead of the contextual menu, for a row whose kind has one (alarm, timer). */
-    onRightClick: (() -> Unit)? = null,
+    /** The right-click opens the row ([onOpen]) instead of the contextual menu: an alarm, a timer, a reminder. */
+    opensOnRightClick: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Box(
@@ -1064,7 +1057,7 @@ private fun ItemResultRow(
                 key = item.kind.name + "/" + item.id,
                 onSelect = onSelect,
                 onOpen = onOpen,
-                onOpenMenu = { if (onRightClick != null) onRightClick() else menuOpen = true },
+                onOpenMenu = { if (opensOnRightClick) onOpen() else menuOpen = true },
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -1097,8 +1090,6 @@ private fun ItemResultRow(
         ) {
             MenuEntry(
                 when (item.kind) {
-                    SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer -> "open in Alarms"
-                    SearchDomain.Kind.Reminder -> "open in Reminders"
                     SearchDomain.Kind.HistoryUnit -> "open in History"
                     SearchDomain.Kind.TaskTree -> "open in All task trees"
                     SearchDomain.Kind.TaskRelation -> "open in Task relations"

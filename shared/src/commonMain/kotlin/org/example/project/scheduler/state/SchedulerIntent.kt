@@ -891,30 +891,6 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §7 **All tasks**: run [inner] against the live tree seen **through that window** — re-rooted at a
-     * synthetic list holding [rootCells] (one cell per task, in the sorter's order) and carrying the
-     * window's own expansion/selection/edit session instead of the tree's
-     * ([org.example.project.scheduler.state.projectTaskList]).
-     *
-     * The window draws the task tree's own component, so it emits the task tree's own intents — `ClickCell`,
-     * `SetCellTitle`, `ToggleExpand`, `Copy`, `Paste`, the lot. This wrapper is what points them at the
-     * window's rows rather than the tree's: without it the arrow keys, `Ctrl+A` and Ctrl+F would all walk the
-     * tree's order, and an edit would move the tree's caret.
-     *
-     * The rows travel with the intent because the order is the **window's** Compose-only sorter state (PRD §7
-     * — an ordering is a way of looking at the tree, never a fact about it), so the reducer has nothing to
-     * recompute it from and must be told exactly which rows the gesture was made on.
-     *
-     * What it edits is the **live tree**, so the whole gesture lands as **one Main history unit** and syncs
-     * like any other tree edit. The inner reduction's own units evaporate with the projection, exactly as
-     * they do for [InDefaultSubtree].
-     */
-    data class InTaskList(
-        val inner: SchedulerIntent,
-        val rootCells: List<CellId>,
-    ) : SchedulerIntent
-
-    /**
      * PRD §7 *Search*: rename the task [taskId] to [title] — a task row of the Search window leaving its
      * rename-only Edit Mode. Task-level, not cell-level: the row may name a task no cell holds (cut from the
      * tree and kept by the timeline, or only in a stored task tree), and renaming never touches its sub-tree.
@@ -927,7 +903,7 @@ sealed interface SchedulerIntent {
      * PRD §7 *Search*: [inner], raised by the sub-tree an expanded task row of the Search window shows, run
      * against that sub-tree — the live tree re-rooted at [listId] (the task's own sub-list) with the Search
      * window's own expansion, selection and edit session ([projectSearchSubtree]). The cells are the live
-     * tree's, so an edit there is an edit to the tree: one Main unit, like [InTaskList].
+     * tree's, so an edit there is an edit to the tree: one Main unit.
      *
      * [readOnly] is the sub-tree of a task **cut from the tree and kept by the timeline**, which the user may
      * look through but not modify: the reducer refuses every gesture there that would change the tree, and
@@ -938,14 +914,6 @@ sealed interface SchedulerIntent {
         val listId: CellListId,
         val readOnly: Boolean,
     ) : SchedulerIntent
-
-    /**
-     * PRD §7 "All tasks": close every row the window has open — the button beside its sorter.
-     *
-     * Local view state ([org.example.project.scheduler.state.SchedulerState.taskListExpanded]): not
-     * persisted, not synced, and no Undo/Redo unit, like the sorter it sits beside.
-     */
-    data object CollapseTaskListRows : SchedulerIntent
 
     /**
      * PRD §4/§7: turn the default-sub-tree policy on/off (the switch left of the lateral-menu button). Off
@@ -1021,9 +989,7 @@ sealed interface SchedulerIntent {
      * [initialText] non-null when entering via typing (replaces cell content with first keystroke).
      *
      * [mode] forces the session's Edit Mode instead of letting it open on PRD §4's default (Change Task).
-     * The one caller is PRD §7's "All tasks" window: its root rows are **always in renaming mode**, because
-     * the row IS the task and re-pointing it at another one there would say nothing (see
-     * [SchedulerReducer]'s `reduceInTaskList`). Null everywhere else, which is the default.
+     * Null, the default, everywhere in the app.
      */
     data class BeginEdit(
         val cellId: CellId,

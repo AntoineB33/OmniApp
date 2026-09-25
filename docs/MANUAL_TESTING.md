@@ -262,7 +262,7 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         the window grows to the whole app; pull the menu back → it shrinks again.
   - [ ] **Resize by the left, right and bottom edges.** The opposite edge stays put in each case. There is
         no top edge to drag (the head is there). A window pulled to its minimum does not walk sideways when
-        the drag keeps going. A list inside (History's rows, All tasks, Categories) **follows the new
+        the drag keeps going. A list inside (History's rows, Categories) **follows the new
         height** rather than stopping at an old cap.
   - [ ] **Reduce** files the window in the bar along the **bottom of the app**, drawn **over the lateral
         menu**. Clicking its chip restores it *with whatever was typed still in it* **and on top**; the

@@ -87,10 +87,10 @@ import org.example.project.ui.printableChar
  *    a real tree ([org.example.project.scheduler.state.DefaultSubtreeTemplate]), so this is the same code
  *    over what [org.example.project.scheduler.state.projectDefaultSubtree] projects, wrapped in
  *    [SchedulerIntent.InDefaultSubtree];
- *  - PRD §7's **All tasks** window ([org.example.project.ui.TaskListWindow]) — the *live* tree re-rooted at a
- *    synthetic list holding one cell per task in the sorter's order
- *    ([org.example.project.scheduler.state.projectTaskList]), wrapped in [SchedulerIntent.InTaskList]. Its
- *    rows are the tree's own cells, so an edit there is an edit to the tree.
+ *  - PRD §7's **Search** window's expanded task rows ([org.example.project.ui.SearchWindow]) — the *live* tree
+ *    re-rooted at the task's own sub-list ([org.example.project.scheduler.state.projectSearchSubtree]), wrapped
+ *    in [SchedulerIntent.InSearchSubtree]. Its rows are the tree's own cells, so an edit there is an edit to
+ *    the tree.
  *
  * A tree drawn by a second implementation is a tree that silently drifts from the first, which is exactly
  * what this replaced.
@@ -103,10 +103,10 @@ import org.example.project.ui.printableChar
  *   layer above every floating window rather than under one (CLAUDE.md *Pop-up windows*).
  * - [keyboardActive] says whether this tree currently owns the keyboard; [aboveTreeKeyHandler] lets whatever
  *   sits above it claim a key first (returning null to decline).
- * - [rowTrailing] draws one extra cell at the end of every row — the template's switch, the "All tasks"
- *   window's occurrence count, and nothing in the account's own tree.
- * - [onGoToTaskTree], [rootRenameOnly], [allowRootDrop] and [colorSource] are the four things that follow
- *   from a drawing whose ROOT is not the tree's own root; only the "All tasks" window passes them.
+ * - [rowTrailing] draws one extra cell at the end of every row — the template's switch, the Search window's
+ *   "not in a task tree" mark, and nothing in the account's own tree.
+ * - [onGoToTaskTree], [colorSource] and [namingSource] are the things that follow from a drawing whose ROOT is
+ *   not the tree's own root; the Search window's sub-trees pass them.
  */
 @Composable
 internal fun TaskTreeView(
@@ -134,32 +134,19 @@ internal fun TaskTreeView(
     refocusWindow: HistoryWindow? = null,
     /**
      * PRD §8/§13 "go to task tree" on a row's contextual menu, or null where the entry has no meaning —
-     * the account's own tree (you are already there) and the §4 template. PRD §7's "All tasks" window is
-     * what passes it: its rows are the tree's cells listed in the sorter's order, so "where is this in the
-     * tree" is exactly the question its rows raise. Same entry, same name and the same
+     * the account's own tree (you are already there) and the §4 template. PRD §7's Search window's sub-trees
+     * pass it: their rows are the tree's cells shown outside it, so "where is this in the tree" is exactly the
+     * question they raise. Same entry, same name and the same
      * [org.example.project.scheduler.state.SchedulerIntent.RevealCell] primitive as the calendar panel's.
      */
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
     /**
-     * PRD §7 "All tasks": the rows of the ROOT list are always in renaming mode, so no Mode selector is
-     * drawn for them. The row IS the task there and the order is the window's sorter, so "change task" could
-     * only re-point a cell the user is not looking at. False in the tree, where the root is an ordinary
-     * level.
-     */
-    rootRenameOnly: Boolean = false,
-    /**
-     * PRD §7 "All tasks": whether a drag-move may drop into the ROOT list. False there — the root's order is
-     * the sorter's, so a drop would be a reordering the next re-sort silently undoes — and the blue line
-     * simply never appears at root level. (The reducer refuses such a move too; this is what the user sees.)
-     */
-    allowRootDrop: Boolean = true,
-    /**
      * The state the task COLOURS are solved over, when that is not the state being drawn.
      *
-     * PRD §7's "All tasks" window draws a projection re-rooted at its own list
-     * ([org.example.project.scheduler.state.projectTaskList]), and a colour is a function of the tree's
-     * depth-first order (ADR 0013) — solved over that projection the ring would be ordered by the sorter and
-     * a task would be one colour in the list and another in the tree. Passing the live state keeps the one
+     * PRD §7's Search window draws a projection re-rooted at a task's own sub-list
+     * ([org.example.project.scheduler.state.projectSearchSubtree]), and a colour is a function of the tree's
+     * depth-first order (ADR 0013) — solved over that projection the ring would start at the sub-list and a
+     * task would be one colour there and another in the tree. Passing the live state keeps the one
      * identity the palette exists for: the tree's cell, this window's row and the calendar's panel read the
      * same hue.
      */
@@ -169,8 +156,8 @@ internal fun TaskTreeView(
      * same shape as [colorSource], and for the same kind of reason.
      *
      * A row's path says WHICH task of that title this row is, which is a fact about the account's tree. Both
-     * projections re-root the state, so read off the drawing every live task is pathless (PRD §7's "All
-     * tasks") or named by where the TEMPLATE puts it (PRD §4's window) — the release account's menu offered
+     * projections re-root the state, so read off the drawing a live task is named by where the sub-tree
+     * or the TEMPLATE puts it (PRD §7's Search, PRD §4's window) — the release account's menu offered
      * sixty-odd rows all reading "planning". See
      * [org.example.project.scheduler.domain.SchedulerDomain.changeTaskMenuEntries].
      */
@@ -675,8 +662,8 @@ internal fun TaskTreeView(
                 state = state,
                 // PRD §2: the drawing starts one level ABOVE the tree's top-level list, at the list holding
                 // the single inert root row — so the root is a row like any other, with the tree indented
-                // under it and its arrow collapsing the whole thing. The two projections that have no root
-                // row (the §4 template, §7's "All tasks") fall back to their own root list here.
+                // under it and its arrow collapsing the whole thing. The projections that have no root row
+                // (the §4 template, §7's Search sub-trees) fall back to their own root list here.
                 listId = SchedulerDomain.displayRootListId(state),
                 renderVia = null,
                 depth = 0,
@@ -729,13 +716,7 @@ internal fun TaskTreeView(
                 onRowBounds = { occurrence, top, bottom -> rowBounds[occurrence] = top..bottom },
                 onMoveDragStart = { moveDragActive = true },
                 onMoveDropHover = { target, insertBefore, via ->
-                    // PRD §7: no blue line in the "All tasks" root — a row rendered there is a root row
-                    // exactly when nothing rendered it (`via == null`), which is the same test the tree's
-                    // own occurrences use. Cleared rather than kept at the last valid target, so releasing
-                    // over the root commits nothing at all.
-                    moveDropTarget =
-                        if (!allowRootDrop && via == null) null
-                        else MoveDropTarget(target, insertBefore, via)
+                    moveDropTarget = MoveDropTarget(target, insertBefore, via)
                 },
                 onMoveDragEnd = {
                     val target = moveDropTarget
@@ -752,7 +733,6 @@ internal fun TaskTreeView(
                 },
                 rowTrailing = rowTrailing,
                 onGoToTaskTree = onGoToTaskTree,
-                rootRenameOnly = rootRenameOnly,
                 namingSource = namingSource,
                 onIntent = { intent ->
                     // PRD §8 focus: a click into the tree hands focus back from the calendar, so typing

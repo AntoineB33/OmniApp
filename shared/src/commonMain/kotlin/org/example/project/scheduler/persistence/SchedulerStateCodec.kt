@@ -2008,7 +2008,7 @@ private sealed interface PersistedDelta {
         val afterInstance: String = "",
     ) : PersistedDelta
 
-    /** New 2026-09-25: the selection of All tasks, the Default sub-tree or the Search window's sub-trees. */
+    /** New 2026-09-25: the selection of the Default sub-tree or the Search window's sub-trees (or the retired All tasks). */
     @Serializable
     @SerialName("viewSelection")
     data class ViewSelection(val window: String, val before: PersistedSelection, val after: PersistedSelection) : PersistedDelta
@@ -2436,5 +2436,14 @@ private data class PersistedTimeRange(
  * A window read back by the name it was persisted under — a unit's window, the focused window, a focus move's two
  * ends — or null for a name this build does not know (a newer build's window). The one reading, so the three
  * cannot disagree about what an unknown name means.
+ *
+ * Heals the retired names (windows removed 2026-09-25), each read back as the window its edits now live in, so
+ * they stay undoable from there: `TaskList`, the "All tasks" window, recorded edits to the live tree — the tree's;
+ * `Reminders`, the list of every reminder, recorded reminder edits — the Search window's, where a reminder is now
+ * opened (its own window takes no focus of its own, so its edits are stamped with Search's).
  */
-private fun windowNamed(name: String): HistoryWindow? = HistoryWindow.entries.firstOrNull { it.name == name }
+private fun windowNamed(name: String): HistoryWindow? =
+    RETIRED_WINDOWS[name] ?: HistoryWindow.entries.firstOrNull { it.name == name }
+
+private val RETIRED_WINDOWS: Map<String, HistoryWindow> =
+    mapOf("TaskList" to HistoryWindow.Tree, "Reminders" to HistoryWindow.Search)

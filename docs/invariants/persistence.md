@@ -92,7 +92,7 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
   two stacks orders them by `deviceSeq`, which is why `chronoId` is counted across **every** category: a press
   moves the focus and selects in one millisecond, and the two must still be walked in the order made.
 - **Every window's selection is a unit** — the tree's (`SetSelectionDelta`), the projected windows'
-  (`ViewSelectionDelta`, committed by `reduceInTaskList` / `reduceInSearchSubtree` / `reduceInDefaultSubtree`),
+  (`ViewSelectionDelta`, committed by `reduceInSearchSubtree` / `reduceInDefaultSubtree`),
   and `SchedulerState.windowSelections` (`WindowSelectionDelta`: the Search window's row, the Task trees window's
   open entry, per copy). A window's own reset (`SelectInWindow(record = false)`) is not one.
 - **A new edit discards only this device's undone units** — the other devices' redo branches stay theirs. It is

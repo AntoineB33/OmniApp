@@ -11,6 +11,31 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Lateral-menu buttons trimmed; the "All tasks" window removed — 2026-09-25
+
+User spec: remove the Reminders, Alarms, History, All task trees, All tasks, Task relations and Keyboard shortcuts
+buttons from the left menu, and remove the windows that can no longer be opened — the Search window and the
+per-object windows its rows open replace them.
+
+- The six other windows are still opened from Search (a row's double-click / Enter / "open in …"), so they stay.
+  **All tasks** had no other way in and is deleted with everything only it used: `TaskListWindow`,
+  `TaskListProjection`, `SchedulerIntent.InTaskList` / `CollapseTaskListRows`, `reduceInTaskList`, the
+  `taskList*` view state, `HistoryWindow.TaskList`, the sorter (`TaskListSort`, `taskListEntries`) and its
+  "similar titles" figure (`TitleSimilarity`), and the tree view's `rootRenameOnly` / `allowRootDrop` /
+  `hideModeSelector`. Its membership rule survives as `SchedulerDomain.tasksInTree` (`TasksInTreeTest`), which
+  `periodKindTaskRows` reads.
+- Healing: the codec reads the retired window name `TaskList` as the tree's (focused window, a unit's window, a
+  focus move, a selection unit — `HistoryChordsByWindowTest`); a user-made menu button for it is not shown.
+- Then (same day): in the Search window, a double-click or `Enter` on an alarm, a timer or a reminder row opens
+  its own window, as the right-click already did — so the "open in Alarms / Reminders" menu entries, which could
+  never show, and Search's `onOpenAlarms` / `onOpenReminders` are gone. That left the **list of every
+  reminder** unreachable, and it is deleted: `ChoresManagerWindow` is now only the one-reminder window
+  (`subject` required; reminders are created by its "+ New reminder" and by the calendar's "add reminder"),
+  with `FloatingWindow.Reminders`, `AccountRemindersWindow` and `HistoryWindow.Reminders`. The codec reads the
+  retired `Reminders` window as the Search window's, where a reminder is opened now. The full Alarms window
+  stays: the calendar's alarm/timer edit entry opens it.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
+
 ### Buttons the user makes in the lateral menu — 2026-09-25
 
 User spec: a section at the bottom of the left menu for custom buttons, and in every window's head, left of

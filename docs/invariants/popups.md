@@ -120,7 +120,7 @@ means.
   elsewhere, so a pointer-input (or focus) node applied around it answers for the rectangle the window
   would occupy **undragged** — an invisible region at the centre of the content area, standing at that
   window's z. Compose stops hit-testing lower siblings the moment one records a hit, so such a ghost eats
-  every press aimed at the window behind it: the Reminders window's "a press on bare chrome leaves Edit
+  every press aimed at the window behind it: the reminder window's "a press on bare chrome leaves Edit
   mode" `detectTapGestures` made the Alarms window under it impossible to bring forward (2026-09-21).
   `AppWindowFrame` therefore applies the caller's `modifier` **inside** the offset and the size, below
   every geometry modifier of its own — `align` is parent data and is read from anywhere in the chain, so
@@ -144,7 +144,7 @@ means.
 ## Duplicating a window
 
 The head's **⧉** opens an **independent copy** of the window (2026-09-24): the same window, starting from the
-same view (the Search window's query, types and filters; the "All tasks" sort), which then changes on its own.
+same view (the Search window's query, types and filters), which then changes on its own.
 The account's data is shared, of course — an alarm edited in one copy shows in the other.
 
 - **One mechanism, not one per window.** `LocalWindowInstance` (`ui/WindowFrame.kt`) tells a window which copy
@@ -158,7 +158,7 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   in `CompanionWindowScope` for the same reason, and raises the pair through the copy's wiring. It has no ⧉:
   duplicating the window duplicates the pair.
 - **A copy's view configuration is read by FRAME id** (`windowInstanceId`), never from one `App` variable:
-  `searchConfigs`, `configSearches`, `taskListSorts`. A window whose keyboard ownership was
+  `searchConfigs`, `configSearches`. A window whose keyboard ownership was
   `focusedWindow() == X` reads `windowFrames.frontId == windowInstanceId(X)`, or no copy could ever own it.
 - **Lateral-menu windows**: `App.LateralWindow` draws the one call site for the original and each copy. A copy
   is its own `window_placement` row (`Name#n`) — position, size, chrome, config — so it comes back at startup
@@ -172,8 +172,8 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   projection to its span and leave the original blank; it needs that pipeline made per-window first
   (`display-hot-path.md` binds each to its visible window). **Notices** (`MessagePopup`) — a message has no
   second view. The debug time-sim panel wears no frame.
-- **Known sharing**: the "All tasks" window's expansion, selection and edit session, and the default sub-tree's
-  tree state, are `SchedulerState` view state, not the window's — their copies share them.
+- **Known sharing**: the Search window's sub-tree expansion, selection and edit session, and the default
+  sub-tree's tree state, are `SchedulerState` view state, not the window's — their copies share them.
 
 ## Geometry is local-only view state
 

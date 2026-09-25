@@ -22,7 +22,7 @@ import org.example.project.scheduler.state.SchedulerState
 class TaskColorSpaceTest {
 
     /**
-     * The shape [TaskListWindowTest] and [RelativePriorityTest] use, because it is the one that makes the
+     * The shape [TasksInTreeTest] and [RelativePriorityTest] use, because it is the one that makes the
      * partition interesting: the branches are of unequal width (3 childless tasks against 2) and "Write" is
      * ONE task held by TWO cells under different parents.
      *

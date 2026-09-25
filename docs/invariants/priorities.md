@@ -146,7 +146,7 @@ Global rules that always apply: `CLAUDE.md`.
 
 ### The task-relations list
 
-→ ADR 0004, PRD §5/§7. The lateral menu's **Task relations** button; `TaskRelationsDomain` is the whole of
+→ ADR 0004, PRD §5/§7. The **Task relations** window (opened from Search, no lateral-menu button since 2026-09-25); `TaskRelationsDomain` is the whole of
 the rule and `ui/TaskRelationsWindow.kt` draws it.
 
 A **relation** is a *pair*: a task, and the task its priority was expressed **relative to**. It is the pair
@@ -283,8 +283,8 @@ relative-priority window's number said once and then **kept**.
   deleting a category and setting a rule are account settings and record **no** unit (as `AddPeriodKind` does
   not); a task **carrying** a category is a tree edit and records one (as its resilience does). The weights a
   rule moves are in no unit at all.
-- **The two projections reduce through `reduceIntent`, not `reduce`.** The "All tasks" window and the §4
-  template are re-rooted trees, so a rule solved against one of them would be solved against the wrong root
+- **The two projections reduce through `reduceIntent`, not `reduce`.** The Search window's sub-trees and
+  the §4 template are re-rooted trees, so a rule solved against one of them would be solved against the wrong root
   list; the settle they need is the one the outer `reduce` runs on the folded-back live state.
 - Authoritative + synced, merged **per category as a whole value** (a title and its rules are one statement),
   with `categoryIds` merged as a membership list like `childTaskIds`. Not in `schedulingSignature`: a rule

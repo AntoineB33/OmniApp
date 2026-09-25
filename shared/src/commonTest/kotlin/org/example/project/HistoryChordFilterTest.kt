@@ -35,7 +35,7 @@ class HistoryChordFilterTest {
         )
         // WindowNav — walked by Shift+Alt+arrows alone. The focus goes back to the tree, where the two units
         // above were made, because Ctrl+Z and Alt+arrows are relative to the focused window.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Reminders))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Alarms))
         s = SchedulerReducer.reduce(s, SchedulerIntent.FocusWindow(HistoryWindow.Tree))
         return s
     }

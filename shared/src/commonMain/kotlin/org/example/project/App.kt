@@ -155,7 +155,6 @@ import org.example.project.ui.SimPauseScope
 import org.example.project.ui.ShortcutsWindow
 import org.example.project.ui.SleepWindow
 import org.example.project.ui.DefaultSubtreeWindow
-import org.example.project.ui.TaskListWindow
 import org.example.project.ui.SearchWindow
 import org.example.project.ui.ScreenPoint
 import org.example.project.ui.TaskPickerMenu
@@ -188,7 +187,7 @@ enum class OmniPage(val label: String) {
  * [WindowFrameHost.stackOrder], keyed by the enum's own name — which is also that window's frame id.
  */
 private enum class FloatingWindow {
-    Calendar, Reminders, History, Sleep, Alarms, TaskTrees, TaskList, TaskRelations, Categories,
+    Calendar, History, Sleep, Alarms, TaskTrees, TaskRelations, Categories,
     DefaultSubtree, Shortcuts, Search,
     /** PRD §5: status, work offline and the account — what the top-right chip and button used to be. */
     Online,
@@ -373,9 +372,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
 
         // PRD §7: the buttons the user made at the bottom of the lateral menu, one per window (its head's ☆).
-        // Local-only, on a placement row of their own — they name windows of this device, copies included.
+        // Local-only, on a placement row of their own — they name windows of this device, copies included. A
+        // button for a window this build no longer has ("All tasks" and the list of reminders, removed 2026-09-25)
+        // is not shown.
         var menuButtons by remember(placements) {
-            mutableStateOf(CustomMenuButtons.decode(placements[CustomMenuButtons.PLACEMENT_ID]?.config))
+            mutableStateOf(
+                CustomMenuButtons.decode(placements[CustomMenuButtons.PLACEMENT_ID]?.config)
+                    .filter { lateralWindowOf(it.windowId) != null },
+            )
         }
         // The one whose title is being typed: a new button opens so, and so does "Rename". Compose-only.
         var editingMenuButton by remember { mutableStateOf<String?>(null) }
@@ -651,9 +655,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 relativeWindowCellId = null
             }
         }
-        // PRD §7/§14 Chores Manager: whether the floating chores window is open (local UI state, like the
-        // calendar window; the chores data itself lives in the persisted scheduler state).
-        var choresManagerOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Reminders)) }
         // PRD §5/§6 History Manager: whether the floating history window is open (local UI state).
         var historyManagerOpen by remember { mutableStateOf(savedVisible(FloatingWindow.History)) }
         // Sleep schedule window: whether the floating sleep-settings window is open (local UI state).
@@ -664,8 +665,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // All task trees: whether the floating task-tree timeline window is open (local UI state; the trees
         // and their dates are authoritative synced state).
         var taskTreesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskTrees)) }
-        // All tasks: whether the flat, sortable list of every task in the tree is open (local UI state).
-        var taskListWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskList)) }
         // PRD §5 Task relations: whether the list of (task, relational target) pairs is open (local UI
         // state; the pairs the user has kept or struck off are authoritative synced state).
         var taskRelationsWindowOpen by
@@ -722,11 +721,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             configSearches[id] = own
             updatePlacementById(id) { it.copy(config = own.encode()) }
         }
-        // Its sorter configuration. Compose-only state, like the calendar's zoom and the §4 find bar: how a
-        // list is ordered on screen is a way of looking at the tree, not a fact about it — so it is never
-        // persisted, never synced, and records no history unit.
-        // Per "All tasks" window — the original and each copy, by frame id: (sort, descending).
-        val taskListSorts = remember { mutableStateMapOf<String, Pair<SchedulerDomain.TaskListSort, Boolean>>() }
         // PRD §4 Default sub-tree: whether the floating template window is open (local UI state; the template
         // and the "is it applied" switch are authoritative synced state).
         var defaultSubtreeWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.DefaultSubtree)) }
@@ -744,12 +738,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // enums or to neither.
         fun historyWindowOf(id: FloatingWindow): HistoryWindow? = when (id) {
             FloatingWindow.Calendar -> HistoryWindow.Calendar
-            FloatingWindow.Reminders -> HistoryWindow.Reminders
             FloatingWindow.History -> HistoryWindow.History
             FloatingWindow.Sleep -> HistoryWindow.Sleep
             FloatingWindow.Alarms -> HistoryWindow.Alarms
             FloatingWindow.TaskTrees -> HistoryWindow.TaskTrees
-            FloatingWindow.TaskList -> HistoryWindow.TaskList
             FloatingWindow.TaskRelations -> HistoryWindow.TaskRelations
             FloatingWindow.Categories -> HistoryWindow.Categories
             FloatingWindow.DefaultSubtree -> HistoryWindow.DefaultSubtree
@@ -770,12 +762,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         fun isWindowOpen(id: FloatingWindow): Boolean = when (id) {
             FloatingWindow.Calendar -> calendarOpen
-            FloatingWindow.Reminders -> choresManagerOpen
             FloatingWindow.History -> historyManagerOpen
             FloatingWindow.Sleep -> sleepWindowOpen
             FloatingWindow.Alarms -> alarmWindowOpen
             FloatingWindow.TaskTrees -> taskTreesWindowOpen
-            FloatingWindow.TaskList -> taskListWindowOpen
             FloatingWindow.TaskRelations -> taskRelationsWindowOpen
             FloatingWindow.Categories -> categoriesWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
@@ -791,12 +781,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun setWindowOpen(id: FloatingWindow, open: Boolean) {
             when (id) {
                 FloatingWindow.Calendar -> calendarOpen = open
-                FloatingWindow.Reminders -> choresManagerOpen = open
                 FloatingWindow.History -> historyManagerOpen = open
                 FloatingWindow.Sleep -> sleepWindowOpen = open
                 FloatingWindow.Alarms -> alarmWindowOpen = open
                 FloatingWindow.TaskTrees -> taskTreesWindowOpen = open
-                FloatingWindow.TaskList -> taskListWindowOpen = open
                 FloatingWindow.TaskRelations -> taskRelationsWindowOpen = open
                 FloatingWindow.Categories -> categoriesWindowOpen = open
                 FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen = open
@@ -836,7 +824,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // The configurations held in memory follow the row they were decoded from.
             searchConfigs[fromId]?.let { searchConfigs[id] = it }
             configSearches[fromId]?.let { configSearches[id] = it }
-            taskListSorts[fromId]?.let { taskListSorts[id] = it }
             windowCopies.add(id)
             windowFrames.focus(id)
         }
@@ -925,7 +912,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // what re-arms its keyboard.
         //
         // Declared once because several surfaces offer the entry under that name: a calendar task panel's menu
-        // (PRD §8), the "All tasks" window's rows and the Search window's task rows (PRD §7). A panel outlives
+        // (PRD §8) and the Search window's task rows (PRD §7). A panel outlives
         // the cell that laid it (panels are not per-tree, §7), so the task may be a detached parent, deleted, or
         // another task tree's — and a panel whose title never named a task has no id at all. All of those are the
         // same answer, said once, here.
@@ -1008,8 +995,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // hard-coded cascade staggers, used until the user drags a window (which persists via onOffsetChange).
         var calendarOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Calendar, Offset.Zero)) }
         var calendarSize by remember { mutableStateOf(savedSize(FloatingWindow.Calendar)) }
-        var remindersOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Reminders, Offset(-200f, -150f))) }
-        var remindersSize by remember { mutableStateOf(savedSize(FloatingWindow.Reminders)) }
         var historyOffset by remember { mutableStateOf(savedOffset(FloatingWindow.History, Offset(200f, 150f))) }
         var historySize by remember { mutableStateOf(savedSize(FloatingWindow.History)) }
         var sleepOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Sleep, Offset(120f, -120f))) }
@@ -1018,8 +1003,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var alarmSize by remember { mutableStateOf(savedSize(FloatingWindow.Alarms)) }
         var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
         var taskTreesSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskTrees)) }
-        var taskListOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskList, Offset(-60f, 100f))) }
-        var taskListSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskList)) }
         var taskRelationsOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.TaskRelations, Offset(100f, -100f))) }
         var taskRelationsSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskRelations)) }
@@ -1037,12 +1020,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var configSearchSize by remember { mutableStateOf(savedSize(FloatingWindow.ConfigSearch)) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarSize, calendarOpen) }
-        LaunchedEffect(choresManagerOpen) { persistPlacement(FloatingWindow.Reminders, remindersOffset, remindersSize, choresManagerOpen) }
         LaunchedEffect(historyManagerOpen) { persistPlacement(FloatingWindow.History, historyOffset, historySize, historyManagerOpen) }
         LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepSize, sleepWindowOpen) }
         LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmSize, alarmWindowOpen) }
         LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesSize, taskTreesWindowOpen) }
-        LaunchedEffect(taskListWindowOpen) { persistPlacement(FloatingWindow.TaskList, taskListOffset, taskListSize, taskListWindowOpen) }
         LaunchedEffect(taskRelationsWindowOpen) {
             persistPlacement(FloatingWindow.TaskRelations, taskRelationsOffset, taskRelationsSize, taskRelationsWindowOpen)
         }
@@ -1998,10 +1979,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onSelectDate = { selectedDate = it; calendarJumpNonce++ },
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
-                    choresManagerOpen = choresManagerOpen,
-                    onToggleChoresManager = { onMenuWindowClicked(FloatingWindow.Reminders) { choresManagerOpen = it } },
-                    historyManagerOpen = historyManagerOpen,
-                    onToggleHistoryManager = { onMenuWindowClicked(FloatingWindow.History) { historyManagerOpen = it } },
                     notificationVoiceEnabled = schedulerState.notificationVoiceEnabled,
                     onToggleNotificationVoice = { vm.dispatch(SchedulerIntent.SetNotificationVoice(it)) },
                     // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the
@@ -2017,20 +1994,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     shortcutBindings = schedulerState.shortcutBindings,
                     sleepWindowOpen = sleepWindowOpen,
                     onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
-                    alarmWindowOpen = alarmWindowOpen,
-                    onToggleAlarms = { onMenuWindowClicked(FloatingWindow.Alarms) { alarmWindowOpen = it } },
-                    taskTreesWindowOpen = taskTreesWindowOpen,
-                    onToggleTaskTrees = {
-                        onMenuWindowClicked(FloatingWindow.TaskTrees) { taskTreesWindowOpen = it }
-                    },
-                    taskListWindowOpen = taskListWindowOpen,
-                    onToggleTaskList = {
-                        onMenuWindowClicked(FloatingWindow.TaskList) { taskListWindowOpen = it }
-                    },
-                    taskRelationsWindowOpen = taskRelationsWindowOpen,
-                    onToggleTaskRelations = {
-                        onMenuWindowClicked(FloatingWindow.TaskRelations) { taskRelationsWindowOpen = it }
-                    },
                     categoriesWindowOpen = categoriesWindowOpen,
                     onToggleCategories = {
                         onMenuWindowClicked(FloatingWindow.Categories) { categoriesWindowOpen = it }
@@ -2038,10 +2001,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
                     onToggleDefaultSubtree = {
                         onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
-                    },
-                    shortcutsWindowOpen = shortcutsWindowOpen,
-                    onToggleShortcuts = {
-                        onMenuWindowClicked(FloatingWindow.Shortcuts) { shortcutsWindowOpen = it }
                     },
                     searchWindowOpen = searchWindowOpen,
                     onToggleSearch = {
@@ -2705,81 +2664,41 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     }
 
-                    // PRD §14 Chores Manager: floating window over the tree (not the lateral menu).
-                    // The Reminders window and the per-object window of ONE reminder (PRD §7 Search) are the same
-                    // component over the same callbacks, so they are wired once, here — AccountAlarmWindow's rule.
-                    @Composable
-                    fun AccountRemindersWindow(
-                        subject: String?,
-                        onDismiss: () -> Unit,
-                        modifier: Modifier,
-                        initialOffset: Offset = Offset.Zero,
-                        initialSize: Size = Size.Zero,
-                        onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
-                        onRaise: () -> Unit = {},
-                    ) {
-                        // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
-                        val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
-                        ChoresManagerWindow(
-                            chores = schedulerState.chores,
-                            // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
-                            onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
-                            onDismiss = onDismiss,
-                            // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
-                            newRowTimeOfDayMinutes = {
-                                val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
-                                t.hour * 60 + t.minute
-                            },
-                            // PRD §14: title/id suggestion menus under the focused reminder name field —
-                            // existing reminders matching the draft, and distinct reminder titles.
-                            reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                            titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                            // A new row's id must avoid every known reminder id (including calendar-only ones).
-                            knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
-                            // PRD §14: reminder ids kept alive by a checked or pinned tag — the focused row
-                            // shows its own id in the menu only when it is one of these (independently referenced).
-                            referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
-                            // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
-                            reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                            titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                            initialOffset = initialOffset,
-                            initialSize = initialSize,
-                            onGeometryChange = onGeometryChange,
-                            onRaise = onRaise,
-                            modifier = modifier,
-                            subject = subject,
-                        )
-                    }
-
-                    LateralWindow(FloatingWindow.Reminders, choresManagerOpen) {
-                        AccountRemindersWindow(
-                            subject = null,
-                            onDismiss = { choresManagerOpen = false },
-                            // Cascade: open up-left of center so it isn't fully hidden behind a wider window.
-                            initialOffset = remindersOffset,
-                            initialSize = remindersSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                remindersOffset = windowOffset
-                                remindersSize = windowSize
-                                persistPlacement(FloatingWindow.Reminders, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.Reminders) },
-                            modifier = Modifier.align(Alignment.Center),
-                        )
-                    }
-
-                    // PRD §7 Search: the per-object window of one reminder. One slot, like the alarm's; it closes
-                    // itself when its row is gone (ChoresManagerWindow), and it is duplicable like every window.
-                    // No existence check here: the window follows its row even when the id menu makes it adopt
-                    // another reminder's id, and closes itself once the row is gone — one rule, in one place.
+                    // PRD §14 / PRD §7 Search: the per-object window of one reminder — opened from its Search row.
+                    // One slot, like the alarm's; it closes itself when its row is gone (ChoresManagerWindow), and
+                    // it is duplicable like every window. No existence check here: the window follows its row even
+                    // when the id menu makes it adopt another reminder's id, and closes itself once the row is
+                    // gone — one rule, in one place.
                     DuplicableWindows(editReminderId, closeOriginal = { editReminderId = null }) { reminderId, close ->
                         TransientPopupLayer(windowInstanceId(REMINDER_EDIT_FRAME_ID)) {
                             // Keyed on the reminder: another one REPLACES the window, and its rows must not carry
                             // over.
                             key(reminderId) {
-                                AccountRemindersWindow(
-                                    subject = reminderId,
+                                // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
+                                val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
+                                ChoresManagerWindow(
+                                    chores = schedulerState.chores,
+                                    // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
+                                    onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
                                     onDismiss = close,
+                                    subject = reminderId,
+                                    // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
+                                    newRowTimeOfDayMinutes = {
+                                        val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
+                                        t.hour * 60 + t.minute
+                                    },
+                                    // PRD §14: title/id suggestion menus under the focused reminder name field —
+                                    // existing reminders matching the draft, and distinct reminder titles.
+                                    reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                    titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                                    // A new row's id must avoid every known reminder id (including calendar-only ones).
+                                    knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
+                                    // PRD §14: reminder ids kept alive by a checked or pinned tag — the focused row
+                                    // shows its own id in the menu only when it is one of these (independently referenced).
+                                    referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
+                                    // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
+                                    reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                    titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
                                     modifier = Modifier.align(Alignment.Center),
                                 )
                             }
@@ -2958,69 +2877,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    // All tasks: every task of the LIVE tree, flat, over its sorter configuration — and
-                    // every row is a TASK CELL, drawn by the SAME task-tree component the account's tree and
-                    // the §4 template are, over the state projectTaskList() makes (the live tree re-rooted
-                    // at this window's own list). So the rows carry the §13 contextual menu, Edit Mode and
-                    // every tree gesture, plus "go to task tree" — and an edit made here is an edit to the
-                    // tree. The percentage stays the same absolute priority the tree's own rows show, not
-                    // the keyframe blend the scheduler follows.
-                    LateralWindow(FloatingWindow.TaskList, taskListWindowOpen) {
-                        val taskListId = windowInstanceId(FloatingWindow.TaskList.name)
-                        val (taskListSort, taskListDescending) =
-                            taskListSorts[taskListId] ?: (SchedulerDomain.TaskListSort.Priority to true)
-                        TaskListWindow(
-                            state = schedulerState,
-                            sort = taskListSort,
-                            onSortChange = { taskListSorts[taskListId] = it to taskListDescending },
-                            descending = taskListDescending,
-                            onDirectionChange = { taskListSorts[taskListId] = taskListSort to it },
-                            onIntent = { vm.dispatch(it) },
-                            // The rows own the keyboard only while this window is the front one.
-                            focused = windowFrames.frontId == windowInstanceId(FloatingWindow.TaskList.name),
-                            // PRD §5/§13: the same four per-object windows the account's tree opens. They read
-                            // and write the LIVE state, because that is exactly what this window's rows are.
-                            onSetWeightWindow = {
-                                popupFromDefaultSubtree = false
-                                weightWindowListId = it
-                            },
-                            onSetRelativeWindow = {
-                                popupFromDefaultSubtree = false
-                                relativeWindowCellId = it
-                            },
-                            onSetEditTask = {
-                                popupFromDefaultSubtree = false
-                                editTaskId = it
-                            },
-                            onSetEditCategory = {
-                                popupFromDefaultSubtree = false
-                                editCategoryId = it
-                            },
-                            onSetDeepCopyCell = {
-                                popupFromDefaultSubtree = false
-                                deepCopyCellId = it
-                            },
-                            // PRD §8's entry under its own name — the app's one handler, shared with the
-                            // calendar panel's menu. A row here always names a live task, so the "not in the
-                            // task tree" branch is unreachable from this surface; it is the same call all
-                            // the same, because a second one is how two surfaces start answering differently.
-                            onGoToTaskTree = { taskId ->
-                                goToTaskTree(taskId, schedulerState.tasks[taskId]?.title.orEmpty())
-                            },
-                            onDismiss = { taskListWindowOpen = false },
-                            initialOffset = taskListOffset,
-                            initialSize = taskListSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                taskListOffset = windowOffset
-                                taskListSize = windowSize
-                                persistPlacement(FloatingWindow.TaskList, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.TaskList) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
-
                     // PRD §5 Task relations: every (task, relational target) pair the priority machinery
                     // has raised, in four sections. It reads the LIVE state — a relation is a fact about the
                     // account's own tree — and its two buttons are the only writers of
@@ -3109,18 +2965,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 popupFromDefaultSubtree = false
                                 editPeriodKind = it
                             },
-                            // The window that OWNS an alarm, a timer or a reminder — opened if it is closed and
-                            // brought to the front either way, never closed by this (unlike its menu button).
-                            onOpenAlarms = {
-                                alarmWindowOpen = true
-                                focusWindow(FloatingWindow.Alarms)
-                            },
                             onEditAlarmOrTimer = { editAlarmOrTimer = it },
                             onEditReminder = { editReminderId = it },
-                            onOpenReminders = {
-                                choresManagerOpen = true
-                                focusWindow(FloatingWindow.Reminders)
-                            },
+                            // The windows that own a history unit, a task tree, a task relation or a shortcut —
+                            // opened if closed and brought to the front either way, never closed by this.
                             onOpenHistory = {
                                 historyManagerOpen = true
                                 focusWindow(FloatingWindow.History)

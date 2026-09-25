@@ -36,7 +36,7 @@ class TaskSchedulerViewModelDebounceTest {
 
             // Three state-changing intents in quick succession (each window focus differs).
             vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Calendar))
-            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Reminders))
+            vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.Alarms))
             vm.dispatch(SchedulerIntent.FocusWindow(HistoryWindow.History))
 
             // Before the debounce window elapses, nothing is written.

@@ -15,7 +15,6 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.projectDefaultSubtree
-import org.example.project.scheduler.state.projectTaskList
 
 /**
  * PRD §2: the tree is drawn under ONE inert row standing for the whole of it — a real cell of the tree
@@ -132,8 +131,8 @@ class RootCellTest {
     /**
      * A render-via names *which occurrence of a mirrored parent* a row is drawn under, and the root cell is
      * the one parent that can never be mirrored. So the tree's top-level rows keep the null via they had
-     * before it existed — which is what lets the tree, PRD §7's "All tasks" window and PRD §4's template
-     * all highlight one selection the same way.
+     * before it existed — which is what lets the tree and PRD §4's template all highlight one selection the
+     * same way.
      */
     @Test
     fun the_root_row_is_not_a_render_via() {
@@ -161,20 +160,15 @@ class RootCellTest {
         )
     }
 
-    // ----- the two drawings that have no root row -------------------------------------------------
+    // ----- the drawing that has no root row -------------------------------------------------------
 
     /**
-     * PRD §7's "All tasks" window and PRD §4's template are re-rooted at their own parentless lists, so
-     * neither grows a root row — [SchedulerDomain.displayRootListId] falls back to their own root.
+     * PRD §4's template is re-rooted at its own parentless list, so it grows no root row —
+     * [SchedulerDomain.displayRootListId] falls back to its own root.
      */
     @Test
-    fun the_projections_draw_no_root_row() {
+    fun the_template_draws_no_root_row() {
         val (s, _) = tree()
-
-        val taskList = s.projectTaskList(listOf(s.lists[s.rootListId]!!.cellIds.first()))
-        assertNull(SchedulerDomain.rootCellId(taskList))
-        assertEquals(taskList.rootListId, SchedulerDomain.displayRootListId(taskList))
-        assertFalse(WellKnownIds.ROOT_CELL in SchedulerDomain.visibleCellOrder(taskList))
 
         val template = s.projectDefaultSubtree()
         assertNull(SchedulerDomain.rootCellId(template))

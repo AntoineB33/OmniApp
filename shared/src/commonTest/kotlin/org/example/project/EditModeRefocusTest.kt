@@ -39,7 +39,7 @@ class EditModeRefocusTest {
         val onIntent: (SchedulerIntent) -> Unit = { s = r(s, it) }
 
         fun pick(label: String) =
-            cellEditModeOptions(s, cell, hideModeSelector = false, onIntent = onIntent) { refocuses++ }
+            cellEditModeOptions(s, cell, onIntent = onIntent) { refocuses++ }
                 .single { it.label == label }
                 .onSelect()
 
@@ -67,20 +67,17 @@ class EditModeRefocusTest {
     fun a_mode_switch_keeps_the_draft_the_caret_returns_to() {
         var (s, cell) = editing()
         s = r(s, SchedulerIntent.UpdateEditText("Apple pie"))
-        cellEditModeOptions(s, cell, false, { s = r(s, it) }) {}.single { it.label == "Rename" }.onSelect()
+        cellEditModeOptions(s, cell, { s = r(s, it) }) {}.single { it.label == "Rename" }.onSelect()
         assertEquals("Apple pie", s.editSession!!.draftText)
-        cellEditModeOptions(s, cell, false, { s = r(s, it) }) {}.single { it.label == "Change Task" }.onSelect()
+        cellEditModeOptions(s, cell, { s = r(s, it) }) {}.single { it.label == "Change Task" }.onSelect()
         assertEquals("Apple pie", s.editSession!!.draftText)
     }
 
     @Test
     fun no_selector_where_there_is_no_choice() {
-        val (s, cell) = editing()
-        assertTrue(cellEditModeOptions(s, cell, hideModeSelector = true, onIntent = {}) {}.isEmpty())
-
         var fresh = SchedulerState.empty()
         val empty = fresh.lists[fresh.rootListId]!!.cellIds.last()
         fresh = r(fresh, SchedulerIntent.BeginEdit(empty))
-        assertTrue(cellEditModeOptions(fresh, empty, hideModeSelector = false, onIntent = {}) {}.isEmpty())
+        assertTrue(cellEditModeOptions(fresh, empty, onIntent = {}) {}.isEmpty())
     }
 }

@@ -63,7 +63,7 @@ handler.
   hold one the rules refuse today (decode). Both drop back to the default.
 - Desktop-only (Android/iOS report `Unsupported`), and best-effort: a refused chord leaves the app running with
   the lateral-menu buttons, never a failed start.
-- The lateral menu's **Keyboard shortcuts** window lists every chord in the app (`KeyboardShortcutCatalog`). The
+- The **Keyboard shortcuts** window (opened from Search) lists every chord in the app (`KeyboardShortcutCatalog`). The
   per-surface entries are prose — add a chord and its entry in the same change.
 
 ### A button that has a chord names it on hover

@@ -36,7 +36,7 @@ import org.example.project.scheduler.state.SchedulerState
  * The account holds several task trees (the selector's named trees): the live one, whose fields are the
  * state's own, and every other one as a stored snapshot. A task is in a task tree when **any** of them holds
  * it — its title-bearing cell is reachable from that tree's root, the same predicate the live tree's
- * [SchedulerDomain.shortestTaskTreePaths] (and so "go to task", and PRD §7's "All tasks") uses. The active
+ * [SchedulerDomain.shortestTaskTreePaths] (and so "go to task") uses. The active
  * tree's stored entry is stale by design and is never read: the live fields stand for it.
  *
  * ### Paths
@@ -721,8 +721,8 @@ object SearchDomain {
      *
      * **Only at edit boundaries**, like [SchedulerDomain.pruneDetachedTree]: renaming a parent passes through
      * a blank title between keystrokes, and a blank title holds nothing, so read mid-session its whole
-     * sub-tree would leave the tree and come back. So while a session is open (the tree's or the "All tasks"
-     * window's) nothing is stamped, and the reduction that closes one is measured from the tree the session
+     * sub-tree would leave the tree and come back. So while a session is open (the tree's or a Search
+     * sub-tree's) nothing is stamped, and the reduction that closes one is measured from the tree the session
      * **started** on, which is what the gesture changed.
      *
      * Cheap when nothing structural moved (the common case: a tick, a selection): the tree fields are
@@ -730,14 +730,14 @@ object SearchDomain {
      */
     fun withLastTreePathsStamped(before: SchedulerState, after: SchedulerState): SchedulerState {
         if (before === after) return after
-        if (after.editSession != null || after.taskListEditSession != null || after.searchEditSession != null) return after
-        val session = before.editSession ?: before.taskListEditSession ?: before.searchEditSession
+        if (after.editSession != null || after.searchEditSession != null) return after
+        val session = before.editSession ?: before.searchEditSession
         val baseline =
             if (session == null) {
                 before
             } else {
-                // The projection's tree is the live one plus the window's synthetic root list, so its snapshot
-                // walked from the live root is the live tree the session started on.
+                // The projection's tree is the live one re-rooted, so its snapshot walked from the live root is
+                // the live tree the session started on.
                 val tree = session.treeBefore
                 before.copy(cells = tree.cells, lists = tree.lists, tasks = tree.tasks)
             }

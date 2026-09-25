@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.CellId
@@ -206,23 +207,6 @@ class HistoryChordsByWindowTest {
         }
     }
 
-    @Test
-    fun the_all_tasks_window_records_its_selection_and_alt_left_there_puts_it_back() {
-        var s = SchedulerState.empty()
-        val cell = firstCell(s)
-        s = r(s, SchedulerIntent.SetCellTitle(cell, "Daily"))
-        s = focus(s, HistoryWindow.TaskList)
-        val rows = listOf(cell)
-        s = r(s, SchedulerIntent.InTaskList(SchedulerIntent.ClickCell(cell, ctrl = false, shift = false, visibleOrder = rows), rows))
-        assertEquals(cell, s.taskListSelection.main)
-        assertNull(s.selection.main, "the tree's own selection is not the window's")
-        assertEquals("Selection (All tasks)", s.histories.forCategory(HistoryCategory.Selection).units.last().delta.label)
-
-        val back = r(s, SchedulerIntent.UndoSelection)
-        assertNull(back.taskListSelection.main)
-        assertEquals(cell, r(back, SchedulerIntent.RedoSelection).taskListSelection.main)
-    }
-
     // ----- Persistence (CLAUDE.md: persisted-DB compatibility) --------------------------------------
 
     @Test
@@ -232,11 +216,10 @@ class HistoryChordsByWindowTest {
         s = r(s, SchedulerIntent.SetCellTitle(cell, "Daily"))
         s = focus(s, HistoryWindow.Search, "#2")
         s = select(s, "task:a", instance = "#2")
-        s = focus(s, HistoryWindow.TaskList)
-        s = r(s, SchedulerIntent.InTaskList(SchedulerIntent.ClickCell(cell, ctrl = false, shift = false, visibleOrder = listOf(cell)), listOf(cell)))
+        s = focus(s, HistoryWindow.Categories)
 
         val decoded = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
-        assertEquals(HistoryWindow.TaskList, decoded.focusedWindow)
+        assertEquals(HistoryWindow.Categories, decoded.focusedWindow)
         for (category in listOf(HistoryCategory.WindowNav, HistoryCategory.Selection)) {
             assertEquals(
                 s.histories.forCategory(category).units.map { it.delta },
@@ -253,14 +236,73 @@ class HistoryChordsByWindowTest {
 
         // The focused window as an older build wrote it, and a name this build does not know.
         val encoded = SchedulerStateCodec.encode(s)
-        assertTrue("\"focusedWindow\":\"TaskList\"" in encoded)
+        assertTrue("\"focusedWindow\":\"Categories\"" in encoded)
         assertEquals(
             HistoryWindow.Calendar,
-            SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"TaskList\"", "\"focusedWindow\":\"Calendar\""))?.focusedWindow,
+            SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"Categories\"", "\"focusedWindow\":\"Calendar\""))?.focusedWindow,
         )
         assertEquals(
             HistoryWindow.Tree,
-            SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"TaskList\"", "\"focusedWindow\":\"Wormhole\""))?.focusedWindow,
+            SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"Categories\"", "\"focusedWindow\":\"Wormhole\""))?.focusedWindow,
         )
+    }
+
+    /**
+     * The "All tasks" window was removed (2026-09-25). What it wrote still decodes: every unit it recorded
+     * edited the live tree, so its name reads back as the tree's — the focused window, a unit's window, a focus
+     * move's ends and its selection units alike.
+     */
+    @Test
+    fun what_the_retired_all_tasks_window_wrote_decodes_as_the_tree() {
+        var s = SchedulerState.empty()
+        s = focus(s, HistoryWindow.Categories)
+        val encoded = SchedulerStateCodec.encode(s)
+        assertEquals(
+            HistoryWindow.Tree,
+            SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"Categories\"", "\"focusedWindow\":\"TaskList\""))?.focusedWindow,
+        )
+
+        val unit = assertNotNull(
+            SchedulerStateCodec.decodeUnit(
+                timeMillis = 1L, chronoId = 0L, tainted = false, window = "TaskList", deviceId = "d", deviceSeq = 1000L,
+                undone = false, text = """{"type":"focus","before":"Tree","after":"TaskList"}""",
+            ),
+        )
+        assertEquals(HistoryWindow.Tree, unit.window)
+        assertEquals(FocusDelta(HistoryWindow.Tree, HistoryWindow.Tree), unit.delta)
+
+        val selection = assertNotNull(
+            SchedulerStateCodec.decodeUnit(
+                timeMillis = 1L, chronoId = 0L, tainted = false, window = "TaskList", deviceId = "d", deviceSeq = 1001L,
+                undone = false,
+                text = """{"type":"viewSelection","window":"TaskList","before":{},"after":{}}""",
+            ),
+        )
+        assertEquals(HistoryWindow.Tree, selection.window)
+        // Undoing it is a no-op: the window whose selection it moved is gone.
+        assertSame(s, selection.delta.undo(s))
+    }
+
+    /**
+     * The list of every reminder was removed (2026-09-25): a reminder is opened from the Search window now, and
+     * its own window takes no focus, so what the old list recorded reads back as Search's.
+     */
+    @Test
+    fun what_the_retired_reminders_window_wrote_decodes_as_the_search_windows() {
+        var s = SchedulerState.empty()
+        s = focus(s, HistoryWindow.Categories)
+        val encoded = SchedulerStateCodec.encode(s)
+        assertEquals(
+            HistoryWindow.Search,
+            SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"Categories\"", "\"focusedWindow\":\"Reminders\""))?.focusedWindow,
+        )
+        val unit = assertNotNull(
+            SchedulerStateCodec.decodeUnit(
+                timeMillis = 1L, chronoId = 0L, tainted = false, window = "Reminders", deviceId = "d", deviceSeq = 1000L,
+                undone = false, text = """{"type":"focus","before":"Reminders","after":"Tree"}""",
+            ),
+        )
+        assertEquals(HistoryWindow.Search, unit.window)
+        assertEquals(FocusDelta(HistoryWindow.Search, HistoryWindow.Tree), unit.delta)
     }
 }

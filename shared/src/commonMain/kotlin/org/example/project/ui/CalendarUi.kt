@@ -1221,36 +1221,15 @@ fun LateralMenu(
     /** PRD §7 Automatic Schedule Switch: current state + toggle callback. */
     automaticSchedule: Boolean = true,
     onToggleAutomaticSchedule: (Boolean) -> Unit = {},
-    /** PRD §7 Chores Manager: whether the chores window is open + toggle callback. */
-    choresManagerOpen: Boolean = false,
-    onToggleChoresManager: () -> Unit = {},
-    /** PRD §5/§6 History Manager: whether the history window is open + toggle callback. */
-    historyManagerOpen: Boolean = false,
-    onToggleHistoryManager: () -> Unit = {},
     /** Sleep schedule window: whether it is open + toggle callback. */
     sleepWindowOpen: Boolean = false,
     onToggleSleep: () -> Unit = {},
-    /** PRD §18 Alarms: whether the alarms window is open + toggle callback. */
-    alarmWindowOpen: Boolean = false,
-    onToggleAlarms: () -> Unit = {},
-    /** All task trees (the timeline of dated task trees): whether that window is open + toggle callback. */
-    taskTreesWindowOpen: Boolean = false,
-    onToggleTaskTrees: () -> Unit = {},
-    /** All tasks (the flat, sortable list of every task in the tree): whether it is open + toggle callback. */
-    taskListWindowOpen: Boolean = false,
-    onToggleTaskList: () -> Unit = {},
-    /** PRD §5 Task relations: whether the (task, relational target) pair list is open + toggle callback. */
-    taskRelationsWindowOpen: Boolean = false,
-    onToggleTaskRelations: () -> Unit = {},
     /** PRD §5 Categories: whether the account's list of categories is open + toggle callback. */
     categoriesWindowOpen: Boolean = false,
     onToggleCategories: () -> Unit = {},
     /** PRD §4 Default sub-tree: whether that window is open + toggle callback. */
     defaultSubtreeWindowOpen: Boolean = false,
     onToggleDefaultSubtree: () -> Unit = {},
-    /** PRD §7 Keyboard shortcuts: whether the window listing every chord is open + toggle callback. */
-    shortcutsWindowOpen: Boolean = false,
-    onToggleShortcuts: () -> Unit = {},
     /**
      * PRD §5: the Online window (status, work offline, account) — it replaced the top-right chip and offline
      * button, so its button carries the status they showed ([onlineStatus], e.g. "☁ Synced", "✈ Offline").
@@ -1441,20 +1420,6 @@ fun LateralMenu(
             chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.SwitchTask),
         )
 
-        // PRD §7 Reminders: toggles the floating reminders window over the tree.
-        MenuButton(
-            label = "Reminders",
-            active = choresManagerOpen,
-            onClick = onToggleChoresManager,
-        )
-
-        // PRD §5/§6 History: toggles the floating history manager (all the history unit lists).
-        MenuButton(
-            label = "History",
-            active = historyManagerOpen,
-            onClick = onToggleHistoryManager,
-        )
-
         // Sleep/Work toggle: "Sleep" when working (press it when going away), "Work" when sleeping (press it
         // when resuming). Tells the server so the phone's pause-end cue is suppressed while deliberately away.
         MenuButton(
@@ -1477,38 +1442,6 @@ fun LateralMenu(
             label = "Sleep schedule",
             active = sleepWindowOpen,
             onClick = onToggleSleep,
-        )
-
-        // PRD §18 Alarms: toggles the window where the account's alarms (time, sound length, vibration) are set.
-        MenuButton(
-            label = "Alarms",
-            active = alarmWindowOpen,
-            onClick = onToggleAlarms,
-        )
-
-        // The task-tree timeline: every named task tree, and the dates that make them the keyframes the
-        // scheduler blends its priorities between.
-        MenuButton(
-            label = "All task trees",
-            active = taskTreesWindowOpen,
-            onClick = onToggleTaskTrees,
-        )
-
-        // Every task of the tree, flat and sorted: the two figures the tree's shape hides — how often a task
-        // recurs across the whole tree, and how much priority it actually carries.
-        MenuButton(
-            label = "All tasks",
-            active = taskListWindowOpen,
-            onClick = onToggleTaskList,
-        )
-
-        // PRD §5 Task relations: every (task, relational target) pair the priority machinery has raised — a
-        // weight table's optional row, a relative priority the user opened or changed — in four sections,
-        // so the ones worth keeping can be kept and the rest recognised as noise.
-        MenuButton(
-            label = "Task relations",
-            active = taskRelationsWindowOpen,
-            onClick = onToggleTaskRelations,
         )
 
         // PRD §7 Search: find a task, a category, a restrictive-period kind, an alarm, a timer or a reminder by
@@ -1549,15 +1482,6 @@ fun LateralMenu(
             }
         }
 
-        // PRD §7 Keyboard shortcuts: the reference list of every chord the app answers to, and the only place
-        // the system-wide ones can be rebound. The controls that duplicate a chord name it on hover
-        // (ShortcutHint); this window is where the rest of them are written down.
-        MenuButton(
-            label = "Keyboard shortcuts",
-            active = shortcutsWindowOpen,
-            onClick = onToggleShortcuts,
-        )
-
         // PRD §5: status, the device's "work offline" switch and the account, in one window.
         MenuButton(
             label = "Online" + (onlineStatus?.let { "  $it" } ?: ""),
@@ -1585,35 +1509,27 @@ fun Modifier.raiseOnPress(onPress: () -> Unit): Modifier =
     }
 
 /**
- * PRD §14 Reminders: a floating, draggable in-app window (not a modal dialog) holding a vertical list of
- * rows, each three input fields — a title, a recurrence in **days** (a floating-point number) and a time
- * of day. Like the §7 calendar window it floats over the tree, not the lateral menu; grab the title bar
- * to move it. Rows are edited live: every change pushes the parsed list up via [onChange]. Each row has a
- * bin button (remove) and a `+` (insert above); a trailing `+` appends a row.
+ * PRD §14 Reminders: the **per-object window of one reminder** ([subject], a reminder id) — opened from its
+ * row in the Search window (PRD §7: a double-click, Enter or a right-click). A floating, draggable in-app
+ * window (not a modal dialog) holding that reminder's editor: a title, a recurrence in **days** (a
+ * floating-point number) and a time of day, its constraint and its alert. Edits are live: every change pushes
+ * the whole parsed list up via [onChange] — the rows it does not draw are held and pushed back unchanged. Its
+ * bin removes the reminder, and the window closes itself when its row is gone; **"+ New reminder"** adds one
+ * and moves the window on to it (the Alarms window's "+ New" rule).
  *
- * Given a [subject] (a reminder id), the same window is the **per-object window of one reminder** (PRD §7
- * *Search*: a right-click on its row) — that row's editor alone, every setting it has, nothing to add. It is
- * this window and not a second editor for the reason the Alarms window gives: a second copy of a row's
- * fields, parsing and push rule is the copy that drifts. The rows it does not draw are held and pushed back
- * unchanged, and it closes itself when its row is gone.
+ * (It was also the lateral menu's list of every reminder, removed 2026-09-25: the Search window lists them.)
  */
 @Composable
 fun ChoresManagerWindow(
     chores: List<ChoreEntry>,
     onChange: (List<ChoreEntry>) -> Unit,
     onDismiss: () -> Unit,
+    /** The one reminder (by id) this window is about. */
+    subject: String,
     modifier: Modifier = Modifier,
-    /** Initial position relative to centered; staggered per window so they open in a clickable cascade. */
-    initialOffset: Offset = Offset.Zero,
-    /** Initial size in px; `Size.Zero` opens the window at its default size. */
-    initialSize: Size = Size.Zero,
-    /** Persists the window's new position/size when a move or resize gesture ends (local-only geometry). */
-    onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
-    /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
-    onRaise: () -> Unit = {},
     /**
      * PRD §14: the time-of-day (minutes since midnight) to pre-fill a newly added reminder's "Time" field —
-     * the current clock time at the moment the `+` is clicked. A negative value (the default) leaves it blank.
+     * the current clock time at the moment "+ New reminder" is clicked. A negative value (the default) leaves it blank.
      */
     newRowTimeOfDayMinutes: () -> Int = { -1 },
     /**
@@ -1640,10 +1556,8 @@ fun ChoresManagerWindow(
     reminderIdForTitle: (String) -> String? = { null },
     /** PRD §14 "constrained in": the title of a known reminder id (shown beside the "constrained in" button). */
     titleForReminderId: (String) -> String? = { null },
-    /** The one reminder (by id) this window is about, or null for the lateral-menu window listing them all. */
-    subject: String? = null,
 ) {
-    val frame = rememberWindowFrameState(if (subject != null) REMINDER_EDIT_FRAME_ID else "Reminders", initialOffset, initialSize)
+    val frame = rememberWindowFrameState(REMINDER_EDIT_FRAME_ID)
     // The subject row's id as it now stands: the id menu can make the row adopt another reminder's id.
     var subjectId by remember { mutableStateOf(subject) }
     val focusManager = LocalFocusManager.current
@@ -1724,7 +1638,7 @@ fun ChoresManagerWindow(
     fun push() {
         val ids = resolvedRowIds()
         // The subject row follows its id through the id menu's adoption of another reminder.
-        if (subject != null) rows.forEachIndexed { index, row -> if (row.id == subjectId) subjectId = ids[index] }
+        rows.forEachIndexed { index, row -> if (row.id == subjectId) subjectId = ids[index] }
         val entries =
             rows.mapIndexed { index, row ->
                 // PRD §14: the chosen unit maps the entered number to a cadence in days (interval vs rate units).
@@ -1745,11 +1659,11 @@ fun ChoresManagerWindow(
     }
     // A single reminder's window whose row is gone (its own bin, another window, an undo, a peer) closes.
     val latestDismiss by rememberUpdatedState(onDismiss)
-    val subjectGone = subject != null && rows.none { it.id == subjectId }
+    val subjectGone = rows.none { it.id == subjectId }
     LaunchedEffect(subjectGone) { if (subjectGone) latestDismiss() }
 
     AppWindowFrame(
-        title = if (subject != null) "Reminder" else "Reminders",
+        title = "Reminder",
         state = frame,
         onClose = onDismiss,
         defaultWidth = 560.dp,
@@ -1760,8 +1674,6 @@ fun ChoresManagerWindow(
         // (the title field, menu rows, other inputs/buttons) consume their own taps, so this only fires
         // for clicks that land on bare window chrome.
         modifier = modifier.pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } },
-        onRaise = onRaise,
-        onGeometryChange = onGeometryChange,
     ) {
         Column(
             modifier = Modifier
@@ -1772,7 +1684,7 @@ fun ChoresManagerWindow(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             rows.forEachIndexed { index, row ->
-              if (subject != null && row.id != subjectId) return@forEachIndexed
+              if (row.id != subjectId) return@forEachIndexed
               // The row is a focus group so that opening the Mode dropdown (a focusable anchor) keeps the
               // editor open rather than collapsing it. Entering Edit mode still requires focusing the
               // *title* field (set below); the group only governs *staying* in edit mode — the menus
@@ -1830,10 +1742,8 @@ fun ChoresManagerWindow(
                         label = { Text("Time") },
                         modifier = Modifier.width(80.dp),
                     )
-                    // Bin: remove this row.
+                    // Bin: remove this reminder (the window then closes itself).
                     TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
-                    // Plus: insert a new row above this one. Not in a single reminder's window, which adds nothing.
-                    if (subject == null) TextButton(onClick = { rows.add(index, newRow()); push() }) { Text("+") }
                 }
 
                 // PRD §14 "constrained in": a button opening the constraint picker, with the chosen
@@ -1928,21 +1838,17 @@ fun ChoresManagerWindow(
                 }
               }
             }
-            // Trailing single plus: append a new row at the end of the list.
-            if (subject == null) TextButton(onClick = { rows.add(newRow()); push() }) { Text("+ add reminder") }
-            // The single reminder's window: a new reminder at the bottom — and the window moves on to it, the one
-            // the user means to set up now (the Alarms window's "+ New" rule).
-            if (subject != null) {
-                TextButton(
-                    onClick = {
-                        val row = newRow()
-                        rows.add(row)
-                        subjectId = row.id
-                        // push() carries subjectId along if the new row resolves to another reminder's id.
-                        push()
-                    },
-                ) { Text("+ New reminder") }
-            }
+            // A new reminder at the bottom — and the window moves on to it, the one the user means to set up
+            // now (the Alarms window's "+ New" rule).
+            TextButton(
+                onClick = {
+                    val row = newRow()
+                    rows.add(row)
+                    subjectId = row.id
+                    // push() carries subjectId along if the new row resolves to another reminder's id.
+                    push()
+                },
+            ) { Text("+ New reminder") }
         }
     }
 

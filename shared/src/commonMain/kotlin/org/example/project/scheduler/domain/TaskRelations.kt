@@ -86,7 +86,7 @@ object TaskRelationsDomain {
 
     /**
      * Every pair the window lists, section by section, then by title. Ties fall back to the ids so the order
-     * cannot depend on a map's iteration order (the same rule the "All tasks" list follows).
+     * cannot depend on a map's iteration order.
      */
     fun rows(state: SchedulerState): List<Row> {
         val fromTables = weightTableRelations(state)

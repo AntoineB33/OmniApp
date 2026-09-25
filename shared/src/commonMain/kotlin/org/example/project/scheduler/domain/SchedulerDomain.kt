@@ -95,8 +95,8 @@ object SchedulerDomain {
     // and is the one thing that tells the two shapes apart.
 
     /**
-     * The tree's **root cell**, or `null` for a drawing that has none — the PRD §4 template and PRD §7's
-     * "All tasks" projection, whose own root lists are parentless.
+     * The tree's **root cell**, or `null` for a drawing that has none — the PRD §4 template, whose own root
+     * list is parentless.
      */
     fun rootCellId(state: SchedulerState): CellId? =
         state.lists[state.rootListId]?.parentCellId?.takeIf { it in state.cells && !isSelectableCell(state, it) }
@@ -119,7 +119,7 @@ object SchedulerDomain {
      * It is the ONE definition of that shape: [SchedulerState.empty] builds through it, the codec heals a
      * decoded payload with it, the sync merge repairs with it, and [SchedulerState.applyTree] carries it
      * across an undo into pre-upgrade history. It refuses any tree not rooted at [WellKnownIds.ROOT_LIST]
-     * (the "All tasks" projection is re-rooted elsewhere), and the caller that must not grow one — the §4
+     * (a Search sub-tree projection is re-rooted elsewhere), and the caller that must not grow one — the §4
      * template, whose own [WellKnownIds.ROOT_LIST] is parentless and shadows the live tree's — is kept out
      * by its own call site.
      *
@@ -326,8 +326,8 @@ object SchedulerDomain {
     /**
      * [firstTaskOccurrence] for **every** task at once, in one walk.
      *
-     * PRD §7's "All tasks" window needs the first occurrence of each of its rows to draw them as the tree's
-     * own cells, and asking one task at a time would re-walk the tree per task — O(tasks × tree) on every
+     * [tasksInTree] needs the first occurrence of every task, and asking one task at a time would re-walk the
+     * tree per task — O(tasks × tree) on every
      * recomposition, which is exactly the display cost ADR 0009 forbids. Same walk, same rules (depth-first,
      * each LIST visited once, a blank-titled cell neither matched nor descended into), so the two can never
      * disagree about which cell "the first occurrence" is.
@@ -404,8 +404,8 @@ object SchedulerDomain {
      * A render-via names *which occurrence of a mirrored parent* a row is drawn under, and the root cell is
      * the one parent that can never be mirrored — it is the viewport's header, not a place in the tree. So
      * the tree's top-level cells keep the `null` via they had before the root row existed, which is what
-     * lets all three drawings agree: the tree draws them under the root row, PRD §7's "All tasks" window
-     * and PRD §4's template draw them at the top with no parent at all, and one selection highlights
+     * lets all three drawings agree: the tree draws them under the root row, PRD §4's template draws them
+     * at the top with no parent at all, and one selection highlights
      * correctly in every one of them.
      */
     fun renderViaOf(state: SchedulerState, parentCellId: CellId): CellId? =
@@ -800,141 +800,33 @@ object SchedulerDomain {
         // returns 1.0 for it so the walk terminates — not a row that holds a share of its own, and it only
         // reaches [cellsByTask] at all because the PRD §2 root cell points at it. Returning it would put a
         // second 1.0 beside the tasks that divide that 1.0 up, so anything summing this map (the category
-        // rules' solve, the "All tasks" window, the tests that assert the leaves fill the tree) would count
+        // rules' solve, the tests that assert the leaves fill the tree) would count
         // the whole tree twice.
         return cellsByTask.keys.asSequence().filterNot(::isRootTask).associateWith { absolute(it) }
     }
 
-    // ----- The task list ("All tasks") ---------------------------------------------------------
+    // ----- The tasks the tree holds ------------------------------------------------------------
 
     /**
-     * PRD §7 lateral menu ("All tasks"): the three figures that window may order its rows by.
+     * Every task the tree actually holds: the **populated** cells' tasks, counted off `state.cells` as
+     * [absoluteTaskPriorities] and [RelativePriority.occurrenceChains] count them. A task "deleted" by blanking
+     * its title (PRD §4) is not held even while its records keep it alive, and a *detached parent* — titled, but
+     * with no cell pointing at it — is not held either.
      *
-     * All three are readouts of the tree the user is editing, never of the scheduler's blended view — see
-     * [TaskListEntry].
+     * **"Not in the tree" is [firstTaskOccurrences], not "has no cell",** and the two differ for a reason that is
+     * easy to miss: a detached parent keeps its whole **sub-tree** alive (that is what assigning its id back
+     * restores), so the tasks inside it still have cells — cells the tree cannot display anywhere, since nothing
+     * reachable from the root descends into that sub-list. Membership is therefore this walk, so the answer is
+     * exactly the set of tasks whose "go to task" (PRD §4) / "go to task tree" (PRD §8) has somewhere to go.
      */
-    enum class TaskListSort {
-        /** How many cells of the tree point at the task (a mirrored task counts once per cell). */
-        Occurrences,
-
-        /** The task's absolute priority share — the same number its rows show in the tree. */
-        Priority,
-
-        /**
-         * How alike the task's title is to another task's — [TitleSimilarity], the answer to "what have I
-         * written down twice?". Unlike the two above it is not a property of the task at all but of the
-         * task *against the rest of the list*, which is why it is the one figure that is computed only when
-         * it is asked for.
-         */
-        Similarity,
-    }
-
-    /**
-     * One row of the "All tasks" window: a task of the **live** tree, with the two figures it is sorted by.
-     *
-     * [priority] is [absoluteTaskPriorities], not [blendedTaskPriorities], for the same reason the tree's
-     * own percentage column is: this window is a readout of the arrangement on screen, which is what the
-     * user is editing — not of the keyframe blend the scheduler happens to be following right now.
-     */
-    data class TaskListEntry(
-        val taskId: TaskId,
-        val title: String,
-        val occurrences: Int,
-        val priority: Double,
-        /**
-         * How alike this title is to the other listed tasks' — `null` unless [TaskListSort.Similarity] asked
-         * for it, since it costs a pass over every pair of tasks and nothing else on this path reads it.
-         */
-        val similarity: TitleSimilarity? = null,
-    )
-
-    /**
-     * Every task the tree actually holds, ordered by [sort] — [descending] puts the largest figure at the
-     * top (the window's "top to bottom"), otherwise the smallest leads ("bottom to top").
-     *
-     * The rows are the **populated** cells' tasks, counted off `state.cells` exactly as
-     * [absoluteTaskPriorities] and [RelativePriority.occurrenceChains] count them, so the two columns can
-     * never disagree about what an occurrence is. Consequences worth knowing: a task "deleted" by blanking
-     * its title (PRD §4) is gone from the list even while its records keep it alive, and a *detached
-     * parent* — titled, but with no cell pointing at it — is not listed either, since it is not in the tree.
-     *
-     * **"Not in the tree" is [firstTaskOccurrences], not "has no cell",** and the two are different for a
-     * reason that is easy to miss: a detached parent keeps its whole **sub-tree** alive (that is what
-     * assigning its id back restores), so the tasks inside it still have cells — cells the tree cannot
-     * display anywhere, since nothing reachable from the root descends into that sub-list. Counting "has a
-     * populated cell" listed those, and [org.example.project.ui.TaskListWindow] then dropped them again when
-     * it asked this same walk for their row cells — a row silently missing from a window whose own sort had
-     * already counted it. Membership is therefore this walk, so the list is exactly the set of tasks whose
-     * "go to task" (PRD §4) / "go to task tree" (PRD §8) has somewhere to go.
-     *
-     * Deliberately NOT filtered: the occurrence **count** of a listed task still counts every populated cell
-     * pointing at it, unreachable ones included, because that is the occurrence the percentage is divided
-     * over. A task with one row in the tree and one stranded cell reads as 2 occurrences, and changing that
-     * here would make the two columns disagree.
-     *
-     * Ties fall back to the title and then the id so the order is total: without that, the many tasks
-     * sharing 0 % (or one occurrence) would be free to shuffle between recompositions. That final fallback
-     * is deliberately **not** reversed with [descending], so flipping the direction never re-shuffles a
-     * block sharing one figure.
-     *
-     * [TaskListSort.Similarity] is the one figure that is a fact about the *list* rather than about a task,
-     * so it is measured here and only here — and only when it is the sort asked for, because it costs a pass
-     * over every pair of titles (ADR 0009). Its order is the PRD's: the **best** score first, and among
-     * tasks sharing one best score, the one that **reaches it against the most other tasks**.
-     */
-    fun taskListEntries(
-        state: SchedulerState,
-        sort: TaskListSort = TaskListSort.Priority,
-        descending: Boolean = true,
-    ): List<TaskListEntry> {
-        val priorities = absoluteTaskPriorities(state)
-        // "In the tree" is ONE predicate, and it is this walk — the same one "go to task" / "go to task
-        // tree" asks, so a task has a row here exactly when the tree has somewhere to take you. Membership
-        // only: the COUNT below still counts every populated cell off `state.cells`, because that is the
-        // occurrence [absoluteTaskPriorities] and [RelativePriority.occurrenceChains] charge, and the
-        // percentage column has to keep agreeing with it.
+    fun tasksInTree(state: SchedulerState): Set<TaskId> {
         val inTree = firstTaskOccurrences(state)
-        val counts = HashMap<TaskId, Int>()
+        val held = LinkedHashSet<TaskId>()
         for (cell in state.cells.values) {
             val taskId = cell.taskId ?: continue
-            if (!isPopulatedCell(state, cell.id)) continue
-            if (taskId !in inTree) continue
-            counts[taskId] = (counts[taskId] ?: 0) + 1
+            if (taskId in inTree && isPopulatedCell(state, cell.id)) held += taskId
         }
-        val titles = counts.keys.associateWith { state.tasks[it]?.title.orEmpty() }
-        val similarities =
-            if (sort == TaskListSort.Similarity) TitleSimilarity.of(titles) else emptyMap()
-        val entries = counts.map { (taskId, count) ->
-            TaskListEntry(
-                taskId = taskId,
-                title = titles[taskId].orEmpty(),
-                occurrences = count,
-                priority = priorities[taskId] ?: 0.0,
-                similarity = similarities[taskId],
-            )
-        }
-        val byFigure = when (sort) {
-            TaskListSort.Occurrences ->
-                if (descending) compareByDescending<TaskListEntry> { it.occurrences }
-                else compareBy { it.occurrences }
-            TaskListSort.Priority ->
-                if (descending) compareByDescending<TaskListEntry> { it.priority }
-                else compareBy { it.priority }
-            // Two figures, in the PRD's order: the best score, then how many tasks reach that same best.
-            // Both follow the direction toggle — the tie-break is part of the figure, not part of the
-            // alphabetical fallback below.
-            TaskListSort.Similarity ->
-                if (descending) {
-                    compareByDescending<TaskListEntry> { it.similarity?.best ?: 0 }
-                        .thenByDescending { it.similarity?.matches ?: 0 }
-                } else {
-                    compareBy<TaskListEntry> { it.similarity?.best ?: 0 }
-                        .thenBy { it.similarity?.matches ?: 0 }
-                }
-        }
-        return entries.sortedWith(
-            byFigure.thenBy { it.title.lowercase() }.thenBy { it.taskId.value },
-        )
+        return held
     }
 
     // ----- The period edit window (a kind of restrictive period, and who may work through it) ----
@@ -955,19 +847,19 @@ object SchedulerDomain {
     /**
      * Every task the period edit window lists for [kind], ordered by title (then id, so the order is total).
      *
-     * The rows are the **schedulable leaves** of [taskListEntries], and only those: a resilience says where a
+     * The rows are the **schedulable leaves** of [tasksInTree], and only those: a resilience says where a
      * task may be *placed*, and a parent task is a grouping the scheduler never places (the task edit window
      * shows it no resilience section for the same reason). Offering a parent a value would be offering to
      * write a number nothing reads.
      */
     fun periodKindTaskRows(state: SchedulerState, kind: String): List<PeriodKindTaskRow> =
-        taskListEntries(state)
-            .filter { isLeafTask(state, it.taskId) }
-            .map { entry ->
+        tasksInTree(state)
+            .filter { isLeafTask(state, it) }
+            .map { taskId ->
                 PeriodKindTaskRow(
-                    taskId = entry.taskId,
-                    title = entry.title,
-                    resilience = state.tasks[entry.taskId]?.resilienceFor(kind)
+                    taskId = taskId,
+                    title = state.tasks[taskId]?.title.orEmpty(),
+                    resilience = state.tasks[taskId]?.resilienceFor(kind)
                         ?: PeriodKinds.defaultResilience(kind),
                 )
             }
@@ -6016,7 +5908,7 @@ object SchedulerDomain {
      * titles if no cells point to it**".
      *
      * "No cells point to it" is read as **not in the tree** ([shortestTaskTreePaths] has no path for it),
-     * which is the same predicate [taskListEntries] uses for membership and the same one "go to task" is
+     * which is the same predicate [tasksInTree] uses for membership and the same one "go to task" is
      * greyed on — one answer, not three. It is wider than `taskHasCells`, deliberately: a task stranded
      * inside a *detached parent's* sub-tree still has a cell, but there is no path in the tree to name it
      * by, so it is named by what it holds exactly as the detached parent above it is. A task with nothing
@@ -6153,7 +6045,7 @@ object SchedulerDomain {
      *
      * A row's path answers "**which** of the tasks with this title is this one", which is a fact about where
      * the task lives in the ACCOUNT, not about the tree this window happens to draw. Both projections re-root
-     * the state: PRD §7's "All tasks" roots at its synthetic list and PRD §4's template shadows
+     * the state: PRD §7's Search sub-trees root at a task's own sub-list and PRD §4's template shadows
      * [WellKnownIds.ROOT_LIST] with its own root, so read off the drawing every live task is pathless and
      * falls back to [childTitlesLabel] or its bare title — on the release account, **sixty-odd rows all
      * reading "planning"**, which is exactly the flattening the path exists to prevent (the same symptom the
@@ -6186,7 +6078,7 @@ object SchedulerDomain {
         val matching = eligibleAssignTaskIds(state, cellId, draftText, paths, excludeTaskId)
         // PRD §4 *Appearance* — see above. Both halves are read off the DRAWN tree, like everything else the
         // menu offers or hides: it is that tree's cell the user is editing, and its own session (the §4
-        // template window and "All tasks" each carry theirs).
+        // template window and the Search window each carry theirs).
         val sessionEntryTaskId =
             state.editSession
                 ?.takeIf { it.cellId == cellId }
@@ -6704,15 +6596,14 @@ object SchedulerDomain {
         // [WellKnownIds.ROOT_LIST] is seeded as well as [SchedulerState.rootListId]: every tree in the
         // account is rooted there (SchedulerState.empty, withTaskTreeLoaded, projectDefaultSubtree), so for
         // all of them this is the same list twice. It matters for the ONE projection that re-roots the state
-        // elsewhere — PRD §7's "All tasks" window
-        // ([org.example.project.scheduler.state.projectTaskList]), whose synthetic root holds one cell per
-        // task: a real root cell that is not the first occurrence of its task (nor an empty placeholder) is
-        // reachable from neither that root nor a detached parent, and without this seed the first edit
-        // boundary in that window would prune it out of the tree.
+        // elsewhere — an expanded Search row's sub-tree
+        // ([org.example.project.scheduler.state.projectSearchSubtree]), rooted at a task's own sub-list: a
+        // cell of the real root is reachable from neither that root nor a detached parent, and without this
+        // seed the first edit boundary in that window would prune it out of the tree.
         // [WellKnownIds.ROOT_CELL_LIST] joins them for the same reason: the root cell is reachable from
         // neither [SchedulerState.rootListId] (it sits ABOVE it) nor a detached parent, so without this seed
-        // the first edit boundary would prune the row the whole tree is drawn under — and, in PRD §7's "All
-        // tasks" window, would prune it out of the live tree.
+        // the first edit boundary would prune the row the whole tree is drawn under — and, in a Search
+        // sub-tree, would prune it out of the live tree.
         val queue =
             ArrayDeque(
                 listOf(state.rootListId, WellKnownIds.ROOT_LIST, WellKnownIds.ROOT_CELL_LIST) + detachedRoots,
