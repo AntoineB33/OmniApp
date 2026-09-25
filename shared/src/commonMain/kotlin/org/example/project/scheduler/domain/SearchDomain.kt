@@ -75,7 +75,8 @@ object SearchDomain {
         val query: String = "",
         val kinds: Set<Kind> = setOf(Kind.Task),
         val filters: Filters = Filters(),
-        val sorts: Sorts = Sorts(),
+        /** Dominant first ([SortMethod]). */
+        val sorts: List<SortMethod> = DEFAULT_SORTS,
     ) {
         /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */
         fun encode(): String =
@@ -99,11 +100,7 @@ object SearchDomain {
                     taskTreeDated = filters.taskTreeDated.name,
                     relationSection = filters.relationSection?.name,
                     shortcutRebound = filters.shortcutRebound.name,
-                    sort = sorts.overall.key.name,
-                    sortDescending = sorts.overall.descending,
-                    kindSorts = Kind.entries.mapNotNull { kind ->
-                        sorts.byKind[kind]?.let { kind.name to StoredSort(it.key.name, it.descending) }
-                    }.toMap(),
+                    sortMethods = sorts.map { StoredSortMethod(it.kind?.name, it.key.name, it.descending) },
                 ),
             )
 
@@ -143,21 +140,34 @@ object SearchDomain {
                             TaskRelationsDomain.Section.entries.firstOrNull { it.name == stored.relationSection },
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
                     ),
-                    sorts = Sorts(
-                        overall = sortNamed(null, stored.sort, stored.sortDescending),
-                        byKind = stored.kindSorts.entries.mapNotNull { (kindName, sort) ->
-                            val kind = Kind.entries.firstOrNull { it.name == kindName } ?: return@mapNotNull null
-                            (kind to sortNamed(kind, sort.key, sort.descending)).takeIf { it.second != Sort() }
-                        }.toMap(),
-                    ),
+                    sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                 )
             }
 
-            /** A key this build does not know, or one [kind]'s list does not offer, falls back to relevance. */
-            private fun sortNamed(kind: Kind?, key: String?, descending: Boolean): Sort {
-                val known = sortKeysOf(kind).firstOrNull { it.name == key } ?: return Sort()
-                return Sort(known, descending)
-            }
+            /**
+             * The stored methods this build can read, in order: one naming a kind or a key it does not know, or a
+             * key its kind does not offer, is dropped — the rest keep their order — and so is a repeat.
+             */
+            /**
+             * The first sorting shape (2026-09-25, `14e11c8`): one whole-list sort (`sort`, absent = relevance)
+             * and one sort per kind (`kindSorts`), each kind's applied beneath the whole list's. As a list: the
+             * whole-list method dominant, the kinds' below it. Nothing stored at all is the default list.
+             */
+            private fun legacySortMethods(stored: StoredConfig): List<StoredSortMethod> =
+                listOf(StoredSortMethod(null, stored.sort ?: SortKey.Relevance.name, stored.sortDescending)) +
+                    Kind.entries.mapNotNull { kind ->
+                        stored.kindSorts[kind.name]?.let {
+                            StoredSortMethod(kind.name, it.key ?: SortKey.Relevance.name, it.descending)
+                        }
+                    }
+
+            private fun sortMethodsNamed(stored: List<StoredSortMethod>): List<SortMethod> =
+                stored.mapNotNull { method ->
+                    val kind =
+                        if (method.kind == null) null else Kind.entries.firstOrNull { it.name == method.kind } ?: return@mapNotNull null
+                    val key = sortKeysOf(kind).firstOrNull { it.name == method.key } ?: return@mapNotNull null
+                    SortMethod(kind, key, method.descending)
+                }.distinctBy { it.kind to it.key }
 
             private fun kindsNamed(names: List<String>): Set<Kind> =
                 names.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet()
@@ -296,30 +306,46 @@ object SearchDomain {
             listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
         }
 
-    /** One ordering: a key, and whether the largest comes first. Ties keep the order beneath (the sort is stable). */
-    data class Sort(val key: SortKey = SortKey.Relevance, val descending: Boolean = false)
-
     /**
-     * How the result list is ordered, in two levels: each kind's rows among themselves ([of]), then the whole
-     * list ([overall]) — stably, so rows the overall key cannot tell apart keep their kind's order. The defaults
-     * are relevance at both levels, which is the order the window had before it could be sorted.
+     * One sorting method of the list at the top of the Configuration Search window: a [key], the rows it is
+     * about ([kind] null = every row; else that kind's rows only), and its direction. A method is identified
+     * by its kind and key ([sameMethod]) — the list holds each at most once, whatever its direction.
+     *
+     * The list is ordered **dominant first**, and applied as stable sorts from the least dominant up, so a
+     * method only decides between rows every method above it leaves tied. A method about one kind orders that
+     * kind's rows **among the places they already hold** ([results]): it never moves a row of another kind,
+     * which is what lets "alarm: time" sit anywhere in the list without pulling the alarms to one end.
      */
-    data class Sorts(
-        val overall: Sort = Sort(),
-        /** Only the kinds whose order is not the default — so two equal orderings are equal values. */
-        val byKind: Map<Kind, Sort> = emptyMap(),
-    ) {
-        fun of(kind: Kind): Sort = byKind[kind] ?: Sort()
+    data class SortMethod(val kind: Kind?, val key: SortKey, val descending: Boolean = false) {
+        fun sameMethod(other: SortMethod): Boolean = kind == other.kind && key == other.key
 
-        fun with(kind: Kind, sort: Sort): Sorts =
-            copy(byKind = if (sort == Sort()) byKind - kind else byKind + (kind to sort))
+        val label: String get() = (kind?.label?.let { "$it: " } ?: "") + key.label
+    }
+
+    /** Relevance over the whole list — the order the window had before it could be sorted. */
+    val DEFAULT_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.Relevance))
+
+    /** [sorts] with [method] at the bottom (checked in a drop-down), or without it (unchecked, or its ✕). */
+    fun withSortMethod(sorts: List<SortMethod>, method: SortMethod, on: Boolean): List<SortMethod> {
+        val rest = sorts.filterNot { it.sameMethod(method) }
+        return if (on) rest + method else rest
+    }
+
+    /** [sorts] with the method at [from] dragged to [to] — the others keep their order around it. */
+    fun movedSortMethod(sorts: List<SortMethod>, from: Int, to: Int): List<SortMethod> {
+        if (from !in sorts.indices) return sorts
+        val list = sorts.toMutableList()
+        val method = list.removeAt(from)
+        list.add(to.coerceIn(0, list.size), method)
+        return list
     }
 
     /**
      * Every configuration of the Search window, which the Configuration Search window lists — one section per
      * kind, after the [section]-less ones that are about the search as a whole (the two the Search window
-     * itself shows, and the whole list's order). The window finds them by [label] ([configurations]). A
-     * [sorts] setting orders its section's rows (the whole list's, for the general section).
+     * itself shows, and the sorting methods about every row). The window finds them by [label]
+     * ([configurations]). A [sorts] setting is a drop-down with a check box per sorting method of its section's
+     * rows ([sortKeysOf]); checking one adds it at the bottom of the [Config.sorts] list.
      */
     enum class Setting(val section: Kind?, val label: String, val sorts: Boolean = false) {
         SearchText(null, "Search text"),
@@ -395,13 +421,19 @@ object SearchDomain {
         val taskTreeDated: String? = null,
         val relationSection: String? = null,
         val shortcutRebound: String? = null,
+        /** Null = never stored (a configuration written before sorting): the default list. */
+        val sortMethods: List<StoredSortMethod>? = null,
+        /** The first sorting shape's fields — read only, when [sortMethods] is absent ([Config.decode]). */
         val sort: String? = null,
         val sortDescending: Boolean = false,
-        val kindSorts: Map<String, StoredSort> = emptyMap(),
+        val kindSorts: Map<String, StoredLegacySort> = emptyMap(),
     )
 
     @Serializable
-    private data class StoredSort(val key: String? = null, val descending: Boolean = false)
+    private data class StoredLegacySort(val key: String? = null, val descending: Boolean = false)
+
+    @Serializable
+    private data class StoredSortMethod(val kind: String? = null, val key: String = "", val descending: Boolean = false)
 
     @Serializable
     private data class StoredConfigurationSearch(
@@ -883,8 +915,8 @@ object SearchDomain {
      * kind listed before it. Within one tier the kinds keep the drop-down's order, and each kind its own order
      * ([taskResults], [itemResults]). [allPaths] is read only when [Kind.Task] is checked.
      *
-     * That is the default of [sorts]. Each kind's rows are ordered first by the kind's own sort, then the whole
-     * list by the overall one, both stably: a key's ties keep the order beneath it.
+     * That is the base [sorts] are applied to, and so the last word on anything they leave tied. They are
+     * applied from the least dominant up, each stably ([SortMethod]).
      */
     fun results(
         state: SchedulerState,
@@ -892,22 +924,33 @@ object SearchDomain {
         query: String,
         allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
         filters: Filters = Filters(),
-        sorts: Sorts = Sorts(),
+        sorts: List<SortMethod> = DEFAULT_SORTS,
     ): List<Result> {
-        val keys = SortValues(state, query)
-        val rows =
+        val base =
             Kind.entries
                 .filter { it in kinds }
                 .flatMap { kind ->
-                    val own =
-                        if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
-                    val kept = own.filter { passes(state, it, filters) }
-                    // The kind's own order already IS its default (relevance first).
-                    val sort = sorts.of(kind)
-                    if (sort == Sort()) kept else sortedBy(kept, sort, keys)
+                    if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
                 }
-        // Rows come in the drop-down's order of the kinds, so the Type key ascending has nothing to move.
-        return sortedBy(rows, sorts.overall, keys)
+                .filter { passes(state, it, filters) }
+                // Stable: ties keep the kind order and each kind's own order.
+                .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
+        if (sorts == DEFAULT_SORTS) return base
+        val keys = SortValues(state, query)
+        var rows = base
+        for (method in sorts.asReversed()) {
+            val kind = method.kind
+            if (kind == null) {
+                rows = sortedBy(rows, method, keys)
+                continue
+            }
+            // Only this kind's rows move, and only into the places this kind's rows held.
+            val places = rows.indices.filter { rows[it].kind == kind }
+            if (places.size < 2) continue
+            val sorted = sortedBy(places.map { rows[it] }, method, keys)
+            rows = rows.toMutableList().also { list -> places.forEachIndexed { i, place -> list[place] = sorted[i] } }
+        }
+        return rows
     }
 
     /**
@@ -915,8 +958,8 @@ object SearchDomain {
      * and a row without a value for the key — a task no live cell holds has no priority, a tree no date —
      * goes last in either direction.
      */
-    private fun sortedBy(rows: List<Result>, sort: Sort, keys: SortValues): List<Result> {
-        if (rows.size < 2 || (sort.key == SortKey.Type && !sort.descending)) return rows
+    private fun sortedBy(rows: List<Result>, sort: SortMethod, keys: SortValues): List<Result> {
+        if (rows.size < 2) return rows
         val keyed = rows.map { it to keys.of(it, sort.key) }
         @Suppress("UNCHECKED_CAST")
         val order = Comparator<Pair<Result, Comparable<*>?>> { (_, a), (_, b) ->

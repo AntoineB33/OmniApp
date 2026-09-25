@@ -13,13 +13,19 @@ Check here before assuming the code matches the docs.
 
 ### Sorting in the Configuration Search window — 2026-09-25
 
-User spec: *"In the Search configurations window, add sorting configurations."* A **Sort by** setting in the
-General section (the whole list: relevance / name / type) and at the end of every kind's section (relevance,
-name, and the kind's own keys), each with ascending / descending.
+User spec: *"In the Search configurations window, add sorting configurations"*, then: a list of sorting
+methods *"from dominant to less dominant"* at *"the top of the second section"* of the window (above the
+scrolling configurations), fed by a **Sort by** per type section — *"a drop-down menu with check box for each
+sorting methods"*, a checked one added *"to the bottom of the list"* — reorderable by **drag**, each with an
+**✕** removing it.
 
-- `SearchDomain.SortKey` / `sortKeysOf` / `Sort` / `Sorts` (on `Config`), `Setting.*Sort`, `results(sorts=)`.
-  Defaults reproduce the previous order exactly. Stored in the Search window's local JSON config (`sort`,
-  `sortDescending`, `kindSorts`); a config written before decodes to the defaults (tested). No SQLite
+- `SearchDomain.SortKey` / `sortKeysOf` / `SortMethod` / `DEFAULT_SORTS` / `withSortMethod` /
+  `movedSortMethod`; `Config.sorts` (a list); `Setting.*Sort`; `results(sorts=)`. A method of one type reorders
+  that type's rows within their own places. Kept a per-method ascending/descending toggle in the list (not in
+  the spec; a key without a direction would halve what each method can say).
+- The default list is relevance alone, reproducing the previous order exactly. Stored in the Search window's
+  local JSON config (`sortMethods`). A config written before sorting decodes to the default; one written by the
+  first sorting build (`14e11c8`: `sort` + `kindSorts`) becomes the equivalent list (both tested). No SQLite
   migration, nothing synced.
 - **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
 

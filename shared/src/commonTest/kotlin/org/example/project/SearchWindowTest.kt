@@ -643,8 +643,11 @@ class SearchWindowTest {
 
     // ----- Sorting ----------------------------------------------------------------------------------
 
+    private fun method(kind: SearchDomain.Kind?, key: SearchDomain.SortKey, descending: Boolean = false) =
+        SearchDomain.SortMethod(kind, key, descending)
+
     @Test
-    fun each_kind_is_sorted_by_its_own_key_and_the_default_is_the_order_before_sorts() {
+    fun the_sorting_methods_apply_dominant_first_and_a_kinds_method_keeps_the_other_kinds_in_place() {
         val s =
             SchedulerState.empty().copy(
                 alarms = listOf(
@@ -658,27 +661,56 @@ class SearchWindowTest {
                 ),
             )
         val kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer)
-        fun names(sorts: SearchDomain.Sorts) = SearchDomain.results(s, kinds, "", sorts = sorts).map { it.name }
+        fun names(vararg sorts: SearchDomain.SortMethod) =
+            SearchDomain.results(s, kinds, "", sorts = sorts.toList()).map { it.name }
+        val alarmTime = method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.AlarmTime)
+        val name = method(null, SearchDomain.SortKey.Name)
 
-        // Default: relevance (all equal on a blank query), then each kind by name, kinds in the drop-down's order.
-        assertEquals(listOf("Alarm", "Bake", "Cook", "Long", "Short"), names(SearchDomain.Sorts()))
-        // The alarms by time, the timers by duration, longest first: each kind within its own rows.
-        val own =
-            SearchDomain.Sorts()
-                .with(SearchDomain.Kind.Alarm, SearchDomain.Sort(SearchDomain.SortKey.AlarmTime))
-                .with(SearchDomain.Kind.Timer, SearchDomain.Sort(SearchDomain.SortKey.TimerDuration, descending = true))
-        assertEquals(listOf("Alarm", "Cook", "Bake", "Long", "Short"), names(own))
-        // The whole list by name, Z first — the kinds interleave.
-        val byName = SearchDomain.Sorts(overall = SearchDomain.Sort(SearchDomain.SortKey.Name, descending = true))
-        assertEquals(listOf("Short", "Long", "Cook", "Bake", "Alarm"), names(byName))
-        // By type, reversed: the timers first, each kind keeping its own order.
-        val byType = own.copy(overall = SearchDomain.Sort(SearchDomain.SortKey.Type, descending = true))
-        assertEquals(listOf("Long", "Short", "Alarm", "Cook", "Bake"), names(byType))
-        // Setting a kind back to its default leaves no trace: two equal orderings are equal values.
+        // The default list (relevance) is the order before sorting; so is an empty list.
+        val base = listOf("Alarm", "Bake", "Cook", "Long", "Short")
+        assertEquals(base, SearchDomain.results(s, kinds, "").map { it.name })
+        assertEquals(base, names())
+        // One kind's methods reorder its rows in the places they held: the timers never move for the alarms.
         assertEquals(
-            SearchDomain.Sorts(),
-            own.with(SearchDomain.Kind.Alarm, SearchDomain.Sort()).with(SearchDomain.Kind.Timer, SearchDomain.Sort()),
+            listOf("Alarm", "Cook", "Bake", "Long", "Short"),
+            names(alarmTime, method(SearchDomain.Kind.Timer, SearchDomain.SortKey.TimerDuration, descending = true)),
         )
+        // The whole list by name, Z first — the kinds interleave — and the alarms by time in the alarms' places.
+        assertEquals(
+            listOf("Short", "Long", "Alarm", "Cook", "Bake"),
+            names(alarmTime, name.copy(descending = true)),
+        )
+        // Dominance: below the name (every name differs) the alarms' time decides nothing; above it, it decides.
+        assertEquals(base, names(name, alarmTime))
+        assertEquals(listOf("Alarm", "Cook", "Bake", "Long", "Short"), names(alarmTime, name))
+        // By type, reversed: the timers first, the alarms still by time among themselves.
+        assertEquals(
+            listOf("Long", "Short", "Alarm", "Cook", "Bake"),
+            names(method(null, SearchDomain.SortKey.Type, descending = true), alarmTime),
+        )
+    }
+
+    @Test
+    fun checking_adds_at_the_bottom_dragging_reorders_and_the_cross_removes() {
+        val relevance = SearchDomain.DEFAULT_SORTS.single()
+        val alarmTime = method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.AlarmTime)
+        val name = method(null, SearchDomain.SortKey.Name)
+        var sorts = SearchDomain.withSortMethod(SearchDomain.DEFAULT_SORTS, alarmTime, on = true)
+        sorts = SearchDomain.withSortMethod(sorts, name, on = true)
+        assertEquals(listOf(relevance, alarmTime, name), sorts)
+        // A method is in the list once, whatever its direction.
+        assertEquals(
+            listOf(relevance, name, alarmTime.copy(descending = true)),
+            SearchDomain.withSortMethod(sorts, alarmTime.copy(descending = true), on = true),
+        )
+        // Dragged to the top, and to the bottom; the others keep their order around it.
+        assertEquals(listOf(name, relevance, alarmTime), SearchDomain.movedSortMethod(sorts, 2, 0))
+        assertEquals(listOf(alarmTime, name, relevance), SearchDomain.movedSortMethod(sorts, 0, 2))
+        assertEquals(sorts, SearchDomain.movedSortMethod(sorts, 7, 0))
+        // The ✕ (or unchecking) removes it.
+        assertEquals(listOf(relevance, name), SearchDomain.withSortMethod(sorts, alarmTime, on = false))
+        // "alarm: name" and "name" are two methods.
+        assertEquals(4, SearchDomain.withSortMethod(sorts, method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.Name), on = true).size)
     }
 
     @Test
@@ -691,7 +723,7 @@ class SearchWindowTest {
         val live = SchedulerDomain.absoluteTaskPriorities(s)
         assertFalse(pie in live)
         for (descending in listOf(false, true)) {
-            val sorts = SearchDomain.Sorts().with(SearchDomain.Kind.Task, SearchDomain.Sort(SearchDomain.SortKey.TaskPriority, descending))
+            val sorts = listOf(method(SearchDomain.Kind.Task, SearchDomain.SortKey.TaskPriority, descending))
             val rows = SearchDomain.results(s, tasks, "", sorts = sorts).map { it as SearchDomain.TaskResult }
             val withValue = rows.takeWhile { it.taskId in live }
             assertEquals(listOf(pie), rows.drop(withValue.size).map { it.taskId }, "the row without a priority closes the list")
@@ -701,21 +733,43 @@ class SearchWindowTest {
     }
 
     @Test
-    fun the_sorts_survive_their_local_encoding_and_an_unknown_key_falls_back() {
+    fun the_sorting_methods_survive_their_local_encoding_and_an_unknown_one_is_dropped() {
         val config =
             SearchDomain.Config(
-                sorts = SearchDomain.Sorts(overall = SearchDomain.Sort(SearchDomain.SortKey.Type, descending = true))
-                    .with(SearchDomain.Kind.Alarm, SearchDomain.Sort(SearchDomain.SortKey.AlarmTime))
-                    .with(SearchDomain.Kind.Task, SearchDomain.Sort(SearchDomain.SortKey.Name, descending = true)),
+                sorts = listOf(
+                    method(null, SearchDomain.SortKey.Type, descending = true),
+                    method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.AlarmTime),
+                    method(SearchDomain.Kind.Task, SearchDomain.SortKey.Name, descending = true),
+                ),
             )
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
-        // Local-DB compatibility: a configuration stored before sorts decodes to the default order.
-        assertEquals(SearchDomain.Sorts(), SearchDomain.Config.decode("""{"query":"x","alarmState":"On"}""")!!.sorts)
-        // A key this build does not know, or one the kind does not offer, is relevance.
+        // An emptied list stays empty; it does not come back as the default.
+        val none = SearchDomain.Config(sorts = emptyList())
+        assertEquals(none, SearchDomain.Config.decode(none.encode()))
+        // Local-DB compatibility: a configuration stored before sorting decodes to the default list.
+        assertEquals(SearchDomain.DEFAULT_SORTS, SearchDomain.Config.decode("""{"query":"x","alarmState":"On"}""")!!.sorts)
+        // Local-DB compatibility: the first sorting shape (one whole-list sort, one per kind) becomes the list —
+        // the whole-list method dominant, the kinds' below it in the drop-down's order.
         assertEquals(
-            SearchDomain.Sorts(),
+            listOf(
+                method(null, SearchDomain.SortKey.Name, descending = true),
+                method(SearchDomain.Kind.Task, SearchDomain.SortKey.TaskPriority),
+                method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.AlarmTime, descending = true),
+            ),
             SearchDomain.Config.decode(
-                """{"sort":"Wormhole","kindSorts":{"Alarm":{"key":"TimerDuration"},"Nope":{"key":"Name"}}}""",
+                """{"sort":"Name","sortDescending":true,"kindSorts":{"Alarm":{"key":"AlarmTime","descending":true},""" +
+                    """"Task":{"key":"TaskPriority"}}}""",
+            )!!.sorts,
+        )
+        // That shape's defaults (a relevance whole-list sort, no kind sort) are today's default.
+        assertEquals(SearchDomain.DEFAULT_SORTS, SearchDomain.Config.decode("""{"sort":"Relevance","kindSorts":{}}""")!!.sorts)
+        // A kind or key this build does not know, a key its kind does not offer, and a repeat are dropped; the
+        // rest keep their order.
+        assertEquals(
+            listOf(method(null, SearchDomain.SortKey.Name), method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.AlarmTime)),
+            SearchDomain.Config.decode(
+                """{"sortMethods":[{"key":"Wormhole"},{"key":"Name"},{"kind":"Alarm","key":"TimerDuration"},""" +
+                    """{"kind":"Nope","key":"Name"},{"kind":"Alarm","key":"AlarmTime"},{"key":"Name","descending":true}]}""",
             )!!.sorts,
         )
     }

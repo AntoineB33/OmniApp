@@ -594,12 +594,14 @@ to the task id. Do not add a second row implementation: the flat one this replac
   section and one section per kind (`SearchDomain.configurations`). Neither window keeps a copy, so a filter set
   in one narrows the other's list at once. A filter applies to its own kind's rows only, and every one has an
   "any" that filters nothing; the Search window's button counts the ones that are on.
-- **The sorts are two stable levels** (`SearchDomain.Sorts`, in the same `Config`): each kind's rows by the
-  kind's own `Sort` first, then the whole list by `overall` — so the overall key's ties keep the kind's order.
-  Both default to **relevance**, which is exactly the order the window had before it could be sorted; a kind
-  set back to its default leaves no entry (`Sorts.with`), so equal orderings are equal values. A row with no
-  value for a key goes last in either direction. The keys that read more than one row (priorities, counts)
-  are computed once per `results` and **only when a sort asks for them** — never under the default order.
+- **The sorting is ONE ordered list of methods** (`SearchDomain.Config.sorts`, `SortMethod` = kind-or-all +
+  key + direction), dominant first, shown at the top of the Configuration Search window's result section (its second section); every section's Sort by
+  is only a check-box view onto it (checking appends, `withSortMethod`; dragging is `movedSortMethod`). It is
+  applied as **stable sorts from the least dominant up** over the default (relevance) order, which therefore
+  settles every tie. A method of one kind **permutes that kind's rows within the places they hold** — never a
+  comparator that returns "tie" across kinds, which is not transitive and breaks the sort's contract. A row
+  with no value for a key goes last in either direction. The keys that read more than one row (priorities,
+  counts) are computed once per `results` and **only when a method asks for them** — never under the default.
 - **A history unit, a task tree, a task relation, a keyboard shortcut** are kinds too (`itemResults`): the
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and

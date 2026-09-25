@@ -26,7 +26,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,16 +55,18 @@ import org.example.project.scheduler.state.SchedulerState
 /**
  * PRD §7 *Search*: the **Configuration Search** window, opened from the Search window's configuration. It lists
  * **every configuration of the Search window** — the two the Search window shows (its search text and its
- * types), the per-kind filters ([SearchDomain.Filters]) and the orderings ([SearchDomain.Sorts]: the whole
- * list's, and each kind's rows among themselves) — in sections, one for the search as a whole and one per kind
- * of element.
+ * types), the per-kind filters ([SearchDomain.Filters]) and a **Sort by** per section, a drop-down with a
+ * check box for each sorting method of that section's rows — in sections, one for the search as a whole and one
+ * per kind of element.
  *
- * Like the Search window it is a **configuration section** above a **result section**. Its configuration has
- * a search bar that finds configurations by name, the same kind drop-down ([KindsDropDown]) that keeps only
- * the checked kinds' sections, and a button that keeps only the kinds the Search window's results actually
- * hold ([SearchDomain.kindsInResults]). Its results are the configurations themselves, each edited in place:
- * they are the Search window's own ([config]), held by `App`, so a change here narrows that window's list at
- * once.
+ * Like the Search window it is a **configuration section** above a **result section**. Its configuration has a
+ * search bar that finds configurations by name, the same kind drop-down ([KindsDropDown]) that keeps only the
+ * checked kinds' sections, and a button that keeps only the kinds the Search window's results actually hold
+ * ([SearchDomain.kindsInResults]). The result section opens on the **list of sorting methods** in force
+ * ([SearchDomain.Config.sorts], dominant first) — checking a method in a Sort by adds it at the bottom, dragging
+ * one reorders the list, its ✕ removes it — held above the scrolling configurations, so it stays in view while
+ * they are checked. The configurations are edited in place: they are the Search window's own ([config]), held
+ * by `App`, so a change here narrows that window's list at once.
  *
  * Its own configuration ([own]) is local-only view state, kept by `App` like the Search window's.
  */
@@ -131,7 +142,8 @@ fun ConfigurationSearchWindow(
 
             HorizontalDivider()
 
-            // --- The result section: the configurations -----------------------------------------------
+            // --- The result section: the sorting methods in force, then the configurations -------------
+            SortMethodList(config.sorts) { onConfigChange(config.copy(sorts = it)) }
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -245,51 +257,143 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.ShortcutReboundSetting ->
             Choices(SearchDomain.Tri.entries, f.shortcutRebound, { it.label }) { filters(f.copy(shortcutRebound = it)) }
-        SearchDomain.Setting.SortResults ->
-            SortEditor(null, config.sorts.overall) { onChange(config.copy(sorts = config.sorts.copy(overall = it))) }
+        SearchDomain.Setting.SortResults,
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ReminderSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
         SearchDomain.Setting.ShortcutSort,
-        -> {
-            val kind = setting.section ?: return
-            SortEditor(kind, config.sorts.of(kind)) { onChange(config.copy(sorts = config.sorts.with(kind, it))) }
+        -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
+    }
+}
+
+/**
+ * A Sort by: a drop-down with a check box per sorting method of [kind]'s rows (null = every row). Checking one
+ * adds it at the bottom of [sorts]; unchecking removes it. The menu stays open, so several can be checked in
+ * turn, each landing below the last.
+ */
+@Composable
+private fun SortMethodPicker(
+    kind: SearchDomain.Kind?,
+    sorts: List<SearchDomain.SortMethod>,
+    onChange: (List<SearchDomain.SortMethod>) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val methods = SearchDomain.sortKeysOf(kind).map { SearchDomain.SortMethod(kind, it) }
+    fun inList(method: SearchDomain.SortMethod) = sorts.any { it.sameMethod(method) }
+    Box {
+        Text(
+            text = methods.filter(::inList).joinToString(", ") { it.key.label }.ifEmpty { "none" } + "  ▾",
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                .menuToggleClickable(open) { open = it }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+        transientMenuDismissal(open) { open = false }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+            methods.forEach { method ->
+                val checked = inList(method)
+                DropdownMenuItem(
+                    text = { Text(method.key.label) },
+                    leadingIcon = { Checkbox(checked = checked, onCheckedChange = null) },
+                    onClick = { onChange(SearchDomain.withSortMethod(sorts, method, on = !checked)) },
+                )
+            }
         }
     }
 }
 
 /**
- * An ordering: its key, from what [kind]'s rows offer ([SearchDomain.sortKeysOf]; null = the whole list), and
- * its direction.
+ * The sorting methods in force, dominant first: each row can be dragged to another place, its direction
+ * flipped, and removed with its ✕. The dragged row follows the pointer and lands where it is released, the rows
+ * it passed over each moving one place (`SearchDomain.movedSortMethod`).
  */
 @Composable
-private fun SortEditor(kind: SearchDomain.Kind?, sort: SearchDomain.Sort, onChange: (SearchDomain.Sort) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box {
+private fun SortMethodList(sorts: List<SearchDomain.SortMethod>, onChange: (List<SearchDomain.SortMethod>) -> Unit) {
+    val current by rememberUpdatedState(sorts)
+    val change by rememberUpdatedState(onChange)
+    var dragged by remember { mutableStateOf<Int?>(null) }
+    var dragY by remember { mutableStateOf(0f) }
+    // One row's height plus the gap between rows: what a drag must cover to pass one row.
+    var pitch by remember { mutableStateOf(1f) }
+    val gap = 4.dp
+    val gapPx = with(LocalDensity.current) { gap.toPx() }
+    Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
+        Text("Sort by — most dominant first", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        if (sorts.isEmpty()) {
             Text(
-                text = sort.key.label + "  ▾",
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                    .menuToggleClickable(open) { open = it }
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                text = "No sorting method: the results keep their default order. Check one in a Sort by below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            transientMenuDismissal(open) { open = false }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-                SearchDomain.sortKeysOf(kind).forEach { key ->
-                    DropdownMenuItem(text = { Text(key.label) }, onClick = { open = false; onChange(sort.copy(key = key)) })
+        }
+        sorts.forEachIndexed { index, method ->
+            val isDragged = dragged == index
+            key(method.kind, method.key) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .zIndex(if (isDragged) 1f else 0f)
+                        .graphicsLayer { translationY = if (isDragged) dragY else 0f }
+                        .onSizeChanged { pitch = it.height + gapPx }
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (isDragged) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        .pointerInput(method.kind, method.key) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    dragged = current.indexOfFirst { it.sameMethod(method) }
+                                    dragY = 0f
+                                },
+                                onDragEnd = {
+                                    val from = dragged
+                                    if (from != null) {
+                                        val to = (from + (dragY / pitch).roundToInt()).coerceIn(0, current.lastIndex)
+                                        if (to != from) change(SearchDomain.movedSortMethod(current, from, to))
+                                    }
+                                    dragged = null
+                                    dragY = 0f
+                                },
+                                onDragCancel = { dragged = null; dragY = 0f },
+                            ) { pointer, amount ->
+                                pointer.consume()
+                                dragY += amount.y
+                            }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = "${index + 1}. ${method.label}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ToggleChip(
+                        text = if (method.descending) "↓ descending" else "↑ ascending",
+                        on = method.descending,
+                        onToggle = { down ->
+                            onChange(sorts.map { if (it.sameMethod(method)) it.copy(descending = down) else it })
+                        },
+                    )
+                    Text(
+                        text = "✕",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onChange(SearchDomain.withSortMethod(sorts, method, on = false)) }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
                 }
             }
         }
-        ToggleChip(
-            text = if (sort.descending) "↓ descending" else "↑ ascending",
-            on = sort.descending,
-            onToggle = { onChange(sort.copy(descending = it)) },
-        )
     }
 }
 
