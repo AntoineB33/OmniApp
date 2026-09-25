@@ -583,9 +583,12 @@ class SearchWindowTest {
         // The general section first, then one per kind, in the drop-down's order.
         assertEquals(listOf<SearchDomain.Kind?>(null) + SearchDomain.Kind.entries, sections.map { it.first })
         assertEquals(
-            listOf(SearchDomain.Setting.SearchText, SearchDomain.Setting.Types),
+            listOf(SearchDomain.Setting.SearchText, SearchDomain.Setting.Types, SearchDomain.Setting.SortResults),
             sections.first().second,
         )
+        // Every kind's section ends with how its rows are ordered, and "sort" finds every ordering.
+        assertTrue(sections.drop(1).all { (_, settings) -> settings.last().sorts })
+        assertEquals(1 + SearchDomain.Kind.entries.size, SearchDomain.configurations("sort", every).sumOf { it.second.size })
         // The bar finds configurations by name; a section with nothing left is dropped.
         val state = SearchDomain.configurations("state", every)
         assertEquals(listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), state.map { it.first })
@@ -636,6 +639,85 @@ class SearchWindowTest {
         assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
         // Stored before copies existed: it edits the original Search window.
         assertEquals("Search", SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.target)
+    }
+
+    // ----- Sorting ----------------------------------------------------------------------------------
+
+    @Test
+    fun each_kind_is_sorted_by_its_own_key_and_the_default_is_the_order_before_sorts() {
+        val s =
+            SchedulerState.empty().copy(
+                alarms = listOf(
+                    AlarmEntry(id = "a1", label = "Bake", timeOfDayMinutes = 9 * 60),
+                    AlarmEntry(id = "a2", label = "Alarm", timeOfDayMinutes = 7 * 60),
+                    AlarmEntry(id = "a3", label = "Cook", timeOfDayMinutes = 8 * 60),
+                ),
+                timers = listOf(
+                    TimerEntry(id = "t1", label = "Long", durationSeconds = 600),
+                    TimerEntry(id = "t2", label = "Short", durationSeconds = 60),
+                ),
+            )
+        val kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer)
+        fun names(sorts: SearchDomain.Sorts) = SearchDomain.results(s, kinds, "", sorts = sorts).map { it.name }
+
+        // Default: relevance (all equal on a blank query), then each kind by name, kinds in the drop-down's order.
+        assertEquals(listOf("Alarm", "Bake", "Cook", "Long", "Short"), names(SearchDomain.Sorts()))
+        // The alarms by time, the timers by duration, longest first: each kind within its own rows.
+        val own =
+            SearchDomain.Sorts()
+                .with(SearchDomain.Kind.Alarm, SearchDomain.Sort(SearchDomain.SortKey.AlarmTime))
+                .with(SearchDomain.Kind.Timer, SearchDomain.Sort(SearchDomain.SortKey.TimerDuration, descending = true))
+        assertEquals(listOf("Alarm", "Cook", "Bake", "Long", "Short"), names(own))
+        // The whole list by name, Z first — the kinds interleave.
+        val byName = SearchDomain.Sorts(overall = SearchDomain.Sort(SearchDomain.SortKey.Name, descending = true))
+        assertEquals(listOf("Short", "Long", "Cook", "Bake", "Alarm"), names(byName))
+        // By type, reversed: the timers first, each kind keeping its own order.
+        val byType = own.copy(overall = SearchDomain.Sort(SearchDomain.SortKey.Type, descending = true))
+        assertEquals(listOf("Long", "Short", "Alarm", "Cook", "Bake"), names(byType))
+        // Setting a kind back to its default leaves no trace: two equal orderings are equal values.
+        assertEquals(
+            SearchDomain.Sorts(),
+            own.with(SearchDomain.Kind.Alarm, SearchDomain.Sort()).with(SearchDomain.Kind.Timer, SearchDomain.Sort()),
+        )
+    }
+
+    @Test
+    fun a_row_without_a_value_for_the_key_goes_last_in_either_direction() {
+        var s = withStoredCopy(tree())
+        // Pie leaves the live tree; the stored tree still holds it, so it is a row — with no live priority.
+        val pie = taskWithTitle(s, "Pie")
+        s = r(s, SchedulerIntent.SetCellTitle(cellWithTitle(s, "Pie"), ""))
+        val tasks = setOf(SearchDomain.Kind.Task)
+        val live = SchedulerDomain.absoluteTaskPriorities(s)
+        assertFalse(pie in live)
+        for (descending in listOf(false, true)) {
+            val sorts = SearchDomain.Sorts().with(SearchDomain.Kind.Task, SearchDomain.Sort(SearchDomain.SortKey.TaskPriority, descending))
+            val rows = SearchDomain.results(s, tasks, "", sorts = sorts).map { it as SearchDomain.TaskResult }
+            val withValue = rows.takeWhile { it.taskId in live }
+            assertEquals(listOf(pie), rows.drop(withValue.size).map { it.taskId }, "the row without a priority closes the list")
+            val values = withValue.map { live.getValue(it.taskId) }
+            assertEquals(if (descending) values.sortedDescending() else values.sorted(), values)
+        }
+    }
+
+    @Test
+    fun the_sorts_survive_their_local_encoding_and_an_unknown_key_falls_back() {
+        val config =
+            SearchDomain.Config(
+                sorts = SearchDomain.Sorts(overall = SearchDomain.Sort(SearchDomain.SortKey.Type, descending = true))
+                    .with(SearchDomain.Kind.Alarm, SearchDomain.Sort(SearchDomain.SortKey.AlarmTime))
+                    .with(SearchDomain.Kind.Task, SearchDomain.Sort(SearchDomain.SortKey.Name, descending = true)),
+            )
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        // Local-DB compatibility: a configuration stored before sorts decodes to the default order.
+        assertEquals(SearchDomain.Sorts(), SearchDomain.Config.decode("""{"query":"x","alarmState":"On"}""")!!.sorts)
+        // A key this build does not know, or one the kind does not offer, is relevance.
+        assertEquals(
+            SearchDomain.Sorts(),
+            SearchDomain.Config.decode(
+                """{"sort":"Wormhole","kindSorts":{"Alarm":{"key":"TimerDuration"},"Nope":{"key":"Name"}}}""",
+            )!!.sorts,
+        )
     }
 
     @Test

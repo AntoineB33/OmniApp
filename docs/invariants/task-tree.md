@@ -594,6 +594,12 @@ to the task id. Do not add a second row implementation: the flat one this replac
   section and one section per kind (`SearchDomain.configurations`). Neither window keeps a copy, so a filter set
   in one narrows the other's list at once. A filter applies to its own kind's rows only, and every one has an
   "any" that filters nothing; the Search window's button counts the ones that are on.
+- **The sorts are two stable levels** (`SearchDomain.Sorts`, in the same `Config`): each kind's rows by the
+  kind's own `Sort` first, then the whole list by `overall` — so the overall key's ties keep the kind's order.
+  Both default to **relevance**, which is exactly the order the window had before it could be sorted; a kind
+  set back to its default leaves no entry (`Sorts.with`), so equal orderings are equal values. A row with no
+  value for a key goes last in either direction. The keys that read more than one row (priorities, counts)
+  are computed once per `results` and **only when a sort asks for them** — never under the default order.
 - **A history unit, a task tree, a task relation, a keyboard shortcut** are kinds too (`itemResults`): the
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and

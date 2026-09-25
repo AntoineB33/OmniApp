@@ -188,6 +188,7 @@ fun SearchWindow(
     val query = config.query
     val kinds = config.kinds
     val filters = config.filters
+    val sorts = config.sorts
     var selected by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val fieldFocus = remember { FocusRequester() }
@@ -217,15 +218,15 @@ fun SearchWindow(
         }
     val results =
         remember(
-            kinds, query, filters, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
+            kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists,
         ) {
-            SearchDomain.results(state, kinds, query, { allPaths }, filters)
+            SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts)
         }
     val count = results.size
     // A new question starts at its best answer.
-    LaunchedEffect(kinds, query, filters) { selected = 0 }
+    LaunchedEffect(kinds, query, filters, sorts) { selected = 0 }
     LaunchedEffect(selected) { minTimeEditTaskId = null }
     // The task tree's rule: the list scrolls only when the selection would leave what is on screen — by just
     // enough to bring it to the nearer edge. Scrolling the selected row to the top on every move made the list

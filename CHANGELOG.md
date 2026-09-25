@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Sorting in the Configuration Search window — 2026-09-25
+
+User spec: *"In the Search configurations window, add sorting configurations."* A **Sort by** setting in the
+General section (the whole list: relevance / name / type) and at the end of every kind's section (relevance,
+name, and the kind's own keys), each with ascending / descending.
+
+- `SearchDomain.SortKey` / `sortKeysOf` / `Sort` / `Sorts` (on `Config`), `Setting.*Sort`, `results(sorts=)`.
+  Defaults reproduce the previous order exactly. Stored in the Search window's local JSON config (`sort`,
+  `sortDescending`, `kindSorts`); a config written before decodes to the defaults (tested). No SQLite
+  migration, nothing synced.
+- **Deploy:** client apps only (`account{1,2,3}-*deploy*.bat`).
+
 ### Search task rows are the tree's own cells — 2026-09-24
 
 User spec: task rows of the Search results use *"the same code used in the task tree"* — the task's background

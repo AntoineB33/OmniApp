@@ -75,6 +75,7 @@ object SearchDomain {
         val query: String = "",
         val kinds: Set<Kind> = setOf(Kind.Task),
         val filters: Filters = Filters(),
+        val sorts: Sorts = Sorts(),
     ) {
         /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */
         fun encode(): String =
@@ -98,6 +99,11 @@ object SearchDomain {
                     taskTreeDated = filters.taskTreeDated.name,
                     relationSection = filters.relationSection?.name,
                     shortcutRebound = filters.shortcutRebound.name,
+                    sort = sorts.overall.key.name,
+                    sortDescending = sorts.overall.descending,
+                    kindSorts = Kind.entries.mapNotNull { kind ->
+                        sorts.byKind[kind]?.let { kind.name to StoredSort(it.key.name, it.descending) }
+                    }.toMap(),
                 ),
             )
 
@@ -137,7 +143,20 @@ object SearchDomain {
                             TaskRelationsDomain.Section.entries.firstOrNull { it.name == stored.relationSection },
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
                     ),
+                    sorts = Sorts(
+                        overall = sortNamed(null, stored.sort, stored.sortDescending),
+                        byKind = stored.kindSorts.entries.mapNotNull { (kindName, sort) ->
+                            val kind = Kind.entries.firstOrNull { it.name == kindName } ?: return@mapNotNull null
+                            (kind to sortNamed(kind, sort.key, sort.descending)).takeIf { it.second != Sort() }
+                        }.toMap(),
+                    ),
                 )
+            }
+
+            /** A key this build does not know, or one [kind]'s list does not offer, falls back to relevance. */
+            private fun sortNamed(kind: Kind?, key: String?, descending: Boolean): Sort {
+                val known = sortKeysOf(kind).firstOrNull { it.name == key } ?: return Sort()
+                return Sort(known, descending)
             }
 
             private fun kindsNamed(names: List<String>): Set<Kind> =
@@ -239,13 +258,83 @@ object SearchDomain {
     }
 
     /**
+     * What a list can be ordered by. [kind] null = a key every list has; else the key belongs to that kind's
+     * rows only. Which keys a list offers is [sortKeysOf]'s answer.
+     */
+    enum class SortKey(val kind: Kind?, val label: String) {
+        /** The same name, then names starting with the query, then the rest — the order before sorts existed. */
+        Relevance(null, "relevance"),
+        Name(null, "name"),
+        /** The drop-down's order of the kinds — the whole list only. */
+        Type(null, "type"),
+        TaskPriority(Kind.Task, "priority"),
+        TaskPathLength(Kind.Task, "path length"),
+        TaskPathCount(Kind.Task, "number of paths"),
+        TaskInTree(Kind.Task, "in a task tree"),
+        CategoryTasks(Kind.Category, "tasks"),
+        CategoryRules(Kind.Category, "rules"),
+        PeriodsPlaced(Kind.RestrictivePeriod, "periods placed"),
+        AlarmTime(Kind.Alarm, "time"),
+        TimerDuration(Kind.Timer, "duration"),
+        ReminderTime(Kind.Reminder, "time"),
+        ReminderCadence(Kind.Reminder, "cadence"),
+        HistoryDate(Kind.HistoryUnit, "date"),
+        TaskTreeDate(Kind.TaskTree, "date"),
+        TaskTreeSize(Kind.TaskTree, "tasks"),
+        RelationSection(Kind.TaskRelation, "section"),
+        ShortcutChord(Kind.Shortcut, "chord"),
+    }
+
+    /**
+     * The keys offered for the whole list ([kind] null: relevance, name, type) or for one kind's rows
+     * (relevance, name, and that kind's own keys).
+     */
+    fun sortKeysOf(kind: Kind?): List<SortKey> =
+        if (kind == null) {
+            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type)
+        } else {
+            listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
+        }
+
+    /** One ordering: a key, and whether the largest comes first. Ties keep the order beneath (the sort is stable). */
+    data class Sort(val key: SortKey = SortKey.Relevance, val descending: Boolean = false)
+
+    /**
+     * How the result list is ordered, in two levels: each kind's rows among themselves ([of]), then the whole
+     * list ([overall]) — stably, so rows the overall key cannot tell apart keep their kind's order. The defaults
+     * are relevance at both levels, which is the order the window had before it could be sorted.
+     */
+    data class Sorts(
+        val overall: Sort = Sort(),
+        /** Only the kinds whose order is not the default — so two equal orderings are equal values. */
+        val byKind: Map<Kind, Sort> = emptyMap(),
+    ) {
+        fun of(kind: Kind): Sort = byKind[kind] ?: Sort()
+
+        fun with(kind: Kind, sort: Sort): Sorts =
+            copy(byKind = if (sort == Sort()) byKind - kind else byKind + (kind to sort))
+    }
+
+    /**
      * Every configuration of the Search window, which the Configuration Search window lists — one section per
      * kind, after the [section]-less ones that are about the search as a whole (the two the Search window
-     * itself shows). The window finds them by [label] ([configurations]).
+     * itself shows, and the whole list's order). The window finds them by [label] ([configurations]). A
+     * [sorts] setting orders its section's rows (the whole list's, for the general section).
      */
-    enum class Setting(val section: Kind?, val label: String) {
+    enum class Setting(val section: Kind?, val label: String, val sorts: Boolean = false) {
         SearchText(null, "Search text"),
         Types(null, "Types"),
+        SortResults(null, "Sort by", sorts = true),
+        TaskSort(Kind.Task, "Sort by", sorts = true),
+        CategorySort(Kind.Category, "Sort by", sorts = true),
+        PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
+        AlarmSort(Kind.Alarm, "Sort by", sorts = true),
+        TimerSort(Kind.Timer, "Sort by", sorts = true),
+        ReminderSort(Kind.Reminder, "Sort by", sorts = true),
+        HistorySort(Kind.HistoryUnit, "Sort by", sorts = true),
+        TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
+        RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
+        ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskCategory(Kind.Task, "Category"),
         CategoryHasRules(Kind.Category, "Has rules"),
@@ -273,7 +362,10 @@ object SearchDomain {
     fun configurations(query: String, kinds: Set<Kind>, onlyKinds: Set<Kind>? = null): List<Pair<Kind?, List<Setting>>> {
         val sections = listOf<Kind?>(null) + Kind.entries.filter { it in kinds && (onlyKinds == null || it in onlyKinds) }
         return sections.mapNotNull { section ->
-            val settings = Setting.entries.filter { it.section == section && matchRank(it.label, query) != null }
+            // The kind's settings first, its order last: what is kept, then how it is laid out.
+            val settings = Setting.entries
+                .filter { it.section == section && matchRank(it.label, query) != null }
+                .sortedBy { it.sorts }
             if (settings.isEmpty()) null else section to settings
         }
     }
@@ -303,7 +395,13 @@ object SearchDomain {
         val taskTreeDated: String? = null,
         val relationSection: String? = null,
         val shortcutRebound: String? = null,
+        val sort: String? = null,
+        val sortDescending: Boolean = false,
+        val kindSorts: Map<String, StoredSort> = emptyMap(),
     )
+
+    @Serializable
+    private data class StoredSort(val key: String? = null, val descending: Boolean = false)
 
     @Serializable
     private data class StoredConfigurationSearch(
@@ -784,6 +882,9 @@ object SearchDomain {
      * names starting with the query, then the rest — across kinds, so an exact match is never buried under a
      * kind listed before it. Within one tier the kinds keep the drop-down's order, and each kind its own order
      * ([taskResults], [itemResults]). [allPaths] is read only when [Kind.Task] is checked.
+     *
+     * That is the default of [sorts]. Each kind's rows are ordered first by the kind's own sort, then the whole
+     * list by the overall one, both stably: a key's ties keep the order beneath it.
      */
     fun results(
         state: SchedulerState,
@@ -791,15 +892,95 @@ object SearchDomain {
         query: String,
         allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
         filters: Filters = Filters(),
-    ): List<Result> =
-        Kind.entries
-            .filter { it in kinds }
-            .flatMap { kind ->
-                if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
+        sorts: Sorts = Sorts(),
+    ): List<Result> {
+        val keys = SortValues(state, query)
+        val rows =
+            Kind.entries
+                .filter { it in kinds }
+                .flatMap { kind ->
+                    val own =
+                        if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
+                    val kept = own.filter { passes(state, it, filters) }
+                    // The kind's own order already IS its default (relevance first).
+                    val sort = sorts.of(kind)
+                    if (sort == Sort()) kept else sortedBy(kept, sort, keys)
+                }
+        // Rows come in the drop-down's order of the kinds, so the Type key ascending has nothing to move.
+        return sortedBy(rows, sorts.overall, keys)
+    }
+
+    /**
+     * [rows] stably ordered by [sort]. Each row's key is read once (a comparison would read it again per pair),
+     * and a row without a value for the key — a task no live cell holds has no priority, a tree no date —
+     * goes last in either direction.
+     */
+    private fun sortedBy(rows: List<Result>, sort: Sort, keys: SortValues): List<Result> {
+        if (rows.size < 2 || (sort.key == SortKey.Type && !sort.descending)) return rows
+        val keyed = rows.map { it to keys.of(it, sort.key) }
+        @Suppress("UNCHECKED_CAST")
+        val order = Comparator<Pair<Result, Comparable<*>?>> { (_, a), (_, b) ->
+            when {
+                a == null && b == null -> 0
+                a == null -> 1
+                b == null -> -1
+                else -> (a as Comparable<Any>).compareTo(b).let { if (sort.descending) -it else it }
             }
-            .filter { passes(state, it, filters) }
-            // Stable: ties keep the kind order and each kind's own order.
-            .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
+        }
+        return keyed.sortedWith(order).map { it.first }
+    }
+
+    /**
+     * A row's value under each [SortKey]. What more than one row reads — the priorities, the per-category and
+     * per-kind counts — is computed at most once per [results], and only when a sort asks for it: none of it is
+     * read under the default order.
+     */
+    private class SortValues(private val state: SchedulerState, private val query: String) {
+        private val priorities by lazy { SchedulerDomain.absoluteTaskPriorities(state) }
+        private val carriers by lazy {
+            state.tasks.values.flatMap { it.categoryIds }.groupingBy { it }.eachCount()
+        }
+        private val placed by lazy { state.panels.groupingBy { it.periodKind }.eachCount() }
+        private val alarms by lazy { state.alarms.associateBy { it.id } }
+        private val timers by lazy { state.timers.associateBy { it.id } }
+        private val chores by lazy { state.chores.associateBy { it.id.ifEmpty { it.title } } }
+        private val trees by lazy { state.taskTrees.associateBy { it.id.value } }
+        private val sectionRank by lazy {
+            TaskRelationsDomain.Section.entries.associate { relationSectionLabel(it) to it.ordinal }
+        }
+
+        fun of(row: Result, key: SortKey): Comparable<*>? =
+            when (key) {
+                SortKey.Relevance -> matchRank(row.name, query) ?: Int.MAX_VALUE
+                SortKey.Name -> row.name.lowercase()
+                SortKey.Type -> row.kind.ordinal
+                SortKey.TaskPriority -> (row as? TaskResult)?.let { priorities[it.taskId] }
+                SortKey.TaskPathLength -> (row as? TaskResult)?.takeIf { it.paths.isNotEmpty() }?.shownPath?.size
+                SortKey.TaskPathCount -> (row as? TaskResult)?.paths?.size
+                // Ascending: what a tree holds first, as the default order has it.
+                SortKey.TaskInTree -> (row as? TaskResult)?.let { if (it.inTaskTree) 0 else 1 }
+                else -> (row as? ItemResult)?.let { itemValue(it, key) }
+            }
+
+        private fun itemValue(row: ItemResult, key: SortKey): Comparable<*>? =
+            when (key) {
+                SortKey.CategoryTasks -> carriers[CategoryId(row.id)] ?: 0
+                SortKey.CategoryRules -> state.categoryById(CategoryId(row.id))?.rules?.size
+                SortKey.PeriodsPlaced -> placed[row.id] ?: 0
+                SortKey.AlarmTime -> alarms[row.id]?.timeOfDayMinutes
+                SortKey.TimerDuration -> timers[row.id]?.durationSeconds
+                SortKey.ReminderTime -> chores[row.id]?.timeOfDayMinutes
+                SortKey.ReminderCadence -> chores[row.id]?.spanDays
+                SortKey.HistoryDate -> historyUnitOf(state, row.id)?.timeMillis
+                SortKey.TaskTreeDate -> trees[row.id]?.dateMillis
+                SortKey.TaskTreeSize -> trees[row.id]?.let { entry ->
+                    if (entry.id == state.activeTaskTreeId) state.tasks.size else entry.tree.tasks.size
+                }
+                SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
+                SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
+                else -> null
+            }
+    }
 
     /** Whether [result] passes its own kind's [filters]; another kind's filters never touch it. */
     private fun passes(state: SchedulerState, result: Result, filters: Filters): Boolean {

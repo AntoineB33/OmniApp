@@ -46,8 +46,9 @@ import org.example.project.scheduler.state.SchedulerState
 /**
  * PRD §7 *Search*: the **Configuration Search** window, opened from the Search window's configuration. It lists
  * **every configuration of the Search window** — the two the Search window shows (its search text and its
- * types) and the per-kind filters ([SearchDomain.Filters]) — in sections, one for the search as a whole and
- * one per kind of element.
+ * types), the per-kind filters ([SearchDomain.Filters]) and the orderings ([SearchDomain.Sorts]: the whole
+ * list's, and each kind's rows among themselves) — in sections, one for the search as a whole and one per kind
+ * of element.
  *
  * Like the Search window it is a **configuration section** above a **result section**. Its configuration has
  * a search bar that finds configurations by name, the same kind drop-down ([KindsDropDown]) that keeps only
@@ -244,6 +245,51 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.ShortcutReboundSetting ->
             Choices(SearchDomain.Tri.entries, f.shortcutRebound, { it.label }) { filters(f.copy(shortcutRebound = it)) }
+        SearchDomain.Setting.SortResults ->
+            SortEditor(null, config.sorts.overall) { onChange(config.copy(sorts = config.sorts.copy(overall = it))) }
+        SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
+        SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ReminderSort,
+        SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
+        SearchDomain.Setting.ShortcutSort,
+        -> {
+            val kind = setting.section ?: return
+            SortEditor(kind, config.sorts.of(kind)) { onChange(config.copy(sorts = config.sorts.with(kind, it))) }
+        }
+    }
+}
+
+/**
+ * An ordering: its key, from what [kind]'s rows offer ([SearchDomain.sortKeysOf]; null = the whole list), and
+ * its direction.
+ */
+@Composable
+private fun SortEditor(kind: SearchDomain.Kind?, sort: SearchDomain.Sort, onChange: (SearchDomain.Sort) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            Text(
+                text = sort.key.label + "  ▾",
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                    .menuToggleClickable(open) { open = it }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            transientMenuDismissal(open) { open = false }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+                SearchDomain.sortKeysOf(kind).forEach { key ->
+                    DropdownMenuItem(text = { Text(key.label) }, onClick = { open = false; onChange(sort.copy(key = key)) })
+                }
+            }
+        }
+        ToggleChip(
+            text = if (sort.descending) "↓ descending" else "↑ ascending",
+            on = sort.descending,
+            onToggle = { onChange(sort.copy(descending = it)) },
+        )
     }
 }
 
