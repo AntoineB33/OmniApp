@@ -6,6 +6,7 @@ import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.ChronoDomain
+import org.example.project.scheduler.domain.TaskPathsDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.domain.PeriodKindStyle
@@ -266,6 +267,10 @@ object SchedulerReducer {
             is SchedulerIntent.ReplaceTaskTitles -> reduceReplaceTaskTitles(state, intent.titles)
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
             is SchedulerIntent.AssignTaskId -> commitDelta(state, assignTaskIdDelta(state, intent.cellId, intent.taskId))
+            is SchedulerIntent.CreateTask -> createTaskDelta(state, intent.title)?.let { commitDelta(state, it) } ?: state
+            is SchedulerIntent.AddTaskPath ->
+                addTaskPathDelta(state, intent.taskId, intent.parentTaskId)?.let { commitDelta(state, it) } ?: state
+            is SchedulerIntent.RemoveTaskPath -> removeTaskPathDelta(state, intent.cellId)?.let { commitDelta(state, it) } ?: state
             is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
             is SchedulerIntent.CreateTaskTree -> reduceCreateTaskTree(state, intent.title)
             is SchedulerIntent.RenameTaskTree -> reduceRenameTaskTree(state, intent.id, intent.title)
@@ -3911,6 +3916,78 @@ private fun applyAssignTaskId(state: SchedulerState, cellId: CellId, taskId: Tas
     }
 
     return SchedulerDomain.purgeOrphanTasks(working)
+}
+
+/** [SchedulerIntent.CreateTask]: the root list's placeholder named, as typing into it does. */
+private fun createTaskDelta(state: SchedulerState, titleRaw: String): Delta? {
+    val title = titleRaw.trim()
+    if (title.isEmpty() || state.editSession != null) return null
+    val placeholder = TaskPathsDomain.placeholderOf(state, state.rootListId) ?: return null
+    val after = applySetCellTitle(state, placeholder, title)
+    if (after === state) return null
+    return TreeMutationDelta(before = state.captureTree(), after = after.captureTree(), label = "New task")
+}
+
+/**
+ * [SchedulerIntent.AddTaskPath]: [taskId] assigned to the bottom placeholder of the parent's list, then named there
+ * so the list gets its new placeholder — Change Task's own two steps. A parent with no list yet is given one first
+ * (its title set again on one of its cells, which is what mints a sub-list).
+ */
+private fun addTaskPathDelta(state: SchedulerState, taskId: TaskId, parentTaskId: TaskId?): Delta? {
+    if (state.editSession != null) return null
+    val task = state.tasks[taskId]?.takeIf { it.title.isNotEmpty() } ?: return null
+    var working = state
+    if (parentTaskId != null) {
+        val parent = working.tasks[parentTaskId]?.takeIf { it.title.isNotEmpty() } ?: return null
+        if (parent.childListId == null) {
+            val parentCell = TaskPathsDomain.occurrences(working, parentTaskId).firstOrNull()?.cellId ?: return null
+            working = applySetCellTitle(working, parentCell, parent.title, forceTaskId = parentTaskId)
+        }
+    }
+    val listId =
+        if (parentTaskId == null) working.rootListId else working.tasks[parentTaskId]?.childListId ?: return null
+    val placeholder = TaskPathsDomain.placeholderOf(working, listId) ?: return null
+    if (!SchedulerDomain.canAssignTaskId(working, placeholder, taskId)) return null
+    working = applyAssignTaskId(working, placeholder, taskId)
+    working = applySetCellTitle(working, placeholder, task.title, forceTaskId = taskId)
+    return TreeMutationDelta(before = state.captureTree(), after = working.captureTree(), label = "Add path")
+}
+
+/**
+ * [SchedulerIntent.RemoveTaskPath]: the cell unbound and cleaned away like an emptied one — but only that cell: the
+ * task keeps its title (a blank title would delete it everywhere). The task's sub-list, when this cell is the one it
+ * names as its parent, is handed to another of the task's cells, so every reading of "this list's parent" still
+ * finds the task.
+ */
+private fun removeTaskPathDelta(state: SchedulerState, cellId: CellId): Delta? {
+    if (state.editSession != null) return null
+    val cell = state.cells[cellId] ?: return null
+    val taskId = cell.taskId ?: return null
+    val places = TaskPathsDomain.occurrences(state, taskId)
+    if (places.size < 2 || places.none { it.cellId == cellId }) return null
+    val task = state.tasks.getValue(taskId)
+    val cells = state.cells.toMutableMap()
+    cells[cellId] = cell.copy(taskId = null)
+    val tasks = state.tasks.toMutableMap()
+    tasks[taskId] = task.copy(occurrences = task.occurrences - cellId)
+    val lists = state.lists.toMutableMap()
+    task.childListId?.let { childListId ->
+        val childList = lists[childListId]
+        if (childList != null && childList.parentCellId == cellId) {
+            val heir = places.first { it.cellId != cellId }.cellId
+            lists[childListId] = childList.copy(parentCellId = heir)
+        }
+    }
+    val unbound = state.copy(cells = cells, tasks = tasks, lists = lists)
+    val cleaned = evaluatePostEditCleanup(unbound)
+    val selectionAfter = adjustSelectionAfterRemovedCells(beforeCleanup = unbound, afterCleanup = cleaned, selection = state.selection)
+    return EmptyCellsDelta(
+        treeBefore = state.captureTree(),
+        treeAfter = cleaned.captureTree(),
+        selectionBefore = state.selection,
+        selectionAfter = selectionAfter,
+        label = "Remove path",
+    )
 }
 
 /** Wraps a priority-table mutation as an undoable [TreeMutationDelta] (PRD §6). */

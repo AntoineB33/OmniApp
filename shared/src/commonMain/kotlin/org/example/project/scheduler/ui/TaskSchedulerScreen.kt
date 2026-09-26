@@ -124,6 +124,7 @@ import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.domain.TaskTreeSearch
+import org.example.project.scheduler.domain.TaskPathsDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PriorityWeightPin
@@ -3471,6 +3472,59 @@ private fun formatPercent(value: Double): String {
     return if (rounded == kotlin.math.floor(rounded)) rounded.toInt().toString() else rounded.toString()
 }
 
+/**
+ * The task edit window's **Paths**: one row per place the task sits in the live tree — the path down to it, and a
+ * ✕ that takes the task out of that list (not offered for its last place: deleting a task is the tree's blank
+ * title) — then an "Add under…" field whose suggestions are the places the tree's rules let it go.
+ */
+@Composable
+private fun TaskPathsSection(
+    paths: List<TaskPathsDomain.Occurrence>,
+    candidates: (String) -> List<TaskPathsDomain.Candidate>,
+    onAddPath: (TaskId?) -> Unit,
+    onRemovePath: (CellId) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    Text("Paths", style = MaterialTheme.typography.labelMedium)
+    if (paths.isEmpty()) {
+        Text("In no place of the open task tree.", style = MaterialTheme.typography.bodySmall)
+    }
+    for (place in paths) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(place.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            if (paths.size > 1) TextButton(onClick = { onRemovePath(place.cellId) }) { Text("✕") }
+        }
+    }
+    OutlinedTextField(
+        value = query,
+        onValueChange = {
+            query = it
+            adding = true
+        },
+        singleLine = true,
+        label = { Text("Add under…") },
+        modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) adding = true },
+    )
+    if (adding) {
+        for (candidate in candidates(query)) {
+            Text(
+                text = candidate.label,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        onAddPath(candidate.parentTaskId)
+                        query = ""
+                        adding = false
+                    }
+                    .padding(vertical = 4.dp, horizontal = 8.dp),
+            )
+        }
+    }
+    HorizontalDivider()
+}
+
 @Composable
 internal fun TaskEditWindow(
     task: Task,
@@ -3500,6 +3554,16 @@ internal fun TaskEditWindow(
     onEditPeriodKind: (String) -> Unit,
     onSave: (resilience: Map<String, Double>, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * PRD §13 **Paths** (user spec 2026-09-26): where the task sits in the live tree ([TaskPathsDomain]) and the
+     * places it may be added under for a query. Null = no such section (a default sub-tree's task).
+     */
+    paths: List<TaskPathsDomain.Occurrence>? = null,
+    pathCandidates: (query: String) -> List<TaskPathsDomain.Candidate> = { emptyList() },
+    /** Put the task under this parent as well (null = the top level). Applied at once, one History Unit. */
+    onAddPath: (parentTaskId: TaskId?) -> Unit = {},
+    /** Take the task out of the list this cell is in. Applied at once, one History Unit. */
+    onRemovePath: (CellId) -> Unit = {},
 ) {
     val minimumMinutes = task.minimumMinutes
     // The whole resilience map is edited here, kind by kind, and handed back on Save — one intent per kind
@@ -3527,6 +3591,9 @@ internal fun TaskEditWindow(
                 Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // Section 0: where the task sits, and where else it may go. Structural, so applied at once — each
+                // add and each removal its own History Unit — rather than held for Save.
+                if (paths != null) TaskPathsSection(paths, pathCandidates, onAddPath, onRemovePath)
 
                 // Section 1 (leaf only): `side-dev/README.md` § *Restrictive Period* — this task's
                 // RESILIENCE to each kind of restrictive period, and the place new kinds are defined.

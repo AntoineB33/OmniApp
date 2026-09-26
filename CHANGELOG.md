@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The "creation" type; a task's paths; window rows one per type — 2026-09-26
+
+User spec: a "creation" option in the Search window's type selector — a creation row for every other element type,
+opened by a double- or right-click as that element's own "+ New …" (a task in its edit window, which gains a
+configuration of its paths; a window as another Search window listing every window type, for which the Search
+Configuration window gains a filter against duplicates of one window — the default timer's window not being a
+timer's).
+
+- `SearchDomain.Kind.Creation`, `CREATABLE` (task, category, restrictive period, alarm, timer, chrono, reminder,
+  task tree, window — not history units, task relations, shortcuts), `App.createElement`.
+- `SchedulerIntent.CreateTask`, `AddTaskPath`, `RemoveTaskPath`; `TaskPathsDomain`; the task edit window's Paths.
+- `Filters.windowDuplicates` ("Duplicates": shown / hidden), `WindowEntry.type` / `typeTitle` / `placeholder`,
+  `WINDOW_TYPES_CONFIG`. The stored Search configuration gains an optional `windowDuplicates` (absent = shown).
+- Tests: `TaskPathsAndCreationTest`. No persistence shape change beyond that optional field; no sync change.
+
 ### A menu button focuses its exact window when it is open — 2026-09-26
 
 User spec: clicking a button of the lateral menu, if the exact window is already open, focuses it instead of

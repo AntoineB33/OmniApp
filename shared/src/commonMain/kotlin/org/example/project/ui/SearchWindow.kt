@@ -178,6 +178,11 @@ fun SearchWindow(
     windows: List<SearchDomain.WindowEntry> = emptyList(),
     /** Opens the window a window row names (by frame id), or brings it back — a minimized one included. */
     onOpenWindow: (String) -> Unit = {},
+    /**
+     * A "creation" row opened: make a new element of this kind and open its window — what that kind's own
+     * "+ New …" does ([SearchDomain.Kind.Creation]).
+     */
+    onCreate: (SearchDomain.Kind) -> Unit = {},
     onDismiss: () -> Unit,
     /**
      * The configuration — query, checked kinds, filters. Held by `App`, not here: the Configuration Search
@@ -329,6 +334,8 @@ fun SearchWindow(
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()
             SearchDomain.Kind.Window -> onOpenWindow(item.id)
+            SearchDomain.Kind.Creation ->
+                SearchDomain.Kind.entries.firstOrNull { it.name == item.id }?.let(onCreate)
         }
     }
     fun openSelected() {
@@ -561,6 +568,7 @@ fun SearchWindow(
                                             result.kind == SearchDomain.Kind.Alarm ||
                                                 result.kind == SearchDomain.Kind.Timer ||
                                                 result.kind == SearchDomain.Kind.Chrono ||
+                                                result.kind == SearchDomain.Kind.Creation ||
                                                 result.kind == SearchDomain.Kind.Reminder,
                                     )
                             }

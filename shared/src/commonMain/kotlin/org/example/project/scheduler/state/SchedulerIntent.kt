@@ -75,6 +75,28 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 *Search*, a "creation" row (user spec 2026-09-26): a new task titled [title] at the bottom of the live
+     * tree's top level — the root list's placeholder named, exactly as typing into it does. One tree History Unit.
+     * A no-op while a cell is in Edit Mode, or for a blank title.
+     */
+    data class CreateTask(val title: String) : SchedulerIntent
+
+    /**
+     * PRD §13 the task edit window's **Paths**: put [taskId] at the bottom of [parentTaskId]'s list as well (null =
+     * the top level) — a mirror, under the tree's own assignment rule
+     * ([org.example.project.scheduler.domain.TaskPathsDomain.canAddUnder]). One tree History Unit; a no-op when the
+     * rule refuses it or a cell is in Edit Mode.
+     */
+    data class AddTaskPath(val taskId: TaskId, val parentTaskId: TaskId?) : SchedulerIntent
+
+    /**
+     * PRD §13 the task edit window's **Paths**: take the task out of the list [cellId] is in — that cell only; the
+     * task, its title and its sub-tree stay. Refused for the task's LAST place in the live tree (deleting a task is
+     * the tree's blank title, not this). One History Unit.
+     */
+    data class RemoveTaskPath(val cellId: CellId) : SchedulerIntent
+
+    /**
      * Task-tree selector (the field above the tree): make [id] the live task tree. The tree being left is
      * flushed into its own entry first, so nothing done in it is lost (see [TaskTreeEntry]). Recorded as an
      * undoable Main History Unit; a no-op when [id] is already active or names no tree.

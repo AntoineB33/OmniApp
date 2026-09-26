@@ -38,6 +38,9 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
+import org.example.project.scheduler.domain.ChronoDomain
+import org.example.project.scheduler.domain.TaskPathsDomain
+import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.RestrictivePeriod
@@ -1182,21 +1185,115 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // bar lists too; a reduced one is "minimized" (in that bar). A lateral-menu window that is not open
         // is one entry more, so it can be found and opened from the list. Read inside the Search window's own
         // scope, so a window opening or being reduced recomposes that window and not `App`.
+        // A window's TYPE ([SearchDomain.WindowEntry.type]) and what it is called: a per-object window's by its object
+        // kind (the default timer's window is not a timer's), a lateral-menu window's by its kind — a copy included —
+        // and anything else by its frame id's base.
+        fun objectWindowType(kind: ObjectWindowKey.Kind): String = "object:" + kind.name
+        fun objectWindowTypeTitle(kind: ObjectWindowKey.Kind): String = kind.noun.replaceFirstChar { it.uppercaseChar() }
+        fun windowTypeOf(window: WindowFrameHost.Registration): Pair<String, String> {
+            window.menuKey?.let(ObjectWindowKey::decode)?.let { return objectWindowType(it.kind) to objectWindowTypeTitle(it.kind) }
+            lateralWindowOf(window.id)?.let { return it.name to it.title }
+            return window.id.substringBefore('#') to window.title
+        }
         fun searchWindowEntries(): List<SearchDomain.WindowEntry> {
             val open = windowFrames.registrations.map { window ->
                 val status = if (window.state.minimized) SearchDomain.WindowStatus.Minimized else SearchDomain.WindowStatus.Open
-                SearchDomain.WindowEntry(window.id, window.title, status)
+                val (type, typeTitle) = windowTypeOf(window)
+                SearchDomain.WindowEntry(window.id, window.title, status, type, typeTitle)
             }
             val openIds = open.mapTo(HashSet()) { it.id }
             val closed = FloatingWindow.entries
                 .filter { lateralWindowOf(it.name) != null && !isWindowOpen(it) && it.name !in openIds }
-                .map { SearchDomain.WindowEntry(it.name, it.title, SearchDomain.WindowStatus.NotOpen) }
-            return open + closed
+                .map { SearchDomain.WindowEntry(it.name, it.title, SearchDomain.WindowStatus.NotOpen, it.name, it.title) }
+            // Every per-object TYPE, for the one-per-type listing — "Timer" and "Default timer" are two types.
+            val listedTypes = (open + closed).mapTo(HashSet()) { it.type }
+            val types = ObjectWindowKey.Kind.entries
+                .filter { objectWindowType(it) !in listedTypes }
+                .map { kind ->
+                    SearchDomain.WindowEntry(
+                        objectWindowType(kind), objectWindowTypeTitle(kind), SearchDomain.WindowStatus.NotOpen,
+                        objectWindowType(kind), objectWindowTypeTitle(kind), placeholder = true,
+                    )
+                }
+            return open + closed + types
+        }
+        // PRD §7 Search, a "creation" row (user spec 2026-09-26): a new element of [kind], made the way that kind's
+        // own "+ New …" makes it — through the same intents and the account's default configuration — and opened in
+        // its window. A new WINDOW is a Search window listing the window types.
+        fun createElement(kind: SearchDomain.Kind) {
+            val st = vm.state.value
+            val now = clock.nowMillis()
+            val minutes = Instant.fromEpochMilliseconds(now).toLocalDateTime(tz).let { it.hour * 60 + it.minute }
+            fun unique(base: String, taken: Collection<String>): String =
+                generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base $it" }
+                    .first { name -> taken.none { it.equals(name, ignoreCase = true) } }
+            when (kind) {
+                SearchDomain.Kind.Task -> {
+                    val placeholder = TaskPathsDomain.placeholderOf(st, st.rootListId) ?: return
+                    vm.dispatch(SchedulerIntent.CreateTask("New task"))
+                    vm.state.value.cells[placeholder]?.taskId?.let { taskEditWindows.open(TreeObject(it)) }
+                }
+                SearchDomain.Kind.Category -> {
+                    val title = unique("New category", st.categories.map { it.title })
+                    vm.dispatch(SchedulerIntent.CreateCategory(title))
+                    vm.state.value.categories.firstOrNull { it.title == title }?.let { categoryWindows.open(TreeObject(it.id)) }
+                }
+                SearchDomain.Kind.RestrictivePeriod -> {
+                    val name = unique("New period", st.allPeriodKinds)
+                    vm.dispatch(SchedulerIntent.AddPeriodKind(name))
+                    if (name in vm.state.value.allPeriodKinds) periodKindWindows.open(TreeObject(name))
+                }
+                SearchDomain.Kind.Alarm -> {
+                    val id = AlarmDomain.mintAlarmId(st.alarms.map { it.id })
+                    vm.dispatch(SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, id, minutes)))
+                    alarmWindows.open(AlarmWindowSubject(id, AlarmWindowSubject.Kind.Alarm))
+                }
+                SearchDomain.Kind.Timer -> {
+                    val id = TimerDomain.mintTimerId(st.timers.map { it.id })
+                    vm.dispatch(SchedulerIntent.SetTimers(st.timers + NewElementDefaults.newTimer(st.newTimerDefaults, id)))
+                    alarmWindows.open(AlarmWindowSubject(id, AlarmWindowSubject.Kind.Timer))
+                }
+                SearchDomain.Kind.Chrono -> {
+                    val id = ChronoDomain.mintChronoId(st.chronos.map { it.id })
+                    vm.dispatch(SchedulerIntent.SetChronos(st.chronos + ChronoEntry(id = id)))
+                    alarmWindows.open(AlarmWindowSubject(id, AlarmWindowSubject.Kind.Chrono))
+                }
+                SearchDomain.Kind.Reminder -> {
+                    val todayStart = today.atStartOfDayIn(tz).toEpochMilliseconds()
+                    val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", minutes)
+                    vm.dispatch(SchedulerIntent.SetChores(st.chores + created, todayStart, now))
+                    vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let { reminderWindows.open(it) }
+                }
+                SearchDomain.Kind.TaskTree -> {
+                    vm.dispatch(SchedulerIntent.CreateTaskTree(unique("New tree", st.taskTrees.map { it.title })))
+                    taskTreesWindowOpen = true
+                    focusWindow(FloatingWindow.TaskTrees)
+                }
+                SearchDomain.Kind.Window -> openNewWindow(FloatingWindow.Search, SearchDomain.WINDOW_TYPES_CONFIG.encode())
+                else -> Unit
+            }
         }
         // Opening a "window" row: the window is opened if it is not, and brought back — out of the system tray,
         // to the front, into the focus — if it is. Never closed by this, unlike its lateral-menu button: the row
         // is asked for from the Search window, which is the front one.
         fun showWindow(frameId: String) {
+            // A one-per-type row: a window of that type brought back when one is open, else the type opened when it
+            // can be without an object (a lateral-menu window, a default configuration's window).
+            if (frameId.startsWith(SearchDomain.WindowEntry.TYPE_PREFIX)) {
+                val type = frameId.removePrefix(SearchDomain.WindowEntry.TYPE_PREFIX)
+                windowFrames.registrations.firstOrNull { windowTypeOf(it).first == type }?.let {
+                    showWindow(it.id)
+                    return
+                }
+                FloatingWindow.entries.firstOrNull { it.name == type && lateralWindowOf(it.name) != null }?.let {
+                    openNewWindow(it)
+                    return
+                }
+                ObjectWindowKey.Kind.entries.firstOrNull { objectWindowType(it) == type }
+                    ?.takeIf { it == ObjectWindowKey.Kind.AlarmDefaults || it == ObjectWindowKey.Kind.TimerDefaults || it == ObjectWindowKey.Kind.ReminderDefaults }
+                    ?.let { defaultsWindows.open(it) }
+                return
+            }
             val kind = lateralWindowOf(frameId)
             if (kind != null && '#' !in frameId) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
@@ -2399,6 +2496,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     close()
                                 },
                                 onDismiss = { close() },
+                                // PRD §13 Paths: where the task sits in the LIVE tree, and where else it may go —
+                                // not offered for a default sub-tree's task, whose places are the template's.
+                                // Held on the tree fields, never re-walked on a tick (display-hot-path.md).
+                                paths = if (template) null else remember(taskId, popupState.cells, popupState.lists, popupState.tasks) {
+                                    TaskPathsDomain.occurrences(popupState, taskId)
+                                },
+                                pathCandidates = { query -> TaskPathsDomain.candidates(vm.state.value, taskId, query) },
+                                onAddPath = { parent -> vm.dispatch(SchedulerIntent.AddTaskPath(taskId, parent)) },
+                                onRemovePath = { cellId -> vm.dispatch(SchedulerIntent.RemoveTaskPath(cellId)) },
                             )
                         }
                     }
@@ -3245,6 +3351,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             windows = if (SearchDomain.Kind.Window in searchConfigOf(searchId).kinds) searchWindowEntries() else emptyList(),
                             onOpenWindow = ::showWindow,
+                            onCreate = ::createElement,
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfigOf(searchId),
                             onConfigChange = { setSearchConfig(searchId, it) },

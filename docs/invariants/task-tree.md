@@ -440,6 +440,21 @@ disagreeing about what colour a task is.
   screen break repaints the task panels such a period may legitimately hold, and costs the palette a corner of
   the circle.
 
+### A task's paths (the task edit window)
+
+User spec 2026-09-26. `scheduler/domain/TaskPathsDomain.kt`; the window's **Paths** section.
+
+- **A path is a CELL of the live tree** holding the task, read as the path down to its list. Removing one
+  (`RemoveTaskPath`) unbinds that cell alone — never a blank title, which deletes the task everywhere — and is
+  refused for the task's LAST place (deleting a task is the tree's own gesture). When the removed cell is the one
+  the task's sub-list names as its parent (`CellList.parentCellId`), the list is handed to another of the task's
+  cells, so "the parent of this list" still finds the task.
+- **Adding one (`AddTaskPath`) is Change Task's own two steps** on the parent list's bottom placeholder — assign,
+  then name — under the tree's own rule (`SchedulerDomain.canAssignTaskId`: never twice in a list, never under its
+  own sub-tree). The field only offers places that rule allows (`TaskPathsDomain.candidates`).
+- Both are applied at once, each one tree History Unit — structural, unlike the window's Save-held sections — and
+  both are refused while a cell is in Edit Mode. The walk is held on the tree fields, never per tick.
+
 ### Which tasks the tree holds
 
 → PRD §7. `SchedulerDomain.tasksInTree` — what the period edit window's rows (`periodKindTaskRows`) are drawn
@@ -570,6 +585,18 @@ titles" figure: the Search window and the per-object windows its rows open repla
   copy of itself. **Its subject is the window's own state**: the "+ New …" button at the bottom adds an element
   of the same kind (`addAlarm` / `addTimer` / `newRow`) and moves the window on to it;
   so the window, not `App`, closes itself when the element it shows is gone.
+- **"creation" is a kind too** (`Kind.Creation`, user spec 2026-09-26): one row per kind the user makes
+  (`SearchDomain.CREATABLE` — not history units, task relations or shortcuts). Opening it (double-click, Enter,
+  right-click) makes one through the SAME path that kind's own "+ New …" uses — the account's default
+  configuration, the same intents (`App.createElement`) — and opens its window; never a second way to build an
+  element. A new task is the top level's placeholder named ("New task", `CreateTask`) and opens in its edit window;
+  a new window is a Search window of the window TYPES (`WINDOW_TYPES_CONFIG`).
+- **The window rows may be one per window TYPE** (`Filters.windowDuplicates` = hidden, "Duplicates" in the
+  Configuration Search window). A type is a per-object window's `ObjectWindowKey.Kind` — so the default timer's
+  window is not a timer's — a lateral-menu window's kind (its copies included), else the frame id's base; every
+  per-object type is listed even with no window of it (`WindowEntry.placeholder`, never listed as a window). A type
+  row reads open when any window of it is, minimized when every one is, and opens one of its windows, else the
+  type itself when it needs no object.
 - **The Configuration Search window lists EVERY configuration of the Search window, drawn the way that window
   draws it** — the type selector is the same field with a drop-down (`KindsDropDown`), and the Search window's
   Reset is a setting of its own (`Setting.ResetSearch`, "Reset text and types"), distinct from the Configuration

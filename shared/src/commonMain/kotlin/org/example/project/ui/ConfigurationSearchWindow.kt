@@ -263,6 +263,11 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.ShortcutReboundSetting ->
             Choices(SearchDomain.Tri.entries, f.shortcutRebound, { it.label }) { filters(f.copy(shortcutRebound = it)) }
+        // Hidden: one row per window TYPE — the default timer's window is a type of its own, not a timer's.
+        SearchDomain.Setting.WindowDuplicatesSetting ->
+            Choices(SearchDomain.WindowDuplicates.entries, f.windowDuplicates, { it.label }) {
+                filters(f.copy(windowDuplicates = it))
+            }
         SearchDomain.Setting.WindowStatusSetting ->
             EnumPicker(SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
         SearchDomain.Setting.SortResults,
@@ -270,7 +275,7 @@ private fun SettingEditor(
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort,
         SearchDomain.Setting.ReminderSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
-        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WindowSort,
+        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WindowSort, SearchDomain.Setting.CreationSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
     }
 }
