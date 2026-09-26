@@ -698,6 +698,27 @@ Global rules that always apply: `CLAUDE.md`.
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.
 
+### "Go to calendar" and the lock on a task
+
+User spec 2026-09-26. `scheduler/domain/CalendarLockDomain.kt`; the task cell menu's entry
+(`TaskCellMenuItems`, `LocalCalendarGoTo`); the calendar's "Locked on task" switch.
+
+- **ONE lock, held on one instant.** "Locked on task" is "Lock to now" with another instant at the middle of the
+  view (`WeekView(lockTaskMillis)`): the same centring, released the same ways (a scroll, a date pick). The two
+  are one or the other — "go to calendar" and the switch turn "Lock to now" off, and "Lock to now" turns the task
+  lock off. Never a second centring mechanism.
+- **The instant is the middle of the task's panel CLOSEST to the now-line** (a scheduled or pinned panel, a
+  PROVISIONAL one — the far-week plan the calendar draws past the definitive-schedule front by the rules in force,
+  not settled yet, but a panel on the calendar all the same — or a recorded period; the one the line is inside
+  wins), re-read whenever the panels or the display's now move — so the
+  lock follows a panel the line drags or a new set of rules moves. With no panel of it yet but one to come (a
+  schedulable leaf with a priority above zero) it is the **definitive-schedule front**
+  (`definitiveScheduleFrontMillis`), and the switch and the menu entry show a loading mark, until a panel appears.
+- **The entry is offered only where a panel exists or can come** (`CalendarLockDomain.reach`, asked of the live
+  state as the menu opens). One entry for every surface drawing a task cell's menu — provided once by `App`, never
+  threaded through each tree drawing.
+- Compose-only view state (`App`: the task, on/off), like the now-line lock: never persisted, never synced.
+
 ### What may be banked as a record
 
 → ADR 0002. **An on-screen task banks NO record over a no-screen period**, and "no-screen period" has two

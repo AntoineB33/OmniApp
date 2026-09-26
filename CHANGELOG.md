@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Go to calendar" and the calendar's "Locked on task" — 2026-09-26
+
+User spec: a task cell's menu entry "go to calendar" focusing the calendar centred on the task's panel closest to
+the now-line, turning on a new "locked on task" option (and "lock to now" off) that follows that panel's middle;
+with no panel yet but a schedulable task of non-null priority, a loading logo and the lock on the last definitive
+time until the task appears; not offered when no panel can appear.
+
+- `CalendarLockDomain` (closest panel's middle, `reach`, `lockCenterMillis`), `LocalCalendarGoTo` +
+  `TaskCellMenuActions.calendarTaskId`, `WeekView(lockTaskMillis)`, the configuration section's switch.
+- Compose-only state in `App`; no persistence or sync change. Tests: `CalendarLockTest`.
+- Same day, user spec: the provisional panels (the far-week plan past the definitive front, by the rules in force)
+  count in "closest panel" — for the lock and for the menu's loading mark (`provisionalPanels`).
+
 ### The "creation" type; a task's paths; window rows one per type — 2026-09-26
 
 User spec: a "creation" option in the Search window's type selector — a creation row for every other element type,

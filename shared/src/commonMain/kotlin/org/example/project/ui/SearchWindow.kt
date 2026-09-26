@@ -309,6 +309,7 @@ fun SearchWindow(
                     null
                 },
             onEdit = if (live != null) ({ onOpenTaskEdit(taskId) }) else null,
+            calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
             onCopyTaskId = { writeSystemClipboardText(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + taskId.value) },

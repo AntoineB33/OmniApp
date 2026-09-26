@@ -44,6 +44,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -3235,6 +3236,19 @@ private fun MiniMonthDay(
 fun CalendarFloatingWindow(
     selectedDate: LocalDate,
     today: LocalDate,
+    /**
+     * PRD §8 **"locked on task"** (user spec 2026-09-26), set by a task cell's "go to calendar": the task's title
+     * (null = no such option shown), whether the lock is on, the instant it holds at the middle of the view (the
+     * task's closest panel's middle, else the definitive-schedule front — null = nothing to hold), and whether that
+     * panel is still to come (a loading mark). [lockOnTaskNonce] counts the requests: each one turns "Lock to now"
+     * off, the two locks being one or the other.
+     */
+    lockedTaskTitle: String? = null,
+    lockOnTask: Boolean = false,
+    lockTaskMillis: Long? = null,
+    lockTaskPending: Boolean = false,
+    onLockOnTaskChange: (Boolean) -> Unit = {},
+    lockOnTaskNonce: Int = 0,
     /** The month the day selector shows (its ‹ / › page it), and the day picked in it. */
     monthAnchor: LocalDate = LocalDate(today.year, today.month, 1),
     onMonthAnchorChange: (LocalDate) -> Unit = {},
@@ -3371,6 +3385,13 @@ fun CalendarFloatingWindow(
     // It starts ON: opening the calendar always lands on the present (with the matching [WeekView] zoom
     // fit), and the window is only composed while it is open, so every open gets this fresh default.
     var lockNowLine by remember { mutableStateOf(true) }
+    // "go to calendar" asked for the task lock: the now-line lock yields to it.
+    LaunchedEffect(lockOnTaskNonce) { if (lockOnTaskNonce > 0) lockNowLine = false }
+    // The two locks are one or the other: turning "Lock to now" on releases the task.
+    fun setLockNowLine(on: Boolean) {
+        lockNowLine = on
+        if (on) onLockOnTaskChange(false)
+    }
     // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
     // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
     // tree normally holds focus. Focus is (re)claimed when the window opens and on every press inside it.
@@ -3453,7 +3474,14 @@ fun CalendarFloatingWindow(
                 today = today,
                 onSelectDate = onSelectDate,
                 lockNowLine = lockNowLine,
-                onLockNowLineChange = { lockNowLine = it },
+                onLockNowLineChange = ::setLockNowLine,
+                lockedTaskTitle = lockedTaskTitle,
+                lockOnTask = lockOnTask,
+                lockTaskPending = lockTaskPending,
+                onLockOnTaskChange = { on ->
+                    if (on) lockNowLine = false
+                    onLockOnTaskChange(on)
+                },
                 showReminders = showReminders,
                 onToggleReminders = onToggleReminders,
                 showScreenBreaks = showScreenBreaks,
@@ -3483,7 +3511,9 @@ fun CalendarFloatingWindow(
                     onVisibleDaysChanged = onVisibleDaysChanged,
                     onNowLineResolutionChanged = onNowLineResolutionChanged,
                     lockNowLine = lockNowLine,
-                    onLockNowLineChange = { lockNowLine = it },
+                    onLockNowLineChange = ::setLockNowLine,
+                    lockTaskMillis = lockTaskMillis?.takeIf { lockOnTask },
+                    onReleaseTaskLock = { onLockOnTaskChange(false) },
                 )
             }
         }
@@ -3506,6 +3536,10 @@ private fun CalendarConfigurationSection(
     onSelectDate: (LocalDate) -> Unit,
     lockNowLine: Boolean,
     onLockNowLineChange: (Boolean) -> Unit,
+    lockedTaskTitle: String?,
+    lockOnTask: Boolean,
+    lockTaskPending: Boolean,
+    onLockOnTaskChange: (Boolean) -> Unit,
     showReminders: Boolean,
     onToggleReminders: (Boolean) -> Unit,
     showScreenBreaks: Boolean,
@@ -3528,6 +3562,26 @@ private fun CalendarConfigurationSection(
         )
         HorizontalDivider()
         CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
+        // PRD §8 "locked on task": there once a task cell's "go to calendar" named a task. Held on the middle of
+        // its panel closest to the now-line — or, while none exists yet, on the definitive-schedule front, which
+        // the loading mark says.
+        if (lockedTaskTitle != null) {
+            CalendarConfigurationSwitch("Locked on task", lockOnTask, onLockOnTaskChange)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                Text(
+                    text = lockedTaskTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (lockTaskPending) {
+                    Spacer(Modifier.width(6.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
         CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders)
         CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks)
     }
@@ -3874,6 +3928,12 @@ private fun WeekView(
     lockNowLine: Boolean,
     /** Releases the lock: the user scrolled, or picked another date — either way, they looked elsewhere. */
     onLockNowLineChange: (Boolean) -> Unit,
+    /**
+     * PRD §8 "locked on task": the instant held at the middle of the view instead of the now-line — the same lock,
+     * released the same ways ([onReleaseTaskLock]); null = not locked on a task.
+     */
+    lockTaskMillis: Long? = null,
+    onReleaseTaskLock: () -> Unit = {},
     /** Drawn at the end of the month-label row — the window's own view menu. */
     headerTrailing: @Composable RowScope.() -> Unit = {},
 ) {
@@ -3930,8 +3990,13 @@ private fun WeekView(
     // a zoom pivots on the now-line instead of the cursor. The gesture handlers below outlive the
     // composition that created them (`pointerInput(Unit)` / the scrollable lambda), so they read the flag
     // and the release callback through [rememberUpdatedState] rather than closing over them.
-    val lockNow = rememberUpdatedState(lockNowLine)
-    val releaseLock = rememberUpdatedState(onLockNowLineChange)
+    // Locked on the now-line or on a task: one lock, held on whichever instant it names.
+    val lockNow = rememberUpdatedState(lockNowLine || lockTaskMillis != null)
+    val releaseLock = rememberUpdatedState<(Boolean) -> Unit> { on ->
+        onLockNowLineChange(on)
+        if (!on) onReleaseTaskLock()
+    }
+    val lockTaskState = rememberUpdatedState(lockTaskMillis)
     // PRD §8 zoom vs. scroll: whether the last pointer event over the grid carried the zoom modifier
     // (Ctrl/Cmd on the event itself, or the focus-tracked key state). The gesture handler below decides a
     // wheel turn is a ZOOM on exactly this, and the scroller consults the SAME decision — so one notch can
@@ -3959,7 +4024,7 @@ private fun WeekView(
     // change prompted the re-centring.
     fun centerOnNowLine(dayH: Float) {
         if (dayH <= 0f || viewportHpx <= 0f) return
-        val lineTime = lockLineTime()
+        val lineTime = lockTaskState.value?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) } ?: lockLineTime()
         val dayFraction = lineTime?.time?.hourOfDay()?.div(24f) ?: nowFractionState.value
         val lineDay = lineTime?.date ?: todayState.value
         offsetPx = nowLineCenterOffset(
@@ -4092,8 +4157,8 @@ private fun WeekView(
     // the day the middle of the view belongs to the neighbouring one), which is a composition-level change.
     // Cost follows the screen, not the history (CLAUDE.md hot-path rule): it is a handful of arithmetic per
     // observed now-line, and the observed now-line is already quantized upstream.
-    LaunchedEffect(lockNowLine, nowMillis, zoom, viewportHpx) {
-        if (lockNowLine) centerOnNowLine(dayHeightPxAt(zoom))
+    LaunchedEffect(lockNowLine, lockTaskMillis, nowMillis, zoom, viewportHpx) {
+        if (lockNowLine || lockTaskMillis != null) centerOnNowLine(dayHeightPxAt(zoom))
     }
 
     // How many day-rows cover the viewport, and therefore which days are on screen: the columns span

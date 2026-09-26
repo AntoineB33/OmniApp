@@ -46,6 +46,9 @@ import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.ui.periodDrawing
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.staticCompositionLocalOf
+import org.example.project.scheduler.domain.CalendarLockDomain
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -574,6 +577,7 @@ internal fun CellListSection(
                                 null
                             },
                         onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
+                        calendarTaskId = taskId.takeUnless { isRootRow },
                         // PRD §7/§8: offered only where the surface is NOT the tree — the Search
                         // window's sub-trees today. Same entry, same name and the same RevealCell primitive the
                         // calendar panel's menu uses.
@@ -3359,6 +3363,31 @@ internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit)
             },
         )
     }
+    // PRD §8 "go to calendar" (user spec 2026-09-26): the calendar, locked on this task's panel closest to the
+    // now-line — with a loading mark while no panel of it exists yet but one can come, and not offered at all when
+    // none can. Asked once as the menu opens.
+    val calendar = LocalCalendarGoTo.current
+    val calendarTaskId = cellMenu.calendarTaskId
+    if (calendar != null && calendarTaskId != null) {
+        val reach = remember(calendarTaskId) { calendar.reach(calendarTaskId) }
+        if (reach != CalendarLockDomain.Reach.None) {
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("go to calendar")
+                        if (reach == CalendarLockDomain.Reach.Pending) {
+                            Spacer(Modifier.width(8.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                },
+                onClick = {
+                    close()
+                    calendar.go(calendarTaskId)
+                },
+            )
+        }
+    }
     DropdownMenuItem(
         text = { Text("copy task id (ctrl c)") },
         onClick = {
@@ -3428,7 +3457,18 @@ internal class TaskCellMenuActions(
     val onDeepCopy: (() -> Unit)?,
     val onCollapseSubtrees: (() -> Unit)?,
     val onAddDefaultSubtree: (() -> Unit)?,
+    /** PRD §8 "go to calendar": the task it is about, where there is one ([LocalCalendarGoTo] decides the rest). */
+    val calendarTaskId: TaskId? = null,
 )
+
+/**
+ * PRD §8 "go to calendar", provided once by `App` to every surface that draws a task cell's menu (the tree, its
+ * Search sub-trees, the Search window's task rows) rather than threaded through each: [reach] says how the entry is
+ * offered for a task ([CalendarLockDomain.reach], on the live state), [go] opens the calendar locked on it.
+ */
+class CalendarGoTo(val reach: (TaskId) -> CalendarLockDomain.Reach, val go: (TaskId) -> Unit)
+
+val LocalCalendarGoTo = staticCompositionLocalOf<CalendarGoTo?> { null }
 
 /**
  * PRD §13 Edition Window: the floating "edit task" editor opened from a cell's contextual menu (and from a

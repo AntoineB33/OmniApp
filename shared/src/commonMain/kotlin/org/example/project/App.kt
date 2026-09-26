@@ -39,6 +39,9 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.ChronoDomain
+import org.example.project.scheduler.domain.CalendarLockDomain
+import org.example.project.scheduler.ui.CalendarGoTo
+import org.example.project.scheduler.ui.LocalCalendarGoTo
 import org.example.project.scheduler.domain.TaskPathsDomain
 import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.domain.CalendarElements
@@ -1369,6 +1372,33 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7: a date pick in the month rail is an EVENT the calendar must act on even when it picks the
         // day already selected (the scroll has since carried the grid elsewhere), so it is counted, not read.
         var calendarJumpNonce by remember { mutableStateOf(0) }
+        // PRD §8 "locked on task" (user spec 2026-09-26): the task a cell's "go to calendar" named, whether the
+        // calendar is locked on it, and how many times it was asked for (each ask turns "Lock to now" off). View
+        // state of this session, like the now-line lock — Compose-only, never persisted.
+        var calendarLockTask by remember { mutableStateOf<TaskId?>(null) }
+        var calendarLockOnTask by remember { mutableStateOf(false) }
+        var calendarLockNonce by remember { mutableStateOf(0) }
+        // A task cell's "go to calendar": the calendar opened (or brought back) and focused, locked on the task.
+        fun goToCalendar(taskId: TaskId) {
+            calendarLockTask = taskId
+            calendarLockOnTask = true
+            calendarLockNonce++
+            if (!calendarOpen) calendarOpen = true
+            focusWindow(FloatingWindow.Calendar)
+            windowFrames.present(FloatingWindow.Calendar.name)
+        }
+        // The provisional panels the calendar last drew (the far-week plan), for the menu's question below.
+        val latestProvisionalPanels = remember { mutableStateOf<List<TaskPanel>>(emptyList()) }
+        val calendarGoTo = remember {
+            CalendarGoTo(
+                // Asked of the LIVE state as the menu opens — whichever tree drawing the menu stands in — and of
+                // the provisional panels the calendar draws, which count as the task's panels too.
+                reach = { taskId ->
+                    CalendarLockDomain.reach(vm.state.value, taskId, clock.nowMillis(), latestProvisionalPanels.value)
+                },
+                go = { goToCalendar(it) },
+            )
+        }
 
         // PRD §15: screen breaks are projected from now to the END OF THE DISPLAYED SPAN. The scheduling
         // horizon is the floor, so the near term is unchanged and scrolling further out extends the
@@ -1378,6 +1408,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val visibleSpanStartMillis = visibleFirstDay.atStartOfDayIn(tz).toEpochMilliseconds()
         val visibleSpanEndMillis =
             visibleFirstDay.plus(visibleDayCount, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
+
 
         // `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_goal$**, the instant the
         // scheduler may stop at — the end of the timeline the calendar shows, or `now + 10 min` if further. It
@@ -1435,6 +1466,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // (falling back to the near panels while it is still computing, so past/pinned blocks stay visible).
         val workPlanPanels =
             if (visibleSpanBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
+
+        // PRD §8 "locked on task": the instant held at the middle of the calendar — the task's panel closest to the
+        // now-line, re-read whenever the panels or the display's now move (a panel the line drags, a new set of
+        // rules), else the definitive-schedule front while no panel of it exists yet — and whether it is pending.
+        // The PROVISIONAL panels count (the far-week plan past the front, by the same rules): a panel the calendar
+        // draws is a panel to lock on, settled or not. One task's panels and records per reading, keyed on what
+        // they are read from, never on a frame.
+        val lockedTask = calendarLockTask
+        val provisionalPanels = if (visibleSpanBeyondNearHorizon) farWeekPlan.orEmpty() else emptyList()
+        SideEffect { latestProvisionalPanels.value = provisionalPanels }
+        val calendarLockTarget: Pair<Long?, Boolean> =
+            remember(lockedTask, schedulerState.panels, schedulerState.tasks, provisionalPanels, nowMillis, visibleSpanEndMillis) {
+                if (lockedTask == null) {
+                    null to false
+                } else {
+                    val panel =
+                        CalendarLockDomain.closestPanelCenterMillis(schedulerState, lockedTask, nowMillis, provisionalPanels)
+                    val front = SchedulerDomain.definitiveScheduleFrontMillis(nowMillis, visibleSpanEndMillis, tz)
+                    (panel ?: CalendarLockDomain.lockCenterMillis(schedulerState, lockedTask, nowMillis, front)) to
+                        (panel == null)
+                }
+            }
         // WHICH LAYER IS HATCHED WHERE IS THE DEVICE'S OWN OS HISTORY, not the app's activity heartbeats.
         // The app only knows when it was itself running and being touched; the question a layer asks is
         // whether the DEVICE was usable, so it is asked of the OS — the lock/unlock record where the platform
@@ -2252,6 +2305,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
             LocalMenuButtonHost provides menuButtonHost,
+            // PRD §8: a task cell's "go to calendar", for every surface that draws the cell's menu.
+            LocalCalendarGoTo provides calendarGoTo,
             // The period edit window's companions + drawings, for everything that draws a period.
             LocalPeriodKindConfig provides schedulerState.periodKindConfig,
         ) {
@@ -2642,6 +2697,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         CalendarFloatingWindow(
                             selectedDate = selectedDate,
                             today = today,
+                            // PRD §8 "locked on task", set by a task cell's "go to calendar".
+                            lockedTaskTitle = calendarLockTask?.let { schedulerState.tasks[it]?.title?.ifBlank { null } },
+                            lockOnTask = calendarLockOnTask,
+                            lockTaskMillis = calendarLockTarget.first,
+                            lockTaskPending = calendarLockTarget.second,
+                            onLockOnTaskChange = { calendarLockOnTask = it },
+                            lockOnTaskNonce = calendarLockNonce,
                             // The day selector, in the window's configuration section (it left the lateral menu).
                             monthAnchor = monthAnchor,
                             onMonthAnchorChange = { monthAnchor = it },
