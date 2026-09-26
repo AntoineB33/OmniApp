@@ -54,6 +54,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -1205,8 +1206,8 @@ private fun hourLabel(hour: Int): String {
 
 /**
  * PRD §7 Lateral menu: a persistent left rail. Its first element is the page-navigation button
- * (present on every feature page); below it a button toggles the calendar popup. While the calendar
- * is open the rail also hosts the month grid for day/month selection (mirroring Google Calendar).
+ * (present on every feature page); below it a button toggles the calendar popup. The day selector is the
+ * calendar window's own, in its configuration section ([CalendarFloatingWindow]).
  */
 @Composable
 fun LateralMenu(
@@ -1214,11 +1215,6 @@ fun LateralMenu(
     onPageSelected: (OmniPage) -> Unit,
     calendarOpen: Boolean,
     onToggleCalendar: () -> Unit,
-    monthAnchor: LocalDate,
-    onMonthAnchorChange: (LocalDate) -> Unit,
-    selectedDate: LocalDate,
-    today: LocalDate,
-    onSelectDate: (LocalDate) -> Unit,
     /** PRD §7 Automatic Schedule Switch: current state + toggle callback. */
     automaticSchedule: Boolean = true,
     onToggleAutomaticSchedule: (Boolean) -> Unit = {},
@@ -1320,19 +1316,6 @@ fun LateralMenu(
             active = calendarOpen,
             onClick = onToggleCalendar,
         )
-
-        // PRD §7 Calendar: the day selector (month grid) sits right below the Calendar button, and only
-        // appears while the calendar is displayed.
-        if (calendarOpen) {
-            Spacer(Modifier.height(4.dp))
-            MiniMonth(
-                monthAnchor = monthAnchor,
-                onMonthAnchorChange = onMonthAnchorChange,
-                selectedDate = selectedDate,
-                today = today,
-                onSelectDate = onSelectDate,
-            )
-        }
 
         // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait.
         Row(
@@ -3130,7 +3113,7 @@ internal fun MenuButton(
     }
 }
 
-/** PRD §7 Calendar: month grid in the lateral menu — pick a day, or page months with ‹ / ›. */
+/** PRD §7 Calendar: the day selector in the calendar window's configuration section — pick a day, or page months with ‹ / ›. */
 @Composable
 private fun MiniMonth(
     monthAnchor: LocalDate,
@@ -3256,6 +3239,10 @@ private fun MiniMonthDay(
 fun CalendarFloatingWindow(
     selectedDate: LocalDate,
     today: LocalDate,
+    /** The month the day selector shows (its ‹ / › page it), and the day picked in it. */
+    monthAnchor: LocalDate = LocalDate(today.year, today.month, 1),
+    onMonthAnchorChange: (LocalDate) -> Unit = {},
+    onSelectDate: (LocalDate) -> Unit = {},
     nowMillis: Long,
     /**
      * `docs/scheduler_requirements.md` § *$now line$*: **the exact clock**, read afresh on every frame the
@@ -3368,7 +3355,7 @@ fun CalendarFloatingWindow(
      */
     onNowLineResolutionChanged: (Long) -> Unit = {},
     /**
-     * PRD §7: bumped on every date pick in the lateral month calendar. The grid scrolls away from
+     * PRD §7: bumped on every date pick in the day selector. The grid scrolls away from
      * [selectedDate] freely, so re-picking the day already selected must still jump back — this is what
      * makes that pick observable.
      */
@@ -3397,8 +3384,8 @@ fun CalendarFloatingWindow(
         title = "Calendar",
         state = frame,
         onClose = onDismiss,
-        defaultWidth = 720.dp,
-        defaultHeight = 540.dp,
+        defaultWidth = 920.dp,
+        defaultHeight = 560.dp,
         modifier = modifier
             .focusRequester(focusRequester)
             .focusable()
@@ -3460,54 +3447,67 @@ fun CalendarFloatingWindow(
             }
         },
     ) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            WeekView(
+        Row(Modifier.weight(1f).fillMaxWidth()) {
+            // The configuration section: the day selector, then the view switches. Beside the grid rather
+            // than above it, so it costs the week none of its height.
+            CalendarConfigurationSection(
+                monthAnchor = monthAnchor,
+                onMonthAnchorChange = onMonthAnchorChange,
                 selectedDate = selectedDate,
                 today = today,
-                nowMillis = nowMillis,
-                nowExactMillis = nowExactMillis,
-                records = records,
-                taskColors = taskColors,
-                taskSheetColors = taskSheetColors,
-                zoomActions = zoomActions,
-                ctrlHeld = ctrlHeld,
-                onAddAt = onAddAt,
-                onCommitBounds = onCommitBounds,
-                onEditChoice = onEditChoice,
-                onEditElementsAt = onEditElementsAt,
-                onGoToTaskTree = onGoToTaskTree,
-                onToggleReminder = onToggleReminder,
-                onAdjustWeights = onAdjustWeights,
-                overlapArmed = overlapArmed,
-                jumpNonce = jumpNonce,
-                onVisibleDaysChanged = onVisibleDaysChanged,
-                onNowLineResolutionChanged = onNowLineResolutionChanged,
+                onSelectDate = onSelectDate,
                 lockNowLine = lockNowLine,
                 onLockNowLineChange = { lockNowLine = it },
-                headerTrailing = {
-                    CalendarViewMenu(
-                        lockNowLine = lockNowLine,
-                        onLockNowLineChange = { lockNowLine = it },
-                        showReminders = showReminders,
-                        onToggleReminders = onToggleReminders,
-                        showScreenBreaks = showScreenBreaks,
-                        onToggleScreenBreaks = onToggleScreenBreaks,
-                    )
-                },
+                showReminders = showReminders,
+                onToggleReminders = onToggleReminders,
+                showScreenBreaks = showScreenBreaks,
+                onToggleScreenBreaks = onToggleScreenBreaks,
             )
+            VerticalDivider()
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                WeekView(
+                    selectedDate = selectedDate,
+                    today = today,
+                    nowMillis = nowMillis,
+                    nowExactMillis = nowExactMillis,
+                    records = records,
+                    taskColors = taskColors,
+                    taskSheetColors = taskSheetColors,
+                    zoomActions = zoomActions,
+                    ctrlHeld = ctrlHeld,
+                    onAddAt = onAddAt,
+                    onCommitBounds = onCommitBounds,
+                    onEditChoice = onEditChoice,
+                    onEditElementsAt = onEditElementsAt,
+                    onGoToTaskTree = onGoToTaskTree,
+                    onToggleReminder = onToggleReminder,
+                    onAdjustWeights = onAdjustWeights,
+                    overlapArmed = overlapArmed,
+                    jumpNonce = jumpNonce,
+                    onVisibleDaysChanged = onVisibleDaysChanged,
+                    onNowLineResolutionChanged = onNowLineResolutionChanged,
+                    lockNowLine = lockNowLine,
+                    onLockNowLineChange = { lockNowLine = it },
+                )
+            }
         }
     }
 }
 
 /**
- * The calendar's view switches — PRD §8 "Lock to now", PRD §14/§15 "Reminders" / "Screen breaks" (cosmetic;
- * notifications keep firing) — in a drop-down inside the window. They used to sit in the window's head, and
- * the head is the drag handle: a switch there is a press the drag has to be taught to leave alone.
- *
- * A row press flips its switch and leaves the menu open, so several can be set in one visit.
+ * The calendar window's **configuration section**, down its left side: the day selector (it used to sit in the
+ * lateral menu) and the view switches — PRD §8 "Lock to now", PRD §14/§15 "Reminders" / "Screen breaks"
+ * (cosmetic; notifications keep firing), which used to hide in a "View ▾" drop-down. Not in the head: the head
+ * is the drag handle, and a switch there is a press the drag has to be taught to leave alone. It scrolls on its
+ * own when the window is shorter than it.
  */
 @Composable
-private fun CalendarViewMenu(
+private fun CalendarConfigurationSection(
+    monthAnchor: LocalDate,
+    onMonthAnchorChange: (LocalDate) -> Unit,
+    selectedDate: LocalDate,
+    today: LocalDate,
+    onSelectDate: (LocalDate) -> Unit,
     lockNowLine: Boolean,
     onLockNowLineChange: (Boolean) -> Unit,
     showReminders: Boolean,
@@ -3515,33 +3515,45 @@ private fun CalendarViewMenu(
     showScreenBreaks: Boolean,
     onToggleScreenBreaks: (Boolean) -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        Text(
-            text = "View  ▾",
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color(0xFFEEF3FF))
-                .clickable { open = true }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            color = CalColors.accent,
-            style = MaterialTheme.typography.labelSmall,
+    Column(
+        modifier = Modifier
+            .width(CALENDAR_CONFIGURATION_WIDTH)
+            .fillMaxHeight()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        MiniMonth(
+            monthAnchor = monthAnchor,
+            onMonthAnchorChange = onMonthAnchorChange,
+            selectedDate = selectedDate,
+            today = today,
+            onSelectDate = onSelectDate,
         )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            CalendarViewMenuSwitch("Lock to now", lockNowLine, onLockNowLineChange)
-            CalendarViewMenuSwitch("Reminders", showReminders, onToggleReminders)
-            CalendarViewMenuSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks)
-        }
+        HorizontalDivider()
+        CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
+        CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders)
+        CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks)
     }
 }
 
+/** How wide the calendar window's configuration section is — room for the month grid's seven columns. */
+private val CALENDAR_CONFIGURATION_WIDTH = 220.dp
+
+/** One switch of the calendar's configuration section: the label, then the switch; a press on the row flips it. */
 @Composable
-private fun CalendarViewMenuSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    DropdownMenuItem(
-        text = { Text(label, style = MaterialTheme.typography.labelMedium) },
-        trailingIcon = { Switch(checked = checked, onCheckedChange = onCheckedChange) },
-        onClick = { onCheckedChange(!checked) },
-    )
+private fun CalendarConfigurationSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onCheckedChange(!checked) }
+            .padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
 }
 
 /** PRD §8 zoom: the week grid's hour-row height at zoom 1f, and the zoom bounds / per-step factor. */

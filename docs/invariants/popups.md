@@ -97,8 +97,8 @@ means.
   gesture.
 - **The head drag has no dead zone**: the window follows the pointer from its first movement. The slop is
   only the click test above, never a threshold before moving. That is affordable because the head holds
-  nothing interactive but its own buttons (which consume their press); a window's toggles belong in a menu
-  inside the window (the calendar's "View ▾"), not in the head.
+  nothing interactive but its own buttons (which consume their press); a window's toggles belong
+  inside the window (the calendar's configuration section), not in the head.
 - **A maximized window fills the content area**, which is the app minus the lateral menu — and grows to the
   whole app when the menu is retracted, because the content area does. Nothing in the frame knows about the
   menu: `fillMaxWidth`/`fillMaxHeight` inside the content `Box` is the entire mechanism.

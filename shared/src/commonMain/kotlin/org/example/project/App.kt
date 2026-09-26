@@ -2141,11 +2141,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onPageSelected = { page = it },
                     calendarOpen = calendarOpen,
                     onToggleCalendar = { onMenuWindowClicked(FloatingWindow.Calendar) { calendarOpen = it } },
-                    monthAnchor = monthAnchor,
-                    onMonthAnchorChange = { monthAnchor = it },
-                    selectedDate = selectedDate,
-                    today = today,
-                    onSelectDate = { selectedDate = it; calendarJumpNonce++ },
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     notificationVoiceEnabled = schedulerState.notificationVoiceEnabled,
@@ -2506,6 +2501,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         CalendarFloatingWindow(
                             selectedDate = selectedDate,
                             today = today,
+                            // The day selector, in the window's configuration section (it left the lateral menu).
+                            monthAnchor = monthAnchor,
+                            onMonthAnchorChange = { monthAnchor = it },
+                            onSelectDate = { selectedDate = it; calendarJumpNonce++ },
                             nowMillis = nowMillis,
                             // The now-line's own instant: read afresh on every frame it is placed on, so it
                             // glides however seldom [nowMillis] above is re-derived (see the display's own

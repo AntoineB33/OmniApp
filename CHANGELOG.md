@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar window's configuration section; the day selector leaves the lateral menu — 2026-09-26
+
+User spec: a section in the calendar view holding the day selector and the other configurations; the day
+selector removed from the lateral menu.
+
+- `CalendarConfigurationSection`, down the calendar window's left side: the month grid (`MiniMonth`, moved out of
+  `LateralMenu`), then "Lock to now", "Reminders" and "Screen breaks" as switches — the "View ▾" drop-down that
+  held them is gone. The window's default size grew to 920 × 560 dp to make room.
+- The day selector's state (`selectedDate`, `monthAnchor`, the jump nonce) stays in `App`, handed to the window.
+  No state, persistence or sync change.
+
 ### Chronos, and timers that count below zero — 2026-09-26
 
 User spec: add the chrono type; and an option in a timer's configuration to let it go into the negatives — a timer
