@@ -74,8 +74,9 @@ means.
 - **A head**, which is the handle the window is dragged by, carrying — in this order — **add to the menu, duplicate,
   fill width, fill height, reduce, maximize, close**. The order is fixed here and not per window, so every window's
   ✕ is under the same pixel. Duplicate (⧉) shows only where the window can be duplicated (below). Add to the menu
-  (☆) puts a button for that very window (that copy) at the bottom of the lateral menu (`ui/CustomMenuButtons.kt`),
-  and shows wherever `App` can open the window again from a button: a **lateral-menu window** or copy, by its
+  (☆) puts a button at the bottom of the lateral menu (`ui/CustomMenuButtons.kt`) that opens a NEW window of that
+  kind **with the configuration this window has now** (`CustomMenuButton.config`: the Search window's query, types,
+  filters and sorting; the Configuration Search window's own) — a saved search is a button. It shows wherever `App` can open the window again from a button: a **lateral-menu window** or copy, by its
   frame id (`MenuButtonHost.canAdd`), and a **per-object window about an object with a stable id** — a task's edit
   window, a category's, a period kind's, a weight table, a relative priority, a deep copy, an alarm's, a timer's,
   a reminder's, and the default alarm, timer and reminder — by its `ObjectWindowKey` (the kind, the tree and the id; `ObjectWindows`' `menuKeyOf`, handed to
@@ -84,7 +85,7 @@ means.
   companion, a notice) has no ☆: a saved button would have nothing to come back to.
   - **The key follows what the window shows**: the alarm, timer and reminder windows move on to the element their
     "+ New …" made (`ObjectWindows.Window.retarget`), and the registration's `menuKey` is kept current
-    (`WindowFrameHost.rekey`), which is what the button's "close it when it is the window being worked in" reads.
+    (`WindowFrameHost.rekey`), so a ☆ pressed after a "+ New …" saves the element shown now.
   - **A button whose object is gone is hidden, not deleted** (`ObjectWindowKey.exists`), so an undo brings it back.
 - **Maximize is exactly "fill both axes"** (`WindowFill.Both`), never a sixth state of its own. Pressing the
   two fill buttons in turn therefore lands on the same window as pressing maximize, and un-maximizing puts
@@ -123,7 +124,10 @@ means.
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
   open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
-  maximized window stops above it. A tab brings its window back (`present`); its ✕ closes it outright.
+  maximized window stops above it. **A tab is a taskbar's** (`WindowFrameHost.onTabClicked`, 2026-09-26): a
+  reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window
+  that HAS the focus is reduced — giving the focus up, so no hidden window keeps the keyboard. Its ✕ closes it
+  outright.
 - **The lateral menu's scrolled content ends a bar's height lower** (`LateralMenu`'s bottom padding, `+
   MINIMIZED_BAR_HEIGHT`), always — so scrolled to the end, its last button clears the bar drawn over it, and
   the menu does not jump as the bar comes and goes.
@@ -328,10 +332,14 @@ It lives in the host because the host already sees the only two events that deci
 - **A window that is not in the stack yet reads as the top** (`zOf` returns `stack.size`). Its `register`
   runs after the composition that first draws it, and reading as the bottom would draw a newly opened
   window under its neighbours for one frame.
-- **The lateral-menu button closes its window only when that window is the FRONT one** —
-  `WindowFrameHost.frontId`, the top of the *whole* stack. Not "the topmost lateral-menu window": a
-  per-object window standing over the Alarms window makes the answer null, and the button then brings
-  Alarms back to the front (and to the focus) instead of reading as "you are already here" and closing it.
+- **A window button of the lateral menu OPENS A NEW WINDOW at every click, and nothing else** (user rule,
+  2026-09-26; `App.openNewWindow`): never closes one, never brings one back, and is never drawn as "open" (no
+  blue) — the window bar says what is open. The new window starts from the kind's default configuration (a ☆
+  button's: the one it saved): the original when it is not open, else a copy (`Search#2`) cascaded off it. The
+  **task tree and the calendar** exist once (*Not duplicable*), so theirs opens when closed and is brought back
+  (out of the bar included) when open. A ☆ button of a per-object window opens a new window on its object even
+  when one is open on it (`ObjectWindows.openNew`). Sleep/Work and "I'm away" are modes, not windows, and keep
+  their on state.
 - **Moving to a window takes the focus**, however the move was asked for. `App`'s `focusWindow` goes through
   the same `WindowFrameHost.focus` a press inside the window would, or the menu button raises a window the
   app still believes is un-focused — and the keyboard stays with whatever was focused before it.

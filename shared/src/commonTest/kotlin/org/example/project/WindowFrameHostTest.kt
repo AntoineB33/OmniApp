@@ -328,4 +328,26 @@ class WindowFrameHostTest {
 
         assertFalse(host.keyboardClaimed)
     }
+
+    @Test
+    fun `a tab brings its window back or into the focus, and reduces the one that has it`() {
+        // User spec 2026-09-26: the window bar is the app's system tray, and its tabs behave like a taskbar's.
+        val host = WindowFrameHost()
+        val a = register(host, "a")
+        register(host, "b")
+        host.focus("b")
+
+        host.onTabClicked("a")
+        assertEquals("a", host.focusedId, "a window without the focus takes it")
+        assertEquals("a", host.frontId)
+        assertFalse(a.minimized)
+
+        host.onTabClicked("a")
+        assertTrue(a.minimized, "the window that has the focus is reduced")
+        assertNull(host.focusedId, "a reduced window gives the keyboard up")
+
+        host.onTabClicked("a")
+        assertFalse(a.minimized, "a reduced window comes back")
+        assertEquals("a", host.focusedId)
+    }
 }

@@ -733,8 +733,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // A per-object window named by its key: opened on its object (or brought back when one is open on it) — or,
         // at startup, reopened under the [number] it had. The one reading of a key, for the ☆ buttons and the
         // restore alike.
-        fun openObjectWindow(key: ObjectWindowKey, number: Int? = null) {
-            fun <T : Any> ObjectWindows<T>.openOn(subject: T) = if (number == null) open(subject) else restore(number, subject)
+        fun openObjectWindow(key: ObjectWindowKey, number: Int? = null, fresh: Boolean = false) {
+            // [fresh]: a NEW window even when one is open on the object — a lateral-menu button's (☆) click.
+            fun <T : Any> ObjectWindows<T>.openOn(subject: T) =
+                when {
+                    number != null -> restore(number, subject)
+                    fresh -> openNew(subject)
+                    else -> open(subject)
+                }
             when (key.kind) {
                 ObjectWindowKey.Kind.TaskEdit -> taskEditWindows.openOn(TreeObject(TaskId(key.id), key.template))
                 ObjectWindowKey.Kind.CategoryEdit -> categoryWindows.openOn(TreeObject(CategoryId(key.id), key.template))
@@ -1055,8 +1061,54 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
         }
         val goToTaskTree: (TaskId?, String) -> Unit = { taskId, title -> goToTaskTreeAt(taskId, title, null) }
-        // Lateral-menu click on a window button: open it (and focus) when closed; close it when it is the
-        // window being worked in; otherwise bring it back to the front and the focus without closing.
+        // PRD §7: the configuration a lateral-menu window keeps on its placement row, in its stored form — what a
+        // ☆ saves on the button it makes. Only the Search window and the Configuration Search window have one.
+        fun windowConfigOf(frameId: String): String? =
+            when (lateralWindowOf(frameId)) {
+                FloatingWindow.Search -> searchConfigOf(frameId).encode()
+                FloatingWindow.ConfigSearch -> configSearchOf(frameId).encode()
+                else -> null
+            }
+        // PRD §7: what EVERY window button of the lateral menu does — open a NEW window of [kind], never close one.
+        // It starts from [config] (a ☆ button's snapshot), or the kind's default configuration: the original
+        // window when it is not open (where it was left), else a new copy set off from it (`Search#2`, the head's
+        // ⧉ mechanism). The task tree and the calendar exist once (`popups.md`, *Not duplicable*): theirs is
+        // opened when closed and brought back — out of the window bar included — when open.
+        fun openNewWindow(kind: FloatingWindow, config: String? = null) {
+            if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.Calendar || kind == FloatingWindow.TimeSim) {
+                if (!isWindowOpen(kind)) setWindowOpen(kind, true)
+                focusWindow(kind)
+                windowFrames.present(kind.name)
+                return
+            }
+            val id =
+                if (!isWindowOpen(kind)) {
+                    kind.name
+                } else {
+                    val used = windowCopies.filter { lateralWindowOf(it) == kind }.mapNotNull { it.substringAfter('#').toIntOrNull() }.toSet()
+                    kind.name + "#" + generateSequence(2) { it + 1 }.first { it !in used }
+                }
+            // The configuration held in memory is re-read from the row written here.
+            searchConfigs.remove(id)
+            configSearches.remove(id)
+            if (id == kind.name) {
+                updatePlacementById(id) { it.copy(config = config, minimized = false) }
+                setWindowOpen(kind, true)
+                focusWindow(kind)
+                return
+            }
+            val from = placements[kind.name] ?: WindowPlacement(x = 0f, y = 0f, visible = true)
+            val step = COPY_CASCADE_PX * ((id.substringAfter('#').toInt() - 1) % 6)
+            updatePlacementById(id) {
+                from.copy(x = from.x + step, y = from.y + step, visible = true, minimized = false, config = config)
+            }
+            windowCopies.add(id)
+            windowFrames.focus(id)
+            historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
+        }
+        // A window button that is NOT in the lateral menu (the default sub-tree's, atop the task tree window): open
+        // it (and focus) when closed; close it when it is the window being worked in; otherwise bring it back to the
+        // front and the focus without closing.
         fun onMenuWindowClicked(id: FloatingWindow, setOpen: (Boolean) -> Unit) {
             when {
                 !isWindowOpen(id) -> {
@@ -1073,9 +1125,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // like its frame id), a per-object window's object and what it is ("Tea timer").
         fun addMenuButton(key: String, title: String) {
             val objectKey = ObjectWindowKey.decode(key)
-            val number = if (objectKey == null) key.substringAfter('#', "") else ""
-            val name = objectKey?.buttonTitle(schedulerState) ?: if (number.isEmpty()) title else "$title #$number"
-            val (list, id) = CustomMenuButtons.added(menuButtons, key, name)
+            val kind = lateralWindowOf(key)
+            // Named after what it opens — a new window of that kind, not this copy of it.
+            val name = objectKey?.buttonTitle(schedulerState) ?: kind?.title ?: title
+            val (list, id) = CustomMenuButtons.added(menuButtons, key, name, windowConfigOf(key))
             setMenuButtons(list)
             editingMenuButton = id
             // The field has to be seen to be typed in: the menu opens, scrolled to its end.
@@ -1087,47 +1140,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val menuButtonHost = remember {
             MenuButtonHost(canAdd = { lateralWindowOf(it) != null }, add = { id, title -> addMenuButton(id, title) })
         }
-        fun isFrameOpen(frameId: String): Boolean {
-            if (ObjectWindowKey.decode(frameId) != null) return windowFrames.registrations.any { it.menuKey == frameId }
-            val kind = lateralWindowOf(frameId) ?: return false
-            return if ('#' in frameId) frameId in windowCopies else isWindowOpen(kind)
-        }
-        // A per-object window's button: its window is closed when it is the one being worked in, opened on its
-        // object otherwise — or brought back, when one is open on it ([ObjectWindows.open]).
-        fun onObjectMenuButtonClicked(key: ObjectWindowKey) {
-            val front = windowFrames.registrations.firstOrNull { it.id == windowFrames.frontId }
-            if (front != null && front.menuKey == key.encode()) {
-                front.onClose()
+        // A button the user made (☆) opens a NEW window, like every button of the menu: a per-object window on
+        // its object (a second one when one is open on it already), or a lateral-menu window with the
+        // configuration the ☆ saved. A button made before the snapshot existed opens with what its window has now.
+        fun onMenuButtonClicked(button: CustomMenuButton) {
+            ObjectWindowKey.decode(button.windowId)?.let { key ->
+                openObjectWindow(key, fresh = true)
                 return
             }
-            openObjectWindow(key)
-        }
-        // A button the user made does what its window's own menu button does — for a copy too: opened (a closed
-        // copy comes back from its row, with its own configuration) and focused when closed, closed when it is the
-        // one being worked in, brought back to the front otherwise.
-        fun onMenuButtonClicked(frameId: String) {
-            ObjectWindowKey.decode(frameId)?.let { key ->
-                onObjectMenuButtonClicked(key)
-                return
-            }
-            val kind = lateralWindowOf(frameId) ?: return
-            if ('#' !in frameId) {
-                onMenuWindowClicked(kind) { setWindowOpen(kind, it) }
-                return
-            }
-            when {
-                frameId !in windowCopies -> {
-                    updatePlacementById(frameId) { it.copy(visible = true, minimized = false) }
-                    windowCopies.add(frameId)
-                    windowFrames.focus(frameId)
-                }
-                windowFrames.frontId == frameId -> {
-                    closeWindowCopy(frameId)
-                    return
-                }
-                else -> windowFrames.present(frameId)
-            }
-            historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, frameId.removePrefix(kind.name))) }
+            val kind = lateralWindowOf(button.windowId) ?: return
+            openNewWindow(kind, button.config ?: windowConfigOf(button.windowId))
         }
 
         // PRD §7 Search, the "window" kind: every window of the app, open or not. Each open window is its own entry
@@ -2139,8 +2161,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 if (!menuCollapsed) LateralMenu(
                     page = page,
                     onPageSelected = { page = it },
-                    calendarOpen = calendarOpen,
-                    onToggleCalendar = { onMenuWindowClicked(FloatingWindow.Calendar) { calendarOpen = it } },
+                    // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
+                    onToggleCalendar = { openNewWindow(FloatingWindow.Calendar) },
                     automaticSchedule = schedulerState.automaticSchedule,
                     onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     notificationVoiceEnabled = schedulerState.notificationVoiceEnabled,
@@ -2156,16 +2178,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // at whatever chord the ACCOUNT has it bound to (the same map installGlobalHotkeys above
                     // is claiming).
                     shortcutBindings = schedulerState.shortcutBindings,
-                    sleepWindowOpen = sleepWindowOpen,
-                    onToggleSleep = { onMenuWindowClicked(FloatingWindow.Sleep) { sleepWindowOpen = it } },
-                    categoriesWindowOpen = categoriesWindowOpen,
-                    onToggleCategories = {
-                        onMenuWindowClicked(FloatingWindow.Categories) { categoriesWindowOpen = it }
-                    },
-                    searchWindowOpen = searchWindowOpen,
-                    onToggleSearch = {
-                        onMenuWindowClicked(FloatingWindow.Search) { searchWindowOpen = it }
-                    },
+                    onToggleSleep = { openNewWindow(FloatingWindow.Sleep) },
+                    onToggleCategories = { openNewWindow(FloatingWindow.Categories) },
+                    onToggleSearch = { openNewWindow(FloatingWindow.Search) },
                     sleeping = schedulerState.isSleeping(nowMillis),
                     onToggleSleepWork = {
                         if (schedulerState.isSleeping(clock.nowMillis())) {
@@ -2178,19 +2193,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     },
                     away = userAway,
                     onToggleAway = { engine.setUserAway(!userAway) },
-                    onlineWindowOpen = onlineWindowOpen,
-                    onToggleOnline = { onMenuWindowClicked(FloatingWindow.Online) { onlineWindowOpen = it } },
+                    onToggleOnline = { openNewWindow(FloatingWindow.Online) },
                     onlineStatus = if (vm.syncState == null) null else syncStatusLabel(syncStateValue, accountValue),
-                    taskTreeOpen = taskTreeWindowOpen,
-                    onToggleTaskTree = {
-                        onMenuWindowClicked(FloatingWindow.TaskTree) { taskTreeWindowOpen = it }
-                    },
+                    onToggleTaskTree = { openNewWindow(FloatingWindow.TaskTree) },
                     scrollState = menuScroll,
                     customSection = {
                         CustomMenuSection(
                             buttons = menuButtons.filter(::menuButtonShown),
-                            isOpen = ::isFrameOpen,
-                            onClick = { onMenuButtonClicked(it.windowId) },
+                            onClick = { onMenuButtonClicked(it) },
                             editingId = editingMenuButton,
                             onStartRename = { editingMenuButton = it },
                             onRename = { id, title -> setMenuButtons(CustomMenuButtons.renamed(menuButtons, id, title)) },

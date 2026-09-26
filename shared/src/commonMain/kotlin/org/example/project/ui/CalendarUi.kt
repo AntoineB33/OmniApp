@@ -1206,33 +1206,29 @@ private fun hourLabel(hour: Int): String {
 
 /**
  * PRD §7 Lateral menu: a persistent left rail. Its first element is the page-navigation button
- * (present on every feature page); below it a button toggles the calendar popup. The day selector is the
- * calendar window's own, in its configuration section ([CalendarFloatingWindow]).
+ * (present on every feature page). **A window's button opens a NEW window at every click** — never closes one,
+ * and is never drawn as "open" (the window bar says what is open). The day selector is the calendar window's
+ * own, in its configuration section ([CalendarFloatingWindow]).
  */
 @Composable
 fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
-    calendarOpen: Boolean,
     onToggleCalendar: () -> Unit,
     /** PRD §7 Automatic Schedule Switch: current state + toggle callback. */
     automaticSchedule: Boolean = true,
     onToggleAutomaticSchedule: (Boolean) -> Unit = {},
-    /** Sleep schedule window: whether it is open + toggle callback. */
-    sleepWindowOpen: Boolean = false,
+    /** Sleep schedule window: open one. */
     onToggleSleep: () -> Unit = {},
-    /** PRD §5 Categories: whether the account's list of categories is open + toggle callback. */
-    categoriesWindowOpen: Boolean = false,
+    /** PRD §5 Categories: open a window on the account's list of categories. */
     onToggleCategories: () -> Unit = {},
     /**
      * PRD §5: the Online window (status, work offline, account) — it replaced the top-right chip and offline
      * button, so its button carries the status they showed ([onlineStatus], e.g. "☁ Synced", "✈ Offline").
      */
-    onlineWindowOpen: Boolean = false,
     onToggleOnline: () -> Unit = {},
     onlineStatus: String? = null,
-    /** PRD §7 Search: whether the search window is open + toggle callback. */
-    searchWindowOpen: Boolean = false,
+    /** PRD §7 Search: open a search window. */
     onToggleSearch: () -> Unit = {},
     /**
      * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
@@ -1274,8 +1270,7 @@ fun LateralMenu(
      * bubble can never advertise a chord the app is not listening for.
      */
     shortcutBindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap(),
-    /** PRD §4: the task tree is a window like the others, opened and closed from here. */
-    taskTreeOpen: Boolean = false,
+    /** PRD §4: the task tree is a window like the others, opened from here. */
     onToggleTaskTree: () -> Unit = {},
     /** The buttons the user made for one window each ([CustomMenuSection]), at the very bottom. */
     customSection: @Composable () -> Unit = {},
@@ -1307,13 +1302,13 @@ fun LateralMenu(
         // Closing every window at once is the window bar's "Close all" now (WindowBar), where the windows are.
         MenuButton(
             label = "Task tree",
-            active = taskTreeOpen,
+            active = false,
             onClick = onToggleTaskTree,
         )
 
         MenuButton(
             label = "Calendar",
-            active = calendarOpen,
+            active = false,
             onClick = onToggleCalendar,
         )
 
@@ -1414,7 +1409,7 @@ fun LateralMenu(
         // Sleep schedule: toggles the floating window for the nightly sleep window the scheduler avoids.
         MenuButton(
             label = "Sleep schedule",
-            active = sleepWindowOpen,
+            active = false,
             onClick = onToggleSleep,
         )
 
@@ -1422,7 +1417,7 @@ fun LateralMenu(
         // name — including a task no task tree holds any more, which nothing else in the menu can reach.
         MenuButton(
             label = "Search",
-            active = searchWindowOpen,
+            active = false,
             onClick = onToggleSearch,
         )
 
@@ -1431,14 +1426,14 @@ fun LateralMenu(
         // cell's own categories field, which can only ever reach the ones a task already carries.
         MenuButton(
             label = "Categories",
-            active = categoriesWindowOpen,
+            active = false,
             onClick = onToggleCategories,
         )
 
         // PRD §5: status, the device's "work offline" switch and the account, in one window.
         MenuButton(
             label = "Online" + (onlineStatus?.let { "  $it" } ?: ""),
-            active = onlineWindowOpen,
+            active = false,
             onClick = onToggleOnline,
         )
 

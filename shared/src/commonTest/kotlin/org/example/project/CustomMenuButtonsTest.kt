@@ -51,4 +51,18 @@ class CustomMenuButtonsTest {
             CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S","icon":"star"}],"v":2}"""),
         )
     }
+
+    @Test
+    fun a_button_keeps_the_configuration_its_window_had_and_one_stored_before_that_reads_none() {
+        // User spec 2026-09-26: the ☆ of a Search window keeps its configuration as a button that opens a new
+        // window with exactly it.
+        val saved = """{"query":"tea","kinds":["Timer"]}"""
+        val (list, _) = CustomMenuButtons.added(emptyList(), "Search#2", "Search", saved)
+        val decoded = CustomMenuButtons.decode(CustomMenuButtons.encode(list)).single()
+        assertEquals(saved, decoded.config)
+        // A button stored before the snapshot existed.
+        val old = CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"Search"}]}""").single()
+        assertEquals(CustomMenuButton("b1", "Search", "Search"), old)
+        assertEquals(null, old.config)
+    }
 }

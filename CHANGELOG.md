@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Lateral-menu buttons open a new window; ☆ keeps a window's configuration; taskbar tabs — 2026-09-26
+
+User spec: the lateral menu's buttons only open a new window at each click and are no longer drawn blue; the ☆
+creates a button that always opens a new window with the exact configuration the window had (e.g. a Search);
+a window-bar tab focuses its window if it did not have the focus, reduces it otherwise, and brings back a reduced
+one.
+
+- `App.openNewWindow` is the one funnel: the original when closed (its configuration reset to the default, or to
+  a ☆ button's), else a copy `Kind#n`. The task tree and the calendar are not duplicable: opened or brought back.
+- `CustomMenuButton.config` (new, optional — a button stored before it opens with what its window has now);
+  `ObjectWindows.openNew`; `WindowFrameHost.onTabClicked`. Local-only view state; no persistence or sync change.
+
 ### The calendar window's configuration section; the day selector leaves the lateral menu — 2026-09-26
 
 User spec: a section in the calendar view holding the day selector and the other configurations; the day

@@ -513,6 +513,22 @@ class WindowFrameHost {
         focus(id)
     }
 
+    /**
+     * A click on [id]'s tab in the window bar (the app's system tray): a reduced window comes back and takes the
+     * focus, a window that does not have the focus takes it (and comes to the top), and the window that HAS the
+     * focus is reduced — the taskbar's toggle. A reduced window gives the focus up, so no hidden window keeps
+     * the keyboard.
+     */
+    fun onTabClicked(id: String) {
+        val entry = entries.firstOrNull { it.id == id } ?: return
+        if (!entry.state.minimized && focusedId == id) {
+            entry.state.minimize()
+            blur()
+        } else {
+            present(id)
+        }
+    }
+
     /** The task tree took a press: no framed window is focused any more. */
     fun blur() {
         focusedId = null
@@ -701,6 +717,15 @@ class ObjectWindows<T : Any>(
     fun open(subject: T) {
         val existing = windows.firstOrNull { it.subject == subject }
         if (existing != null) existing.presentRequests++ else add(Window(next++, subject, duplicated = false))
+    }
+
+    /**
+     * Open a NEW window on [subject], even when one is open on it already — what a lateral-menu button made from
+     * such a window's ☆ does (every button of the menu opens a new window). The second on one subject is a copy,
+     * numbered like the head's ⧉ makes it.
+     */
+    fun openNew(subject: T) {
+        if (windows.none { it.subject == subject }) open(subject) else add(Window(next++, subject, duplicated = true))
     }
 
     /**
@@ -1324,13 +1349,11 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                // Picking a window back up puts it on top: it is the window the user has just asked for,
-                // exactly as when it was opened.
-                // …and into the FOCUS, like every other way of asking for a window that is already
-                // open ([WindowFrameHost.present]): raising alone left the app believing the user was
-                // still in whatever they had focused before, so a window that answers keystrokes came
-                // back from the bar without its keyboard.
-                modifier = Modifier.clickable { host.present(row.id) },
+                // The taskbar's toggle ([WindowFrameHost.onTabClicked]): a reduced window comes back, one without
+                // the focus takes it — on top and into the FOCUS, like every other way of asking for a window
+                // that is open, or a window that answers keystrokes would come back without its keyboard — and
+                // the window that has the focus is reduced.
+                modifier = Modifier.clickable { host.onTabClicked(row.id) },
             )
             Box(
                 modifier = Modifier.size(20.dp).clip(CircleShape).clickable { row.onClose() },

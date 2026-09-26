@@ -42,18 +42,26 @@ import kotlinx.serialization.json.Json
 import org.example.project.scheduler.ui.contextMenuModifier
 
 /**
- * PRD §7 *Lateral menu*: a button the user made at the bottom of the lateral menu for ONE window — the window
- * itself or one of its copies ([windowId] is its frame id: `Search`, `Search#2`). Made by the ☆ in that window's
- * head; pressing it does what the window's own menu button does.
+ * PRD §7 *Lateral menu*: a button the user made at the bottom of the lateral menu from ONE window's ☆. Like
+ * every button of the menu it **opens a new window at each click**: of the kind [windowId] names (the frame id
+ * it was made from, `Search` / `Search#2`, or a per-object window's [ObjectWindowKey]), with the configuration
+ * that window had when the ☆ was pressed ([config]) — so a Search window's query, types, filters and sorting can
+ * be kept as a button.
  *
  * **Local-only view state**, kept by `App` in the window-placement store under [CustomMenuButtons.PLACEMENT_ID]:
- * a button names a window of THIS device (a copy exists only here), so it is not a fact about the account.
+ * a button names a window of THIS device, so it is not a fact about the account.
  */
 @Serializable
 data class CustomMenuButton(
     val id: String,
     @SerialName("window") val windowId: String,
     val title: String,
+    /**
+     * The window's configuration as its ☆ saved it, in the window's own stored form (a Search window's
+     * `SearchDomain.Config.encode()`), or null for a window that has none. Absent from a button made before
+     * 2026-09-26, which then opens with what its window has now.
+     */
+    val config: String? = null,
 )
 
 /** The list of [CustomMenuButton]s, in menu order, and the few things done to it. Pure. */
@@ -73,10 +81,15 @@ object CustomMenuButtons {
         text?.let { runCatching { json.decodeFromString(Stored.serializer(), it).buttons }.getOrNull() }.orEmpty()
 
     /** [buttons] with a new one for [windowId] at the bottom, and its id — the first `b<n>` no button holds. */
-    fun added(buttons: List<CustomMenuButton>, windowId: String, title: String): Pair<List<CustomMenuButton>, String> {
+    fun added(
+        buttons: List<CustomMenuButton>,
+        windowId: String,
+        title: String,
+        config: String? = null,
+    ): Pair<List<CustomMenuButton>, String> {
         val used = buttons.map { it.id }.toSet()
         val id = generateSequence(1) { it + 1 }.map { "b$it" }.first { it !in used }
-        return buttons + CustomMenuButton(id, windowId, title) to id
+        return buttons + CustomMenuButton(id, windowId, title, config) to id
     }
 
     /** [buttons] with [id] renamed — a blank title keeps the one it had. */
@@ -95,7 +108,6 @@ object CustomMenuButtons {
 @Composable
 internal fun CustomMenuSection(
     buttons: List<CustomMenuButton>,
-    isOpen: (windowId: String) -> Boolean,
     onClick: (CustomMenuButton) -> Unit,
     editingId: String?,
     onStartRename: (id: String) -> Unit,
@@ -114,7 +126,7 @@ internal fun CustomMenuSection(
                 Box {
                     MenuButton(
                         label = button.title,
-                        active = isOpen(button.windowId),
+                        active = false,
                         onClick = { onClick(button) },
                         modifier = contextMenuModifier(enabled = true, key = button.id) { menuOpen = true },
                     )

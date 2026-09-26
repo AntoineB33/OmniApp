@@ -504,8 +504,9 @@ titles" figure: the Search window and the per-object windows its rows open repla
   everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
   this — it measures unweighted children first, which is the opposite priority.
 - **The query, the checked kinds and the filters are local-only view state** (`SearchDomain.Config`, kept by
-  `App` on the window's placement row — `popups.md`): the window reopens with them after a close and a
-  restart, and they never sync. The selection is Compose-only.
+  `App` on the window's placement row — `popups.md`): an open window comes back with them after a restart,
+  and they never sync. A window opened from the lateral menu starts from the default configuration, or from
+  the one a ☆ button saved (`CustomMenuButton.config`) — which is how a search is kept. The selection is Compose-only.
 - **ONE configuration, held by `App`, edited by two windows.** The Search window shows its text and types;
   the **Configuration Search** window (`ui/ConfigurationSearchWindow.kt`, opened from the Search window) lists
   every configuration of it — those two and the per-kind **filters** (`SearchDomain.Filters`) — in a General
