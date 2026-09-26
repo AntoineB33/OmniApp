@@ -635,9 +635,21 @@ class SearchWindowTest {
         // The general section first, then one per kind, in the drop-down's order.
         assertEquals(listOf<SearchDomain.Kind?>(null) + SearchDomain.Kind.entries, sections.map { it.first })
         assertEquals(
-            listOf(SearchDomain.Setting.SearchText, SearchDomain.Setting.Types, SearchDomain.Setting.SortResults),
+            listOf(
+                SearchDomain.Setting.SearchText,
+                SearchDomain.Setting.Types,
+                SearchDomain.Setting.ResetSearch,
+                SearchDomain.Setting.SortResults,
+            ),
             sections.first().second,
         )
+        // Every configuration of the Search window is there, its Reset included — found by name, and never a
+        // filter that counts as "on".
+        assertEquals(
+            listOf<SearchDomain.Kind?>(null) to listOf(SearchDomain.Setting.ResetSearch),
+            SearchDomain.configurations("reset", every).let { found -> found.map { it.first } to found.flatMap { it.second } },
+        )
+        assertFalse(SearchDomain.Filters().isOn(SearchDomain.Setting.ResetSearch))
         // Every kind's section ends with how its rows are ordered, and "sort" finds every ordering.
         assertTrue(sections.drop(1).all { (_, settings) -> settings.last().sorts })
         assertEquals(1 + SearchDomain.Kind.entries.size, SearchDomain.configurations("sort", every).sumOf { it.second.size })

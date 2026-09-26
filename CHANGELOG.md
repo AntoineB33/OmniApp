@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Configuration Search window lists the Search window's Reset; one type selector — 2026-09-26
+
+User spec: the search configurations window includes every configuration of the Search window, its Reset
+included (distinct from its own top-section Reset), and the type selector looks the same in both: a field with a
+drop-down. `SearchDomain.Setting.ResetSearch` in the General section; the Types setting draws `KindsDropDown`
+instead of a column of check boxes. No state change.
+
 ### Lateral-menu buttons open a new window; ☆ keeps a window's configuration; taskbar tabs — 2026-09-26
 
 User spec: the lateral menu's buttons only open a new window at each click and are no longer drawn blue; the ☆

@@ -570,6 +570,10 @@ titles" figure: the Search window and the per-object windows its rows open repla
   copy of itself. **Its subject is the window's own state**: the "+ New …" button at the bottom adds an element
   of the same kind (`addAlarm` / `addTimer` / `newRow`) and moves the window on to it;
   so the window, not `App`, closes itself when the element it shows is gone.
+- **The Configuration Search window lists EVERY configuration of the Search window, drawn the way that window
+  draws it** — the type selector is the same field with a drop-down (`KindsDropDown`), and the Search window's
+  Reset is a setting of its own (`Setting.ResetSearch`, "Reset text and types"), distinct from the Configuration
+  Search window's own Reset in its top section.
 - **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
   have their own window and a counter), and the Configuration Search window's never touches the Search
   window's configuration it lists.

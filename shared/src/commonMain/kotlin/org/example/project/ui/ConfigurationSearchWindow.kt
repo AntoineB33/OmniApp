@@ -214,21 +214,14 @@ private fun SettingEditor(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+        // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
-            Column {
-                SearchDomain.Kind.entries.forEach { kind ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable {
-                                onChange(config.copy(kinds = if (kind in config.kinds) config.kinds - kind else config.kinds + kind))
-                            },
-                    ) {
-                        Checkbox(checked = kind in config.kinds, onCheckedChange = null)
-                        Text(kind.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(end = 8.dp))
-                    }
-                }
+            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) })
+        // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
+        // clears this window's search instead.
+        SearchDomain.Setting.ResetSearch ->
+            ResetButton(enabled = config.query.isNotEmpty() || config.kinds.isNotEmpty()) {
+                onChange(config.copy(query = "", kinds = emptySet()))
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }

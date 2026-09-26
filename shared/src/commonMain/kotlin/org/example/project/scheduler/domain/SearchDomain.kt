@@ -414,6 +414,12 @@ object SearchDomain {
     enum class Setting(val section: Kind?, val label: String, val sorts: Boolean = false) {
         SearchText(null, "Search text"),
         Types(null, "Types"),
+        /**
+         * The Search window's own Reset: its search text and types cleared (never the filters, which have their
+         * own window and a counter). Listed here because every configuration of the Search window is — and it is
+         * not the Configuration Search window's own Reset, which clears that window's search.
+         */
+        ResetSearch(null, "Reset text and types"),
         SortResults(null, "Sort by", sorts = true),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
