@@ -1103,9 +1103,11 @@ class SchedulerEngine(
         val title = armed.kind.label
         notifyUser(title, armed.label.ifBlank { title }, alert = armed.alert)
         if (armed.timer) {
-            // A timer is a one-off by nature: it has run out, so it goes back to its full duration. Unknown
-            // id = deleted meanwhile; nothing to reset.
-            vm.dispatch(SchedulerIntent.ResetTimer(armed.alarmId))
+            // A timer is a one-off by nature: it has run out, so it goes back to its full duration — keeping the
+            // instant it reached zero — unless it goes negative, in which case it counts on below zero
+            // (TimerDomain.rang). The engine's clock, not the ring's instant: the phone's is converted to real
+            // time for the OS. Unknown id = deleted meanwhile; nothing to do.
+            vm.dispatch(SchedulerIntent.TimerRang(armed.alarmId, clock.nowMillis()))
         } else {
             // A one-off alarm has now rung: disarm it so it doesn't come round again tomorrow (the row stays
             // in the window, ready to be re-armed). Unknown id = deleted meanwhile; nothing to disarm.

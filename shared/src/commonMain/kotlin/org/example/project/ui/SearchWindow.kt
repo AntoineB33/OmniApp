@@ -160,8 +160,8 @@ fun SearchWindow(
     onOpenCategory: (CategoryId) -> Unit,
     onOpenPeriodKind: (String) -> Unit,
     /**
-     * The per-object window of ONE alarm or timer, with every setting it has — what opening its row does (a
-     * double-click, Enter or a right-click).
+     * The per-object window of ONE alarm, timer or chrono, with every setting it has — what opening its row does
+     * (a double-click, Enter or a right-click).
      */
     onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
     /** The per-object window of ONE reminder (by id), with every setting it has — opened like an alarm's. */
@@ -229,7 +229,7 @@ fun SearchWindow(
     val results =
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
-            state.panels, state.alarms, state.timers, state.chores, state.histories, state.taskRelations,
+            state.panels, state.alarms, state.timers, state.chronos, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
             SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts, windows)
@@ -320,8 +320,9 @@ fun SearchWindow(
             SearchDomain.Kind.Task -> Unit
             SearchDomain.Kind.Category -> onOpenCategory(CategoryId(item.id))
             SearchDomain.Kind.RestrictivePeriod -> onOpenPeriodKind(item.id)
-            SearchDomain.Kind.Alarm -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, isAlarm = true))
-            SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, isAlarm = false))
+            SearchDomain.Kind.Alarm -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Alarm))
+            SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Timer))
+            SearchDomain.Kind.Chrono -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Chrono))
             SearchDomain.Kind.Reminder -> onEditReminder(item.id)
             SearchDomain.Kind.HistoryUnit -> onOpenHistory()
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
@@ -559,6 +560,7 @@ fun SearchWindow(
                                         opensOnRightClick =
                                             result.kind == SearchDomain.Kind.Alarm ||
                                                 result.kind == SearchDomain.Kind.Timer ||
+                                                result.kind == SearchDomain.Kind.Chrono ||
                                                 result.kind == SearchDomain.Kind.Reminder,
                                     )
                             }

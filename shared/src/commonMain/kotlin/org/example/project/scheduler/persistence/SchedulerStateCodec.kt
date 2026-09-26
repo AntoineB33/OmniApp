@@ -24,6 +24,9 @@ import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.platform.AlertSound
 import org.example.project.scheduler.model.TimerEntry
+import org.example.project.scheduler.model.ChronoEntry
+import org.example.project.scheduler.domain.ChronoDomain
+import org.example.project.scheduler.state.ChronosDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CategoryRule
@@ -537,6 +540,8 @@ object SchedulerStateCodec {
             // instant nothing else can recompute, so it is authoritative and belongs on the wire (CLAUDE.md
             // § State). The remaining time never is: it is derived from that instant and the now-line.
             timers = timers.map { it.toPersisted() },
+            // PRD §18 Chronos: the run state rides along, the timers' rule — the start instant is authoritative.
+            chronos = chronos.map { it.toPersisted() },
             // PRD §5: the relative-priority window's pinned cells, sorted so the encoded payload (and the
             // sync fingerprint with it) does not depend on the map's iteration order.
             relativePriorityPins =
@@ -865,6 +870,8 @@ object SchedulerStateCodec {
                 PersistedDelta.Alarms(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is TimersDelta ->
                 PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
+            is ChronosDelta ->
+                PersistedDelta.Chronos(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             NoOpDelta -> PersistedDelta.NoOp
         }
 
@@ -1145,6 +1152,8 @@ object SchedulerStateCodec {
             // surfacing it) — a blank id gets one minted, and a row holding BOTH run fields keeps only the
             // instant it is due at.
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
+            // PRD §18 Chronos: a payload written before chronos existed decodes to an empty list; every row healed.
+            chronos = ChronoDomain.assignChronoIds(chronos.map { it.toChronoEntry() }).map(ChronoDomain::healed),
             // PRD §5: a payload written before the relative-priority window existed decodes to no pins.
             relativePriorityPins =
                 relativePriorityPins
@@ -1372,6 +1381,11 @@ object SchedulerStateCodec {
                     TimerDomain.assignTimerIds(before.map { it.toTimerEntry() }).map(TimerDomain::healed),
                     TimerDomain.assignTimerIds(after.map { it.toTimerEntry() }).map(TimerDomain::healed),
                 )
+            is PersistedDelta.Chronos ->
+                ChronosDelta(
+                    ChronoDomain.assignChronoIds(before.map { it.toChronoEntry() }).map(ChronoDomain::healed),
+                    ChronoDomain.assignChronoIds(after.map { it.toChronoEntry() }).map(ChronoDomain::healed),
+                )
             is PersistedDelta.ShortcutBindings ->
                 ShortcutBindingDelta(before.toShortcutBindings(), after.toShortcutBindings())
             PersistedDelta.NoOp -> NoOpDelta
@@ -1518,6 +1532,8 @@ private data class PersistedState(
     val alarms: List<PersistedAlarm> = emptyList(),
     // PRD §18: a missing timer list decodes to empty (payloads written before the Timers section existed).
     val timers: List<PersistedTimer> = emptyList(),
+    // PRD §18: a missing chrono list decodes to empty (payloads written before the Chronos section existed).
+    val chronos: List<PersistedChrono> = emptyList(),
     // PRD §5: the relative-priority window's pinned cells; a missing list decodes to no pins (payloads
     // written before the window existed).
     val relativePriorityPins: List<PersistedRelativePriorityPins> = emptyList(),
@@ -1832,6 +1848,8 @@ private fun TimerEntry.toPersisted(): PersistedTimer =
         endsAtMillis = endsAtMillis,
         remainingMillis = remainingMillis,
         runMillis = runMillis,
+        goesNegative = goesNegative,
+        endedAtMillis = endedAtMillis,
     )
 
 /** The inverse of [TimerEntry.toPersisted]. The caller heals the run fields ([TimerDomain.healed]). */
@@ -1846,7 +1864,17 @@ private fun PersistedTimer.toTimerEntry(): TimerEntry =
         endsAtMillis = endsAtMillis,
         remainingMillis = remainingMillis,
         runMillis = runMillis,
+        goesNegative = goesNegative,
+        endedAtMillis = endedAtMillis,
     )
+
+/** PRD §18 Chronos: the persisted form of one chrono row, run state included. */
+private fun ChronoEntry.toPersisted(): PersistedChrono =
+    PersistedChrono(id = id, label = label, startedAtMillis = startedAtMillis, bankedMillis = bankedMillis)
+
+/** The inverse of [ChronoEntry.toPersisted]. The caller heals it ([ChronoDomain.healed]). */
+private fun PersistedChrono.toChronoEntry(): ChronoEntry =
+    ChronoEntry(id = id, label = label, startedAtMillis = startedAtMillis, bankedMillis = bankedMillis)
 
 /**
  * PRD §18 Alarms: one persisted alarm. Every field carries a default so a payload written by an older shape
@@ -1912,6 +1940,21 @@ private data class PersistedTimer(
      * field existed — whose run then reads its elapsed time against the duration, as it did.
      */
     val runMillis: Long? = null,
+    /** [TimerEntry.goesNegative]. New 2026-09-26: absent from an older payload, which reads as off. */
+    val goesNegative: Boolean = false,
+    /** [TimerEntry.endedAtMillis]. New 2026-09-26: absent from an older payload, which reads as none. */
+    val endedAtMillis: Long? = null,
+)
+
+/** PRD §18 Chronos: one persisted chrono. Every field defaulted, so a later build's shape decodes cleanly. */
+@Serializable
+private data class PersistedChrono(
+    val id: String = "",
+    val label: String = "",
+    /** Running: the instant the current stretch began. Null when idle or paused. */
+    val startedAtMillis: Long? = null,
+    /** What the earlier stretches counted. */
+    val bankedMillis: Long = 0L,
 )
 
 /**
@@ -2131,6 +2174,14 @@ private sealed interface PersistedDelta {
     data class Timers(
         val before: List<PersistedTimer>,
         val after: List<PersistedTimer>,
+    ) : PersistedDelta
+
+    /** PRD §18 Chronos: [Timers]' rule for the chrono list. New 2026-09-26, and additive in the same way. */
+    @Serializable
+    @SerialName("chronos")
+    data class Chronos(
+        val before: List<PersistedChrono>,
+        val after: List<PersistedChrono>,
     ) : PersistedDelta
 
     @Serializable

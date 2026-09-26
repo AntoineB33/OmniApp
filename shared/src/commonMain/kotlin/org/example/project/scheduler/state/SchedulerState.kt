@@ -632,6 +632,13 @@ data class SchedulerState(
      */
     val timers: List<org.example.project.scheduler.model.TimerEntry> = emptyList(),
     /**
+     * PRD §18 Chronos: the chronometers in the Alarms window's **Chronos** section. Authoritative, persisted
+     * **and synced** like [timers] — whether each one runs included (`ChronoEntry.startedAtMillis`, an absolute
+     * instant), so one started on the desktop reads the same on the phone. The time shown is derived from it and
+     * the now-line, so a running chrono writes nothing. Empty by default.
+     */
+    val chronos: List<org.example.project.scheduler.model.ChronoEntry> = emptyList(),
+    /**
      * PRD §15 Screen breaks: the periodic screen breaks to weave into the auto schedule. A hardcoded set in
      * production (seeded by [org.example.project.scheduler.ui.TaskSchedulerViewModel] from
      * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]); empty by default so the

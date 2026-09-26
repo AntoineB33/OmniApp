@@ -643,7 +643,10 @@ class SearchWindowTest {
         assertEquals(1 + SearchDomain.Kind.entries.size, SearchDomain.configurations("sort", every).sumOf { it.second.size })
         // The bar finds configurations by name; a section with nothing left is dropped.
         val state = SearchDomain.configurations("state", every)
-        assertEquals(listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Window), state.map { it.first })
+        assertEquals(
+            listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Window),
+            state.map { it.first },
+        )
         // The kind selector, and the "only the Search results' kinds" button, cut the per-kind sections only.
         assertEquals(
             listOf<SearchDomain.Kind?>(null, SearchDomain.Kind.Timer),

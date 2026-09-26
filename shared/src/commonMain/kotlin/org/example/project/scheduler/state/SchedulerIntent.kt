@@ -678,6 +678,48 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §18 Timers: the timer [id] has **rung** — dispatched by the engine, for every device's ring. What it does
+     * to the row is [TimerDomain.rang]: one that goes negative counts on below zero, any other goes back to idle
+     * keeping the instant it reached zero. A run-state write, so not a History Unit ([StartTimer]'s rule — and it
+     * is machine-authored besides). [nowMillis] is the engine clock's, which tells a stale ring from this run's.
+     */
+    data class TimerRang(
+        val id: String,
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Chronos: replace the whole chrono list with [entries] — a row added, a row struck off with the bin,
+     * a label edited. A **Main History Unit**, [SetTimers]' rule and [SetTimers]' [editKey]; the run state rides
+     * along untouched and is moved only by [StartChrono] / [PauseChrono] / [ResetChrono].
+     */
+    data class SetChronos(
+        val entries: List<org.example.project.scheduler.model.ChronoEntry>,
+        val editKey: String? = null,
+    ) : SchedulerIntent
+
+    /**
+     * PRD §18 Chronos: start one chrono from zero, or resume it. Like the timers' run-state writes, the three
+     * chrono transitions are **not** History Units: their currency is an absolute instant, and a delta replayed
+     * later would not mean what it meant when it was recorded.
+     */
+    data class StartChrono(
+        val id: String,
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /** PRD §18 Chronos: hold one chrono at what it counted up to [nowMillis]. */
+    data class PauseChrono(
+        val id: String,
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /** PRD §18 Chronos: one chrono back to 0:00, stopped. */
+    data class ResetChrono(
+        val id: String,
+    ) : SchedulerIntent
+
+    /**
      * PRD §15 Screen breaks: replace the screen-break list — used at launch to seed each screen break's
      * the screen-break list (durations/intervals, debug overrides included). Session state,
      * not undoable.

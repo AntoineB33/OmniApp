@@ -96,7 +96,7 @@ fun ConfigurationSearchWindow(
         } else {
             remember(
                 config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
-                state.alarms, state.timers, state.chores, windows,
+                state.alarms, state.timers, state.chronos, state.chores, windows,
             ) { SearchDomain.kindsInResults(state, config, windows) }
         }
     val sections = SearchDomain.configurations(own.query, own.kinds, resultKinds, config.filters.takeIf { own.showFiltersOn })
@@ -246,6 +246,8 @@ private fun SettingEditor(
             DayChips(f.alarmDays) { filters(f.copy(alarmDays = it)) }
         SearchDomain.Setting.TimerStateSetting ->
             Choices(SearchDomain.TimerState.entries, f.timerState, { it.label }) { filters(f.copy(timerState = it)) }
+        SearchDomain.Setting.ChronoStateSetting ->
+            Choices(SearchDomain.TimerState.entries, f.chronoState, { it.label }) { filters(f.copy(chronoState = it)) }
         SearchDomain.Setting.ReminderRepeatsSetting ->
             Choices(SearchDomain.ReminderRepeats.entries, f.reminderRepeats, { it.label }) {
                 filters(f.copy(reminderRepeats = it))
@@ -272,7 +274,8 @@ private fun SettingEditor(
             EnumPicker(SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
         SearchDomain.Setting.SortResults,
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
-        SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ReminderSort,
+        SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort,
+        SearchDomain.Setting.ReminderSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
         SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WindowSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }

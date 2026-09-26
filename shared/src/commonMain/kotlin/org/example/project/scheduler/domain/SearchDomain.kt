@@ -58,6 +58,7 @@ object SearchDomain {
         RestrictivePeriod("restrictive period"),
         Alarm("alarm"),
         Timer("timer"),
+        Chrono("chrono"),
         Reminder("reminder"),
         HistoryUnit("history unit"),
         TaskTree("task tree"),
@@ -116,6 +117,7 @@ object SearchDomain {
                     alarmState = filters.alarmState.name,
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     timerState = filters.timerState.name,
+                    chronoState = filters.chronoState.name,
                     reminderRepeats = filters.reminderRepeats.name,
                     historyCategory = filters.historyCategory?.name,
                     historyWindow = filters.historyWindow?.name,
@@ -155,6 +157,7 @@ object SearchDomain {
                         alarmDays = stored.alarmDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
                         timerState = enumNamed(stored.timerState, TimerState.Any),
+                        chronoState = enumNamed(stored.chronoState, TimerState.Any),
                         reminderRepeats = enumNamed(stored.reminderRepeats, ReminderRepeats.Any),
                         historyCategory = HistoryCategory.entries.firstOrNull { it.name == stored.historyCategory },
                         historyWindow = HistoryWindow.entries.firstOrNull { it.name == stored.historyWindow },
@@ -274,6 +277,8 @@ object SearchDomain {
         /** Empty = any day; else the alarm rings on at least one of them. */
         val alarmDays: Set<DayOfWeek> = emptySet(),
         val timerState: TimerState = TimerState.Any,
+        /** A chrono is idle, running or paused like a timer — the same filter, over its own rows. */
+        val chronoState: TimerState = TimerState.Any,
         val reminderRepeats: ReminderRepeats = ReminderRepeats.Any,
         /** Null = any category (PRD §5's stacks: edit, selection, calendar, main, window navigation). */
         val historyCategory: HistoryCategory? = null,
@@ -310,6 +315,7 @@ object SearchDomain {
                 Setting.AlarmStateSetting -> alarmState != AlarmState.Any
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
+                Setting.ChronoStateSetting -> chronoState != TimerState.Any
                 Setting.ReminderRepeatsSetting -> reminderRepeats != ReminderRepeats.Any
                 Setting.HistoryCategorySetting -> historyCategory != null
                 Setting.HistoryWindowSetting -> historyWindow != null
@@ -414,6 +420,7 @@ object SearchDomain {
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
         AlarmSort(Kind.Alarm, "Sort by", sorts = true),
         TimerSort(Kind.Timer, "Sort by", sorts = true),
+        ChronoSort(Kind.Chrono, "Sort by", sorts = true),
         ReminderSort(Kind.Reminder, "Sort by", sorts = true),
         HistorySort(Kind.HistoryUnit, "Sort by", sorts = true),
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
@@ -427,6 +434,7 @@ object SearchDomain {
         AlarmStateSetting(Kind.Alarm, "State"),
         AlarmDays(Kind.Alarm, "Rings on"),
         TimerStateSetting(Kind.Timer, "State"),
+        ChronoStateSetting(Kind.Chrono, "State"),
         ReminderRepeatsSetting(Kind.Reminder, "Repeats"),
         HistoryCategorySetting(Kind.HistoryUnit, "Category"),
         HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
@@ -481,6 +489,8 @@ object SearchDomain {
         val alarmState: String? = null,
         val alarmDays: List<Int> = emptyList(),
         val timerState: String? = null,
+        /** New 2026-09-26: absent from what an older build stored, which reads as any. */
+        val chronoState: String? = null,
         val reminderRepeats: String? = null,
         val historyCategory: String? = null,
         val historyWindow: String? = null,
@@ -938,6 +948,14 @@ object SearchDomain {
                             }
                     ItemResult(kind, timer.id, timer.label.ifBlank { "Timer" }, detail)
                 }
+                Kind.Chrono -> state.chronos.map { chrono ->
+                    val detail = when {
+                        chrono.running -> "running"
+                        chrono.paused -> "paused"
+                        else -> "idle"
+                    }
+                    ItemResult(kind, chrono.id, chrono.label.ifBlank { "Chrono" }, detail)
+                }
                 Kind.Reminder -> state.chores.map { chore ->
                     ItemResult(kind, chore.id.ifEmpty { chore.title }, chore.title, reminderDetail(chore))
                 }
@@ -1143,6 +1161,15 @@ object SearchDomain {
                         TimerState.Idle -> timer.idle
                         TimerState.Running -> timer.running
                         TimerState.Paused -> timer.paused
+                    }
+                }
+                Kind.Chrono -> {
+                    val chrono = state.chronos.firstOrNull { it.id == result.id } ?: return true
+                    when (filters.chronoState) {
+                        TimerState.Any -> true
+                        TimerState.Idle -> chrono.idle
+                        TimerState.Running -> chrono.running
+                        TimerState.Paused -> chrono.paused
                     }
                 }
                 Kind.Reminder -> {

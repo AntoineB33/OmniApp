@@ -711,7 +711,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7 Search: one alarm's or one timer's own window, and one reminder's.
         val alarmWindows = remember {
             ObjectWindows<AlarmWindowSubject>(
-                { ObjectWindowKey(if (it.isAlarm) ObjectWindowKey.Kind.Alarm else ObjectWindowKey.Kind.Timer, it.id).encode() },
+                {
+                    val kind = when (it.kind) {
+                        AlarmWindowSubject.Kind.Alarm -> ObjectWindowKey.Kind.Alarm
+                        AlarmWindowSubject.Kind.Timer -> ObjectWindowKey.Kind.Timer
+                        AlarmWindowSubject.Kind.Chrono -> ObjectWindowKey.Kind.Chrono
+                    }
+                    ObjectWindowKey(kind, it.id).encode()
+                },
                 objectWindowMemory,
             )
         }
@@ -735,8 +742,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ObjectWindowKey.Kind.PriorityWeights -> weightWindows.openOn(TreeObject(CellListId(key.id), key.template))
                 ObjectWindowKey.Kind.RelativePriority -> relativeWindows.openOn(TreeObject(CellId(key.id), key.template))
                 ObjectWindowKey.Kind.DeepCopy -> deepCopyWindows.openOn(TreeObject(CellId(key.id), key.template))
-                ObjectWindowKey.Kind.Alarm -> alarmWindows.openOn(AlarmWindowSubject(key.id, isAlarm = true))
-                ObjectWindowKey.Kind.Timer -> alarmWindows.openOn(AlarmWindowSubject(key.id, isAlarm = false))
+                ObjectWindowKey.Kind.Alarm -> alarmWindows.openOn(AlarmWindowSubject(key.id, AlarmWindowSubject.Kind.Alarm))
+                ObjectWindowKey.Kind.Timer -> alarmWindows.openOn(AlarmWindowSubject(key.id, AlarmWindowSubject.Kind.Timer))
+                ObjectWindowKey.Kind.Chrono -> alarmWindows.openOn(AlarmWindowSubject(key.id, AlarmWindowSubject.Kind.Chrono))
                 ObjectWindowKey.Kind.Reminder -> reminderWindows.openOn(key.id)
                 ObjectWindowKey.Kind.AlarmDefaults, ObjectWindowKey.Kind.TimerDefaults, ObjectWindowKey.Kind.ReminderDefaults ->
                     defaultsWindows.openOn(key.kind)
@@ -2972,6 +2980,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onNudgeTimerRemaining = { id, delta ->
                                 vm.dispatch(SchedulerIntent.NudgeTimerRemaining(id, delta, clock.nowMillis()))
                             },
+                            // PRD §18 Chronos: none in a default configuration's window — a chrono has none.
+                            chronos = if (defaults) emptyList() else schedulerState.chronos,
+                            onChronosChange = { entries, editKey ->
+                                if (!defaults) vm.dispatch(SchedulerIntent.SetChronos(entries, editKey))
+                            },
+                            onStartChrono = { vm.dispatch(SchedulerIntent.StartChrono(it, clock.nowMillis())) },
+                            onPauseChrono = { vm.dispatch(SchedulerIntent.PauseChrono(it, clock.nowMillis())) },
+                            onResetChrono = { vm.dispatch(SchedulerIntent.ResetChrono(it)) },
                             // Read straight off the clock (simulated under §16), and polled by the window
                             // itself while a timer runs — the engine's now-line only advances once per
                             // production tick, which is far too coarse for a countdown.
@@ -3064,7 +3080,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 AccountAlarmWindow(
                                     subject = AlarmWindowSubject(
                                         DEFAULT_CONFIGURATION_ROW_ID,
-                                        isAlarm = w.subject == ObjectWindowKey.Kind.AlarmDefaults,
+                                        if (w.subject == ObjectWindowKey.Kind.AlarmDefaults) AlarmWindowSubject.Kind.Alarm
+                                        else AlarmWindowSubject.Kind.Timer,
                                     ),
                                     onDismiss = w::close,
                                     modifier = Modifier.align(Alignment.Center),

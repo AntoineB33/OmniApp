@@ -38,6 +38,7 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
         DeepCopy("deep copy", DEEP_COPY_FRAME_ID),
         Alarm("alarm", AlarmWindowSubject.FRAME_ID),
         Timer("timer", AlarmWindowSubject.FRAME_ID),
+        Chrono("chrono", AlarmWindowSubject.FRAME_ID),
         Reminder("reminder", REMINDER_EDIT_FRAME_ID),
 
         /** The account's default configuration of a new alarm / timer / reminder: one each, always there. */
@@ -64,6 +65,7 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
             Kind.DeepCopy -> tree.cells[CellId(id)] != null
             Kind.Alarm -> state.alarms.any { it.id == id }
             Kind.Timer -> state.timers.any { it.id == id }
+            Kind.Chrono -> state.chronos.any { it.id == id }
             Kind.Reminder -> state.chores.any { it.id == id }
             Kind.AlarmDefaults, Kind.TimerDefaults, Kind.ReminderDefaults -> true
         }
@@ -86,6 +88,7 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
             Kind.RelativePriority, Kind.DeepCopy -> taskOfCell(id)
             Kind.Alarm -> state.alarms.firstOrNull { it.id == id }?.label
             Kind.Timer -> state.timers.firstOrNull { it.id == id }?.label
+            Kind.Chrono -> state.chronos.firstOrNull { it.id == id }?.label
             Kind.Reminder -> state.chores.firstOrNull { it.id == id }?.title
             // Named by the noun alone: "Default alarm".
             Kind.AlarmDefaults, Kind.TimerDefaults, Kind.ReminderDefaults -> null

@@ -65,9 +65,14 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.AlertSettings
 import org.example.project.scheduler.model.TimerEntry
+import org.example.project.scheduler.domain.ChronoDomain
+import org.example.project.scheduler.model.ChronoEntry
 
 /**
- * PRD §18 Alarms and timers: a floating, draggable window in **two sections**.
+ * PRD §18 Alarms, timers and chronos: a floating, draggable window in **three sections** — the third,
+ * **Chronos**, is one row per chronometer: a label, the time it has counted, and start / pause / reset.
+ *
+ * The first two:
  *
  * **Alarms** — one row each, with the time of day it rings, an optional label, **the days it is triggered
  * on** (every day by default), **how long the alarm sound lasts**, how it **announces itself** (PRD §11: the
@@ -124,6 +129,13 @@ fun AlarmWindow(
      * ± second buttons, which are how the seconds move **without** stopping the countdown.
      */
     onNudgeTimerRemaining: (String, Long) -> Unit,
+    /** PRD §18 Chronos: the account's chronometers, including which of them are running. */
+    chronos: List<ChronoEntry> = emptyList(),
+    /** Persists + syncs the chrono rows' labels (and a row added or struck off), as [onChange]. */
+    onChronosChange: (List<ChronoEntry>, String?) -> Unit = { _, _ -> },
+    onStartChrono: (String) -> Unit = {},
+    onPauseChrono: (String) -> Unit = {},
+    onResetChrono: (String) -> Unit = {},
     /**
      * The current instant, read from the app clock (the **simulated** one under §16). Polled by this window
      * while a timer is running so the countdown reads down in real time: the engine's own now-line only
@@ -149,7 +161,7 @@ fun AlarmWindow(
     onRaise: () -> Unit = {},
     /** Time of day (minutes since midnight) to pre-fill a newly added row with — the current clock time. */
     newRowTimeOfDayMinutes: () -> Int = { 0 },
-    /** The one alarm or timer this window is about, or null for the lateral-menu window listing them all. */
+    /** The one alarm, timer or chrono this window is about, or null for the lateral-menu window listing them all. */
     subject: AlarmWindowSubject? = null,
     /** The element the single element's window shows now — its "+ New" moved it on to [AlarmWindowSubject]. */
     onShownChange: (AlarmWindowSubject) -> Unit = {},
@@ -210,6 +222,17 @@ fun AlarmWindow(
             timerRows.addAll(timerSettings)
         }
     }
+    // The same again, for the chronos — their labels only; the run state is read live off [chronos].
+    val chronoRows = remember { mutableStateListOf<ChronoRow>().apply { addAll(chronos.map(::chronoRowOf)) } }
+    var pushedChronoSettings by remember { mutableStateOf(chronos.map(::chronoRowOf)) }
+    val chronoSettings = chronos.map(::chronoRowOf)
+    LaunchedEffect(chronoSettings) {
+        if (chronoSettings != pushedChronoSettings) {
+            pushedChronoSettings = chronoSettings
+            chronoRows.clear()
+            chronoRows.addAll(chronoSettings)
+        }
+    }
 
     // PRD §5: the field-focus session a live text edit belongs to. The window pushes its whole list on every
     // keystroke, so without this a five-letter label would be five History Units for Ctrl+Z to walk back one
@@ -249,7 +272,7 @@ fun AlarmWindow(
     // calendar's zoom: nothing here is persisted, synced or scheduled.
 
     var displayNowMillis by remember { mutableStateOf(nowMillis()) }
-    val anyRunning = timers.any { it.running }
+    val anyRunning = timers.any { it.running } || chronos.any { it.running }
     LaunchedEffect(anyRunning) {
         displayNowMillis = nowMillis()
         while (anyRunning) {
@@ -285,7 +308,7 @@ fun AlarmWindow(
                 // Carry the run state through untouched: this push is about the settings, and the row may be
                 // counting down while the user edits its label.
                 val live = timers.firstOrNull { it.id == row.id }
-                TimerEntry(
+                val entry = TimerEntry(
                     id = row.id,
                     label = row.label,
                     // A half-typed duration keeps the row alive at its default rather than dropping the
@@ -296,7 +319,12 @@ fun AlarmWindow(
                     endsAtMillis = live?.endsAtMillis,
                     remainingMillis = live?.remainingMillis,
                     runMillis = live?.runMillis,
+                    goesNegative = live?.goesNegative ?: row.goesNegative,
+                    endedAtMillis = live?.endedAtMillis,
                 )
+                // The one setting that moves the run: "below zero" leaves the row as if it had always been set
+                // so — a row that rang with it off counts on from the instant it reached zero.
+                TimerDomain.withGoesNegative(entry, row.goesNegative, nowMillis())
             }
         pushedTimerSettings = entries.map(::timerRowOf)
         onTimersChange(entries, editKey)
@@ -309,6 +337,30 @@ fun AlarmWindow(
         val id = AlarmDomain.mintAlarmId(rows.map { it.id })
         rows.add(alarmRowOf(NewElementDefaults.newAlarm(newAlarm, id, newRowTimeOfDayMinutes())))
         push()
+        return id
+    }
+
+    fun pushChronos(editKey: String? = null) {
+        val entries =
+            chronoRows.map { row ->
+                // The run state rides along untouched: this push is about the label (or a row added/removed).
+                val live = chronos.firstOrNull { it.id == row.id }
+                ChronoEntry(
+                    id = row.id,
+                    label = row.label,
+                    startedAtMillis = live?.startedAtMillis,
+                    bankedMillis = live?.bankedMillis ?: 0L,
+                )
+            }
+        pushedChronoSettings = entries.map(::chronoRowOf)
+        onChronosChange(entries, editKey)
+    }
+
+    /** Adds a chrono row, pushes it, and returns its id — the list's "+ Add chrono" and "+ New chrono". */
+    fun addChrono(): String {
+        val id = ChronoDomain.mintChronoId(chronoRows.map { it.id })
+        chronoRows.add(ChronoRow(id))
+        pushChronos()
         return id
     }
 
@@ -325,7 +377,11 @@ fun AlarmWindow(
     val latestDismiss by rememberUpdatedState(onDismiss)
     val shownGone =
         shown?.let { current ->
-            if (current.isAlarm) rows.none { it.id == current.id } else timerRows.none { it.id == current.id }
+            when (current.kind) {
+                AlarmWindowSubject.Kind.Alarm -> rows.none { it.id == current.id }
+                AlarmWindowSubject.Kind.Timer -> timerRows.none { it.id == current.id }
+                AlarmWindowSubject.Kind.Chrono -> chronoRows.none { it.id == current.id }
+            }
         } == true
     LaunchedEffect(shownGone) { if (shownGone) latestDismiss() }
 
@@ -426,7 +482,7 @@ fun AlarmWindow(
                 )
             }
             timerRows.forEachIndexed { index, row ->
-                if (shown?.let { it.isAlarm || it.id != row.id } == true) return@forEachIndexed
+                if (shown?.let { it.kind != AlarmWindowSubject.Kind.Timer || it.id != row.id } == true) return@forEachIndexed
                 TimerRowEditor(
                     row = row,
                     // The live entry, which is where the run state lives; null only for the instant
@@ -476,19 +532,69 @@ fun AlarmWindow(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                // PRD §18 Chronos: the third section — a count up, with nothing to ring.
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                SectionHeader("Chronos")
+            }
+            if (shown == null && chronoRows.isEmpty()) {
+                Text(
+                    text = "No chrono yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            chronoRows.forEachIndexed { index, row ->
+                if (shown?.let { it.kind != AlarmWindowSubject.Kind.Chrono || it.id != row.id } == true) return@forEachIndexed
+                ChronoRowEditor(
+                    row = row,
+                    entry = chronos.firstOrNull { it.id == row.id },
+                    nowMillis = displayNowMillis,
+                    onRowChange = { updated, field ->
+                        chronoRows[index] = updated
+                        pushChronos(sessionKeyFor(row.id, field))
+                    },
+                    onStart = { onStartChrono(row.id) },
+                    onPause = { onPauseChrono(row.id) },
+                    onReset = { onResetChrono(row.id) },
+                    onRemove = {
+                        chronoRows.removeAt(index)
+                        pushChronos()
+                    },
+                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                )
+                if (shown == null && index != chronoRows.lastIndex) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            }
+            if (shown == null) {
+                Text(
+                    text = "+ Add chrono",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { addChrono() }
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                )
             }
             // The single element's window: a new one of the same kind, at the bottom — and the window moves on
             // to it (the list window has its "+ Add" links above instead) — and, under it, the default
             // configuration every new one of that kind starts with.
             shown?.takeIf { !defaults }?.let { current ->
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                WindowLink(if (current.isAlarm) "+ New alarm" else "+ New timer") {
-                    val id = if (current.isAlarm) addAlarm() else addTimer()
-                    val next = AlarmWindowSubject(id, isAlarm = current.isAlarm)
+                WindowLink("+ New " + current.kind.title.lowercase()) {
+                    val id = when (current.kind) {
+                        AlarmWindowSubject.Kind.Alarm -> addAlarm()
+                        AlarmWindowSubject.Kind.Timer -> addTimer()
+                        AlarmWindowSubject.Kind.Chrono -> addChrono()
+                    }
+                    val next = AlarmWindowSubject(id, current.kind)
                     shown = next
                     onShownChange(next)
                 }
-                onOpenDefaults?.let { open ->
+                // A chrono has nothing to configure but its name, so no default configuration.
+                onOpenDefaults?.takeIf { current.kind != AlarmWindowSubject.Kind.Chrono }?.let { open ->
                     WindowLink(if (current.isAlarm) "Default alarm configuration" else "Default timer configuration") {
                         open(current.isAlarm)
                     }
@@ -499,12 +605,15 @@ fun AlarmWindow(
 }
 
 /**
- * The one alarm ([isAlarm]) or timer an [AlarmWindow] is about when it is a per-object window. One frame id
- * for all of them: at most one such window is open at a time, and asking for another replaces it
- * (`docs/invariants/popups.md`).
+ * The one alarm, timer or chrono ([kind]) an [AlarmWindow] is about when it is a per-object window. One frame id
+ * base for all of them, each window numbered after it (`docs/invariants/popups.md`).
  */
-data class AlarmWindowSubject(val id: String, val isAlarm: Boolean) {
-    val title: String get() = if (isAlarm) "Alarm" else "Timer"
+data class AlarmWindowSubject(val id: String, val kind: Kind) {
+    /** Which section of the Alarms window the subject's row is in. */
+    enum class Kind(val title: String) { Alarm("Alarm"), Timer("Timer"), Chrono("Chrono") }
+
+    val isAlarm: Boolean get() = kind == Kind.Alarm
+    val title: String get() = kind.title
     val frameId: String get() = FRAME_ID
 
     companion object {
@@ -512,7 +621,7 @@ data class AlarmWindowSubject(val id: String, val isAlarm: Boolean) {
     }
 }
 
-/** The label above each of the window's two sections (PRD §18: alarms and timers). */
+/** The label above each of the window's three sections (PRD §18: alarms, timers and chronos). */
 @Composable
 private fun SectionHeader(text: String) {
     Text(
@@ -723,6 +832,16 @@ private fun TimerRowEditor(
             }
         }
         if (!settingsOnly) Row(verticalAlignment = Alignment.CenterVertically) {
+            // Past zero (a timer that goes below it): the three fields hold the magnitude, and the sign stands
+            // before them.
+            if (TimerDomain.displayedCountdown(shown, draft?.held, draft?.field).negative) {
+                Text(
+                    text = "−",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 2.dp),
+                )
+            }
             // The countdown, as three INPUTS: derived from the end instant and the now-line, never stored, but
             // writable at any moment — before the start as much as during it. Each field moves the countdown
             // by its OWN unit, so typing into the hours leaves the minutes and seconds reading down
@@ -826,12 +945,72 @@ private fun TimerRowEditor(
             )
             Spacer(Modifier.width(4.dp))
             Text(text = "s", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(12.dp))
+            // Off = reset at the ring, as a timer always did. On = ring at zero and count on below it. Turning
+            // it on after a ring picks up from the instant the countdown reached zero.
+            Text(text = "Below zero", style = MaterialTheme.typography.bodySmall)
+            Switch(checked = row.goesNegative, onCheckedChange = { onRowChange(row.copy(goesNegative = it), null) })
         }
         // PRD §11: the alarms' own block, unchanged — a timer rings exactly like an alarm.
         AlertSettingsEditor(
             alert = row.alert,
             onChange = { onRowChange(row.copy(alert = it), null) },
         )
+    }
+}
+
+/**
+ * PRD §18 Chronos: one chrono row — label and bin on the first line, the time counted and start / pause / reset
+ * on the second. [entry] is the live state (null only in the instant between adding the row and the push
+ * landing); the time is read off it and [nowMillis], never stored.
+ */
+@Composable
+private fun ChronoRowEditor(
+    row: ChronoRow,
+    entry: ChronoEntry?,
+    nowMillis: Long,
+    onRowChange: (ChronoRow, String?) -> Unit,
+    onStart: () -> Unit,
+    onPause: () -> Unit,
+    onReset: () -> Unit,
+    onRemove: () -> Unit,
+    onFieldFocus: (String, Boolean) -> Unit,
+) {
+    val running = entry?.running == true
+    val paused = entry?.paused == true
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = row.label,
+                onValueChange = { onRowChange(row.copy(label = it), FIELD_LABEL) },
+                singleLine = true,
+                placeholder = { Text("Label", style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.weight(1f).editSession(FIELD_LABEL, onFieldFocus),
+            )
+            Spacer(Modifier.width(4.dp))
+            Box(
+                modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = ChronoDomain.format(entry?.elapsedAtMillis(nowMillis) ?: 0L),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(96.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            if (running) {
+                TimerActionChip(text = "Pause", onClick = onPause)
+            } else {
+                TimerActionChip(text = if (paused) "Resume" else "Start", enabled = entry != null, onClick = onStart)
+            }
+            Spacer(Modifier.width(6.dp))
+            TimerActionChip(text = "Reset", enabled = running || paused, onClick = onReset)
+        }
     }
 }
 
@@ -895,7 +1074,11 @@ private fun timerRowOf(entry: TimerEntry): TimerRow =
         label = entry.label,
         soundText = entry.soundSeconds.toString(),
         alert = entry.alert,
+        goesNegative = entry.goesNegative,
     )
+
+/** The editable row a chrono shows as — its label only, the run state being read off the [ChronoEntry]. */
+private fun chronoRowOf(entry: ChronoEntry): ChronoRow = ChronoRow(id = entry.id, label = entry.label)
 
 /**
  * PRD §18 Timers: what the user is typing into the countdown — into WHICH field, and the countdown as it
@@ -1060,6 +1243,14 @@ private data class TimerRow(
     val soundText: String = AlarmEntry.DEFAULT_ALARM_SOUND_SECONDS.toString(),
     /** PRD §11: an alarm row's own field, with an alarm row's meaning. */
     val alert: AlertSettings = AlertSettings.RING,
+    /** Counts on below zero once it has rung ([TimerEntry.goesNegative]). */
+    val goesNegative: Boolean = false,
+)
+
+/** The in-window editing shape of one chrono: its label. The run state lives on the [ChronoEntry]. */
+private data class ChronoRow(
+    val id: String,
+    val label: String = "",
 )
 
 /**

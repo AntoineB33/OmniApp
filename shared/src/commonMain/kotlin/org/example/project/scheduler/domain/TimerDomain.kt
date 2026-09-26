@@ -90,18 +90,18 @@ object TimerDomain {
     /**
      * PRD §18 Timers: how much is left, as `M:SS` (or `H:MM:SS` from an hour up). Rounded **up** to the next
      * whole second, so a freshly started 5:00 timer reads 5:00 rather than 4:59 and `0:00` appears only when
-     * it has actually run out.
+     * it has actually run out. Past zero (a timer that [TimerEntry.goesNegative]) it reads `−0:01`, `−0:02`…
+     * — [countdownOf]'s split, so the readout and the fields agree.
      */
     fun formatCountdown(millis: Long): String {
-        val total = ((millis.coerceAtLeast(0L) + 999L) / 1_000L)
-        val h = total / 3600
-        val m = (total % 3600) / 60
-        val s = total % 60
-        return if (h > 0) {
-            "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
-        } else {
-            "$m:${s.toString().padStart(2, '0')}"
-        }
+        val c = countdownOf(millis)
+        val body =
+            if (c.hours > 0) {
+                "${c.hours}:${c.minutes.toString().padStart(2, '0')}:${c.seconds.toString().padStart(2, '0')}"
+            } else {
+                "${c.minutes}:${c.seconds.toString().padStart(2, '0')}"
+            }
+        return (if (c.negative) "−" else "") + body
     }
 
     /**
@@ -115,16 +115,23 @@ object TimerDomain {
         SECONDS(1_000L),
     }
 
-    /** A countdown split the way the window shows it: [formatCountdown]'s own arithmetic, as numbers. */
-    data class TimerCountdown(val hours: Int, val minutes: Int, val seconds: Int) {
+    /**
+     * A countdown split the way the window shows it: [formatCountdown]'s own arithmetic, as numbers. The
+     * components are a magnitude; [negative] is the sign, for a timer counting on past zero
+     * ([TimerEntry.goesNegative]) — every figure below ([millis], [millisDownTo]) is signed by it, so an edit of
+     * a component of `−0:05:10` is measured in the same direction it reads.
+     */
+    data class TimerCountdown(val hours: Int, val minutes: Int, val seconds: Int, val negative: Boolean = false) {
         fun component(field: TimerField): Int = when (field) {
             TimerField.HOURS -> hours
             TimerField.MINUTES -> minutes
             TimerField.SECONDS -> seconds
         }
 
+        private val sign: Long get() = if (negative) -1L else 1L
+
         /** The whole countdown as millis, on the second — what a snapped seconds edit banks. */
-        val millis: Long get() = (hours.toLong() * 3600L + minutes.toLong() * 60L + seconds.toLong()) * 1_000L
+        val millis: Long get() = sign * (hours.toLong() * 3600L + minutes.toLong() * 60L + seconds.toLong()) * 1_000L
 
         /** This countdown with [field] set to [value]. */
         fun with(field: TimerField, value: Int): TimerCountdown = when (field) {
@@ -135,7 +142,7 @@ object TimerDomain {
 
         /** The millis of [field] and every coarser component — what an edit of [field] is a change of. */
         fun millisDownTo(field: TimerField): Long =
-            TimerField.entries.filter { it.ordinal <= field.ordinal }.sumOf { component(it) * it.unitMillis }
+            sign * TimerField.entries.filter { it.ordinal <= field.ordinal }.sumOf { component(it) * it.unitMillis }
     }
 
     /**
@@ -144,11 +151,14 @@ object TimerDomain {
      * what an edit of that readout is measured against.
      */
     fun countdownOf(millis: Long): TimerCountdown {
-        val total = (millis.coerceAtLeast(0L) + 999L) / 1_000L
+        // Up above zero (5:00 until it has actually started), down below it: `0:00` is the one second just past
+        // the ring, then `−0:01` a second after it — so the readout moves one second per second across zero.
+        val total = if (millis >= 0L) (millis + 999L) / 1_000L else -millis / 1_000L
         return TimerCountdown(
             hours = (total / 3600).toInt(),
             minutes = ((total % 3600) / 60).toInt(),
             seconds = (total % 60).toInt(),
+            negative = millis < 0L && total > 0L,
         )
     }
 
@@ -188,6 +198,22 @@ object TimerDomain {
         if (entry.runMillis != null) entry else entry.copy(runMillis = entry.durationMillis)
 
     /**
+     * An idle row about to begin a NEW run: what the last run left on it — its length and the instant it reached
+     * zero ([TimerEntry.endedAtMillis]) — belongs to that run, not this one.
+     */
+    private fun fresh(entry: TimerEntry): TimerEntry =
+        if (entry.idle && (entry.runMillis != null || entry.endedAtMillis != null)) {
+            entry.copy(runMillis = null, endedAtMillis = null)
+        } else {
+            entry
+        }
+
+    private const val MAX_MILLIS: Long = TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L
+
+    /** The least time left a write may put on [entry]: zero, or as far below it as above for one that goes negative. */
+    private fun floorMillis(entry: TimerEntry): Long = if (entry.goesNegative) -MAX_MILLIS else 0L
+
+    /**
      * PRD §18 Timers: set one component of [entry]'s countdown to [value] — what the window's three countdown
      * fields write.
      *
@@ -224,8 +250,7 @@ object TimerDomain {
         // What the user sees: the coarser components held, [field] and the finer ones live.
         val shown = held?.let { live.withHeld(it, through = field.ordinal - 1) } ?: live
         if (field == TimerField.SECONDS) {
-            val snapped = shown.copy(seconds = value).millis
-                .coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
+            val snapped = shown.copy(seconds = value).millis.coerceIn(floorMillis(entry), MAX_MILLIS)
             // Only a RUNNING row is stopped here (that stop is what makes a typed seconds value stick). A
             // paused or idle one has no countdown to stop, so it banks the snapped value like any other
             // write, through the one primitive.
@@ -262,9 +287,11 @@ object TimerDomain {
      */
     fun started(entry: TimerEntry, nowMillis: Long): TimerEntry {
         if (entry.running) return entry
-        val remaining = entry.remainingMillis?.coerceAtLeast(0L) ?: entry.durationMillis
-        if (remaining <= 0L) return entry
-        return withRunFixed(entry).copy(endsAtMillis = nowMillis + remaining, remainingMillis = null)
+        val base = fresh(entry)
+        val remaining = base.remainingMillis?.coerceAtLeast(floorMillis(base)) ?: base.durationMillis
+        // A held countdown past zero resumes past zero, for a timer that goes negative: it has rung already.
+        if (remaining <= 0L && !base.goesNegative) return entry
+        return withRunFixed(base).copy(endsAtMillis = nowMillis + remaining, remainingMillis = null)
     }
 
     /**
@@ -273,7 +300,7 @@ object TimerDomain {
      */
     fun paused(entry: TimerEntry, nowMillis: Long): TimerEntry {
         val endsAt = entry.endsAtMillis ?: return entry
-        return entry.copy(endsAtMillis = null, remainingMillis = (endsAt - nowMillis).coerceAtLeast(0L))
+        return entry.copy(endsAtMillis = null, remainingMillis = (endsAt - nowMillis).coerceAtLeast(floorMillis(entry)))
     }
 
     /**
@@ -294,15 +321,16 @@ object TimerDomain {
      * way — it is a *setting*, the field beside the countdown edits it, and [reset] still goes back to it.
      *
      * [nowMillis] is passed in rather than read, like [started] and [paused], so this stays a pure function of
-     * its inputs. The value is clamped into `0..`[TimerEntry.MAX_TIMER_SECONDS].
+     * its inputs. The value is clamped into `0..`[TimerEntry.MAX_TIMER_SECONDS] — or as far below zero as above
+     * it, for a timer that [TimerEntry.goesNegative].
      */
     fun withRemaining(entry: TimerEntry, remainingMillis: Long, nowMillis: Long): TimerEntry {
-        val remaining = remainingMillis.coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
+        val remaining = remainingMillis.coerceIn(floorMillis(entry), MAX_MILLIS)
         return when {
             entry.running -> entry.copy(endsAtMillis = nowMillis + remaining)
             entry.paused -> entry.copy(remainingMillis = remaining)
             remaining == entry.durationMillis -> entry
-            else -> withRunFixed(entry).copy(remainingMillis = remaining)
+            else -> withRunFixed(fresh(entry)).copy(remainingMillis = remaining)
         }
     }
 
@@ -312,8 +340,59 @@ object TimerDomain {
      * one-off alarm does (there is no on/off switch here to leave off).
      */
     fun reset(entry: TimerEntry): TimerEntry =
-        if (entry.idle && entry.runMillis == null) entry
-        else entry.copy(endsAtMillis = null, remainingMillis = null, runMillis = null)
+        if (entry.idle && entry.runMillis == null && entry.endedAtMillis == null) entry
+        else entry.copy(endsAtMillis = null, remainingMillis = null, runMillis = null, endedAtMillis = null)
+
+    /**
+     * How far past [rang]'s clock the row may still be due and its end be taken as the instant it reached zero.
+     * A row due later than that is not the run that rang (it was restarted meanwhile, here or on a peer), so no
+     * instant is kept for it.
+     */
+    const val RING_TOLERANCE_MILLIS: Long = 2_000L
+
+    /**
+     * What a **ring** does to the row that rang, at [nowMillis]. A timer that [TimerEntry.goesNegative] is left
+     * running: it rang at zero and counts on below it. Any other goes back to idle like [reset], as a timer
+     * always did — but keeps the instant it reached zero ([TimerEntry.endedAtMillis]) and the run's length, so
+     * turning the option on afterwards resumes it from there ([withGoesNegative]). That instant is kept only when
+     * the row's end is this ring's (not later than [nowMillis]); a row that is not running is left alone.
+     */
+    fun rang(entry: TimerEntry, nowMillis: Long): TimerEntry {
+        val endsAt = entry.endsAtMillis ?: return entry
+        if (entry.goesNegative) return entry
+        if (endsAt > nowMillis + RING_TOLERANCE_MILLIS) return reset(entry)
+        return entry.copy(endsAtMillis = null, remainingMillis = null, endedAtMillis = endsAt)
+    }
+
+    /**
+     * PRD §18 Timers: set the "goes negative" option of [entry] at [nowMillis] — the ONE setting that moves the
+     * run state, because what it says is how a run ends. The row is left **as if the option had always been
+     * what it is now set to**:
+     *
+     * - **on**, on a row that rang with it off ([TimerEntry.endedAtMillis]): it runs again from the instant it
+     *   reached zero, so its countdown reads exactly the time since then, below zero, and counts on;
+     * - **off**, on a row already past zero: it is what a ring with the option off would have left — idle,
+     *   keeping the instant it reached zero (a held countdown below zero is taken to have reached it that long
+     *   before [nowMillis]), so turning the option back on puts it back where it was.
+     *
+     * Otherwise only the flag moves. Pure — [nowMillis] is the caller's clock, like every run-state write here.
+     */
+    fun withGoesNegative(entry: TimerEntry, on: Boolean, nowMillis: Long): TimerEntry {
+        if (entry.goesNegative == on) return entry
+        val flipped = entry.copy(goesNegative = on)
+        if (on) {
+            val ended = entry.endedAtMillis ?: return flipped
+            if (!entry.idle) return flipped.copy(endedAtMillis = null)
+            return flipped.copy(endsAtMillis = ended, endedAtMillis = null, runMillis = entry.runMillis ?: entry.durationMillis)
+        }
+        val endsAt = entry.endsAtMillis
+        val banked = entry.remainingMillis
+        return when {
+            endsAt != null && endsAt < nowMillis -> flipped.copy(endsAtMillis = null, endedAtMillis = endsAt)
+            banked != null && banked < 0L -> flipped.copy(remainingMillis = null, endedAtMillis = nowMillis + banked)
+            else -> flipped
+        }
+    }
 
     /**
      * The at-most-one-non-null invariant of [TimerEntry]'s two run fields, applied. A running timer wins over
@@ -327,16 +406,21 @@ object TimerDomain {
      */
     fun healed(entry: TimerEntry): TimerEntry {
         val duration = entry.durationSeconds.coerceIn(1, TimerEntry.MAX_TIMER_SECONDS)
-        val remaining = if (entry.endsAtMillis != null) null else entry.remainingMillis?.coerceAtLeast(0L)
-        // An idle row has no run, so no run length; a negative one is not a length.
+        val remaining = if (entry.endsAtMillis != null) null else entry.remainingMillis?.coerceAtLeast(floorMillis(entry))
+        // Only an idle row remembers where its last run ended.
+        val ended = if (entry.endsAtMillis != null || remaining != null) null else entry.endedAtMillis
+        // An idle row has no run, so no run length — unless it keeps the one that rang; a negative one is not a
+        // length.
         val run =
-            if (entry.endsAtMillis == null && remaining == null) null
-            else entry.runMillis?.coerceIn(0L, TimerEntry.MAX_TIMER_SECONDS.toLong() * 1_000L)
-        return if (duration == entry.durationSeconds && remaining == entry.remainingMillis && run == entry.runMillis) {
-            entry
-        } else {
-            entry.copy(durationSeconds = duration, remainingMillis = remaining, runMillis = run)
+            if (entry.endsAtMillis == null && remaining == null && ended == null) null
+            else entry.runMillis?.coerceIn(0L, MAX_MILLIS)
+        val result = entry.copy(durationSeconds = duration, remainingMillis = remaining, runMillis = run, endedAtMillis = ended)
+        // A row that goes negative never rests idle at an instant it reached zero (a merge of the option from one
+        // side and the ring from the other): it counts on from there, as [withGoesNegative] would have put it.
+        if (result.goesNegative && ended != null) {
+            return result.copy(endsAtMillis = ended, endedAtMillis = null, runMillis = run ?: result.durationMillis)
         }
+        return if (result == entry) entry else result
     }
 
     /** Mints an id no timer in [existing] uses, mirroring the alarms' `alarm-{n}` scheme. */

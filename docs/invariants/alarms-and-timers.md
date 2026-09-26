@@ -65,6 +65,16 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **No on/off switch and no repeat switch.** A timer that is not running is already not due (an idle row is not
   a silenced one), and a timer is a one-off by nature: having rung it **resets** to its full duration. A
   one-off *alarm* disarms itself instead precisely because it has a switch to leave off.
+- **"Below zero" (`TimerEntry.goesNegative`) is the ONE setting that moves the run, and only to leave the row
+  as if it had always been set so** (`TimerDomain.withGoesNegative`, applied by the window's push). On: the ring
+  (`TimerRang` → `TimerDomain.rang`) leaves the row running and its countdown reads below zero (`−0:07`); it is
+  never armed again, its instant being behind the clock. Off: the ring resets the row as ever **but keeps the
+  instant it reached zero** (`endedAtMillis`, authoritative, persisted and synced, cleared by any new run and by
+  Reset) — so turning the option on afterwards runs it again from that instant, and turning it off past zero puts
+  it back to that rung state. The ring reads the engine clock, never the ring's instant (the phone's is converted
+  to real time for the OS); a row due later than that clock is a later run, and keeps no instant. The countdown's
+  split is signed (`TimerCountdown.negative`): the fields hold the magnitude, the sign stands before them, and an
+  edit moves in the direction the countdown reads.
 - **Editing a row's settings — its alert block included — must not disturb the instant it is due at, and a
   countdown edit must not touch the settings.** One rule, said both ways. `SetTimers` carries the settings;
   the run state moves only through
@@ -196,6 +206,20 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   front one is left holding none — and the very Ctrl+Z that would undo the deletion reaches nobody. That is
   not hypothetical; it shipped, and the History rows showed the units committed with the pointer never
   moving. Do not gate either the `focusable()` or the reclaim on "is this the focused window".
+
+### A chrono counts up from an instant, and rings at nothing
+
+The Alarms window's third section (`SchedulerState.chronos`, `ChronoEntry`, `ChronoDomain`). A stopwatch: no
+arming, no sweep, no calendar marker, no alert block.
+
+- **`startedAtMillis` is authoritative, the time shown is derived** (`elapsedAtMillis` = `bankedMillis` + the
+  time since the start) — the timers' rule, so a running chrono writes nothing and reads the same on every device.
+- **The list is a Main History Unit (`SetChronos` → `ChronosDelta`), the run is not** (`StartChrono` /
+  `PauseChrono` / `ResetChrono`) — the timers' rule and reason. Undo is three-way like every list: undoing the add
+  of a chrono started since keeps it.
+- Each chrono has its own per-object window (`AlarmWindowSubject.Kind.Chrono`, `ObjectWindowKey.Kind.Chrono`, ☆,
+  kept across restarts), opened from its Search row. There is no default configuration: a chrono has nothing to
+  configure but its name.
 
 ## One alert block, three kinds of row
 

@@ -26,7 +26,13 @@ object NewElementDefaults {
         defaults.copy(id = id, label = "", timeOfDayMinutes = timeOfDayMinutes)
 
     fun newTimer(defaults: TimerEntry, id: String): TimerEntry =
-        TimerEntry(id = id, durationSeconds = defaults.durationSeconds, soundSeconds = defaults.soundSeconds, alert = defaults.alert)
+        TimerEntry(
+            id = id,
+            durationSeconds = defaults.durationSeconds,
+            soundSeconds = defaults.soundSeconds,
+            alert = defaults.alert,
+            goesNegative = defaults.goesNegative,
+        )
 
     fun newReminder(defaults: ChoreEntry, id: String, timeOfDayMinutes: Int): ChoreEntry =
         defaults.copy(id = id, title = "", timeOfDayMinutes = timeOfDayMinutes)

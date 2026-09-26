@@ -92,6 +92,10 @@ object SnapshotMerge {
         // one shape a field-wise merge could still forge).
         val timers =
             mergeKeyedList(base.timers, local.timers, remote.timers, TimerEntry::id) { b, l, r -> pick(b, l, r) }
+        // PRD §18 Chronos: whole objects, for the timers' reason — a start instant and a banked count taken from
+        // two sides would be a run neither device made.
+        val chronos =
+            mergeKeyedList(base.chronos, local.chronos, remote.chronos, { it.id }) { b, l, r -> pick(b, l, r) }
         // Task trees resolve as WHOLE objects: an entry's title and its stored tree are not independent
         // fields to interleave — a tree captured on one device is one consistent thing. Adding a tree on each
         // device keeps both (they carry different ids); the live tree of whichever entry is active is merged
@@ -140,6 +144,7 @@ object SnapshotMerge {
                 chores = chores,
                 alarms = alarms,
                 timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),
+                chronos = chronos.map(org.example.project.scheduler.domain.ChronoDomain::healed),
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),
                 // PRD §4 Default sub-tree: the template resolves as ONE value, like a task tree — and it IS
                 // a tree, a shape the user drew, not independent rows to interleave (two devices each

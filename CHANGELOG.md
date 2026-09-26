@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Chronos, and timers that count below zero — 2026-09-26
+
+User spec: add the chrono type; and an option in a timer's configuration to let it go into the negatives — a timer
+that reached the end with the option off and has it turned on afterwards counts as if it had always been on (from
+the exact instant it reached 0).
+
+- **Chronos**: `ChronoEntry` / `ChronoDomain`, `SchedulerState.chronos` (authoritative, persisted + synced — the
+  row sync splits it generically, no sync code), a third "Chronos" section in the Alarms window, a per-object
+  window per chrono (`AlarmWindowSubject.Kind` replaced its `isAlarm` flag), and a "chrono" Search type with a
+  State filter and a Sort by. `SetChronos` is a Main History Unit (`ChronosDelta`, persisted as
+  `PersistedDelta.Chronos`); start / pause / reset are not.
+- **Below zero**: `TimerEntry.goesNegative` (a setting, in the default timer configuration too) and
+  `endedAtMillis` (the instant a run reached zero, kept on the rung-and-reset row). The engine's ring dispatches
+  `TimerRang` (was `ResetTimer`). `TimerDomain.withGoesNegative` is the one setting that moves the run.
+- Persisted-DB compatibility: a payload without `chronos`, `goesNegative` or `endedAtMillis` decodes to none /
+  off / none (`ChronoTest`, `TimerBelowZeroTest`). No SQLite or Supabase migration.
+
 ### The Search window finds windows — 2026-09-26
 
 User spec: a "window" option in the Search window's type selector lists every window, open or not; several open

@@ -390,6 +390,12 @@ data class AlarmEntry(
  * | idle (full duration, not counting) | null | null |
  * | running (fires at that instant) | set | null |
  * | paused (that much left) | null | set |
+ *
+ * **Past zero** ([goesNegative]): a timer with the option on is not reset by its ring — it rings at zero and
+ * then keeps running, its countdown reading negative (`endsAtMillis` in the past). A timer with the option off
+ * is reset by its ring as ever, but keeps the instant it reached zero in [endedAtMillis], so turning the option
+ * on afterwards resumes it as if the option had always been on (see
+ * [org.example.project.scheduler.domain.TimerDomain.withGoesNegative]).
  */
 data class TimerEntry(
     /** Stable identity (`timer-{n}`), so a ring can name its timer across devices and edits. */
@@ -413,6 +419,17 @@ data class TimerEntry(
      * and on a run started by a build before it existed, which then reads against the duration.
      */
     val runMillis: Long? = null,
+    /**
+     * A setting: the countdown carries on below zero once the timer has rung, instead of resetting. Off by
+     * default — a timer is a one-off by nature.
+     */
+    val goesNegative: Boolean = false,
+    /**
+     * The instant the last run reached zero, on an idle row that rang with [goesNegative] off — what lets
+     * turning the option on afterwards count on from that instant. Null otherwise; cleared by any new run and by
+     * Reset. Authoritative (nothing else remembers the instant), so persisted and synced with the row.
+     */
+    val endedAtMillis: Long? = null,
 ) {
     /** Counting down: it has an instant to fire at. */
     val running: Boolean get() = endsAtMillis != null
@@ -437,10 +454,13 @@ data class TimerEntry(
      * [endsAtMillis], the paused form is what was banked, and the idle form is the full duration.
      */
     fun remainingAtMillis(nowMillis: Long): Long = when {
-        endsAtMillis != null -> (endsAtMillis - nowMillis).coerceAtLeast(0L)
-        remainingMillis != null -> remainingMillis.coerceAtLeast(0L)
+        endsAtMillis != null -> floored(endsAtMillis - nowMillis)
+        remainingMillis != null -> floored(remainingMillis)
         else -> durationMillis
     }
+
+    /** Below zero only for a timer that [goesNegative]. */
+    private fun floored(millis: Long): Long = if (goesNegative) millis else millis.coerceAtLeast(0L)
 
     companion object {
         /** How long a freshly added timer counts down for. */
@@ -450,6 +470,41 @@ data class TimerEntry(
         const val MAX_TIMER_SECONDS: Int = 24 * 60 * 60
     }
 }
+/**
+ * PRD §18 Chronos: a chronometer — a count UP from zero, started, paused and reset from the Alarms window's
+ * third section. It has nothing to ring and so nothing to arm: it is a stopwatch, not an alarm.
+ *
+ * **The run state is authoritative**, like a timer's: [startedAtMillis] is an absolute instant nothing else can
+ * recompute, so it is persisted and synced — a chrono started on the desktop reads the same on the phone. What
+ * is derived, and never stored, is the time it shows while running ([elapsedAtMillis]), so a running chrono
+ * writes nothing as it counts.
+ *
+ * | State | [startedAtMillis] | [bankedMillis] |
+ * | --- | --- | --- |
+ * | idle (0:00) | null | 0 |
+ * | running | the instant the current stretch began | what earlier stretches counted |
+ * | paused | null | what it counted |
+ */
+data class ChronoEntry(
+    /** Stable identity (`chrono-{n}`). */
+    val id: String,
+    val label: String = "",
+    /** Running: the instant the current stretch began. Null when idle or paused. */
+    val startedAtMillis: Long? = null,
+    /** What the stretches before the current one counted — all of it when paused. */
+    val bankedMillis: Long = 0L,
+) {
+    val running: Boolean get() = startedAtMillis != null
+
+    val paused: Boolean get() = startedAtMillis == null && bankedMillis > 0L
+
+    val idle: Boolean get() = startedAtMillis == null && bankedMillis == 0L
+
+    /** The time shown at [nowMillis] — **derived**, never stored. */
+    fun elapsedAtMillis(nowMillis: Long): Long =
+        bankedMillis + (startedAtMillis?.let { (nowMillis - it).coerceAtLeast(0L) } ?: 0L)
+}
+
 /**
  * The user's sleep schedule: a nightly window `[wake − sleepDuration, wake)` (local wall-clock) that the
  * task scheduler and screen-break projection must leave empty (see

@@ -5,6 +5,7 @@ import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.TimerDomain
+import org.example.project.scheduler.domain.ChronoDomain
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.domain.PeriodKindStyle
@@ -470,6 +471,17 @@ object SchedulerReducer {
             is SchedulerIntent.SetTimerCountdownField -> reduceTimerTransition(state, intent.id) {
                 TimerDomain.withCountdownField(it, intent.field, intent.value, intent.nowMillis, intent.held)
             }
+            is SchedulerIntent.TimerRang -> reduceTimerTransition(state, intent.id) {
+                TimerDomain.rang(it, intent.nowMillis)
+            }
+            is SchedulerIntent.SetChronos -> reduceSetChronos(state, intent.entries, intent.editKey)
+            is SchedulerIntent.StartChrono -> reduceChronoTransition(state, intent.id) {
+                ChronoDomain.started(it, intent.nowMillis)
+            }
+            is SchedulerIntent.PauseChrono -> reduceChronoTransition(state, intent.id) {
+                ChronoDomain.paused(it, intent.nowMillis)
+            }
+            is SchedulerIntent.ResetChrono -> reduceChronoTransition(state, intent.id, ChronoDomain::reset)
             is SchedulerIntent.NudgeTimerRemaining -> reduceTimerTransition(state, intent.id) {
                 TimerDomain.nudged(it, intent.deltaMillis, intent.nowMillis)
             }
@@ -1182,6 +1194,29 @@ object SchedulerReducer {
         val next = transition(timer)
         if (next == timer) return state
         return state.copy(timers = state.timers.map { if (it.id == id) next else it })
+    }
+
+    /** PRD §18 Chronos: store the chrono list — [reduceSetTimers]' rule, a Main History Unit. */
+    private fun reduceSetChronos(
+        state: SchedulerState,
+        entries: List<org.example.project.scheduler.model.ChronoEntry>,
+        editKey: String? = null,
+    ): SchedulerState {
+        val withIds = ChronoDomain.assignChronoIds(entries).map(ChronoDomain::healed)
+        if (state.chronos == withIds) return state
+        return commitDelta(state, ChronosDelta(state.chronos, withIds, editKey))
+    }
+
+    /** PRD §18 Chronos: one run-state write on the chrono [id] — [reduceTimerTransition]'s rule, no unit. */
+    private fun reduceChronoTransition(
+        state: SchedulerState,
+        id: String,
+        transition: (org.example.project.scheduler.model.ChronoEntry) -> org.example.project.scheduler.model.ChronoEntry,
+    ): SchedulerState {
+        val chrono = state.chronos.firstOrNull { it.id == id } ?: return state
+        val next = transition(chrono)
+        if (next == chrono) return state
+        return state.copy(chronos = state.chronos.map { if (it.id == id) next else it })
     }
 
     /**
@@ -5838,6 +5873,43 @@ internal data class TimersDelta(
 }
 
 /**
+ * PRD §18 Chronos: a change to the account's **chrono list** — a row added, struck off, or relabelled.
+ * [TimersDelta]'s rule: it carries the rows whole, run state included, and never records a run transition.
+ */
+internal data class ChronosDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.model.ChronoEntry>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.model.ChronoEntry>,
+        after: List<org.example.project.scheduler.model.ChronoEntry>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
+    override val label: String
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "chrono")
+
+    override val details: List<String>
+        get() {
+            fun name(c: org.example.project.scheduler.model.ChronoEntry): String = c.label.ifBlank { "chrono" }
+            return listDetails(changes.before, changes.after, ::name) { b, a ->
+                if (b.label != a.label) listOf("label " + quoted(b.label) + " -> " + quoted(a.label)) else emptyList()
+            }
+        }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is ChronosDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(chronos = changes.applyToList(state.chronos, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(chronos = changes.applyToList(state.chronos, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(chronos = changes.applyToList(state.chronos, forward = true, exact = true) { it.id })
+}
+
+/**
  * The label an [AlarmsDelta] / [TimersDelta] reads under in the History window: what the user did to the
  * list, named after the [noun] the list holds. Rows are identified by id, so a row edited in place is neither
  * an add nor a removal however much of it changed.
@@ -5893,6 +5965,7 @@ private fun timerDetails(
             if (b.soundSeconds != a.soundSeconds)
                 add("rings for " + b.soundSeconds + " s -> " + a.soundSeconds + " s")
             addAll(alertChanges(b.alert, a.alert))
+            if (b.goesNegative != a.goesNegative) add("below zero " + onOff(b.goesNegative) + " -> " + onOff(a.goesNegative))
         }
     }
 }
