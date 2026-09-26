@@ -26,6 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 
 /**
@@ -65,9 +70,25 @@ class TransientMenuHost {
 
     /** Registers a newly opened menu, closing any menu already open — a second one is never wanted. */
     fun open(key: Any, onDismiss: () -> Unit) {
-        dismissAll()
+        dismissMenus()
         entries[key] = onDismiss
         anyOpen = true
+    }
+
+    /**
+     * The fields in an **edit mode that leaves on the first press outside them** ([leaveOnOutsidePress]), each
+     * with its bounds in the window. Not menus: opening a menu does not end one (the field's own right-click menu
+     * would otherwise end the edit it was opened on), a press INSIDE the field keeps it, and they do not make the
+     * tree deaf — the field holding the caret already owns the keyboard.
+     */
+    private val editors = LinkedHashMap<Any, Pair<() -> Rect?, () -> Unit>>()
+
+    fun openEditor(key: Any, bounds: () -> Rect?, onLeave: () -> Unit) {
+        editors[key] = bounds to onLeave
+    }
+
+    fun closeEditor(key: Any) {
+        editors.remove(key)
     }
 
     /** Forgets a menu that left the composition. Never calls its `onDismiss` — it is already gone. */
@@ -77,10 +98,21 @@ class TransientMenuHost {
     }
 
     /**
-     * A press landed somewhere the observer can see it, i.e. outside every open menu. They all close; the
-     * press itself is neither consumed nor altered.
+     * A press landed somewhere the observer can see it, i.e. outside every open menu. They all close, and so
+     * does every edit whose field [windowPosition] (in the window; null = unknown) is not in; the press itself is
+     * neither consumed nor altered.
      */
-    fun onPress() {
+    fun onPress(windowPosition: Offset? = null) {
+        for ((key, editor) in editors.entries.toList()) {
+            val bounds = editor.first()
+            if (windowPosition != null && bounds != null && bounds.contains(windowPosition)) continue
+            editors.remove(key)
+            editor.second()
+        }
+        dismissMenus()
+    }
+
+    private fun dismissMenus() {
         if (entries.isEmpty()) return
         for ((key, onDismiss) in entries.entries.toList()) {
             entries.remove(key)
@@ -88,8 +120,6 @@ class TransientMenuHost {
         }
         anyOpen = false
     }
-
-    private fun dismissAll() = onPress()
 }
 
 val LocalTransientMenuHost = staticCompositionLocalOf<TransientMenuHost?> { null }
@@ -101,15 +131,42 @@ val LocalTransientMenuHost = staticCompositionLocalOf<TransientMenuHost?> { null
  * reach it, which is what keeps a window's own menus from closing on their own first click.
  */
 @Composable
-fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier =
-    this.pointerInput(host) {
-        awaitPointerEventScope {
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                if (event.type == PointerEventType.Press) host.onPress()
+fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier {
+    // Where the observer stands, so a press can be told in window coordinates — what an editor's bounds are in.
+    val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    return this
+        .onGloballyPositioned { coordinates[0] = it }
+        .pointerInput(host) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.type != PointerEventType.Press) continue
+                    val at = event.changes.firstOrNull()?.position
+                    host.onPress(at?.let { position -> coordinates[0]?.takeIf { it.isAttached }?.localToWindow(position) })
+                }
             }
         }
+}
+
+/**
+ * An **edit mode that leaves on the first press outside the field** — [active] while it is on, [onLeave] ending
+ * it. A text field alone does not: a press on something that takes no focus (a bare stretch of a window, the
+ * calendar, the tree's background) leaves the caret where it was, and the edit with it. Decided by the same ONE
+ * root observer as the menus ([transientMenuDismissRoot]); the press still does whatever it was aimed at, and a
+ * press inside the field (moving the caret) keeps the edit.
+ */
+@Composable
+fun Modifier.leaveOnOutsidePress(active: Boolean, onLeave: () -> Unit): Modifier {
+    val host = LocalTransientMenuHost.current
+    val key = remember { Any() }
+    val bounds = remember { arrayOfNulls<Rect>(1) }
+    val latestLeave by rememberUpdatedState(onLeave)
+    DisposableEffect(host, key, active) {
+        if (active) host?.openEditor(key, { bounds[0] }) { latestLeave() }
+        onDispose { host?.closeEditor(key) }
     }
+    return this.onGloballyPositioned { bounds[0] = it.boundsInWindow() }
+}
 
 /**
  * Registers a **right-click contextual menu** (or a drop-down) with the host, so the first press outside it

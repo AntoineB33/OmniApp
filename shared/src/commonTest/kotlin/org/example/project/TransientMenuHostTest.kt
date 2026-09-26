@@ -119,4 +119,25 @@ class TransientMenuHostTest {
         // At most one is open at a time — but one still is, so the tree must stay deaf.
         assertTrue(host.anyOpen)
     }
+
+    @Test
+    fun `an edit that leaves on an outside press ends there and survives a press inside it or a menu`() {
+        // The timer's countdown field in edit mode (2026-09-26): a press on something that takes no focus left the
+        // caret, and the held countdown, where they were.
+        val host = TransientMenuHost()
+        val field = androidx.compose.ui.geometry.Rect(100f, 100f, 160f, 140f)
+        var left = 0
+        host.openEditor(Any(), { field }) { left++ }
+
+        host.onPress(androidx.compose.ui.geometry.Offset(120f, 120f))
+        assertEquals(0, left, "a press inside the field moves the caret; it stays in edit mode")
+        host.open(Any()) {}
+        assertEquals(0, left, "its own right-click menu opening does not end it")
+        assertTrue(host.anyOpen, "the menu is open")
+
+        host.onPress(androidx.compose.ui.geometry.Offset(400f, 20f))
+        assertEquals(1, left)
+        host.onPress(androidx.compose.ui.geometry.Offset(400f, 20f))
+        assertEquals(1, left, "it leaves once")
+    }
 }

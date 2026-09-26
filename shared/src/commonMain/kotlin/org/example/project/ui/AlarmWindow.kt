@@ -56,6 +56,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
 import org.example.project.scheduler.domain.AlarmDomain
@@ -1130,6 +1131,7 @@ private fun CountdownField(
     val shownText =
         own?.text ?: padded(TimerDomain.displayedCountdown(live, draft?.held, draft?.field).component(field))
     var menuOpen by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
     Box {
         OutlinedTextField(
             value = shownText,
@@ -1149,6 +1151,12 @@ private fun CountdownField(
             ),
             modifier = Modifier
                 .width(56.dp)
+                // Edit mode ends on the first press outside the field, wherever it lands — a text field alone
+                // keeps the caret when the press hits something that takes no focus, and the held fields with it.
+                .leaveOnOutsidePress(own != null) {
+                    focusManager.clearFocus()
+                    if (draft?.field == field) onDraftChange(null)
+                }
                 // Initial pass, and consumed: the right-click is this menu's, never the text field's own.
                 .pointerInput(editable) {
                     awaitPointerEventScope {

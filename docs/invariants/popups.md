@@ -265,6 +265,12 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   open closes it. A plain `clickable { open = true }` reopens it instead, because the root observer has
   already closed it on the press and the click lands after; the field reads the menu's state as last
   composed at the press. Every drop-down field uses it, never a hand-rolled toggle.
+- **A field's edit mode that must end on a press elsewhere registers with the SAME observer**
+  (`Modifier.leaveOnOutsidePress`, `TransientMenuHost.openEditor`) — never a per-field outside-press handler.
+  A text field alone keeps the caret when the press lands on something that takes no focus (a window's bare
+  chrome, the calendar, the tree's background), so its edit mode never ended (the timer's countdown fields,
+  2026-09-26). It publishes its bounds in the window, so a press INSIDE it keeps the edit; a menu opening does
+  not end it (its own right-click menu would), and it does not make the tree deaf.
 - Registering the menu also makes the tree deaf while it is up, which is why the edited cell hands its caret
   back for as long as a menu stands over it (`task-tree.md`, *The selection and Edit Mode belong to the
   TREE*).
