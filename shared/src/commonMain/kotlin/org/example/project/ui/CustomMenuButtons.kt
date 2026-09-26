@@ -43,10 +43,10 @@ import org.example.project.scheduler.ui.contextMenuModifier
 
 /**
  * PRD §7 *Lateral menu*: a button the user made at the bottom of the lateral menu from ONE window's ☆. Like
- * every button of the menu it **opens a new window at each click**: of the kind [windowId] names (the frame id
- * it was made from, `Search` / `Search#2`, or a per-object window's [ObjectWindowKey]), with the configuration
- * that window had when the ☆ was pressed ([config]) — so a Search window's query, types, filters and sorting can
- * be kept as a button.
+ * every button of the menu it asks for **one exact window**: of the kind [windowId] names (the frame id it was
+ * made from, `Search` / `Search#2`, or a per-object window's [ObjectWindowKey]), with the configuration that
+ * window had when the ☆ was pressed ([config]) — so a Search window's query, types, filters and sorting can be
+ * kept as a button. That window is brought back when it is open, and opened anew otherwise.
  *
  * **Local-only view state**, kept by `App` in the window-placement store under [CustomMenuButtons.PLACEMENT_ID]:
  * a button names a window of THIS device, so it is not a fact about the account.
@@ -59,7 +59,7 @@ data class CustomMenuButton(
     /**
      * The window's configuration as its ☆ saved it, in the window's own stored form (a Search window's
      * `SearchDomain.Config.encode()`), or null for a window that has none. Absent from a button made before
-     * 2026-09-26, which then opens with what its window has now.
+     * 2026-09-26, which is given its window's configuration once, at load ([CustomMenuButtons.withConfigsFrozen]).
      */
     val config: String? = null,
 )
@@ -97,6 +97,14 @@ object CustomMenuButtons {
         if (title.isBlank()) buttons else buttons.map { if (it.id == id) it.copy(title = title.trim()) else it }
 
     fun removed(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> = buttons.filterNot { it.id == id }
+
+    /**
+     * [buttons] with every button that has no [CustomMenuButton.config] given [configOf] its window — once, when the
+     * list is loaded: a button made before the snapshot existed then keeps ONE configuration, instead of following
+     * whatever its window becomes. A window with no configuration answers null and leaves the button as it is.
+     */
+    fun withConfigsFrozen(buttons: List<CustomMenuButton>, configOf: (windowId: String) -> String?): List<CustomMenuButton> =
+        buttons.map { button -> if (button.config != null) button else configOf(button.windowId)?.let { button.copy(config = it) } ?: button }
 }
 
 /**

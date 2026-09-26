@@ -239,14 +239,4 @@ class ObjectWindowsTest {
         host.rekey("AlarmOrTimerEdit#1", "k2")
         assertEquals("k2", host.registrations.single().menuKey)
     }
-
-    @Test
-    fun a_menu_button_opens_a_new_window_even_on_an_object_already_open() {
-        // User spec 2026-09-26: every button of the lateral menu opens a new window.
-        val windows = ObjectWindows<String>()
-        windows.openNew("a")
-        windows.openNew("a")
-        windows.openNew("b")
-        assertEquals(listOf("a", "a", "b"), windows.subjects)
-    }
 }

@@ -720,15 +720,6 @@ class ObjectWindows<T : Any>(
     }
 
     /**
-     * Open a NEW window on [subject], even when one is open on it already — what a lateral-menu button made from
-     * such a window's ☆ does (every button of the menu opens a new window). The second on one subject is a copy,
-     * numbered like the head's ⧉ makes it.
-     */
-    fun openNew(subject: T) {
-        if (windows.none { it.subject == subject }) open(subject) else add(Window(next++, subject, duplicated = true))
-    }
-
-    /**
      * Reopen, at startup, the window numbered [number] on [subject] that was open when the app last stopped — under
      * the same frame id, so it comes back where it was left and as it was left.
      */

@@ -733,14 +733,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // A per-object window named by its key: opened on its object (or brought back when one is open on it) — or,
         // at startup, reopened under the [number] it had. The one reading of a key, for the ☆ buttons and the
         // restore alike.
-        fun openObjectWindow(key: ObjectWindowKey, number: Int? = null, fresh: Boolean = false) {
-            // [fresh]: a NEW window even when one is open on the object — a lateral-menu button's (☆) click.
-            fun <T : Any> ObjectWindows<T>.openOn(subject: T) =
-                when {
-                    number != null -> restore(number, subject)
-                    fresh -> openNew(subject)
-                    else -> open(subject)
-                }
+        fun openObjectWindow(key: ObjectWindowKey, number: Int? = null) {
+            fun <T : Any> ObjectWindows<T>.openOn(subject: T) = if (number == null) open(subject) else restore(number, subject)
             when (key.kind) {
                 ObjectWindowKey.Kind.TaskEdit -> taskEditWindows.openOn(TreeObject(TaskId(key.id), key.template))
                 ObjectWindowKey.Kind.CategoryEdit -> categoryWindows.openOn(TreeObject(CategoryId(key.id), key.template))
@@ -1069,16 +1063,46 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.ConfigSearch -> configSearchOf(frameId).encode()
                 else -> null
             }
-        // PRD §7: what EVERY window button of the lateral menu does — open a NEW window of [kind], never close one.
-        // It starts from [config] (a ☆ button's snapshot), or the kind's default configuration: the original
-        // window when it is not open (where it was left), else a new copy set off from it (`Search#2`, the head's
-        // ⧉ mechanism). The task tree and the calendar exist once (`popups.md`, *Not duplicable*): theirs is
-        // opened when closed and brought back — out of the window bar included — when open.
+        // A button made before buttons kept a configuration (2026-09-26) is given one ONCE, here at startup, from
+        // its window's row as it stands — and never again read off the live window. Reading it at every click (as
+        // the first version did) made the button's "exact window" whatever its window had become, so it always
+        // found the window it had opened, however that window had been changed since.
+        remember(placements) {
+            val frozen = CustomMenuButtons.withConfigsFrozen(menuButtons) { windowConfigOf(it) }
+            if (frozen != menuButtons) setMenuButtons(frozen)
+        }
+        // [config] as [kind]'s window would hold it once opened with it — a missing one is the kind's default — so
+        // two readings of one configuration compare equal. Null for a kind that has no configuration.
+        fun normalizedWindowConfig(kind: FloatingWindow, config: String?): String? =
+            when (kind) {
+                FloatingWindow.Search -> (SearchDomain.Config.decode(config) ?: SearchDomain.Config()).encode()
+                FloatingWindow.ConfigSearch ->
+                    (SearchDomain.ConfigurationSearch.decode(config) ?: SearchDomain.ConfigurationSearch()).encode()
+                else -> null
+            }
+        // Bring the open window [id] of [kind] back: out of the window bar, to the front, into the focus.
+        fun presentWindow(kind: FloatingWindow, id: String) {
+            if (id == kind.name) focusWindow(kind)
+            else historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
+            windowFrames.present(id)
+        }
+        // PRD §7: what EVERY window button of the lateral menu does. It asks for a window of [kind] with [config] (a
+        // ☆ button's snapshot) or the kind's default configuration. **When that exact window is open already** —
+        // same kind, same configuration (any window of a kind that has none) — it is brought back and focused
+        // instead; otherwise a NEW one opens: the original when it is not open (where it was left), else a copy set
+        // off from it (`Search#2`, the head's ⧉ mechanism). Never closes one. The task tree and the calendar exist
+        // once (`popups.md`, *Not duplicable*): theirs is opened when closed and brought back when open.
         fun openNewWindow(kind: FloatingWindow, config: String? = null) {
             if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.Calendar || kind == FloatingWindow.TimeSim) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
                 windowFrames.present(kind.name)
+                return
+            }
+            val wanted = normalizedWindowConfig(kind, config)
+            val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
+            open.firstOrNull { windowConfigOf(it) == wanted }?.let { existing ->
+                presentWindow(kind, existing)
                 return
             }
             val id =
@@ -1140,16 +1164,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val menuButtonHost = remember {
             MenuButtonHost(canAdd = { lateralWindowOf(it) != null }, add = { id, title -> addMenuButton(id, title) })
         }
-        // A button the user made (☆) opens a NEW window, like every button of the menu: a per-object window on
-        // its object (a second one when one is open on it already), or a lateral-menu window with the
-        // configuration the ☆ saved. A button made before the snapshot existed opens with what its window has now.
+        // A button the user made (☆) opens its window like every button of the menu ([openNewWindow]): a
+        // per-object window on its object — the one open on it already, brought back, when there is one — or a
+        // lateral-menu window with the configuration the ☆ saved. A button made before the snapshot existed opens
+        // with what its window has now.
         fun onMenuButtonClicked(button: CustomMenuButton) {
             ObjectWindowKey.decode(button.windowId)?.let { key ->
-                openObjectWindow(key, fresh = true)
+                openObjectWindow(key)
                 return
             }
             val kind = lateralWindowOf(button.windowId) ?: return
-            openNewWindow(kind, button.config ?: windowConfigOf(button.windowId))
+            openNewWindow(kind, button.config)
         }
 
         // PRD §7 Search, the "window" kind: every window of the app, open or not. Each open window is its own entry

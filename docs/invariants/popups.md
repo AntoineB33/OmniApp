@@ -332,14 +332,16 @@ It lives in the host because the host already sees the only two events that deci
 - **A window that is not in the stack yet reads as the top** (`zOf` returns `stack.size`). Its `register`
   runs after the composition that first draws it, and reading as the bottom would draw a newly opened
   window under its neighbours for one frame.
-- **A window button of the lateral menu OPENS A NEW WINDOW at every click, and nothing else** (user rule,
-  2026-09-26; `App.openNewWindow`): never closes one, never brings one back, and is never drawn as "open" (no
-  blue) — the window bar says what is open. The new window starts from the kind's default configuration (a ☆
-  button's: the one it saved): the original when it is not open, else a copy (`Search#2`) cascaded off it. The
-  **task tree and the calendar** exist once (*Not duplicable*), so theirs opens when closed and is brought back
-  (out of the bar included) when open. A ☆ button of a per-object window opens a new window on its object even
-  when one is open on it (`ObjectWindows.openNew`). Sleep/Work and "I'm away" are modes, not windows, and keep
-  their on state.
+- **A window button of the lateral menu asks for ONE exact window, and never closes one** (user rules,
+  2026-09-26; `App.openNewWindow`): its kind with the kind's default configuration — a ☆ button's: the one it
+  saved. **When that exact window is open** (same kind, same configuration — `normalizedWindowConfig`, so a
+  missing configuration and the default one are the same; any window of a kind that has none) it is brought
+  back and focused (out of the bar included). Otherwise a NEW window opens: the original when it is not open,
+  else a copy (`Search#2`) cascaded off it. So a Search window whose query was typed into is no longer "the"
+  Search button's, and the button opens a fresh one. It is never drawn as "open" (no blue) — the window bar
+  says what is open. The **task tree and the calendar** exist once (*Not duplicable*). A ☆ button of a
+  per-object window brings back the window open on its object, or opens one (`ObjectWindows.open`).
+  Sleep/Work and "I'm away" are modes, not windows, and keep their on state.
 - **Moving to a window takes the focus**, however the move was asked for. `App`'s `focusWindow` goes through
   the same `WindowFrameHost.focus` a press inside the window would, or the menu button raises a window the
   app still believes is un-focused — and the keyboard stays with whatever was focused before it.

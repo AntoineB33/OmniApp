@@ -53,6 +53,21 @@ class CustomMenuButtonsTest {
     }
 
     @Test
+    fun a_button_stored_without_a_configuration_is_given_its_windows_once_and_keeps_it() {
+        // The anomaly (2026-09-26): a "timers" button made before the snapshot existed read its Search window's
+        // configuration at every click, so after the types were changed in the window it opened, the button still
+        // "found" that window. It now keeps ONE configuration, taken at load.
+        val old = CustomMenuButtons.decode("""{"buttons":[{"id":"b4","window":"Search","title":"timers"},""" +
+            """{"id":"b1","window":"object:Timer:live:timer-3","title":"job offers"}]}""")
+        val atLoad = """{"kinds":["Timer"]}"""
+        val frozen = CustomMenuButtons.withConfigsFrozen(old) { if (it == "Search") atLoad else null }
+        assertEquals(atLoad, frozen.first().config)
+        assertEquals(null, frozen.last().config, "a window with no configuration leaves its button as it is")
+        // Frozen: what the window becomes later no longer reaches it.
+        assertEquals(frozen, CustomMenuButtons.withConfigsFrozen(frozen) { if (it == "Search") """{"kinds":["Timer","Chrono"]}""" else null })
+    }
+
+    @Test
     fun a_button_keeps_the_configuration_its_window_had_and_one_stored_before_that_reads_none() {
         // User spec 2026-09-26: the ☆ of a Search window keeps its configuration as a button that opens a new
         // window with exactly it.

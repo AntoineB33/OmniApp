@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A menu button focuses its exact window when it is open — 2026-09-26
+
+User spec: clicking a button of the lateral menu, if the exact window is already open, focuses it instead of
+creating a new instance. `App.openNewWindow` first looks among the open windows of the kind (the original and its
+copies) for one whose configuration equals the one it would open with (`normalizedWindowConfig`: the ☆ snapshot,
+else the kind's default; any window of a kind without one), and brings it back — out of the bar, to the front,
+focused. A per-object ☆ button uses `ObjectWindows.open` again (`openNew` removed). No state change.
+- **Anomaly, same day:** a ☆ "timers" button made before buttons kept a configuration (release DB: `b4`,
+  `window = Search`, no `config`) read its window's configuration at every click, so after the types were changed
+  in the Search window it had opened, it still "found" that window. Such a button is now given its window's
+  configuration ONCE, at load (`CustomMenuButtons.withConfigsFrozen`), and a click never reads the live window.
+
 ### Spoken messages say their own sentence; the window bar's "Close all" is "Reset" — 2026-09-26
 
 User spec: replace "Close all" in the system tray by "Reset"; improve the vocal messages — the chord for "I'm
