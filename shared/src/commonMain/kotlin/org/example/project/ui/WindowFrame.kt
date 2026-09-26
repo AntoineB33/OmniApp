@@ -1290,9 +1290,9 @@ private fun Modifier.unplaced(active: Boolean): Modifier =
  * TAB for each one, the reduced ones included, in the order they were opened; drawn at the app ROOT, over the
  * lateral menu, so a window reduced while the menu is open is not filed behind it.
  *
- * A tab brings its window back — out of the bar, to the top, into the focus ([WindowFrameHost.present]); its ✕
- * closes it outright. **Close all**, at the bar's right corner, closes every window at once (it replaced the
- * lateral menu's "Close windows").
+ * A tab is a taskbar's ([WindowFrameHost.onTabClicked]); its ✕ closes its window outright. **Reset**, at the bar's
+ * right corner, closes every window at once (it was "Close all", and before that the lateral menu's "Close
+ * windows").
  */
 @Composable
 fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier) {
@@ -1315,7 +1315,7 @@ fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier) {
                 for (row in rows.toList()) MinimizedChip(row, host)
             }
             Text(
-                text = "✕ Close all",
+                text = "Reset",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier

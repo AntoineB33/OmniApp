@@ -679,7 +679,7 @@ object SchedulerStateCodec {
             forcedStartTaskId = forcedStart?.taskId?.value,
             forcedStartAtMillis = forcedStart?.atMillis,
             notificationLog =
-                notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message, it.cue?.name) },
+                notificationLog.map { PersistedNotificationEntry(it.timeMillis, it.title, it.message, it.cue?.name, it.spoken) },
             supabaseUsageLog =
                 supabaseUsageLog.map {
                     PersistedSupabaseUsageEntry(it.timeMillis, it.resource, it.operation, it.requestBytes, it.responseBytes, it.status)
@@ -1269,6 +1269,7 @@ object SchedulerStateCodec {
                         entry.title,
                         entry.message,
                         entry.cue?.let { name -> VoiceCue.entries.firstOrNull { it.name == name } },
+                        entry.spoken,
                     )
                 },
             supabaseUsageLog =
@@ -1669,6 +1670,9 @@ private data class PersistedNotificationEntry(
     // window could replay a notification's voice, and on every entry spoken from its own text. An unknown
     // name (a cue a later build retired) decodes to null, i.e. replayed from the text.
     val cue: String? = null,
+    // Its own spoken sentence ([NotificationLogEntry.spoken]); absent on entries written before 2026-09-26, which
+    // replay their text read out, as they were spoken.
+    val spoken: String? = null,
 )
 
 @Serializable

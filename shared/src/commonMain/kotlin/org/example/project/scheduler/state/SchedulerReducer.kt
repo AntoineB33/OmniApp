@@ -715,7 +715,7 @@ object SchedulerReducer {
         intent: SchedulerIntent.RecordNotification,
     ): SchedulerState {
         val appended = state.notificationLog +
-            NotificationLogEntry(intent.timeMillis, intent.title, intent.message, intent.cue)
+            NotificationLogEntry(intent.timeMillis, intent.title, intent.message, intent.cue, intent.spoken)
         val capped =
             if (appended.size > SchedulerState.MAX_NOTIFICATION_LOG) {
                 appended.takeLast(SchedulerState.MAX_NOTIFICATION_LOG)

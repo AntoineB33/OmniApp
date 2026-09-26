@@ -1299,7 +1299,7 @@ fun LateralMenu(
         // visible after the whole menu (this button included) slides off-screen.
         PageNavButton(page = page, onPageSelected = onPageSelected)
 
-        // Closing every window at once is the window bar's "Close all" now (WindowBar), where the windows are.
+        // Closing every window at once is the window bar's "Reset" now (WindowBar), where the windows are.
         MenuButton(
             label = "Task tree",
             active = false,
@@ -2706,7 +2706,8 @@ private fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
                 // button says exactly this.
                 HistoryInfo(
                     "Voice",
-                    entry.entry.utterance.let { if (it.cue != null) "${it.text} (recorded phrase)" else it.text },
+                    entry.entry.utterance?.let { if (it.cue != null) "${it.text} (recorded phrase)" else it.text }
+                        ?: "(not spoken)",
                 ),
             )
         is FilteredHistoryEntry.SupabaseUsage ->

@@ -46,7 +46,9 @@ class GlobalShortcutReceiptTest {
                 "receipt for ${shortcut.name} does not name its chord: ${entry.message}",
             )
             assertTrue(
-                entry.message.contains(shortcut.action),
+                entry.message.contains(
+                    if (shortcut == GlobalShortcut.ToggleAway) "I'm away" else shortcut.action,
+                ),
                 "receipt for ${shortcut.name} does not say what it does: ${entry.message}",
             )
         }

@@ -96,6 +96,14 @@ class SearchWindowTest {
 
     private fun root(s: SchedulerState): String = s.tasks.getValue(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK).title
 
+    @Test
+    fun the_task_to_do_now_notification_says_where_the_task_sits_and_a_top_level_one_says_nothing() {
+        // User spec 2026-09-26: the written notification may carry details the voice does not — the path.
+        val s = tree()
+        assertEquals("Pie\nApple", SchedulerDomain.taskSwitchNotificationMessage(s, taskWithTitle(s, "Pie"), 0L) { "" })
+        assertEquals("Apple", SchedulerDomain.taskSwitchNotificationMessage(s, taskWithTitle(s, "Apple"), 0L) { "" })
+    }
+
     // ----- The last path ----------------------------------------------------------------------------
 
     @Test

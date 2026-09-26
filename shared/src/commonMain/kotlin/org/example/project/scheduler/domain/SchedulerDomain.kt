@@ -4356,6 +4356,9 @@ object SchedulerDomain {
      * [startMillis] via [formatDeadline]. Returns null when the task is missing or blank-titled (nothing
      * worth notifying about). [formatDeadline] turns an epoch-millis deadline into a human label.
      */
+    /** The longest a "task to do now" notification's path line runs before its start is dropped. */
+    const val TASK_NOTIFICATION_PATH_MAX_CHARS: Int = 48
+
     fun taskSwitchNotificationMessage(
         state: SchedulerState,
         taskId: TaskId,
@@ -4363,13 +4366,19 @@ object SchedulerDomain {
         formatDeadline: (Long) -> String,
     ): String? {
         val title = state.tasks[taskId]?.title?.takeIf { it.isNotBlank() } ?: return null
+        // Where the task sits: its shortest path below the tree's root (a top-level task has none), the start
+        // dropped when it runs long — the end, next to the task, is the part that tells two of a name apart.
+        val path =
+            SearchDomain.shortestPathsInAnyTree(state)[taskId]?.drop(1)?.takeIf { it.isNotEmpty() }
+                ?.let { SearchDomain.shortenedPathLabel(it, TASK_NOTIFICATION_PATH_MAX_CHARS) }
+        val head = if (path == null) title else "$title\n$path"
         val unit = state.tasks[taskId]?.scheduleUnit.orEmpty()
-        if (unit.isEmpty()) return title
+        if (unit.isEmpty()) return head
         val lines =
             scheduleUnitDeadlines(unit, startMillis).joinToString("\n") { (stepTitle, deadline) ->
                 "• $stepTitle — ${formatDeadline(deadline)}"
             }
-        return "$title\n$lines"
+        return "$head\n$lines"
     }
 
     /**

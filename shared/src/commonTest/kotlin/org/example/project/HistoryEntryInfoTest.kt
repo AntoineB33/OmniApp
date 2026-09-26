@@ -64,7 +64,7 @@ class HistoryEntryInfoTest {
         val restPose = NotificationLogEntry(2_000, "Screen break", "stretch — 5 min")
         assertEquals(VoiceUtterance.of(VoiceCue.LookAway), lookAway.utterance)
         assertEquals(VoiceUtterance.forNotification("Screen break", "stretch — 5 min"), restPose.utterance)
-        assertEquals(null, restPose.utterance.cue)
+        assertEquals(null, restPose.utterance?.cue)
     }
 
     @Test

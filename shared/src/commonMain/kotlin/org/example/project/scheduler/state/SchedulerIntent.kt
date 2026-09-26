@@ -1350,6 +1350,8 @@ sealed interface SchedulerIntent {
         val message: String,
         val timeMillis: Long,
         val cue: org.example.project.scheduler.platform.VoiceCue? = null,
+        /** Its own spoken sentence, if any ([org.example.project.scheduler.state.NotificationLogEntry.spoken]). */
+        val spoken: String? = null,
     ) : SchedulerIntent
 
     /**

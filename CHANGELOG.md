@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Spoken messages say their own sentence; the window bar's "Close all" is "Reset" — 2026-09-26
+
+User spec: replace "Close all" in the system tray by "Reset"; improve the vocal messages — the chord for "I'm
+away" says "I'm away" / "I'm back", not the whole shortcut; "Current task: <title>", the voice needing not say what
+the notification writes, which may carry details such as the task's shortest path, its start hidden when too long.
+
+- The window bar's right-corner button reads **Reset**; it still closes every window (label only).
+- The Ctrl+Shift+Alt+A receipt WRITES which way it went too — "<chord> — I'm away" or "— I'm back"
+  (`shortcutReceiptAction`), no longer "I'm away / I'm back".
+- `engine/SpokenMessages.kt`: one builder for every spoken sentence (chord receipts, current task, a rest pose,
+  the rings, wind-down, "Notifications on"); `notifyUser(spoken = …)`; `SpokenMessages.SILENT` for "Look away
+  now", whose look-away speaks at once. `VoiceUtterance.forNotification(title, message, cue, spoken)` is the one
+  decision, for the engine and the History replay.
+- The written "task to do now" carries the task's shortest path below the tree's root
+  (`SearchDomain.shortenedPathLabel`, ≤ 48 characters, start dropped first).
+- `NotificationLogEntry.spoken` (persisted, optional — an older entry replays its text read out, as spoken
+  then). Local-only diagnostics; no sync or migration.
+
 ### The Configuration Search window lists the Search window's Reset; one type selector — 2026-09-26
 
 User spec: the search configurations window includes every configuration of the Search window, its Reset

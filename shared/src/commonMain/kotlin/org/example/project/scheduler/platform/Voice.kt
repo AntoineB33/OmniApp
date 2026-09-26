@@ -50,7 +50,21 @@ data class VoiceUtterance(val text: String, val cue: VoiceCue? = null) {
          * point — a notification the user can see but not hear would be exactly the gap this closes.
          */
         fun forNotification(title: String, message: String, cue: VoiceCue? = null): VoiceUtterance =
-            if (cue != null) of(cue) else VoiceUtterance(spokenNotificationText(title, message))
+            forNotification(title, message, cue, spoken = null)!!
+
+        /**
+         * The same, for a notification that says its OWN sentence rather than its text read out ([spoken],
+         * user spec 2026-09-26: "I'm away", "Current task: …"); `""` says nothing at all (null). A [cue] still
+         * wins — its recording is the phrase. The one decision, for the engine that speaks and the History
+         * window that replays.
+         */
+        fun forNotification(title: String, message: String, cue: VoiceCue?, spoken: String?): VoiceUtterance? =
+            when {
+                cue != null -> of(cue)
+                spoken == "" -> null
+                spoken != null -> VoiceUtterance(spoken)
+                else -> VoiceUtterance(spokenNotificationText(title, message))
+            }
     }
 }
 

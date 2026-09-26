@@ -1101,7 +1101,7 @@ class SchedulerEngine(
         // and the voice below, which is a perfectly ordinary way to set an alarm on a machine in an office.
         if (armed.alert.rings) ringAlarm(armed)
         val title = armed.kind.label
-        notifyUser(title, armed.label.ifBlank { title }, alert = armed.alert)
+        notifyUser(title, armed.label.ifBlank { title }, alert = armed.alert, spoken = SpokenMessages.ring(armed.kind, armed.label))
         if (armed.timer) {
             // A timer is a one-off by nature: it has run out, so it goes back to its full duration — keeping the
             // instant it reached zero — unless it goes negative, in which case it counts on below zero
@@ -1310,7 +1310,7 @@ class SchedulerEngine(
     fun setNotificationsEnabled(enabled: Boolean) {
         if (vm.state.value.notificationsEnabled == enabled) return
         vm.dispatch(SchedulerIntent.SetNotificationsEnabled(enabled))
-        if (enabled) notifyUser(NOTIFICATIONS_ON_TITLE, NOTIFICATIONS_ON_MESSAGE)
+        if (enabled) notifyUser(NOTIFICATIONS_ON_TITLE, NOTIFICATIONS_ON_MESSAGE, spoken = SpokenMessages.NOTIFICATIONS_ON)
         else runCatching { clearNotifications() }
     }
 
@@ -1403,6 +1403,11 @@ class SchedulerEngine(
         message: String,
         cue: VoiceCue? = null,
         alert: AlertSettings = AlertSettings.RING,
+        /**
+         * What it SAYS, when that is not the written text read out ([SpokenMessages]); [SpokenMessages.SILENT]
+         * says nothing. A [cue] still wins: its recording is the phrase.
+         */
+        spoken: String? = null,
     ) {
         val now = clock.nowMillis()
         val st = vm.state.value
@@ -1411,24 +1416,24 @@ class SchedulerEngine(
         // wind-down, an alarm, a chord's own receipt), so gating it is what makes "cancel every notification"
         // mean every one of them rather than the handful somebody remembered to guard.
         val muted = !st.notificationsEnabled
-        val utterance = VoiceUtterance.forNotification(title, message, cue)
+        val utterance = VoiceUtterance.forNotification(title, message, cue, spoken)
         // The row's own two channels, under the account's. A row that asked for neither is not a bug: it is
         // an alarm set to ring and say nothing, or a reminder set to be a tag on the calendar and no more.
         val posted = !muted && alert.notification
-        val spoken = !muted && st.notificationVoiceEnabled && alert.voice
+        val speaks = utterance != null && !muted && st.notificationVoiceEnabled && alert.voice
         Diagnostics.log(
             "notification [$title] ${message.replace('\n', ' ')} " +
                 "(sim now=${Diagnostics.formatInstant(now)})" +
                 (if (muted) " [suppressed: notifications off]" else "") +
                 (if (!muted && !alert.notification) " [suppressed: this row posts no notification]" else "") +
-                (if (spoken) " [spoken: ${utterance.text}]" else " [voice off]"),
+                (if (speaks) " [spoken: ${utterance?.text}]" else " [not spoken]"),
         )
         // Append to the History Manager's local-only Notifications column (capped, non-syncing). Written
         // whether or not the OS is told: the switch silences the interruption, never the record, so the
         // column still answers "what did the app decide to say while I had it muted".
-        vm.dispatch(SchedulerIntent.RecordNotification(title, message, now, cue))
+        vm.dispatch(SchedulerIntent.RecordNotification(title, message, now, cue, spoken))
         if (posted) postNotification(title, message)
-        if (spoken) speak(utterance)
+        if (speaks && utterance != null) speak(utterance)
     }
 
     // A voice with no notification behind it. The ONE case is the pause-over cue an OS alarm fires on a phone
@@ -2794,7 +2799,13 @@ class SchedulerEngine(
                                 if (deviceUnlocked()) {
                                     lastNotifiedTaskId = currentTaskId
                                     lastAwaySuppressedTaskId = null
-                                    notifyUser("Task to do now", message)
+                                    notifyUser(
+                                        "Task to do now",
+                                        message,
+                                        spoken = SpokenMessages.currentTask(
+                                            st.tasks[currentTaskId]?.title.orEmpty(),
+                                        ),
+                                    )
                                 } else {
                                     Diagnostics.log(
                                         "task switch notification suppressed: device locked (sim now=" +
@@ -2913,6 +2924,10 @@ class SchedulerEngine(
                                                 startMillis = due,
                                                 endMillis = poseEnd,
                                             ),
+                                            spoken = SpokenMessages.screenBreak(
+                                                title,
+                                                SchedulerDomain.screenBreakFollowOn(st.panels, due, poseEnd),
+                                            ),
                                         )
                                     }
                                 }
@@ -2966,6 +2981,7 @@ class SchedulerEngine(
                                             RingKind.Reminder.label,
                                             title.ifBlank { RingKind.Reminder.label },
                                             alert = alert,
+                                            spoken = SpokenMessages.ring(RingKind.Reminder, title),
                                         )
                                     }
                                 }
@@ -2981,7 +2997,7 @@ class SchedulerEngine(
                                     if (cueSweep.realLatenessMillis(wd) <= LOOK_AWAY_START_FRESH_MILLIS &&
                                         deviceUnlocked()
                                     ) {
-                                        notifyUser("Stop work", "Wind down — bedtime in 1 hour")
+                                        notifyUser("Stop work", "Wind down — bedtime in 1 hour", spoken = SpokenMessages.WIND_DOWN)
                                     }
                                 }
                             }
@@ -3158,7 +3174,13 @@ class SchedulerEngine(
         // keyboard-shortcuts window can rebind these three). A receipt naming a chord the user does not
         // have would be worse than none — it is the one line they check when a press seems to go nowhere.
         val chord = GlobalShortcutBindings.chordOf(vm.state.value.shortcutBindings, shortcut)
-        notifyUser(SHORTCUT_RECEIVED_TITLE, "$chord — ${shortcut.action}")
+        // Written: the chord and what it does, so two presses in a row can be told apart. Spoken: only what the
+        // press does now ("I'm away"), never the chord the user has just struck.
+        notifyUser(
+            SHORTCUT_RECEIVED_TITLE,
+            "$chord — ${shortcutReceiptAction(shortcut, _userAway.value)}",
+            spoken = SpokenMessages.shortcutReceipt(shortcut, _userAway.value, vm.state.value.notificationsEnabled),
+        )
     }
 
     // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the

@@ -66,6 +66,37 @@ class NotificationLogTest {
     }
 
     /**
+     * User spec 2026-09-26: a notification may SAY something else than it shows ("I'm away" for the chord's
+     * receipt), so the entry keeps that sentence — the History window replays what was said, not the text —
+     * across a save and a reload; an entry written before the field reads its text out, as it was spoken then.
+     */
+    @Test
+    fun the_log_replays_a_notifications_own_sentence_and_keeps_it_across_a_reload() {
+        val spoken = mutableListOf<VoiceUtterance>()
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val engine = SchedulerEngine(
+            vm = vm,
+            clock = object : AppClock { override fun nowMillis(): Long = 7_000L },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            screenActive = { true },
+            speak = { spoken.add(it) },
+        )
+        engine.announceShortcutReceived(org.example.project.scheduler.platform.GlobalShortcut.ToggleAway)
+        val entry = vm.state.value.notificationLog.single()
+        assertEquals("I'm away", entry.spoken)
+        assertEquals(spoken.single(), entry.utterance, "the replay is what was said")
+
+        val reloaded = org.example.project.scheduler.persistence.SchedulerStateCodec.decode(
+            org.example.project.scheduler.persistence.SchedulerStateCodec.encode(vm.state.value),
+        )!!
+        assertEquals(entry, reloaded.notificationLog.single())
+
+        val old = NotificationLogEntry(1L, "Task to do now", "Write the report")
+        assertEquals(VoiceUtterance.forNotification("Task to do now", "Write the report"), old.utterance)
+        assertEquals(null, old.copy(spoken = "").utterance, "a silent one replays nothing")
+    }
+
+    /**
      * PRD §15, end to end through the engine's cue sweep: the 20 s look-away posts a notification when it
      * BEGINS and another when it ENDS. The two halves are wired differently (the start comes off a
      * [SchedulerDomain.CueKind.LookAwayStart] crossing, the end off the resume armed in `pendingEnds`), so

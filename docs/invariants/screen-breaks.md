@@ -410,9 +410,16 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   not a mute; never add the check anywhere else, and never post around it.
 - **Every notification is SPOKEN from that same call.** A notification is written for a user who is not
   looking at OmniApp, so a silent one only reaches somebody already watching the corner it appears in. The
-  funnel posts and speaks together, from one text and at one instant — which is what makes it impossible to
-  say one thing and show another, and impossible for a new notification site to be silent by forgetting to
-  add a cue beside it. Never speak a notification anywhere but here.
+  funnel posts and speaks together, at one instant — which is what makes it impossible for a new notification
+  site to be silent by forgetting to add a cue beside it. Never speak a notification anywhere but here.
+- **What it SAYS is its own short sentence, not its text read out** (user spec 2026-09-26). The written half is
+  read at leisure and may carry detail (a chord, a task's path, step deadlines); the spoken half is heard once,
+  in passing, and says what just happened or what to do: a chord's receipt says what the press does ("I'm
+  away" / "I'm back", never the chord), a task switch "Current task: <title>", a ring "Time's up: Tea". Every
+  such sentence is built in ONE place (`engine/SpokenMessages.kt`, `SpokenMessagesTest`) and handed to
+  `notifyUser(spoken = …)`; a call without one reads its text out (`spokenNotificationText`). The one silent
+  notification is one whose consequence speaks at once after it (`SpokenMessages.SILENT`: "Look away now",
+  whose look-away speaks its cue).
 - **A phrase with a bundled recording is named, and everything else is synthesized from its own text.**
   `notifyUser`'s `cue` parameter is passed by exactly the two notifications §15 fixes word for word (the
   look-away's start and its resume), so those keep the shared Piper voice; every other phrase carries a task
@@ -431,7 +438,8 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   can silence the interruption without touching the record.
 - **The log records the `cue` the notification was spoken with** (`NotificationLogEntry.cue`), and the History
   window replays a row through `NotificationLogEntry.utterance` = the same `VoiceUtterance.forNotification`
-  call. Do not re-derive the cue from the text: a look-away's start and a rest pose's are both titled
+  call — and so does the sentence it said (`NotificationLogEntry.spoken`, persisted with the entry; an entry
+  older than it reads its text out, as it was spoken then). Do not re-derive the cue from the text: a look-away's start and a rest pose's are both titled
   "Screen break" and only one plays the WAV. A new `notifyUser(…, cue)` needs nothing else.
 - **Switching off also withdraws what the OS is still showing** (`cancelSystemNotifications`): a notification
   sits in Android's shade / iOS's Notification Centre until dismissed, so "cancel every notification" has to

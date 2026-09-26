@@ -20,7 +20,9 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * PRD §11/§15: **every notification has a voice.**
+ * PRD §11/§15: **every notification has a voice** — its OWN short sentence (user spec 2026-09-26), not the written
+ * text read out: a chord's receipt says what the press does ("I'm away"), a task switch says "Current task: …".
+ * The one notification left silent is one whose consequence speaks right after it (`SpokenMessages.SILENT`).
  *
  * A notification is written for a user who is not looking at OmniApp — that is the whole of what it is for —
  * so one that only appears in the corner of a screen they are not watching has not arrived. The spoken half
@@ -30,7 +32,8 @@ import org.example.project.time.AppClock
  *
  * What that has to mean, and what this pins:
  *
- *  * every posted notification is spoken — no exempt caller, exactly as the mute has none;
+ *  * every posted notification is spoken — no exempt caller but [SpokenMessages.SILENT]'s, exactly as the
+ *    mute has none;
  *  * the two phrases PRD §15 fixes word for word keep their **bundled** recording, and everything else is
  *    spoken from its own text (a task title, an alarm's label, a chord cannot be pre-rendered);
  *  * the **Notifications** switch silences BOTH halves (a mute that went on talking would not be a mute),
@@ -64,7 +67,7 @@ class NotificationVoiceTest {
         // Three different notification sites, wired through different call paths: a screen break's end, a
         // chord's own receipt, and the un-mute announcement posted from the far side of the flip.
         engine.announceResumeWork()
-        engine.announceShortcutReceived(GlobalShortcut.LookAwayNow)
+        engine.announceShortcutReceived(GlobalShortcut.SwitchTask)
         engine.setNotificationsEnabled(false)
         engine.setNotificationsEnabled(true)
 
@@ -95,15 +98,23 @@ class NotificationVoiceTest {
         assertEquals(VoiceCue.ResumeWork, sink.spoken.single().cue, "spoken off the bundled recording")
 
         sink.spoken.clear()
-        engine.announceShortcutReceived(GlobalShortcut.LookAwayNow)
+        engine.announceShortcutReceived(GlobalShortcut.ToggleAway)
         val receipt = sink.spoken.single()
-        assertEquals(null, receipt.cue, "no enum can carry a chord: this one is synthesized")
-        // The posted message is written to be READ ("<chord> — Look away now"); the spoken one is the same
-        // sentence with the dash turned into the pause a reader hears there.
-        val (title, message) = sink.posted.last()
-        assertEquals(spokenNotificationText(title, message), receipt.text)
-        assertTrue(receipt.text.startsWith("Shortcut received. "), receipt.text)
-        assertTrue(receipt.text.endsWith(", Look away now"), receipt.text)
+        assertEquals(null, receipt.cue, "no recording says it: this one is synthesized")
+        // Written to be READ: the chord and what it does. Spoken: what the press does now, and nothing else.
+        val (_, message) = sink.posted.last()
+        assertTrue(message.endsWith("— I'm away"), message)
+        assertEquals("I'm away", receipt.text)
+        engine.setUserAway(true)
+        sink.spoken.clear()
+        engine.announceShortcutReceived(GlobalShortcut.ToggleAway)
+        assertEquals("I'm back", sink.spoken.single().text)
+
+        // "Look away now" says nothing of its own: the look-away it starts speaks its cue at once.
+        sink.spoken.clear()
+        engine.announceShortcutReceived(GlobalShortcut.LookAwayNow)
+        assertEquals(emptyList(), sink.spoken)
+        assertTrue(sink.posted.last().second.endsWith("Look away now"), "it is still posted")
     }
 
     /** The mute is "cancel every notification", and the loud half is not the one it may leave running. */

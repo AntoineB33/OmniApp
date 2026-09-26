@@ -537,6 +537,21 @@ object SearchDomain {
 
     fun pathLabel(path: List<String>): String = path.joinToString(PATH_SEPARATOR)
 
+    /**
+     * [path] as a label of at most [maxChars]: whole, when it fits; else with its START dropped, whole segments
+     * first, behind an ellipsis (`… / Work / Report`) — the end, nearest the task, is what identifies it. A last
+     * segment too long on its own keeps its end.
+     */
+    fun shortenedPathLabel(path: List<String>, maxChars: Int): String {
+        val whole = pathLabel(path)
+        if (whole.length <= maxChars) return whole
+        for (drop in 1 until path.size) {
+            val candidate = "…" + PATH_SEPARATOR + pathLabel(path.drop(drop))
+            if (candidate.length <= maxChars) return candidate
+        }
+        return "…" + path.last().takeLast((maxChars - 1).coerceAtLeast(1))
+    }
+
     /** Shortest first, then alphabetically — PRD §4's order for paths, so the two menus rank alike. */
     private val pathOrder: Comparator<List<String>> =
         compareBy<List<String>>({ it.size }, { pathLabel(it) })

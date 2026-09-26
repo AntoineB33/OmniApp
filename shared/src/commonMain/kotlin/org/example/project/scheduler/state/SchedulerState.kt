@@ -257,9 +257,15 @@ data class NotificationLogEntry(
     val title: String,
     val message: String,
     val cue: VoiceCue? = null,
+    /**
+     * The notification's own spoken sentence when it had one ("I'm away", "Current task: …" — user spec
+     * 2026-09-26), `""` when it said nothing; null = its text read out, and what every entry recorded before
+     * this field decodes to.
+     */
+    val spoken: String? = null,
 ) {
-    /** What this notification SOUNDS like — through the one funnel that decided it when it fired. */
-    val utterance: VoiceUtterance get() = VoiceUtterance.forNotification(title, message, cue)
+    /** What this notification SOUNDS like — through the one funnel that decided it when it fired; null = silent. */
+    val utterance: VoiceUtterance? get() = VoiceUtterance.forNotification(title, message, cue, spoken)
 }
 
 /**
