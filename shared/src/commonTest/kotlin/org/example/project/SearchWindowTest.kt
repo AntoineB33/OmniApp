@@ -510,9 +510,61 @@ class SearchWindowTest {
                     taskTreeDated = SearchDomain.Tri.No,
                     relationSection = org.example.project.scheduler.domain.TaskRelationsDomain.Section.Edited,
                     shortcutRebound = SearchDomain.Tri.Yes,
+                    windowStatus = SearchDomain.WindowStatus.Minimized,
                 ),
             )
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
+    }
+
+    @Test
+    fun a_configuration_stored_before_the_window_kind_reads_its_window_filter_as_any() {
+        // What the build before the "window" kind wrote: no `windowStatus` field at all.
+        val stored = "{\"query\":\"x\",\"kinds\":[\"Task\",\"Shortcut\"],\"shortcutRebound\":\"Yes\"}"
+        val config = SearchDomain.Config.decode(stored)!!
+        assertEquals(null, config.filters.windowStatus)
+        assertEquals(SearchDomain.Tri.Yes, config.filters.shortcutRebound)
+        assertEquals(setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Shortcut), config.kinds)
+    }
+
+    private val windows =
+        listOf(
+            SearchDomain.WindowEntry("Search", "Search", SearchDomain.WindowStatus.Open),
+            SearchDomain.WindowEntry("Search#2", "Search (2)", SearchDomain.WindowStatus.Minimized),
+            SearchDomain.WindowEntry("TaskEdit#1", "Pie", SearchDomain.WindowStatus.Open),
+            SearchDomain.WindowEntry("History", "History", SearchDomain.WindowStatus.NotOpen),
+        )
+
+    @Test
+    fun every_window_is_a_row_each_instance_its_own_and_its_detail_says_where_it_stands() {
+        val kinds = setOf(SearchDomain.Kind.Window)
+        val rows = SearchDomain.results(SchedulerState.empty(), kinds, "", windows = windows).map { it as SearchDomain.ItemResult }
+        assertEquals(windows.map { it.id }.toSet(), rows.map { it.id }.toSet())
+        assertTrue(rows.all { it.kind == SearchDomain.Kind.Window })
+        // Two instances of one window are two rows, each saying where it stands.
+        val search = SearchDomain.results(SchedulerState.empty(), kinds, "search", windows = windows).map { it as SearchDomain.ItemResult }
+        assertEquals(listOf("Search" to "open", "Search (2)" to "minimized"), search.map { it.name to it.detail })
+        assertEquals("not open", rows.single { it.id == "History" }.detail)
+        // Not checked: no window row, whatever the app hands in.
+        assertTrue(SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.Task), "", windows = windows).isEmpty())
+    }
+
+    @Test
+    fun the_window_filter_and_sort_read_where_the_window_stands() {
+        val kinds = setOf(SearchDomain.Kind.Window)
+        fun ids(filters: SearchDomain.Filters = SearchDomain.Filters(), sorts: List<SearchDomain.SortMethod> = SearchDomain.DEFAULT_SORTS) =
+            SearchDomain.results(SchedulerState.empty(), kinds, "", filters = filters, sorts = sorts, windows = windows).map { (it as SearchDomain.ItemResult).id }
+        assertEquals(listOf("Search#2"), ids(SearchDomain.Filters(windowStatus = SearchDomain.WindowStatus.Minimized)))
+        assertEquals(listOf("History"), ids(SearchDomain.Filters(windowStatus = SearchDomain.WindowStatus.NotOpen)))
+        assertEquals(1, SearchDomain.Filters(windowStatus = SearchDomain.WindowStatus.Open).activeCount)
+        val byState = listOf(SearchDomain.SortMethod(SearchDomain.Kind.Window, SearchDomain.SortKey.WindowState))
+        val sorted = ids(sorts = byState)
+        assertEquals("History", sorted.last())
+        assertEquals("Search#2", sorted[sorted.size - 2])
+        // The kinds in the results see the windows too.
+        assertEquals(
+            setOf(SearchDomain.Kind.Window),
+            SearchDomain.kindsInResults(SchedulerState.empty(), SearchDomain.Config(kinds = kinds), windows),
+        )
     }
 
     @Test
@@ -591,7 +643,7 @@ class SearchWindowTest {
         assertEquals(1 + SearchDomain.Kind.entries.size, SearchDomain.configurations("sort", every).sumOf { it.second.size })
         // The bar finds configurations by name; a section with nothing left is dropped.
         val state = SearchDomain.configurations("state", every)
-        assertEquals(listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), state.map { it.first })
+        assertEquals(listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Window), state.map { it.first })
         // The kind selector, and the "only the Search results' kinds" button, cut the per-kind sections only.
         assertEquals(
             listOf<SearchDomain.Kind?>(null, SearchDomain.Kind.Timer),

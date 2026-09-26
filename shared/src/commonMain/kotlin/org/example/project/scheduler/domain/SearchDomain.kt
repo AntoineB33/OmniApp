@@ -63,7 +63,31 @@ object SearchDomain {
         TaskTree("task tree"),
         TaskRelation("task relation"),
         Shortcut("keyboard shortcut"),
+
+        /**
+         * A window of the app, open or not ([WindowEntry]): what the rows name is not in the account's state but
+         * in `App`'s windows, which hands the list in ([results]'s `windows`).
+         */
+        Window("window"),
     }
+
+    /**
+     * Where a window stands, as its row says it: on screen, reduced to the window bar along the bottom of the
+     * app (minimized, `popups.md`), or not open at all. This order is the sort key's.
+     */
+    enum class WindowStatus(val label: String) {
+        Open("open"),
+        Minimized("minimized"),
+        NotOpen("not open"),
+    }
+
+    /**
+     * One window of the app, as a [Kind.Window] row lists it: [id] is its frame id (`Search`, `Search#2`,
+     * `TaskEdit#3`) — what opening the row brings back — and [title] what its head reads. Every open window is one
+     * entry, each copy and each per-object window on its own; a lateral-menu window that is not open is one entry
+     * too, so it can be found and opened from here. Built by `App` from its windows, never stored.
+     */
+    data class WindowEntry(val id: String, val title: String, val status: WindowStatus)
 
     /**
      * The window's configuration: what is typed in the bar, which kinds are checked, and the per-kind
@@ -100,6 +124,7 @@ object SearchDomain {
                     taskTreeDated = filters.taskTreeDated.name,
                     relationSection = filters.relationSection?.name,
                     shortcutRebound = filters.shortcutRebound.name,
+                    windowStatus = filters.windowStatus?.name,
                     sortMethods = sorts.map { StoredSortMethod(it.kind?.name, it.key.name, it.descending) },
                 ),
             )
@@ -139,6 +164,7 @@ object SearchDomain {
                         relationSection =
                             TaskRelationsDomain.Section.entries.firstOrNull { it.name == stored.relationSection },
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
+                        windowStatus = WindowStatus.entries.firstOrNull { it.name == stored.windowStatus },
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                 )
@@ -263,6 +289,8 @@ object SearchDomain {
         val relationSection: TaskRelationsDomain.Section? = null,
         /** Yes = bound to another chord than the one it ships with. */
         val shortcutRebound: Tri = Tri.Any,
+        /** Null = any: open, minimized or not open. */
+        val windowStatus: WindowStatus? = null,
     ) {
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
@@ -290,6 +318,7 @@ object SearchDomain {
                 Setting.TaskTreeDatedSetting -> taskTreeDated != Tri.Any
                 Setting.RelationSectionSetting -> relationSection != null
                 Setting.ShortcutReboundSetting -> shortcutRebound != Tri.Any
+                Setting.WindowStatusSetting -> windowStatus != null
                 else -> false
             }
     }
@@ -320,6 +349,8 @@ object SearchDomain {
         TaskTreeSize(Kind.TaskTree, "tasks"),
         RelationSection(Kind.TaskRelation, "section"),
         ShortcutChord(Kind.Shortcut, "chord"),
+        /** [WindowStatus]'s order: open, minimized, not open. */
+        WindowState(Kind.Window, "state"),
     }
 
     /**
@@ -388,6 +419,7 @@ object SearchDomain {
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
         RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
+        WindowSort(Kind.Window, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskCategory(Kind.Task, "Category"),
         CategoryHasRules(Kind.Category, "Has rules"),
@@ -403,6 +435,7 @@ object SearchDomain {
         TaskTreeDatedSetting(Kind.TaskTree, "On the timeline"),
         RelationSectionSetting(Kind.TaskRelation, "Section"),
         ShortcutReboundSetting(Kind.Shortcut, "Rebound"),
+        WindowStatusSetting(Kind.Window, "State"),
     }
 
     /**
@@ -431,9 +464,10 @@ object SearchDomain {
         }
 
     /** The kinds that have at least one row in the Search window's results for [config]. */
-    fun kindsInResults(state: SchedulerState, config: Config): Set<Kind> =
+    fun kindsInResults(state: SchedulerState, config: Config, windows: List<WindowEntry> = emptyList()): Set<Kind> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
-        results(state, config.kinds, config.query, { emptyMap() }, config.filters).mapTo(HashSet()) { it.kind }
+        results(state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows)
+            .mapTo(HashSet()) { it.kind }
 
     /** The stored form of a [Config] — strings, so an unknown value decodes to its default. */
     @Serializable
@@ -455,6 +489,8 @@ object SearchDomain {
         val taskTreeDated: String? = null,
         val relationSection: String? = null,
         val shortcutRebound: String? = null,
+        /** New 2026-09-26: absent from what an older build stored, which reads as any. */
+        val windowStatus: String? = null,
         /** Null = never stored (a configuration written before sorting): the default list. */
         val sortMethods: List<StoredSortMethod>? = null,
         /** The first sorting shape's fields — read only, when [sortMethods] is absent ([Config.decode]). */
@@ -867,6 +903,8 @@ object SearchDomain {
         query: String,
         /** For the history units' date and time: the device's own. */
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        /** The app's windows, for [Kind.Window] — `App`'s to know, not the state's. */
+        windows: List<WindowEntry> = emptyList(),
     ): List<ItemResult> {
         val items =
             when (kind) {
@@ -932,6 +970,8 @@ object SearchDomain {
                     val rebound = binding != shortcut.defaultBinding
                     ItemResult(kind, shortcut.name, shortcut.action, binding.chord + if (rebound) " · rebound" else "")
                 }
+                // Each instance its own row — two copies of Search are two rows; the detail is where it stands.
+                Kind.Window -> windows.map { window -> ItemResult(kind, window.id, window.title, window.status.label) }
             }
         return items
             .mapNotNull { item -> matchRank(item.name, query)?.let { it to item } }
@@ -961,12 +1001,18 @@ object SearchDomain {
         allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
         filters: Filters = Filters(),
         sorts: List<SortMethod> = DEFAULT_SORTS,
+        /** The app's windows, read only when [Kind.Window] is checked ([WindowEntry]). */
+        windows: List<WindowEntry> = emptyList(),
     ): List<Result> {
         val base =
             Kind.entries
                 .filter { it in kinds }
                 .flatMap { kind ->
-                    if (kind == Kind.Task) taskResults(state, query, allPaths()) else itemResults(state, kind, query)
+                    if (kind == Kind.Task) {
+                        taskResults(state, query, allPaths())
+                    } else {
+                        itemResults(state, kind, query, windows = windows)
+                    }
                 }
                 .filter { passes(state, it, filters) }
                 // Stable: ties keep the kind order and each kind's own order.
@@ -1057,6 +1103,7 @@ object SearchDomain {
                 }
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
+                SortKey.WindowState -> windowStatusOf(row)?.ordinal
                 else -> null
             }
     }
@@ -1124,9 +1171,13 @@ object SearchDomain {
                     val binding = state.shortcutBindings[shortcut] ?: shortcut.defaultBinding
                     tri(filters.shortcutRebound, binding != shortcut.defaultBinding)
                 }
+                Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
             }
         }
     }
+
+    /** A [Kind.Window] row's status, read back off its detail — the one thing the detail says. */
+    private fun windowStatusOf(row: ItemResult): WindowStatus? = WindowStatus.entries.firstOrNull { it.label == row.detail }
 
     /** The id of a task relation's row: its two task ids. */
     fun relationId(key: TaskRelationKey): String = key.taskId.value + "|" + key.relativeTo.value

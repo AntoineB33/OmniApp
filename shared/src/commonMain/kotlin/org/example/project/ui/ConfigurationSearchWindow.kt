@@ -80,6 +80,8 @@ fun ConfigurationSearchWindow(
     own: SearchDomain.ConfigurationSearch,
     onOwnChange: (SearchDomain.ConfigurationSearch) -> Unit,
     onDismiss: () -> Unit,
+    /** The app's windows, for the window rows of the Search results ([SearchDomain.WindowEntry]). */
+    windows: List<SearchDomain.WindowEntry> = emptyList(),
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -94,8 +96,8 @@ fun ConfigurationSearchWindow(
         } else {
             remember(
                 config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
-                state.alarms, state.timers, state.chores,
-            ) { SearchDomain.kindsInResults(state, config) }
+                state.alarms, state.timers, state.chores, windows,
+            ) { SearchDomain.kindsInResults(state, config, windows) }
         }
     val sections = SearchDomain.configurations(own.query, own.kinds, resultKinds, config.filters.takeIf { own.showFiltersOn })
 
@@ -266,11 +268,13 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.ShortcutReboundSetting ->
             Choices(SearchDomain.Tri.entries, f.shortcutRebound, { it.label }) { filters(f.copy(shortcutRebound = it)) }
+        SearchDomain.Setting.WindowStatusSetting ->
+            EnumPicker(SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
         SearchDomain.Setting.SortResults,
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ReminderSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
-        SearchDomain.Setting.ShortcutSort,
+        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WindowSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
     }
 }

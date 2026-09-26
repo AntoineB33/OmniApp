@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search window finds windows — 2026-09-26
+
+User spec: a "window" option in the Search window's type selector lists every window, open or not; several open
+instances of one window are listed individually, and each row says whether it is open, not open, or in the
+system tray — worded "minimized" (2026-09-26, user).
+
+- `SearchDomain.Kind.Window`, fed by `App` (`searchWindowEntries`): every registered frame of
+  `WindowFrameHost` (so every copy, per-object window and notice, each its own row), plus each lateral-menu window
+  that is not open. A window reduced to the window bar along the bottom of the app reads "minimized".
+- The status is the row's detail section; a "State" filter (`Filters.windowStatus`) and a "state" sort key go with
+  it. Opening a row opens the window, or brings it back (out of the bar, to the front, focused) — never closes it.
+- Local-only view state only (the stored Search configuration gains an optional `windowStatus`); no SQLite or
+  Supabase migration.
+
 ### Default configurations of a new alarm, timer and reminder; the default sub-tree leaves the menu — 2026-09-25
 
 User spec: at the bottom of a timer's window (opened from Search), a button defining the default configuration a

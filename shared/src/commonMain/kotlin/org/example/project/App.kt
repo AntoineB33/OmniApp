@@ -193,17 +193,28 @@ enum class OmniPage(val label: String) {
 /**
  * The lateral-menu windows. Where each sits in the app's one stacking order is
  * [WindowFrameHost.stackOrder], keyed by the enum's own name — which is also that window's frame id.
+ *
+ * [title] is what the window's head reads, for the one place that names a window while it is NOT open: the
+ * Search window's "window" rows ([SearchDomain.WindowEntry]). An open window is named by its head itself.
  */
-private enum class FloatingWindow {
-    Calendar, History, Sleep, Alarms, TaskTrees, TaskRelations, Categories,
-    DefaultSubtree, Shortcuts, Search,
+private enum class FloatingWindow(val title: String) {
+    Calendar("Calendar"),
+    History("History"),
+    Sleep("Sleep"),
+    Alarms("Alarms"),
+    TaskTrees("All task trees"),
+    TaskRelations("Task relations"),
+    Categories("Categories"),
+    DefaultSubtree("Default sub-tree"),
+    Shortcuts("Keyboard shortcuts"),
+    Search("Search"),
     /** PRD §5: status, work offline and the account — what the top-right chip and button used to be. */
-    Online,
+    Online("Online"),
     /** PRD §4: the task tree, a window like the others ([TASK_TREE_WINDOW_ID]). */
-    TaskTree,
+    TaskTree("Task tree"),
     /** Opened from the Search window; its name is its frame id ([CONFIGURATION_SEARCH_FRAME_ID]). */
-    ConfigSearch,
-    TimeSim
+    ConfigSearch("Search configurations"),
+    TimeSim("Time simulation"),
 }
 
 /** The lateral-menu window a frame id names: its own name, or a copy's (`Search#2`); null for anything else. */
@@ -1109,6 +1120,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 else -> windowFrames.present(frameId)
             }
             historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, frameId.removePrefix(kind.name))) }
+        }
+
+        // PRD §7 Search, the "window" kind: every window of the app, open or not. Each open window is its own entry
+        // — every copy, every per-object window, every notice — read off the frame host, which is what the window
+        // bar lists too; a reduced one is "minimized" (in that bar). A lateral-menu window that is not open
+        // is one entry more, so it can be found and opened from the list. Read inside the Search window's own
+        // scope, so a window opening or being reduced recomposes that window and not `App`.
+        fun searchWindowEntries(): List<SearchDomain.WindowEntry> {
+            val open = windowFrames.registrations.map { window ->
+                val status = if (window.state.minimized) SearchDomain.WindowStatus.Minimized else SearchDomain.WindowStatus.Open
+                SearchDomain.WindowEntry(window.id, window.title, status)
+            }
+            val openIds = open.mapTo(HashSet()) { it.id }
+            val closed = FloatingWindow.entries
+                .filter { lateralWindowOf(it.name) != null && !isWindowOpen(it) && it.name !in openIds }
+                .map { SearchDomain.WindowEntry(it.name, it.title, SearchDomain.WindowStatus.NotOpen) }
+            return open + closed
+        }
+        // Opening a "window" row: the window is opened if it is not, and brought back — out of the system tray,
+        // to the front, into the focus — if it is. Never closed by this, unlike its lateral-menu button: the row
+        // is asked for from the Search window, which is the front one.
+        fun showWindow(frameId: String) {
+            val kind = lateralWindowOf(frameId)
+            if (kind != null && '#' !in frameId) {
+                if (!isWindowOpen(kind)) setWindowOpen(kind, true)
+                focusWindow(kind)
+            } else {
+                kind?.let(::historyWindowOf)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, frameId.removePrefix(kind.name))) }
+            }
+            windowFrames.present(frameId)
         }
 
         // Local-only persisted drag positions for the managed windows. The defaults reproduce the previous
@@ -3151,6 +3192,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 shortcutsWindowOpen = true
                                 focusWindow(FloatingWindow.Shortcuts)
                             },
+                            windows = if (SearchDomain.Kind.Window in searchConfigOf(searchId).kinds) searchWindowEntries() else emptyList(),
+                            onOpenWindow = ::showWindow,
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfigOf(searchId),
                             onConfigChange = { setSearchConfig(searchId, it) },
@@ -3216,6 +3259,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             own = own,
                             onOwnChange = { setConfigSearch(configId, it) },
                             onDismiss = { configSearchWindowOpen = false },
+                            windows = if (own.onlyResultKinds) searchWindowEntries() else emptyList(),
                             initialOffset = configSearchOffset,
                             initialSize = configSearchSize,
                             onGeometryChange = { windowOffset, windowSize ->

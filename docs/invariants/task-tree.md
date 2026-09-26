@@ -524,6 +524,11 @@ titles" figure: the Search window and the per-object windows its rows open repla
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and
   chord. Opening one opens the window that owns it.
+- **A window is a kind too** (`Kind.Window`), and the one kind whose rows are not the account's: `App` hands
+  them in (`SearchDomain.WindowEntry`, built by `searchWindowEntries` off `WindowFrameHost.registrations` — the
+  same list the window bar draws — plus every lateral-menu window that is not open). Every open instance is its
+  own row, keyed by its frame id; the detail says "open", "minimized" (reduced to the window bar) or
+  "not open". Opening one opens the window or brings it back, never closes it. Never stored, never synced.
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`, and "show the filters that are on", which keeps a filter that is on listed

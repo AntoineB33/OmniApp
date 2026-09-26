@@ -171,6 +171,13 @@ fun SearchWindow(
     onOpenTaskTrees: () -> Unit = {},
     onOpenTaskRelations: () -> Unit = {},
     onOpenShortcuts: () -> Unit = {},
+    /**
+     * Every window of the app, open or not, one entry per instance ([SearchDomain.WindowEntry]) — the rows of the
+     * "window" kind. `App` holds them, not the state.
+     */
+    windows: List<SearchDomain.WindowEntry> = emptyList(),
+    /** Opens the window a window row names (by frame id), or brings it back — a minimized one included. */
+    onOpenWindow: (String) -> Unit = {},
     onDismiss: () -> Unit,
     /**
      * The configuration — query, checked kinds, filters. Held by `App`, not here: the Configuration Search
@@ -223,9 +230,9 @@ fun SearchWindow(
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chores, state.histories, state.taskRelations,
-            state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists,
+            state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
-            SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts)
+            SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts, windows)
         }
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
@@ -320,6 +327,7 @@ fun SearchWindow(
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()
+            SearchDomain.Kind.Window -> onOpenWindow(item.id)
         }
     }
     fun openSelected() {
@@ -1094,6 +1102,7 @@ private fun ItemResultRow(
                     SearchDomain.Kind.TaskTree -> "open in All task trees"
                     SearchDomain.Kind.TaskRelation -> "open in Task relations"
                     SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
+                    SearchDomain.Kind.Window -> "show window"
                     else -> "edit " + item.kind.label
                 },
             ) {
