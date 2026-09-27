@@ -604,6 +604,26 @@ titles" figure: the Search window and the per-object windows its rows open repla
 - **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
   have their own window and a counter), and the Configuration Search window's never touches the Search
   window's configuration it lists.
+- **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
+  elements** above the **added elements**. Every result row has a check box (Compose-only, like the selection);
+  **Add** adds the checked rows, else the selected row (the outline's own rule — none while the bar or a sub-tree
+  holds the focus), else it is greyed. The added list is `Config.added` — result KEYS (`SearchDomain.keyOf`), each
+  once, local-only with the rest of the configuration — and its rows are rebuilt by `SearchDomain.resolve` the way
+  the result list builds them; a key whose element is gone lists nothing.
+- **Opening a row is `SearchRowOpeners.open`**, for the result list and for the added elements' "Open each" in both
+  windows that offer it — the one mapping from a row to its window, never a second copy.
+- **The actions act through the app's own intents** (`SearchDomain.addedIntents`): a tree edit over several tasks
+  is ONE intent and one Undo/Redo unit (`SetTasksCategory`, `SetTasksMinimumTime`); the alarms' switch rides
+  `SetAlarms`; a timer's or a chrono's run is its row's own run-state intent per element (no History Unit, by
+  their rule). The **Added elements configurations** window (`ui/AddedElementsConfigurationWindow.kt`) lists every
+  action (`SearchDomain.addedActions`) exactly as the Configuration Search window lists the settings — a name bar,
+  the kind drop-down, "only the types in the added elements" — and acts on the added list of the Search window
+  that opened it; the top right quarter draws the same sections for the kinds the list holds.
+- **The calendar filters** (tasks and restrictive-period kinds): on the calendar at all, every box from a day,
+  every box until the end of a day. A day bound needs a box: an element with none fails it. A task's boxes are
+  `SchedulerDomain.calendarBoxesOfTask` (its records and every panel placed for it — the scheduler's past reads the
+  same funnel); a period kind's are the panels whose `restrictiveKind` it is. Gathered once per `results`, and only
+  while one of them is on.
 - **The stored configuration is JSON with every field optional**; `decode` still reads the first shape (a line
   of kind names, then the query), and an unknown value falls back to "any".
 

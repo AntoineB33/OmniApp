@@ -1083,14 +1083,37 @@ object SchedulerDomain {
      * past blocks no longer be re-picked (PRD §9).
      */
     fun pastPeriodsForTask(state: SchedulerState, taskId: TaskId, nowMillis: Long): List<TaskTimeRange> {
+        return calendarBoxesOfTask(state, taskId)
+            .filter { it.startEpochMillis < nowMillis }
+            .map { TaskTimeRange(it.startEpochMillis, minOf(it.endEpochMillis, nowMillis)) }
+            .toList()
+    }
+
+    /**
+     * The task's **boxes on the calendar**: its banked records ([Task.record]) and every panel placed for it —
+     * the scheduler's and the user's alike. The one statement of which boxes are a task's: the scheduler's past
+     * ([pastPeriodsForTask]) and the Search window's calendar filters ([calendarBoxesByTask]) both read it.
+     */
+    fun calendarBoxesOfTask(state: SchedulerState, taskId: TaskId): Sequence<TaskTimeRange> {
         val recorded = state.tasks[taskId]?.record.orEmpty().asSequence()
         val panels = state.panels.asSequence()
             .filter { it.taskId == taskId }
             .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        return (recorded + panels)
-            .filter { it.startEpochMillis < nowMillis }
-            .map { TaskTimeRange(it.startEpochMillis, minOf(it.endEpochMillis, nowMillis)) }
-            .toList()
+        return recorded + panels
+    }
+
+    /**
+     * [calendarBoxesOfTask] for every task at once, in one pass over the panels — what a filter over every task
+     * reads, instead of one walk of the panels per task.
+     */
+    fun calendarBoxesByTask(state: SchedulerState): Map<TaskId, List<TaskTimeRange>> {
+        val boxes = HashMap<TaskId, MutableList<TaskTimeRange>>()
+        for (task in state.tasks.values) if (task.record.isNotEmpty()) boxes.getOrPut(task.id) { mutableListOf() }.addAll(task.record)
+        for (panel in state.panels) {
+            val taskId = panel.taskId ?: continue
+            boxes.getOrPut(taskId) { mutableListOf() }.add(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis))
+        }
+        return boxes
     }
 
     /** Whether any cell in the tree currently points at [taskId] (i.e. the task is still in the tree). */

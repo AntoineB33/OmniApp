@@ -332,6 +332,16 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 *Search*, the added elements' actions: [SetTaskMinimumTime] over every task of [taskIds] — one
+     * gesture, so **one** Undo/Redo unit ([SetPeriodResilience]'s rule). Tasks already at the value contribute
+     * nothing, and a call that moves nobody records no unit.
+     */
+    data class SetTasksMinimumTime(
+        val taskIds: List<TaskId>,
+        val minutes: Int,
+    ) : SchedulerIntent
+
+    /**
      * `side-dev/README.md` § *Restrictive Period*: set [taskId]'s **resilience** to one [kind] of restrictive
      * period — the multiplier in `[0, 1]` on its priority percentage inside such a period. `0` forbids it
      * there, `1` leaves it untouched. Replaces the old pair of screen switches: "on screen" is exactly a `0`
@@ -454,6 +464,17 @@ sealed interface SchedulerIntent {
      * object in its own right.
      */
     data class RemoveTaskCategory(val taskId: TaskId, val categoryId: CategoryId) : SchedulerIntent
+
+    /**
+     * PRD §7 *Search*, the added elements' actions: [AttachTaskCategory] ([carried] true) or [RemoveTaskCategory]
+     * (false) over every task of [taskIds], as **one** Undo/Redo unit ([SetPeriodResilience]'s rule). A category
+     * the account no longer holds, or a call that changes no task, records nothing.
+     */
+    data class SetTasksCategory(
+        val taskIds: List<TaskId>,
+        val categoryId: CategoryId,
+        val carried: Boolean,
+    ) : SchedulerIntent
 
     /** Rename a category. It is named by id everywhere, so this reaches every task and every rule at once. */
     data class RenameCategory(val categoryId: CategoryId, val title: String) : SchedulerIntent

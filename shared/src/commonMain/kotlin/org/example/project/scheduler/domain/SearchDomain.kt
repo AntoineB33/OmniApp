@@ -11,6 +11,12 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlin.time.Instant
 import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.plus
+import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.TaskTimeRange
 import kotlinx.datetime.isoDayNumber
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -24,6 +30,7 @@ import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
+import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 
 /**
@@ -148,7 +155,17 @@ object SearchDomain {
         val filters: Filters = Filters(),
         /** Dominant first ([SortMethod]). */
         val sorts: List<SortMethod> = DEFAULT_SORTS,
+        /**
+         * The **added elements** — the Search window's right half — as result keys ([keyOf]), in the order they
+         * were added, each once. Kept with the rest of the configuration: local-only, never synced. A key whose
+         * element is gone is kept but lists nothing ([resolve]).
+         */
+        val added: List<String> = emptyList(),
     ) {
+        /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
+        val readsWindows: Boolean
+            get() = Kind.Window in kinds || added.any { it.startsWith(Kind.Window.name + "/") }
+
         /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */
         fun encode(): String =
             configJson.encodeToString(
@@ -175,6 +192,13 @@ object SearchDomain {
                     windowStatus = filters.windowStatus?.name,
                     windowDuplicates = filters.windowDuplicates.name,
                     sortMethods = sorts.map { StoredSortMethod(it.kind?.name, it.key.name, it.descending) },
+                    taskOnCalendar = filters.taskOnCalendar.name,
+                    taskBoxesFrom = filters.taskBoxesFrom?.toString(),
+                    taskBoxesUntil = filters.taskBoxesUntil?.toString(),
+                    periodOnCalendar = filters.periodOnCalendar.name,
+                    periodBoxesFrom = filters.periodBoxesFrom?.toString(),
+                    periodBoxesUntil = filters.periodBoxesUntil?.toString(),
+                    added = added,
                 ),
             )
 
@@ -216,8 +240,15 @@ object SearchDomain {
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
                         windowStatus = WindowStatus.entries.firstOrNull { it.name == stored.windowStatus },
                         windowDuplicates = enumNamed(stored.windowDuplicates, WindowDuplicates.Shown),
+                        taskOnCalendar = enumNamed(stored.taskOnCalendar, Tri.Any),
+                        taskBoxesFrom = dateNamed(stored.taskBoxesFrom),
+                        taskBoxesUntil = dateNamed(stored.taskBoxesUntil),
+                        periodOnCalendar = enumNamed(stored.periodOnCalendar, Tri.Any),
+                        periodBoxesFrom = dateNamed(stored.periodBoxesFrom),
+                        periodBoxesUntil = dateNamed(stored.periodBoxesUntil),
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
+                    added = stored.added.distinct(),
                 )
             }
 
@@ -251,6 +282,9 @@ object SearchDomain {
 
             private inline fun <reified E : Enum<E>> enumNamed(name: String?, default: E): E =
                 enumValues<E>().firstOrNull { it.name == name } ?: default
+
+            /** An ISO date (2026-09-27), or null: for nothing stored and for what does not parse alike. */
+            private fun dateNamed(text: String?): LocalDate? = text?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         }
     }
 
@@ -346,7 +380,24 @@ object SearchDomain {
         val windowStatus: WindowStatus? = null,
         /** Hidden = one row per window TYPE ([WindowEntry.type]). */
         val windowDuplicates: WindowDuplicates = WindowDuplicates.Shown,
+        /** Yes = the task has at least one box on the calendar ([SchedulerDomain.calendarBoxesOfTask]). */
+        val taskOnCalendar: Tri = Tri.Any,
+        /** Every box of the task starts on this day or later (and it has one). Null = any. */
+        val taskBoxesFrom: LocalDate? = null,
+        /** Every box of the task ends by the end of this day (and it has one). Null = any. */
+        val taskBoxesUntil: LocalDate? = null,
+        /** Yes = at least one period of this kind is on the calendar. */
+        val periodOnCalendar: Tri = Tri.Any,
+        /** Every period of this kind on the calendar starts on this day or later (and there is one). Null = any. */
+        val periodBoxesFrom: LocalDate? = null,
+        /** Every period of this kind on the calendar ends by the end of this day (and there is one). Null = any. */
+        val periodBoxesUntil: LocalDate? = null,
     ) {
+        /** Whether any filter reads the calendar: the only case its boxes are gathered at all ([results]). */
+        val readsCalendar: Boolean
+            get() = taskOnCalendar != Tri.Any || taskBoxesFrom != null || taskBoxesUntil != null ||
+                periodOnCalendar != Tri.Any || periodBoxesFrom != null || periodBoxesUntil != null
+
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
             get() = Setting.entries.count { isOn(it) }
@@ -376,6 +427,12 @@ object SearchDomain {
                 Setting.ShortcutReboundSetting -> shortcutRebound != Tri.Any
                 Setting.WindowStatusSetting -> windowStatus != null
                 Setting.WindowDuplicatesSetting -> windowDuplicates != WindowDuplicates.Shown
+                Setting.TaskOnCalendar -> taskOnCalendar != Tri.Any
+                Setting.TaskBoxesFrom -> taskBoxesFrom != null
+                Setting.TaskBoxesUntil -> taskBoxesUntil != null
+                Setting.PeriodOnCalendar -> periodOnCalendar != Tri.Any
+                Setting.PeriodBoxesFrom -> periodBoxesFrom != null
+                Setting.PeriodBoxesUntil -> periodBoxesUntil != null
                 else -> false
             }
     }
@@ -487,8 +544,14 @@ object SearchDomain {
         CreationSort(Kind.Creation, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskCategory(Kind.Task, "Category"),
+        TaskOnCalendar(Kind.Task, "On the calendar"),
+        TaskBoxesFrom(Kind.Task, "Every box from"),
+        TaskBoxesUntil(Kind.Task, "Every box until"),
         CategoryHasRules(Kind.Category, "Has rules"),
         PeriodOriginSetting(Kind.RestrictivePeriod, "Origin"),
+        PeriodOnCalendar(Kind.RestrictivePeriod, "On the calendar"),
+        PeriodBoxesFrom(Kind.RestrictivePeriod, "Every box from"),
+        PeriodBoxesUntil(Kind.RestrictivePeriod, "Every box until"),
         AlarmStateSetting(Kind.Alarm, "State"),
         AlarmDays(Kind.Alarm, "Rings on"),
         TimerStateSetting(Kind.Timer, "State"),
@@ -568,6 +631,14 @@ object SearchDomain {
         val sort: String? = null,
         val sortDescending: Boolean = false,
         val kindSorts: Map<String, StoredLegacySort> = emptyMap(),
+        /** New 2026-09-27 (the calendar filters, the added elements): absent from an older build's = any / none. */
+        val taskOnCalendar: String? = null,
+        val taskBoxesFrom: String? = null,
+        val taskBoxesUntil: String? = null,
+        val periodOnCalendar: String? = null,
+        val periodBoxesFrom: String? = null,
+        val periodBoxesUntil: String? = null,
+        val added: List<String> = emptyList(),
     )
 
     @Serializable
@@ -1107,7 +1178,10 @@ object SearchDomain {
         sorts: List<SortMethod> = DEFAULT_SORTS,
         /** The app's windows, read only when [Kind.Window] is checked ([WindowEntry]). */
         windows: List<WindowEntry> = emptyList(),
+        /** For the calendar filters' days: the device's own. */
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
     ): List<Result> {
+        val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
             Kind.entries
                 .filter { it in kinds }
@@ -1121,7 +1195,7 @@ object SearchDomain {
                         )
                     }
                 }
-                .filter { passes(state, it, filters) }
+                .filter { passes(state, it, filters, calendar) }
                 // Stable: ties keep the kind order and each kind's own order.
                 .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
         if (sorts == DEFAULT_SORTS) return base
@@ -1216,14 +1290,18 @@ object SearchDomain {
     }
 
     /** Whether [result] passes its own kind's [filters]; another kind's filters never touch it. */
-    private fun passes(state: SchedulerState, result: Result, filters: Filters): Boolean {
+    private fun passes(state: SchedulerState, result: Result, filters: Filters, calendar: CalendarBoxes?): Boolean {
         fun tri(value: Tri, actual: Boolean) = value == Tri.Any || (value == Tri.Yes) == actual
         return when (result) {
             is TaskResult -> {
                 val task = state.tasks[result.taskId]
                     ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[result.taskId] }
                 tri(filters.taskInTree, result.inTaskTree) &&
-                    (filters.taskCategory == null || task?.categoryIds?.contains(filters.taskCategory) == true)
+                    (filters.taskCategory == null || task?.categoryIds?.contains(filters.taskCategory) == true) &&
+                    (calendar == null ||
+                        calendar.passes(
+                            calendar.ofTask(result.taskId), filters.taskOnCalendar, filters.taskBoxesFrom, filters.taskBoxesUntil,
+                        ))
             }
             is ItemResult -> when (result.kind) {
                 Kind.Task -> true
@@ -1233,7 +1311,10 @@ object SearchDomain {
                     PeriodOrigin.Any -> true
                     PeriodOrigin.BuiltIn -> !PeriodKinds.isUserDefined(result.id)
                     PeriodOrigin.Yours -> PeriodKinds.isUserDefined(result.id)
-                }
+                } && (calendar == null ||
+                    calendar.passes(
+                        calendar.ofPeriodKind(result.id), filters.periodOnCalendar, filters.periodBoxesFrom, filters.periodBoxesUntil,
+                    ))
                 Kind.Alarm -> {
                     val alarm = state.alarms.firstOrNull { it.id == result.id } ?: return true
                     val onOff = when (filters.alarmState) {
@@ -1290,6 +1371,41 @@ object SearchDomain {
                 Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
                 Kind.Creation -> true
             }
+        }
+    }
+
+    /**
+     * The calendar's boxes, gathered once per [results] and only when a calendar filter is on: a task's are
+     * [SchedulerDomain.calendarBoxesOfTask]'s, a restrictive period kind's are the panels of that kind
+     * ([TaskPanel.restrictiveKind], the one reading of a panel's kind).
+     */
+    private class CalendarBoxes(private val state: SchedulerState, private val timeZone: TimeZone) {
+        private val byTask by lazy { SchedulerDomain.calendarBoxesByTask(state) }
+        private val byPeriodKind by lazy {
+            state.panels.filter { it.isRestrictivePeriod }
+                .groupBy({ it.restrictiveKind }) { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        }
+
+        fun ofTask(taskId: TaskId): List<TaskTimeRange> = byTask[taskId].orEmpty()
+
+        fun ofPeriodKind(kind: String): List<TaskTimeRange> = byPeriodKind[kind].orEmpty()
+
+        /**
+         * Whether [boxes] pass the three calendar filters: on the calendar at all, every box starting on [from]
+         * or later, every box ending by the end of [until]. A day bound needs a box to hold: with none, there is
+         * nothing "every box after that day" is about, and the user asking for one is asking about boxes.
+         */
+        fun passes(boxes: List<TaskTimeRange>, onCalendar: Tri, from: LocalDate?, until: LocalDate?): Boolean {
+            if (onCalendar != Tri.Any && (onCalendar == Tri.Yes) != boxes.isNotEmpty()) return false
+            if (from != null) {
+                val start = from.atStartOfDayIn(timeZone).toEpochMilliseconds()
+                if (boxes.isEmpty() || boxes.any { it.startEpochMillis < start }) return false
+            }
+            if (until != null) {
+                val end = until.plus(1, DateTimeUnit.DAY).atStartOfDayIn(timeZone).toEpochMilliseconds()
+                if (boxes.isEmpty() || boxes.any { it.endEpochMillis > end }) return false
+            }
+            return true
         }
     }
 
@@ -1388,6 +1504,148 @@ object SearchDomain {
         val h = (minutes / 60) % 24
         val m = minutes % 60
         return h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
+    }
+
+    // ----- The added elements ---------------------------------------------------------------------
+
+    /**
+     * A row's key: its kind and its id (`Task/…`, `Alarm/…`). What the selection, the check boxes and the added
+     * list ([Config.added]) remember a row by — never the row itself, which is rebuilt with the state.
+     */
+    fun keyOf(result: Result): String =
+        when (result) {
+            is TaskResult -> Kind.Task.name + "/" + result.taskId.value
+            is ItemResult -> result.kind.name + "/" + result.id
+        }
+
+    /** [added] with [keys] appended in order — each key once, where it was first added. */
+    fun withAdded(added: List<String>, keys: List<String>): List<String> = (added + keys).distinct()
+
+    /**
+     * The rows [keys] name, in their order, built exactly as the result list builds them ([taskResults],
+     * [itemResults]) — so an added row reads as it did when it was found. A key whose element is gone lists
+     * nothing. Only the kinds the keys hold are walked.
+     */
+    fun resolve(
+        state: SchedulerState,
+        keys: List<String>,
+        allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
+        windows: List<WindowEntry> = emptyList(),
+    ): List<Result> {
+        if (keys.isEmpty()) return emptyList()
+        val kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
+        val found = HashMap<String, Result>()
+        for (kind in kinds) {
+            val rows =
+                when (kind) {
+                    Kind.Task -> taskResults(state, "", allPaths())
+                    // A window row is one window or one window TYPE, whichever the list it was added from showed.
+                    Kind.Window ->
+                        itemResults(state, kind, "", windows = windows) +
+                            itemResults(state, kind, "", windows = windows, windowTypesOnly = true)
+                    else -> itemResults(state, kind, "", windows = windows)
+                }
+            for (row in rows) found.getOrPut(keyOf(row)) { row }
+        }
+        return keys.mapNotNull { found[it] }
+    }
+
+    /**
+     * What can be done to **every added element at once** — the Search window's top right quarter lists those of
+     * the kinds in the list, and the Added elements configurations window lists them all, in sections, the way
+     * the Configuration Search window lists [Setting]s: [section] null is about the list as a whole.
+     */
+    enum class AddedAction(val section: Kind?, val label: String) {
+        OpenEach(null, "Open each"),
+        ClearList(null, "Remove every element from the list"),
+        TaskAddCategory(Kind.Task, "Add a category"),
+        TaskRemoveCategory(Kind.Task, "Remove a category"),
+        TaskMinimumTime(Kind.Task, "Minimum time"),
+        AlarmOnOff(Kind.Alarm, "State"),
+        TimerRun(Kind.Timer, "Run"),
+        ChronoRun(Kind.Chrono, "Run"),
+    }
+
+    /**
+     * The actions the Added elements configurations window lists, section by section — [configurations]'
+     * rule: the general ones first, then one section per kind of [kinds] in the drop-down's order (and of
+     * [onlyKinds] when given: the kinds the added list holds), each holding the actions whose label contains
+     * [query]. An empty section is dropped.
+     */
+    fun addedActions(query: String, kinds: Set<Kind>, onlyKinds: Set<Kind>? = null): List<Pair<Kind?, List<AddedAction>>> =
+        (listOf<Kind?>(null) + Kind.entries.filter { it in kinds && (onlyKinds == null || it in onlyKinds) })
+            .mapNotNull { section ->
+                val actions = AddedAction.entries.filter { it.section == section && matchRank(it.label, query) != null }
+                if (actions.isEmpty()) null else section to actions
+            }
+
+    /** A timer's or a chrono's run-state step, as its own row's buttons take it. */
+    enum class RunStep(val label: String) { Start("start"), Pause("pause"), Reset("reset") }
+
+    /** One action on the added elements, with its value: what [addedIntents] turns into the app's own intents. */
+    sealed interface AddedCommand {
+        data class Category(val categoryId: CategoryId, val carried: Boolean) : AddedCommand
+
+        data class MinimumTime(val minutes: Int) : AddedCommand
+
+        data class AlarmsOn(val on: Boolean) : AddedCommand
+
+        data class TimersRun(val step: RunStep) : AddedCommand
+
+        data class ChronosRun(val step: RunStep) : AddedCommand
+    }
+
+    /**
+     * [command] applied to the [added] rows of its kind, as the intents the app already has for it — never a
+     * second write path. A tree edit over several tasks is ONE intent and so one Undo/Redo unit
+     * ([SchedulerIntent.SetTasksCategory], [SchedulerIntent.SetTasksMinimumTime]); the alarms' switch rides
+     * [SchedulerIntent.SetAlarms] like the row's own switch does. A timer's or a chrono's run is its own row's
+     * button per element — those writes are no History Unit by rule ([SchedulerIntent.StartTimer]). Nothing to
+     * change is no intent at all.
+     */
+    fun addedIntents(
+        state: SchedulerState,
+        added: List<Result>,
+        command: AddedCommand,
+        nowMillis: Long,
+    ): List<SchedulerIntent> {
+        fun idsOf(kind: Kind) = added.filterIsInstance<ItemResult>().filter { it.kind == kind }.mapTo(HashSet()) { it.id }
+        val taskIds = added.filterIsInstance<TaskResult>().map { it.taskId }.filter { it in state.tasks }
+        return when (command) {
+            is AddedCommand.Category ->
+                if (taskIds.isEmpty()) emptyList()
+                else listOf(SchedulerIntent.SetTasksCategory(taskIds, command.categoryId, command.carried))
+            is AddedCommand.MinimumTime ->
+                if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksMinimumTime(taskIds, command.minutes))
+            is AddedCommand.AlarmsOn -> {
+                val ids = idsOf(Kind.Alarm)
+                if (state.alarms.none { it.id in ids && it.enabled != command.on }) {
+                    emptyList()
+                } else {
+                    listOf(SchedulerIntent.SetAlarms(state.alarms.map { if (it.id in ids) it.copy(enabled = command.on) else it }))
+                }
+            }
+            is AddedCommand.TimersRun -> {
+                val ids = idsOf(Kind.Timer)
+                state.timers.filter { it.id in ids }.mapNotNull { timer ->
+                    when (command.step) {
+                        RunStep.Start -> SchedulerIntent.StartTimer(timer.id, nowMillis).takeIf { !timer.running }
+                        RunStep.Pause -> SchedulerIntent.PauseTimer(timer.id, nowMillis).takeIf { timer.running }
+                        RunStep.Reset -> SchedulerIntent.ResetTimer(timer.id).takeIf { !timer.idle }
+                    }
+                }
+            }
+            is AddedCommand.ChronosRun -> {
+                val ids = idsOf(Kind.Chrono)
+                state.chronos.filter { it.id in ids }.mapNotNull { chrono ->
+                    when (command.step) {
+                        RunStep.Start -> SchedulerIntent.StartChrono(chrono.id, nowMillis).takeIf { !chrono.running }
+                        RunStep.Pause -> SchedulerIntent.PauseChrono(chrono.id, nowMillis).takeIf { chrono.running }
+                        RunStep.Reset -> SchedulerIntent.ResetChrono(chrono.id).takeIf { !chrono.idle }
+                    }
+                }
+            }
+        }
     }
 
     // ----- Memo -----------------------------------------------------------------------------------

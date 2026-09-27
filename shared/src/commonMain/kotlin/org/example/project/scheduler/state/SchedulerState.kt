@@ -115,6 +115,7 @@ enum class HistoryWindow(val label: String) {
     Search("Search"),
     ConfigSearch("Search configurations"),
     Online("Online"),
+    AddedConfig("Added elements configurations"),
 }
 
 /**

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.isoDayNumber
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.TaskRelationsDomain
@@ -185,7 +186,7 @@ fun ConfigurationSearchWindow(
 const val CONFIGURATION_SEARCH_FRAME_ID: String = "ConfigSearch"
 
 @Composable
-private fun SettingRow(label: String, editor: @Composable () -> Unit) {
+internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text(
             text = label,
@@ -229,6 +230,14 @@ private fun SettingEditor(
             CategoryPicker(state, f.taskCategory?.let { id -> state.categoryById(id)?.title ?: "(deleted)" }) {
                 filters(f.copy(taskCategory = it))
             }
+        SearchDomain.Setting.TaskOnCalendar ->
+            Choices(SearchDomain.Tri.entries, f.taskOnCalendar, { it.label }) { filters(f.copy(taskOnCalendar = it)) }
+        SearchDomain.Setting.TaskBoxesFrom -> DayFilterField(f.taskBoxesFrom) { filters(f.copy(taskBoxesFrom = it)) }
+        SearchDomain.Setting.TaskBoxesUntil -> DayFilterField(f.taskBoxesUntil) { filters(f.copy(taskBoxesUntil = it)) }
+        SearchDomain.Setting.PeriodOnCalendar ->
+            Choices(SearchDomain.Tri.entries, f.periodOnCalendar, { it.label }) { filters(f.copy(periodOnCalendar = it)) }
+        SearchDomain.Setting.PeriodBoxesFrom -> DayFilterField(f.periodBoxesFrom) { filters(f.copy(periodBoxesFrom = it)) }
+        SearchDomain.Setting.PeriodBoxesUntil -> DayFilterField(f.periodBoxesUntil) { filters(f.copy(periodBoxesUntil = it)) }
         SearchDomain.Setting.CategoryHasRules ->
             Choices(SearchDomain.Tri.entries, f.categoryHasRules, { it.label }) { filters(f.copy(categoryHasRules = it)) }
         SearchDomain.Setting.PeriodOriginSetting ->
@@ -420,14 +429,14 @@ private fun SortMethodList(sorts: List<SearchDomain.SortMethod>, onChange: (List
 
 /** One choice among a few, as a row of chips — the first is always "any", which filters nothing. */
 @Composable
-private fun <T> Choices(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit) {
+internal fun <T> Choices(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         options.forEach { option -> ToggleChip(label(option), option == selected, onToggle = { onSelect(option) }) }
     }
 }
 
 @Composable
-private fun ToggleChip(text: String, on: Boolean, onToggle: (Boolean) -> Unit) {
+internal fun ToggleChip(text: String, on: Boolean, onToggle: (Boolean) -> Unit) {
     val shape = RoundedCornerShape(6.dp)
     Text(
         text = text,
@@ -504,6 +513,43 @@ private fun CategoryPicker(
             state.categories.sortedBy { it.title.lowercase() }.forEach { category ->
                 DropdownMenuItem(text = { Text(category.title) }, onClick = { open = false; onSelect(category.id) })
             }
+        }
+    }
+}
+
+/**
+ * A calendar filter's day, typed as `YYYY-MM-DD`: empty is "any". The filter changes only when what is typed is a
+ * day (or is cleared) — a half-typed date leaves it as it was, and the field says so.
+ */
+@Composable
+private fun DayFilterField(day: LocalDate?, onChange: (LocalDate?) -> Unit) {
+    var draft by remember(day) { mutableStateOf(day?.toString().orEmpty()) }
+    val parsed = runCatching { LocalDate.parse(draft.trim()) }.getOrNull()
+    val invalid = draft.isNotBlank() && parsed == null
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { typed ->
+                draft = typed
+                when {
+                    typed.isBlank() -> onChange(null)
+                    else -> runCatching { LocalDate.parse(typed.trim()) }.getOrNull()?.let(onChange)
+                }
+            },
+            singleLine = true,
+            isError = invalid,
+            placeholder = { Text("any — YYYY-MM-DD") },
+            modifier = Modifier.width(190.dp),
+        )
+        if (day != null) {
+            Text(
+                text = "✕",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { onChange(null) }
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
     }
 }

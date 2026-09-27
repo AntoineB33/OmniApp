@@ -11,6 +11,30 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search window's added elements; the calendar filters — 2026-09-27
+
+User spec: three sections in the Search window — the search on the left half, the actions on the added elements
+top right, the list of added elements bottom right; a check box on every result row, Select all / Deselect all, and
+an Add button (the checked rows, else the selected one, else greyed); a button opening an "Added elements
+configurations" window built like the Search configurations window; calendar filters in the Search
+configurations window (on the calendar at all, every box from / until a day).
+
+- The spec named the right quarters both ways round; built as its detailed half says: actions top right, added list
+  bottom right.
+- `Config.added` (result keys, local-only, on the placement row like the rest of the configuration);
+  `SearchDomain.keyOf` / `resolve` / `withAdded`; `SearchRowOpeners` is now the one row-to-window mapping, shared by
+  the result list and "Open each".
+- Actions: `SearchDomain.AddedAction` / `addedActions` / `addedIntents` — categories and minimum time as ONE unit
+  over every task (`SetTasksCategory`, `SetTasksMinimumTime`, `SetPeriodResilience`'s rule), alarms through
+  `SetAlarms`, timers and chronos through their rows' own run-state intents.
+- New lateral window `FloatingWindow.AddedConfig` / `HistoryWindow.AddedConfig` (appended; its own configuration is
+  a `ConfigurationSearch`).
+- Calendar filters for tasks and restrictive-period kinds: `Filters.taskOnCalendar` / `taskBoxesFrom` /
+  `taskBoxesUntil` and the `period…` three; a task's boxes are `SchedulerDomain.calendarBoxesOfTask` (records + its
+  panels), which `pastPeriodsForTask` now reads too. Gathered only while one is on.
+- No sync or schema change; the stored configuration gains optional fields (older ones decode to none / any).
+  Tests: `SearchAddedElementsTest`.
+
 ### "Go to calendar" and the calendar's "Locked on task" — 2026-09-26
 
 User spec: a task cell's menu entry "go to calendar" focusing the calendar centred on the task's panel closest to

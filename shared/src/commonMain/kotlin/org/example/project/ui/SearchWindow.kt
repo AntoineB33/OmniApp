@@ -24,6 +24,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -135,11 +136,71 @@ private const val NOT_IN_TREE_HINT: String =
  * looking for something is not a fact about the account. The selection is Compose-only. Nothing here writes the
  * state except through the gestures' own intents.
  */
+/**
+ * How a row of the Search window is OPENED, whatever its kind — the one mapping from a row to the handler the
+ * rest of the app already has for it (a task's "edit task" window, a category's or a period kind's own window,
+ * the one element's window of an alarm, a timer, a chrono or a reminder, the lateral-menu window that owns a
+ * history unit, a task tree, a task relation or a shortcut, a window brought back, a creation made). The result
+ * list and the added elements' "Open each" (both windows that list it) go through [open]: never a second copy.
+ */
+class SearchRowOpeners(
+    val onOpenTaskEdit: (TaskId) -> Unit,
+    val onOpenCategory: (CategoryId) -> Unit,
+    val onOpenPeriodKind: (String) -> Unit,
+    /**
+     * The per-object window of ONE alarm, timer or chrono, with every setting it has — what opening its row does
+     * (a double-click, Enter or a right-click).
+     */
+    val onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
+    /** The per-object window of ONE reminder (by id), with every setting it has — opened like an alarm's. */
+    val onEditReminder: (String) -> Unit,
+    /** The lateral-menu windows that own a history unit, a task tree, a task relation and a keyboard shortcut. */
+    val onOpenHistory: () -> Unit = {},
+    val onOpenTaskTrees: () -> Unit = {},
+    val onOpenTaskRelations: () -> Unit = {},
+    val onOpenShortcuts: () -> Unit = {},
+    /** Opens the window a window row names (by frame id), or brings it back — a minimized one included. */
+    val onOpenWindow: (String) -> Unit = {},
+    /**
+     * A "creation" row opened: make a new element of this kind and open its window — what that kind's own
+     * "+ New …" does ([SearchDomain.Kind.Creation]).
+     */
+    val onCreate: (SearchDomain.Kind) -> Unit = {},
+) {
+    /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
+    fun open(state: SchedulerState, result: SearchDomain.Result) {
+        when (result) {
+            is SearchDomain.TaskResult -> if (result.taskId in state.tasks) onOpenTaskEdit(result.taskId)
+            is SearchDomain.ItemResult -> openItem(result)
+        }
+    }
+
+    private fun openItem(item: SearchDomain.ItemResult) {
+        when (item.kind) {
+            SearchDomain.Kind.Task -> Unit
+            SearchDomain.Kind.Category -> onOpenCategory(CategoryId(item.id))
+            SearchDomain.Kind.RestrictivePeriod -> onOpenPeriodKind(item.id)
+            SearchDomain.Kind.Alarm -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Alarm))
+            SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Timer))
+            SearchDomain.Kind.Chrono -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Chrono))
+            SearchDomain.Kind.Reminder -> onEditReminder(item.id)
+            SearchDomain.Kind.HistoryUnit -> onOpenHistory()
+            SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
+            SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
+            SearchDomain.Kind.Shortcut -> onOpenShortcuts()
+            SearchDomain.Kind.Window -> onOpenWindow(item.id)
+            SearchDomain.Kind.Creation ->
+                SearchDomain.Kind.entries.firstOrNull { it.name == item.id }?.let(onCreate)
+        }
+    }
+}
+
 @Composable
 fun SearchWindow(
     /** The live state — the search is about the account's own things. */
     state: SchedulerState,
-    onOpenTaskEdit: (TaskId) -> Unit,
+    /** How a row is opened ([SearchRowOpeners]) — shared with the Added elements configurations window. */
+    openers: SearchRowOpeners,
     onStartTaskNow: (TaskId) -> Unit,
     /**
      * PRD §8 "go to task tree" — the app's one handler, shared with the calendar: the task's cell
@@ -157,32 +218,13 @@ fun SearchWindow(
     onSetWeightWindow: (CellListId?) -> Unit = {},
     /** PRD §5: the percentage's right-click opens the cell's relative-priority window. */
     onSetRelativeWindow: (CellId?) -> Unit = {},
-    onOpenCategory: (CategoryId) -> Unit,
-    onOpenPeriodKind: (String) -> Unit,
-    /**
-     * The per-object window of ONE alarm, timer or chrono, with every setting it has — what opening its row does
-     * (a double-click, Enter or a right-click).
-     */
-    onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
-    /** The per-object window of ONE reminder (by id), with every setting it has — opened like an alarm's. */
-    onEditReminder: (String) -> Unit,
-    /** The lateral-menu windows that own a history unit, a task tree, a task relation and a keyboard shortcut. */
-    onOpenHistory: () -> Unit = {},
-    onOpenTaskTrees: () -> Unit = {},
-    onOpenTaskRelations: () -> Unit = {},
-    onOpenShortcuts: () -> Unit = {},
     /**
      * Every window of the app, open or not, one entry per instance ([SearchDomain.WindowEntry]) — the rows of the
      * "window" kind. `App` holds them, not the state.
      */
     windows: List<SearchDomain.WindowEntry> = emptyList(),
-    /** Opens the window a window row names (by frame id), or brings it back — a minimized one included. */
-    onOpenWindow: (String) -> Unit = {},
-    /**
-     * A "creation" row opened: make a new element of this kind and open its window — what that kind's own
-     * "+ New …" does ([SearchDomain.Kind.Creation]).
-     */
-    onCreate: (SearchDomain.Kind) -> Unit = {},
+    /** The app's clock — what a timer's or a chrono's run, started from the added elements' actions, is read at. */
+    nowMillis: () -> Long = { 0L },
     onDismiss: () -> Unit,
     /**
      * The configuration — query, checked kinds, filters. Held by `App`, not here: the Configuration Search
@@ -192,6 +234,8 @@ fun SearchWindow(
     onConfigChange: (SearchDomain.Config) -> Unit,
     /** Opens the Configuration Search window, which lists every configuration of this window. */
     onOpenConfigurations: () -> Unit,
+    /** Opens the Added elements configurations window, which lists every action on the added elements. */
+    onOpenAddedConfigurations: () -> Unit = {},
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -308,7 +352,7 @@ fun SearchWindow(
                 } else {
                     null
                 },
-            onEdit = if (live != null) ({ onOpenTaskEdit(taskId) }) else null,
+            onEdit = if (live != null) ({ openers.onOpenTaskEdit(taskId) }) else null,
             calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
@@ -321,30 +365,8 @@ fun SearchWindow(
                     ?.let { { onIntent(SchedulerIntent.AddDefaultSubtree(listOf(it.cellId))) } },
         )
     }
-    fun openItem(item: SearchDomain.ItemResult) {
-        when (item.kind) {
-            SearchDomain.Kind.Task -> Unit
-            SearchDomain.Kind.Category -> onOpenCategory(CategoryId(item.id))
-            SearchDomain.Kind.RestrictivePeriod -> onOpenPeriodKind(item.id)
-            SearchDomain.Kind.Alarm -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Alarm))
-            SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Timer))
-            SearchDomain.Kind.Chrono -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Chrono))
-            SearchDomain.Kind.Reminder -> onEditReminder(item.id)
-            SearchDomain.Kind.HistoryUnit -> onOpenHistory()
-            SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
-            SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
-            SearchDomain.Kind.Shortcut -> onOpenShortcuts()
-            SearchDomain.Kind.Window -> onOpenWindow(item.id)
-            SearchDomain.Kind.Creation ->
-                SearchDomain.Kind.entries.firstOrNull { it.name == item.id }?.let(onCreate)
-        }
-    }
     fun openSelected() {
-        when (val result = results.getOrNull(selected)) {
-            is SearchDomain.TaskResult -> taskActions(result, null).onEdit?.invoke()
-            is SearchDomain.ItemResult -> openItem(result)
-            null -> Unit
-        }
+        results.getOrNull(selected)?.let { openers.open(state, it) }
     }
     /** PRD §4 Edit Mode, stuck to Rename: [initial] is the draft to start from (a typed letter, or the title). */
     fun beginEdit(result: SearchDomain.TaskResult, initial: String) {
@@ -382,21 +404,47 @@ fun SearchWindow(
     val priorities = remember(state.cells, state.lists, state.tasks) { SchedulerDomain.absoluteTaskPriorities(state) }
     val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
 
+    // The result rows' check boxes. Compose-only, like the selection: which rows are checked is a way of
+    // picking some for the Add button, not a fact about them — nor a configuration.
+    var checkedKeys by remember { mutableStateOf(emptySet<String>()) }
+    val resultKeys = remember(results) { results.map(::resultKey) }
+    val allChecked = resultKeys.isNotEmpty() && checkedKeys.containsAll(resultKeys)
+    // "A row is selected" is the outline's own rule: not while the bar holds the focus, nor while a row's
+    // sub-tree does.
+    val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null
+    // What Add adds: the checked rows (in the list's order), else the selected one, else nothing (greyed).
+    val toAdd =
+        resultKeys.filter { it in checkedKeys }
+            .ifEmpty { if (hasSelection) listOfNotNull(resultKeys.getOrNull(selected)) else emptyList() }
+    // The added elements (the right half), read off the live state the way the result list reads its rows.
+    val addedRows =
+        remember(
+            config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
+            state.timers, state.chronos, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
+            state.activeTaskTreeId, state.cells, state.lists, windows,
+        ) {
+            // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
+            SearchDomain.resolve(state, config.added, { emptyMap() }, windows)
+        }
+
     AppWindowFrame(
         title = "Search",
         state = frame,
         onClose = onDismiss,
-        defaultWidth = 520.dp,
-        defaultHeight = 560.dp,
+        defaultWidth = 1040.dp,
+        defaultHeight = 600.dp,
         modifier = modifier,
         onRaise = onRaise,
         onGeometryChange = onGeometryChange,
         claimsKeyboard = true,
     ) {
+      // Three sections: the search in the left half; on the right, the actions on the added elements above the
+      // list of the added elements.
+      Row(Modifier.fillMaxWidth().weight(1f)) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
                 .weight(1f)
+                .fillMaxHeight()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -447,6 +495,26 @@ fun SearchWindow(
             )
 
             HorizontalDivider()
+
+            // --- The check boxes' buttons -----------------------------------------------------------
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Driven by the boxes, not by its own last press ([SelectAllMenuItem]'s rule): it checks the
+                // rows listed now, and unchecks them.
+                FrameButton(if (allChecked) "Deselect all" else "Select all", enabled = resultKeys.isNotEmpty()) {
+                    checkedKeys = if (allChecked) checkedKeys - resultKeys.toSet() else checkedKeys + resultKeys
+                }
+                FrameButton("Add", enabled = toAdd.isNotEmpty()) {
+                    onConfigChange(config.copy(added = SearchDomain.withAdded(config.added, toAdd)))
+                    checkedKeys = checkedKeys - toAdd.toSet()
+                }
+                if (checkedKeys.isNotEmpty()) {
+                    Text(
+                        text = "${resultKeys.count { it in checkedKeys }} checked",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             // --- The result list --------------------------------------------------------------------
             Box(Modifier.fillMaxWidth().weight(1f)) {
@@ -522,6 +590,11 @@ fun SearchWindow(
                                         state = state,
                                         result = result,
                                         query = query,
+                                        checked = resultKey(result) in checkedKeys,
+                                        onCheckedChange = { on ->
+                                            val key = resultKey(result)
+                                            checkedKeys = if (on) checkedKeys + key else checkedKeys - key
+                                        },
                                         selected = rowSelected(index),
                                         editing = editingTaskId == result.taskId,
                                         editDraft = editDraft,
@@ -546,8 +619,8 @@ fun SearchWindow(
                                         onIntent = onIntent,
                                         onSetWeightWindow = onSetWeightWindow,
                                         onSetRelativeWindow = onSetRelativeWindow,
-                                        onOpenTaskEdit = onOpenTaskEdit,
-                                        onOpenCategory = onOpenCategory,
+                                        onOpenTaskEdit = openers.onOpenTaskEdit,
+                                        onOpenCategory = openers.onOpenCategory,
                                         onDeepCopyCell = onDeepCopyCell,
                                         onGoToTaskTree = { taskId -> onGoToTaskTree(taskId, null) },
                                         subtreeFocused = subtreeFocusOwner == result.taskId,
@@ -559,9 +632,14 @@ fun SearchWindow(
                                 is SearchDomain.ItemResult ->
                                     ItemResultRow(
                                         item = result,
+                                        checked = resultKey(result) in checkedKeys,
+                                        onCheckedChange = { on ->
+                                            val key = resultKey(result)
+                                            checkedKeys = if (on) checkedKeys + key else checkedKeys - key
+                                        },
                                         selected = rowSelected(index),
                                         onSelect = { selectRow(index) },
-                                        onOpen = { openItem(result) },
+                                        onOpen = { openers.open(state, result) },
                                         // An alarm, a timer or a reminder has its own window, and the
                                         // right-click opens it straight away, as opening the row does: its
                                         // settings are what the user is asking about.
@@ -579,6 +657,125 @@ fun SearchWindow(
                 if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
         }
+
+        VerticalDivider()
+
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            // --- The actions on every added element (top right) ------------------------------------
+            AddedActionsSection(
+                state = state,
+                added = addedRows,
+                onIntent = onIntent,
+                nowMillis = nowMillis,
+                onOpenEach = { addedRows.forEach { openers.open(state, it) } },
+                onClear = { onConfigChange(config.copy(added = emptyList())) },
+                onOpenConfigurations = onOpenAddedConfigurations,
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+            HorizontalDivider()
+            // --- The added elements (bottom right) ---------------------------------------------------
+            AddedElementsList(
+                rows = addedRows,
+                onOpen = { openers.open(state, it) },
+                onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+      }
+    }
+}
+
+/**
+ * The added elements, in the order they were added: each row its kind, its name and its detail (a task's
+ * shortest path), a double-click opens it as the result list does ([SearchRowOpeners]), and its ✕ takes it off
+ * the list — never off the account.
+ */
+@Composable
+private fun AddedElementsList(
+    rows: List<SearchDomain.Result>,
+    onOpen: (SearchDomain.Result) -> Unit,
+    onRemove: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Added elements" + if (rows.isEmpty()) "" else "  ·  ${rows.size}",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        if (rows.isEmpty()) {
+            Text(
+                text = "Check rows of the results (or select one) and press Add.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+        val listState = rememberLazyListState()
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
+                itemsIndexed(rows, key = { _, r -> resultKey(r) }) { _, row ->
+                    val key = resultKey(row)
+                    Row(
+                        modifier = resultRowModifier(selected = false)
+                            .pointerInput(key) { detectTapGestures(onDoubleTap = { onOpen(row) }) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        KindSection(row.kind)
+                        Text(
+                            text = row.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            text = when (row) {
+                                is SearchDomain.TaskResult ->
+                                    if (row.shownPath.isEmpty()) "no path" else SearchDomain.pathLabel(row.shownPath)
+                                is SearchDomain.ItemResult -> row.detail
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "✕",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onRemove(key) }
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+            ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
+        }
+    }
+}
+
+/**
+ * A result row's check box — what the Add button reads. Drawn small, to fit the row's one height; a press on it
+ * toggles it and nothing else.
+ */
+@Composable
+private fun ResultCheckBox(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val shape = RoundedCornerShape(3.dp)
+    Box(
+        modifier = Modifier
+            .padding(end = 6.dp)
+            .size(16.dp)
+            .clip(shape)
+            .background(if (checked) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
+            .border(1.dp, if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, shape)
+            .clickable { onCheckedChange(!checked) },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) Text("✓", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
     }
 }
 
@@ -682,11 +879,7 @@ private fun kindsLabel(kinds: Set<SearchDomain.Kind>): String =
         else -> SearchDomain.Kind.entries.filter { it in kinds }.joinToString(", ") { it.label }
     }
 
-private fun resultKey(result: SearchDomain.Result): String =
-    when (result) {
-        is SearchDomain.TaskResult -> SearchDomain.Kind.Task.name + "/" + result.taskId.value
-        is SearchDomain.ItemResult -> result.kind.name + "/" + result.id
-    }
+private fun resultKey(result: SearchDomain.Result): String = SearchDomain.keyOf(result)
 
 /** The press gestures every result row shares: press selects, double-click opens, right-click menus. */
 private fun Modifier.resultRowGestures(
@@ -733,6 +926,8 @@ private fun SearchTaskRow(
     state: SchedulerState,
     result: SearchDomain.TaskResult,
     query: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
     selected: Boolean,
     editing: Boolean,
     editDraft: String,
@@ -848,7 +1043,10 @@ private fun SearchTaskRow(
             // Stuck to Rename: no mode selector, no id menu.
             editMenus = null,
             categoryCell = live?.let { { TaskCategoryCell(state, taskId, onIntent, onOpenCategory) } },
-            rowLeading = { KindSection(result.kind) },
+            rowLeading = {
+                ResultCheckBox(checked, onCheckedChange)
+                KindSection(result.kind)
+            },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
             afterTitle = {
                 Box(Modifier.fillMaxWidth().height(24.dp).padding(start = 8.dp)) {
@@ -1063,6 +1261,8 @@ private fun NotInTreeLogo() {
 @Composable
 private fun ItemResultRow(
     item: SearchDomain.ItemResult,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
     selected: Boolean,
     onSelect: () -> Unit,
     onOpen: () -> Unit,
@@ -1085,6 +1285,7 @@ private fun ItemResultRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            ResultCheckBox(checked, onCheckedChange)
             KindSection(item.kind)
             Text(
                 text = item.name,

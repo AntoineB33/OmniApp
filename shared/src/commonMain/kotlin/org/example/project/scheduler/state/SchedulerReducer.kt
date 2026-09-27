@@ -399,6 +399,13 @@ object SchedulerReducer {
             }
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
+            is SchedulerIntent.SetTasksMinimumTime -> {
+                val apply = { working: SchedulerState ->
+                    intent.taskIds.fold(working) { acc, id -> applySetTaskMinimumTime(acc, id, intent.minutes) }
+                }
+                // Nobody moves: no empty unit for Ctrl+Z to walk back over.
+                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Minimum time", apply))
+            }
             is SchedulerIntent.SetTaskResilience -> {
                 // Unchanged resilience is a no-op — no empty history unit for a slider put back where it was.
                 val task = state.tasks[intent.taskId]
@@ -443,6 +450,16 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Task category") {
                     applyRemoveTaskCategory(it, intent.taskId, intent.categoryId)
                 })
+            is SchedulerIntent.SetTasksCategory -> {
+                val apply = { working: SchedulerState ->
+                    intent.taskIds.fold(working) { acc, id ->
+                        if (intent.carried) applyAttachTaskCategory(acc, id, intent.categoryId)
+                        else applyRemoveTaskCategory(acc, id, intent.categoryId)
+                    }
+                }
+                if (state.categoryById(intent.categoryId) == null || apply(state) === state) state
+                else commitDelta(state, priorityTreeDelta(state, "Task category", apply))
+            }
             is SchedulerIntent.RenameCategory -> reduceRenameCategory(state, intent.categoryId, intent.title)
             is SchedulerIntent.DeleteCategory -> reduceDeleteCategory(state, intent.categoryId)
             is SchedulerIntent.SetCategoryRule ->

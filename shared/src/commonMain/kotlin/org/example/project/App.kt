@@ -135,6 +135,9 @@ import org.example.project.ui.TreeObject
 import org.example.project.ui.COPY_CASCADE_PX
 import org.example.project.ui.AlarmWindowSubject
 import org.example.project.ui.CONFIGURATION_SEARCH_FRAME_ID
+import org.example.project.ui.ADDED_CONFIGURATION_FRAME_ID
+import org.example.project.ui.AddedElementsConfigurationWindow
+import org.example.project.ui.SearchRowOpeners
 import org.example.project.ui.ConfigurationSearchWindow
 import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.CalendarFloatingWindow
@@ -220,6 +223,8 @@ private enum class FloatingWindow(val title: String) {
     TaskTree("Task tree"),
     /** Opened from the Search window; its name is its frame id ([CONFIGURATION_SEARCH_FRAME_ID]). */
     ConfigSearch("Search configurations"),
+    /** Opened from the Search window's actions; its name is its frame id ([ADDED_CONFIGURATION_FRAME_ID]). */
+    AddedConfig("Added elements configurations"),
     TimeSim("Time simulation"),
 }
 
@@ -838,6 +843,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The Configuration Search window: open or not, and — per window, by frame id — its OWN configuration
         // (which configurations it lists, and which Search window it edits).
         var configSearchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.ConfigSearch)) }
+        // The Added elements configurations window: open or not. Its own configuration is a ConfigurationSearch
+        // too (which actions it lists, and which Search window's added elements they act on), kept alike.
+        var addedConfigWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.AddedConfig)) }
         val configSearches = remember { mutableStateMapOf<String, SearchDomain.ConfigurationSearch>() }
         fun configSearchOf(id: String): SearchDomain.ConfigurationSearch =
             configSearches[id] ?: (SearchDomain.ConfigurationSearch.decode(placements[id]?.config)
@@ -874,6 +882,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Shortcuts -> HistoryWindow.Shortcuts
             FloatingWindow.Search -> HistoryWindow.Search
             FloatingWindow.ConfigSearch -> HistoryWindow.ConfigSearch
+            FloatingWindow.AddedConfig -> HistoryWindow.AddedConfig
             FloatingWindow.TaskTree -> HistoryWindow.Tree
             FloatingWindow.Online -> HistoryWindow.Online
             // The debug time-simulation panel is not a window of the app and commits nothing.
@@ -898,6 +907,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Shortcuts -> shortcutsWindowOpen
             FloatingWindow.Search -> searchWindowOpen
             FloatingWindow.ConfigSearch -> configSearchWindowOpen
+            FloatingWindow.AddedConfig -> addedConfigWindowOpen
             FloatingWindow.TaskTree -> taskTreeWindowOpen
             FloatingWindow.Online -> onlineWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
@@ -917,6 +927,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.Shortcuts -> shortcutsWindowOpen = open
                 FloatingWindow.Search -> searchWindowOpen = open
                 FloatingWindow.ConfigSearch -> configSearchWindowOpen = open
+                FloatingWindow.AddedConfig -> addedConfigWindowOpen = open
                 FloatingWindow.TaskTree -> taskTreeWindowOpen = open
                 FloatingWindow.Online -> onlineWindowOpen = open
                 FloatingWindow.TimeSim -> Unit
@@ -1066,7 +1077,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun windowConfigOf(frameId: String): String? =
             when (lateralWindowOf(frameId)) {
                 FloatingWindow.Search -> searchConfigOf(frameId).encode()
-                FloatingWindow.ConfigSearch -> configSearchOf(frameId).encode()
+                FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> configSearchOf(frameId).encode()
                 else -> null
             }
         // A button made before buttons kept a configuration (2026-09-26) is given one ONCE, here at startup, from
@@ -1082,7 +1093,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun normalizedWindowConfig(kind: FloatingWindow, config: String?): String? =
             when (kind) {
                 FloatingWindow.Search -> (SearchDomain.Config.decode(config) ?: SearchDomain.Config()).encode()
-                FloatingWindow.ConfigSearch ->
+                FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig ->
                     (SearchDomain.ConfigurationSearch.decode(config) ?: SearchDomain.ConfigurationSearch()).encode()
                 else -> null
             }
@@ -1334,6 +1345,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var searchSize by remember { mutableStateOf(savedSize(FloatingWindow.Search)) }
         var configSearchOffset by remember { mutableStateOf(savedOffset(FloatingWindow.ConfigSearch, Offset(200f, -40f))) }
         var configSearchSize by remember { mutableStateOf(savedSize(FloatingWindow.ConfigSearch)) }
+        var addedConfigOffset by remember { mutableStateOf(savedOffset(FloatingWindow.AddedConfig, Offset(240f, 0f))) }
+        var addedConfigSize by remember { mutableStateOf(savedSize(FloatingWindow.AddedConfig)) }
         // Persist each window's visibility whenever it opens/closes (its offset persists separately on drag-end).
         LaunchedEffect(calendarOpen) { persistPlacement(FloatingWindow.Calendar, calendarOffset, calendarSize, calendarOpen) }
         LaunchedEffect(historyManagerOpen) { persistPlacement(FloatingWindow.History, historyOffset, historySize, historyManagerOpen) }
@@ -1357,6 +1370,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         LaunchedEffect(configSearchWindowOpen) {
             persistPlacement(FloatingWindow.ConfigSearch, configSearchOffset, configSearchSize, configSearchWindowOpen)
+        }
+        LaunchedEffect(addedConfigWindowOpen) {
+            persistPlacement(FloatingWindow.AddedConfig, addedConfigOffset, addedConfigSize, addedConfigWindowOpen)
         }
 
         var selectedDate by remember { mutableStateOf(today) }
@@ -3375,20 +3391,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // reminder, found by name. It reads the LIVE state, and every gesture on a row goes through
                     // the handler the rest of the app already uses for it — the §13 windows hoisted above, the
                     // one "go to task tree", the lateral-menu windows that own an alarm or a reminder.
-                    LateralWindow(FloatingWindow.Search, searchWindowOpen) {
-                        val searchId = windowInstanceId(FloatingWindow.Search.name)
-                        SearchWindow(
-                            state = schedulerState,
+                    // How a Search row is opened — ONE mapping, for the result list and for the added elements'
+                    // "Open each" in both windows that offer it.
+                    val searchRowOpeners =
+                        SearchRowOpeners(
                             onOpenTaskEdit = { taskEditWindows.open(TreeObject(it)) },
-                            onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
-                            onGoToTaskTree = { taskId, at ->
-                                goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
-                            },
-                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
-                            onIntent = { vm.dispatch(it) },
-                            // A row's percentage, as a tree cell's: the weight table and the relative priority.
-                            onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
-                            onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
                             onOpenCategory = { categoryWindows.open(TreeObject(it)) },
                             onOpenPeriodKind = { periodKindWindows.open(TreeObject(it)) },
                             onEditAlarmOrTimer = { alarmWindows.open(it) },
@@ -3411,11 +3418,28 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 shortcutsWindowOpen = true
                                 focusWindow(FloatingWindow.Shortcuts)
                             },
-                            windows = if (SearchDomain.Kind.Window in searchConfigOf(searchId).kinds) searchWindowEntries() else emptyList(),
                             onOpenWindow = ::showWindow,
                             onCreate = ::createElement,
+                        )
+                    LateralWindow(FloatingWindow.Search, searchWindowOpen) {
+                        val searchId = windowInstanceId(FloatingWindow.Search.name)
+                        val searchConfig = searchConfigOf(searchId)
+                        SearchWindow(
+                            state = schedulerState,
+                            openers = searchRowOpeners,
+                            onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
+                            onGoToTaskTree = { taskId, at ->
+                                goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
+                            },
+                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            onIntent = { vm.dispatch(it) },
+                            // A row's percentage, as a tree cell's: the weight table and the relative priority.
+                            onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
+                            onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
+                            windows = if (searchConfig.readsWindows) searchWindowEntries() else emptyList(),
+                            nowMillis = clock::nowMillis,
                             onDismiss = { searchWindowOpen = false },
-                            config = searchConfigOf(searchId),
+                            config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
                             // Opened if closed, brought to the front either way — and pointed at THIS Search
                             // window, which is the one whose configurations it then lists and edits.
@@ -3424,6 +3448,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 setConfigSearch(configId, configSearchOf(configId).copy(target = searchId))
                                 configSearchWindowOpen = true
                                 focusWindow(FloatingWindow.ConfigSearch)
+                            },
+                            // The same, for the actions on the added elements.
+                            onOpenAddedConfigurations = {
+                                val configId = FloatingWindow.AddedConfig.name
+                                setConfigSearch(configId, configSearchOf(configId).copy(target = searchId))
+                                addedConfigWindowOpen = true
+                                focusWindow(FloatingWindow.AddedConfig)
                             },
                             initialOffset = searchOffset,
                             initialSize = searchSize,
@@ -3488,6 +3519,49 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 persistPlacement(FloatingWindow.ConfigSearch, windowOffset, windowSize, true)
                             },
                             onRaise = { focusWindow(FloatingWindow.ConfigSearch) },
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+
+                    // PRD §7 Search: every action on a Search window's added elements, in sections per kind — the
+                    // Configuration Search window's twin. It acts on the `added` list of the Search window it was
+                    // opened from, which it reads off the same `searchConfig`.
+                    LateralWindow(FloatingWindow.AddedConfig, addedConfigWindowOpen) {
+                        val configId = windowInstanceId(FloatingWindow.AddedConfig.name)
+                        val own = configSearchOf(configId)
+                        val target = own.target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+                        val targetConfig = searchConfigOf(target)
+                        val windows = if (targetConfig.readsWindows) searchWindowEntries() else emptyList()
+                        val added =
+                            // Keyed on what the rows read, never on the whole state, which every tick replaces.
+                            remember(
+                                targetConfig.added, schedulerState.tasks, schedulerState.taskTrees,
+                                schedulerState.categories, schedulerState.periodKinds, schedulerState.panels,
+                                schedulerState.alarms, schedulerState.timers, schedulerState.chronos,
+                                schedulerState.chores, schedulerState.histories, schedulerState.taskRelations,
+                                schedulerState.shortcutBindings, schedulerState.activeTaskTreeId,
+                                schedulerState.cells, schedulerState.lists, windows,
+                            ) {
+                                SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows)
+                            }
+                        AddedElementsConfigurationWindow(
+                            state = schedulerState,
+                            added = added,
+                            own = own,
+                            onOwnChange = { setConfigSearch(configId, it) },
+                            onIntent = { vm.dispatch(it) },
+                            nowMillis = clock::nowMillis,
+                            onOpenEach = { added.forEach { searchRowOpeners.open(schedulerState, it) } },
+                            onClear = { setSearchConfig(target, targetConfig.copy(added = emptyList())) },
+                            onDismiss = { addedConfigWindowOpen = false },
+                            initialOffset = addedConfigOffset,
+                            initialSize = addedConfigSize,
+                            onGeometryChange = { windowOffset, windowSize ->
+                                addedConfigOffset = windowOffset
+                                addedConfigSize = windowSize
+                                persistPlacement(FloatingWindow.AddedConfig, windowOffset, windowSize, true)
+                            },
+                            onRaise = { focusWindow(FloatingWindow.AddedConfig) },
                             modifier = Modifier.align(Alignment.Center),
                         )
                     }
