@@ -63,5 +63,9 @@ The scheduler doesn't need to calculate the right schedule for the entire timeli
 The scheduler can have a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop. It will also stop if the set of rules became too heavy, or if it calculated for too long.
 * **direct consequence:** If the device bearing the running process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon time) in mode 2 to the current date. If the current date is beyond the definitive schedule, then it is similar to a case where no CPU were available during this period and the current set of rules, parameterized by $now line$ and $now line$ mode, is used to define the schedule as the $now line$ does its fast move, while no better set of rules was found.
 
-# Strict requirements
-All the requirements above must be strictly satisfied. The only acceptable degradation allowed in order to save time or computer power is getting as close as possible to the best score for the two optimization criteria, without reaching it. But if the best possible score is reachable within the required time and acceptable computer power, it must be reached.
+# Strict Requirements
+All of the above requirements must be strictly adhered to, with only two acceptable exceptions:
+
+1. Get as close as possible to the optimal score for both optimization criteria, without actually reaching it, in order to save time or computing power, or if necessary to maintain the required pace. However, if the optimal score is achievable within the given time and with acceptable computing power, it must be achieved.
+
+2. Other limits may be imposed to conserve memory, computing power, or CPU usage over time, as appropriate. For example, a limit may be imposed on the memory for the frozen timeline history.
