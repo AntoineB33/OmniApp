@@ -2,7 +2,7 @@
 
 ### System Overview
 
-The scheduler returns a set of rules that define the task schedule for a given timeline to satisfy constraints and two optimization criteria.
+The scheduler returns a set of rules output that define the task schedule for a given timeline to satisfy constraints and two optimization criteria.
 
 ### Core Constraints & Task Allocation
 
@@ -17,47 +17,53 @@ The scheduler returns a set of rules that define the task schedule for a given t
 Each task has a defined minimum execution time. Another optimization goal is to reach the minimum execution time for any task appearing in the timeline. The ideal situation is that each task panels spans at least its minimum execution time without interruption.
 
 #### Restrictive Period
-Restrictive periods are objects with a start and end time, and a kind.
-* Each task has a resilience value for each kind of restrictive period from 0 to 1. It is a multiplier for the task's priority percentage during that restrictive period. A resilience of 0 means the task is forbidden during that restrictive period, while a resilience of 1 means the task is unaffected.
-* Multiple restrictive periods can appear at a given time t.
+* The user can define restrictive periods, which are types of periods that can be placed in any time intervals on the timeline. The user can place them manually, or define rules to place them automatically. The user can also define that a period must be accompanied by others, for example whenever there is period A, then there is also period B.
+* Each task has a resilience value for each kind of restrictive period from 0 to 1. It is a multiplier for the task's priority percentage during that restrictive period. A resilience of 0 means the task is forbidden during that restrictive period. For example, for the "no screen" period, "homework" has a resilience of 0.5, "video games" has a resilience of 0, and "read a book" has a resilience of 1. If "no screen" occupies the whole timeline and every other task has resilience 1 to "no screen", then "homework" would require twice as much presence.
 
-### Rule state input evolution
-* **Rule State Input Definition:** A rule state input is the set of tasks and their associated priority percentages, minimum execution time and resilience values for every periods at a given moment in time.
-* **Rule State Input Evolution:** When $now line$ is before the first rule state input or after the last rule state, then this rule state input is applied. When $now line$ is between two rule state input, the rule state input being applied is the one found at this moment in the transition. In a transition between two rule state input, the priority percentages, minimum execution time and resilience values of each task change at a constant rate and over the same timeframe, which is the time difference of the two rule state inputs. If a task is missing in the other rule state input, the priority starts or ends at 0, but the minimum execution time and the resilience value don't change.
-* **Example:** Only two rule state inputs at t1 and t2 and both only have the two same tasks A and B. The only difference between the two scenarios is the priority of A at the second rule state input and the time t2.
-Scenario 1: Task A goes from 0 to 100% priority from t1 to t2=t1+10min.
-Scenario 2: Task A goes from 0 to 50% priority from t1 to t2=t1+5min.
-It is guaranteed, with infinite compute resources, that the resulting set of rules output on both scenarios gives the same schedule and alternative schedule up to t1+5min.
-
-
-### $now line$ and 3 Dynamic Restrictive Period
-
+### $now line$
 * **$now line$:** Some of the rules returned by the scheduler are parameterized by two variables that can unpredictably change value anytime during the test: $now line$ (the present) and the $now line$ mode. Every t such that t <= $now line$ are the previous values of the $now line$ variable. This means that the $now line$ moves continuously forward in time.
-* **frozen past:** The schedule at t < $now line$ never changes as $now line$ increases, except for one of the rules of the 3 dynamic restrictive periods described below, or by an action of the user to rewrite history.
-* **3 Dynamic Restrictive Period:** They are named the 20s, 5min and 15min periods, with the respective corresponding durations, and have the kind "no task allowed". The placement of those three dynamic restrictive periods are parametrized by $now line$ to place them anywhere in the timeline that doesn't violate the following rules:
-    * After any dynamic restrictive period, no 20s period in the next **20 minutes**.
-    * After any $\ge 5$-minute stretch covered by the period "no on-screen task" without any task (whether caused by dynamic periods, pre-placed restrictive periods, or a combination), no 5min period in the next 1 hour.
-    * After a $\ge 15$-minute stretch covered by the period "no on-screen task" without any task, no 20s restrictive period in the next **20 minutes**, and no 15min period in the next **2 hours**.
-    * If the rules above make dynamic restrictive periods touching, the whole chain is replaced by the longest period of the chain starting at the earliest point, and the others are removed. The rules above prevent any situation where two dynamic restrictive periods of the same length are overlapping.
-    * When a "no on-screen task" period touches the start of a dynamic restrictive period, and that this chain of "no on-screen task" periods ends somewhere in $[now line;+infinity)$, then the dynamic restrictive period now starts at the start of this chain.
-* **$now line$ 3 modes:** There are three "$now line$ modes". In the tests, the switch between modes is done with a button.
-    * **Mode 1:** $now line$ must not be covered by the period "no on-screen task". This means that if it reaches one of those periods, the passing of the $now line$ line creates task panels not covered by the period. **The 20s period is the exception:** each time $now line$ reaches a 20s screen break, the user abides by it, so it is never delayed — the $now line$ is in mode 3 for the duration of that 20s period, crosses it, and is back in mode 1 at its end.
-    * **Mode 2 & 3:** $now line$ must be covered by the period "no on-screen task".
-* **consequence examples:** Here are direct consequences of the rules:
-    * If a 5min or 15min period is placed at t, that $now line$ is in mode 1 and is reaching t, it would continuously delay that period (while creating task panels in its passing). The delayed period is the half-open interval $(t_p, t_p + d]$, with $d$ its duration.
-    * If a 20s period is placed at t, that $now line$ is in mode 1 and is reaching t, the 20s period does not move: the $now line$ is in mode 3 over $[t, t + 20\text{s}]$ and crosses it, and the period stays in the timeline at t once the $now line$ is past it (**frozen past**). It can still be placed elsewhere later if the rules above say so — for instance if a 20s period is taken manually less than 20 minutes after it.
-    * When the $now line$ is in mode 1 and has dragged a 5min period to make its end touch a 15min period, the 15min period teleports 5 minutes backward (without including $now line$) which absorbs the 5min period, and the 5-minute gap created at the end of the 15min period is filled with task panels given the set of rules output parameterized by $now line$ and $now line$ mode and returned by the scheduler.
-    * If $now line$ is in mode 2 and reaches the end of a 15min period, the gap between the end of the 15min period and $now line$ is covered by a period "no on-screen task", filled with tasks that have a non-zero resilience to the kind "no on-screen task", or no task if none have such resilience.
-    * When the $now line$ is in mode 1 and reaches a "no screen" period that extends to [t1;t2], I want the "no screen" period to become ]$now line$;t2] when $now line$ is in [t1;t2[. When $now line$ >= t2, then this "no screen" period is removed.
+* **$now line$ 3 modes:**
+    * **Mode 1:** $now line$ must not be covered by the period "no screen".
+    * **Mode 2 & 3:** $now line$ must be covered by the period "no screen".
+    * **Mode switching:** The current $now line$ mode can be decided anytime by a program, but can't go in mode 1 during a "20s screen break" restrictive period. When $now line$ enters a "20s screen break" restrictive period in mode 1, it gets in mode 3, and when it leaves it, it gets in mode 1 unless the user wanted it to stay in mode 3, or unless it is in mode 2.
+* **frozen past:** The schedule at t < $now line$ never changes as $now line$ increases, with only two exceptions:
+    * When the user or a program wants to rewrite history.
+    * When a "screen break" period needs to get removed to satisfy its restrictive period rules.
 
-### Starting timeline
-The starting timeline can have pre-placed tasks and restrictive periods. They never change except for dynamic restrictive periods or the three modes of $now line$.
+### Default restrictive periods
+* **existing periods:** By default, there are already defined periods with automatic placement rules. For example, the "no screen" periods, the "sleep" period that is always accompanied by the "no screen" period, is placed at the same times every day, and allows no task (a task has a 0 resilience to it by default). The "before bed" period that is always placed on the hour before a "sleep" period. There are also the three "screen breaks" periods.
+* **screen breaks:** There are the 20s, 5min and 15min screen break periods, always accompanied by the "no screen" period. The 20s screen break allows no task. The 5min break is accompanied by two periods: the first minute that allow no tasks and the 4 next minutes. The three screen breaks are placed everywhere in the timeline as earliest as possible where it doesn't violate the frozen past rule and the rules below.
+    * A screen break period lasts as long as its name implies.
+    * The $now line$ must be in mode 1 or 3 before entering the 20s break.
+    * After the end of a screen break, no 20s break in the next **20 minutes**.
+    * After a $\ge 5$-minute of "no screen", no 5min break in the next **1 hour**.
+    * After a $\ge 15$-minute of "no screen", no 20s break in the next **20 minutes**, and no 15min break in the next **2 hours**.
+    * Where the five rules above allow a continuous chain of breaks, then the interval of the whole chain only contains one screen break, which is the longest screen break of the chain brought to the start of the interval.
+    * In a "no screen" period, if $t_b$ is in a screen break, where $t_b$ is the start of a screen break, and that $now line$ < $t_b$, then this screen break must now start at max($now line$, $t_s$), where $t_s$ is the start of the continuous "no screen" period, even if it contradicts with the five first screen break rules.
+
+### Example behaviors
+Here are some example situations resulting from the rules described above.
+* If the $now line$ reaches a 20s break in mode 2, this 20s break becomes ]$now line$; $now line$ + 20s], because the $now line$ must be in mode 1 or 3 before entering the 20s break. 
+* If the $now line$ reaches a 5min break in mode 1, this 5min break becomes ]$now line$; $now line$ + 5min].
+* When the $now line$ is in mode 1 and has dragged a 5min break until the break's end edge touches a 15min break, the 15min break teleports 5 minutes backward, starting right after $now line$, the 5min break is removed, and the 5-minute gap created at the end of the 15min break is filled with task panels given the set of rules output parameterized by $now line$ and $now line$ mode and returned by the scheduler.
+* If $now line$ is in mode 2 and reaches the end of a 15min break, the gap between the end of the 15min break and $now line$ is covered by a period "no screen", filled with tasks that have a non-zero resilience to the kind "no screen", or no task if none have such resilience.
+* When the $now line$ is in mode 1 and reaches a "no screen" period that extends to [t1;t2], I want the "no screen" period to become ]$now line$;t2] when $now line$ is in [t1;t2[. When $now line$ >= t2, then this "no screen" period is removed.
+* If the $now line$ reaches a "no screen" period in mode 1, if it is accompanied by a 20s break then it gets in mode 3, otherwise the "no screen" period now starts at $now line$ not included.
 
 ### Alternative Schedules:
-The returned set of rules output must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler can't be scheduled now. When it happens, a program would simply read the rules, set this new task starting at $now line$, and run the scheduler again with this new schedule (because this alternative schedule doesn't say what happens next if this alternative task is chosen).
+The returned set of rules output must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler is refused by the user. When it happens, a program would simply read the rules, set this alternative task starting at [$now line$, $now line$+d], with d defined beforehand (like 10 minutes), and run the scheduler again with this new schedule.
 
 ### No idling:
 Anywhere that is not covered by restrictive periods which would prevent any task from being scheduled, the scheduler must schedule a task, for any $now line$ and $now line$ mode.
+
+### Rule state input evolution
+* **Rule State Input Definition:** A rule state input is the set of tasks and their associated priority percentages, minimum execution time and resilience values for every periods at a given moment in time.
+* **Rule State Input Evolution:** The rule state input can change continuously or discretely on the timeline. For example, with the rule state input switching to a new state only once in the future, discretely, then with infinite computing and memory resources it is like: it first finds the best infinite schedule with the first rule state input in mind, then it finds the best infinite schedule with the second rule state input in mind starting at the moment where it switches, and from this same moment replace the previous schedule.
+* **When not the same task ids:** If a task id is missing in the other rule state input, then in the continuous evolution of the rule state input the priority starts or ends at 0, but the minimum execution time and the resilience value don't change.
+* **Example:** Only two rule state inputs at t1 and t2 and both only have the two same tasks A and B. The only difference between the two scenarios is the priority of A at the second rule state input and the time t2.
+Scenario 1: Task A goes from 0 to 100% priority from t1 to t2=t1+10min.
+Scenario 2: Task A goes from 0 to 50% priority from t1 to t2=t1+5min.
+
 
 ### Progressive Calculation:
 The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for any t < $t_1$, then 10 seconds later the definitive schedule must be found for any t < $t_1$ + 10 minutes. When the schedule is definitive for any t < $t_1$, it means that for all the next set of rules output the scheduler will return until it is done, they will all indicate the same schedule rules for any t < $t_1$ (task panel scheduling parameterized by $now line$ and $now line$ mode as well as the "alternative schedule"). As time passes, the scheduler returns one set of rule output after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used.
@@ -70,3 +76,6 @@ All of the above requirements must be strictly adhered to, with only two accepta
 1. Get as close as possible to the optimal score for both optimization criteria, without actually reaching it, in order to save time or computing power, or if necessary to maintain the required pace. However, if the optimal score is achievable within the given time and with acceptable computing power, it must be achieved.
 
 2. Other limits may be imposed to conserve memory, computing power, or CPU usage over time, as appropriate. For example, a limit may be imposed on the memory for the frozen timeline history.
+
+The set of rules output could be something like: set task A from t0 to t1; if $now line$ gets in mode 2 between t2 and t3 then set task B from $now line$ to t4 etc...
+Even if the optimization score is not perfect for all infinite paths, the scheduler game search for the best set of rules output with its limited time and CPU resources and came out with a valid result, which is the expected behavior.
