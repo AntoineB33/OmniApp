@@ -497,7 +497,8 @@ object SchedulerReducer {
             is SchedulerIntent.SetTaskText ->
                 commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
-            is SchedulerIntent.SetReminderChecked -> reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis)
+            is SchedulerIntent.SetReminderChecked ->
+                reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis, intent.tag)
             is SchedulerIntent.AddReminder -> reduceAddReminder(state, intent.reminderId, intent.title, intent.atMillis, intent.checked, intent.pinned)
             is SchedulerIntent.SetAlarms -> reduceSetAlarms(state, intent.entries, intent.editKey)
             is SchedulerIntent.SetAlarmEnabled -> reduceSetAlarmEnabled(state, intent.id, intent.enabled)
@@ -1270,14 +1271,29 @@ object SchedulerReducer {
         panelId: String,
         checked: Boolean,
         nowMillis: Long,
+        tag: TaskPanel? = null,
     ): SchedulerState {
-        val panel = state.panels.firstOrNull { it.id == panelId && it.chore } ?: return state
+        val stored = state.panels.firstOrNull { it.id == panelId && it.chore }
+        val panel = stored ?: tag?.takeIf { it.id == panelId && it.chore } ?: return state
         if (panel.checked == checked) return state
         // PRD §14: checking freezes the tag at the moment it was checked; un-checking clears that anchor.
         val checkedAtMillis = if (checked) nowMillis else null
-        val updated = state.panels.map {
-            if (it.id == panelId) it.copy(checked = checked, checkedAtMillis = checkedAtMillis) else it
-        }
+        val updated =
+            if (stored != null) {
+                state.panels.map {
+                    if (it.id == panelId) it.copy(checked = checked, checkedAtMillis = checkedAtMillis) else it
+                }
+            } else {
+                // A tag the calendar laid but the store does not hold: store it, in place of the stored
+                // generated tag of the same reminder at the same instant (one laid under an older id), so the
+                // occurrence is not left behind unchecked beside its own completion.
+                val reminderId = SchedulerDomain.reminderIdOfChorePanel(panelId)
+                state.panels.filterNot {
+                    it.chore && !it.checked && !it.pinned && it.startEpochMillis == panel.startEpochMillis &&
+                        !it.id.startsWith(SchedulerDomain.MANUAL_REMINDER_PREFIX) &&
+                        SchedulerDomain.reminderIdOfChorePanel(it.id) == reminderId
+                } + panel.copy(checked = checked, checkedAtMillis = checkedAtMillis)
+            }
         return commitPanels(state, updated, label = if (checked) "Check reminder" else "Uncheck reminder")
     }
 

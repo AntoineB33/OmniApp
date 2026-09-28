@@ -5919,8 +5919,10 @@ object SchedulerDomain {
      * Only **blank-titled** reminders are skipped; a reminder with no recurrence (`spanDays ≤ 0`) is a
      * **one-off** placed today only, so entering just a title creates a single reminder; a sub-day cadence
      * (`0 < spanDays < 1`) recurs every day. Tags carry [TaskPanel.chore] = true, a null taskId, and
-     * `start == end` (no spanning time), with deterministic `chore/{reminderId}/{offset}` ids (keyed by
-     * the reminder's stable id, not the row index) so a steady regeneration reproduces them. They start un-[TaskPanel.checked]. Overlapping tags keep the default
+     * `start == end` (no spanning time), with deterministic `chore/{reminderId}/d{day}` ids (keyed by
+     * the reminder's stable id, not the row index, and by the occurrence's own calendar day — see
+     * [reminderTagDayKey] — never by its offset from today, which names a different day tomorrow) so a
+     * steady regeneration reproduces them. They start un-[TaskPanel.checked]. Overlapping tags keep the default
      * layout weight, so the calendar splits their shared width evenly (PRD §14).
      *
      * [anchorMillisByReminderId] supplies, per reminder id ([ChoreEntry.id]), the epoch-millis of the most
@@ -5964,11 +5966,15 @@ object SchedulerDomain {
             // PRD §14: "the defined time in the day, or the current time if not defined in the field".
             val minutes = if (chore.timeOfDayMinutes < 0) currentTimeOfDayMinutes else chore.timeOfDayMinutes
             val timeOfDay = minutes.coerceIn(0, 24 * 60 - 1) * MILLIS_PER_MINUTE
+            // A one-off that has been done is done: it is not laid again on a later today.
+            if (chore.spanDays <= 0.0 && chore.constrainedToReminderId.isBlank() &&
+                chore.id in anchorMillisByReminderId
+            ) return@forEach
             for (offset in effectiveOffsets(chore, emptySet())) {
                 val start = todayStartMillis + offset * MILLIS_PER_DAY + timeOfDay
                 result.add(
                     TaskPanel(
-                        id = "chore/${chore.id}/$offset",
+                        id = "chore/${chore.id}/d${reminderTagDayKey(todayStartMillis, offset)}",
                         taskId = null,
                         title = chore.title,
                         startEpochMillis = start,
@@ -5982,6 +5988,16 @@ object SchedulerDomain {
         }
         return result
     }
+
+    /**
+     * The calendar day a generated reminder tag stands for, as a day count since the epoch: the day
+     * [offset] days after the local midnight [todayStartMillis]. Rounding (rather than flooring) the
+     * midnight's instant reads the local date for any zone within ±12 h, so the key names the SAME day
+     * whichever today it is computed from. A tag keyed by the bare offset named a different day every day,
+     * so a tag checked on the 20th (`…/0`) swallowed every later today's fresh occurrence.
+     */
+    internal fun reminderTagDayKey(todayStartMillis: Long, offset: Int): Long =
+        (todayStartMillis + MILLIS_PER_DAY / 2).floorDiv(MILLIS_PER_DAY) + offset
 
     /**
      * PRD §14 "the calendar updates each time the reminders manager changes": rebuild the reminder tags in
@@ -6019,9 +6035,14 @@ object SchedulerDomain {
         // Fresh tags for the current rows, skipping occurrences already kept. Chore panels that are not
         // reproduced here (stale generated tags, or orphans whose reminder is no longer a row and is neither
         // checked nor pinned) are dropped — an id referenced by nothing ceases to exist (PRD §14 GC).
+        // A day that already holds a kept tag of the reminder (its completion, or where the user pinned it)
+        // gets no second, fresh one. Asked by day as well as by id because a tag checked before the ids were
+        // day-keyed carries the old `chore/{id}/{offset}` form.
+        fun dayOf(millis: Long): Long = (millis - todayStartMillis).floorDiv(MILLIS_PER_DAY)
+        val keptDays = kept.mapNotNullTo(HashSet()) { p -> reminderIdOfChorePanel(p.id)?.let { it to dayOf(p.startEpochMillis) } }
         val generated =
             choreScheduledPanels(withIds, todayStartMillis, horizonDays, nowMillis, anchorMillisByReminderId)
-                .filter { it.id !in keptIds }
+                .filter { it.id !in keptIds && (reminderIdOfChorePanel(it.id) to dayOf(it.startEpochMillis)) !in keptDays }
         return nonChore + kept + generated
     }
 

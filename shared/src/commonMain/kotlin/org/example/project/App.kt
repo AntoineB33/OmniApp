@@ -2847,7 +2847,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onGoToTaskTree = goToTaskTree,
                             // PRD §14 Reminders: clicking a reminder tag toggles its checked (done) state.
                             onToggleReminder = { block ->
-                                block.entryId?.let { vm.dispatch(SchedulerIntent.SetReminderChecked(it, !block.checked, nowMillis)) }
+                                block.entryId?.let { id ->
+                                    vm.dispatch(
+                                        SchedulerIntent.SetReminderChecked(
+                                            id, !block.checked, nowMillis,
+                                            // The same funnel the calendar drew the tag through, over the
+                                            // days it shows, so a tag the store does not hold yet is stored.
+                                            tag = SchedulerDomain.regenerateChorePanels(
+                                                schedulerState.panels, schedulerState.chores,
+                                                today.atStartOfDayIn(tz).toEpochMilliseconds(),
+                                                ((visibleSpanEndMillis - today.atStartOfDayIn(tz).toEpochMilliseconds()) /
+                                                    (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(0),
+                                                nowMillis,
+                                            ).firstOrNull { it.id == id },
+                                        ),
+                                    )
+                                }
                             },
                             // PRD §8 Overlap Mode: commit re-divided panel widths from a dragged edge.
                             onAdjustWeights = { weights ->

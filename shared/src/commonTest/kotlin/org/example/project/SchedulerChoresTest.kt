@@ -573,6 +573,73 @@ class SchedulerChoresTest {
     }
 
     @Test
+    fun a_tag_checked_days_ago_does_not_hide_todays_occurrence() {
+        // Account 3, 2026-09-28: "teeth brushing morning" was last checked on the 20th, when its tag was laid as
+        // `chore/reminder-7/0` (offset 0 from THAT today). Ids were offsets from today, so every later today's
+        // fresh `…/0` matched the kept id and was dropped: no tag on the calendar, no cue.
+        val today = 1_000_000_000_000L
+        val daily = ChoreEntry("teeth brushing morning", 1.0, 10 * 60 + 15, id = "reminder-7")
+        val eightDaysAgo = today - 8 * DAY + 8 * HOUR + 42 * 60_000
+        val legacyChecked = TaskPanel("chore/reminder-7/0", null, daily.title, eightDaysAgo, eightDaysAgo, chore = true, checked = true)
+
+        val regen = SchedulerDomain.regenerateChorePanels(listOf(legacyChecked), listOf(daily), today, horizonDays = 3)
+
+        val todays = regen.filter { it.chore && it.startEpochMillis == today + 10 * HOUR + 15 * 60_000 }
+        assertEquals(1, todays.size, "today's occurrence is laid")
+        assertFalse(todays.single().checked)
+        assertEquals(regen.size, regen.map { it.id }.toSet().size, "no two tags share an id")
+    }
+
+    @Test
+    fun a_generated_tag_names_the_same_day_whichever_today_lays_it() {
+        val today = 1_000_000_000_000L
+        val daily = listOf(ChoreEntry("r", 1.0, 9 * 60, id = "r"))
+        val fromToday = SchedulerDomain.choreScheduledPanels(daily, today, horizonDays = 3)
+        val fromYesterday = SchedulerDomain.choreScheduledPanels(daily, today - DAY, horizonDays = 3)
+        val tomorrow = today + DAY + 9 * HOUR
+        assertEquals(
+            fromYesterday.single { it.startEpochMillis == tomorrow }.id,
+            fromToday.single { it.startEpochMillis == tomorrow }.id,
+        )
+    }
+
+    @Test
+    fun a_legacy_tag_checked_today_still_stands_for_todays_occurrence() {
+        // Tags checked before the ids were day-keyed carry `chore/{id}/{offset}`; one checked today must still
+        // keep today free of a second, unchecked tag of the same reminder.
+        val today = 1_000_000_000_000L
+        val daily = ChoreEntry("r", 1.0, 9 * 60, id = "r")
+        val checkedToday = TaskPanel("chore/r/0", null, "r", today + 9 * HOUR, today + 9 * HOUR, chore = true, checked = true)
+        val regen = SchedulerDomain.regenerateChorePanels(listOf(checkedToday), listOf(daily), today, horizonDays = 2)
+        assertEquals(listOf(checkedToday), regen.filter { it.startEpochMillis in today until today + DAY })
+    }
+
+    @Test
+    fun a_done_one_off_is_not_laid_again_on_a_later_day() {
+        val today = 1_000_000_000_000L
+        val oneOff = ChoreEntry("shower", 0.0, 18 * 60, id = "reminder-5")
+        val doneLastWeek = TaskPanel("chore/reminder-5/0", null, "shower", today - 10 * DAY, today - 10 * DAY, chore = true, checked = true)
+        val regen = SchedulerDomain.regenerateChorePanels(listOf(doneLastWeek), listOf(oneOff), today)
+        assertEquals(listOf(doneLastWeek), regen)
+    }
+
+    @Test
+    fun checking_a_tag_the_calendar_laid_but_the_store_lacks_stores_it_in_place_of_its_stale_twin() {
+        val now = 1_000_000_000_000L
+        val at = now - HOUR
+        // Stored under the old offset id; the calendar drew the same occurrence under its day-keyed id.
+        val staleTwin = TaskPanel("chore/r/0", null, "r", at, at, chore = true)
+        val drawn = TaskPanel("chore/r/d11574", null, "r", at, at, chore = true)
+        val s0 = SchedulerState.empty().copy(panels = listOf(staleTwin))
+
+        val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetReminderChecked(drawn.id, true, now, tag = drawn))
+
+        val tags = s1.panels.filter { it.chore }
+        assertEquals(listOf(drawn.id), tags.map { it.id })
+        assertTrue(tags.single().checked)
+    }
+
+    @Test
     fun set_chores_preserves_a_checked_reminder() {
         val today = 1_000_000_000_000L
         val checkedTag = TaskPanel("chore/0/0", null, "Weekly", today, today, chore = true, checked = true)
@@ -613,7 +680,8 @@ class SchedulerChoresTest {
                 todayStartMillis = today, nowMillis = today,
             ),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetReminderChecked("chore/rem-B/0", true, today))
+        val todayTag = s.panels.first { it.chore && it.id.startsWith("chore/rem-B/") && it.startEpochMillis == today }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetReminderChecked(todayTag.id, true, today))
         assertTrue("rem-B" in SchedulerDomain.checkedReminderIds(s))
 
         // Detach: the row now represents a brand-new reminder rem-C; rem-B is no longer a manager row.

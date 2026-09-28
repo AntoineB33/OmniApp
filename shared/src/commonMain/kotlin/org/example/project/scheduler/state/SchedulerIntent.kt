@@ -563,6 +563,10 @@ sealed interface SchedulerIntent {
         // PRD §14: the clock time of the check, so a checked reminder freezes at this point on the
         // calendar timeline (caller's time zone). Defaults to 0 for callers that omit it.
         val nowMillis: Long = 0L,
+        // The tag as the calendar drew it. The calendar lays reminder tags afresh for the days it shows, so a
+        // tag clicked there need not be among the stored panels yet (they are laid again only when the
+        // reminders change); it is then stored from this.
+        val tag: org.example.project.scheduler.model.TaskPanel? = null,
     ) : SchedulerIntent
 
     /**
