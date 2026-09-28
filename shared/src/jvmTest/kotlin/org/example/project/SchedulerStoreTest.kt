@@ -1,6 +1,8 @@
 package org.example.project
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import org.example.project.scheduler.domain.BankedBreak
+import org.example.project.scheduler.domain.FrozenScreenBreaks
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.persistence.ActiveSessionRecord
 import org.example.project.scheduler.persistence.DeclaredAwaySpanRecord
@@ -1354,6 +1356,134 @@ class SchedulerStoreTest {
                 )
             store.savePlacement("Search", left)
             assertEquals(left, store.loadPlacements()["Search"])
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v15 — everything through the
+     * window chrome columns, no screen-break history) must still load, with 15.sqm adding the two tables on open:
+     * nothing banked yet (a first run re-derives the past once and banks from there), everything else kept, and
+     * the new tables usable at once.
+     */
+    @Test
+    fun upgrades_pre_screen_break_history_v15_db_and_preserves_data() {
+        val dbFile = File.createTempFile("scheduler-v15", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            // The v15 shape, exactly as 14.sqm left it.
+            raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "seq INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
+                    "debug_tainted INTEGER NOT NULL, delta_length INTEGER NOT NULL DEFAULT -1, " +
+                    "delta_hash INTEGER, delta TEXT NOT NULL, window TEXT, " +
+                    "PRIMARY KEY (account_id, category, seq))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "acknowledged_logout_at INTEGER, base_payload TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL, fill_width INTEGER NOT NULL DEFAULT 0, " +
+                    "fill_height INTEGER NOT NULL DEFAULT 0, minimized INTEGER NOT NULL DEFAULT 0, config TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                    "PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)",
+                0,
+            )
+            raw.execute(null, "CREATE TABLE device_away_span (start_ms INTEGER NOT NULL PRIMARY KEY, end_ms INTEGER NOT NULL)", 0)
+            raw.execute(null, "INSERT INTO device_away_span(start_ms, end_ms) VALUES (5000, 6000)", 0)
+            raw.execute(null, "CREATE TABLE network_mode (id INTEGER NOT NULL PRIMARY KEY, offline INTEGER NOT NULL)", 0)
+            raw.execute(null, "INSERT INTO network_mode(id, offline) VALUES (0, 1)", 0)
+            raw.execute(
+                null,
+                "INSERT INTO window_placement(window_id, x, y, width, height, visible) " +
+                    "VALUES ('Search', 12.5, -40.0, 520.0, 560.0, 1)",
+                0,
+            )
+            raw.execute(null, "INSERT INTO app_state(account_id, payload) VALUES ('user-1', ?)", 1) {
+                bindString(0, payload)
+            }
+            raw.execute(
+                null,
+                "INSERT INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email) " +
+                    "VALUES (0, 'dev-1', 'at', 'rt', 'user-1', 'u1@x.y')",
+                0,
+            )
+            raw.execute(
+                null,
+                "INSERT INTO device_active_session(device_id, start_ms, end_ms, updated_at, kind) " +
+                    "VALUES ('dev-1', 1000, 2000, 9000, 'desktop')",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 15", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload, "the upgrade kept the state")
+            assertEquals(
+                ActiveSessionRecord("dev-1", 1_000, 2_000, 9_000, kind = "desktop"),
+                store.loadActiveSessions().single(),
+                "the upgrade kept the activity history",
+            )
+            assertEquals(true, store.loadOfflineChoice(), "the upgrade kept the offline choice")
+            assertEquals(
+                WindowPlacement(x = 12.5f, y = -40f, width = 520f, height = 560f, visible = true),
+                store.loadPlacements()["Search"],
+            )
+            // Nothing banked yet, and the record round-trips at once: added breaks, the front, and the prune.
+            assertEquals(null, store.loadFrozenScreenBreaks())
+            val first = listOf(BankedBreak("20s", 1_000, 21_000), BankedBreak("5min", 100_000, 400_000))
+            store.saveFrozenScreenBreaks(first, untilMillis = 500_000, lineMillis = 550_000, pruneBeforeMillis = 0)
+            assertEquals(FrozenScreenBreaks(first, 500_000, 550_000), store.loadFrozenScreenBreaks())
+            store.saveFrozenScreenBreaks(listOf(BankedBreak("20s", 600_000, 620_000)), 700_000, 710_000, pruneBeforeMillis = 21_000)
+            assertEquals(
+                FrozenScreenBreaks(listOf(BankedBreak("5min", 100_000, 400_000), BankedBreak("20s", 600_000, 620_000)), 700_000, 710_000),
+                store.loadFrozenScreenBreaks(),
+                "the prune drops what ended at or before its floor",
+            )
             driver.close()
         } finally {
             dbFile.delete()

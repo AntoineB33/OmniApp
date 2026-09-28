@@ -26,8 +26,8 @@ import org.example.project.scheduler.state.SchedulerState
  * The two rules being tested are the two halves of "grey means the scheduler places nothing here":
  *  - a grey period overrides every TASK PANEL it covers, on-screen or off-screen (a no-screen period still
  *    only overrides the on-screen ones — §9 lets an off-screen task run inside one);
- *  - a hand-laid period strips the RECORDS banked under its elapsed part right away, instead of waiting for
- *    the next engine start's [SchedulerIntent.StripNoScreenRecords] pass.
+ *  - a hand-laid period strips the RECORDS banked under its elapsed part right away — the user rewriting the
+ *    past, which is the one way besides the dynamic periods' own rule that the requirements let it change.
  *
  * The window itself is Compose-only state (the bounds it resolves arrive as ordinary intents), so what is
  * verifiable here is the reducer side plus the "∞" sentinels the window writes.

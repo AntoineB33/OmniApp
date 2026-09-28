@@ -12,6 +12,7 @@ import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.NewElementDefaults
+import org.example.project.scheduler.domain.PanelRepeats
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
@@ -164,6 +165,22 @@ object SchedulerReducer {
      * behaviour before this seam existed.
      */
     var tpMode: () -> Int = { DynamicPeriods.MODE_AT_SCREEN }
+
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past*: **the screen breaks the line has already banked**
+     * ([org.example.project.scheduler.domain.FrozenScreenBreaks]) — every fill places the three continuing from
+     * them, so nothing a fill does can move a break behind the line. The engine owns the record (it banks it as the
+     * line advances, `SchedulerEngine`), exactly as it owns [noScreenEvidence]. The default is none: a shell with no
+     * engine re-derives the past off the environment, which is the behaviour before this seam existed.
+     */
+    var frozenScreenBreaks: () -> org.example.project.scheduler.domain.FrozenScreenBreaks? = { null }
+
+    /**
+     * PRD §15: the "Look away now" the engine is conducting right now, as the dynamic period it is
+     * ([SchedulerDomain.conductingBreakPeriod]) — part of the one break environment every placement reads. None by
+     * default.
+     */
+    var conductingBreak: () -> org.example.project.scheduler.domain.RestrictivePeriod? = { null }
 
     /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
@@ -468,7 +485,9 @@ object SchedulerReducer {
                 reduceRemoveCategoryRule(state, intent.categoryId, intent.scopeCellId)
             SchedulerIntent.DismissCategoryRuleError ->
                 if (state.categoryRuleError == null) state else state.copy(categoryRuleError = null)
-            is SchedulerIntent.RecordConductedBreak -> reduceRecordConductedBreak(state, intent)
+            // A break that vanishes with it gives its hole back to the task on both sides: a record change,
+            // committed as the advance commits the records it banks.
+            is SchedulerIntent.RecordConductedBreak -> commitRecordChanges(state, reduceRecordConductedBreak(state, intent))
             is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
             is SchedulerIntent.SetPeriodCompanions -> reduceSetPeriodCompanions(state, intent.kind, intent.companions)
@@ -523,6 +542,7 @@ object SchedulerReducer {
                 abandonable(state) {
                     reduceExtendSchedule(
                         state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.generation,
+                        intent.seeds,
                     )
                 }
             is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
@@ -577,7 +597,6 @@ object SchedulerReducer {
             is SchedulerIntent.RemoveTaskPanels -> reduceRemoveTaskPanels(state, intent.ids)
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
-            is SchedulerIntent.StripNoScreenRecords -> reduceStripNoScreenRecords(state, intent.ranges)
             is SchedulerIntent.FocusWindow -> reduceFocusWindow(state, intent.window, intent.instance)
             is SchedulerIntent.SetCalendarFocus ->
                 reduceFocusWindow(state, if (intent.focused) HistoryWindow.Calendar else HistoryWindow.Tree, "")
@@ -2213,6 +2232,7 @@ object SchedulerReducer {
                 // PRD §8: a period the user drew is a pre-placed thing, so the calendar's pin box reads
                 // CHECKED on it. `pinned` stays false all the same — see [derivePinned]'s overload.
                 pins = PanelPins(existence = true),
+                repeat = org.example.project.scheduler.model.PanelRepeat.of(intent.repeatEveryDays, null),
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
         val laid = resolvedPanels.firstOrNull { it.id == panelId } ?: panel
@@ -2475,6 +2495,25 @@ object SchedulerReducer {
         state: SchedulerState,
         intent: SchedulerIntent.UpdateTaskPanel,
     ): SchedulerState {
+        // `docs/scheduler_requirements.md`: an occurrence of a repeating panel is derived, so editing one edits the
+        // PATTERN — its first occurrence moved by as much as this one was, and resized like it.
+        PanelRepeats.baseIdOf(intent.id)?.let { baseId ->
+            val base = state.panels.firstOrNull { it.id == baseId } ?: return state
+            val occurrence =
+                state.panels.firstOrNull { it.id == intent.id }
+                    ?: PanelRepeats.indexOf(intent.id)?.let { PanelRepeats.occurrence(base, it, kotlinx.datetime.TimeZone.currentSystemDefault()) }
+                    ?: return state
+            val shift = intent.startEpochMillis - occurrence.startEpochMillis
+            val length = intent.endEpochMillis - intent.startEpochMillis
+            return reduceUpdateTaskPanel(
+                state,
+                intent.copy(
+                    id = baseId,
+                    startEpochMillis = base.startEpochMillis + shift,
+                    endEpochMillis = base.startEpochMillis + shift + length,
+                ),
+            )
+        }
         val panels = state.panels
         val index = panels.indexOfFirst { it.id == intent.id }
         if (index < 0) return state
@@ -2503,6 +2542,9 @@ object SchedulerReducer {
                 pins = intent.pins,
                 auto = false,
                 layoutWeight = weight,
+                repeat =
+                    if (intent.repeatEveryDays == null) existing.repeat
+                    else org.example.project.scheduler.model.PanelRepeat.of(intent.repeatEveryDays, existing.repeat?.untilMillis),
             )
         val (resolved, resolvedPanels) =
             resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
@@ -2556,7 +2598,9 @@ object SchedulerReducer {
     }
 
     /** PRD §8 "Remove": delete a panel (undoable calendar delta). */
-    private fun reduceRemoveTaskPanel(state: SchedulerState, id: String): SchedulerState {
+    private fun reduceRemoveTaskPanel(state: SchedulerState, idIn: String): SchedulerState {
+        // An occurrence of a repeating panel is derived: removing one removes the pattern it belongs to.
+        val id = PanelRepeats.baseIdOf(idIn) ?: idIn
         val panels = state.panels
         if (panels.none { it.id == id }) return state
         return commitPanels(state, panels.filterNot { it.id == id }, label = "Remove panel")
@@ -2659,6 +2703,8 @@ object SchedulerReducer {
                 nowMillis,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
                 rulesSink = { rules = it },
@@ -2712,8 +2758,14 @@ object SchedulerReducer {
                 nowMillis,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
+                // A plan this device already holds for these rules is definitive as far as it is materialized: the
+                // rules taken in are laid past it, never over it.
+                keepExistingUntilMillis =
+                    if (intent.keepHead) SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis) else null,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
                 adoptedPlacements = intent.placements,
@@ -2913,6 +2965,7 @@ object SchedulerReducer {
         horizonCapMillis: Long? = null,
         searchMillis: Long = 0,
         generation: Long = 0L,
+        seeds: List<List<RulePlacement>> = emptyList(),
     ): SchedulerState {
         if (abandoned(generation)) throw PlanAbandoned()
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
@@ -2930,11 +2983,14 @@ object SchedulerReducer {
                 nowMillis,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
                 keepExistingUntilMillis = materializedUntil,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
+                extraSeeds = seeds,
                 searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 searchSink = { report, cost ->
                     search = report
@@ -2975,6 +3031,8 @@ object SchedulerReducer {
                 now,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
@@ -3009,6 +3067,8 @@ object SchedulerReducer {
                 now,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
@@ -3016,23 +3076,6 @@ object SchedulerReducer {
             )
         return updated.copy(panels = filled, scheduleCycle = cycle)
     }
-
-    /**
-     * PRD §9/§12 retroactive: apply the "assume nothing happened" rule to work banked BEFORE that rule could
-     * see the OS lock history — subtract [ranges] from every ON-SCREEN task's record and materialize the
-     * removed spans as "Inactivity" panels, exactly as the banking path does going forward.
-     *
-     * Off-screen tasks are untouched: they are ALLOWED to run in a no-screen period (PRD §9), so their records
-     * over one are true. Same reason [appendRecordOutsideNoScreen] banks their whole span.
-     *
-     * Refills for the same reason [reduceRemoveRecordPeriod] does: the records are the frozen past the lags
-     * are replayed from, so removing some genuinely changes the plan, and the engine's signature watcher cannot see it.
-     * Returns the same instance when nothing was covered, so the start-up pass is a no-op on a clean account.
-     */
-    private fun reduceStripNoScreenRecords(
-        state: SchedulerState,
-        ranges: List<TaskTimeRange>,
-    ): SchedulerState = stripRecords(state, ranges, affects = { it.onScreen })
 
     /**
      * PRD §8/§9/§12: the same rule the moment a period is **laid by hand** rather than at the next engine
@@ -3059,7 +3102,7 @@ object SchedulerReducer {
     }
 
     /**
-     * Subtracts [ranges] from the record of every affected task (see [reduceStripNoScreenRecords] /
+     * Subtracts [ranges] from the record of every affected task (see
      * [stripRecordsUnderPeriod] for which tasks those are). What the strip vacates holds no panel: it is
      * idle time, and the calendar draws it as a DERIVED grey band. Nothing is materialized — a period the
      * user did not draw is never written into [SchedulerState.panels]. Returns the same instance when
@@ -3092,6 +3135,8 @@ object SchedulerReducer {
                 now,
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
@@ -4164,6 +4209,12 @@ private fun advanceSchedule(
  * no-screen period when the task is on-screen — the app assumes nothing happened on screen there, so
  * that part reads as past inactivity instead of completed work. An off-screen task (allowed inside a
  * no-screen period) banks the whole span.
+ *
+ * `docs/scheduler_requirements.md`: the three dynamic periods are of the kind "no task allowed", so a task is
+ * never recorded as having run inside one the line has banked ([SchedulerReducer.frozenScreenBreaks]) — unless it
+ * was given a resilience to that kind. The record is what happened, and the banked break is too: without this a plan
+ * built around another placement of the breaks (a plan made by an earlier build, or before the environment moved)
+ * banked its work straight across a break the calendar then drew over it.
  */
 private fun appendRecordOutsideNoScreen(
     tasks: Map<TaskId, Task>,
@@ -4173,10 +4224,18 @@ private fun appendRecordOutsideNoScreen(
     endMillis: Long,
 ): Map<TaskId, Task> {
     if (taskId == null || endMillis <= startMillis) return tasks
-    val onScreen = tasks[taskId]?.onScreen ?: true
-    if (!onScreen || noScreenRanges.isEmpty()) return appendRecordMap(tasks, taskId, startMillis, endMillis)
+    val task = tasks[taskId]
+    val onScreen = task?.onScreen ?: true
+    val refusedByBreaks = (task?.resilienceFor(PeriodKinds.INACTIVITY) ?: 0.0) <= 0.0
+    val breaks =
+        if (!refusedByBreaks) emptyList()
+        else SchedulerReducer.frozenScreenBreaks()?.let { it.breaks + it.pending }.orEmpty()
+            .filter { it.endMillis > startMillis && it.startMillis < endMillis }
+            .map { TaskTimeRange(it.startMillis, it.endMillis) }
+    val excluded = (if (onScreen) noScreenRanges else emptyList()) + breaks
+    if (excluded.isEmpty()) return appendRecordMap(tasks, taskId, startMillis, endMillis)
     var out = tasks
-    for (piece in SchedulerDomain.subtractRegions(listOf(TaskTimeRange(startMillis, endMillis)), noScreenRanges)) {
+    for (piece in SchedulerDomain.subtractRegions(listOf(TaskTimeRange(startMillis, endMillis)), SchedulerDomain.mergeOccupied(excluded))) {
         out = appendRecordMap(out, taskId, piece.startEpochMillis, piece.endEpochMillis)
     }
     return out
@@ -4354,7 +4413,7 @@ private fun reduceRecordConductedBreak(
         }
     if (already) return state
     val (panelId, allocated) = state.allocatePanelId()
-    return allocated.copy(
+    val recorded = allocated.copy(
         panels = allocated.panels + TaskPanel(
             id = panelId,
             taskId = null,
@@ -4369,6 +4428,106 @@ private fun reduceRecordConductedBreak(
             conductedBreak = true,
         ),
     )
+    return withVanishedBreaksBridged(state, recorded, intent)
+}
+
+/**
+ * User spec 2026-09-27: a conducted break re-anchors the recurrence bars, so pressing "Look away now" just before
+ * a 20 s look-away falls due makes that look-away disappear — once the press completes it is behind the line, or
+ * straddles it. What it leaves is a hole the plan cut around a break that is no longer there. When ONE task's
+ * boxes touch both of its edges ([SchedulerDomain.taskTouchingBothEdges]), **the break is replaced by that task**:
+ *  - its plan panel ending at the hole (an auto panel the line has not banked yet) is stretched across it, so the
+ *    two panels of the task meet and read as one block — the advance banks it like any other when it elapses;
+ *  - otherwise (the side before is already a record) the elapsed part of the hole is banked on the task's record
+ *    (outside any no-screen stretch, as every banking is) and joined to the record it touches, and the part still
+ *    ahead of the line pulls the task's next auto panel back onto the line.
+ *
+ * A hole with two different tasks, or nothing, on its sides is left as it is — and nothing a user placed is
+ * moved. Which breaks vanished is asked the calendar's way, before and after the conducted panel
+ * ([SchedulerDomain.vanishedPastBreaks]), over the bars' longest reach behind the line.
+ */
+private fun withVanishedBreaksBridged(
+    before: SchedulerState,
+    after: SchedulerState,
+    intent: SchedulerIntent.RecordConductedBreak,
+): SchedulerState {
+    val now = intent.endEpochMillis
+    val evidence = SchedulerReducer.noScreenEvidence()
+    val holes =
+        SchedulerDomain.vanishedPastBreaks(
+            before,
+            after,
+            fromMillis = now - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
+            // What the calendar draws behind the line: a break that began before it, straddling it included.
+            toMillis = now - 1,
+            tpMillis = now,
+            liveRest = SchedulerReducer.liveRestGap(),
+            noScreenEvidence = evidence,
+            mode = SchedulerReducer.tpMode(),
+            frozen = SchedulerReducer.frozenScreenBreaks(),
+            conducting = SchedulerReducer.conductingBreak(),
+        )
+    if (holes.isEmpty()) return after
+    val noScreenRanges = noScreenRangesFor(after, evidence)
+    val tolerance = SchedulerDomain.BREAK_EDGE_TOLERANCE_MILLIS
+    var working = after
+    for (hole in holes) {
+        val taskId = SchedulerDomain.taskTouchingBothEdges(working, hole) ?: continue
+        fun planPanel(edge: Long, atEnd: Boolean) =
+            working.panels.firstOrNull {
+                it.auto && !it.pinned && it.taskId == taskId &&
+                    kotlin.math.abs((if (atEnd) it.endEpochMillis else it.startEpochMillis) - edge) <= tolerance
+            }
+        val leftPanel = planPanel(hole.startEpochMillis, atEnd = true)
+        if (leftPanel != null) {
+            working = working.copy(
+                panels = working.panels.map { if (it.id == leftPanel.id) it.copy(endEpochMillis = hole.endEpochMillis) else it },
+            )
+            continue
+        }
+        var tasks = working.tasks
+        val elapsedEnd = minOf(hole.endEpochMillis, now)
+        if (elapsedEnd > hole.startEpochMillis) {
+            tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, hole.startEpochMillis, elapsedEnd)
+            tasks = withRecordsJoinedAt(tasks, taskId, hole)
+        }
+        val rightPanel = planPanel(hole.endEpochMillis, atEnd = false).takeIf { hole.endEpochMillis > now }
+        val panels =
+            if (rightPanel == null) {
+                working.panels
+            } else {
+                val from = maxOf(hole.startEpochMillis, now)
+                working.panels.map { if (it.id == rightPanel.id) it.copy(startEpochMillis = from) else it }
+            }
+        working = working.copy(tasks = tasks, panels = panels)
+    }
+    return working
+}
+
+/**
+ * [taskId]'s records at [hole] — the ones reaching it within [SchedulerDomain.BREAK_EDGE_TOLERANCE_MILLIS] — joined
+ * wherever they touch or overlap, so a bridged break reads as one box, not three abutting ones. The task's other
+ * records are left exactly as they are.
+ */
+private fun withRecordsJoinedAt(tasks: Map<TaskId, Task>, taskId: TaskId, hole: TaskTimeRange): Map<TaskId, Task> {
+    val task = tasks[taskId] ?: return tasks
+    val tolerance = SchedulerDomain.BREAK_EDGE_TOLERANCE_MILLIS
+    val (atHole, elsewhere) =
+        task.record.partition {
+            it.endEpochMillis >= hole.startEpochMillis - tolerance && it.startEpochMillis <= hole.endEpochMillis + tolerance
+        }
+    if (atHole.size < 2) return tasks
+    val joined = ArrayList<TaskTimeRange>(atHole.size)
+    for (range in atHole.sortedBy { it.startEpochMillis }) {
+        val last = joined.lastOrNull()
+        if (last != null && range.startEpochMillis <= last.endEpochMillis + SchedulerDomain.BREAK_EDGE_TOLERANCE_MILLIS) {
+            joined[joined.lastIndex] = TaskTimeRange(last.startEpochMillis, maxOf(last.endEpochMillis, range.endEpochMillis))
+        } else {
+            joined += range
+        }
+    }
+    if (joined.size == atHole.size) return tasks
+    return tasks + (taskId to task.copy(record = (elsewhere + joined).sortedBy { it.startEpochMillis }))
 }
 
 /**

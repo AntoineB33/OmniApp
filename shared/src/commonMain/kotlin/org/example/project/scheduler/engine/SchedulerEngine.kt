@@ -280,6 +280,15 @@ private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
  */
 private const val MAX_SWEEP_STEPS: Int = 2_000
 
+// How far ahead of the line a journey's plan is made at a time ([SchedulerEngine.planJourney]).
+private const val JOURNEY_PLAN_STEP_MILLIS: Long = 24L * 60L * 60L * 1000L
+
+// How far back the banking reads the recorded work a break may not be banked over — past the walk's own reach.
+private const val BANK_WORK_LOOKBACK_MILLIS: Long = 3L * 24L * 60L * 60L * 1000L
+
+// How often, in REAL time, the line's position is written with the banked screen breaks when nothing else moved.
+private const val FROZEN_LINE_PERSIST_MILLIS: Long = 20_000L
+
 /**
  * PRD §9/§12: how often the engine re-reads the OS lock/standby history that feeds
  * [SchedulerReducer.noScreenEvidence]. Reading it costs a process launch (a PowerShell query on Windows), so it
@@ -467,6 +476,9 @@ class SchedulerEngine(
     // without a row a restart erases the stretch from the layer, the hatch and the §9 record bank alike.
     // Null keeps the old in-memory-only behaviour (a store without the capability, e.g. web).
     private val declaredAwayStore: DeclaredAwayStore? = null,
+    // `docs/scheduler_requirements.md` § *frozen past*: LOCAL-ONLY store for the screen breaks the line has banked
+    // ([_frozenBreaks]). Null keeps the record in memory only (a store without the capability, e.g. web).
+    private val frozenBreakStore: org.example.project.scheduler.persistence.FrozenScreenBreakStore? = null,
     // PRD §15: store for the active-session intervals — this device's own rows (the beat writes them) plus
     // the peers' rows the manual Sync button pulls in. The input to the "Inactivity" bands / "Sleep"-band
     // carve / live-rest placement and the calendar's per-panel device sets. Null disables activity tracking.
@@ -679,6 +691,25 @@ class SchedulerEngine(
     /** The start of the open "I'm away" stretch, or null while the button is off. */
     val declaredAwaySince: StateFlow<Long?> = _declaredAwaySince.asStateFlow()
 
+    // `docs/scheduler_requirements.md` § *frozen past*: the three dynamic periods the line has BANKED, and the front
+    // they are the whole answer up to ([SchedulerDomain.bankScreenBreaks]). Written at every advance of the line
+    // ([bankScreenBreaks]), read by every placement: the reducer's fills ([SchedulerReducer.frozenScreenBreaks]),
+    // the cue sweep, the published pause-cue rules and the calendar. PERSISTED locally ([frozenBreakStore]),
+    // never synced.
+    private val _frozenBreaks =
+        MutableStateFlow(runCatching { frozenBreakStore?.loadFrozenScreenBreaks() }.getOrNull())
+
+    /** The banked screen breaks — the calendar draws the past from them and continues the walk from their front. */
+    val frozenBreaks: StateFlow<org.example.project.scheduler.domain.FrozenScreenBreaks?> = _frozenBreaks.asStateFlow()
+
+    // PRD §15: the "Look away now" being conducted right now, as the dynamic period it is from the press
+    // ([SchedulerDomain.conductingBreakPeriod]) — null while none runs. Part of the one break environment every
+    // placement reads, so a look-away falling due during it is absorbed rather than laid (and banked) over it.
+    private val _conductingBreak = MutableStateFlow<org.example.project.scheduler.domain.RestrictivePeriod?>(null)
+
+    /** The look-away being conducted right now, for the calendar's break environment. */
+    val conductingBreak: StateFlow<org.example.project.scheduler.domain.RestrictivePeriod?> = _conductingBreak.asStateFlow()
+
     // The RAW platform lock signal ([screenActive], unmasked by the away flag or the debug leap) as of the last
     // sample — the only thing the away flag's automatic clearing is read from (see [noteScreenSignal]). A
     // MutableStateFlow rather than a plain field because the two samplers sit on different threads: the
@@ -798,6 +829,15 @@ class SchedulerEngine(
         // `side-dev/README.md` § *$t_p$ 3 modes*: mode 1 while a device of the account is unlocked, mode 2
         // otherwise. Read at fill time from the same account-wide pause the calendar draws ([tpModeNow]).
         SchedulerReducer.tpMode = { tpModeNow() }
+        // `docs/scheduler_requirements.md` § *frozen past*: every fill continues from the banked screen breaks.
+        val frozenSeam: () -> org.example.project.scheduler.domain.FrozenScreenBreaks? = { _frozenBreaks.value }
+        SchedulerReducer.frozenScreenBreaks = frozenSeam
+        SchedulerReducer.conductingBreak = { _conductingBreak.value }
+        // The seam is process-wide; a record that outlived its engine would be read by whoever reduces next (an
+        // engine is scoped to the app on both hosts, so this only ever runs when a host or a test tears it down).
+        scope.coroutineContext[Job]?.invokeOnCompletion {
+            if (SchedulerReducer.frozenScreenBreaks === frozenSeam) SchedulerReducer.frozenScreenBreaks = { null }
+        }
         // PRD §9 / `docs/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
         // plan out to $t_{goal}$ — the end of the timeline the calendar shows, or `now + 10 min` if further.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
@@ -807,8 +847,8 @@ class SchedulerEngine(
         // …and whether the fill running right now is still the one this engine wants (see [planGeneration]).
         // Generation 0 is the in-reducer re-plans answering a press: never abandoned.
         SchedulerReducer.planAbandoned = { generation -> generation != 0L && generation != planGeneration }
+        catchUpAfterNotRunning()
         launchNoScreenEvidenceScan()
-        launchRetroactiveNoScreenStrip()
         launchAdvanceTick()
         launchRuleChangeReschedule()
         launchTaskTreeBlendReschedule()
@@ -1171,7 +1211,7 @@ class SchedulerEngine(
 
     // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt. Moves the
     // display now-line AND advances the schedule (the leap/device-sleep path wants both at once).
-    private fun advanceTo(now: Long) {
+    internal fun advanceTo(now: Long) {
         _nowMillis.value = now
         dispatchScheduleAdvance(now)
     }
@@ -1192,7 +1232,11 @@ class SchedulerEngine(
         // work plan out of a purely time-driven event. The calendar does not need it: `App.kt` projects the
         // screen-break markers for DISPLAY itself, from the same live-pause overlay, so what is drawn keeps
         // moving with the pause; and the cue sweep keys on the poses' fixed due instants, not on panels.
+        // The breaks first: a record is banked minus every break the line has banked over its span, so the break an
+        // elapsing panel ran across has to be in the record before the panel is.
+        bankScreenBreaks(now)
         vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
+        guardPlanAtLine(now)
         // PRD §17: the Sleep toggle auto-wakes when its scheduled wake instant lapses mid-session — finalize
         // the sleep session as a past "Sleep" panel (reduceSetSleepMode) and stop suppressing the pause cue.
         current.sleepingUntilMillis?.let { until -> if (now >= until) vm.setSleepMode(null) }
@@ -1527,8 +1571,21 @@ class SchedulerEngine(
         val previous = sweepMode
         var steps = 0
         var widened = false
+        // How far the plan the journey walks is materialized. A journey in a fixed mode (a wake) starts by making the
+        // plan for that mode, from its first instant — the rules are parameterized by the mode, and the plan in force
+        // was made for the one the line was in before it (and a device sleep has just dropped its tail) — and
+        // extends it as the line reaches its front: *"the current set of rules … is used to define the schedule as
+        // the now line does its fast move"*. Without it the whole swept stretch was left with no task, even where a
+        // task resilient to "no on-screen task" could run (§ *No idling*).
+        var plannedUntil = Long.MAX_VALUE
         try {
             var cursor = fromMillis
+            if (mode != null) {
+                sweepMode =
+                    if (awaySpans.any { it.startEpochMillis <= cursor && cursor < it.endEpochMillis }) DynamicPeriods.MODE_ON_BREAK
+                    else mode
+                plannedUntil = planJourney(cursor, toMillis, replan = true)
+            }
             while (cursor < toMillis) {
                 // The mode HERE, not the mode the journey set out in: a stretch the account spent on a declared
                 // break is mode 3, and the poses in it were taken rather than dragged.
@@ -1547,19 +1604,39 @@ class SchedulerEngine(
                         .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
                         .filter { it > cursor }
                         .minOrNull() ?: toMillis
-                cursor = minOf(toMillis, edge, cursor + maxOf(step, even, 1L))
+                if (mode != null && cursor >= plannedUntil) plannedUntil = planJourney(cursor, toMillis, replan = false)
+                // A step never passes the plan's front either: the line walks over the plan, and the plan can only be
+                // extended from where the line is.
+                val next = minOf(toMillis, edge, cursor + maxOf(step, even, 1L), plannedUntil)
+                cursor = next
                 advanceTo(cursor)
                 steps++
             }
         } finally {
             sweepMode = previous
         }
+        // The landing: the line is back in the live mode, whose plan applies from the arrival on.
+        if (mode != null) requestReschedule(local = true)
         if (widened) {
             Diagnostics.log(
                 "now-line swept ${(toMillis - fromMillis) / 60_000}min in $steps step(s) " +
                     "(stride widened past the minimum execution time to stay inside $MAX_SWEEP_STEPS)",
             )
         }
+    }
+
+    /**
+     * The plan a journey walks, made (or extended) in line as of [lineMillis] in the journey's mode, out to a day
+     * ahead of the line or the arrival plus a first stage, whichever is nearer. Returns how far it is materialized.
+     */
+    private fun planJourney(lineMillis: Long, journeyEndMillis: Long, replan: Boolean): Long {
+        val cap = minOf(journeyEndMillis + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS, lineMillis + JOURNEY_PLAN_STEP_MILLIS)
+        vm.dispatch(
+            if (replan) SchedulerIntent.RefreshSchedule(lineMillis, cap)
+            else SchedulerIntent.ExtendSchedule(lineMillis, cap),
+        )
+        // What the reducer capped the fill at — its own reading of the goal, not a second one of it here.
+        return minOf(cap, SchedulerReducer.scheduleHorizonEndMillis(lineMillis)).coerceAtLeast(lineMillis + 1)
     }
 
     /**
@@ -1763,11 +1840,14 @@ class SchedulerEngine(
         // would start naming different breaks.
         val now = clock.nowMillis()
         val st = vm.state.value
+        val env = breakEnvNow(st, now)
         val windows = SchedulerDomain.poseWindowsBetween(
             screenBreaks = st.screenBreaks,
             nowMillis = now,
-            basePeriods = dynamicPeriodBaseNow(st),
-            tasks = SchedulerDomain.planTasksOf(st, now),
+            basePeriods = env.periods,
+            blocks = env.blocks,
+            tasks = env.tasks,
+            frozen = env.frozen,
         )
         // On the REAL wall clock, like every other instant the server is given: a device on an accelerated
         // debug clock must not report sim-ahead windows against server-stamped `now()`.
@@ -1962,10 +2042,11 @@ class SchedulerEngine(
      * either case stamp [lastRescheduleMillis]. Every re-plan path goes through here so "the last scheduling"
      * means one thing, whichever event triggered it.
      */
-    private fun requestReschedule(now: Long = clock.nowMillis()) {
+    private fun requestReschedule(now: Long = clock.nowMillis(), local: Boolean = false) {
         lastRescheduleMillis = now
-        if (vm.state.value.automaticSchedule) replan()
-        else pendingReschedule = true
+        if (!vm.state.value.automaticSchedule) pendingReschedule = true
+        else if (local) dispatchProgressivePlan(replan = true)
+        else replan()
     }
 
     /**
@@ -2051,7 +2132,7 @@ class SchedulerEngine(
                 val searchMillis = if (searchUseful) stageSearchMillis(span, remaining) else 0L
                 val intent =
                     if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds, generation)
-                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation)
+                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation, if (first) seeds else emptyList())
                 lastPlanSearch = null
                 val mark = TimeSource.Monotonic.markNow()
                 runPlan(intent)
@@ -2154,15 +2235,18 @@ class SchedulerEngine(
                     dispatchProgressivePlan(replan = true, lead = lead)
                     if (lead == null) coordinator?.notePlannedLocally(signature.value, clock.nowMillis())
                 },
-                adopt = { rules -> adoptRules(rules) },
+                adopt = { rules, keepHead -> adoptRules(rules, keepHead) },
                 currentRules = { election -> rulesMessage(election, 0) },
                 newElectionId = { "${gateway.deviceId}:${Random.nextLong().toULong().toString(36)}" },
                 elapsed = { monotonic.elapsedNow().inWholeMilliseconds },
                 ownPlan = { futurePlacements(vm.state.value, clock.nowMillis()) },
                 replanWithSeeds = { lead, placements ->
                     peerDisplayedEndMillis = lead.displayedEndMillis
+                    // An EXTENSION with the other plan as a seed, never a re-plan from the line: this device has
+                    // already published a stage of these rules, and what it made definitive stays so. The two
+                    // compete on the score from the materialized front on.
                     dispatchProgressivePlan(
-                        replan = true,
+                        replan = false,
                         lead = lead,
                         seeds = listOf(placements.map { p ->
                             RulePlacement(
@@ -2205,7 +2289,7 @@ class SchedulerEngine(
     }
 
     /** Take the elected device's rules in: what this device's own re-plan would have been, without the search. */
-    private fun adoptRules(rules: PeerMessage.Rules) {
+    private fun adoptRules(rules: PeerMessage.Rules, keepHead: Boolean) {
         progressivePlan?.cancel()
         lastRescheduleMillis = clock.nowMillis()
         val placements =
@@ -2217,7 +2301,9 @@ class SchedulerEngine(
             }
         Diagnostics.log("scheduler peers: adopting ${placements.size} runs from ${rules.from} (${rules.election} stage ${rules.stage})")
         progressivePlan = scope.launch {
-            runPlan(SchedulerIntent.AdoptScheduleRules(clock.nowMillis(), placements, rules.cycle?.toModel(), rules.horizonMillis))
+            runPlan(
+                SchedulerIntent.AdoptScheduleRules(clock.nowMillis(), placements, rules.cycle?.toModel(), rules.horizonMillis, keepHead),
+            )
         }
     }
 
@@ -2251,14 +2337,128 @@ class SchedulerEngine(
      * 2026-08-29 — the bars walk a timeline in which the user has been at the screen without interruption
      * since the placement origin, and a pose falls due inside the hour a real pause bars it in.
      */
-    private fun dynamicPeriodBaseNow(state: SchedulerState) =
-        SchedulerDomain.dynamicPeriodBase(
-            panels = state.panels,
-            config = state.periodKindConfig,
-            liveRest =
-                SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis()),
+    private fun breakEnvNow(
+        state: SchedulerState,
+        nowMillis: Long = clock.nowMillis(),
+        untilMillis: Long = nowMillis + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS,
+        mode: Int = tpModeNow(nowMillis),
+    ) =
+        SchedulerDomain.breakEnvironment(
+            state = state,
+            nowMillis = nowMillis,
+            untilMillis = untilMillis,
+            timeZone = tz,
+            liveRest = SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, nowMillis),
             noScreenEvidence = _noScreenEvidence.value,
+            mode = mode,
+            frozen = _frozenBreaks.value,
+            conducting = _conductingBreak.value,
         )
+
+    // The mismatch [guardPlanAtLine] last re-planned for, so one mismatch is answered once: the fill is the
+    // authority, and a check that disagrees with its answer must not ask it again at every tick.
+    private var lastPlanMismatch: List<Any?>? = null
+
+    /**
+     * `docs/scheduler_requirements.md` § *No idling*: **the plan at the line still matches the rules there**
+     * ([SchedulerDomain.planMismatchAtLine]) — or it is re-planned, from the line, at once and on this device.
+     *
+     * The rules are parameterized by the line: where a break falls can move as the line advances (the chain rule
+     * pulls a pose back onto the start of the stretch the line is in), and a plan built around the old placement is
+     * then either empty where somebody may run or running a task inside a break. This is the rules being evaluated
+     * where the line now is, not time re-planning: it fires only on a mismatch, once per mismatch, and never while a
+     * plan is already on its way. During a journey ([sweepMode]) the re-plan is made in line, as of the step.
+     */
+    private fun guardPlanAtLine(now: Long) {
+        if (progressivePlan?.isActive == true) return
+        val state = vm.state.value
+        val mode = tpModeNow(now)
+        val mismatch =
+            SchedulerDomain.planMismatchAtLine(state, now, mode, breakEnvNow(state, now, now + 1, mode), tz) ?: run {
+                lastPlanMismatch = null
+                return
+            }
+        if (mismatch == lastPlanMismatch) return
+        lastPlanMismatch = mismatch
+        Diagnostics.log("plan at the line no longer matches the rules there (${mismatch.first()}): re-planning from the line")
+        lastRescheduleMillis = now
+        if (sweepMode != null) {
+            vm.dispatch(SchedulerIntent.RefreshSchedule(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS))
+        } else {
+            dispatchProgressivePlan(replan = true)
+        }
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past*: **bank the screen breaks the line has just passed**
+     * ([SchedulerDomain.bankScreenBreaks]), in the mode that holds where the line is — the one writer of
+     * [_frozenBreaks]. Called at every advance of the line, so a journey (a wake, a debug leap) banks each step
+     * in the mode it was walked in. A no-op when nothing new elapsed; persisted only when the record moved.
+     */
+    private fun bankScreenBreaks(now: Long) {
+        val state = vm.state.value
+        val previous = _frozenBreaks.value
+        val mode = tpModeNow(now)
+        val env = breakEnvNow(state, now, now, mode)
+        val next =
+            SchedulerDomain.bankScreenBreaks(
+                state.screenBreaks, previous, now, env.periods, env.blocks, env.tasks, mode,
+                recordedWork = SchedulerDomain.recordedRefusedWork(state, now - BANK_WORK_LOOKBACK_MILLIS, now),
+            )
+        if (next == previous) return
+        _frozenBreaks.value = next
+        val before = previous?.breaks.orEmpty().toHashSet()
+        val added = next.breaks.filter { it !in before }
+        // A new break or a moved front is written at once; the line's own position only every
+        // [FROZEN_LINE_PERSIST_MILLIS] of REAL time — it is what a restart reads to know how long nothing ran, and a
+        // write per tick under an accelerated clock would buy nothing but disk traffic.
+        val realNow = SystemAppClock.nowMillis()
+        if (added.isEmpty() && next.untilMillis == previous?.untilMillis &&
+            realNow - lastFrozenPersistRealMillis < FROZEN_LINE_PERSIST_MILLIS
+        ) {
+            return
+        }
+        lastFrozenPersistRealMillis = realNow
+        runCatching {
+            frozenBreakStore?.saveFrozenScreenBreaks(
+                added, next.untilMillis, next.lineMillis, now - SchedulerDomain.SCREEN_BREAK_HISTORY_RETENTION_MILLIS,
+            )
+        }.onFailure { Diagnostics.log("screen-break history: could not persist (${it.message})") }
+    }
+
+    // The real instant the banked record was last written ([bankScreenBreaks]).
+    private var lastFrozenPersistRealMillis = Long.MIN_VALUE
+
+    /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a stretch nothing ran in is
+     * WALKED, not jumped — *"it is similar to a case where no CPU were available during this period"*, in mode 2. A
+     * device sleep is detected by the tick loop; an app that was not RUNNING at all is detected here, before anything
+     * is launched that could bank — otherwise the first advance banked the whole of the old plan as work done while
+     * nothing ran (seven hours of it on account 3, 2026-09-27, with the breaks drawn over it).
+     *
+     * Where the line last was is the latest of what this device persisted while it ran: the banked record's line, the
+     * end of its own last active session, the end of the last work recorded (any recorded work was banked by a line
+     * that had passed it). The mode-3 stretches of the journey are the ones this device recorded; the server is not
+     * asked, since nothing may be banked while it answers.
+     */
+    private fun catchUpAfterNotRunning() {
+        val now = clock.nowMillis()
+        val state = vm.state.value
+        val recorded = state.tasks.values.maxOfOrNull { t -> t.record.maxOfOrNull { it.endEpochMillis } ?: Long.MIN_VALUE }
+        val session =
+            runCatching { activeSessionStore?.loadActiveSessions() }.getOrNull()
+                ?.filter { it.deviceId == activeSessionDeviceId }?.maxOfOrNull { it.endMillis }
+        val lastLine =
+            listOfNotNull(_frozenBreaks.value?.lineMillis, session, recorded?.takeIf { it != Long.MIN_VALUE })
+                .filter { it <= now }.maxOrNull() ?: return
+        if (now - lastLine <= DEVICE_SLEEP_THRESHOLD_MILLIS) return
+        Diagnostics.log(
+            "the app was not running for ${(now - lastLine) / 60_000}min (${Diagnostics.formatInstant(lastLine)}): " +
+                "walking the line there",
+        )
+        val away = _declaredAwaySpans.value.filter { it.endEpochMillis > lastLine && it.startEpochMillis < now }
+        reportTimeGap(lastLine, now, away)
+    }
 
     /**
      * `side-dev/README.md` § *$t_p$ 3 modes*: **the mode the now-line is in, right now** — the one reading,
@@ -2311,7 +2511,11 @@ class SchedulerEngine(
             .drop(1)
             .collect {
                 Diagnostics.log("t_p mode is now $it (${tpModeReason(it)})")
-                requestReschedule()
+                // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the rules are parameterized by the mode,
+                // so the plan for the mode the line is in NOW applies from the flip — at once, on this device. It
+                // is not a rule change: no election (whose deadline would leave the old mode's plan standing for
+                // seconds), no debounce. Every device answers its own flip the same deterministic way.
+                requestReschedule(local = true)
             }
     }
 
@@ -2512,39 +2716,6 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §9/§12 retroactive: apply the no-screen rule ONCE, at start-up, to work banked before the rule could
-     * see the OS lock history at all.
-     *
-     * Until [SchedulerReducer.noScreenEvidence] existed the rule keyed on hand-drawn "No screen" panels alone,
-     * and the only thing that creates one is the §8 contextual-menu action — so on an account where the user
-     * had never drawn one it never fired, and the app banked records straight through a machine its own OS
-     * reported asleep (account 3: 43 h across 206 records). Going forward the scan prevents that; this repairs
-     * what is already stored.
-     *
-     * Runs over the DISPLAYED past ([SchedulerDomain.SCHEDULE_HORIZON_MILLIS] back, the same floor the calendar
-     * uses) and is naturally idempotent — once the covered records are gone there is nothing left to subtract,
-     * so a later launch reduces to a no-op and returns the same state instance.
-     */
-    private fun launchRetroactiveNoScreenStrip() = scope.launch {
-        val now = clock.nowMillis()
-        val since = now - SchedulerDomain.SCHEDULE_HORIZON_MILLIS
-        val observed = readNoScreenEvidence(since, now)
-        if (observed.isEmpty()) return@launch
-        val before = vm.state.value
-        vm.dispatch(SchedulerIntent.StripNoScreenRecords(observed))
-        val after = vm.state.value
-        if (after === before) return@launch
-        // scripts/collect-diagnostics.bat: this REMOVES recorded work, so it must be visible in the timeline
-        // rather than silently changing every priority percentage.
-        fun recorded(state: SchedulerState): Long =
-            state.tasks.values.sumOf { task -> task.record.sumOf { it.endEpochMillis - it.startEpochMillis } }
-        Diagnostics.log(
-            "retroactive no-screen strip: removed ${(recorded(before) - recorded(after)) / 60_000}min of " +
-                "on-screen records over ${observed.size} observed no-screen span(s)",
-        )
-    }
-
-    /**
      * PRD §9/§12: keep [_noScreenEvidence] fresh — the OS lock/standby history of every device kind that can be
      * asked, intersected into the stretches nobody was at a screen for.
      *
@@ -2740,6 +2911,7 @@ class SchedulerEngine(
                     // does the task cue below — a second `tpModeNow` call could answer differently mid-sweep
                     // and let the two disagree about the very same instant.
                     val mode = tpModeNow(simNow)
+                    val sweepEnv = breakEnvNow(st, simNow, simNow + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS, mode)
                     val crossings = SchedulerDomain.cueCrossings(
                         screenBreaks = st.screenBreaks,
                         windDownInstants = windDownInstants,
@@ -2750,8 +2922,10 @@ class SchedulerEngine(
                         // PRD §14: the calendar's own reminder tags — the placement the user sees, never a
                         // second derivation of the recurrence.
                         reminderTags = st.panels,
-                        basePeriods = dynamicPeriodBaseNow(st),
-                        tasks = SchedulerDomain.planTasksOf(st, simNow),
+                        basePeriods = sweepEnv.periods,
+                        blocks = sweepEnv.blocks,
+                        tasks = sweepEnv.tasks,
+                        frozen = sweepEnv.frozen,
                         // ...and the mode, because half that reading is the AT-LINE run: the 20 s look-away
                         // is never dragged, so its cue keys on where it really falls, and where a POSE the
                         // line is dragging falls is what decides that.
@@ -3044,15 +3218,18 @@ class SchedulerEngine(
                     // `lastRest + interval`, which the bars no longer put anything at: the sweep found no next
                     // boundary at all and stopped.
                     val eligible = st.screenBreaks.filter { st.automaticSchedule || !it.restBreak }
+                    val nextEnv = breakEnvNow(st, simNow)
                     val nextBreak =
                         SchedulerDomain.screenBreakCueOccurrencesBetween(
                             screenBreaks = eligible,
                             fromMillis = simNow,
                             toMillis = simNow + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS,
                             nowMillis = simNow,
-                            basePeriods = dynamicPeriodBaseNow(st),
-                            tasks = SchedulerDomain.planTasksOf(st, simNow),
+                            basePeriods = nextEnv.periods,
+                            blocks = nextEnv.blocks,
+                            tasks = nextEnv.tasks,
                             mode = tpModeNow(simNow),
+                            frozen = nextEnv.frozen,
                         )
                             .map { it.startEpochMillis }
                             .filter { it > simNow && it !in announcedStarts }
@@ -3099,6 +3276,10 @@ class SchedulerEngine(
             // it runs out into (PRD §15), so the window is measured before the cue rather than after it, and
             // `resumeAt` is re-read from the clock below so the recorded occurrence is unchanged.
             val startedAt = clock.nowMillis()
+            val conducting = SchedulerDomain.conductingBreakPeriod(lookAway.title, startedAt, lookAway.durationMillis)
+            _conductingBreak.value = conducting
+            // Superseded or finished, it stops being the one in progress; a finished one is recorded below.
+            coroutineContext[Job]?.invokeOnCompletion { _conductingBreak.compareAndSet(conducting, null) }
             notifyUser(
                 "Screen break",
                 SchedulerDomain.screenBreakStartNotificationMessage(

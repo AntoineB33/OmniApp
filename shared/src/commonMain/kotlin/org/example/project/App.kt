@@ -526,6 +526,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                     declaredAwayStore = store as? DeclaredAwayStore,
+                    frozenBreakStore = store as? org.example.project.scheduler.persistence.FrozenScreenBreakStore,
                     activeSessionStore = store as? ActiveSessionStore,
                     pauseCue = vm.pauseCue,
                     // `docs/invariants/scheduler.md` § *One device plans*: the account's broadcast channel.
@@ -663,6 +664,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // the hatching, which are asked over the whole scrolled span; the bars deliberately share the engine's,
         // or the calendar would draw a break at an instant the app does not announce one at.
         val observedNoScreenEvidence by engine.noScreenEvidence.collectAsState()
+        // `docs/scheduler_requirements.md` § *frozen past*: the screen breaks the line has banked — the calendar
+        // draws the past from them and every placement continues from their front.
+        val frozenBreaks by engine.frozenBreaks.collectAsState()
+        val conductingBreak by engine.conductingBreak.collectAsState()
         // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
         // since a chord another application already owns is otherwise indistinguishable from a broken app.
         val globalHotkeyClaim by GlobalHotkeys.claim.collectAsState()
@@ -1455,7 +1460,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var farWeekCalculating by remember { mutableStateOf(false) }
         // Keyed on the displayed END, not on `goalEndMillis`: beyond the ceiling the two are the same instant,
         // and below it the goal's ten-minute floor rolls with every now-tick.
-        LaunchedEffect(visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis) {
+        // Re-derived when the RULES change (a far week showing the plan of rules the user has since edited is
+        // not the scheduler's answer), when the mode flips and when the environment the breaks read moves — the
+        // same inputs, with the same values, the engine's own fills get.
+        val farMode =
+            SchedulerDomain.tpMode(
+                SchedulerDomain.anyDeviceUnlockedAt(inactivityGaps, inactiveSince, activeSince, nowMillis),
+                awayDeclared = userAway || accountAway,
+            )
+        val farSignature = remember(schedulerState) { SchedulerDomain.schedulingSignature(schedulerState) }
+        LaunchedEffect(
+            visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis,
+            farSignature, farMode, frozenBreaks, observedNoScreenEvidence, inactiveSince, activeSince,
+        ) {
             if (!visibleSpanBeyondNearHorizon) {
                 farWeekPlan = null
                 farWeekCalculating = false
@@ -1471,8 +1488,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 withContext(Dispatchers.Default) {
                     SchedulerDomain.fillSchedule(
                         schedulerState, nowMillis, timeZone = tz, horizonMillis = goalEndMillis,
+                        liveRest = SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
                         noScreenEvidence = observedNoScreenEvidence,
                         keepExistingUntilMillis = SchedulerDomain.firstFreeMoment(schedulerState.panels, nowMillis),
+                        tpMode = farMode,
+                        frozenBreaks = frozenBreaks,
                     )
                 }
             farWeekPlan = fill
@@ -1480,8 +1500,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // The source for the calendar's real task BLOCKS: the near panels as usual, or the async far-week fill
         // (falling back to the near panels while it is still computing, so past/pinned blocks stay visible).
+        // `docs/scheduler_requirements.md`: pre-placed tasks and restrictive periods can repeat for ever, so every
+        // occurrence of one over the displayed span is drawn — derived here like everywhere else it is asked for.
+        val planPanels = if (visibleSpanBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
+        // Held on what it reads, so the memos keyed on this list see the same instance until one of those moves.
         val workPlanPanels =
-            if (visibleSpanBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
+            remember(planPanels, visibleSpanStartMillis, visibleSpanEndMillis, tz) {
+                org.example.project.scheduler.domain.PanelRepeats.expand(
+                    planPanels, visibleSpanStartMillis - 24L * 60 * 60 * 1000, visibleSpanEndMillis, tz,
+                )
+            }
 
         // PRD §8 "locked on task": the instant held at the middle of the calendar — the task's panel closest to the
         // now-line, re-read whenever the panels or the display's now move (a panel the line drags, a new set of
@@ -1538,7 +1566,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // reminder regeneration are functions of the panels, the breaks, the §17 windows and the PLAN's view
         // of the tasks ([SchedulerDomain.planTasksOf] carries a task's priority, minimum and resilience, and
         // no title), none of which a rename moves. Held here, typing pays only what it actually changed.
-        val dynamicBaseMemo = remember { CalendarDisplayMemo<List<RestrictivePeriod>>() }
+        val dynamicBaseMemo = remember { CalendarDisplayMemo<SchedulerDomain.BreakEnvironment>() }
         val pastSidePanelsMemo = remember { CalendarDisplayMemo<List<TaskPanel>>() }
         val sidePanelsMemo = remember { CalendarDisplayMemo<List<TaskPanel>>() }
         val reminderPanelsMemo = remember { CalendarDisplayMemo<List<TaskPanel>>() }
@@ -1607,113 +1635,107 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // standing restrictive periods (the user's own and the §17 sleep windows) and the tasks, which is
             // what decides whether a stretch is a REST (nobody can run there) or merely a period somebody is
             // resilient to.
-            val displayDynamicBase =
-                dynamicBaseMemo.get(
-                    listOf(
-                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tz,
-                        schedulerState.panels, schedulerState.periodKindStyles, schedulerState.sleep,
-                        inactiveSince, activeSince, observedNoScreenEvidence,
-                    ),
-                ) {
-                Perf.measure("display.dynamicBase") {
-                SchedulerDomain.restrictivePeriodsOf(schedulerState.panels, schedulerState.periodKindConfig) +
-                    // The live pause reaches the recurrence bars as the rest stretch it is (see
-                    // [SchedulerDomain.liveRestPeriod]), so the grid moves with a user who has walked away.
-                    listOfNotNull(
-                        SchedulerDomain.liveRestPeriod(
-                            SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
-                        ),
-                    ) +
-                    // ...and a pause that has already ENDED reaches them the same way, off what the devices
-                    // observed — the live gap covers only the one this device is in the middle of, and a restart
-                    // clears even that.
-                    SchedulerDomain.observedNoScreenPeriods(observedNoScreenEvidence) +
-                    // PRD §17: and the §17 windows and wind-down hours over the visible span, projected because it
-                    // may run past the fill's horizon, where `schedulerState.panels` holds neither — each WITH the
-                    // companion periods its kind carries.
-                    SchedulerDomain.projectedSleepPeriods(
-                        schedulerState,
-                        visibleSpanStartMillis - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
-                        visibleSpanEndMillis,
-                        tz,
-                    )
-                }
-                }
             val displayDynamicTasks =
                 Perf.measure("display.planTasks") { SchedulerDomain.planTasksOf(schedulerState, nowMillis) }
+            // `side-dev/README.md` § *3 Dynamic Restrictive Period*: the three are placed by the recurrence bars
+            // over the environment they interrupt, and the display asks the ONE funnel the fill, the cue sweep and
+            // the banking ask ([SchedulerDomain.breakEnvironment]) — so a break drawn here is the break the plan
+            // was built around, however far ahead the calendar looks. It reaches to the end of the displayed span,
+            // and continues from the breaks the line has banked ([frozenBreaks]).
+            val breakEnvUntil = maxOf(nowMillis, visibleSpanEndMillis)
+            val displayBreakEnv =
+                dynamicBaseMemo.get(
+                    listOf(
+                        nowMillis, breakEnvUntil, tz, tpMode,
+                        schedulerState.panels, schedulerState.periodKindStyles, schedulerState.sleep,
+                        inactiveSince, activeSince, observedNoScreenEvidence, frozenBreaks, displayDynamicTasks,
+                        conductingBreak,
+                    ),
+                ) {
+                    Perf.measure("display.dynamicBase") {
+                        SchedulerDomain.breakEnvironment(
+                            state = schedulerState,
+                            nowMillis = nowMillis,
+                            untilMillis = breakEnvUntil,
+                            timeZone = tz,
+                            liveRest = SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
+                            noScreenEvidence = observedNoScreenEvidence,
+                            mode = tpMode,
+                            frozen = frozenBreaks,
+                            tasks = displayDynamicTasks,
+                            conducting = conductingBreak,
+                        )
+                    }
+                }
             // `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: the elapsed part of the visible
-            // window — what the three dynamic periods DID over a stretch the line has already crossed.
-            //
-            // It is the same placement, asked about a window that has gone by, with the same environment the
-            // forward call gets (the live pause included) and the real now-line as $t_p$ — which is what decides
-            // whether anything is there at all. In mode 1 a POSE the line reached was pushed ahead of it and never
-            // happened, so a stretch crossed at the screen holds task panels and no pose; a pose shows where the
-            // line crossed it in mode 2. A 20 s LOOK-AWAY always shows: it is never dragged
-            // (`DynamicPeriods.dragsAtLine`) because the app assumes the user looked away as it fell due, so the
-            // line crossed it and it stays drawn where it happened — as does one the app CONDUCTED and recorded
-            // (which is pre-placed, and so is never dragged either).
-            //
-            // Bounded to the VISIBLE days (CLAUDE.md: hot-path display derivations scale with the screen, not with
-            // total history) and stopping one millisecond short of `now`, so this and the forward projection below
-            // can never draw the same occurrence twice.
+            // window — what the three dynamic periods DID over a stretch the line has already crossed. Behind the
+            // banked front that is the banked record ([SchedulerDomain.bankScreenBreaks]), whatever its age; from
+            // the front to the line it is the same walk, at the line.
             val displayPastSidePanels =
                 pastSidePanelsMemo.get(
                     listOf(
                         nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tpMode,
-                        schedulerState.screenBreaks, displayDynamicBase, displayDynamicTasks,
+                        schedulerState.screenBreaks, displayBreakEnv,
                     ),
                 ) {
-                Perf.measure("display.pastSidePanels") {
-                SchedulerDomain.takenScreenBreakPanels(
-                    schedulerState.screenBreaks,
-                    visibleSpanStartMillis,
-                    minOf(nowMillis - 1, visibleSpanEndMillis),
-                    basePeriods = displayDynamicBase,
-                    tasks = displayDynamicTasks,
-                    tpMillis = nowMillis,
-                    mode = tpMode,
-                )
+                    Perf.measure("display.pastSidePanels") {
+                        if (visibleSpanStartMillis >= nowMillis) {
+                            emptyList()
+                        } else {
+                            SchedulerDomain.takenScreenBreakPanels(
+                                schedulerState.screenBreaks,
+                                visibleSpanStartMillis,
+                                minOf(nowMillis - 1, visibleSpanEndMillis),
+                                basePeriods = displayBreakEnv.periods,
+                                blocks = displayBreakEnv.blocks,
+                                tasks = displayBreakEnv.tasks,
+                                anchorMillis = nowMillis,
+                                tpMillis = nowMillis,
+                                mode = tpMode,
+                                frozen = displayBreakEnv.frozen,
+                            )
+                        }
+                    }
                 }
-                }
-            // The three over the visible span. Which half the calendar is looking at decides which question is
-            // asked, and the split is the `t_p` line: a span containing the present is the past behind the line
-            // plus the projection ahead of it, both asked AT the line so the two modes apply; a span entirely in
-            // the FUTURE is a window the line is not in, so nothing there is being dragged or covered and it is
-            // reconstructed from the bars alone.
-            //
-            // That is also a hot-path rule (CLAUDE.md / ADR 0009): projecting from `now` to a distant week would
-            // generate every occurrence in between — at a shrunk break interval ([DebugFlags.breakIntervalMillisOverride])
-            // tens of thousands of markers pushed through the O(n²) placement scan, which froze the app when a
-            // far day was opened. Both branches are bounded by the VISIBLE days.
+            // The three ahead of the line are ONE walk from the line to the end of the displayed span, whatever
+            // the span: a week the calendar has navigated to is where the walk that starts at the line puts them
+            // — never a grid restarted at the week's own edge, which is a different grid (it put breaks where the
+            // plan had not cut its holes). Past the 168 h ceiling the far-week fill below makes that walk off the
+            // UI thread and its breaks are taken from it, so the plan and the breaks drawn come out of one call.
             val displaySidePanels =
                 sidePanelsMemo.get(
                     listOf(
                         nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tpMode,
-                        schedulerState.screenBreaks, displayDynamicBase, displayDynamicTasks,
-                        displayPastSidePanels,
+                        schedulerState.screenBreaks, displayBreakEnv, displayPastSidePanels,
+                        visibleSpanBeyondNearHorizon, farWeekPlan,
                     ),
                 ) {
-                Perf.measure("display.sidePanels") {
-                if (visibleSpanStartMillis <= nowMillis) {
-                    displayPastSidePanels +
-                        SchedulerDomain.screenBreakPanels(
-                            screenBreaks = schedulerState.screenBreaks,
-                            nowMillis = nowMillis,
-                            horizonMillis = visibleSpanEndMillis,
-                            basePeriods = displayDynamicBase,
-                            tasks = displayDynamicTasks,
-                            mode = tpMode,
-                        ).filter { it.startEpochMillis >= nowMillis }
-                } else {
-                    SchedulerDomain.screenBreakPanelsInWindow(
-                        screenBreaks = schedulerState.screenBreaks,
-                        fromMillis = visibleSpanStartMillis,
-                        toMillis = visibleSpanEndMillis,
-                        basePeriods = displayDynamicBase,
-                        tasks = displayDynamicTasks,
-                    )
-                }
-                }
+                    Perf.measure("display.sidePanels") {
+                        val ahead =
+                            when {
+                                visibleSpanEndMillis <= nowMillis -> emptyList()
+                                visibleSpanBeyondNearHorizon ->
+                                    farWeekPlan.orEmpty().filter {
+                                        it.screenBreak && it.startEpochMillis >= nowMillis &&
+                                            it.endEpochMillis > visibleSpanStartMillis &&
+                                            it.startEpochMillis < visibleSpanEndMillis
+                                    }
+                                else ->
+                                    SchedulerDomain.screenBreakPanels(
+                                        screenBreaks = schedulerState.screenBreaks,
+                                        nowMillis = nowMillis,
+                                        horizonMillis = visibleSpanEndMillis,
+                                        basePeriods = displayBreakEnv.periods,
+                                        blocks = displayBreakEnv.blocks,
+                                        tasks = displayBreakEnv.tasks,
+                                        mode = tpMode,
+                                        frozen = displayBreakEnv.frozen,
+                                    ).filter {
+                                        it.startEpochMillis >= nowMillis && it.endEpochMillis > visibleSpanStartMillis
+                                    }
+                            }
+                        displayPastSidePanels + ahead
+                    }
                 }
 
             // PRD §15: a screen break the now-line has REACHED is a period accepting no task, and in `t_p` mode 1
@@ -2036,7 +2058,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // away spell are the same thing said two ways — the user's own word about who was at a
                     // screen — while everything in [layerAssertedAll] is the APP promising something.
                     val layerStated =
-                        SchedulerDomain.assertedLayerRanges(schedulerState.panels, layer, periodKindConfig)
+                        SchedulerDomain.assertedLayerRanges(workPlanPanels, layer, periodKindConfig)
                     val regions =
                         SchedulerDomain.layerRegions(
                             lockedIntervals = layerLocked,
@@ -2885,6 +2907,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 noScreenResilienceForTaskId = { id ->
                                     schedulerState.tasks[id]?.resilienceFor(PeriodKinds.NO_SCREEN)
                                 },
+                                // The pattern of the panel this block is (an occurrence reads its pattern's).
+                                initialRepeatDays = repeatDaysOf(schedulerState.panels, block.entryId),
                                 onDismiss = { close() },
                                 // PRD §8: the bin — the menu's "Remove" now lives in the window that names
                                 // what it deletes.
@@ -2892,8 +2916,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     removeBlockIntent(block)?.let(vm::dispatch)
                                     close()
                                 },
-                                onSave = { taskId, title, startMillis, endMillis, pins, noScreenResilience ->
-                                    commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins)
+                                onSave = { taskId, title, startMillis, endMillis, pins, noScreenResilience, repeatDays ->
+                                    commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins, repeatEveryDays = repeatDays)
                                         ?.let(vm::dispatch)
                                     // `side-dev/README.md`: the task's resilience to "no on-screen task",
                                     // saved alongside the panel — the one thing the old pair of switches
@@ -2936,10 +2960,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                                 close()
                                             }
                                         },
-                                onSave = { start, end ->
+                                initialRepeatDays = repeatDaysOf(schedulerState.panels, draft.blocks.firstOrNull { it.entryId != null }?.entryId),
+                                onSave = { start, end, repeatDays ->
                                     if (draft.blocks.isEmpty()) {
                                         // `side-dev/README.md`: one intent lays a period of any kind.
-                                        vm.dispatch(SchedulerIntent.AddRestrictivePeriod(draft.kind, start, end))
+                                        vm.dispatch(SchedulerIntent.AddRestrictivePeriod(draft.kind, start, end, repeatDays))
                                     } else {
                                         // Every period the row stands for takes the new bounds — one for an
                                         // ordinary period, two where a "no screen" stretch is spelt as the
@@ -2951,6 +2976,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                                     // period's own override rule over its new span.
                                                     commitBoundsIntent(
                                                         block, null, block.title, start, end, block.pins,
+                                                        repeatEveryDays = repeatDays,
                                                     )
                                                 } else {
                                                     // A DERIVED band: the app was reporting this stretch and
@@ -2959,7 +2985,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                                     // the row's: a wind-down hour materializes as
                                                     // `before bed`, never as plain inactivity.
                                                     SchedulerIntent.AddRestrictivePeriod(
-                                                        block.restrictiveKind.ifBlank { draft.kind }, start, end,
+                                                        block.restrictiveKind.ifBlank { draft.kind }, start, end, repeatDays,
                                                     )
                                                 }
                                             intent?.let(vm::dispatch)
@@ -3764,6 +3790,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 private data class TaskPickerRequest(val anchor: ScreenPoint?, val openedAtMillis: Long)
 
 /**
+ * `docs/scheduler_requirements.md`: how often the panel [entryId] recurs, in days (0: once) — an occurrence of a
+ * repeating panel reads its pattern's.
+ */
+private fun repeatDaysOf(panels: List<TaskPanel>, entryId: String?): Int {
+    val id = entryId?.let { org.example.project.scheduler.domain.PanelRepeats.baseIdOf(it) ?: it } ?: return 0
+    return panels.firstOrNull { it.id == id }?.repeat?.everyDays ?: 0
+}
+
+/**
  * PRD §8 (uniform blocks): the intent that commits new bounds/title/pinned for any calendar [block].
  * A panel (it has an [PlacedRecord.entryId]) is updated in place; a green task-record block is pinned
  * into a new panel. Returns null when the block has no usable identity (defensive).
@@ -3776,13 +3811,15 @@ private fun commitBoundsIntent(
     endMillis: Long,
     pins: PanelPins,
     allowOverlap: Boolean = false,
+    /** How often the panel recurs, in days (0: once); null keeps whatever it does — a drag never changes it. */
+    repeatEveryDays: Int? = null,
 ): SchedulerIntent? {
     return when {
     // A merged block (several same-task panels shown as one): replace the whole group with one panel.
     block.entryIds.size > 1 ->
         SchedulerIntent.ReplaceTaskPanels(block.entryIds, taskId, title, startMillis, endMillis, pins, allowOverlap)
     block.entryId != null ->
-        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pins, allowOverlap)
+        SchedulerIntent.UpdateTaskPanel(block.entryId, taskId, title, startMillis, endMillis, pins, allowOverlap, repeatEveryDays)
     block.taskId != null ->
         SchedulerIntent.PinRecordAsPanel(
             recordTaskId = block.taskId,

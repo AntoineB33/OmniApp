@@ -22,7 +22,7 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  */
 class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
     SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore,
-    SleepScanCheckpointStore, DeclaredAwayStore, NetworkModeStore {
+    SleepScanCheckpointStore, DeclaredAwayStore, NetworkModeStore, FrozenScreenBreakStore {
     private val queries = database.schedulerQueries
 
     /** The account whose partition [load]/[save] read and write: the signed-in user, else "unclaimed". */
@@ -369,6 +369,28 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
 
     override fun saveSleepScanCheckpoint(scannedThroughMillis: Long) {
         queries.upsertSleepScanCheckpoint(scannedThroughMillis)
+    }
+
+    override fun loadFrozenScreenBreaks(): org.example.project.scheduler.domain.FrozenScreenBreaks? {
+        val front = queries.selectScreenBreakFront().executeAsOneOrNull() ?: return null
+        val breaks =
+            queries.selectScreenBreakHistory().executeAsList().map {
+                org.example.project.scheduler.domain.BankedBreak(it.label, it.start_ms, it.end_ms)
+            }
+        return org.example.project.scheduler.domain.FrozenScreenBreaks(breaks, front.until_ms, front.line_ms)
+    }
+
+    override fun saveFrozenScreenBreaks(
+        added: List<org.example.project.scheduler.domain.BankedBreak>,
+        untilMillis: Long,
+        lineMillis: Long,
+        pruneBeforeMillis: Long,
+    ) {
+        queries.transaction {
+            for (b in added) queries.insertScreenBreak(start_ms = b.startMillis, label = b.label, end_ms = b.endMillis)
+            queries.deleteScreenBreaksBefore(pruneBeforeMillis)
+            queries.upsertScreenBreakFront(untilMillis, lineMillis)
+        }
     }
 
     override fun loadOfflineChoice(): Boolean? = queries.selectNetworkMode().executeAsOneOrNull()?.let { it != 0L }

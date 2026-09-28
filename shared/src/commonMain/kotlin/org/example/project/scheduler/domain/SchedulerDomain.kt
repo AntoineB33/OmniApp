@@ -1827,6 +1827,15 @@ object SchedulerDomain {
      */
     const val SCHEDULE_PAST_LOOKBACK_CAP_MILLIS: Long = 90L * 24 * 60 * 60 * 1000
 
+    /** How far past its horizon a fill derives the occurrences of a repeating panel — past what its search reads. */
+    const val REPEAT_SEARCH_MARGIN_MILLIS: Long = 2L * 24 * 60 * 60 * 1000
+
+    /**
+     * How far behind the line a fill keeps a repeating panel's occurrences in its answer. Older ones are derived
+     * again wherever they are asked for (the calendar's past, the recurrence bars' walk), exactly like the newer.
+     */
+    const val REPEAT_KEEP_BEHIND_MILLIS: Long = 24L * 60 * 60 * 1000
+
     /**
      * PRD §15 display only: the floor under how far the calendar PROJECTS its forward bands (screen breaks,
      * sleep) past the now-line (24 hours). It is not a scheduling horizon — the plan's goal is
@@ -2505,6 +2514,166 @@ object SchedulerDomain {
             observedNoScreenPeriods(noScreenEvidence)
 
     /**
+     * Everything the recurrence bars read, as one value: the periods, the pre-placed blocks, the tasks, and the
+     * banked past the walk continues from.
+     */
+    data class BreakEnvironment(
+        val periods: List<RestrictivePeriod>,
+        val blocks: List<PlanBlock>,
+        val tasks: List<PlanTask>,
+        val frozen: FrozenScreenBreaks?,
+    )
+
+    /**
+     * `side-dev/README.md` § *3 Dynamic Restrictive Period*: **THE environment the three are placed over — the one
+     * funnel the fill, the calendar, the cue sweep, the published pause-cue due and the banking all ask**, so a
+     * break the calendar draws is the break the plan was built around and the break the app announces, however
+     * far ahead the calendar is looking.
+     *
+     * - **periods**: every standing period the panels hold ([restrictivePeriodsOf] — the user's own, a break the app
+     *   conducted, the materialized past sleep), the §17 windows and wind-down hours PROJECTED from [nowMillis] to
+     *   [untilMillis] ([projectedSleepPeriods]; the fill's own derived `sleep/…` and `before-bed/…` panels are left
+     *   out and re-projected, so a caller looking further than the last fill is not handed a timeline that stops at
+     *   its horizon), the live pause ([liveRestPeriod]) and what the devices observed ([observedNoScreenPeriods]).
+     *   An ONGOING pause is left out while the account is in mode 1: some device of the account is unlocked, so the
+     *   line is not covered by "no on-screen task", and this device's own pause is no rest of the account's.
+     * - **blocks**: the pre-placed tasks ([isSchedulerFixed]) — a pre-placed task is a task, so a stretch it fills is
+     *   not a rest.
+     * - **tasks**: the rule state at the line ([planTasksOf]).
+     */
+    fun breakEnvironment(
+        state: SchedulerState,
+        nowMillis: Long,
+        untilMillis: Long,
+        timeZone: TimeZone,
+        liveRest: LiveRest? = null,
+        noScreenEvidence: List<TaskTimeRange> = emptyList(),
+        mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozen: FrozenScreenBreaks? = null,
+        tasks: List<PlanTask> = planTasksOf(state, nowMillis),
+        /**
+         * A "Look away now" the app is conducting right now ([conductingBreakPeriod]): a dynamic period from the
+         * press, so a look-away falling due during it is absorbed rather than laid over it. It is recorded as the
+         * conducted panel it is once it completes; one that is superseded leaves no trace.
+         */
+        conducting: RestrictivePeriod? = null,
+    ): BreakEnvironment {
+        // Every occurrence of a repeating period or block over what the walk reads, from its start to [untilMillis].
+        val walkStart = dynamicWalkStartMillis(nowMillis, frozen?.takeIf { it.continuesAt(nowMillis) })
+        val panels = PanelRepeats.expand(state.panels, walkStart, maxOf(nowMillis, untilMillis), timeZone)
+        val standing =
+            panels.filterNot { (it.sleep && it.id.startsWith("sleep/")) || it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) }
+        val live = liveRest?.takeUnless { it.ongoing && mode == DynamicPeriods.MODE_AT_SCREEN }
+        val periods =
+            restrictivePeriodsOf(standing, state.periodKindConfig) +
+                projectedSleepPeriods(state, nowMillis, maxOf(nowMillis, untilMillis), timeZone) +
+                listOfNotNull(liveRestPeriod(live), conducting) +
+                observedNoScreenPeriods(noScreenEvidence)
+        return BreakEnvironment(periods, preplacedBlocks(panels), tasks, frozen)
+    }
+
+    /**
+     * PRD §15: the look-away the app is CONDUCTING ("Look away now"), from the press to its end — the one dynamic
+     * period that is on the timeline before it is recorded. `dynamic`, so it fires the README's first bar exactly as
+     * the recorded one will.
+     */
+    fun conductingBreakPeriod(title: String, startMillis: Long, durationMillis: Long): RestrictivePeriod =
+        RestrictivePeriod(startMillis, startMillis + durationMillis, PeriodKinds.INACTIVITY, title, dynamic = true)
+
+    /**
+     * `docs/scheduler_requirements.md` § *No idling*: **of the three as placed at the line ([atLine]), the ones the
+     * line will actually meet if the mode it is in holds** — what a plan may be built around.
+     *
+     * - **Mode 1**: a pose the line reaches is dragged and never happens, and a pose riding the line bars every
+     *   look-away behind it; so only the look-aways before the first pose (dragged or still due) will happen.
+     * - **Modes 2 & 3**: nothing is dragged; the three are where they are placed at the line.
+     *
+     * A flip is an edge the engine re-plans at; a placement the line moves in an away mode (the chain rule) is caught
+     * by the engine's check at the line (`SchedulerEngine`'s idle check).
+     */
+    fun breaksTheLineWillMeet(
+        screenBreaks: List<ScreenBreak>,
+        atLine: List<TaskPanel>,
+        nowMillis: Long,
+        mode: Int,
+    ): List<TaskPanel> {
+        if (DynamicPeriods.lineIsCoveredAt(mode)) return atLine
+        val lookAway = dynamicPeriodTitles(screenBreaks)[DynamicPeriods.LABEL_20S]
+        val firstPose =
+            atLine.filter { it.title != lookAway && it.endEpochMillis > nowMillis }.minOfOrNull { it.startEpochMillis }
+                ?: Long.MAX_VALUE
+        return atLine.filter { it.title == lookAway && !isDraggedScreenBreak(it) && it.startEpochMillis < firstPose }
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *No idling*, checked **at the line**: what the plan holds at [nowMillis]
+     * no longer matches what the rules say is there — or null when it does. Two ways, and only these:
+     *  - **idle**: no task at the line, no break the line is in, and somebody may run here — a break the plan was
+     *    built around has moved on (the requirements' chain rule pulls a pose back onto the start of the stretch
+     *    the line is in, in an away mode), or a period it planned around is gone;
+     *  - **a task inside a break**: a break the line is in refuses the auto task the plan put here.
+     *
+     * The answer is a KEY describing the mismatch, so a caller re-planning on it can tell the same mismatch from a
+     * new one and never re-plan twice for one (the fill is the authority; this only asks it again).
+     *
+     * The periods are the fill's own ([restrictivePeriodsOf], the §17 windows projected at the line, mode 1's
+     * retraction, the away modes' cover); a stretch the plan does not reach yet is the extension's, not this.
+     */
+    fun planMismatchAtLine(state: SchedulerState, nowMillis: Long, mode: Int, env: BreakEnvironment, timeZone: TimeZone): List<Any?>? {
+        if (!state.automaticSchedule) return null
+        val work = state.panels.filter { it.taskId != null && !it.chore && !it.isRestrictivePeriod }
+        val nextAuto = work.filter { it.auto && it.endEpochMillis > nowMillis }.minOfOrNull { it.startEpochMillis } ?: return null
+        val atLine = work.firstOrNull { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }
+        val breaksHere =
+            breaksTheLineWillMeet(
+                state.screenBreaks,
+                screenBreakPanels(state.screenBreaks, nowMillis, nowMillis + 1, env.periods, env.blocks, env.tasks, mode, env.frozen),
+                nowMillis,
+                mode,
+            ).filter { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }
+        val breakKey = breaksHere.map { it.title to it.startEpochMillis }
+        if (atLine != null) {
+            val task = atLine.taskId?.let { state.tasks[it] }
+            val refused = atLine.auto && !atLine.pinned && breaksHere.any { !periodAccepts(it, task) }
+            return if (refused) listOf("task inside a break", atLine.id, breakKey) else null
+        }
+        if (breaksHere.isNotEmpty()) return null
+        val standingPanels =
+            state.panels.filterNot { it.screenBreak || (it.sleep && it.id.startsWith("sleep/")) || it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) }
+        val standing =
+            restrictivePeriodsOf(standingPanels, state.periodKindConfig) +
+                projectedSleepPeriods(state, nowMillis, nowMillis + 1, timeZone)
+        val periods =
+            retractAtLine(standing, retractedAtLineSpans(standing, nowMillis, mode, state.periodKindConfig), state.periodKindConfig) +
+                listOfNotNull(
+                    RestrictivePeriod(nowMillis, nowMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
+                        .takeIf { DynamicPeriods.lineIsCoveredAt(mode) },
+                )
+        if (env.tasks.isEmpty() || !DynamicPeriods.Base(periods, env.blocks, env.tasks).anybodyAt(nowMillis)) return null
+        return listOf("idle", nextAuto)
+    }
+
+    /**
+     * The work recorded as done over `[fromMillis, toMillis)` by the tasks a dynamic period refuses (no resilience to
+     * `no task allowed`) — what a banked break may never overlap ([bankScreenBreaks], [FrozenScreenBreaks.overlapping]).
+     */
+    fun recordedRefusedWork(state: SchedulerState, fromMillis: Long, toMillis: Long): List<TaskTimeRange> =
+        state.tasks.values.asSequence()
+            .filter { it.resilienceFor(PeriodKinds.INACTIVITY) <= 0.0 }
+            .flatMap { it.record.asSequence() }
+            .filter { it.endEpochMillis > fromMillis && it.startEpochMillis < toMillis }
+            .toList()
+
+    /** The pre-placed tasks as the recurrence bars read them: every fixed task block ([isSchedulerFixed]). */
+    fun preplacedBlocks(panels: List<TaskPanel>): List<PlanBlock> =
+        panels.asSequence()
+            .filter { it.taskId != null && !it.chore && !it.isRestrictivePeriod && isSchedulerFixed(it) }
+            .map { PlanBlock(it.taskId, it.startEpochMillis, it.endEpochMillis) }
+            .filter { it.endMillis > it.startMillis }
+            .sortedBy { it.startMillis }
+            .toList()
+
+    /**
      * `side-dev/README.md` § *$t_p$ 3 modes* — **which mode the line is in**, and the one place it is decided.
      *
      * The rule is the user's, and it is two questions asked in order:
@@ -3040,6 +3209,7 @@ object SchedulerDomain {
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
         mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozen: FrozenScreenBreaks? = null,
     ): List<TaskPanel> =
         dynamicPeriodPanels(
             screenBreaks = screenBreaks,
@@ -3051,6 +3221,7 @@ object SchedulerDomain {
             tasks = tasks,
             mode = mode,
             anchorMillis = nowMillis,
+            frozen = frozen,
             // `nowMillis` IS $t_p$ here, so both modes apply. (The other caller that says so is
             // [takenScreenBreakPanels]: the elapsed window is behind the same line.)
             atLine = true,
@@ -3175,6 +3346,111 @@ object SchedulerDomain {
     const val DYNAMIC_PLACEMENT_LOOKBACK_MILLIS: Long = 4L * 60L * 60L * 1000L
 
     /**
+     * Where the recurrence bars' walk starts: the day-quantized origin ([dynamicPlacementOriginMillis]) of the
+     * banked front once the past is banked ([FrozenScreenBreaks]), of the anchor before. The bars are read off the
+     * record there, and at least a day of it is walked — far past the longest bar (two hours), and long enough for
+     * a stretch crossing the front to be measured whole.
+     *
+     * Anchored on the RECORD, not on the caller, so every question asked of one record walks one grid; and
+     * QUANTIZED to the day like the origin it replaces, because the front moves at every advance and a start
+     * that moved with it would carry every bar the record does not set (a pose never taken since the start) along
+     * with it — the undragged due of a pose owed all day slid by one tick at every tick, and was re-published each
+     * time.
+     */
+    fun dynamicWalkStartMillis(anchorMillis: Long, frozen: FrozenScreenBreaks?): Long =
+        dynamicPlacementOriginMillis(frozen?.untilMillis ?: anchorMillis)
+
+    /**
+     * `docs/scheduler_requirements.md` § *Strict Requirements*, exception 2: **how long the banked screen breaks are
+     * kept** ([FrozenScreenBreaks]). The same bound the frozen past is replayed over for the lags
+     * ([SCHEDULE_PAST_LOOKBACK_CAP_MILLIS]): past it, neither the plan nor anything that reads the breaks looks.
+     */
+    const val SCREEN_BREAK_HISTORY_RETENTION_MILLIS: Long = 90L * 24L * 60L * 60L * 1000L
+
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past*: **bank the dynamic periods the line has passed** — the one
+     * writer of [FrozenScreenBreaks], called as the line advances (and at every step of a journey it is walked
+     * on), with the mode that holds where it is.
+     *
+     * Every occurrence the walk AT THE LINE places, continuing from [frozen], that has wholly elapsed before the
+     * new front is appended. The front is the line, held back to the start of anything the past may still move:
+     *  * an occurrence the line is inside (it is not over, so it is not a fact yet);
+     *  * a "no on-screen task" chain the line is inside — *"when a 'no on-screen task' period touches the start
+     *    of a dynamic restrictive period, and that chain … ends somewhere in [now line; +infinity), the dynamic
+     *    restrictive period now starts at the start of this chain"* is the requirements' own rule for moving a
+     *    break behind the line, and it can only apply to a chain that has not ended.
+     * The front never moves back: what was banked stays banked, whatever the environment says later.
+     *
+     * **Nor is a break banked over work already recorded as done** ([recordedWork]: the records of the tasks a break
+     * refuses). The record is a fact of the past too, and a break the walk places over it is a break that did not
+     * happen — the plan was built around a different placement (made by an earlier build, or before the environment
+     * moved), and the line ran the task there. Going forward the record is the one that yields
+     * (`SchedulerReducer`'s record append leaves out every banked break), so this only ever meets work recorded
+     * before the break could be banked.
+     */
+    fun bankScreenBreaks(
+        screenBreaks: List<ScreenBreak>,
+        frozen: FrozenScreenBreaks?,
+        nowMillis: Long,
+        basePeriods: List<RestrictivePeriod>,
+        blocks: List<PlanBlock>,
+        tasks: List<PlanTask>,
+        mode: Int,
+        recordedWork: List<TaskTimeRange> = emptyList(),
+    ): FrozenScreenBreaks {
+        val floor = nowMillis - SCREEN_BREAK_HISTORY_RETENTION_MILLIS
+        val specs = dynamicPeriodSpecs(screenBreaks)
+        if (specs.isEmpty()) {
+            return FrozenScreenBreaks(
+                frozen?.breaks.orEmpty().filter { it.endMillis > floor }, maxOf(nowMillis, frozen?.untilMillis ?: nowMillis), nowMillis,
+            )
+        }
+        if (frozen != null && frozen.untilMillis >= nowMillis) return frozen
+        val continued = frozen?.takeIf { it.continuesAt(nowMillis) }
+        val start = dynamicWalkStartMillis(nowMillis, continued)
+        val base = DynamicPeriods.Base(basePeriods, blocks, tasks, continued?.toWalk(specs))
+        val placed =
+            DynamicPeriods.instances(
+                base, specs, start, nowMillis + 1, nowMillis, mode,
+                sweepFromMillis = start,
+                floorAtFrozen = true,
+            )
+        val previous = frozen?.untilMillis ?: Long.MIN_VALUE
+        var front = nowMillis
+        DynamicPeriods.chainReaching(base, nowMillis)?.let { front = minOf(front, it.startMillis) }
+        // Whatever straddles the front is not over; the front waits at its start. Repeated, because pulling the
+        // front back can land it inside an earlier occurrence.
+        while (true) {
+            val straddling =
+                placed.filter { it.coveredFromMillis < front && it.coveredUntilMillis > front }.minOfOrNull { it.coveredFromMillis }
+            if (straddling == null || straddling >= front) break
+            front = straddling
+        }
+        front = maxOf(front, previous)
+        // Recorded work wins only over a past no line saw — a first banking, or one after a stretch too long to continue
+        // from: there the walk re-derives breaks the plan was never built around. At the line the break wins (the
+        // record yields, `SchedulerReducer`'s record append): refusing the break there because the task panel under it
+        // had been recorded a few milliseconds into it left an overdue look-away unbanked for good, placed again at
+        // every tick's front and announced every thirty seconds (account 3, 2026-09-28 09:27).
+        val rederived = continued == null
+        val fresh =
+            placed.filter { it.coveredFromMillis >= previous && it.coveredUntilMillis <= front && !it.openStart }
+                .filter { inst ->
+                    !rederived ||
+                        recordedWork.none { it.startEpochMillis < inst.coveredUntilMillis && inst.coveredFromMillis < it.endEpochMillis }
+                }
+                .map { BankedBreak(it.spec.label, it.coveredFromMillis, it.coveredUntilMillis) }
+        val pending =
+            placed.filter { !it.openStart && it.coveredFromMillis >= front && it.coveredFromMillis < nowMillis }
+                .map { BankedBreak(it.spec.label, it.coveredFromMillis, it.coveredUntilMillis) }
+        val kept = frozen?.breaks.orEmpty()
+        val merged = (kept + fresh.filter { f -> kept.none { it.startMillis == f.startMillis && it.label == f.label } })
+            .filter { it.endMillis > floor }
+            .sortedBy { it.startMillis }
+        return FrozenScreenBreaks(merged, front, maxOf(nowMillis, frozen?.lineMillis ?: nowMillis), pending)
+    }
+
+    /**
      * The suffix a dynamic period's panel id carries when the now-line is **DRAGGING** it — the half-open
      * `(t_p, t_p + d]` that mode 1 pushes ahead of the line ([DynamicPeriods.Instance.openStart]).
      *
@@ -3229,12 +3505,18 @@ object SchedulerDomain {
          * bars' own answer, which is what the drag is defined *against*.
          */
         atLine: Boolean = false,
+        /** The banked past ([FrozenScreenBreaks]); null re-derives the whole past off the environment. */
+        frozen: FrozenScreenBreaks? = null,
     ): List<TaskPanel> {
         if (toMillis <= fromMillis) return emptyList()
         val specs = dynamicPeriodSpecs(screenBreaks)
         if (specs.isEmpty()) return emptyList()
-        val start = dynamicPlacementOriginMillis(anchorMillis)
-        val base = DynamicPeriods.Base(basePeriods, blocks, tasks)
+        // The walk continues from the record only where it can ([FrozenScreenBreaks.continuesAt]); the record still
+        // answers for the past it holds either way.
+        val continued = frozen?.takeIf { it.continuesAt(anchorMillis) }
+        val frozenWalk = continued?.toWalk(specs)
+        val start = dynamicWalkStartMillis(anchorMillis, continued)
+        val base = DynamicPeriods.Base(basePeriods, blocks, tasks, frozenWalk)
         val titleOfLabel = dynamicPeriodTitles(screenBreaks)
         val indexOfTitle = screenBreaks.withIndex().associate { (i, side) -> side.title to i }
         // What the line has SWEPT, which is the whole of mode 1: from the placement origin up to the line.
@@ -3259,9 +3541,15 @@ object SchedulerDomain {
             DynamicPeriods.instances(
                 base, specs, start, toMillis + 1, tpMillis, mode,
                 sweepFromMillis = if (atLine) start else tpMillis,
+                floorAtFrozen = atLine,
             )
+        // A window reaching behind the walk's start (a past week on the calendar) is answered by the banked
+        // record alone: it is the whole of what happened there.
+        val older =
+            frozen?.takeIf { it.untilMillis <= anchorMillis }?.toWalk(specs)?.instances.orEmpty()
+                .filter { it.coveredUntilMillis <= start }
         val breaks =
-            placed
+            (older + placed)
                 // The half-open `(t_p, t_p + duration]` of a dragged period, realized in the app's discrete
                 // millisecond time (see [DynamicPeriods.Instance.coveredFromMillis]) — so the instant `t_p`
                 // itself is genuinely left free, which is the whole of mode 1's rule.
@@ -3330,6 +3618,7 @@ object SchedulerDomain {
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
         anchorMillis: Long = fromMillis,
+        frozen: FrozenScreenBreaks? = null,
     ): List<TaskPanel> =
         dynamicPeriodPanels(
             screenBreaks = screenBreaks,
@@ -3340,6 +3629,7 @@ object SchedulerDomain {
             blocks = blocks,
             tasks = tasks,
             anchorMillis = anchorMillis,
+            frozen = frozen,
         )
 
     /**
@@ -3375,6 +3665,7 @@ object SchedulerDomain {
         /** The now-line. The elapsed window is behind it, so the line's own rules decide what happened in it. */
         tpMillis: Long = toMillis,
         mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozen: FrozenScreenBreaks? = null,
     ): List<TaskPanel> =
         dynamicPeriodPanels(
             screenBreaks = screenBreaks,
@@ -3387,7 +3678,75 @@ object SchedulerDomain {
             mode = mode,
             anchorMillis = anchorMillis,
             atLine = true,
+            frozen = frozen,
         )
+
+    /**
+     * The dynamic periods **behind the line** that a break the app has just CONDUCTED
+     * ([org.example.project.scheduler.state.SchedulerIntent.RecordConductedBreak], "Look away now") re-anchors
+     * out of existence: those [takenScreenBreakPanels] drew over `[fromMillis, toMillis)` over [before]'s panels
+     * and no longer draws over [after]'s. Asked with the calendar's own environment ([dynamicPeriodBase], the
+     * plan tasks, the line and its mode), so what vanishes here is what vanished from the calendar.
+     */
+    fun vanishedPastBreaks(
+        before: SchedulerState,
+        after: SchedulerState,
+        fromMillis: Long,
+        toMillis: Long,
+        tpMillis: Long,
+        liveRest: LiveRest? = null,
+        noScreenEvidence: List<TaskTimeRange> = emptyList(),
+        mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozen: FrozenScreenBreaks? = null,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        conducting: RestrictivePeriod? = null,
+    ): List<TaskTimeRange> {
+        fun past(state: SchedulerState): Set<TaskTimeRange> {
+            val env =
+                breakEnvironment(
+                    state, tpMillis, toMillis, timeZone, liveRest, noScreenEvidence, mode, frozen,
+                    conducting = conducting,
+                )
+            return takenScreenBreakPanels(
+                state.screenBreaks,
+                fromMillis,
+                toMillis,
+                basePeriods = env.periods,
+                blocks = env.blocks,
+                tasks = env.tasks,
+                anchorMillis = tpMillis,
+                tpMillis = tpMillis,
+                mode = mode,
+                frozen = frozen,
+            ).mapTo(HashSet()) { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        }
+        val gone = past(before) - past(after)
+        return gone.sortedBy { it.startEpochMillis }
+    }
+
+    /**
+     * How far apart a task's box may end before a vanished break (or start after it) and still count as
+     * **touching** its edge: the drag's half-open form moves an edge by one millisecond
+     * ([DynamicPeriods.Instance.coveredFromMillis]), and a second is far below anything the calendar can draw.
+     */
+    const val BREAK_EDGE_TOLERANCE_MILLIS: Long = 1_000L
+
+    /**
+     * The task a vanished break's hole belongs to: the ONE task whose calendar boxes
+     * ([calendarBoxesOfTask] — a banked record, or a panel not yet banked) end at the hole's start AND start at
+     * its end, each within [BREAK_EDGE_TOLERANCE_MILLIS]. Null when the two edges are two different tasks, or
+     * nothing — then the hole is not "the same task on both sides" and stays what it is.
+     */
+    fun taskTouchingBothEdges(state: SchedulerState, hole: TaskTimeRange): TaskId? {
+        fun near(a: Long, b: Long) = kotlin.math.abs(a - b) <= BREAK_EDGE_TOLERANCE_MILLIS
+        val before = HashSet<TaskId>()
+        val after = HashSet<TaskId>()
+        for ((taskId, boxes) in calendarBoxesByTask(state)) {
+            if (boxes.any { near(it.endEpochMillis, hole.startEpochMillis) }) before += taskId
+            if (boxes.any { near(it.startEpochMillis, hole.endEpochMillis) }) after += taskId
+        }
+        return (before intersect after).singleOrNull()
+    }
 
     /**
      * `side-dev/README.md`: the dynamic periods whose start falls in `[fromMillis, toMillis]` — the boundary
@@ -3416,6 +3775,7 @@ object SchedulerDomain {
         tasks: List<PlanTask> = emptyList(),
         /** The now-line. Defaults to the window's right edge, which is what the cue sweep's own is. */
         anchorMillis: Long = toMillis,
+        frozen: FrozenScreenBreaks? = null,
     ): List<TaskPanel> =
         dynamicPeriodPanels(
             screenBreaks = screenBreaks,
@@ -3426,6 +3786,7 @@ object SchedulerDomain {
             blocks = blocks,
             tasks = tasks,
             anchorMillis = anchorMillis,
+            frozen = frozen,
         ).filter { it.startEpochMillis in fromMillis..toMillis }
 
     /**
@@ -3465,6 +3826,7 @@ object SchedulerDomain {
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
         mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozen: FrozenScreenBreaks? = null,
     ): List<TaskPanel> {
         // Both runs are asked with the WHOLE list of breaks and the answer is selected from them afterwards.
         // Dropping the look-away from the due run (or the poses from the at-line one) would be a different
@@ -3480,6 +3842,7 @@ object SchedulerDomain {
                 blocks = blocks,
                 tasks = tasks,
                 anchorMillis = nowMillis,
+                frozen = frozen,
             ).filter { it.title in dragged }
         val lookAwayStarts =
             dynamicPeriodPanels(
@@ -3493,6 +3856,7 @@ object SchedulerDomain {
                 mode = mode,
                 anchorMillis = nowMillis,
                 atLine = true,
+                frozen = frozen,
             ).filter { it.title !in dragged && it.startEpochMillis in fromMillis..toMillis }
         return (poseDues + lookAwayStarts).sortedBy { it.startEpochMillis }
     }
@@ -3539,36 +3903,22 @@ object SchedulerDomain {
         screenBreaks: List<ScreenBreak> = emptyList(),
         tasks: Map<TaskId, Task> = emptyMap(),
     ): List<TaskPanel> {
-        // How far the break covering the now-line reaches. Walked transitively, because the 5↔15 merge and a
-        // look-away re-anchored onto a pose's edge can leave two touching markers: the plan resumes past the
-        // last of them, not inside the seam.
-        //
-        // The walk is seeded one millisecond PAST the line, not at it. `side-dev/README.md`'s mode 1 says the
-        // instant $t_p$ itself must stay free, so the period the line drags is the half-open
-        // `(t_p, t_p + duration]` — in the app's discrete time `[t_p + 1, …)`
-        // ([DynamicPeriods.Instance.coveredFromMillis]). Seeded at $t_p$ the walk asks for a band with
-        // `start <= t_p` and the dragged one starts at `t_p + 1`, so it found nothing: in mode 1 — every
-        // moment a device of the account is unlocked, i.e. the ordinary state of the app — this whole
-        // function returned the plan untouched and the parked look-away was drawn straight over the task
-        // panel the fill had placed under it.
-        var end = nowMillis
-        var cursor = nowMillis + 1
-        while (true) {
-            val next = breakPanels
-                .filter { it.startEpochMillis <= cursor && it.endEpochMillis > cursor }
-                .maxOfOrNull { it.endEpochMillis } ?: break
-            if (next <= end) break
-            end = next
-            cursor = next
-        }
-        if (end <= nowMillis) return panels
-        val chain = breakPanels.filter { it.endEpochMillis > nowMillis && it.startEpochMillis < end }
+        // EVERY break ahead of the line, not only the one sitting on it. The plan is built for the line going on
+        // in the mode it is in ([breaksTheLineWillMeet]): at the screen a pose the line reaches is dragged and
+        // never happens, so the plan runs straight through the poses ahead — and this clip is the whole of what
+        // makes each of them read as the period it is on screen, exactly as for the one the line is dragging.
+        // Every refusing region begins at or after the now-line (the dragged one at `t_p + 1`, the half-open
+        // `(t_p, t_p + d]`), so the clip only ever reaches forward.
+        val chain = breakPanels.filter { it.endEpochMillis > nowMillis }
+        if (chain.isEmpty()) return panels
+        val end = chain.maxOf { it.endEpochMillis }
         // What the chain refuses THIS task: `side-dev/README.md`'s resilience, and nothing else. A dynamic
         // period has no shape any more — it is one span of "no task allowed" end to end — so the question is
         // no longer "which part of the break is open" but the plain one every kind is asked: is this task's
         // resilience to that kind above zero? A task that IS resilient to it is not cut at all, and the
         // calendar draws that part hollow for exactly that reason.
-        fun refusedRegions(taskId: TaskId?): List<TaskTimeRange> {
+        val refusedByTask = HashMap<TaskId?, List<TaskTimeRange>>()
+        fun refusedRegions(taskId: TaskId?): List<TaskTimeRange> = refusedByTask.getOrPut(taskId) {
             val task = taskId?.let { tasks[it] }
             val out = mutableListOf<TaskTimeRange>()
             for (band in chain) {
@@ -3577,7 +3927,7 @@ object SchedulerDomain {
                 if (to <= from) continue
                 if (!periodAccepts(band, task)) out += TaskTimeRange(from, to)
             }
-            return mergeOccupied(out)
+            mergeOccupied(out)
         }
         return panels.flatMap { panel ->
             when {
@@ -3837,6 +4187,8 @@ object SchedulerDomain {
         tasks: List<PlanTask> = emptyList(),
         /** The `t_p` mode the line is in — the at-line run's half of the reading above is a function of it. */
         mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        /** The banked past the placement continues from ([FrozenScreenBreaks]). */
+        frozen: FrozenScreenBreaks? = null,
     ): List<CueCrossing> {
         val out = mutableListOf<CueCrossing>()
         val byTitle = screenBreaks.associateBy { it.title }
@@ -3844,7 +4196,7 @@ object SchedulerDomain {
         val announcedBreaks =
             if (DynamicPeriods.breaksAreNotifiedAt(mode)) {
                 screenBreakCueOccurrencesBetween(
-                    screenBreaks, fromMillis, toMillis, toMillis, basePeriods, blocks, tasks, mode,
+                    screenBreaks, fromMillis, toMillis, toMillis, basePeriods, blocks, tasks, mode, frozen,
                 )
             } else {
                 emptyList()
@@ -3963,6 +4315,7 @@ object SchedulerDomain {
         basePeriods: List<RestrictivePeriod> = emptyList(),
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
+        frozen: FrozenScreenBreaks? = null,
     ): Long? =
         dynamicPeriodPanels(
             screenBreaks = screenBreaks,
@@ -3973,6 +4326,7 @@ object SchedulerDomain {
             blocks = blocks,
             tasks = tasks,
             anchorMillis = nowMillis,
+            frozen = frozen,
         ).firstOrNull { it.title == title && it.startEpochMillis >= nowMillis }?.startEpochMillis
 
     /**
@@ -4012,6 +4366,7 @@ object SchedulerDomain {
         basePeriods: List<RestrictivePeriod> = emptyList(),
         blocks: List<PlanBlock> = emptyList(),
         tasks: List<PlanTask> = emptyList(),
+        frozen: FrozenScreenBreaks? = null,
     ): List<PoseWindow> {
         val keyOfTitle =
             screenBreaks.filter {
@@ -4028,6 +4383,7 @@ object SchedulerDomain {
             blocks = blocks,
             tasks = tasks,
             anchorMillis = nowMillis,
+            frozen = frozen,
         )
             .mapNotNull { panel ->
                 val key = keyOfTitle[panel.title] ?: return@mapNotNull null
@@ -4065,12 +4421,11 @@ object SchedulerDomain {
      * **Asked with the MODE, because that is what the schedule is parameterized by.**
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: *"Mode 2 & 3: $now line$ must be covered by
      * the period 'no on-screen task'"* — a constraint on the line at EVERY instant it is in one of those
-     * modes, not only at the instant the last fill happened to run. The fill expresses it as
-     * [DynamicPeriods.awayCover], zero wide at the line it was built for
-     * (`[now, now]`: it decides the run the line starts in, [ScheduleFill.firstAmong]); the line then walks on without re-planning (CLAUDE.md: time passing never
-     * re-plans), straight into the on-screen task the plan put after it. Reading the stored panel alone is
-     * therefore reading an answer computed for a different `t_p` — and the app **announced "Task to do now"
-     * in the middle of a declared-away spell** (account 3, 15:08:40 on 2026-09-12, away since 14:54:15).
+     * modes, not only at the instant the last fill happened to run. The fill now covers the whole continuation in an
+     * away mode and a flip re-plans at the flip, but a plan can still be read in the moment between a flip and its
+     * re-plan — and when the cover was zero wide the line walked straight into the on-screen task the plan put after
+     * the first run: the app **announced "Task to do now" in the middle of a declared-away spell** (account 3,
+     * 15:08:40 on 2026-09-12, away since 14:54:15).
      *
      * So the mode is applied HERE, where the question is asked, rather than by trying to keep a stored plan
      * continuously true: in either away mode an ON-SCREEN task is not scheduled at the line, whatever a plan
@@ -4435,6 +4790,8 @@ object SchedulerDomain {
      */
     fun isRegeneratedPanel(panel: TaskPanel): Boolean =
         panel.screenBreak || panel.sleep || panel.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) ||
+            // A repeating panel's later occurrences are derived from it wherever they are asked for.
+            PanelRepeats.isOccurrence(panel) ||
             (panel.auto && !panel.pinned && !panel.chore)
 
     /**
@@ -4678,6 +5035,11 @@ object SchedulerDomain {
         extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
         // What the extra passes did, and the score of the searched continuation (null: nothing was searched).
         searchSink: ((SearchReport, Double?) -> Unit)? = null,
+        // `docs/scheduler_requirements.md` § *frozen past*: the screen breaks the line has already banked
+        // ([FrozenScreenBreaks]); the three are placed continuing from them. Null re-derives the past.
+        frozenBreaks: FrozenScreenBreaks? = null,
+        // PRD §15: a "Look away now" being conducted right now ([conductingBreakPeriod]).
+        conductingBreak: RestrictivePeriod? = null,
     ): List<TaskPanel> {
         var ruleState: List<String> = emptyList()
         // Only the fill itself is measured: describing it is a diagnostic the two plan reductions ask for,
@@ -4688,7 +5050,7 @@ object SchedulerDomain {
                 fillScheduleUninstrumented(
                     state, nowMillis, timeZone, liveRest, noScreenEvidence, horizonMillis,
                     keepExistingUntilMillis, tpMode, if (rulesSink == null) null else ({ ruleState = it }), cycleSink,
-                    adoptedPlacements, adoptedCycle, searchBudget, extraSeeds, searchSink,
+                    adoptedPlacements, adoptedCycle, searchBudget, extraSeeds, searchSink, frozenBreaks, conductingBreak,
                 )
             }
         // The returned set of rules is read off what the fill RETURNED, here, rather than collected inside
@@ -4804,7 +5166,7 @@ object SchedulerDomain {
      * tick, and this section is how that is checked rather than assumed.
      */
     private fun fillScheduleUninstrumented(
-        state: SchedulerState,
+        stateIn: SchedulerState,
         nowMillis: Long,
         timeZone: TimeZone,
         liveRest: LiveRest?,
@@ -4819,8 +5181,23 @@ object SchedulerDomain {
         searchBudget: SearchBudget = SearchBudget.NONE,
         extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
         searchSink: ((SearchReport, Double?) -> Unit)? = null,
+        frozenBreaks: FrozenScreenBreaks? = null,
+        conductingBreak: RestrictivePeriod? = null,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
+        // `docs/scheduler_requirements.md`: the pre-placed tasks and restrictive periods can be in infinite patterns.
+        // The fill sees every occurrence over what it reads — the frozen past as far back as the lags are replayed,
+        // and past its horizon as far as it searches — and keeps in its answer only those around the line
+        // ([keepsOccurrence]): the rest are derived again wherever they are asked for.
+        val state =
+            stateIn.copy(
+                panels = PanelRepeats.expand(
+                    stateIn.panels, nowMillis - SCHEDULE_PAST_LOOKBACK_CAP_MILLIS, horizon + REPEAT_SEARCH_MARGIN_MILLIS, timeZone,
+                ),
+            )
+        fun keepsOccurrence(panel: TaskPanel): Boolean =
+            !PanelRepeats.isOccurrence(panel) ||
+                (panel.endEpochMillis > nowMillis - REPEAT_KEEP_BEHIND_MILLIS && panel.startEpochMillis < horizon)
         // Cut every non-pinned panel in [now, horizon]; keep fixed (pinned) panels, reminder tags (PRD
         // §14 — kept on the calendar though not obstacles, see isSchedulerFixed), and any panel entirely
         // outside the window — already past (end ≤ now) or, if the fill does not own it, beyond the horizon
@@ -4943,25 +5320,15 @@ object SchedulerDomain {
         // Bounded by THIS fill's [horizon], not by the fixed 168h default: a fill for a short horizon must
         // not project a week of breaks it will then carry in `panels`, and a DISPLAY fill for a far week
         // must project across it.
-        val standingPeriodPanels = kept.filter { it.isRestrictivePeriod } + envSleepPanels + envBeforeBedPanels
-        val standingOwn =
-            standingPeriodPanels.mapNotNull { panel ->
-                val kind = panel.restrictiveKind
-                if (kind.isEmpty()) null
-                else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
-            }
-        val dynamicBase =
-            standingOwn +
-                // The wind-down hours are laid by THIS fill, not kept, so they are handed in beside `kept`:
-                // each one's companion no-screen period (PRD §17) is what makes the hour a rest to the bars.
-                companionPeriods(standingOwn, state.periodKindConfig) + listOfNotNull(liveRestPeriod(liveRest)) +
-                observedNoScreenPeriods(noScreenEvidence)
-        val dynamicBlocks =
-            kept.asSequence()
-                .filter { it.taskId != null && !it.chore && !it.isRestrictivePeriod }
-                .map { PlanBlock(it.taskId, it.startEpochMillis, it.endEpochMillis) }
-                .filter { it.endMillis > it.startMillis }
-                .toList()
+        // The ONE funnel ([breakEnvironment]) the calendar, the cue sweep and the banking ask too — so the breaks
+        // this plan is built around are the breaks the calendar draws, however far out it looks.
+        val breakEnv =
+            breakEnvironment(
+                state, nowMillis, searchEnd, timeZone, liveRest, noScreenEvidence, tpMode, frozenBreaks, planTasks,
+                conductingBreak,
+            )
+        val dynamicBase = breakEnv.periods
+        val dynamicBlocks = breakEnv.blocks
         val envSidePanels =
             screenBreakPanels(
                 screenBreaks = state.screenBreaks,
@@ -4970,6 +5337,7 @@ object SchedulerDomain {
                 basePeriods = dynamicBase,
                 blocks = dynamicBlocks,
                 tasks = planTasks,
+                frozen = frozenBreaks,
                 mode = tpMode,
             )
         val sidePanels = envSidePanels.filter { it.startEpochMillis < horizon }
@@ -5000,38 +5368,37 @@ object SchedulerDomain {
         // modes 2 and 3 in one clause and the line is covered in both, which means the pose elapses under the
         // line and really happens. The filter is written as a mode-1 test rather than as "drop the dragged
         // ones" so it stays true if a later mode ever drags again.
-        val obstructingSidePanels =
-            if (tpMode == DynamicPeriods.MODE_AT_SCREEN) envSidePanels.filterNot { isDraggedScreenBreak(it) }
-            else envSidePanels
-        // `side-dev/README.md` § *$t_p$ 3 modes*, **mode 2**: *"$now line$ must be covered by the period 'no
-        // on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min period
-        // and $t_p$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
+        //
+        // **And in mode 1 a pose the line has not reached yet obstructs nothing either, nor does anything after it**
+        // ([breaksTheLineWillMeet]). The plan answers the line going on in the mode it is in: at the screen, a pose
+        // the line reaches is dragged, so it never happens, and while one is owed the pose riding the line bars every
+        // look-away (*"after any dynamic restrictive period, no 20s period in the next 20 minutes"*). Planned around
+        // at its due, a pose left a hole the line then swept with no task at all (§ *No idling*): the pose had gone
+        // on ahead, and nothing re-plans on time passing.
+        val obstructingSidePanels = breaksTheLineWillMeet(state.screenBreaks, envSidePanels, nowMillis, tpMode)
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **modes 2 & 3**: *"$now line$ must be covered by
+        // the period 'no on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min
+        // period and $now line$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
         // resilience to the kind 'no on-screen task', or no task if none have such resilience"*.
         //
-        // It is an **environment period, never a panel**. Emitting it as one is what shipped and was reverted
-        // (2026-08-31): the calendar drew a synthetic "Away" band the user did not want, and the revert took
-        // the scheduling effect away with the band — mode 2's own rule then reached nothing at all, and the
-        // fill went on placing an on-screen task AT the line while no device of the account was unlocked.
-        // Built here rather than in [dynamicPeriodPanels] for exactly that reason: what the fill reads and
-        // what the calendar draws are two different lists, and only the first of them wants this.
+        // The rules this fill returns are the answer for the line going on in the mode it is in NOW; a flip is an
+        // edge the engine re-plans at, as of the flip ([org.example.project.scheduler.engine.SchedulerEngine]'s mode
+        // watcher). So in an away mode the whole continuation is covered, from the line on: the line is covered at
+        // EVERY instant the mode holds, not only at the one this fill ran at. The cover was the zero-wide `[now, now]`
+        // until 2026-09-27 — it chose the first run and nothing more, so once that run ended the line walked into the
+        // on-screen task the plan had put after it, which the display clips and the bank refuses: an away stretch
+        // left empty where a resilient task could have run (§ *No idling*).
         //
-        // Where the app already has evidence the line is covered — this device's ongoing pause
-        // ([liveRestPeriod], `closedEnd`), a standing no-screen period, a dynamic period the line is inside —
-        // [DynamicPeriods.awayCover] finds nothing left to do and answers null.
+        // It is an **environment period, never a panel**: the calendar draws no synthetic "Away" band (one shipped
+        // and was reverted, 2026-08-31).
         val awayCover =
-            DynamicPeriods.awayCover(
-                base = DynamicPeriods.Base(dynamicBase, dynamicBlocks, planTasks),
-                placed =
-                    envSidePanels.mapNotNull { panel ->
-                        val kind = panel.restrictiveKind
-                        if (kind.isEmpty()) null
-                        else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
-                    },
-                tpMillis = nowMillis,
-                mode = tpMode,
-            )
+            if (DynamicPeriods.lineIsCoveredAt(tpMode)) {
+                RestrictivePeriod(nowMillis, maxOf(searchEnd, nowMillis), PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
+            } else {
+                null
+            }
         if (leaves.isEmpty()) {
-            return (kept + sidePanels + sleepPanels + beforeBedPanels).sortedBy { it.startEpochMillis }
+            return (kept + sidePanels + sleepPanels + beforeBedPanels).filter(::keepsOccurrence).sortedBy { it.startEpochMillis }
         }
 
         // --- the RESTRICTIVE PERIODS (`docs/scheduler_requirements.md` § *Restrictive Period*), past AND future:
@@ -5065,14 +5432,8 @@ object SchedulerDomain {
             retractedAtLineSpans(standingRestrictions, nowMillis, tpMode, state.periodKindConfig)
         val restrictions =
             retractAtLine(standingRestrictions, retractedSpans, state.periodKindConfig) +
-                // The away modes' cover. It is the one period whose end is CLOSED — the README covers `t_p` itself —
-                // and it is ZERO wide, `[now, now]`: what runs AT the line must be resilient to "no screen", and
-                // nothing more ([ScheduleFill.firstAmong]). It was `[now, now + 1)`, a one-millisecond window the
-                // search decides at the edge of: the resilient task got that millisecond and an on-screen task the
-                // rest, which the away line then swept without drawing or banking anything (§ *No idling*).
-                listOfNotNull(
-                    awayCover?.let { RestrictivePeriod(nowMillis, nowMillis, it.kind, it.label, closedEnd = true) },
-                )
+                // The away modes' cover, from the line to the end of what is searched (above).
+                listOfNotNull(awayCover)
 
         // --- where placement starts. An EXTENSION keeps the head already materialized: it is part of the
         // continuation the rules gave, so it is replayed as served time, never re-planned and never treated as a
@@ -5208,7 +5569,7 @@ object SchedulerDomain {
         return (
             kept.filterNot { it.id in elapsedHeadIds } + sidePanels + sleepPanels + beforeBedPanels +
                 mergeSameTaskPanels(kept.filter { it.id in elapsedHeadIds } + generated)
-            ).sortedBy { it.startEpochMillis }
+            ).filter(::keepsOccurrence).sortedBy { it.startEpochMillis }
     }
 
     /**
@@ -5332,6 +5693,8 @@ object SchedulerDomain {
             // indistinguishable from a task panel — so re-kinding one re-plans nothing.
             result = 31 * result + panel.restrictiveKind.hashCode()
             result = 31 * result + (if (panel.pinned) 1 else 0)
+            // Its pattern: a period or a block that starts or stops recurring restricts the plan differently.
+            result = 31 * result + (panel.repeat?.hashCode() ?: 0)
         }
         // The period edit window's companion sets: a period that starts or stops carrying a kind restricts the
         // plan differently. Only the companions — a period's DRAWING is paint, and re-planning on it would be

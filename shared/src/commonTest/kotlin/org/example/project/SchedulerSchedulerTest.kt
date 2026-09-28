@@ -12,6 +12,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
+import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
@@ -435,8 +436,15 @@ class SchedulerSchedulerTest {
 
         // With no break on the now-line the plan is returned untouched.
         assertEquals(panels, SchedulerDomain.clipPlanForPinnedScreenBreak(panels, emptyList(), now))
+        // A break further ahead is cut out of what is drawn too: the plan runs straight through the breaks the line
+        // will not meet ([SchedulerDomain.breaksTheLineWillMeet]), and the calendar still draws each as the period
+        // it is.
         val future = listOf(breakPanel.copy(startEpochMillis = now + MIN, endEpochMillis = now + MIN + 20_000L))
-        assertEquals(panels, SchedulerDomain.clipPlanForPinnedScreenBreak(panels, future, now))
+        val cut = SchedulerDomain.clipPlanForPinnedScreenBreak(panels, future, now)
+        assertTrue(
+            cut.filter { it.auto }.none { it.startEpochMillis < now + MIN + 20_000L && it.endEpochMillis > now + MIN },
+            "a break ahead of the line is cut out of the drawn plan",
+        )
     }
 
     @Test
@@ -536,13 +544,19 @@ class SchedulerSchedulerTest {
         s0 = SchedulerReducer.reduce(s0, SchedulerIntent.SetCellTitle(c0, "Solo"))
         val solo = s0.tasks.keys.first { s0.tasks[it]!!.title == "Solo" }
         s0 = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskMinimumTime(solo, 45))
-        s0 = s0.copy(screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS)
+        s0 = s0.copy(
+            screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS,
+            panels = listOf(TaskPanel("rest/0", null, "No screen", now - 30 * MIN, now - 5 * MIN, noScreen = true)),
+        )
         val panels = SchedulerDomain.fillSchedule(s0, now, horizonMillis = now + 4 * HOUR_MS)
-        // The period the line is DRAGGING is deliberately not one of these ([SchedulerDomain.isDraggedScreenBreak]):
-        // mode 1 pushes it ahead of the line at every position of the line, so it never happens and the plan
-        // is built straight through it — the requirements' *"creating task panels in its passing"*. What this
-        // test is about is a break that really is a stretch of the timeline.
-        val breaks = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
+        // The breaks the line WILL meet ([SchedulerDomain.breaksTheLineWillMeet]) — what a plan is built around. In
+        // mode 1 a pose the line reaches is dragged and never happens, and while one is owed it bars every look-away
+        // behind it, so the plan runs straight through those (the calendar clips them out of what it draws). The rest
+        // that ended just before the line leaves no pose owed, so the look-aways ahead are real stretches.
+        val breaks =
+            SchedulerDomain.breaksTheLineWillMeet(
+                s0.screenBreaks, panels.filter { it.screenBreak }, now, DynamicPeriods.MODE_AT_SCREEN,
+            )
         assertTrue(breaks.isNotEmpty(), "the case needs a break to be about")
         val mine = panels.filter { it.taskId == solo && it.auto }.sortedBy { it.startEpochMillis }
         assertTrue(mine.isNotEmpty())

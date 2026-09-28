@@ -1,0 +1,20 @@
+-- Schema v15 -> v16: the screen breaks the now-line has banked, and the front they answer up to.
+--
+-- Added 2026-09-27 for docs/scheduler_requirements.md § frozen past: the three dynamic periods behind the line
+-- used to be RE-DERIVED on every reading, from a walk whose origin rolled forward daily and from whatever the
+-- environment, the tasks, the configuration and the mode said by then - so the calendar lost every break older
+-- than a day and a half and moved the rest. They are now banked as the line passes them. LOCAL-ONLY (never
+-- synced, never a History Unit); pruned past a retention bound.
+
+CREATE TABLE screen_break_history (
+    start_ms INTEGER NOT NULL,
+    label    TEXT NOT NULL,
+    end_ms   INTEGER NOT NULL,
+    PRIMARY KEY (start_ms, label)
+);
+
+CREATE TABLE screen_break_front (
+    id       INTEGER NOT NULL PRIMARY KEY,
+    until_ms INTEGER NOT NULL,
+    line_ms  INTEGER NOT NULL
+);

@@ -86,12 +86,23 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   into two answers.
 - **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed pose with the
   line, and the plan under it was materialized at the last rule change: the answer is a display clip
-  (`clipPlanForPinnedScreenBreak`), cutting what a break **refuses** — not what it covers.
+  (`clipPlanForPinnedScreenBreak`, over every break ahead of the line), cutting what a break **refuses** — not what
+  it covers. The plan itself is built around the breaks the line WILL MEET (`breaksTheLineWillMeet`,
+  `screen-breaks.md`), so it runs through a pose the line will drag rather than leaving it a hole.
 
 ### What reaches the scheduler
 
 Only three things: **pre-placed tasks** (pinned/manual panels), **the frozen past** (records, past panels, the
 kept head on an extension) and **restrictive periods**. Nothing else, by any other route.
+
+- **Pre-placed tasks and restrictive periods can repeat for ever** (`TaskPanel.repeat`, `PanelRepeat`, requirements
+  § *Priority, Granularity and Compensation*: *"can be in infinite patterns"*, 2026-09-27): every N days at the same
+  local time, optionally until an instant. The panel is the first occurrence; the others are derived by ONE funnel,
+  `PanelRepeats.expand`, wherever they are asked for — the fill (over the lags' replay window and past its search
+  horizon, keeping in its answer only the occurrences around the line), the break funnel (over the walk), the
+  calendar (over the visible span). Occurrences (`repeat/{base}/{k}`) are `isRegeneratedPanel`: never synced, never in
+  the signature — the pattern is, on its panel. Editing or dragging an occurrence moves the pattern by as much;
+  deleting one deletes the pattern. Set from both editors ("Repeat every (days)").
 
 - **A pre-placed block is a block OWNED BY A TASK, and a period reaches the walk by its KIND** — the two
   slots are not interchangeable, and a panel must never take both. `isSchedulerFixed` (= `TaskPanel.pinned`)
@@ -290,7 +301,9 @@ model exists to prevent.
   one can buy (`π_i(1−π_i)·λ` of extra presence per side), so a 48-hour blockage buys barely more than a 24-hour
   one. Tied to `τ_i`, it made the repayment depend on the minimum time and shrank it to minutes (2026-09-19).
 - **NO IDLING is the hard constraint and the minimum time is the SOFT goal, and only one thing may empty a
-  stretch: that nobody may run in it.** `docs/scheduler_requirements.md` § *No idling* against § *Soft Minimum
+  stretch: that nobody may run in it.** It is held at the line as well as in the search: the idle check
+  (`planMismatchAtLine`, `screen-breaks.md`) re-plans from the line when the plan there no longer matches the
+  rules. `docs/scheduler_requirements.md` § *No idling* against § *Soft Minimum
   Execution Time*, which is *"another optimization goal"*. A continuation that idles where a task may run is not a
   candidate at all (`docs/scheduler_score.md`), so a gap shorter than every minimum is **worked**, and the panel
   there is simply short and pays its shortfall. Do not put back a candidate filter on "does the minimum fit".
@@ -343,10 +356,13 @@ model exists to prevent.
 
 → ADR 0015.
 
-- **A re-plan goes through `ScheduleCoordinator`, never straight to `dispatchProgressivePlan`**
-  (`SchedulerEngine.replan`). Every re-plan trigger — the rule-change watcher, the `t_p` mode,
-  the task-tree boundary, the §7 switch turning on — funnels there. Extensions (the horizon rolling, the calendar
-  scrolling) stay local: they are cheap, and with a cycle they are an unroll.
+- **A RULE re-plan goes through `ScheduleCoordinator`, never straight to `dispatchProgressivePlan`**
+  (`SchedulerEngine.replan`). The rule-change watcher, the task-tree boundary and the §7 switch turning on funnel
+  there. Extensions (the horizon rolling, the calendar scrolling) stay local: they are cheap, and with a cycle they are
+  an unroll. **So do the re-plans that are the rules EVALUATED, not changed** (2026-09-27): a `t_p` mode flip (the
+  rules are parameterized by the mode, and the plan for the new one applies from the flip — an election's deadline
+  left the old mode's plan standing for seconds), the idle check at the line (`screen-breaks.md`) and a journey's
+  plan.
 - **"Who is present" is asked when a re-plan is due, and at no other time.** No presence timer, no poll: the probe,
   the one-second reply window and the ten-second rules deadline are one-shot waits after that event. Adding a
   heartbeat to "know earlier" is the timer-driven traffic CLAUDE.md forbids, and it buys nothing the deadline does
@@ -356,12 +372,21 @@ model exists to prevent.
   different replies and elect different leaders.
 - **The ranking is `PeerCapability.rank`**: present, kind, speed bucket, device id. A value that changes from second
   to second (CPU load) must not enter it, or the leader flaps between elections.
-- **A device with no rules after `RULES_DEADLINE_MILLIS` plans for itself**, and so does every device while the
-  channel is not joined. No device is ever left without a plan because of another device.
+- **A device with no rules after `RULES_DEADLINE_MILLIS` (5 s) plans for itself**, and so does every device while
+  the channel is not joined. No device is ever left without a plan because of another device. The deadline is sized
+  to the requirements' pace: the engine's debounce (1 s), the probe window (1 s) and the deadline leave a first stage
+  room inside the 10 s (`ScheduleCoordinatorTest.the_wait_for_a_leader_fits_inside_the_pace`); at 10 s the deadline
+  alone used the whole pace.
+- **A plan already held for these rules is DEFINITIVE as far as it is materialized** (requirements § *Progressive
+  Calculation*, 2026-09-27). Rules taken in for the very rules a device already planned (it planned alone past the
+  deadline, or took an earlier stage) keep its materialized head and are laid past it (`AdoptScheduleRules.keepHead`),
+  and the leader answers a counter with an EXTENSION seeded with the other plan (`ExtendSchedule.seeds`), never a
+  re-plan from the line: replacing either rewrote a schedule already published as definitive
+  (`DefinitiveAcrossDevicesTest`).
 - **The best score wins.** Plans made apart (offline, alone, past a deadline) need not agree. A device whose plan was
   made ALONE (`notePlannedLocally`, or `publish` with nobody to send to) answers the first rules of the next
-  election with that plan (`PeerMessage.Counter`, once per election); the leader re-plans with it as a seed
-  (`replanWithSeeds` → `RefreshSchedule.seeds`), so the two compete on the score under the rules in force NOW —
+  election with that plan (`PeerMessage.Counter`, once per election); the leader extends with it as a seed
+  (`replanWithSeeds` → `ExtendSchedule.seeds`), so the two compete on the score under the rules in force NOW —
   after the merge, never each under its own pre-merge rules, whose scores are not comparable — and publishes the
   result, which every device takes in. A device that only took rules in never counters, so it cannot bounce
   (`ScheduleCoordinatorTest.a_plan_made_alone_competes_with_the_leaders_on_the_score_once`). The database merge is
@@ -431,10 +456,8 @@ model exists to prevent.
      would resume the stages one poll later with a fresh budget, for ever (`PlanCalculationLimitTest`).
      The limit is given up in the requirement's own order: `stageSearchMillis` drops the SEARCH first and spends
      what is left on reaching further, because a schedule that stops short is worse than one that is not the best.
-     **This third reason is not in `docs/scheduler_requirements.md`** — the requirement lets the scheduler stop
-     only at $t_{goal}$, and a device that meets the pace but needs more than two minutes to reach its week stops
-     short of it. It is a deliberate deviation (a phone must not plan for hours after every edit); do not describe
-     it as the requirement's.
+     This third reason is the requirement's own: *"It will also stop if the set of rules became too heavy, or if it
+     calculated for too long"* — and § *Strict Requirements*' exception 2 bounds the computing power a plan may take.
   How the rolling floor is kept from re-triggering itself, and the 168 h ceiling, are in `display-hot-path.md`.
   Each extension keeps the head, so a run the line is in continues to its minimum across them.
 - **The engine fills in DOUBLING STAGES** (`SchedulerEngine.dispatchProgressivePlan`): a re-plan (or an

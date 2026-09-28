@@ -609,6 +609,24 @@ data class RulePlacement(
     val alternativeSpans: List<AlternativeSpan> = emptyList(),
 )
 
+/**
+ * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
+ * and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns."* — a pre-placed block
+ * or a restrictive period that **recurs every [everyDays] days** at the same local time of day, from its own start
+ * and, with no [untilMillis], for ever. Weekly is `7`.
+ *
+ * The panel carrying it is the first occurrence; the others are derived wherever they are asked for
+ * (`SchedulerDomain.withRepeats`), never stored. Authoritative — the user set it — so persisted and synced with the
+ * panel.
+ */
+data class PanelRepeat(val everyDays: Int, val untilMillis: Long? = null) {
+    companion object {
+        /** The persisted pair back to a rule; null where it does not repeat. */
+        fun of(everyDays: Int, untilMillis: Long?): PanelRepeat? =
+            if (everyDays <= 0) null else PanelRepeat(everyDays, untilMillis)
+    }
+}
+
 /** One run of a [ScheduleCycle]: who runs, for how much schedulable time, and the alternative meanwhile. */
 data class CycleRun(val taskId: TaskId, val lengthMillis: Double, val alternativeTaskId: TaskId?)
 
@@ -743,6 +761,11 @@ data class TaskPanel(
      * Derived exactly like [alternativeTaskId]: never persisted, never synced.
      */
     val alternativeSpans: List<AlternativeSpan> = emptyList(),
+    /**
+     * `docs/scheduler_requirements.md`: this pre-placed block or restrictive period **recurs** ([PanelRepeat]); null
+     * for a panel that happens once. Only a panel the user placed carries one; its later occurrences are derived.
+     */
+    val repeat: PanelRepeat? = null,
 ) {
     /** The alternative schedule at [millis] inside this panel (see [alternativeSpans]). */
     fun alternativeAt(millis: Long): TaskId? {

@@ -4,6 +4,7 @@ import org.example.project.scheduler.domain.PeriodKinds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskId
@@ -146,15 +147,18 @@ class BreaksAndSlidingPrioritiesTest {
 
     @Test
     fun a_screen_break_stays_a_period_while_the_percentages_slide() {
-        val s = keyframes()
-        val stretch = taskId(s, "Stretch")
         val now = T0 + DAY / 2 // mid-transition: both arrangements are in force at once
+        val s = keyframes().let { it.copy(panels = it.panels + restBefore(now)) }
+        val stretch = taskId(s, "Stretch")
         val panels = SchedulerDomain.fillSchedule(s, now, horizonMillis = now + DAY)
-        // The period the line is DRAGGING is deliberately not one of these ([SchedulerDomain.isDraggedScreenBreak]):
-        // mode 1 pushes it ahead of the line at every position of the line, so it never happens and the plan
-        // is built straight through it — the requirements' *"creating task panels in its passing"*. What this
-        // test is about is a break that really is a stretch of the timeline.
-        val bands = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
+        // The breaks the line WILL meet ([SchedulerDomain.breaksTheLineWillMeet]) — what a plan is built around. In
+        // mode 1 a pose the line reaches is dragged and never happens, and while one is owed it bars every look-away
+        // behind it, so the plan runs straight through those (the calendar clips them out of what it draws). The rest
+        // that ended just before the line leaves no pose owed, so the look-aways ahead are real stretches.
+        val bands =
+            SchedulerDomain.breaksTheLineWillMeet(
+                s.screenBreaks, panels.filter { it.screenBreak }, now, DynamicPeriods.MODE_AT_SCREEN,
+            )
         assertTrue(bands.isNotEmpty(), "the break grid must be materialized")
         val work = panels.filter { it.auto }
         fun overlaps(p: TaskPanel, b: TaskPanel) =
@@ -193,4 +197,8 @@ class BreaksAndSlidingPrioritiesTest {
             s.copy(taskTrees = s.taskTrees.map { if (it.title == "before") it.copy(dateMillis = T0 - DAY) else it })
         assertTrue(base != SchedulerDomain.schedulingSignature(moved), "a keyframe's DATE is a scheduling input")
     }
+
+    /** A hand-drawn "no screen" stretch of 25 minutes ending five minutes before [now]: a rest, so no pose is owed. */
+    private fun restBefore(now: Long) =
+        TaskPanel("rest/0", null, "No screen", now - 30 * 60_000L, now - 5 * 60_000L, noScreen = true)
 }

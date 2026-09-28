@@ -240,6 +240,18 @@ object DynamicPeriods {
         val coveredUntilMillis: Long get() = coveredFromMillis + spec.durationMillis
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past*: **the occurrences the line has already made facts of**,
+     * banked as they elapsed ([SchedulerDomain.bankScreenBreaks]), and the instant [untilMillis] up to which
+     * they are the whole answer.
+     *
+     * Behind [untilMillis] the walk re-derives nothing: it reads its bars off these instances and continues
+     * from there, so a later change to the environment, to the tasks, to the breaks' configuration or to the
+     * mode can no longer move a break the line has passed. Re-deriving the past from the walk is what let the
+     * calendar lose every break older than the placement origin and move the rest whenever the origin rolled.
+     */
+    data class Frozen(val instances: List<Instance>, val untilMillis: Long)
+
     /** A half-open `[startMillis, endMillis)` span of the timeline. */
     data class Span(val startMillis: Long, val endMillis: Long) {
         val durationMillis: Long get() = endMillis - startMillis
@@ -250,6 +262,8 @@ object DynamicPeriods {
         val periods: List<RestrictivePeriod>,
         val blocks: List<PlanBlock>,
         val tasks: List<PlanTask>,
+        /** The banked past the walk continues from ([Frozen]); null reads the whole past off the environment. */
+        val frozen: Frozen? = null,
     ) {
         /** Every instant the environment can change at, sorted — the reference's `Environment.bounds`. */
         val bounds: List<Long> =
@@ -344,6 +358,14 @@ object DynamicPeriods {
         tpMillis: Long,
         mode: Int = MODE_AT_SCREEN,
         sweepFromMillis: Long = startMillis,
+        /**
+         * The banked past ([Frozen]). Its instances are returned as they are and set the bars the walk goes on
+         * from; nothing new is placed before its `untilMillis` when [floorAtFrozen] is set — which every
+         * question AT THE LINE sets. The undragged run (a pose's DUE) reads the bars off it without the floor:
+         * a pose owed since before the front is due where it fell due, not wherever the front has got to.
+         */
+        frozen: Frozen? = base.frozen,
+        floorAtFrozen: Boolean = false,
     ): List<Instance> {
         if (dynamics.isEmpty() || horizonMillis <= startMillis) return emptyList()
         val blocked = mutableListOf<Span>()
@@ -397,6 +419,19 @@ object DynamicPeriods {
             }
             barStretch(bars, a, b, spared)
         }
+        // The banked past: returned as it is, and read for the bars the walk continues from — each one bars
+        // exactly what it barred when it was placed. One a chain TOOK is recorded as taken, so the chain does not
+        // hand the same label a second occurrence.
+        val frozenHere =
+            frozen?.instances.orEmpty()
+                .filter { it.coveredUntilMillis > startMillis && it.coveredFromMillis < horizonMillis }
+                .sortedBy { it.startMillis }
+        for (inst in frozenHere) {
+            val chain = chainAtOrBefore(noScreenChains, inst.startMillis)
+            if (chain != null && chain.startMillis == inst.startMillis) takenFrom[inst.spec.label] = chain.startMillis
+            barInstance(bars, byLabel, restedSpans, inst, ::barRestStretch)
+        }
+        val floor = frozen?.untilMillis?.takeIf { floorAtFrozen }
         val out = mutableListOf<Instance>()
         var steps = 0
         while (true) {
@@ -450,6 +485,13 @@ object DynamicPeriods {
                 }
             }
             if (moved) continue
+            // § *frozen past*: behind the banked front nothing new is placed — what happened there is the banked
+            // record. An occurrence the bars still hold below it (a pose the line was dragging, owed since
+            // before the front) comes due AT the front, where the ordinary rules below take it from.
+            if (floor != null && start < floor) {
+                bars[label] = floor
+                continue
+            }
             // Mode 1: `t_p` may not be covered by the period "no on-screen task" ([lineIsCoveredAt]), and a
             // dynamic period's kind covers it a fortiori. A POSE whose slot the line has SWEPT — travelled
             // continuously through, from where its motion began up to here — is therefore pushed onto the line
@@ -529,7 +571,7 @@ object DynamicPeriods {
                 bars[label] = maxOf(bars.getValue(label), start + 1)
             }
         }
-        return mergeChain(out)
+        return mergeChain(frozenHere + out)
     }
 
     /**
@@ -553,7 +595,7 @@ object DynamicPeriods {
         sweepFromMillis: Long = startMillis,
     ): List<RestrictivePeriod> {
         val placed =
-            instances(base, dynamics, startMillis, horizonMillis, tpMillis, mode, sweepFromMillis)
+            instances(base, dynamics, startMillis, horizonMillis, tpMillis, mode, sweepFromMillis, base.frozen, true)
                 .map { it.toPeriod() }
         return placed + listOfNotNull(awayCover(base, placed, tpMillis, mode))
     }
@@ -583,10 +625,8 @@ object DynamicPeriods {
         // case to be dropped — it is the rule. Mode 2 drags a pose onto the line, so the period the line came
         // out of may not exist at all (the pose covers `(t_p, t_p + d]` and leaves `t_p` itself uncovered by
         // construction), and answering null there would leave mode 2's own rule reaching nothing exactly where
-        // it matters most. `SchedulerDomain.fillSchedule` re-expresses whatever this returns as `[now, now]`
-        // — the zero-width instant the fill reads as "the run AT the line must be resilient to no on-screen
-        // task" (`ScheduleFill.firstAmong`) — so the reach behind the line is documentation, never a scheduling
-        // input.
+        // it matters most. (`SchedulerDomain.fillSchedule` does not read this: its cover is the whole continuation
+        // from the line, the plan for the mode going on.)
         val from = (ends ?: tpMillis).coerceAtMost(tpMillis)
         return RestrictivePeriod(from, tpMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
     }
@@ -698,6 +738,14 @@ object DynamicPeriods {
         }
         return found
     }
+
+    /**
+     * The "no on-screen task" chain the line [tpMillis] is in — one that began at or before it and *"ends
+     * somewhere in [now line; +infinity)"* — or null. It is the one stretch of the past the requirements' chain
+     * rule can still move a break into ([chainTaking]), which is why the banked front waits at its start.
+     */
+    fun chainReaching(base: Base, tpMillis: Long): Span? =
+        chainAtOrBefore(noScreenChains(base), tpMillis)?.takeIf { it.endMillis >= tpMillis }
 
     private fun noScreenChains(base: Base): List<Span> =
         mergeSpans(

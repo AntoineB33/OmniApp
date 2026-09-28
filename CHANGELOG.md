@@ -11,6 +11,80 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Look 20 feet away" every thirty seconds; a 20 s hole with no break — 2026-09-28 09:27 (account 3)
+
+An overdue look-away was placed at the banked front (the line). The at-line check re-planned around it; the re-plan
+recorded the task under it up to the instant it read the clock, a few milliseconds into the look-away, and the rule
+"never bank a break over recorded work" then refused that look-away for good. The bars never moved past it, so each
+tick placed it again at the new front, re-planned, and announced it; the plan's hole for the next one (20 min on) was
+left where the rules no longer put a break.
+
+- The record wins only over a past no line saw (a first or stale banking); at the line the break wins, and work is
+  recorded minus the breaks the line has started but not banked yet (`FrozenScreenBreaks.pending`).
+- The start-up heal of 2026-09-27 (already run on account 3) is removed: at every start it would drop history.
+- Tests: `OverdueLookAwayLoopTest` (fails without the fix); replayed on a copy of account 3's DB, the 09:27:20
+  look-away is banked once and the next stays at 09:47:40.
+
+### A 20 s break drawn over a task panel in the past — 2026-09-27 21:09 (account 3)
+
+The app had not run for seven hours; the build that introduced banked breaks started and (1) did not walk that stretch
+— its restart catch-up keyed on a banked record that did not exist yet — so the first advance banked the old plan as
+work; (2) its first banking re-derived the whole day's breaks, which landed on that work; (3) while the line was inside
+a no-screen chain the front waited at its start, so the breaks after it moved as the lock evidence landed.
+
+- `catchUpAfterNotRunning` reads the last line off the banked record, this device's last active session and the last
+  recorded work, and runs in `start()` before anything can bank.
+- Work is recorded minus every banked break refusing its task; breaks are banked before the tick's records, never over
+  recorded work, and a start-up heal drops the overlaps already stored (`BankedBreaksAndRecordsTest`). (Revised
+  2026-09-28: the break wins at the line; the heal ran once and is removed — see the entry above.)
+- Not healed: the work the old plan banked across the seven hours the app did not run is still in the record (nothing
+  can tell it from real work); delete it from the calendar if it is wrong.
+
+### Nothing in `docs/scheduler_requirements.md` violated or left unguaranteed — 2026-09-27
+
+An audit of the requirements against the code, and the fixes. Client apps only: SQLite schema v15 → v16 (15.sqm),
+no Supabase change.
+
+- **Frozen past of the three dynamic periods.** The breaks behind the line are BANKED as it passes them
+  (`SchedulerDomain.bankScreenBreaks`, `FrozenScreenBreaks`, engine-held, `screen_break_history` / `screen_break_front`,
+  local-only, pruned at 90 days); every placement continues from the record. They were re-derived at each reading from
+  an origin a day behind the line: a week view showed no break older than ~1.5 days, and the rest moved with the origin
+  and with any later change to the environment, tasks, configuration or mode (`FrozenScreenBreaksTest`).
+- **One break environment** (`SchedulerDomain.breakEnvironment`) for the fill, the calendar, the cue sweep, the
+  published rules and the banking. A future week is drawn by the walk from the line (it was a grid restarted at the
+  week's edge, which put breaks where the plan had not cut its holes); past the 168 h ceiling the breaks are the
+  far fill's. The far fill is re-keyed on the rules, the mode and the environment, and given the engine's inputs.
+- **Modes are parameters of the rules.** Away modes cover the whole continuation with "no on-screen task" (the cover
+  was zero-wide, and the line walked into on-screen work the display clipped: an idle away stretch); a mode flip
+  re-plans at once, locally; this device's ongoing pause is no rest of the account's in mode 1.
+- **The plan is built around the breaks the line will meet** (`breaksTheLineWillMeet`): in mode 1 a pose is dragged and
+  never happens, so it no longer leaves a hole the line sweeps empty; the calendar clips every break ahead out of the
+  plan it draws. An idle check at the line (`planMismatchAtLine`) re-plans once per mismatch.
+- **Wake and restart journeys** plan for mode 2 from their first instant, extend the plan as the line reaches its front
+  and re-plan on landing (`WakeJourneyNoIdlingTest`); an app that was not running is walked the same way.
+- **Definitive across devices**: adoption keeps a head already planned for the same rules, a counter is folded in as a
+  seeded extension, and the rules deadline is 5 s so the wait fits the 10 s pace (`DefinitiveAcrossDevicesTest`).
+- **"Look away now" is a dynamic period from the press** (in the break environment), so a look-away due during it is
+  absorbed instead of overlapping it.
+- **The start-up retroactive no-screen strip is removed**: it rewrote recorded work on late evidence, which is neither
+  the dynamic-period rule nor a user action (the strip on a hand-laid period stays).
+- **Repeating pre-placed tasks and restrictive periods** (`TaskPanel.repeat`, `PanelRepeats`, "Repeat every (days)" in
+  both editors) — *"can be in infinite patterns"* (`RepeatingPanelsTest`).
+- `ScheduleFill.unroll` rebases a cycle whose span is an exact number of repetitions (it kept the old anchor).
+- Kept as it was, on review: inside a task-tree transition a plan made at a position holds `R` of that position and is
+  re-made at every run start the line reaches (the requirements' parameterized rules; `BreaksAndSlidingPrioritiesTest`).
+
+### A look-away made to vanish by "Look away now" gives its span to the task around it — 2026-09-27
+
+User spec: when a 20 s screen break disappears because the user pressed "Look away now", and the same task touches
+its start and end edges, the break is replaced by that task panel.
+
+- The vanish is the first bar re-anchoring off the conducted break: pressed ~10 s before a look-away falls due, that
+  look-away is gone and the plan's hole around it (`Write` up to it, `Write` after it) was left empty.
+- `SchedulerDomain.vanishedPastBreaks` / `taskTouchingBothEdges`; the reducer's `withVanishedBreaksBridged` runs in
+  `RecordConductedBreak` (record changes committed as the advance commits them). `calendarBoxesOfTask` is the one
+  statement of a task's boxes. Tests: `VanishedBreakBridgeTest` (real fill, press, re-plan).
+
 ### The Search window's added elements; the calendar filters — 2026-09-27
 
 User spec: three sections in the Search window — the search on the left half, the actions on the added elements

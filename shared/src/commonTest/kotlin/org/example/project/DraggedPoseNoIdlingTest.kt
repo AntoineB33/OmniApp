@@ -165,12 +165,37 @@ class DraggedPoseNoIdlingTest {
     // ----- the controls ---------------------------------------------------------------------------
 
     @Test
-    fun a_break_the_line_is_not_dragging_still_obstructs() {
-        // The rule is about the DRAG and nothing else. Every other placement is a real stretch of the
-        // timeline, and no task without a resilience to "no task allowed" may be in one.
-        val panels = fill(account(), NOW)
-        val standing = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
-        assertTrue(standing.isNotEmpty(), "the case needs a standing break to be about")
+    fun while_a_pose_is_owed_the_plan_runs_through_every_break_ahead() {
+        // At the screen, the line going on drags the owed pose at every position it reaches, and that pose bars
+        // every look-away behind it ("after any dynamic restrictive period, no 20s period in the next 20 minutes").
+        // So none of the breaks drawn ahead will be met, and a plan built around them left holes the line then swept
+        // with no task in them (§ *No idling*). The calendar still draws them, clipped out of the plan it shows.
+        val now = NOW
+        val panels = fill(account(), now)
+        assertTrue(draggedPose(panels) != null, "the case needs an owed pose")
+        val met = SchedulerDomain.breaksTheLineWillMeet(
+            SchedulerDomain.DEFAULT_SCREEN_BREAKS, panels.filter { it.screenBreak }, now, DynamicPeriods.MODE_AT_SCREEN,
+        )
+        assertEquals(emptyList(), met, "the line meets none of the breaks ahead while a pose is owed")
+        val covered = panels.filter { it.auto && it.endEpochMillis > now }.map { TaskTimeRange(maxOf(it.startEpochMillis, now), it.endEpochMillis) }
+        assertEquals(
+            emptyList(),
+            SchedulerDomain.subtractRegions(listOf(TaskTimeRange(now, now + 3 * HOUR)), covered),
+            "the plan leaves no stretch ahead of the line without a task",
+        )
+    }
+
+    @Test
+    fun a_look_away_the_line_will_meet_still_obstructs() {
+        // The control: with no pose owed (a rest just ended), the look-aways before the next pose are met exactly
+        // where they are placed, and no task without a resilience to "no task allowed" may be in one.
+        val rest = TaskPanel("rest/0", null, "No screen", NOW - 30 * MIN, NOW - 5 * MIN, noScreen = true)
+        val s = account().let { it.copy(panels = it.panels + rest) }
+        val panels = fill(s, NOW)
+        val standing = SchedulerDomain.breaksTheLineWillMeet(
+            s.screenBreaks, panels.filter { it.screenBreak }, NOW, DynamicPeriods.MODE_AT_SCREEN,
+        )
+        assertTrue(standing.isNotEmpty(), "the case needs a break the line will meet")
         val work = panels.filter { it.auto }
         for (band in standing) {
             assertTrue(

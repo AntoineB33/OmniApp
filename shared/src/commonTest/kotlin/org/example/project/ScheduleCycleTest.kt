@@ -201,7 +201,14 @@ class ScheduleCycleTest {
             val share = millis / total
             assertTrue(kotlin.math.abs(share - 1.0 / 6) < 0.05, "$task runs ${share} of the far weeks, target 1/6")
         }
-        val periods = far.panels.filter { it.screenBreak || it.sleep }
+        // The nights, and the breaks the line will meet ([SchedulerDomain.breaksTheLineWillMeet]): at the screen a pose
+        // the line reaches is dragged and never happens, so the plan is built straight through it.
+        val periods =
+            far.panels.filter { it.sleep } +
+                SchedulerDomain.breaksTheLineWillMeet(
+                    s.screenBreaks, far.panels.filter { it.screenBreak }, NOW,
+                    org.example.project.scheduler.domain.DynamicPeriods.MODE_AT_SCREEN,
+                )
         assertTrue(
             far.panels.none { a ->
                 a.auto && a.startEpochMillis > NOW + HOUR &&

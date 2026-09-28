@@ -147,8 +147,12 @@ Global rules that always apply: `CLAUDE.md`.
   that stops short of an older, longer plan is routine; the old panels answer rules the fill may have replaced,
   and one abutting the new tail was read by the next extension as materialized and kept as definitive
   (`SchedulerFillTest.a_re_plan_shorter_than_the_old_plan_drops_the_old_plan_beyond_it`).
-- Beyond the ceiling, the far fill runs off the UI thread keyed **only on the span** and is **never stored in
-  `state.panels`**. It is an **extension** of the materialized plan (`keepExistingUntilMillis`), so where the rules
+- Beyond the ceiling, the far fill runs off the UI thread and is **never stored in `state.panels`**. It is keyed on
+  the span AND on what the plan is a function of — the rules (`schedulingSignature`), the mode, the banked screen
+  breaks, the observed evidence and the live pause's bounds — and given the same inputs the engine's own fills get:
+  keyed on the span alone it went on showing the plan of rules the user had since edited. **The screen breaks the
+  calendar draws past the ceiling are that fill's**, which is the one walk from the line
+  (`screen-breaks.md`); below it they are the same walk made in the display derivation, to the end of the span. It is an **extension** of the materialized plan (`keepExistingUntilMillis`), so where the rules
   repeat (`state.scheduleCycle`, `scheduler.md` § *The rules repeat*) it unrolls them rather than searching — a
   30-day view of a 6-task account went from ~165 ms to ~40 ms (2026-09-16, JVM test) — and past the 168 h limit it
   never searches at all.

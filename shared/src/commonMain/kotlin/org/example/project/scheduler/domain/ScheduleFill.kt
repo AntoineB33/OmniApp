@@ -540,7 +540,9 @@ internal object ScheduleFill {
         // extension starting there) walks no further than one extension.
         val length = cycle.lengthMillis
         val end = minOf(emitU, model.uEnd)
-        val reps = kotlin.math.floor((end - anchorU) / length).toLong().coerceAtLeast(0L)
+        // The last repetition starting strictly BEFORE the end: when the span is an exact number of repetitions, the
+        // one "starting" at the end starts nothing that is emitted, so it is the one before it.
+        val reps = (kotlin.math.ceil((end - anchorU) / length - ScoreModel.EPS / length).toLong() - 1L).coerceAtLeast(0L)
         val lastStart = anchorU + reps * length
         val rebased = if (lastStart < end - ScoreModel.EPS && reps > 0) cycle.copy(anchorMillis = model.wallStartAt(lastStart)) else cycle
         return runs to rebased

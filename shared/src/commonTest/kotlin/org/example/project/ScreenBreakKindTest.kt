@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.PeriodKinds
+import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.Task
@@ -70,12 +71,16 @@ class ScreenBreakKindTest {
         // and nothing else. This is where the old "open tail" went: a task works through a break when it has
         // been given that resilience, which is the same sentence — and the same code path — as any other kind.
         val (state, resilient) = stateWithResilientTask()
-        val panels = SchedulerDomain.fillSchedule(state, NOW, horizonMillis = NOW + 4 * HOUR)
-        // The period the line is DRAGGING is deliberately not one of these ([SchedulerDomain.isDraggedScreenBreak]):
-        // mode 1 pushes it ahead of the line at every position of the line, so it never happens and the plan
-        // is built straight through it — the requirements' *"creating task panels in its passing"*. What this
-        // test is about is a break that really is a stretch of the timeline.
-        val bands = panels.filter { it.screenBreak && !SchedulerDomain.isDraggedScreenBreak(it) }
+        val rest = TaskPanel("rest/0", null, "No screen", NOW - 30 * 60_000L, NOW - 5 * 60_000L, noScreen = true)
+        val panels = SchedulerDomain.fillSchedule(state.copy(panels = listOf(rest)), NOW, horizonMillis = NOW + 4 * HOUR)
+        // The breaks the line WILL meet ([SchedulerDomain.breaksTheLineWillMeet]) — what a plan is built around. In
+        // mode 1 a pose the line reaches is dragged and never happens, and while one is owed it bars every look-away
+        // behind it, so the plan runs straight through those (the calendar clips them out of what it draws). The rest
+        // that ended just before the line leaves no pose owed, so the look-aways ahead are real stretches.
+        val bands =
+            SchedulerDomain.breaksTheLineWillMeet(
+                state.screenBreaks, panels.filter { it.screenBreak }, NOW, DynamicPeriods.MODE_AT_SCREEN,
+            )
         assertTrue(bands.isNotEmpty(), "the case needs a break to be about")
         val inside = panels.filter { p ->
             p.auto && bands.any { p.startEpochMillis < it.endEpochMillis && p.endEpochMillis > it.startEpochMillis }

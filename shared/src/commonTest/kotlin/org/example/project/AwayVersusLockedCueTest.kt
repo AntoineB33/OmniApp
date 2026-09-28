@@ -163,9 +163,9 @@ class AwayVersusLockedCueTest {
         runCurrent()
         assertTrue(engine.userAway.value)
 
-        // Walk well past any pose the bars owe at the origin, sampling what the PLAN put at the line as we
-        // go: the cue reads exactly that, so a walk that never met an on-screen task would pass for the
-        // wrong reason.
+        // Walk well past any pose the bars owe at the origin, sampling what the PLAN put at the line as we go.
+        // The mode flip re-plans at the flip, and the plan for a covered line holds no on-screen task at all — the
+        // rule the cue's own reading ([SchedulerDomain.currentPanel] with the mode) used to be the only place of.
         var planPlacedAnOnScreenTask = false
         repeat(80) {
             advanceTimeBy(30_000)
@@ -177,7 +177,7 @@ class AwayVersusLockedCueTest {
         }
 
         assertEquals(DynamicPeriods.MODE_ON_BREAK, engine.tpModeNow(), "the account never reached mode 3")
-        assertTrue(planPlacedAnOnScreenTask, "the walk never met an on-screen task — the test proves nothing")
+        assertTrue(!planPlacedAnOnScreenTask, "the plan put an on-screen task at a line the away mode covers")
         assertEquals(
             beforeAway,
             taskNotifications(vm).size,

@@ -64,6 +64,8 @@ class ScheduleCoordinatorTest {
         val signature = MutableStateFlow(signature)
         val plans = ArrayList<ScheduleCoordinator.Lead?>()
         val adopted = ArrayList<PeerMessage.Rules>()
+        /** For each adoption, whether this device already held a plan for those rules (its head is kept). */
+        val keptHeads = ArrayList<Boolean>()
         /** The other devices' plans this device re-planned with, as the leader. */
         val seeded = ArrayList<List<org.example.project.scheduler.sync.PeerPlacement>>()
         private var elections = 0
@@ -84,7 +86,10 @@ class ScheduleCoordinatorTest {
                     if (lead != null && publishes) coordinatorRef().publish(rules(lead.election))
                     if (lead == null) coordinatorRef().notePlannedLocally(this.signature.value, test.testScheduler.currentTime)
                 },
-                adopt = { adopted += it },
+                adopt = { rules, keepHead ->
+                    adopted += rules
+                    keptHeads += keepHead
+                },
                 currentRules = { election -> rules(election) },
                 newElectionId = { "$id-${elections++}" },
                 elapsed = { test.testScheduler.currentTime },
@@ -168,6 +173,41 @@ class ScheduleCoordinatorTest {
         advanceTimeBy(deadline)
         runCurrent()
         assertEquals(listOf<ScheduleCoordinator.Lead?>(null), p.plans, "no rules in time: the phone plans for itself")
+
+        // `docs/scheduler_requirements.md` § *Progressive Calculation*: the plan the phone made for itself is definitive
+        // as far as it is materialized, so rules arriving late for the same rules are laid past it, never over it.
+        d.publishes = true
+        d.coordinator.publish(d.rules(d.plans.single()!!.election))
+        runCurrent()
+        assertTrue(
+            p.keptHeads.isNotEmpty() && p.keptHeads.all { it },
+            "the late rules keep the head the phone already made definitive: ${p.keptHeads}",
+        )
+    }
+
+    @Test
+    fun rules_for_new_rules_replace_a_plan_made_for_the_old_ones() {
+        // The other half: a device that has planned nothing for these rules holds nothing definitive for them.
+        runTest {
+            val bus = Bus()
+            val p = Device("phone", this, backgroundScope, bus, phone)
+            Device("desktop", this, backgroundScope, bus, desktop)
+            runCurrent()
+            p.coordinator.requestPlan()
+            runCurrent()
+            advanceTimeBy(window + 1)
+            runCurrent()
+            assertEquals(listOf(false), p.keptHeads)
+        }
+    }
+
+    @Test
+    fun the_wait_for_a_leader_fits_inside_the_pace() {
+        // "If the definitive schedule is found for any t < t1, then 10 seconds later the definitive schedule must be
+        // found for any t < t1 + 10 minutes." A device waiting on a rule change spends the engine's debounce (1 s),
+        // the probe window and the rules deadline before it plans for itself, and still has its own first stage to
+        // fill — so those three must leave room inside the 10 s.
+        assertTrue(1_000 + window + deadline <= 10_000 - 2_000, "debounce + probe + deadline leaves no room for a stage")
     }
 
     @Test

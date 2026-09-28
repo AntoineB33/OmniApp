@@ -831,6 +831,12 @@ sealed interface SchedulerIntent {
         val searchMillis: Long = 0,
         /** As [RefreshSchedule.generation]: which re-plan this is, so a superseded one stops where it stands. */
         val generation: Long = 0L,
+        /**
+         * Other continuations to compete with this extension's own search on the score — another device's plan for
+         * these rules (`docs/invariants/scheduler.md` § *One device plans*). Compared past the materialized head only,
+         * which the extension keeps: what was made definitive stays so.
+         */
+        val seeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
     ) : SchedulerIntent
 
     /**
@@ -847,6 +853,12 @@ sealed interface SchedulerIntent {
         val placements: List<org.example.project.scheduler.model.RulePlacement>,
         val cycle: org.example.project.scheduler.model.ScheduleCycle?,
         val horizonMillis: Long,
+        /**
+         * `docs/scheduler_requirements.md` § *Progressive Calculation*: this device already holds a plan for these very
+         * rules, so what it has materialized is definitive — keep it, and lay the rules only past it. False when the
+         * plan held answers other rules (a rule change): nothing of it is definitive for these.
+         */
+        val keepHead: Boolean = false,
     ) : SchedulerIntent
 
     /**
@@ -1255,6 +1267,8 @@ sealed interface SchedulerIntent {
         val kind: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
+        /** `docs/scheduler_requirements.md`: the period recurs every this many days ([PanelRepeat]); 0 lays it once. */
+        val repeatEveryDays: Int = 0,
     ) : SchedulerIntent
 
     /**
@@ -1272,6 +1286,12 @@ sealed interface SchedulerIntent {
         val pins: org.example.project.scheduler.model.PanelPins,
         /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
         val allowOverlap: Boolean = false,
+        /**
+         * `docs/scheduler_requirements.md`: how often the panel recurs, in days ([PanelRepeat]) — 0 to stop it
+         * recurring, null to keep whatever it does (a drag never changes a pattern). An [id] of a derived
+         * occurrence edits the whole pattern, moved by as much as the occurrence was.
+         */
+        val repeatEveryDays: Int? = null,
     ) : SchedulerIntent
 
     /**
@@ -1323,24 +1343,6 @@ sealed interface SchedulerIntent {
         val taskId: TaskId,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
-    ) : SchedulerIntent
-
-    /**
-     * PRD §9/§12 retroactive: drop from every ON-SCREEN task's record the parts covered by [ranges] — the
-     * stretches the devices say nobody was at a screen for (`SchedulerDomain.observedNoScreenRegions`) — and
-     * materialize them as "Inactivity" panels instead.
-     *
-     * The same rule `SchedulerReducer.noScreenEvidence` now applies as work is banked, applied ONCE at
-     * start-up to the work banked before that rule existed. It is needed because the rule used to key on
-     * hand-drawn "No screen" panels alone and so never fired on an account without one: account 3 carried
-     * 43 h of recorded on-screen "work" over spans its own OS reported the machine asleep.
-     *
-     * Unlike the tick that banks records, this **syncs**. `Task.record` is authoritative and the three-way
-     * merge UNIONS it, so a deletion that stayed local would be resurrected by the next peer that still had
-     * the span. Not undoable — the record lives outside Undo/Redo (PRD §8), like [RemoveRecordPeriod].
-     */
-    data class StripNoScreenRecords(
-        val ranges: List<TaskTimeRange>,
     ) : SchedulerIntent
 
     /**

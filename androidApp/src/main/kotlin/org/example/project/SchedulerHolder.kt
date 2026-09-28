@@ -92,6 +92,7 @@ object SchedulerHolder {
                 sleepGapStore = store as? DeviceSleepGapStore,
                 sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                 declaredAwayStore = store as? DeclaredAwayStore,
+                frozenBreakStore = store as? org.example.project.scheduler.persistence.FrozenScreenBreakStore,
                 activeSessionStore = store as? ActiveSessionStore,
                 pauseCue = vm.pauseCue,
                 // `docs/invariants/scheduler.md` § *One device plans*: the account's broadcast channel.

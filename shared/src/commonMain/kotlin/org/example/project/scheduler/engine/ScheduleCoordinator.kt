@@ -55,8 +55,12 @@ class ScheduleCoordinator(
     private val signature: StateFlow<Int>,
     /** Plan here: as the elected [Lead] (broadcast the stages), or `null` for a plan nobody else is told about. */
     private val planLocally: (Lead?) -> Unit,
-    /** Take a leader's rules into this device's plan. */
-    private val adopt: (PeerMessage.Rules) -> Unit,
+    /**
+     * Take a leader's rules into this device's plan. `keepHead` is true when this device already holds a plan for
+     * the same rules: what it has materialized of it is definitive (`docs/scheduler_requirements.md` § *Progressive
+     * Calculation*), and the rules taken in are laid past it only.
+     */
+    private val adopt: (PeerMessage.Rules, Boolean) -> Unit,
     /** The rules this device's current plan returns, for the last election it led; null when it has none. */
     private val currentRules: (election: String) -> PeerMessage.Rules?,
     private val newElectionId: () -> String,
@@ -293,7 +297,7 @@ class ScheduleCoordinator(
         if (last != null && last.signature == rules.signature && !newer(rules, last)) return
         offerCounter(rules, last)
         lastTaken = rules
-        adopt(rules)
+        adopt(rules, last != null && last.signature == rules.signature)
     }
 
     /**
@@ -336,11 +340,13 @@ class ScheduleCoordinator(
         const val PROBE_WINDOW_MILLIS: Long = 1_000
 
         /**
-         * How long a device waits for the elected device's first rules before planning for itself — the pace
-         * `docs/scheduler_requirements.md` § *Progressive Calculation* asks for (10 minutes of definitive schedule
-         * per 10 seconds).
+         * How long a device waits for the elected device's first rules before planning for itself. The pace
+         * `docs/scheduler_requirements.md` § *Progressive Calculation* asks for is 10 minutes of definitive schedule per
+         * 10 seconds, and a device waiting on a rule change has already spent the engine's debounce (1 s) and the probe
+         * window ([PROBE_WINDOW_MILLIS]) and still has its own first stage to fill: the whole wait has to fit inside the
+         * 10 s with room to spare, which a 10-second deadline alone did not.
          */
-        const val RULES_DEADLINE_MILLIS: Long = 10_000
+        const val RULES_DEADLINE_MILLIS: Long = 5_000
 
         private const val MAX_HEARD = 8
     }

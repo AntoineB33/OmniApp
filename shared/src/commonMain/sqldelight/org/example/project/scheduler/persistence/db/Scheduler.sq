@@ -193,6 +193,24 @@ CREATE TABLE network_mode (
     offline INTEGER NOT NULL
 );
 
+-- docs/scheduler_requirements.md § frozen past: the three dynamic periods (screen breaks) the now-line has
+-- BANKED, one row per occurrence, and the front they are the whole answer up to (screen_break_front, one row,
+-- id always 0). Once banked a break never moves: the walk continues from this record instead of re-deriving the
+-- past off an environment, a configuration or a mode that may all have changed since. LOCAL-ONLY, never synced
+-- and never a History Unit; pruned past a retention bound. Added in migration 15.sqm.
+CREATE TABLE screen_break_history (
+    start_ms INTEGER NOT NULL,
+    label    TEXT NOT NULL,
+    end_ms   INTEGER NOT NULL,
+    PRIMARY KEY (start_ms, label)
+);
+
+CREATE TABLE screen_break_front (
+    id       INTEGER NOT NULL PRIMARY KEY,
+    until_ms INTEGER NOT NULL,
+    line_ms  INTEGER NOT NULL
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE account_id = ?;
 
@@ -310,3 +328,18 @@ SELECT offline FROM network_mode WHERE id = 0;
 
 upsertNetworkMode:
 INSERT OR REPLACE INTO network_mode(id, offline) VALUES (0, ?);
+
+selectScreenBreakHistory:
+SELECT start_ms, label, end_ms FROM screen_break_history ORDER BY start_ms;
+
+insertScreenBreak:
+INSERT OR REPLACE INTO screen_break_history(start_ms, label, end_ms) VALUES (?, ?, ?);
+
+deleteScreenBreaksBefore:
+DELETE FROM screen_break_history WHERE end_ms <= ?;
+
+selectScreenBreakFront:
+SELECT until_ms, line_ms FROM screen_break_front WHERE id = 0;
+
+upsertScreenBreakFront:
+INSERT OR REPLACE INTO screen_break_front(id, until_ms, line_ms) VALUES (0, ?, ?);

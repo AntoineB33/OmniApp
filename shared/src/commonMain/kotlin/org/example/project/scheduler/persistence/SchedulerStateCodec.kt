@@ -40,6 +40,7 @@ import org.example.project.scheduler.model.DEFAULT_MINIMUM_MINUTES
 import org.example.project.scheduler.model.ForcedTaskStart
 import org.example.project.scheduler.model.ForcedTaskSwitch
 import org.example.project.scheduler.model.PanelPins
+import org.example.project.scheduler.model.PanelRepeat
 import org.example.project.scheduler.model.PriorityWeightPin
 import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
@@ -530,6 +531,8 @@ object SchedulerStateCodec {
                         // was written, and a panel that only carries a legacy flag goes on being healed from
                         // it on decode rather than being silently upgraded here.
                         periodKind = it.periodKind,
+                        repeatEveryDays = it.repeat?.everyDays ?: 0,
+                        repeatUntil = it.repeat?.untilMillis,
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -893,6 +896,8 @@ object SchedulerStateCodec {
             inactivity = inactivity,
             conductedBreak = conductedBreak,
             periodKind = periodKind,
+            repeatEveryDays = repeat?.everyDays ?: 0,
+            repeatUntil = repeat?.untilMillis,
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -1137,6 +1142,7 @@ object SchedulerStateCodec {
                         inactivity = it.inactivity,
                         conductedBreak = it.conductedBreak,
                         periodKind = it.periodKind,
+                        repeat = PanelRepeat.of(it.repeatEveryDays, it.repeatUntil),
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -1415,6 +1421,7 @@ object SchedulerStateCodec {
             // than re-deriving it at every read: the two legacy names, and `sleep` telling apart the two
             // kinds the README's one grey kind became ([PeriodKinds.migrateStoredKind]).
             periodKind = PeriodKinds.migrateStoredKind(periodKind, sleep),
+            repeat = PanelRepeat.of(repeatEveryDays, repeatUntil),
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -2256,6 +2263,14 @@ private data class PersistedPanel(
      * of the flags exactly as it always has.
      */
     val periodKind: String = "",
+    /**
+     * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the pre-placed tasks and
+     * restrictive periods can be in infinite patterns"* — [org.example.project.scheduler.model.TaskPanel.repeat],
+     * flattened. `0` (and a payload that predates the field) is a panel that does not repeat.
+     */
+    val repeatEveryDays: Int = 0,
+    /** The instant a repeating panel stops starting new occurrences; null repeats for ever. */
+    val repeatUntil: Long? = null,
 )
 
 @Serializable

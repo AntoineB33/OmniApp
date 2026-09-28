@@ -13,14 +13,14 @@ import org.example.project.scheduler.state.SchedulerState
 
 /**
  * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**modes 2 & 3**: *"$now line$ must be covered by the
- * period 'no on-screen task'"*) and § *No idling*: **the away cover picks the run the line starts in, and never
- * cuts it.**
+ * period 'no on-screen task'"*) and § *No idling*: **while the mode holds, the plan is the plan for a covered line —
+ * from the line to the end of what is searched.**
  *
- * The cover was `[now, now + 1)`: a one-millisecond window, whose edge the search decides at like any other. So
- * the resilient task got exactly one millisecond, an on-screen task the rest — and since time passing never
- * re-plans, the away line (and the mode-2 sweep after a device sleep) then walked over on-screen work the display
- * clips and the bank refuses, leaving idle a stretch where the resilient task could have run. The cover is now
- * the line's own instant, `[now, now]`, read as a rule on the first run only.
+ * The cover was first `[now, now + 1)` (the resilient task got one millisecond, an on-screen task the rest), then
+ * the line's own instant `[now, now]` (it chose the first run and nothing more). Either way, since time passing
+ * never re-plans, the away line walked out of the first run into on-screen work the display clips and the bank
+ * refuses: an away stretch left empty where a resilient task could have run. The rules are parameterized by the
+ * mode, so the plan for an away mode covers every instant the mode holds, and a flip re-plans at the flip.
  */
 class AwayCoverFirstRunTest {
 
@@ -60,21 +60,29 @@ class AwayCoverFirstRunTest {
     }
 
     @Test
-    fun the_cover_restricts_nothing_but_the_first_run() {
-        // Past the first run the plan is the ordinary one: the on-screen task is still scheduled — the cover is an
-        // instant, not a period that turns work away.
-        val panels = fill(account(), DynamicPeriods.MODE_AWAY)
-        assertTrue(
-            panels.any { it.auto && it.title == "Screen" && it.startEpochMillis > NOW },
-            "the on-screen task must still be planned after the first run: ${panels.map { it.title }}",
-        )
+    fun while_away_the_resilient_task_fills_the_whole_plan_and_no_on_screen_task_is_placed() {
+        for (mode in listOf(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK)) {
+            val panels = fill(account(), mode)
+            assertTrue(
+                panels.none { it.auto && it.title == "Screen" && it.endEpochMillis > NOW },
+                "mode $mode: no on-screen task may be planned while the line is covered: ${panels.map { it.title }}",
+            )
+            val walk = panels.filter { it.auto && it.title == "Walk" }
+                .map { org.example.project.scheduler.model.TaskTimeRange(maxOf(it.startEpochMillis, NOW), it.endEpochMillis) }
+            assertEquals(
+                emptyList(),
+                SchedulerDomain.subtractRegions(listOf(org.example.project.scheduler.model.TaskTimeRange(NOW, NOW + 3 * HOUR)), walk),
+                "mode $mode: the resilient task fills the away plan — nothing idles where it may run",
+            )
+        }
     }
 
     @Test
-    fun with_no_resilient_task_the_line_is_not_left_idle() {
-        // "…or no task if none have such resilience": a no-task of zero length. The line still starts in a task.
+    fun with_no_resilient_task_nothing_is_scheduled_while_away() {
+        // "…filled with tasks that have a non-zero resilience to the kind 'no on-screen task', or no task if none
+        // have such resilience" — the stretch is restricted, not idle.
         val s = account().let { s -> s.copy(tasks = s.tasks.mapValues { (_, t) -> t.withResilience(PeriodKinds.NO_SCREEN, 0.0) }) }
-        val first = atLine(fill(s, DynamicPeriods.MODE_AWAY))
-        assertTrue(first.endEpochMillis - NOW >= MIN, "the line must start in a real run, not a sliver: $first")
+        val panels = fill(s, DynamicPeriods.MODE_AWAY)
+        assertTrue(panels.none { it.auto && it.endEpochMillis > NOW }, "nothing may run while nobody is resilient: $panels")
     }
 }

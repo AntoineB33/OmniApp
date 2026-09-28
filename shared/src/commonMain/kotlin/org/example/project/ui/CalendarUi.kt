@@ -7610,7 +7610,10 @@ fun ManualEntryEditWindow(
     titleSuggestions: (String) -> List<String>,
     taskIdForTitle: (String) -> TaskId?,
     titleForTaskId: (TaskId) -> String?,
-    onSave: (taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins, noScreenResilience: Double) -> Unit,
+    onSave: (
+        taskId: TaskId?, title: String, startMillis: Long, endMillis: Long, pins: PanelPins, noScreenResilience: Double,
+        repeatEveryDays: Int,
+    ) -> Unit,
     onDismiss: () -> Unit,
     /** PRD §8: the bin — see [EditorBinButton]. Null while ADDING a panel. */
     onRemove: (() -> Unit)? = null,
@@ -7626,8 +7629,11 @@ fun ManualEntryEditWindow(
      * where the README's "for each kind" lives.
      */
     noScreenResilienceForTaskId: (TaskId) -> Double? = { null },
+    /** `docs/scheduler_requirements.md`: how often the block recurs, in days (0: it happens once) — [RepeatEveryField]. */
+    initialRepeatDays: Int = 0,
 ) {
     var title by remember { mutableStateOf(initialTitle) }
+    var repeatText by remember { mutableStateOf(repeatDaysText(initialRepeatDays)) }
     // The explicitly-picked existing task, if any. PRD §8: unlike the tree, the calendar does NOT
     // default to "New task" — the first real task of the menu is pre-selected. [newTaskChosen] records
     // when the user explicitly picks the "New task" row instead, so a fresh window / typing reverts to
@@ -7740,6 +7746,8 @@ fun ManualEntryEditWindow(
                 PinSwitchRow("Spanning", pins.spanning) { pins = pins.copy(spanning = it) }
                 PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
 
+                RepeatEveryField(repeatText) { repeatText = it }
+
                 // `side-dev/README.md`: the task's resilience to "no on-screen task" — task-level, not
                 // per-panel, re-seeded whenever the effective task changes. Hidden for a calendar-only
                 // "New task" (no task object yet).
@@ -7776,7 +7784,7 @@ fun ManualEntryEditWindow(
                             onClick = {
                                 val start = parseHmOnDateOf(startText, startMillis, tz) ?: startMillis
                                 val end = parseHmOnDateOf(endText, endMillis, tz) ?: endMillis
-                                onSave(effectiveTaskId, title, start, end, pins, noScreenResilience)
+                                onSave(effectiveTaskId, title, start, end, pins, noScreenResilience, parseRepeatDays(repeatText))
                             },
                         ) { Text("Save") }
                     }
@@ -7946,11 +7954,14 @@ fun PeriodEditWindow(
     endMillis: Long,
     nowMillis: Long,
     tz: TimeZone,
-    onSave: (startMillis: Long, endMillis: Long) -> Unit,
+    onSave: (startMillis: Long, endMillis: Long, repeatEveryDays: Int) -> Unit,
     onDismiss: () -> Unit,
     /** PRD §8: the bin — see [EditorBinButton]. Null while ADDING, and on a period the app derived. */
     onRemove: (() -> Unit)? = null,
+    /** `docs/scheduler_requirements.md`: how often the period recurs, in days (0: once) — [RepeatEveryField]. */
+    initialRepeatDays: Int = 0,
 ) {
+    var repeatText by remember { mutableStateOf(repeatDaysText(initialRepeatDays)) }
     // An already-open bound has no wall-clock time to show, so its (hidden) fields are seeded from `now`
     // rather than from the sentinel instant — switching the bound back to "date & time" then offers today,
     // not the year 1900.
@@ -8028,6 +8039,8 @@ fun PeriodEditWindow(
                     valid = resolvedEnd != null,
                 )
 
+                RepeatEveryField(repeatText) { repeatText = it }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -8041,7 +8054,7 @@ fun PeriodEditWindow(
                         onClick = {
                             val start = resolvedStart
                             val end = resolvedEnd
-                            if (start != null && end != null && end > start) onSave(start, end)
+                            if (start != null && end != null && end > start) onSave(start, end, parseRepeatDays(repeatText))
                         },
                     ) { Text("Save") }
                     }
@@ -8050,6 +8063,29 @@ fun PeriodEditWindow(
         }
     }
 }
+
+/**
+ * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the pre-placed tasks and restrictive
+ * periods can be in infinite patterns"* — **how often the thing this window edits recurs**, in days. Blank or 0 is
+ * once; 1 every day, 7 every week. It recurs at the same local time for ever; every occurrence of it is the same
+ * thing, so editing or deleting any one of them edits or deletes the pattern.
+ */
+@Composable
+internal fun RepeatEveryField(text: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = text,
+        onValueChange = { typed -> onChange(typed.filter(Char::isDigit).take(4)) },
+        label = { Text("Repeat every (days, blank = once)") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** What [RepeatEveryField] shows for a pattern of [days] days (blank for none). */
+internal fun repeatDaysText(days: Int): String = if (days > 0) days.toString() else ""
+
+/** The days [RepeatEveryField] holds (0: once). */
+internal fun parseRepeatDays(text: String): Int = text.trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
 
 /**
  * PRD §8: **the bin of a calendar editor** — the one way to get rid of the thing the window names.
