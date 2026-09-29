@@ -53,9 +53,6 @@ Here are some example situations resulting from the rules described above.
 ### Alternative Schedules:
 The returned set of rules output must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler is refused by the user. When it happens, a program would simply read the rules, set this alternative task starting at [$now line$, $now line$+d], with d defined beforehand (like 10 minutes), and run the scheduler again with this new schedule.
 
-### No idling:
-Anywhere that is not covered by restrictive periods which would prevent any task from being scheduled, the scheduler must schedule a task, for any $now line$ and $now line$ mode.
-
 ### Rule state input evolution
 * **Rule State Input Definition:** A rule state input is the set of tasks and their associated priority percentages, minimum execution time and resilience values for every periods at a given moment in time.
 * **Rule State Input Evolution:** The rule state input can change continuously or discretely on the timeline. For example, with the rule state input switching to a new state only once in the future, discretely, then with infinite computing and memory resources it is like: it first finds the best infinite schedule with the first rule state input in mind, then it finds the best infinite schedule with the second rule state input in mind starting at the moment where it switches, and from this same moment replace the previous schedule.
