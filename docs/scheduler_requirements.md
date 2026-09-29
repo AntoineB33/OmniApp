@@ -2,7 +2,7 @@
 
 ### System Overview
 
-The scheduler returns a set of rules output that define the task schedule for a given timeline to satisfy constraints and two optimization criteria.
+The scheduler returns a set of rules output that define the task schedule for the timeline to satisfy constraints and two optimization criteria. This set of rules consists of simple "if...then...else..." clauses and instructions that the scheduler interprets to apply the scheduling with a complexity of O(1).
 
 ### Core Constraints & Task Allocation
 
