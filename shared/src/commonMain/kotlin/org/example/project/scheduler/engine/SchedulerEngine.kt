@@ -1430,7 +1430,7 @@ class SchedulerEngine(
      * PRD §15: sample the RAW platform lock signal and clear "I'm away" **while locked, and at an unlock**.
      *
      * - **A lock ends it.** `docs/scheduler_requirements.md` § *$now line$ 3 modes*: "I'm away" is this device's
-     *   *"fake no computer unlocked"* (or phone) period, which *"can't be with 'no computer unlocked'"* — so the fake
+     *   *"not on a computer"* (or phone) period, which *"can't be with 'no computer unlocked'"* — so the fake
      *   period ends where the real one starts, and a line with every device really locked is in mode 2, not 3.
      * - **An unlock ends it** too (a safety net now: the lock before it already did). Unlocking this device is the
      *   user coming back to it — the one unambiguous "I'm back" the app can read without being told. An unlock with

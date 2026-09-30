@@ -144,8 +144,8 @@ class TaskResilienceTest {
                 PeriodKinds.NO_COMPUTER_UNLOCKED,
                 PeriodKinds.NO_PHONE_UNLOCKED,
                 // …and their FAKE halves (the "I'm away" button, 2026-09-30).
-                PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED,
-                PeriodKinds.FAKE_NO_PHONE_UNLOCKED,
+                PeriodKinds.NOT_ON_A_COMPUTER,
+                PeriodKinds.NOT_ON_A_PHONE,
                 // The kinds of the two poses, which a task may be resilient to.
                 PeriodKinds.BREAK_5MIN,
                 PeriodKinds.BREAK_15MIN,
@@ -179,8 +179,8 @@ class TaskResilienceTest {
                 PeriodKinds.BEFORE_BED,
                 PeriodKinds.NO_COMPUTER_UNLOCKED,
                 PeriodKinds.NO_PHONE_UNLOCKED,
-                PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED,
-                PeriodKinds.FAKE_NO_PHONE_UNLOCKED,
+                PeriodKinds.NOT_ON_A_COMPUTER,
+                PeriodKinds.NOT_ON_A_PHONE,
                 // The two pose kinds (`docs/scheduler_requirements.md` § *screen breaks*).
                 PeriodKinds.BREAK_5MIN,
                 PeriodKinds.BREAK_15MIN,

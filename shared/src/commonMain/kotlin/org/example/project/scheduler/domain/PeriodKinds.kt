@@ -117,18 +117,18 @@ object PeriodKinds {
 
     /**
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **a computer of the account is unlocked, and the user
-     * said nobody is at it** — the "I'm away" button pressed on a computer. *"Mode 3: $now line$ is in either 'fake no
-     * computer unlocked' or 'fake no phone unlocked' periods. 'fake no computer unlocked' can't be with 'no computer
+     * said nobody is at it** — the "I'm away" button pressed on a computer. *"Mode 3: $now line$ is in either 'not on a
+     * computer' or 'not on a phone' periods. 'not on a computer' can't be with 'no computer
      * unlocked'"*: where the computer really is locked the stretch is [NO_COMPUTER_UNLOCKED], never both
      * ([SchedulerDomain.observedNoScreenRegions] takes the real one out of it).
      *
      * A layer kind like the real one ([isLayerKind]): it restricts nothing by itself, and what it makes with the phone's
      * layer is a combination rule ([DEFAULT_COMBINATIONS]: with either phone layer, a "no screen" period).
      */
-    const val FAKE_NO_COMPUTER_UNLOCKED: String = "fake no computer unlocked"
+    const val NOT_ON_A_COMPUTER: String = "not on a computer"
 
-    /** The phone's half of [FAKE_NO_COMPUTER_UNLOCKED]: the "I'm away" button pressed on a phone. */
-    const val FAKE_NO_PHONE_UNLOCKED: String = "fake no phone unlocked"
+    /** The phone's half of [NOT_ON_A_COMPUTER]: the "I'm away" button pressed on a phone. */
+    const val NOT_ON_A_PHONE: String = "not on a phone"
 
     /**
      * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 5-minute screen break** — *"The 5min break is
@@ -165,12 +165,12 @@ object PeriodKinds {
     val BUILT_IN: List<String> =
         listOf(
             INACTIVITY, SLEEP, NO_SCREEN, BEFORE_BED, NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED,
-            FAKE_NO_COMPUTER_UNLOCKED, FAKE_NO_PHONE_UNLOCKED,
+            NOT_ON_A_COMPUTER, NOT_ON_A_PHONE,
         )
 
     /**
      * **The combination rules an account starts with** (`docs/scheduler_requirements.md` § *$now line$ 3 modes*; user
-     * rule 2026-09-30: *"when 'fake no computer unlocked' and 'no phone unlocked' are present, it is always accompanied
+     * rule 2026-09-30: *"when 'not on a computer' and 'no phone unlocked' are present, it is always accompanied
      * by 'no screen' (except if the user changes the period configurations)"*): **each computer layer with each phone
      * layer — real or fake — is a "no screen" period.** Where a computer's and a phone's "nobody here" overlap, nobody is
      * at any screen. Edited in the period edit window ([PeriodCombination], [PeriodKindConfig.combinations]); until the
@@ -179,9 +179,9 @@ object PeriodKinds {
     val DEFAULT_COMBINATIONS: List<PeriodCombination> =
         listOf(
             PeriodCombination("layers", setOf(NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
-            PeriodCombination("layers-fake-computer", setOf(FAKE_NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
-            PeriodCombination("layers-fake-phone", setOf(NO_COMPUTER_UNLOCKED, FAKE_NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
-            PeriodCombination("layers-fake-both", setOf(FAKE_NO_COMPUTER_UNLOCKED, FAKE_NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
+            PeriodCombination("layers-fake-computer", setOf(NOT_ON_A_COMPUTER, NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
+            PeriodCombination("layers-fake-phone", setOf(NO_COMPUTER_UNLOCKED, NOT_ON_A_PHONE), setOf(NO_SCREEN)),
+            PeriodCombination("layers-fake-both", setOf(NOT_ON_A_COMPUTER, NOT_ON_A_PHONE), setOf(NO_SCREEN)),
         )
 
     /**
@@ -206,8 +206,27 @@ object PeriodKinds {
         when (normalize(stored)) {
             LEGACY_NO_TASK -> if (isSleep) SLEEP else INACTIVITY
             LEGACY_NO_SCREEN -> NO_SCREEN
+            LEGACY_FAKE_NO_COMPUTER -> NOT_ON_A_COMPUTER
+            LEGACY_FAKE_NO_PHONE -> NOT_ON_A_PHONE
             else -> normalize(stored)
         }
+
+    /**
+     * A stored period title healed onto [periodTitle]'s current wording: the two "I'm away" kinds were titled "Fake no
+     * computer unlocked" / "Fake no phone unlocked" until 2026-09-30. Any other title is the user's and kept as is.
+     */
+    fun migrateStoredTitle(stored: String): String =
+        when (stored) {
+            "Fake no computer unlocked" -> periodTitle(NOT_ON_A_COMPUTER)
+            "Fake no phone unlocked" -> periodTitle(NOT_ON_A_PHONE)
+            else -> stored
+        }
+
+    /** [NOT_ON_A_COMPUTER]'s stored name until its rename on 2026-09-30. */
+    private const val LEGACY_FAKE_NO_COMPUTER: String = "fake no computer unlocked"
+
+    /** [NOT_ON_A_PHONE]'s stored name until its rename on 2026-09-30. */
+    private const val LEGACY_FAKE_NO_PHONE: String = "fake no phone unlocked"
 
     /** The README's one grey kind, split into [INACTIVITY] and [SLEEP] on 2026-09-12. */
     private const val LEGACY_NO_TASK: String = "no task allowed"
@@ -264,8 +283,8 @@ object PeriodKinds {
             NO_PHONE_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.FallingObliques)
             // The real layer's slope, DOTTED: the look an "I'm away" stretch has always had on the calendar (the
             // user's word against an unlocked machine).
-            FAKE_NO_COMPUTER_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.DottedRisingObliques)
-            FAKE_NO_PHONE_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.DottedFallingObliques)
+            NOT_ON_A_COMPUTER -> PeriodKindStyle(emptySet(), PeriodDrawing.DottedRisingObliques)
+            NOT_ON_A_PHONE -> PeriodKindStyle(emptySet(), PeriodDrawing.DottedFallingObliques)
             // *"always accompanied by the 'no screen' period"*; drawn as the grey family the breaks belong to.
             BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.VerticalLines)
             else -> PeriodKindStyle(emptySet(), PeriodDrawing.Crosses)
@@ -287,13 +306,13 @@ object PeriodKinds {
      * fake one ([fakeLayerKind]).
      */
     val LAYER_KINDS: Set<String> =
-        setOf(NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED, FAKE_NO_COMPUTER_UNLOCKED, FAKE_NO_PHONE_UNLOCKED)
+        setOf(NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED, NOT_ON_A_COMPUTER, NOT_ON_A_PHONE)
 
     /** The kind that states [layer] was FAKED — its device unlocked, the user saying nobody is at it. */
     fun fakeLayerKind(layer: SchedulerDomain.ActivityLayer): String =
         when (layer) {
-            SchedulerDomain.ActivityLayer.NoComputerUnlocked -> FAKE_NO_COMPUTER_UNLOCKED
-            SchedulerDomain.ActivityLayer.NoPhoneUnlocked -> FAKE_NO_PHONE_UNLOCKED
+            SchedulerDomain.ActivityLayer.NoComputerUnlocked -> NOT_ON_A_COMPUTER
+            SchedulerDomain.ActivityLayer.NoPhoneUnlocked -> NOT_ON_A_PHONE
         }
 
     /** The kind that states [layer] — the one tie between a layer hatch and a restrictive period. */
@@ -371,8 +390,8 @@ object PeriodKinds {
             BEFORE_BED -> "Before bed"
             NO_COMPUTER_UNLOCKED -> SchedulerDomain.ActivityLayer.NoComputerUnlocked.calendarLabel
             NO_PHONE_UNLOCKED -> SchedulerDomain.ActivityLayer.NoPhoneUnlocked.calendarLabel
-            FAKE_NO_COMPUTER_UNLOCKED -> "Fake no computer unlocked"
-            FAKE_NO_PHONE_UNLOCKED -> "Fake no phone unlocked"
+            NOT_ON_A_COMPUTER -> "Not on a computer"
+            NOT_ON_A_PHONE -> "Not on a phone"
             else -> kind
         }
 

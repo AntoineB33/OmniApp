@@ -103,7 +103,7 @@ persisted keys.
   `anyDeviceUnlockedAt` reading the input once off the **account-wide pause the calendar already draws**
   (`displayInactivityGaps`), so the mode and the Inactivity band can never disagree. And, where none is, **has a device
   SAID it is away**: mode 3 if at least one has the "I'm away" button on, mode 2 if none has. "I'm away" is the
-  requirements' *"fake no computer unlocked"* (or phone) period, which *"can't be with 'no computer unlocked'"*: a
+  requirements' *"not on a computer"* (or phone) period, which *"can't be with 'no computer unlocked'"*: a
   device's flag cannot stand while that device is really locked (below), so mode 2 is every device really locked and
   mode 3 at least one device away at an unlocked screen. The engine reads it
   through a cache held on its inputs (`SchedulerEngine.baseTpMode`): for the same inputs the answer only changes where

@@ -33,7 +33,7 @@ class PeriodKindNamingTest {
         assertEquals(
             listOf(
                 "inactivity", "sleep", "no screen", "before bed", "no computer unlocked", "no phone unlocked",
-                "fake no computer unlocked", "fake no phone unlocked",
+                "not on a computer", "not on a phone",
                 "5min screen break", "15min screen break",
             ),
             kinds,
@@ -63,6 +63,11 @@ class PeriodKindNamingTest {
         assertEquals(PeriodKinds.BEFORE_BED, periodKindNamed("Before bed", kinds))
         assertEquals(PeriodKinds.NO_PHONE_UNLOCKED, periodKindNamed("No phone unlocked", kinds))
         assertEquals(PeriodKinds.NO_COMPUTER_UNLOCKED, periodKindNamed("no computer unlocked", kinds))
+        // The "I'm away" kinds, under their names before the 2026-09-30 rename.
+        listOf("not on a computer", "Not on a computer", "fake no computer unlocked")
+            .forEach { typed -> assertEquals(PeriodKinds.NOT_ON_A_COMPUTER, periodKindNamed(typed, kinds), typed) }
+        listOf("not on a phone", "Not on a phone", "fake no phone unlocked")
+            .forEach { typed -> assertEquals(PeriodKinds.NOT_ON_A_PHONE, periodKindNamed(typed, kinds), typed) }
     }
 
     /**

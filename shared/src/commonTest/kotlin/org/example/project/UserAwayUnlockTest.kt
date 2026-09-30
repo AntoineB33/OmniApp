@@ -41,8 +41,8 @@ class UserAwayUnlockTest {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): "I'm away" is this device's *"fake no
-     * computer unlocked"* period, which *"can't be with 'no computer unlocked'"* — so the LOCK ends it, and a line with
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): "I'm away" is this device's *"not on a
+     * computer"* period, which *"can't be with 'no computer unlocked'"* — so the LOCK ends it, and a line with
      * every device really locked is in mode 2. (Until then a lock left the flag standing, and the line stayed in mode 3.)
      */
     @Test

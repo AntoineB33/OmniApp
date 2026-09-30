@@ -307,8 +307,8 @@ data class CalendarRecord(
      */
     val layerDeclared: Boolean = false,
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: this region is [layer]'s **fake** half — "fake no
-     * computer unlocked" / "fake no phone unlocked", a device of that kind unlocked and declared away. Drawn with the
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: this region is [layer]'s **fake** half — "not on a
+     * computer" / "not on a phone", a device of that kind unlocked and declared away. Drawn with the
      * fake kind's own drawing ([PeriodKinds.fakeLayerKind]) and named by it in the bubble.
      */
     val layerFake: Boolean = false,

@@ -30,7 +30,7 @@ Each task has a defined minimum execution time. Another optimization goal is to 
     * **Mode 1:** $now line$ must not be covered by the period "no screen".
     * **Mode 2 & 3:** $now line$ must be covered by the period "no screen".
         * **Mode 2:** $now line$ is in both "no computer unlocked" and "no phone unlocked" periods.
-        * **Mode 3:** $now line$ is in either "fake no computer unlocked" or "fake no phone unlocked" periods. "fake no computer unlocked" can't be with "no computer unlocked", same with the phone.
+        * **Mode 3:** $now line$ is in either "not on a computer" or "not on a phone" periods. "not on a computer" can't be with "no computer unlocked", same with the phone.
     * **Mode switching:** The current $now line$ mode can be decided anytime by a program, but can't go in mode 1 during a "20s screen break" restrictive period. When $now line$ enters a "20s screen break" restrictive period in mode 1, it gets in mode 3, and when it leaves it, it gets in mode 1 unless the user wanted it to stay in mode 3, or unless it is in mode 2.
 * **frozen past:** The schedule at t < $now line$ never changes as $now line$ increases, with only two exceptions:
     * When the user or a program wants to rewrite history.

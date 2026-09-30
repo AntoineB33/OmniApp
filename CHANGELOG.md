@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Fake no computer/phone unlocked" renamed "not on a computer/phone" — 2026-09-30
+
+The two "I'm away" kinds below are now `not on a computer` / `not on a phone` (`PeriodKinds.NOT_ON_A_COMPUTER` /
+`NOT_ON_A_PHONE`, titled "Not on a computer" / "Not on a phone"). The old stored names are healed on load by
+`PeriodKinds.migrateStoredKind` (periods, the account's kind list, resilience maps, combinations, the clipboard) and
+the old period titles by `migrateStoredTitle`; pinned by `RestrictivePeriodKindTest`'s
+`a_payload_written_before_the_away_kinds_rename_…` and `PeriodKindNamingTest`.
+
 ### "Fake no computer/phone unlocked" and the combination rules — 2026-09-30
 
 `docs/scheduler_requirements.md` § *$now line$ 3 modes* defines modes 2 and 3 by real and fake "no … unlocked" periods,

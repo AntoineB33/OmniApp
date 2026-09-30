@@ -22,9 +22,9 @@ import org.example.project.scheduler.state.SchedulerState
 /**
  * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30) and the period edit window's **combinations**:
  *
- * - *"Mode 3: $now line$ is in either 'fake no computer unlocked' or 'fake no phone unlocked' periods. 'fake no computer
- *   unlocked' can't be with 'no computer unlocked', same with the phone."*
- * - *"When 'fake no computer unlocked' and 'no phone unlocked' are present for example, it is always accompanied by 'no
+ * - *"Mode 3: $now line$ is in either 'not on a computer' or 'not on a phone' periods. 'not on a
+ *   computer' can't be with 'no computer unlocked', same with the phone."*
+ * - *"When 'not on a computer' and 'no phone unlocked' are present for example, it is always accompanied by 'no
  *   screen' (except if the user changes the period configurations). In the restrictive period edit window, add a section
  *   where the user can select a combination of periods, and select which periods appear when this combination is
  *   present."*
@@ -40,8 +40,8 @@ class PeriodCombinationsTest {
 
     @Test
     fun every_computer_layer_with_every_phone_layer_is_no_screen_by_default() {
-        for (computer in listOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED)) {
-            for (phone in listOf(PeriodKinds.NO_PHONE_UNLOCKED, PeriodKinds.FAKE_NO_PHONE_UNLOCKED)) {
+        for (computer in listOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NOT_ON_A_COMPUTER)) {
+            for (phone in listOf(PeriodKinds.NO_PHONE_UNLOCKED, PeriodKinds.NOT_ON_A_PHONE)) {
                 val closed = DEFAULT.closeRegions(mapOf(computer to listOf(span(0, 3)), phone to listOf(span(2, 5))))
                 assertEquals(listOf(span(2, 3)), closed[PeriodKinds.NO_SCREEN], "$computer + $phone")
             }
@@ -50,14 +50,14 @@ class PeriodCombinationsTest {
 
     @Test
     fun one_layer_alone_is_no_screen_nowhere() {
-        val closed = DEFAULT.closeRegions(mapOf(PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED to listOf(span(0, 3))))
+        val closed = DEFAULT.closeRegions(mapOf(PeriodKinds.NOT_ON_A_COMPUTER to listOf(span(0, 3))))
         assertEquals(null, closed[PeriodKinds.NO_SCREEN])
     }
 
     @Test
     fun the_user_can_take_a_default_combination_away() {
         val config = PeriodKindConfig(combinations = PeriodKinds.DEFAULT_COMBINATIONS.filterNot { it.id == "layers-fake-computer" })
-        val present = mapOf(PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED to listOf(span(0, 3)), PeriodKinds.NO_PHONE_UNLOCKED to listOf(span(0, 3)))
+        val present = mapOf(PeriodKinds.NOT_ON_A_COMPUTER to listOf(span(0, 3)), PeriodKinds.NO_PHONE_UNLOCKED to listOf(span(0, 3)))
         assertEquals(null, config.closeRegions(present)[PeriodKinds.NO_SCREEN])
         assertEquals(listOf(span(0, 3)), DEFAULT.closeRegions(present)[PeriodKinds.NO_SCREEN])
     }
@@ -122,7 +122,7 @@ class PeriodCombinationsTest {
 
     @Test
     fun without_its_combination_an_away_spell_is_no_screen_nowhere() {
-        val config = PeriodKindConfig(combinations = PeriodKinds.DEFAULT_COMBINATIONS.filterNot { PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED in it.kinds })
+        val config = PeriodKindConfig(combinations = PeriodKinds.DEFAULT_COMBINATIONS.filterNot { PeriodKinds.NOT_ON_A_COMPUTER in it.kinds })
         val observed =
             SchedulerDomain.observedNoScreenRegions(
                 computerLocked = listOf(span(0, 10)),
@@ -145,7 +145,7 @@ class PeriodCombinationsTest {
 
     @Test
     fun the_fake_kinds_are_built_in_layer_kinds_restricting_nobody_alone() {
-        for (kind in listOf(PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED, PeriodKinds.FAKE_NO_PHONE_UNLOCKED)) {
+        for (kind in listOf(PeriodKinds.NOT_ON_A_COMPUTER, PeriodKinds.NOT_ON_A_PHONE)) {
             assertTrue(kind in PeriodKinds.BUILT_IN)
             assertTrue(PeriodKinds.isLayerKind(kind))
             assertEquals(1.0, PeriodKinds.defaultResilience(kind))

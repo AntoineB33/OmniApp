@@ -1134,7 +1134,7 @@ object SchedulerStateCodec {
                     TaskPanel(
                         id = it.id,
                         taskId = it.taskId?.let(::TaskId),
-                        title = it.title,
+                        title = PeriodKinds.migrateStoredTitle(it.title),
                         startEpochMillis = it.start,
                         endEpochMillis = it.end,
                         pinned = it.pinned,
@@ -1415,7 +1415,8 @@ object SchedulerStateCodec {
         TaskPanel(
             id = id,
             taskId = taskId?.let(::TaskId),
-            title = title,
+            // The "I'm away" kinds' titles before their 2026-09-30 rename ([PeriodKinds.migrateStoredTitle]).
+            title = PeriodKinds.migrateStoredTitle(title),
             startEpochMillis = start,
             endEpochMillis = end,
             pinned = pinned,

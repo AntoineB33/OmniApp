@@ -195,8 +195,8 @@ class AccountAwayModeTest {
 
     @Test
     fun the_lock_that_ends_the_button_closes_the_stretch_there() = runTest {
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): the button is the device's "fake no
-        // computer unlocked" period, which "can't be with 'no computer unlocked'" — so the machine locking itself while
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): the button is the device's "not on a
+        // computer" period, which "can't be with 'no computer unlocked'" — so the machine locking itself while
         // the user is away ENDS it, and the record closes at the lock: the OS's own lock history covers the rest, and a
         // line with every device really locked is in mode 2.
         val h = Harness(NOW, FakeGateway())

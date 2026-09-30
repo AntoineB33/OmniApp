@@ -31,9 +31,9 @@ enum class PeriodDrawing(val label: String) {
     Crosses("Crosses +"),
     /** Horizontal zig-zag lines — the "before bed" default. */
     Zigzags("Zig-zags"),
-    /** `/` in dashes — the "fake no computer unlocked" default: the real layer's slope, the user's word. */
+    /** `/` in dashes — the "not on a computer" default: the real layer's slope, the user's word. */
     DottedRisingObliques("Dotted oblique lines /"),
-    /** `\` in dashes — the "fake no phone unlocked" default. */
+    /** `\` in dashes — the "not on a phone" default. */
     DottedFallingObliques("Dotted oblique lines \\"),
 }
 

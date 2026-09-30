@@ -367,6 +367,36 @@ class RestrictivePeriodKindTest {
         assertEquals(PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + "deep work", decoded.allPeriodKinds)
     }
 
+    /**
+     * Persisted-DB compatibility for the 2026-09-30 rename of the "I'm away" kinds: `fake no computer unlocked` →
+     * `not on a computer`, `fake no phone unlocked` → `not on a phone`. A period, the account's kind list and a
+     * task's resilience map written under the old names all land on the new ones.
+     */
+    @Test
+    fun a_payload_written_before_the_away_kinds_rename_decodes_onto_their_new_names() {
+        val json =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":"t0"}],
+             "tasks":[{"id":"t0","title":"X","occurrences":["c0"],
+                       "resilience":{"fake no computer unlocked":0.5}}],
+             "periodKinds":["fake no computer unlocked","fake no phone unlocked","deep work"],
+             "panels":[
+               {"id":"panel/0","title":"Fake no computer unlocked","start":0,"end":3600000,
+                "periodKind":"fake no computer unlocked"},
+               {"id":"panel/1","title":"Fake no phone unlocked","start":7200000,"end":10800000,
+                "periodKind":"fake no phone unlocked"}
+             ]}
+            """.trimIndent()
+        val decoded = SchedulerStateCodec.decode(json)
+        assertNotNull(decoded)
+        assertEquals(PeriodKinds.NOT_ON_A_COMPUTER, decoded.panels.single { it.id == "panel/0" }.restrictiveKind)
+        assertEquals(PeriodKinds.NOT_ON_A_PHONE, decoded.panels.single { it.id == "panel/1" }.restrictiveKind)
+        assertEquals(listOf("Not on a computer", "Not on a phone"), decoded.panels.map { it.title })
+        assertEquals(listOf("deep work"), decoded.periodKinds)
+        assertEquals(0.5, decoded.tasks[TaskId("t0")]!!.resilienceFor(PeriodKinds.NOT_ON_A_COMPUTER))
+    }
+
     @Test
     fun the_scheduling_signature_reads_a_periods_kind_and_not_its_legacy_flags() {
         val (base, _, _) = accountWithOwnKind()

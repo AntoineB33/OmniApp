@@ -63,7 +63,7 @@ Global rules that always apply: `CLAUDE.md`.
     noticed.
 - **THE FOUR LAYERS: REAL AND FAKE, PER DEVICE KIND** (`docs/scheduler_requirements.md` § *$now line$ 3 modes*,
   2026-09-30). Each device kind has a real layer ("no computer unlocked", read off the OS) and a **fake** one
-  ("fake no computer unlocked", `PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED` / `FAKE_NO_PHONE_UNLOCKED`): the device is
+  ("not on a computer", `PeriodKinds.NOT_ON_A_COMPUTER` / `NOT_ON_A_PHONE`): the device is
   unlocked and the user said nobody is at it — the "I'm away" button, or a period drawn of the fake kind. **The two
   never overlap** (`SchedulerDomain.fakeLayerRegions`: the real layer wins), and a lock ends the button
   (`screen-breaks.md`). The fake layer is its OWN band (`CalendarRecord.layerFake`), in the fake kind's drawing —

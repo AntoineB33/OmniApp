@@ -3010,7 +3010,7 @@ object SchedulerDomain {
         )
 
     /**
-     * PRD §8: **the stretches a PERIOD asserts [layer] was FAKED over** — a period of "fake no computer unlocked" (or
+     * PRD §8: **the stretches a PERIOD asserts [layer] was FAKED over** — a period of "not on a computer" (or
      * phone), or one carrying it ([PeriodKindConfig.assertedFakeLayers]). The hand-drawn half of the fake layer; the
      * other half is the "I'm away" button ([fakeLayerRegions]).
      */
@@ -3064,7 +3064,7 @@ object SchedulerDomain {
      *
      * [computerAway] / [phoneAway] are the ONE exception, and they are not an assertion in that sense: they
      * are the stretches the USER said they were away from a device of that kind for ([declaredAwayRegions]) —
-     * that kind's **"fake no … unlocked"** layer ([fakeLayerRegions]: minus where the device really was locked, since
+     * that kind's **"not on a …"** layer ([fakeLayerRegions]: minus where the device really was locked, since
      * the two cannot coexist). The rules' promises are left out because a break is not time the user was absent
      * for; a declaration IS. Each belongs to its own device kind: an away press on the computer says nothing about
      * the phone.
@@ -3094,16 +3094,16 @@ object SchedulerDomain {
             mapOf(
                 PeriodKinds.NO_COMPUTER_UNLOCKED to computer,
                 PeriodKinds.NO_PHONE_UNLOCKED to phone,
-                PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED to fakeLayerRegions(computerAway, computer),
-                PeriodKinds.FAKE_NO_PHONE_UNLOCKED to fakeLayerRegions(phoneAway, phone),
+                PeriodKinds.NOT_ON_A_COMPUTER to fakeLayerRegions(computerAway, computer),
+                PeriodKinds.NOT_ON_A_PHONE to fakeLayerRegions(phoneAway, phone),
             )
         return config.closeRegions(layers)[PeriodKinds.NO_SCREEN].orEmpty()
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **a device kind's "fake no … unlocked" stretches** — what
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **a device kind's "not on a …" stretches** — what
      * the user declared away from it ([away], the "I'm away" button) where that device kind is not really locked
-     * ([realLayer]): *"'fake no computer unlocked' can't be with 'no computer unlocked'"*, same with the phone. The real
+     * ([realLayer]): *"'not on a computer' can't be with 'no computer unlocked'"*, same with the phone. The real
      * layer wins wherever both would be said. Not seam-filtered: a declaration shorter than a minute is still one.
      */
     fun fakeLayerRegions(away: List<TaskTimeRange>, realLayer: List<TaskTimeRange>): List<TaskTimeRange> =

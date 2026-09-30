@@ -2017,7 +2017,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     // The "I'm away" stretches belong to THIS device's FAKE layer alone — a press on the computer says
                     // nothing about the phone, and a device declared away is unlocked (`docs/scheduler_requirements.md`
-                    // § *$now line$ 3 modes*: "fake no computer unlocked", drawn as its own band below).
+                    // § *$now line$ 3 modes*: "not on a computer", drawn as its own band below).
                     val layerAway = if (layer == ownLayer) declaredAwayRegions else emptyList()
                     // What the RULES promise for this layer: the breaks and the future sleep windows whose kind
                     // carries it.
@@ -2045,7 +2045,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             untilMillis = nowMillis,
                         )
                     // The FAKE layer: the away spells and the periods drawn of the fake kind, wherever the real layer
-                    // is not ("'fake no computer unlocked' can't be with 'no computer unlocked'").
+                    // is not ("'not on a computer' can't be with 'no computer unlocked'").
                     val fakeRegions =
                         SchedulerDomain.fakeLayerRegions(
                             layerAway + SchedulerDomain.assertedFakeLayerRanges(workPlanPanels, layer, periodKindConfig),
