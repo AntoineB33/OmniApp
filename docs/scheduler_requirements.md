@@ -29,6 +29,8 @@ Each task has a defined minimum execution time. Another optimization goal is to 
 * **$now line$ 3 modes:**
     * **Mode 1:** $now line$ must not be covered by the period "no screen".
     * **Mode 2 & 3:** $now line$ must be covered by the period "no screen".
+        * **Mode 2:** $now line$ is in both "no computer unlocked" and "no phone unlocked" periods.
+        * **Mode 3:** $now line$ is in either "fake no computer unlocked" or "fake no phone unlocked" periods. "fake no computer unlocked" can't be with "no computer unlocked", same with the phone.
     * **Mode switching:** The current $now line$ mode can be decided anytime by a program, but can't go in mode 1 during a "20s screen break" restrictive period. When $now line$ enters a "20s screen break" restrictive period in mode 1, it gets in mode 3, and when it leaves it, it gets in mode 1 unless the user wanted it to stay in mode 3, or unless it is in mode 2.
 * **frozen past:** The schedule at t < $now line$ never changes as $now line$ increases, with only two exceptions:
     * When the user or a program wants to rewrite history.
@@ -71,7 +73,7 @@ The scheduler doesn't need to calculate the right schedule for the entire timeli
 The scheduler can have a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop. It will also stop if the set of rules output became too heavy, or if it calculated for too long.
 * **direct consequence:** If the device bearing the running process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon time) in mode 2 to the current date. If the current date is beyond the definitive schedule, then it is similar to a case where no CPU were available during this period and the current set of rules output, parameterized by $now line$ and $now line$ mode, is used to define the schedule as the $now line$ does its fast move, while no better set of rules output was found.
 
-# Strict Requirements
+### Strict Requirements
 All of the above requirements must be strictly adhered to, with only two acceptable exceptions:
 
 1. Get as close as possible to the optimal score for both optimization criteria, without actually reaching it, in order to save time or computing power, or if necessary to maintain the required pace. However, if the optimal score is achievable within the given time and with acceptable computing power, it must be achieved.
@@ -79,3 +81,7 @@ All of the above requirements must be strictly adhered to, with only two accepta
 2. Other limits may be imposed to conserve memory, computing power, or CPU usage over time, as appropriate. For example, a limit may be imposed on the memory for the frozen timeline history.
 
 Even if the optimization score is not perfect for all infinite paths, the scheduler game search for the best set of rules output with its limited time and CPU resources and came out with a valid result, which is the expected behavior.
+
+### Use of the set of rules output
+
+* A re-run of the scheduler engine would make it take a screenshot of the schedule without what is deduced from the current set of rules but not saved in history, and find a good schedule from the current rule state inputs. The calendar stays with the previous set of rules, until the scheduler finds one. Then, it removes everything deduced from the previous set of rules but not saved in history, apply the set of rules input, makes the now line gets teleported back to the moment where the scheduler took the screenshot, moves forward very vast to the real current time, and then moves forward normally. It will do it again when a better set of rules input is found.
