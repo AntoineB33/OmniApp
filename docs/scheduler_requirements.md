@@ -5,7 +5,7 @@
 The scheduler returns a set of rules defining the timeline task schedule to satisfy constraints and two optimization criteria. 
 
 #### Rule Structure:
-* **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger boundaries (e.g., active `if...then...else...` clauses for the current interval, paired with an alarm/trigger for the next transition at $t$).
+* **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger boundaries (e.g., active `if...then...else...` clauses for the current interval, paired with an alarm/trigger for the next transition at $t$, at $now line$ mode switch, at history being rewritten by a program etc...).
 * **No Global Lookups:** The runtime interpreter must never execute timeline-wide filtering, dynamic sorting, or interval-tree traversals. As the $now\ line$ moves forward, it simply evaluates the active local condition and advances a forward cursor to the next armed trigger point.
 
 ### Core Constraints & Task Allocation
