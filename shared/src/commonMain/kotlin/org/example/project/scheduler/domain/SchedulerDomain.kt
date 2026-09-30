@@ -551,8 +551,9 @@ object SchedulerDomain {
      * [excludeCellId] is skipped during the walk: while a cell is in Edit Mode it is tentatively assigned
      * the candidate task, so it momentarily sits inside its own ancestors' sub-trees. Ignoring it keeps
      * the candidate from colliding with itself (its current tentative content must not constrain it).
+     * Also what an expanded Search row's sub-tree can hold, for its cells' check boxes.
      */
-    private fun structuralSubtreeTaskIds(
+    fun structuralSubtreeTaskIds(
         state: SchedulerState,
         taskId: TaskId,
         excludeCellId: CellId? = null,

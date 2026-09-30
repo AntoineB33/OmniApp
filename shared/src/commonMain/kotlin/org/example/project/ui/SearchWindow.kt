@@ -406,16 +406,31 @@ fun SearchWindow(
 
     // The result rows' check boxes. Compose-only, like the selection: which rows are checked is a way of
     // picking some for the Add button, not a fact about them — nor a configuration.
+    // A cell of an expanded row's sub-tree has a box too, keyed by its task as that task's own row would be.
     var checkedKeys by remember { mutableStateOf(emptySet<String>()) }
+    val setChecked = { key: String, on: Boolean -> checkedKeys = if (on) checkedKeys + key else checkedKeys - key }
     val resultKeys = remember(results) { results.map(::resultKey) }
+    // Every key a box is shown for: the result rows, then the tasks of the expanded rows' sub-trees. A box
+    // checked on a row the list no longer shows is not counted, nor added.
+    val checkableKeys =
+        remember(resultKeys, results, expandedTasks, state.cells, state.lists, state.tasks) {
+            val subtreeKeys =
+                results.asSequence()
+                    .filterIsInstance<SearchDomain.TaskResult>()
+                    .filter { it.taskId in expandedTasks }
+                    .flatMap { SchedulerDomain.structuralSubtreeTaskIds(state, it.taskId) }
+                    .map(SearchDomain::taskKey)
+            (resultKeys.asSequence() + subtreeKeys).distinct().toList()
+        }
     val allChecked = resultKeys.isNotEmpty() && checkedKeys.containsAll(resultKeys)
     // "A row is selected" is the outline's own rule: not while the bar holds the focus, nor while a row's
     // sub-tree does.
     val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null
-    // What Add adds: the checked rows (in the list's order), else the selected one, else nothing (greyed).
+    // What Add adds: the checked rows (the list's order, then the sub-trees'), else the selected one, else
+    // nothing (greyed).
+    val checkedShown = checkableKeys.filter { it in checkedKeys }
     val toAdd =
-        resultKeys.filter { it in checkedKeys }
-            .ifEmpty { if (hasSelection) listOfNotNull(resultKeys.getOrNull(selected)) else emptyList() }
+        checkedShown.ifEmpty { if (hasSelection) listOfNotNull(resultKeys.getOrNull(selected)) else emptyList() }
     // The added elements (the right half), read off the live state the way the result list reads its rows.
     val addedRows =
         remember(
@@ -507,9 +522,9 @@ fun SearchWindow(
                     onConfigChange(config.copy(added = SearchDomain.withAdded(config.added, toAdd)))
                     checkedKeys = checkedKeys - toAdd.toSet()
                 }
-                if (checkedKeys.isNotEmpty()) {
+                if (checkedShown.isNotEmpty()) {
                     Text(
-                        text = "${resultKeys.count { it in checkedKeys }} checked",
+                        text = "${checkedShown.size} checked",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -590,11 +605,8 @@ fun SearchWindow(
                                         state = state,
                                         result = result,
                                         query = query,
-                                        checked = resultKey(result) in checkedKeys,
-                                        onCheckedChange = { on ->
-                                            val key = resultKey(result)
-                                            checkedKeys = if (on) checkedKeys + key else checkedKeys - key
-                                        },
+                                        checkedKeys = checkedKeys,
+                                        onSetChecked = setChecked,
                                         selected = rowSelected(index),
                                         editing = editingTaskId == result.taskId,
                                         editDraft = editDraft,
@@ -633,10 +645,7 @@ fun SearchWindow(
                                     ItemResultRow(
                                         item = result,
                                         checked = resultKey(result) in checkedKeys,
-                                        onCheckedChange = { on ->
-                                            val key = resultKey(result)
-                                            checkedKeys = if (on) checkedKeys + key else checkedKeys - key
-                                        },
+                                        onCheckedChange = { on -> setChecked(resultKey(result), on) },
                                         selected = rowSelected(index),
                                         onSelect = { selectRow(index) },
                                         onOpen = { openers.open(state, result) },
@@ -926,8 +935,9 @@ private fun SearchTaskRow(
     state: SchedulerState,
     result: SearchDomain.TaskResult,
     query: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    /** The window's checked keys — this row's and its sub-tree cells' boxes read them ([SearchDomain.taskKey]). */
+    checkedKeys: Set<String>,
+    onSetChecked: (key: String, on: Boolean) -> Unit,
     selected: Boolean,
     editing: Boolean,
     editDraft: String,
@@ -1044,7 +1054,8 @@ private fun SearchTaskRow(
             editMenus = null,
             categoryCell = live?.let { { TaskCategoryCell(state, taskId, onIntent, onOpenCategory) } },
             rowLeading = {
-                ResultCheckBox(checked, onCheckedChange)
+                val key = SearchDomain.taskKey(taskId)
+                ResultCheckBox(key in checkedKeys) { on -> onSetChecked(key, on) }
                 KindSection(result.kind)
             },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
@@ -1062,6 +1073,8 @@ private fun SearchTaskRow(
                 listId = childListId,
                 readOnly = readOnlySubtree,
                 priorities = priorities,
+                checkedKeys = checkedKeys,
+                onSetChecked = onSetChecked,
                 focused = subtreeFocused,
                 onFocus = onSubtreeFocus,
                 onIntent = onIntent,
@@ -1089,6 +1102,8 @@ private fun SearchSubtree(
     listId: CellListId,
     readOnly: Boolean,
     priorities: Map<TaskId, Double>,
+    checkedKeys: Set<String>,
+    onSetChecked: (key: String, on: Boolean) -> Unit,
     focused: Boolean,
     onFocus: (Boolean) -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
@@ -1118,6 +1133,14 @@ private fun SearchSubtree(
             }
         },
         keyboardActive = focused,
+        // Each cell holding a task has the result rows' check box: checking it is checking that task's key, so
+        // Add adds it, and its own row (when listed) shows the same box. A placeholder holds nothing to add.
+        rowLeading = { cellId ->
+            state.cells[cellId]?.taskId?.takeIf { state.tasks[it]?.title?.isNotBlank() == true }?.let { taskId ->
+                val key = SearchDomain.taskKey(taskId)
+                ResultCheckBox(key in checkedKeys) { on -> onSetChecked(key, on) }
+            }
+        },
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = SUBTREE_MAX_HEIGHT)

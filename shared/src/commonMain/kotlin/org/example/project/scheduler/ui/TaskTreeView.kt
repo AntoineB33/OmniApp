@@ -12,6 +12,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -139,6 +140,8 @@ internal fun TaskTreeView(
     /** First refusal on a key press: true/false to claim it, null to let the tree have it. */
     aboveTreeKeyHandler: (KeyEvent) -> Boolean? = { null },
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
+    /** One section inside every row before its expand arrow — the Search window's check box; null elsewhere. */
+    rowLeading: (@Composable RowScope.(CellId) -> Unit)? = null,
     /** The app-wide focus a click into this tree claims, or null for a tree inside a floating window. */
     refocusWindow: HistoryWindow? = null,
     /**
@@ -818,6 +821,7 @@ internal fun TaskTreeView(
                 onMoveDropHover = onMoveDropHover,
                 onMoveDragEnd = onMoveDragEnd,
                 rowTrailing = rowTrailing,
+                rowLeading = rowLeading,
                 onGoToTaskTree = onGoToTaskTree,
                 namingSource = namingSource,
                 onIntent = rowIntent,
@@ -874,6 +878,7 @@ internal fun TaskTreeView(
                         onMoveDropHover = onMoveDropHover,
                         onMoveDragEnd = onMoveDragEnd,
                         rowTrailing = rowTrailing,
+                        rowLeading = rowLeading,
                         onGoToTaskTree = onGoToTaskTree,
                         namingSource = namingSource,
                         onIntent = { intent ->

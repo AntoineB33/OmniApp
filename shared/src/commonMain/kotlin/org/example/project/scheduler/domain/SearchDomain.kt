@@ -1514,9 +1514,12 @@ object SearchDomain {
      */
     fun keyOf(result: Result): String =
         when (result) {
-            is TaskResult -> Kind.Task.name + "/" + result.taskId.value
+            is TaskResult -> taskKey(result.taskId)
             is ItemResult -> result.kind.name + "/" + result.id
         }
+
+    /** A task's key — its result row's, and a cell of an expanded row's sub-tree that holds it. */
+    fun taskKey(taskId: TaskId): String = Kind.Task.name + "/" + taskId.value
 
     /** [added] with [keys] appended in order — each key once, where it was first added. */
     fun withAdded(added: List<String>, keys: List<String>): List<String> = (added + keys).distinct()

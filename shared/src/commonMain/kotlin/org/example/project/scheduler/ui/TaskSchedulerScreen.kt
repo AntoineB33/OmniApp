@@ -482,6 +482,8 @@ internal fun CellListSection(
     onIntent: (SchedulerIntent) -> Unit,
     /** PRD §4: one extra cell at the end of every row — the default sub-tree's switch. Null in the tree. */
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
+    /** PRD §7: a section inside every row before its arrow — the Search window's check box. Null in the tree. */
+    rowLeading: (@Composable RowScope.(CellId) -> Unit)? = null,
     /** PRD §7/§8: "go to task tree" on the row's §13 menu, or null where the entry has no meaning. */
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
     /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [EditModeMenus]. */
@@ -780,6 +782,8 @@ internal fun CellListSection(
                     }
                 },
             rowTrailing = rowTrailing,
+            // The root strip is the arrow alone.
+            rowLeading = rowLeading?.takeIf { !isRootRow }?.let { leading -> { leading(cellId) } },
         )
 
         if (expanded && hasChildren && !pinned) {
@@ -813,6 +817,7 @@ internal fun CellListSection(
                 onMoveDragEnd = onMoveDragEnd,
                 onIntent = onIntent,
                 rowTrailing = rowTrailing,
+                rowLeading = rowLeading,
                 onGoToTaskTree = onGoToTaskTree,
                 namingSource = namingSource,
                 rowPath = path,

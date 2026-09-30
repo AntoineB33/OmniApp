@@ -638,8 +638,10 @@ titles" figure: the Search window and the per-object windows its rows open repla
   have their own window and a counter), and the Configuration Search window's never touches the Search
   window's configuration it lists.
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
-  elements** above the **added elements**. Every result row has a check box (Compose-only, like the selection);
-  **Add** adds the checked rows, else the selected row (the outline's own rule — none while the bar or a sub-tree
+  elements** above the **added elements**. Every result row has a check box (Compose-only, like the selection),
+  and so does every task cell of an expanded row's sub-tree (`TaskTreeView`'s `rowLeading`): one box per TASK
+  key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **Add** adds the checked
+  rows listed now — the result rows, then the expanded rows' sub-tree tasks — else the selected row (the outline's own rule — none while the bar or a sub-tree
   holds the focus), else it is greyed. The added list is `Config.added` — result KEYS (`SearchDomain.keyOf`), each
   once, local-only with the rest of the configuration — and its rows are rebuilt by `SearchDomain.resolve` the way
   the result list builds them; a key whose element is gone lists nothing.
