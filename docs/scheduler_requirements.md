@@ -2,7 +2,11 @@
 
 ### System Overview
 
-The scheduler returns a set of rules output that define the task schedule for the timeline to satisfy constraints and two optimization criteria. This set of rules consists of simple "if...then...else..." clauses and instructions that the scheduler interprets to apply the scheduling with a complexity of O(1).
+The scheduler returns a set of rules defining the timeline task schedule to satisfy constraints and two optimization criteria. 
+
+#### Rule Structure:
+* **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger boundaries (e.g., active `if...then...else...` clauses for the current interval, paired with an alarm/trigger for the next transition at $t$).
+* **No Global Lookups:** The runtime interpreter must never execute timeline-wide filtering, dynamic sorting, or interval-tree traversals. As the $now\ line$ moves forward, it simply evaluates the active local condition and advances a forward cursor to the next armed trigger point.
 
 ### Core Constraints & Task Allocation
 
@@ -74,5 +78,4 @@ All of the above requirements must be strictly adhered to, with only two accepta
 
 2. Other limits may be imposed to conserve memory, computing power, or CPU usage over time, as appropriate. For example, a limit may be imposed on the memory for the frozen timeline history.
 
-The set of rules output could be something like: set task A from t0 to t1; if $now line$ gets in mode 2 between t2 and t3 then set task B from $now line$ to t4 etc...
 Even if the optimization score is not perfect for all infinite paths, the scheduler game search for the best set of rules output with its limited time and CPU resources and came out with a valid result, which is the expected behavior.
