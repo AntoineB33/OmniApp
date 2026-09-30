@@ -266,19 +266,27 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
 
 → PRD §3/§4/§7. `reduceClick` and `reduceFocusWindow` (`state/SchedulerReducer.kt`).
 
-- **A press on another task CELL is the only thing that moves the selection, and the only thing that forces
-  Edit Mode to exit.** There is no "deselect" gesture: no tap handler on the tree's empty space, none on the
-  screen's title, and `reduceFocusWindow` moves focus and nothing else. The old `ClearSelection` intent and the
-  three call sites that raised it are gone — an intent that clears the selection is how "clicking somewhere
-  harmless" starts throwing a rename away again, so do not reintroduce one. `Escape` (`CancelEdit`) and the
-  keyboard exits are how a session ends without naming another cell.
+- **A press on another task CELL is the only thing that moves the selection.** There is no "deselect"
+  gesture: no tap handler on the tree's empty space, and `reduceFocusWindow` moves focus and nothing else. The
+  old `ClearSelection` intent and the three call sites that raised it are gone — do not reintroduce one.
+- **A press anywhere outside the edited field and its Edit Mode menus COMMITS and ends the session**
+  (`ExitEdit(Stay)`, PRD §4 *Forced Exit*, user spec 2026-09-30 — it reversed "a click elsewhere keeps the
+  rename open"). Decided by the ONE root press observer (`TransientMenuHost`, `ui/PopupWindows.kt`): `TaskRow`
+  registers its edit with `rememberOutsidePressEditor` and marks the title field and the inline menu block with
+  `outsidePressPart`; what draws in a `Popup` (the mode drop-down, an id row's menu) never reaches the observer
+  and so is inside by construction. The press is never consumed, so a press on another cell commits here and
+  selects there. Never a per-surface outside-click handler, and never `CancelEdit` — a stray click must not
+  throw the draft away. A field whose edit mode is its FOCUS (the task-tree name field with its menus, every
+  search bar, the Find & replace bar) goes through the same observer: `rememberFocusOutsidePressEditor` /
+  `leaveFocusOnOutsidePress` clear the focus on a press outside — a press on something that takes no focus
+  (a window's background, the calendar) otherwise leaves the caret, and the menus, where they were.
 - **The session survives; the FOCUS follows the keyboard.** `LocalTreeKeyboardOwned` (published by
   `TaskTreeView` from its own `keyboardOwned`) is what the edited cell reads: it takes the caret while this
   tree owns the keyboard and gives it back when it does not, so keystrokes aimed at the window the user just
   went to never land in the rename they left open — and coming back puts the caret straight back in it. A
   composition local, like `LocalTransientPopupHost`, so all three drawings of the tree get it at once; never a
-  flag each surface has to remember to pass on. Losing focus must never end the session — that is the
-  behaviour this replaced.
+  flag each surface has to remember to pass on. Losing focus on its own (a chord moving focus, no press) never
+  ends the session — only a press outside does (above).
 - **A Mode pick hands the caret back to the field — every pick, the current mode included**
   (`cellEditModeOptions`, which ends each option in `onModePicked`). The drop-down is a focusable popup, so it
   took the focus, and the state cannot give it back: re-picking the current mode is a reducer no-op. So the

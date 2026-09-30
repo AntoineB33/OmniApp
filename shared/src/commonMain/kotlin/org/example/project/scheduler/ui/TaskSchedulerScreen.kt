@@ -50,6 +50,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.staticCompositionLocalOf
 import org.example.project.scheduler.domain.CalendarLockDomain
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
+import org.example.project.ui.outsidePressPart
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -349,97 +351,97 @@ fun TaskSchedulerScreen(
         }
     }
 
-    Column(
+    // The window is two sections side by side: the task tree fills the whole left one, the configuration
+    // (the default sub-tree's switch and button, then the task-tree name field) the whole right one — so the
+    // configuration costs the tree none of its height, as the calendar's costs the week none of its own.
+    Row(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(12.dp),
+            .background(MaterialTheme.colorScheme.surface),
     ) {
-        Text(
-            text = "Task Scheduler",
-            style = MaterialTheme.typography.titleLarge,
-            // Shifted right so the lateral-menu collapse bookmark («/»), which straddles the content's
-            // left edge, doesn't cover the start of the title.
-            //
-            // PRD §3: no click handler. Only a press on another task CELL moves the selection — a press
-            // anywhere else (here, the tree's empty space, another window) leaves both the selection and
-            // Edit Mode exactly as they were.
-            modifier = Modifier.padding(start = 40.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-
-        // PRD §4: the top of the configuration section — the default sub-tree grafted under every new task, its
-        // switch and its window (the lateral menu's button until 2026-09-25).
-        org.example.project.ui.DefaultSubtreeControl(
-            enabled = state.defaultSubtreeEnabled,
-            onEnabledChange = { vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it)) },
-            windowOpen = defaultSubtreeWindowOpen,
-            onToggleWindow = onToggleDefaultSubtree,
-            modifier = Modifier.padding(start = 40.dp).widthIn(max = 320.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-
-        // Right above the task tree: which named task tree is on screen (and how to pick another).
-        TaskTreeSelector(
-            state = state,
-            draft = treeNameDraft,
-            mode = treeEditMode,
-            focused = treeFieldFocused,
-            onDraftChange = { treeNameDraft = it },
-            onModeChange = { treeEditMode = it },
-            onFocusChange = { treeFieldFocused = it },
-            onCommit = {
-                commitTaskTreeName()
-                focusRequester.requestFocus()
-            },
-            onIntent = { intent -> vm.dispatch(intent) },
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        Perf.measure("compose.TaskTreeView") {
-        TaskTreeView(
-            state = state,
-            priorities = priorities,
-            onIntent = { intent -> vm.dispatch(intent) },
-            // PRD §7/§8: the tree only owns the keyboard while it is the focused surface AND the selector's
-            // name field above it does not hold it — that field's menus close the moment it loses focus, so
-            // the tree's refocus effect must not pull focus back out of it.
-            keyboardActive = keyboardEnabled && state.focusedWindow == HistoryWindow.Tree && !treeFieldFocused,
-            refocusWindow = HistoryWindow.Tree,
-            modifier = Modifier.fillMaxSize(),
-            onSetWeightWindow = onSetWeightWindow,
-            onSetRelativeWindow = onSetRelativeWindow,
-            onSetEditTask = onSetEditTask,
-            onSetEditCategory = onSetEditCategory,
-            onSetDeepCopyCell = onSetDeepCopyCell,
-            focusRequester = focusRequester,
-            // While the selector's field holds focus it owns the keyboard: Enter commits the typed name and
-            // Escape restores the selected tree's, both handing focus back to the tree; everything else
-            // (arrows, Backspace, its own Ctrl+A/C/V) reaches the field.
-            aboveTreeKeyHandler = { event ->
-                if (!treeFieldFocused) {
-                    null
-                } else {
-                    when (event.key) {
-                        Key.Escape -> {
-                            treeNameDraft = activeTreeTitle
-                            focusRequester.requestFocus()
-                            true
+        Box(Modifier.weight(1f).fillMaxHeight().padding(12.dp)) {
+            Perf.measure("compose.TaskTreeView") {
+            TaskTreeView(
+                state = state,
+                priorities = priorities,
+                onIntent = { intent -> vm.dispatch(intent) },
+                // PRD §7/§8: the tree only owns the keyboard while it is the focused surface AND the selector's
+                // name field above it does not hold it — that field's menus close the moment it loses focus, so
+                // the tree's refocus effect must not pull focus back out of it.
+                keyboardActive = keyboardEnabled && state.focusedWindow == HistoryWindow.Tree && !treeFieldFocused,
+                refocusWindow = HistoryWindow.Tree,
+                modifier = Modifier.fillMaxSize(),
+                onSetWeightWindow = onSetWeightWindow,
+                onSetRelativeWindow = onSetRelativeWindow,
+                onSetEditTask = onSetEditTask,
+                onSetEditCategory = onSetEditCategory,
+                onSetDeepCopyCell = onSetDeepCopyCell,
+                focusRequester = focusRequester,
+                // While the selector's field holds focus it owns the keyboard: Enter commits the typed name and
+                // Escape restores the selected tree's, both handing focus back to the tree; everything else
+                // (arrows, Backspace, its own Ctrl+A/C/V) reaches the field.
+                aboveTreeKeyHandler = { event ->
+                    if (!treeFieldFocused) {
+                        null
+                    } else {
+                        when (event.key) {
+                            Key.Escape -> {
+                                treeNameDraft = activeTreeTitle
+                                focusRequester.requestFocus()
+                                true
+                            }
+                            Key.Enter -> {
+                                commitTaskTreeName()
+                                focusRequester.requestFocus()
+                                true
+                            }
+                            else -> false
                         }
-                        Key.Enter -> {
-                            commitTaskTreeName()
-                            focusRequester.requestFocus()
-                            true
-                        }
-                        else -> false
                     }
-                }
-            },
-        )
+                },
+            )
+            }
+        }
+        VerticalDivider()
+        Column(
+            modifier = Modifier
+                .width(TASK_TREE_CONFIGURATION_WIDTH)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // PRD §4: the top of the configuration section — the default sub-tree grafted under every new task,
+            // its switch and its window (the lateral menu's button until 2026-09-25).
+            org.example.project.ui.DefaultSubtreeControl(
+                enabled = state.defaultSubtreeEnabled,
+                onEnabledChange = { vm.dispatch(SchedulerIntent.SetDefaultSubtreeEnabled(it)) },
+                windowOpen = defaultSubtreeWindowOpen,
+                onToggleWindow = onToggleDefaultSubtree,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Which named task tree is on screen (and how to pick another).
+            TaskTreeSelector(
+                state = state,
+                draft = treeNameDraft,
+                mode = treeEditMode,
+                focused = treeFieldFocused,
+                onDraftChange = { treeNameDraft = it },
+                onModeChange = { treeEditMode = it },
+                onFocusChange = { treeFieldFocused = it },
+                onCommit = {
+                    commitTaskTreeName()
+                    focusRequester.requestFocus()
+                },
+                onIntent = { intent -> vm.dispatch(intent) },
+            )
         }
     }
 }
+
+/** How wide the task tree window's configuration section is — the task-tree name field and its menus. */
+private val TASK_TREE_CONFIGURATION_WIDTH = 320.dp
 
 
 @Composable
@@ -873,8 +875,11 @@ private fun TaskTreeSelector(
     // menu, so the user can see whether Enter would switch to an existing tree or create one.
     val matchedId = SchedulerDomain.taskTreeIdForTitle(state, draft)
 
+    // A press outside the field and its menus takes the focus away, which closes the menus and reverts the field
+    // to the selected tree's name, as any focus loss does (PRD §4 *Forced Exit*, the task-cell rule's twin).
+    val outsidePress = org.example.project.ui.rememberFocusOutsidePressEditor(focused)
     Column(
-        modifier = Modifier.padding(start = 40.dp),
+        modifier = Modifier.outsidePressPart(outsidePress),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         OutlinedTextField(
@@ -884,7 +889,7 @@ private fun TaskTreeSelector(
             placeholder = { Text("No task tree selected") },
             singleLine = true,
             modifier = Modifier
-                .widthIn(min = 220.dp, max = 320.dp)
+                .fillMaxWidth()
                 .onFocusChanged { onFocusChange(it.isFocused) },
         )
 
@@ -2730,6 +2735,12 @@ internal fun TaskRow(
     // the ONE effect that owns this field's focus re-runs. Never a second requestFocus call site: the
     // keyboardOwned gate below must hold for this too.
     var fieldRefocusRequests by remember(cellId) { mutableStateOf(0) }
+    // PRD §4 *Forced Exit*: a press anywhere outside the field and its Edit Mode menus (the mode selector, the
+    // Tasks menu, the title suggestions) commits the draft and leaves Edit Mode — in this window or any other.
+    // The press still does what it was aimed at, so a press on another cell commits here and selects there.
+    val latestExitEdit by rememberUpdatedState(onExitEdit)
+    val editRegion =
+        org.example.project.ui.rememberOutsidePressEditor(isEditing) { latestExitEdit(EditExitNavigation.Stay) }
     LaunchedEffect(isEditing, keyboardOwned, fieldRefocusRequests) {
         when {
             isEditing && keyboardOwned -> {
@@ -3022,7 +3033,8 @@ internal fun TaskRow(
                         modifier = Modifier
                             .then(titleWidth)
                             .defaultMinSize(minHeight = 20.dp)
-                            .taskSheetTitleBounds(titleBounds),
+                            .taskSheetTitleBounds(titleBounds)
+                            .outsidePressPart(editRegion),
                         contentAlignment = Alignment.CenterStart,
                     ) {
                     BasicTextField(
@@ -3269,7 +3281,8 @@ internal fun TaskRow(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = (depth * INDENT_STEP_DP).dp),
+                    .padding(start = (depth * INDENT_STEP_DP).dp)
+                    .outsidePressPart(editRegion),
             ) {
                 editMenus?.invoke { fieldRefocusRequests++ }
             }

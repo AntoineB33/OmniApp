@@ -92,6 +92,9 @@ internal fun TaskTreeFindBar(
             // handler underneath, which would drop the very selection a match had just made.
             .pointerInput(Unit) { detectTapGestures { } }
             .onFocusChanged { onFocusChange(it.hasFocus) }
+            // The bar is one edit: a press on its own buttons keeps the caret, a press outside it takes it away
+            // (the bar stays open; Escape or ✕ closes it).
+            .leaveFocusOnOutsidePress()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when {

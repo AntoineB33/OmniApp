@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.example.project.ui.OutsidePressEditor
 import org.example.project.ui.TransientMenuHost
 
 /**
@@ -127,7 +128,8 @@ class TransientMenuHostTest {
         val host = TransientMenuHost()
         val field = androidx.compose.ui.geometry.Rect(100f, 100f, 160f, 140f)
         var left = 0
-        host.openEditor(Any(), { field }) { left++ }
+        val editor = OutsidePressEditor().apply { parts[Any()] = field }
+        host.openEditor(editor, editor) { left++ }
 
         host.onPress(androidx.compose.ui.geometry.Offset(120f, 120f))
         assertEquals(0, left, "a press inside the field moves the caret; it stays in edit mode")
@@ -139,5 +141,39 @@ class TransientMenuHostTest {
         assertEquals(1, left)
         host.onPress(androidx.compose.ui.geometry.Offset(400f, 20f))
         assertEquals(1, left, "it leaves once")
+    }
+
+    @Test
+    fun `a task cell's Edit Mode is inside its field AND its menus, and leaves on a press anywhere else`() {
+        // PRD §4 Forced Exit (2026-09-30): the menus are drawn under the row, apart from the field, so the edit is
+        // two parts — a press in the suggestions must keep it, a press beside the tree or in another window ends it.
+        val host = TransientMenuHost()
+        val field = androidx.compose.ui.geometry.Rect(100f, 100f, 300f, 120f)
+        val menus = androidx.compose.ui.geometry.Rect(100f, 120f, 400f, 260f)
+        val editor = OutsidePressEditor().apply {
+            parts[Any()] = field
+            parts[Any()] = menus
+        }
+        var left = 0
+        host.openEditor(editor, editor) { left++ }
+
+        host.onPress(androidx.compose.ui.geometry.Offset(150f, 110f))
+        host.onPress(androidx.compose.ui.geometry.Offset(350f, 200f))
+        assertEquals(0, left, "a press in the field or in its menus keeps Edit Mode")
+
+        host.onPress(androidx.compose.ui.geometry.Offset(150f, 300f))
+        assertEquals(1, left, "a press below the menus — another cell, the calendar — ends it")
+    }
+
+    @Test
+    fun `an edit whose parts are not laid out yet leaves on any press`() {
+        // No bounds known is not "inside": the old single-rect form left on a null rect, and so does this.
+        val host = TransientMenuHost()
+        val editor = OutsidePressEditor()
+        var left = 0
+        host.openEditor(editor, editor) { left++ }
+
+        host.onPress(androidx.compose.ui.geometry.Offset(10f, 10f))
+        assertEquals(1, left)
     }
 }

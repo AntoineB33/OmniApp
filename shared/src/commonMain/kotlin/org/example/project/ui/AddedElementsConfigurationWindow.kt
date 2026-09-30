@@ -96,7 +96,7 @@ fun AddedElementsConfigurationWindow(
                     onValueChange = { onOwnChange(own.copy(query = it)) },
                     singleLine = true,
                     label = { Text("Search a configuration") },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 ResetButton(enabled = own.query.isNotEmpty() || own.kinds.isNotEmpty()) {

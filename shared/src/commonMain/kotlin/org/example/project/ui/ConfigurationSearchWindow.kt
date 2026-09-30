@@ -128,7 +128,7 @@ fun ConfigurationSearchWindow(
                     onValueChange = { onOwnChange(own.copy(query = it)) },
                     singleLine = true,
                     label = { Text("Search a configuration") },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 // This window's OWN search field and types; the Search window's configuration it lists is
@@ -213,7 +213,7 @@ private fun SettingEditor(
                 value = config.query,
                 onValueChange = { onChange(config.copy(query = it)) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
             )
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->

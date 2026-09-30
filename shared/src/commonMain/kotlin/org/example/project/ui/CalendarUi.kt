@@ -2117,7 +2117,7 @@ fun HistoryManagerWindow(
                         label = { Text("Filter") },
                         placeholder = { Text("a label, a detail line, a rule, a notification") },
                         singleLine = true,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                     )
                     Button(
                         // Back to the default view: all windows, any chord, no query.

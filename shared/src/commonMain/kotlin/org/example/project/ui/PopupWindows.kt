@@ -23,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -81,10 +83,10 @@ class TransientMenuHost {
      * would otherwise end the edit it was opened on), a press INSIDE the field keeps it, and they do not make the
      * tree deaf — the field holding the caret already owns the keyboard.
      */
-    private val editors = LinkedHashMap<Any, Pair<() -> Rect?, () -> Unit>>()
+    private val editors = LinkedHashMap<Any, Pair<OutsidePressEditor, () -> Unit>>()
 
-    fun openEditor(key: Any, bounds: () -> Rect?, onLeave: () -> Unit) {
-        editors[key] = bounds to onLeave
+    fun openEditor(key: Any, editor: OutsidePressEditor, onLeave: () -> Unit) {
+        editors[key] = editor to onLeave
     }
 
     fun closeEditor(key: Any) {
@@ -104,8 +106,7 @@ class TransientMenuHost {
      */
     fun onPress(windowPosition: Offset? = null) {
         for ((key, editor) in editors.entries.toList()) {
-            val bounds = editor.first()
-            if (windowPosition != null && bounds != null && bounds.contains(windowPosition)) continue
+            if (windowPosition != null && editor.first.contains(windowPosition)) continue
             editors.remove(key)
             editor.second()
         }
@@ -157,15 +158,64 @@ fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier {
  */
 @Composable
 fun Modifier.leaveOnOutsidePress(active: Boolean, onLeave: () -> Unit): Modifier {
+    val editor = rememberOutsidePressEditor(active, onLeave)
+    return this.outsidePressPart(editor)
+}
+
+/**
+ * The places an edit mode that leaves on an outside press counts as **inside** — its field, and anything drawn
+ * apart from it that belongs to the same edit (a task cell's Edit Mode menus, drawn under the row). Each part
+ * reports its own bounds ([outsidePressPart]); a press in any of them keeps the edit. What draws in a `Popup`
+ * (the mode selector's drop-down, a menu row's right-click menu) needs no part: its presses never reach the
+ * root observer at all.
+ */
+class OutsidePressEditor internal constructor() {
+    internal val parts = LinkedHashMap<Any, Rect>()
+
+    internal fun contains(windowPosition: Offset): Boolean = parts.values.any { it.contains(windowPosition) }
+}
+
+/** [leaveOnOutsidePress] for an edit drawn in more than one place: mark each place with [outsidePressPart]. */
+@Composable
+fun rememberOutsidePressEditor(active: Boolean, onLeave: () -> Unit): OutsidePressEditor {
     val host = LocalTransientMenuHost.current
-    val key = remember { Any() }
-    val bounds = remember { arrayOfNulls<Rect>(1) }
+    val editor = remember { OutsidePressEditor() }
     val latestLeave by rememberUpdatedState(onLeave)
-    DisposableEffect(host, key, active) {
-        if (active) host?.openEditor(key, { bounds[0] }) { latestLeave() }
-        onDispose { host?.closeEditor(key) }
+    DisposableEffect(host, editor, active) {
+        if (active) host?.openEditor(editor, editor) { latestLeave() }
+        onDispose { host?.closeEditor(editor) }
     }
-    return this.onGloballyPositioned { bounds[0] = it.boundsInWindow() }
+    return editor
+}
+
+/** One place [editor] counts as inside — see [OutsidePressEditor]. */
+@Composable
+fun Modifier.outsidePressPart(editor: OutsidePressEditor): Modifier {
+    val key = remember { Any() }
+    DisposableEffect(editor, key) { onDispose { editor.parts.remove(key) } }
+    return this.onGloballyPositioned { editor.parts[key] = it.boundsInWindow() }
+}
+
+/**
+ * [rememberOutsidePressEditor] for an edit whose edit mode **is its focus** — a search bar, the task-tree name
+ * field: [focused] while it holds the caret, and a press outside it takes the focus away (which is what closes
+ * whatever that field shows only while focused). What was typed stays. Mark the parts with [outsidePressPart].
+ */
+@Composable
+fun rememberFocusOutsidePressEditor(focused: Boolean): OutsidePressEditor {
+    val focusManager = LocalFocusManager.current
+    return rememberOutsidePressEditor(focused) { focusManager.clearFocus() }
+}
+
+/**
+ * A field (or a bar of fields) that is its own whole edit: a press outside it takes its focus away — see
+ * [rememberFocusOutsidePressEditor]. `hasFocus`, so it also serves a container of fields.
+ */
+@Composable
+fun Modifier.leaveFocusOnOutsidePress(): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    val editor = rememberFocusOutsidePressEditor(focused)
+    return this.onFocusChanged { focused = it.hasFocus }.outsidePressPart(editor)
 }
 
 /**

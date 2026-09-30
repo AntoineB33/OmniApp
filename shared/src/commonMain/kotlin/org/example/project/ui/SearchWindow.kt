@@ -478,6 +478,7 @@ fun SearchWindow(
                         .weight(1f)
                         .focusRequester(fieldFocus)
                         .onFocusChanged { fieldFocused = it.isFocused }
+                        .leaveFocusOnOutsidePress()
                         // ↓ or Enter leave the bar for the list, onto its first row; every other key types.
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
