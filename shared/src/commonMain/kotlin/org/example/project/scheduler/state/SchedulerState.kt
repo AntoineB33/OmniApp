@@ -926,6 +926,16 @@ data class SchedulerState(
      */
     val periodKindStyles: Map<String, PeriodKindStyle> = emptyMap(),
     /**
+     * The **period edit window**'s combination rules ([org.example.project.scheduler.domain.PeriodCombination]):
+     * wherever periods of every kind of a rule overlap, the kinds it implies are present too. Starts at
+     * [PeriodKinds.DEFAULT_COMBINATIONS] (each computer layer with each phone layer, real or fake, is "no screen").
+     * Read through [periodKindConfig], like the companions.
+     *
+     * Authoritative user-authored data: persisted and synced (one row for the whole list — a handful of rules), an
+     * account setting and not an Undo/Redo unit, like the companions.
+     */
+    val periodCombinations: List<org.example.project.scheduler.domain.PeriodCombination> = PeriodKinds.DEFAULT_COMBINATIONS,
+    /**
      * PRD §5 **the account's categories**: every label a task can carry, in the order they were created,
      * each with the standing [org.example.project.scheduler.model.CategoryRule]s it imposes.
      *
@@ -1061,7 +1071,7 @@ data class SchedulerState(
      * [periodKindStyles] resolved: every kind's companions (transitively) and drawing — the one reading of both
      * ([PeriodKindConfig]). Built once per state value; a copy builds its own.
      */
-    val periodKindConfig: PeriodKindConfig by lazy { PeriodKindConfig(periodKindStyles) }
+    val periodKindConfig: PeriodKindConfig by lazy { PeriodKindConfig(periodKindStyles, periodCombinations) }
 
     fun captureTree(): TreeSnapshot =
         TreeSnapshot(

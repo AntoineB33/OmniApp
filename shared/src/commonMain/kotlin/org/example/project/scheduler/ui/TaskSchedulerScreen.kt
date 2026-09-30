@@ -3864,6 +3864,11 @@ internal fun TaskEditWindow(
  *   the kinds that come along only THROUGH one of them (companions are transitive,
  *   [org.example.project.scheduler.domain.PeriodKindConfig.kindsOf]) are named under the list, since a box for
  *   them would claim a setting this kind does not hold.
+ * - **Combinations** — the account's combination rules that involve this kind
+ *   ([org.example.project.scheduler.domain.PeriodCombination], written whole by
+ *   [org.example.project.scheduler.state.SchedulerIntent.SetPeriodCombinations]): for each, the kinds that must ALL be
+ *   present, and the kinds that are then present too. "Add a combination" starts one with this kind in it. By default
+ *   each computer layer with each phone layer, real or fake, brings "no screen" ([PeriodKinds.DEFAULT_COMBINATIONS]).
  * - **Drawing** — the pattern its periods wear on the calendar, one of [PeriodDrawing]'s fixed set, each shown
  *   as the swatch the calendar will draw ([org.example.project.ui.periodDrawing]).
  * - **Delete**, offered only for a user-defined kind: this is the one place a period is deleted, because it
@@ -3900,7 +3905,11 @@ internal fun PeriodKindEditWindow(
     style: PeriodKindStyle,
     /** Every kind present wherever this one is, transitively, this one excluded. */
     impliedKinds: Set<String>,
+    /** The account's combination rules, all of them (the section shows the ones naming this kind). */
+    combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
     onSetCompanions: (Set<String>) -> Unit,
+    /** The whole list of combination rules, as the section leaves it. */
+    onSetCombinations: (List<org.example.project.scheduler.domain.PeriodCombination>) -> Unit,
     onSetDrawing: (PeriodDrawing) -> Unit,
     onSetResilience: (List<TaskId>, Double) -> Unit,
     onDelete: () -> Unit,
@@ -3961,6 +3970,10 @@ internal fun PeriodKindEditWindow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+
+                HorizontalDivider()
+
+                PeriodCombinationsSection(kind, allKinds, combinations, onSetCombinations)
 
                 HorizontalDivider()
 
@@ -4357,3 +4370,72 @@ const val RELATIVE_PRIORITY_FRAME_ID: String = "RelativePriority"
 const val TASK_EDIT_FRAME_ID: String = "TaskEdit"
 const val PERIOD_KIND_EDIT_FRAME_ID: String = "PeriodKindEdit"
 const val DEEP_COPY_FRAME_ID: String = "DeepCopy"
+
+/**
+ * The period edit window's **Combinations** section (user rule, 2026-09-30: *"select a combination of periods, and select
+ * which periods appear when this combination is present"*). One block per rule naming [kind] — on either side — with the
+ * kinds that must all be present and the kinds that are then present too, each a row of toggles over [allKinds]; and a
+ * button starting a new rule with [kind] in it. Every change writes the whole list ([onSetCombinations]).
+ */
+@Composable
+private fun PeriodCombinationsSection(
+    kind: String,
+    allKinds: List<String>,
+    combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
+    onSetCombinations: (List<org.example.project.scheduler.domain.PeriodCombination>) -> Unit,
+) {
+    fun update(rule: org.example.project.scheduler.domain.PeriodCombination) =
+        onSetCombinations(combinations.map { if (it.id == rule.id) rule else it })
+    Text("Combinations", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "Wherever periods of every kind of a combination are present together, a period of each kind it brings is " +
+            "present too.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val shown = combinations.filter { kind in it.kinds || kind in it.implies }
+    for (rule in shown) {
+        Column(
+            Modifier.fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text("When all of these are present", style = MaterialTheme.typography.labelMedium)
+            KindToggles(allKinds, rule.kinds) { update(rule.copy(kinds = it)) }
+            Text("these are present too", style = MaterialTheme.typography.labelMedium)
+            KindToggles(allKinds, rule.implies) { update(rule.copy(implies = it)) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onSetCombinations(combinations.filterNot { it.id == rule.id }) }) {
+                    Text("Remove combination")
+                }
+            }
+        }
+    }
+    TextButton(
+        onClick = {
+            val taken = combinations.map { it.id }.toSet()
+            val id = generateSequence(1) { it + 1 }.map { "combination-$it" }.first { it !in taken }
+            onSetCombinations(
+                combinations + org.example.project.scheduler.domain.PeriodCombination(id, setOf(kind), emptySet()),
+            )
+        },
+    ) { Text("Add a combination") }
+}
+
+/** One toggle per kind, wrapping over as many lines as the window needs. */
+@Composable
+private fun KindToggles(allKinds: List<String>, selected: Set<String>, onChange: (Set<String>) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        for (k in allKinds) {
+            val on = k in selected
+            androidx.compose.material3.FilterChip(
+                selected = on,
+                onClick = { onChange(if (on) selected - k else selected + k) },
+                label = { Text(k, style = MaterialTheme.typography.bodySmall) },
+            )
+        }
+    }
+}

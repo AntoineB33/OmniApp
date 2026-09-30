@@ -10,7 +10,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * PRD §15, the "I'm away" button vs. the device's own lock: **an unlock turns the button off**.
+ * PRD §15, the "I'm away" button vs. the device's own lock: **a lock, or an unlock, turns the button off**.
  *
  * Unlocking this device is the user visibly coming back to it, and the flag left standing would go on holding
  * the active session finalized and the presence heartbeat closed — the app would be telling the server nobody
@@ -40,18 +40,22 @@ class UserAwayUnlockTest {
         val away: Boolean get() = engine.userAway.value
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): "I'm away" is this device's *"fake no
+     * computer unlocked"* period, which *"can't be with 'no computer unlocked'"* — so the LOCK ends it, and a line with
+     * every device really locked is in mode 2. (Until then a lock left the flag standing, and the line stayed in mode 3.)
+     */
     @Test
-    fun a_lock_then_unlock_turns_the_away_button_off() {
+    fun a_lock_ends_the_away_button() {
         val h = Harness()
         h.engine.setUserAway(true)
         assertTrue(h.away)
 
         h.setUnlocked(false)
-        // Still away: locking the machine is not coming back to it.
-        assertTrue(h.away, "the lock itself cleared the away flag")
+        assertFalse(h.away, "the away flag outlived a real lock")
 
         h.setUnlocked(true)
-        assertFalse(h.away, "the unlock did not clear the away flag")
+        assertFalse(h.away)
     }
 
     /**
@@ -68,17 +72,24 @@ class UserAwayUnlockTest {
         assertTrue(h.away, "a poke at an already-unlocked screen cleared the away flag")
     }
 
-    /** A device that starts locked has no edge behind it, so its first sample must clear nothing. */
+    /** A device that starts UNLOCKED has no edge behind it, so its first sample must clear nothing. */
     @Test
     fun the_first_sample_is_not_an_edge() {
-        val h = Harness(unlocked = false)
+        val h = Harness(unlocked = true)
         h.engine.setUserAway(true)
 
         h.engine.onPlatformActivityChanged()
         assertTrue(h.away, "the first sample was read as an unlock")
+    }
 
-        h.setUnlocked(true)
-        assertFalse(h.away, "the unlock after it did not clear the away flag")
+    /** A lock is a level, not an edge: a flag found standing on a locked device — first sample or not — goes. */
+    @Test
+    fun a_locked_device_holds_no_away_flag() {
+        val h = Harness(unlocked = false)
+        h.engine.setUserAway(true)
+
+        h.engine.onPlatformActivityChanged()
+        assertFalse(h.away, "the away flag stood beside a real lock")
     }
 
     /** Nothing clears a flag that was never set: an ordinary lock/unlock cycle leaves "I'm back" as it is. */

@@ -2356,9 +2356,10 @@ object SchedulerDomain {
      * no-screen period every `sleep` window and every `before bed` hour carries (PRD §17,
      * [PeriodKinds.defaultStyle]).
      *
-     * Plus one the account cannot switch off, because it is the layers' own definition rather than a
-     * companion: **where a period asserting the computer's layer overlaps one asserting the phone's, the
-     * stretch is a [PeriodKinds.NO_SCREEN] period** ([assertedNoScreenRanges] reads the same intersection).
+     * Plus the account's **combination rules** ([PeriodKindConfig.closeRegions]): where periods of every kind of a
+     * rule overlap, the kinds it implies are present over the overlap — by default, **where a period asserting a
+     * computer layer (real or fake) overlaps one asserting a phone layer, the stretch is a [PeriodKinds.NO_SCREEN]
+     * period** ([PeriodKinds.DEFAULT_COMBINATIONS]; [assertedNoScreenRanges] reads the same closure).
      *
      * Per kind, the spans a period of that very kind already covers are SUBTRACTED, and overlapping companions
      * are merged, because the plan multiplies the resiliences of every covering period
@@ -2371,26 +2372,16 @@ object SchedulerDomain {
      * projected wind-down hours) — mapping a period by hand drops its companions.
      */
     fun companionPeriods(periods: List<RestrictivePeriod>, config: PeriodKindConfig): List<RestrictivePeriod> {
-        val implied = LinkedHashMap<String, MutableList<TaskTimeRange>>()
-        val computer = ArrayList<TaskTimeRange>()
-        val phone = ArrayList<TaskTimeRange>()
+        val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
         for (period in periods) {
             if (period.kind.isEmpty() || period.endMillis <= period.startMillis) continue
-            val span = TaskTimeRange(period.startMillis, period.endMillis)
-            val kinds = config.kindsOf(period.kind)
-            for (kind in kinds) if (kind != period.kind) implied.getOrPut(kind) { ArrayList() } += span
-            if (PeriodKinds.NO_COMPUTER_UNLOCKED in kinds) computer += span
-            if (PeriodKinds.NO_PHONE_UNLOCKED in kinds) phone += span
+            own.getOrPut(period.kind) { ArrayList() } += TaskTimeRange(period.startMillis, period.endMillis)
         }
-        if (computer.isNotEmpty() && phone.isNotEmpty()) {
-            val both = intersectRegions(mergeOccupied(computer), mergeOccupied(phone))
-            if (both.isNotEmpty()) implied.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += both
-        }
-        if (implied.isEmpty()) return emptyList()
-        return implied.flatMap { (kind, spans) ->
-            val explicit =
-                periods.filter { it.kind == kind }.map { TaskTimeRange(it.startMillis, it.endMillis) }
-            subtractRegions(mergeOccupied(spans), explicit).map {
+        if (own.isEmpty()) return emptyList()
+        val closed = config.closeRegions(own)
+        return closed.flatMap { (kind, spans) ->
+            val explicit = own[kind]?.let(::mergeOccupied).orEmpty()
+            subtractRegions(spans, explicit).map {
                 RestrictivePeriod(
                     startMillis = it.startEpochMillis,
                     endMillis = it.endEpochMillis,
@@ -3018,10 +3009,25 @@ object SchedulerDomain {
         )
 
     /**
+     * PRD §8: **the stretches a PERIOD asserts [layer] was FAKED over** — a period of "fake no computer unlocked" (or
+     * phone), or one carrying it ([PeriodKindConfig.assertedFakeLayers]). The hand-drawn half of the fake layer; the
+     * other half is the "I'm away" button ([fakeLayerRegions]).
+     */
+    fun assertedFakeLayerRanges(
+        panels: List<TaskPanel>,
+        layer: ActivityLayer,
+        config: PeriodKindConfig,
+    ): List<TaskTimeRange> =
+        mergeOccupied(
+            panels.filter { it.restrictiveKind.isNotEmpty() && layer in config.assertedFakeLayers(it.restrictiveKind) }
+                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+        )
+
+    /**
      * PRD §8: **the no-screen stretches the user has DRAWN** — every period that is or carries a "no screen"
      * period ([PeriodKindConfig.isOrImpliesNoScreen]: a "No screen" period, a `sleep` window, a `before bed`
-     * hour, or any kind the account gave that companion), plus where a period asserting the computer's layer
-     * and one asserting the phone's overlap.
+     * hour, or any kind the account gave that companion), plus wherever the account's combination rules put one
+     * ([PeriodKindConfig.closeRegions]; by default where a computer layer and a phone layer overlap).
      *
      * The second half is the definition the whole app reads no-screen time by — "a no-screen period is where
      * BOTH layers fall" ([observedNoScreenRegions] takes the same intersection over the two layers' *evidence*)
@@ -3029,16 +3035,14 @@ object SchedulerDomain {
      * growing one of their own. It is the same set [companionPeriods] hands the scheduler, read as spans.
      */
     fun assertedNoScreenRanges(panels: List<TaskPanel>, config: PeriodKindConfig): List<TaskTimeRange> {
-        val stated =
-            panels.filter { it.restrictiveKind.isNotEmpty() && config.isOrImpliesNoScreen(it.restrictiveKind) }
-                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
-        val computer = assertedLayerRanges(panels, ActivityLayer.NoComputerUnlocked, config)
-        val phone =
-            if (computer.isEmpty()) emptyList()
-            else assertedLayerRanges(panels, ActivityLayer.NoPhoneUnlocked, config)
-        val both = if (phone.isEmpty()) emptyList() else intersectRegions(computer, phone)
-        if (stated.isEmpty() && both.isEmpty()) return emptyList()
-        return mergeOccupied(stated + both)
+        val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
+        for (panel in panels) {
+            val kind = panel.restrictiveKind
+            if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) continue
+            own.getOrPut(kind) { ArrayList() } += TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
+        }
+        if (own.isEmpty()) return emptyList()
+        return config.closeRegions(own)[PeriodKinds.NO_SCREEN].orEmpty()
     }
 
     /**
@@ -3058,11 +3062,14 @@ object SchedulerDomain {
      * own route (the reducer unions them in).
      *
      * [computerAway] / [phoneAway] are the ONE exception, and they are not an assertion in that sense: they
-     * are the stretches the USER said they were away from a device of that kind for ([declaredAwayRegions]),
-     * which is a statement that nobody was at that screen — exactly what a lock reports, and exactly what this
-     * function is asking. The rules' promises are left out because a break is not time the user was absent
-     * for; a declaration IS. They ride the asserted slot so the seam filter cannot drop a short one, and each
-     * belongs to its own layer: an away press on the computer says nothing about the phone.
+     * are the stretches the USER said they were away from a device of that kind for ([declaredAwayRegions]) —
+     * that kind's **"fake no … unlocked"** layer ([fakeLayerRegions]: minus where the device really was locked, since
+     * the two cannot coexist). The rules' promises are left out because a break is not time the user was absent
+     * for; a declaration IS. Each belongs to its own device kind: an away press on the computer says nothing about
+     * the phone.
+     *
+     * Which overlaps of the four layers are no-screen time is the account's combination rules ([config],
+     * [PeriodKindConfig.closeRegions]) — by default every computer layer with every phone layer, real or fake.
      *
      * [computerLocked] / [phoneLocked] are the OS lock/standby histories of the two device kinds over
      * `[sinceMillis, untilMillis]`, each **null when no device of that kind could tell** — and null carries the
@@ -3077,12 +3084,29 @@ object SchedulerDomain {
         untilMillis: Long,
         computerAway: List<TaskTimeRange> = emptyList(),
         phoneAway: List<TaskTimeRange> = emptyList(),
+        config: PeriodKindConfig = PeriodKindConfig.DEFAULT,
     ): List<TaskTimeRange> {
         if (untilMillis <= sinceMillis) return emptyList()
-        val computer = layerRegions(computerLocked, computerAway, sinceMillis, untilMillis)
-        val phone = layerRegions(phoneLocked, phoneAway, sinceMillis, untilMillis)
-        return intersectRegions(computer, phone)
+        val computer = layerRegions(computerLocked, emptyList(), sinceMillis, untilMillis)
+        val phone = layerRegions(phoneLocked, emptyList(), sinceMillis, untilMillis)
+        val layers =
+            mapOf(
+                PeriodKinds.NO_COMPUTER_UNLOCKED to computer,
+                PeriodKinds.NO_PHONE_UNLOCKED to phone,
+                PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED to fakeLayerRegions(computerAway, computer),
+                PeriodKinds.FAKE_NO_PHONE_UNLOCKED to fakeLayerRegions(phoneAway, phone),
+            )
+        return config.closeRegions(layers)[PeriodKinds.NO_SCREEN].orEmpty()
     }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **a device kind's "fake no … unlocked" stretches** — what
+     * the user declared away from it ([away], the "I'm away" button) where that device kind is not really locked
+     * ([realLayer]): *"'fake no computer unlocked' can't be with 'no computer unlocked'"*, same with the phone. The real
+     * layer wins wherever both would be said. Not seam-filtered: a declaration shorter than a minute is still one.
+     */
+    fun fakeLayerRegions(away: List<TaskTimeRange>, realLayer: List<TaskTimeRange>): List<TaskTimeRange> =
+        if (away.isEmpty()) emptyList() else subtractRegions(mergeOccupied(away), realLayer)
 
     /**
      * PRD §8: the stretches the calendar draws as an **inactivity period it derived** — the timeline minus
@@ -3394,6 +3418,32 @@ object SchedulerDomain {
                 stretches = observed.map { DynamicPeriods.Span(it.startEpochMillis, it.endEpochMillis) },
             )
         return if (absorbed == machine) record else record.copy(machine = absorbed)
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *Use of the set of rules output*: a new set of rules drops what the old one
+     * deduced but history does not hold — the machine's bars are rebuilt from the banked breaks, the breaks the app
+     * conducted ([dynamic]) and the "no screen" the devices observed ([observed]) ([BreakMachine.rebuildFromHistory]).
+     * The line moves on from there to the clock at the runtime's next step.
+     */
+    fun rebuildScreenBreaksFromHistory(
+        screenBreaks: List<ScreenBreak>,
+        frozen: FrozenScreenBreaks?,
+        observed: List<TaskTimeRange>,
+        dynamic: List<TaskTimeRange> = emptyList(),
+    ): FrozenScreenBreaks? {
+        val record = frozen ?: return null
+        val machine = record.machine ?: return record
+        val specs = dynamicPeriodSpecs(screenBreaks)
+        val rebuilt =
+            BreakMachine.rebuildFromHistory(
+                BreakMachine.withSpecs(machine, specs),
+                specs,
+                banked = record.breaks,
+                dynamic = dynamic.map { DynamicPeriods.Span(it.startEpochMillis, it.endEpochMillis) },
+                stretches = observed.map { DynamicPeriods.Span(it.startEpochMillis, it.endEpochMillis) },
+            )
+        return if (rebuilt == machine) record else record.copy(machine = rebuilt)
     }
 
     /** The record after the machine moved: [events] banked and un-banked, pruned, the front and the machine at the line. */
@@ -5706,6 +5756,13 @@ object SchedulerDomain {
             if (style.companions == PeriodKinds.defaultStyle(kind).companions) continue
             result = 31 * result + kind.hashCode()
             result = 31 * result + style.companions.sorted().hashCode()
+        }
+        // …and its combination rules, for the same reason (an account at the defaults hashes as it always did).
+        if (state.periodCombinations != PeriodKinds.DEFAULT_COMBINATIONS) {
+            for (rule in state.periodCombinations) {
+                result = 31 * result + rule.kinds.sorted().hashCode()
+                result = 31 * result + rule.implies.sorted().hashCode()
+            }
         }
         return result
     }

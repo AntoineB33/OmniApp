@@ -62,7 +62,9 @@ private fun tileSizeDp(drawing: PeriodDrawing): Pair<Float, Float> =
         PeriodDrawing.VerticalLines,
         PeriodDrawing.HorizontalLines,
         PeriodDrawing.RisingObliques,
-        PeriodDrawing.FallingObliques -> 10f to 10f
+        PeriodDrawing.FallingObliques,
+        PeriodDrawing.DottedRisingObliques,
+        PeriodDrawing.DottedFallingObliques -> 10f to 10f
         PeriodDrawing.HalfCirclesLeft,
         PeriodDrawing.HalfCirclesRight -> 16f to 14f
         PeriodDrawing.Crosses -> 16f to 16f
@@ -82,7 +84,9 @@ private fun periodDrawingTile(drawing: PeriodDrawing, color: Color, dotted: Bool
 
 private fun DrawScope.drawTile(drawing: PeriodDrawing, color: Color, dotted: Boolean) {
     val stroke = 1.dp.toPx()
-    val effect = if (dotted) PathEffect.dashPathEffect(floatArrayOf(1.5.dp.toPx(), 2.5.dp.toPx())) else null
+    // The two dotted drawings are their plain slope with the dashes always on.
+    val dashed = dotted || drawing == PeriodDrawing.DottedRisingObliques || drawing == PeriodDrawing.DottedFallingObliques
+    val effect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(1.5.dp.toPx(), 2.5.dp.toPx())) else null
     val w = size.width
     val h = size.height
     fun line(from: Offset, to: Offset) =
@@ -91,9 +95,9 @@ private fun DrawScope.drawTile(drawing: PeriodDrawing, color: Color, dotted: Boo
         PeriodDrawing.VerticalLines -> line(Offset(w / 2f, 0f), Offset(w / 2f, h))
         PeriodDrawing.HorizontalLines -> line(Offset(0f, h / 2f), Offset(w, h / 2f))
         // The diagonal plus its two neighbours, so the anti-aliased corners join into one continuous line.
-        PeriodDrawing.RisingObliques ->
+        PeriodDrawing.RisingObliques, PeriodDrawing.DottedRisingObliques ->
             for (dx in listOf(-w, 0f, w)) line(Offset(dx, h), Offset(dx + w, 0f))
-        PeriodDrawing.FallingObliques ->
+        PeriodDrawing.FallingObliques, PeriodDrawing.DottedFallingObliques ->
             for (dx in listOf(-w, 0f, w)) line(Offset(dx, 0f), Offset(dx + w, h))
         // `(` in the left half of the tile and `)` in the right half, so the two together read "( )" — both
         // visible, neither closing the other into a circle.

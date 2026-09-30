@@ -486,6 +486,7 @@ object SchedulerReducer {
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
             is SchedulerIntent.SetPeriodCompanions -> reduceSetPeriodCompanions(state, intent.kind, intent.companions)
             is SchedulerIntent.SetPeriodDrawing -> reduceSetPeriodDrawing(state, intent.kind, intent.drawing)
+            is SchedulerIntent.SetPeriodCombinations -> reduceSetPeriodCombinations(state, intent.combinations)
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
@@ -4880,6 +4881,29 @@ private fun reduceSetPeriodCompanions(state: SchedulerState, kindRaw: String, co
     return state.withPeriodKindStyle(kind, current.copy(companions = kept))
 }
 
+/**
+ * The period edit window's combination rules. Each rule keeps only the kinds the account holds, and the ids stay unique
+ * (a second rule with an id already seen is dropped). The same list again is a no-op.
+ */
+private fun reduceSetPeriodCombinations(
+    state: SchedulerState,
+    combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
+): SchedulerState {
+    val kinds = state.allPeriodKinds.toSet()
+    val kept =
+        combinations
+            .map { rule ->
+                rule.copy(
+                    kinds = rule.kinds.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it in kinds },
+                    implies = rule.implies.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it in kinds },
+                )
+            }
+            .filter { it.id.isNotBlank() }
+            .distinctBy { it.id }
+    if (kept == state.periodCombinations) return state
+    return state.copy(periodCombinations = kept)
+}
+
 /** The period edit window's drawing for [kindRaw]; the same drawing again is a no-op. */
 private fun reduceSetPeriodDrawing(state: SchedulerState, kindRaw: String, drawing: PeriodDrawing): SchedulerState {
     val kind = PeriodKinds.normalize(kindRaw)
@@ -4918,9 +4942,16 @@ private fun reduceRemovePeriodKind(state: SchedulerState, kindRaw: String): Sche
         (state.periodKindStyles - kind).mapValues { (_, style) ->
             if (kind in style.companions) style.copy(companions = style.companions - kind) else style
         }
+    // …and it leaves every combination rule that names it.
+    val combinations =
+        state.periodCombinations.map { rule ->
+            if (kind in rule.kinds || kind in rule.implies) rule.copy(kinds = rule.kinds - kind, implies = rule.implies - kind)
+            else rule
+        }
     return state.copy(
         periodKinds = state.periodKinds.filterNot { it == kind },
         periodKindStyles = styles,
+        periodCombinations = combinations,
         tasks = state.tasks.mapValues { (_, t) -> if (kind in t.resilience) t.copy(resilience = t.resilience - kind) else t },
         panels = state.panels.filterNot { it.periodKind == kind },
     )

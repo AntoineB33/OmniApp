@@ -1893,6 +1893,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         untilMillis = nowMillis,
                         computerAway = if (ownIsComputer) declaredAwayRegions else emptyList(),
                         phoneAway = if (ownIsComputer) emptyList() else declaredAwayRegions,
+                        config = schedulerState.periodKindConfig,
                     )
                 }
 
@@ -2013,9 +2014,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             lockHistoryScanned -> lockedIntervals
                             else -> emptyList() // not asked yet ≠ cannot be asked
                         }
-                    // The "I'm away" stretches belong to THIS device's layer alone — a press on the computer says
-                    // nothing about the phone — while everything in [layerAsserted] is a claim about every screen
-                    // at once.
+                    // The "I'm away" stretches belong to THIS device's FAKE layer alone — a press on the computer says
+                    // nothing about the phone, and a device declared away is unlocked (`docs/scheduler_requirements.md`
+                    // § *$now line$ 3 modes*: "fake no computer unlocked", drawn as its own band below).
                     val layerAway = if (layer == ownLayer) declaredAwayRegions else emptyList()
                     // What the RULES promise for this layer: the breaks and the future sleep windows whose kind
                     // carries it.
@@ -2038,11 +2039,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val regions =
                         SchedulerDomain.layerRegions(
                             lockedIntervals = layerLocked,
-                            // Asserted rather than evidence so the seam filter cannot drop a declaration shorter
-                            // than a minute: the mode was 3 for it.
-                            assertedRegions = layerAssertedAll + layerAway + layerStated,
+                            assertedRegions = layerAssertedAll + layerStated,
                             sinceMillis = displayFloorMillis,
                             untilMillis = nowMillis,
+                        )
+                    // The FAKE layer: the away spells and the periods drawn of the fake kind, wherever the real layer
+                    // is not ("'fake no computer unlocked' can't be with 'no computer unlocked'").
+                    val fakeRegions =
+                        SchedulerDomain.fakeLayerRegions(
+                            layerAway + SchedulerDomain.assertedFakeLayerRanges(workPlanPanels, layer, periodKindConfig),
+                            regions,
                         )
                     // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the sub-stretches of
                     // this hatch that a device of the layer's kind really was UNLOCKED for, the user having said
@@ -2060,7 +2066,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val declared =
                         SchedulerDomain.declaredLayerRegions(
                             regions = regions,
-                            declaredRegions = layerAway + layerStated,
+                            declaredRegions = layerStated,
                             lockedIntervals = layerLocked,
                             sinceMillis = displayFloorMillis,
                             untilMillis = nowMillis,
@@ -2078,7 +2084,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             layerDeclared = isDeclared,
                             openStart = layerOpenStart != null && region.startEpochMillis == layerOpenStart,
                         )
-                    }
+                    } +
+                        fakeRegions.map { region ->
+                            CalendarRecord(
+                                title = PeriodKinds.periodTitle(PeriodKinds.fakeLayerKind(layer)),
+                                range = region,
+                                layer = layer,
+                                layerFake = true,
+                            )
+                        }
                 }
                 }
             val calendarRecords = baseCalendarRecords + pastInactivityRecords + layerRecords +
@@ -2594,8 +2608,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 allKinds = popupState.allPeriodKinds,
                                 style = popupState.periodKindConfig.style(kind),
                                 impliedKinds = popupState.periodKindConfig.impliedKinds(kind),
+                                combinations = popupState.periodCombinations,
                                 onSetCompanions = { companions ->
                                     popupDispatch(SchedulerIntent.SetPeriodCompanions(kind, companions))
+                                },
+                                onSetCombinations = { rules ->
+                                    popupDispatch(SchedulerIntent.SetPeriodCombinations(rules))
                                 },
                                 onSetDrawing = { drawing ->
                                     popupDispatch(SchedulerIntent.SetPeriodDrawing(kind, drawing))

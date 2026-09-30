@@ -30,7 +30,8 @@ data class FrozenScreenBreaks(
     val untilMillis: Long,
     /**
      * Where the line last was when this record was banked — the front itself, since the front is the line. An engine that starts finding it far behind the clock was not running in between, which is
-     * the requirements' *"no CPU were available during this period"*: the line is walked there, in mode 2.
+     * the requirements' *"no CPU were available during this period"*: the line is walked there — in mode 2 where the
+     * device was locked or asleep, in mode 1 where the OS says it was unlocked (`SchedulerEngine.catchUpAfterNotRunning`).
      */
     val lineMillis: Long = untilMillis,
     /**

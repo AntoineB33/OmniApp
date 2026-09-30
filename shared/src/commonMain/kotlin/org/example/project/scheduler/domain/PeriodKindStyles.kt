@@ -1,5 +1,7 @@
 package org.example.project.scheduler.domain
 
+import org.example.project.scheduler.model.TaskTimeRange
+
 /**
  * PRD §8: **the drawing a period of one kind wears on the calendar** — one of a fixed set, chosen in the period
  * edit window.
@@ -29,7 +31,23 @@ enum class PeriodDrawing(val label: String) {
     Crosses("Crosses +"),
     /** Horizontal zig-zag lines — the "before bed" default. */
     Zigzags("Zig-zags"),
+    /** `/` in dashes — the "fake no computer unlocked" default: the real layer's slope, the user's word. */
+    DottedRisingObliques("Dotted oblique lines /"),
+    /** `\` in dashes — the "fake no phone unlocked" default. */
+    DottedFallingObliques("Dotted oblique lines \\"),
 }
+
+/**
+ * The period edit window's **combination rule**: *"select a combination of periods, and select which periods appear when
+ * this combination is present"* (user rule, 2026-09-30). Wherever a period of EVERY kind in [kinds] is present at once,
+ * a period of each kind in [implies] is present too — over exactly the stretch they overlap on. Like a companion, an
+ * implication and never a laid panel. [id] names the rule for the editor and the store.
+ */
+data class PeriodCombination(
+    val id: String,
+    val kinds: Set<String>,
+    val implies: Set<String>,
+)
 
 /**
  * `side-dev/README.md` § *Restrictive Period*, as the period edit window states it: **what a kind of period
@@ -61,7 +79,11 @@ data class PeriodKindStyle(
  *
  * Immutable and precomputed, so it may be read from the reducer's off-thread re-plans and the frame loop alike.
  */
-class PeriodKindConfig(val styles: Map<String, PeriodKindStyle> = emptyMap()) {
+class PeriodKindConfig(
+    val styles: Map<String, PeriodKindStyle> = emptyMap(),
+    /** The account's combination rules ([PeriodCombination]); [PeriodKinds.DEFAULT_COMBINATIONS] until it edits them. */
+    val combinations: List<PeriodCombination> = PeriodKinds.DEFAULT_COMBINATIONS,
+) {
 
     private val closures: Map<String, Set<String>> =
         (PeriodKinds.BUILT_IN + styles.keys).distinct().associateWith(::walk)
@@ -108,18 +130,71 @@ class PeriodKindConfig(val styles: Map<String, PeriodKindStyle> = emptyMap()) {
     }
 
     /**
-     * The drawings a period BOX of [kind] paints: its own and its companions', minus the two layer kinds' —
+     * PRD §8: which calendar layers a period of [kind] asserts were FAKED ([PeriodKinds.fakeLayerKind] among [kindsOf]).
+     */
+    fun assertedFakeLayers(kind: String): Set<SchedulerDomain.ActivityLayer> {
+        val kinds = kindsOf(kind)
+        return SchedulerDomain.ActivityLayer.entries.filterTo(LinkedHashSet()) { PeriodKinds.fakeLayerKind(it) in kinds }
+    }
+
+    /**
+     * **Every kind in force over the timeline, given where some kinds are** — the one closure of both settings the
+     * period edit window holds: each kind brings its companions ([kindsOf]), and wherever every kind of a
+     * [PeriodCombination] overlaps, its implied kinds (with THEIR companions) are present over the overlap. Repeated
+     * until nothing grows, so a combination may feed another (bounded by the number of rules plus one).
+     *
+     * [present] maps a kind to the stretches a period of it covers; the answer maps every kind in force to its merged
+     * stretches, [present]'s own included. The scheduler's companion periods, the record bank's no-screen stretches
+     * and the devices' observed no-screen time all read it ([SchedulerDomain.companionPeriods],
+     * [SchedulerDomain.assertedNoScreenRanges], [SchedulerDomain.observedNoScreenRegions]).
+     */
+    fun closeRegions(present: Map<String, List<TaskTimeRange>>): Map<String, List<TaskTimeRange>> {
+        val out = HashMap<String, List<TaskTimeRange>>()
+        fun add(kind: String, spans: List<TaskTimeRange>): Boolean {
+            var grew = false
+            for (k in kindsOf(kind)) {
+                val before = out[k].orEmpty()
+                val merged = SchedulerDomain.mergeOccupied(before + spans)
+                if (merged != before) {
+                    out[k] = merged
+                    grew = true
+                }
+            }
+            return grew
+        }
+        for ((kind, spans) in present) if (spans.isNotEmpty()) add(kind, spans)
+        val rules = combinations.filter { it.kinds.isNotEmpty() && it.implies.isNotEmpty() }
+        repeat(rules.size + 1) {
+            var grew = false
+            for (rule in rules) {
+                var overlap: List<TaskTimeRange>? = null
+                for (k in rule.kinds) {
+                    val spans = out[k].orEmpty()
+                    overlap = if (overlap == null) spans else SchedulerDomain.intersectRegions(overlap, spans)
+                    if (overlap.isEmpty()) break
+                }
+                if (overlap.isNullOrEmpty()) continue
+                for (implied in rule.implies) if (add(implied, overlap)) grew = true
+            }
+            if (!grew) return out
+        }
+        return out
+    }
+
+    /**
+     * The drawings a period BOX of [kind] paints: its own and its companions', minus the layer kinds' —
      * those are painted by the layer band, which unions a period's assertion with the OS evidence, so drawing
      * them on the box as well would paint one statement twice.
      */
     fun boxDrawings(kind: String): List<PeriodDrawing> =
         kindsOf(kind).filterNot { it in PeriodKinds.LAYER_KINDS }.map(::drawing).distinct()
 
-    override fun equals(other: Any?): Boolean = other is PeriodKindConfig && other.styles == styles
+    override fun equals(other: Any?): Boolean =
+        other is PeriodKindConfig && other.styles == styles && other.combinations == combinations
 
-    override fun hashCode(): Int = styles.hashCode()
+    override fun hashCode(): Int = styles.hashCode() * 31 + combinations.hashCode()
 
-    override fun toString(): String = "PeriodKindConfig($styles)"
+    override fun toString(): String = "PeriodKindConfig($styles, $combinations)"
 
     companion object {
         /** Every kind at its default — an account that never opened a period edit window. */

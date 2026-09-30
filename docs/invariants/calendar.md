@@ -56,13 +56,30 @@ Global rules that always apply: `CLAUDE.md`.
     exactly as `observedNoScreenRegions` intersects their evidence — so the two kinds never grow a scheduling
     rule of their own, they feed the one `no on-screen task` already has
     (`SchedulerDomain.companionPeriods` → the fill's `restrictions`/`dynamicBase`, `noScreenRangesFor` → the
-    bank). This direction (both layers ⇒ no screen) is the layers' definition and is **not** a companion
-    setting: no account setting turns it off;
+    bank). Since 2026-09-30 that direction is a **combination rule** (below), on by default and editable;
   - **the implied period is subtracted where an explicit "No screen" period already covers**, because the plan
     MULTIPLIES every covering kind's resilience (`PeriodKinds.multiplier`): counting the stretch twice would
     square it and halve the share of anybody sitting strictly between 0 and 1. A `0` and a `1` would not have
     noticed.
-- **"I'm away" hatches its own device's layer** (`SchedulerEngine.declaredAwaySpans`/`declaredAwaySince` →
+- **THE FOUR LAYERS: REAL AND FAKE, PER DEVICE KIND** (`docs/scheduler_requirements.md` § *$now line$ 3 modes*,
+  2026-09-30). Each device kind has a real layer ("no computer unlocked", read off the OS) and a **fake** one
+  ("fake no computer unlocked", `PeriodKinds.FAKE_NO_COMPUTER_UNLOCKED` / `FAKE_NO_PHONE_UNLOCKED`): the device is
+  unlocked and the user said nobody is at it — the "I'm away" button, or a period drawn of the fake kind. **The two
+  never overlap** (`SchedulerDomain.fakeLayerRegions`: the real layer wins), and a lock ends the button
+  (`screen-breaks.md`). The fake layer is its OWN band (`CalendarRecord.layerFake`), in the fake kind's drawing —
+  by default the real slope dotted (`PeriodDrawing.DottedRisingObliques` / `DottedFallingObliques`), the look the
+  away stretches had before. A peer's fake layer is not drawn: nothing carries a peer's layers (its real one is
+  assumed locked whole), and the mode reads the account's away flag.
+- **COMBINATION RULES** (`PeriodCombination`, `PeriodKindConfig.combinations`, `SchedulerState.periodCombinations`;
+  the period edit window's *Combinations* section, user rule 2026-09-30): wherever periods of every kind of a rule
+  overlap, the kinds it implies are present over the overlap. **One closure** reads companions and rules together
+  (`PeriodKindConfig.closeRegions`) for every question of "which kinds are here": the scheduler's companion periods
+  (`companionPeriods`), the bank's drawn no-screen (`assertedNoScreenRanges`) and the devices' observed no-screen
+  (`observedNoScreenRegions`). Defaults (`PeriodKinds.DEFAULT_COMBINATIONS`): each computer layer with each phone
+  layer, real or fake, brings "no screen". Stored only once edited (one `field` row, an emptied list included);
+  `decode` drops kinds the account does not hold; in `schedulingSignature`. The layer hatch itself still reads the
+  companions only (`assertedLayers` / `assertedFakeLayers`).
+- **The "I'm away" stretches are this device's FAKE layer** (`SchedulerEngine.declaredAwaySpans`/`declaredAwaySince` →
   `SchedulerDomain.declaredAwayRegions`, ADR 0002). The machine stays UNLOCKED while the button is on, so the
   OS log is silent over exactly the stretch the now-line is in mode 3 for, and the requirement is that such a
   stretch carries both layers. It rides the **asserted** slot, not the evidence one — the seam filter would

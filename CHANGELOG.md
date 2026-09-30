@@ -11,6 +11,68 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Fake no computer/phone unlocked" and the combination rules — 2026-09-30
+
+`docs/scheduler_requirements.md` § *$now line$ 3 modes* defines modes 2 and 3 by real and fake "no … unlocked" periods,
+and the user asked for the period edit window to hold combinations: *"select a combination of periods, and select which
+periods appear when this combination is present"*, with every real/fake computer layer and phone layer bringing "no
+screen" unless the user changes it.
+
+- **Two built-in kinds**, `fake no computer unlocked` / `fake no phone unlocked` (layer kinds, resilience 1 by default,
+  drawn as the real slope dotted). The "I'm away" stretches are now this device's fake layer instead of being merged
+  into its real one; a fake stretch never overlaps the real layer (`SchedulerDomain.fakeLayerRegions`). The calendar
+  draws the fake layer as its own band (`CalendarRecord.layerFake`); the dotted "user's word" marking of the real
+  layer is left to drawn periods.
+- **Combination rules** (`PeriodCombination`, `SchedulerState.periodCombinations`, `SetPeriodCombinations`): one
+  closure with the companions (`PeriodKindConfig.closeRegions`) now answers `companionPeriods`,
+  `assertedNoScreenRanges` and `observedNoScreenRegions`; "both layers ⇒ no screen" was hard-coded in all three and is
+  now the first of four default rules. At the defaults every answer is what it was.
+- **Period edit window**: a *Combinations* section lists the rules naming the kind, each with the kinds that must all
+  be present and the kinds they bring, plus *Add a combination* / *Remove combination*.
+- **Persistence and sync**: `periodCombinations` in the payload, written only once edited (one `field` row), decoded to
+  the defaults when absent and healed of unknown kinds. No SQLite or Supabase change. Removing a user kind drops it
+  from every rule.
+- Tests: `PeriodCombinationsTest` (defaults, a removed default, chained rules, the scheduler's view, the fake layer,
+  reducer, codec incl. a payload without the field and an emptied list); the built-in kind list pins in
+  `PeriodKindNamingTest` and `TaskResilienceTest` gained the two kinds.
+- Not done: a peer's fake layer is not drawn (no peer's layers are transmitted; the mode already reads the account's
+  away flag).
+
+### Requirements 2026-09-30: a re-run of the scheduler rebuilds the breaks from history; a lock ends "I'm away"
+
+`docs/scheduler_requirements.md` gained § *Use of the set of rules output* (a re-run drops what the previous rules
+deduced but history does not hold) and the definitions of modes 2 and 3 (real vs. fake "no computer/phone unlocked",
+which cannot coexist).
+
+- **Every set of rules the scheduler finds rebuilds the break machine's bars from history**
+  (`SchedulerEngine.rebuildBreaksFromHistory` → `SchedulerDomain.rebuildScreenBreaksFromHistory` →
+  `BreakMachine.rebuildFromHistory`): banked and conducted breaks, observed "no screen", and the stretches the line lived
+  through in this process (`lineStretches`). Bars may go DOWN here, unlike `absorbHistory`. A label with no history keeps
+  its carried bar; a drag still owed keeps its due. This heals the account-3 bar of the entry below at the next re-run
+  (a restart's first re-plan included).
+- **A lock ends "I'm away"** (`noteScreenSignal`: a locked sample clears the flag and closes the declared-away stretch
+  at the lock), so a line with every device really locked is in mode 2, not 3. An unlock still clears it too.
+- Tests: `BreaksRebuiltFromHistoryTest`, `ReplanHealsDeducedBarTest` (the account-3 state healed by the start-up
+  re-plan); `UserAwayUnlockTest` and `AccountAwayModeTest` rewritten for the lock rule.
+- `ServerQuotaTest` stays at 511.77 MB of 512. Rebuilding from the observed evidence alone put it at 515 MB, which is
+  why the line's own stretches count as history.
+
+### A restart at an unlocked computer barred the 5-min break for an hour — 2026-09-30 (account 3)
+
+The app was closed 15:52:21 → 16:29:49 while the computer stayed unlocked (no screen-off event since 12:41). The restart
+catch-up walked that stretch in mode 2 and noted it as "no screen", so the break machine applied *"after a ≥ 5-minute of
+'no screen', no 5min break in the next 1 hour"* at the landing: the next 5-min break was 17:29:49 (restart + 1 h) instead
+of dragged by the line.
+
+- `catchUpAfterNotRunning` asks the OS lock history of the stretch (`lockedIntervalsQuery`, a new engine seam the
+  no-screen evidence scan reads too) and walks the unlocked parts in mode 1; only the rest is mode 2 and swept "no
+  screen". `ReportDeviceSleep` is dispatched only when the walk starts with the device locked or asleep. A history that
+  cannot be read in 8 s walks all of it in mode 2, as before.
+- `start()` waits for that answer off the caller's thread before launching anything that can bank (`startRunning`).
+- Tests: `CatchUpAtUnlockedScreenTest` (fails without the fix). `StartupOnRealDbTest` injects an asleep night, since its
+  clock is faked twelve hours ahead where the OS has recorded nothing.
+- Healed by the next re-run of the scheduler (see the entry above), not by this fix alone.
+
 ### The task tree pins the parent row at the top of its viewport — 2026-09-30
 
 In the tree, the default sub-tree window and a Search window's expanded task, the direct parent of the row

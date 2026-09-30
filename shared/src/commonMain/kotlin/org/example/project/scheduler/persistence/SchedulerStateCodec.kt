@@ -636,6 +636,14 @@ object SchedulerStateCodec {
                         drawing = style.drawing.name,
                     )
                 },
+            // The period edit window's combination rules — absent while they are the defaults, so an account that
+            // never edited them writes nothing (and one row, a field, once it has: an emptied list included).
+            periodCombinations =
+                periodCombinations.takeIf { it != PeriodKinds.DEFAULT_COMBINATIONS }?.let { rules ->
+                    PersistedPeriodCombinations(
+                        rules.map { PersistedPeriodCombination(it.id, it.kinds.sorted(), it.implies.sorted()) },
+                    )
+                },
             // PRD §5: the account's categories and the rules they impose. The tasks carrying each one are
             // written on the TASKS (`categoryIds`), so nothing here is a second copy of that; what lives
             // here is only what a category IS. The rules are sorted by scope so the encoded payload — and
@@ -1240,6 +1248,11 @@ object SchedulerStateCodec {
             // have, a companion naming one, a kind named as its own companion, a drawing this build does not
             // know (the kind's default drawing instead).
             periodKindStyles = periodKindStyles.toPeriodKindStyles(PeriodKinds.BUILT_IN + decodedPeriodKinds()),
+            // Heals a rule naming a kind the account does not hold (the kind is dropped from it), and a rule left with
+            // nothing on either side (dropped).
+            periodCombinations =
+                periodCombinations?.toPeriodCombinations(PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + decodedPeriodKinds())
+                    ?: PeriodKinds.DEFAULT_COMBINATIONS,
             // PRD §5: a blank-titled category is dropped (a category is named by its title; a blank one
             // could never be typed or picked), duplicate ids collapse, and a rule's share is healed into
             // `[0, 1]` — decode heals what an older or hand-edited payload holds rather than surfacing it.
@@ -1607,6 +1620,8 @@ private data class PersistedState(
     val periodKinds: List<String> = emptyList(),
     // The period edit window's companions + drawing per kind (overrides only); absent ⇒ every kind at its default.
     val periodKindStyles: List<PersistedPeriodKindStyle> = emptyList(),
+    // The period edit window's combination rules; absent ⇒ the defaults (every payload written before 2026-09-30).
+    val periodCombinations: PersistedPeriodCombinations? = null,
     // PRD §5: a payload written before categories existed has neither field, which decodes to an account
     // with no category at all — exactly what it had.
     val categories: List<PersistedCategory> = emptyList(),
@@ -2447,6 +2462,33 @@ private fun List<PersistedPeriodKindStyle>.toPeriodKindStyles(kinds: List<String
         out[kind] = PeriodKindStyle(companions, drawing)
     }
     return out
+}
+
+/**
+ * The period edit window's combination rules, as stored: ONE object (so one sync row of kind `field`), present only
+ * once the account edited them — an emptied list still says "no rule", where an absent one says "the defaults".
+ */
+@Serializable
+private data class PersistedPeriodCombinations(val rules: List<PersistedPeriodCombination> = emptyList())
+
+@Serializable
+private data class PersistedPeriodCombination(
+    val id: String,
+    val kinds: List<String> = emptyList(),
+    val implies: List<String> = emptyList(),
+)
+
+private fun PersistedPeriodCombinations.toPeriodCombinations(
+    known: List<String>,
+): List<org.example.project.scheduler.domain.PeriodCombination> {
+    val kinds = known.toSet()
+    fun heal(names: List<String>) = names.map { PeriodKinds.migrateStoredKind(it) }.filterTo(LinkedHashSet()) { it in kinds }
+    return rules.mapNotNull { r ->
+        val on = heal(r.kinds)
+        val implies = heal(r.implies)
+        if (r.id.isBlank() || on.isEmpty() || implies.isEmpty()) null
+        else org.example.project.scheduler.domain.PeriodCombination(r.id, on, implies)
+    }.distinctBy { it.id }
 }
 
 @Serializable

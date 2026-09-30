@@ -563,6 +563,35 @@ object BreakMachine {
         return state.copy(bars = bars, drag = drag)
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *Use of the set of rules output*: **a re-run of the scheduler drops what was
+     * deduced but not saved in history.** The bars are deduced — each is what the rules set after a break or a stretch
+     * of "no screen" — so they are rebuilt from what history holds: [banked] (the breaks the line banked), [dynamic]
+     * (the breaks the app conducted) and [stretches] (the "no screen" observed behind the line). A bar the carried
+     * machine raised on something history does not hold goes (account 3, 2026-09-30: a restart's catch-up counted a
+     * stretch at an unlocked computer as "no screen", and the 5-min break was barred for the hour after it).
+     *
+     * [absorbHistory] only raises; this one also LOWERS. A label history says nothing about keeps its carried bar —
+     * that one is the rested start at the line ([initial]), which a rebuild at every re-run would push one cadence on
+     * each time. The drag is kept, with the instant it fell due, while its labels are still due: the break the line
+     * drags is the same break, announced once. The break the line is in, and its stretch, are the line's own.
+     */
+    fun rebuildFromHistory(
+        state: State,
+        specs: List<Spec>,
+        banked: List<BankedBreak>,
+        dynamic: List<Span> = emptyList(),
+        stretches: List<Span> = emptyList(),
+    ): State {
+        val x = state.atMillis
+        val byLabel = specs.associateBy { it.label }
+        val blank = state.copy(bars = state.bars.mapValues { Long.MIN_VALUE }, drag = null)
+        val history = absorbHistory(blank, specs, banked, dynamic, stretches).bars
+        val bars = state.bars.mapValues { (label, carried) -> history[label]?.takeIf { it != Long.MIN_VALUE } ?: carried }
+        val drag = stillOwed(state.drag, bars, x, byLabel)?.takeIf { drags(it.label, state, Policy.HOLD) }
+        return state.copy(bars = bars, drag = drag)
+    }
+
     /** A drag after the bars moved: only the labels still due at [x] stay in it, the longest of them leading. */
     private fun stillOwed(drag: Drag?, bars: Map<String, Long>, x: Long, byLabel: Map<String, Spec>): Drag? {
         val d = drag ?: return null

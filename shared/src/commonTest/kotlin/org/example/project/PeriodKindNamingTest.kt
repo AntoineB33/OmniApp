@@ -33,6 +33,7 @@ class PeriodKindNamingTest {
         assertEquals(
             listOf(
                 "inactivity", "sleep", "no screen", "before bed", "no computer unlocked", "no phone unlocked",
+                "fake no computer unlocked", "fake no phone unlocked",
                 "5min screen break", "15min screen break",
             ),
             kinds,

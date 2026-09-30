@@ -417,6 +417,16 @@ sealed interface SchedulerIntent {
      */
     data class SetPeriodCompanions(val kind: String, val companions: Set<String>) : SchedulerIntent
 
+    /**
+     * The **period edit window**'s combination rules, the whole list as the window leaves it: wherever periods of every
+     * kind of a rule overlap, the kinds it implies are present too. Kinds the account does not hold are dropped from a
+     * rule; a rule with nothing on either side is kept (the window is still filling it in) but implies nothing. An
+     * account setting like [SetPeriodCompanions]: no history unit.
+     */
+    data class SetPeriodCombinations(
+        val combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
+    ) : SchedulerIntent
+
     /** The **period edit window**: the drawing periods of [kind] wear on the calendar. No history unit. */
     data class SetPeriodDrawing(
         val kind: String,

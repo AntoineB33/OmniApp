@@ -307,6 +307,12 @@ data class CalendarRecord(
      */
     val layerDeclared: Boolean = false,
     /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: this region is [layer]'s **fake** half — "fake no
+     * computer unlocked" / "fake no phone unlocked", a device of that kind unlocked and declared away. Drawn with the
+     * fake kind's own drawing ([PeriodKinds.fakeLayerKind]) and named by it in the bubble.
+     */
+    val layerFake: Boolean = false,
+    /**
      * PRD §8/§9 no-screen period: a user-authored "No screen" panel, drawn as a decorative hatched block
      * (a pattern over the real panels). Off-screen tasks schedule inside it; on-screen tasks never do.
      */
@@ -384,6 +390,8 @@ data class PlacedRecord(
     val layer: SchedulerDomain.ActivityLayer? = null,
     /** PRD §8: the user's word against the lock log over this [layer] region; drawn dotted. See [CalendarRecord.layerDeclared]. */
     val layerDeclared: Boolean = false,
+    /** The fake half of [layer]. See [CalendarRecord.layerFake]. */
+    val layerFake: Boolean = false,
     /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
     val noScreen: Boolean = false,
     /** `side-dev/README.md`: which KIND of restrictive period this block is, blank if it is not one. */
@@ -514,6 +522,7 @@ fun recordsForDay(
             inactivity = record.inactivity,
             layer = record.layer,
             layerDeclared = record.layerDeclared,
+            layerFake = record.layerFake,
             noScreen = record.noScreen,
             restrictiveKind = record.restrictiveKind,
             openStart = record.openStart,
@@ -4894,7 +4903,11 @@ private fun DayColumn(
                     BubbleOverlay(
                         band.startHour,
                         band.endHour,
-                        CalendarBubbleSection(bubbleKind(layer), layer.calendarLabel, placedTimeRange(band, tz)),
+                        CalendarBubbleSection(
+                            bubbleKind(layer),
+                            if (band.layerFake) PeriodKinds.periodTitle(PeriodKinds.fakeLayerKind(layer)) else layer.calendarLabel,
+                            placedTimeRange(band, tz),
+                        ),
                     ),
                 )
             }
@@ -5703,7 +5716,9 @@ private fun DayColumn(
                     )
                     .clipToBounds()
                     .periodDrawing(
-                        periodKindConfig.drawing(PeriodKinds.layerKind(band.layer!!)),
+                        periodKindConfig.drawing(
+                            if (band.layerFake) PeriodKinds.fakeLayerKind(band.layer!!) else PeriodKinds.layerKind(band.layer!!),
+                        ),
                         CalColors.muted,
                         dotted = band.layerDeclared,
                     ),

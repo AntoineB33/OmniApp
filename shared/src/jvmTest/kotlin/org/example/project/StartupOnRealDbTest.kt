@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.platform.DeviceSleepGap
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import java.io.File
@@ -104,6 +105,9 @@ class StartupOnRealDbTest {
                     speak = {},
                     postNotification = { _, _ -> },
                     clearNotifications = {},
+                    // The clock is faked twelve hours ahead, where the OS has recorded nothing: the night is the device
+                    // asleep, as it is on a real morning start.
+                    lockedIntervalsQuery = { since, until -> listOf(DeviceSleepGap(since, until)) },
                     sleepGapStore = store as? DeviceSleepGapStore,
                     sleepScanCheckpoint = store as? SleepScanCheckpointStore,
                     declaredAwayStore = store as? DeclaredAwayStore,

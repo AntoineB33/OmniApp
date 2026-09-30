@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -283,6 +284,10 @@ private const val SCHEDULE_ADVANCE_STEP_MILLIS: Long = 1_000
  */
 private const val MAX_SWEEP_STEPS: Int = 2_000
 
+// How long the restart catch-up waits for the OS lock history of the stretch the app did not run in before walking it
+// all in mode 2 ([SchedulerEngine.catchUpAfterNotRunning]). Nothing banks meanwhile; the window is already drawn.
+private const val CATCH_UP_LOCK_QUERY_MILLIS: Long = 8_000
+
 // How far ahead of the line a journey's plan is made at a time ([SchedulerEngine.planJourney]).
 private const val JOURNEY_PLAN_STEP_MILLIS: Long = 24L * 60L * 60L * 1000L
 
@@ -481,6 +486,9 @@ class SchedulerEngine(
     private val sleepGapStore: DeviceSleepGapStore? = null,
     // PRD §15: the OS sleep/wake-log query (defaults to the platform reader); injectable for tests.
     private val sleepGapQuery: (Long) -> List<DeviceSleepGap> = ::platformRecentSleepGaps,
+    // PRD §8: this device's own "not unlocked" history over a window (defaults to the platform reader; `null` = the
+    // log could not be read). The one reader of it here: the no-screen evidence scan and the restart catch-up's modes.
+    private val lockedIntervalsQuery: (Long, Long) -> List<DeviceSleepGap>? = ::deviceLockedIntervals,
     // PRD §15 device-sleep gaps: LOCAL-ONLY watermark of how far the OS sleep/wake log has been scanned, so the
     // launch backfill resumes instead of re-reading the full 3-day horizon each launch; null re-scans it fully.
     private val sleepScanCheckpoint: SleepScanCheckpointStore? = null,
@@ -732,6 +740,7 @@ class SchedulerEngine(
         val panels: List<org.example.project.scheduler.model.TaskPanel>,
         val sleep: Any?,
         val styles: Any?,
+        val combinations: Any?,
         val screenBreaks: List<org.example.project.scheduler.model.ScreenBreak>,
         val evidence: List<TaskTimeRange>,
         val periods: List<org.example.project.scheduler.domain.RestrictivePeriod>,
@@ -741,7 +750,7 @@ class SchedulerEngine(
     ) {
         fun holdsFor(state: SchedulerState, evidence: List<TaskTimeRange>, nowMillis: Long): Boolean =
             panels === state.panels && sleep === state.sleep && styles === state.periodKindStyles &&
-                screenBreaks === state.screenBreaks && this.evidence === evidence && nowMillis < validUntilMillis
+                combinations === state.periodCombinations && screenBreaks === state.screenBreaks && this.evidence === evidence && nowMillis < validUntilMillis
     }
 
     private var breakInputs: BreakInputs? = null
@@ -890,7 +899,18 @@ class SchedulerEngine(
         // …and whether the fill running right now is still the one this engine wants (see [planGeneration]).
         // Generation 0 is the in-reducer re-plans answering a press: never abandoned.
         SchedulerReducer.planAbandoned = { generation -> generation != 0L && generation != planGeneration }
-        catchUpAfterNotRunning()
+        // Nothing that can bank is launched before the line is where the clock is: a stretch the app did not run in is
+        // walked first, and the walk needs the OS's answer about that stretch (a process launch, so off this thread).
+        val gap = notRunningGap()
+        if (gap == null) startRunning()
+        else scope.launch {
+            catchUpAfterNotRunning(gap.first, gap.second)
+            startRunning()
+        }
+    }
+
+    /** Everything [start] launches once the line has caught up with the clock. */
+    private fun startRunning() {
         launchNoScreenEvidenceScan()
         launchAdvanceTick()
         launchRuleChangeReschedule()
@@ -1407,13 +1427,14 @@ class SchedulerEngine(
     }
 
     /**
-     * PRD §15: sample the RAW platform lock signal and clear "I'm away" on a **lock→unlock edge**.
+     * PRD §15: sample the RAW platform lock signal and clear "I'm away" **while locked, and at an unlock**.
      *
-     * Unlocking this device is the user coming back to it — the one unambiguous "I'm back" the app can read
-     * without being told — so the button must not be left declaring an absence that has visibly ended, holding
-     * the active session finalized and the heartbeat closed for as long as it does. Only that edge clears: an
-     * unlock with no lock before it is not a return (nothing said the user left), and a lock while away must
-     * obviously leave the flag alone.
+     * - **A lock ends it.** `docs/scheduler_requirements.md` § *$now line$ 3 modes*: "I'm away" is this device's
+     *   *"fake no computer unlocked"* (or phone) period, which *"can't be with 'no computer unlocked'"* — so the fake
+     *   period ends where the real one starts, and a line with every device really locked is in mode 2, not 3.
+     * - **An unlock ends it** too (a safety net now: the lock before it already did). Unlocking this device is the
+     *   user coming back to it — the one unambiguous "I'm back" the app can read without being told. An unlock with
+     *   no lock before it is not a return (nothing said the user left).
      *
      * **This needs no polling.** The edge IS the platform's own event — Windows `WM_WTSSESSION_CHANGE`
      * (`WTS_SESSION_LOCK`/`_UNLOCK`), Android's `ACTION_SCREEN_OFF`/`ACTION_USER_PRESENT` — which already
@@ -1428,10 +1449,12 @@ class SchedulerEngine(
      */
     private fun noteScreenSignal() {
         val signal = screenActive()
-        val wasLocked = lastScreenSignal.getAndUpdate { signal } == false
-        if (signal && wasLocked && _userAway.compareAndSet(expect = true, update = false)) {
+        val previous = lastScreenSignal.getAndUpdate { signal }
+        // A lock is a LEVEL (the fake period cannot stand beside the real one at all); an unlock is an EDGE.
+        val clears = !signal || previous == false
+        if (clears && _userAway.compareAndSet(expect = true, update = false)) {
             noteAwayEdge(false)
-            Diagnostics.log("\"I'm away\" cleared: this device was unlocked")
+            Diagnostics.log("\"I'm away\" cleared: this device was ${if (signal) "unlocked" else "locked"}")
             // The flag is the account's business, not this device's ([publishAway]): a peer still holding the
             // account in mode 3 has to learn this device came back.
             scope.launch { publishAway(false) }
@@ -1561,8 +1584,22 @@ class SchedulerEngine(
      * and the tick loop it is made from is already a coroutine, so the journey itself stays the single
      * synchronous walk it has always been. Empty ⇒ the whole journey is mode 2, exactly as before.
      */
-    fun reportTimeGap(sleepStart: Long, sleepEnd: Long, awaySpans: List<TaskTimeRange> = emptyList()) {
-        vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
+    fun reportTimeGap(
+        sleepStart: Long,
+        sleepEnd: Long,
+        awaySpans: List<TaskTimeRange> = emptyList(),
+        atScreenSpans: List<TaskTimeRange> = emptyList(),
+    ) {
+        // [atScreenSpans]: the stretches of a journey the device is KNOWN to have been unlocked for — only an app that
+        // was not running has any ([catchUpAfterNotRunning]); a process suspended with its device has none. They are
+        // walked in mode 1 and are no "no screen", and a journey that starts in one did not start with a device going
+        // to sleep.
+        val coveredSpans =
+            if (atScreenSpans.isEmpty()) listOf(TaskTimeRange(sleepStart, sleepEnd))
+            else SchedulerDomain.subtractRegions(listOf(TaskTimeRange(sleepStart, sleepEnd)), atScreenSpans)
+        if (atScreenSpans.none { it.startEpochMillis <= sleepStart && sleepStart < it.endEpochMillis }) {
+            vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
+        }
         // `side-dev/README.md` § *Progressive Calculation*, direct consequence: *"If the device bearing the
         // running process is put to sleep, then when the program wakes up, the now line does a fast move
         // forward (in epsilon time) in mode 2 to the current date."*
@@ -1573,16 +1610,17 @@ class SchedulerEngine(
         // is what the mode MEANS, which is why the bars stop counting from the last recorded break the moment
         // the app wakes instead of ten minutes later when the OS lock scan lands (the drift the funnel exists
         // to remove).
-        noteSweptNoScreen(sleepStart, sleepEnd)
+        coveredSpans.forEach { noteSweptNoScreen(it.startEpochMillis, it.endEpochMillis) }
         // scripts/collect-diagnostics.bat: a wake is the event that explains most post-wake anomalies (a break
         // owed at the line, a hole in the records), and nothing logged it at all before. Once per wake.
         Diagnostics.log(
             "device sleep ${(sleepEnd - sleepStart) / 60_000}min " +
                 "(${Diagnostics.formatInstant(sleepStart)} → ${Diagnostics.formatInstant(sleepEnd)}): " +
                 "now-line swept in mode 2, the stretch covered as no on-screen task" +
-                (if (awaySpans.isEmpty()) "" else " (${awaySpans.size} stretch(es) of it in mode 3: a declared break)"),
+                (if (awaySpans.isEmpty()) "" else " (${awaySpans.size} stretch(es) of it in mode 3: a declared break)") +
+                (if (atScreenSpans.isEmpty()) "" else " (${atScreenSpans.size} stretch(es) of it in mode 1: the device unlocked)"),
         )
-        sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY, awaySpans)
+        sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY, awaySpans, atScreenSpans)
     }
 
     /**
@@ -1617,8 +1655,17 @@ class SchedulerEngine(
         toMillis: Long,
         mode: Int? = null,
         awaySpans: List<TaskTimeRange> = emptyList(),
+        atScreenSpans: List<TaskTimeRange> = emptyList(),
     ) {
         if (toMillis <= fromMillis) return
+        // The mode HERE, not the mode the journey set out in: a stretch the account spent on a declared break is mode 3
+        // (the poses in it were taken rather than dragged), one the device is known to have been unlocked for is mode 1.
+        fun modeAt(cursor: Long, held: Int): Int =
+            when {
+                awaySpans.any { it.startEpochMillis <= cursor && cursor < it.endEpochMillis } -> DynamicPeriods.MODE_ON_BREAK
+                atScreenSpans.any { it.startEpochMillis <= cursor && cursor < it.endEpochMillis } -> DynamicPeriods.MODE_AT_SCREEN
+                else -> held
+            }
         val previous = sweepMode
         var steps = 0
         var widened = false
@@ -1631,17 +1678,19 @@ class SchedulerEngine(
             var cursor = fromMillis
             if (mode != null) {
                 val planMode = planTpModeNow(cursor)
-                sweepMode =
-                    if (awaySpans.any { it.startEpochMillis <= cursor && cursor < it.endEpochMillis }) DynamicPeriods.MODE_ON_BREAK
-                    else mode
+                sweepMode = modeAt(cursor, mode)
                 layHeldModePlan(cursor, planMode, sweepMode ?: mode)
                 plannedUntil = unrollJourney(cursor, toMillis)
             }
             while (cursor < toMillis) {
-                // The mode HERE, not the mode the journey set out in: a stretch the account spent on a declared
-                // break is mode 3, and the poses in it were taken rather than dragged.
-                val onBreak = awaySpans.any { it.startEpochMillis <= cursor && cursor < it.endEpochMillis }
-                sweepMode = if (mode == null) null else if (onBreak) DynamicPeriods.MODE_ON_BREAK else mode
+                val stepMode = mode?.let { modeAt(cursor, it) }
+                // Crossing into the other mode class is a mode flip: the rules held for the new class are laid there.
+                val was = sweepMode
+                sweepMode = stepMode
+                if (was != null && stepMode != null && SchedulerDomain.tpModeFlipChangesPlan(was, stepMode)) {
+                    layHeldModePlan(cursor, was, stepMode)
+                    plannedUntil = unrollJourney(cursor, toMillis)
+                }
                 // The rules at the line, so a journey crossing a task-tree keyframe steps by the minimum in
                 // force there rather than the one it set out with (ADR 0008).
                 val step = SchedulerDomain.sweepStepMillis(vm.state.value, cursor) ?: (toMillis - cursor)
@@ -1651,7 +1700,7 @@ class SchedulerEngine(
                 // A step never crosses a mode edge: the next one starts there instead, so every position is
                 // committed in the mode that actually held at it.
                 val edge =
-                    awaySpans.asSequence()
+                    (awaySpans + atScreenSpans).asSequence()
                         .flatMap { sequenceOf(it.startEpochMillis, it.endEpochMillis) }
                         .filter { it > cursor }
                         .minOrNull() ?: toMillis
@@ -2393,6 +2442,63 @@ class SchedulerEngine(
     private suspend fun runPlan(intent: SchedulerIntent) {
         val dispatcher = planDispatcher
         if (dispatcher == null) vm.dispatch(intent) else withContext(dispatcher) { vm.dispatch(intent) }
+        // A set of rules the scheduler FOUND (a mode flip lays one already held, which is not a run of it).
+        if (intent !is SchedulerIntent.SwitchTpMode) rebuildBreaksFromHistory()
+    }
+
+    /**
+     * The stretches of "no screen" the line itself was covered for and has ended, in this process — the modes it was
+     * in, which history holds beside what the devices observed ([rebuildBreaksFromHistory]). A device's lock the OS
+     * log does not show (a peer, a scan that failed) is still a stretch the line lived through. In memory only: a
+     * restart reads the observed history, not a mode a previous process deduced. Pruned to the evidence window.
+     */
+    private var lineStretches: List<TaskTimeRange> = emptyList()
+
+    private fun noteLineStretch(
+        before: org.example.project.scheduler.domain.BreakMachine.State?,
+        after: org.example.project.scheduler.domain.BreakMachine.State?,
+        now: Long,
+    ) {
+        val start = after?.lastStretchStart ?: return
+        val end = after.lastStretchEnd ?: return
+        if (before?.lastStretchStart == start && before.lastStretchEnd == end) return
+        val floor = now - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
+        lineStretches = lineStretches.filter { it.endEpochMillis > floor } + TaskTimeRange(start, end)
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *Use of the set of rules output*: once a re-run of the scheduler has found its
+     * set of rules, *"it removes everything deduced from the previous set of rules but not saved in history"* and the
+     * line moves fast from where the run took its screenshot to the clock. The plan was found from the line the run
+     * started at and published by compare-and-set; what the line carries of the three breaks is rebuilt here from
+     * history — the banked and conducted breaks, the "no screen" observed and the stretches the line lived through
+     * ([lineStretches]) — ([SchedulerDomain.rebuildScreenBreaksFromHistory]) and moved on to the clock at the next step, which the
+     * rebuild arms at once. On the engine's own thread, the machine's one writer.
+     */
+    private fun rebuildBreaksFromHistory() {
+        val record = _frozenBreaks.value ?: return
+        val before = record.machine ?: return
+        val state = vm.state.value
+        val dynamic = state.panels.filter { it.conductedBreak }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        val rebuilt =
+            SchedulerDomain.rebuildScreenBreaksFromHistory(
+                state.screenBreaks, record, _noScreenEvidence.value + lineStretches, dynamic,
+            )
+                ?: return
+        if (rebuilt === record) return
+        _frozenBreaks.value = rebuilt
+        nextBreakTriggerMillis = Long.MIN_VALUE
+        val after = rebuilt.machine
+        if (after?.bars != before.bars) {
+            // scripts/collect-diagnostics.bat: a bar history does not vouch for is the anomaly this exists to heal.
+            Diagnostics.log(
+                "screen breaks re-read from history (a new set of rules): " +
+                    before.bars.keys.joinToString { label ->
+                        "$label ${Diagnostics.formatInstant(before.bars.getValue(label))}" +
+                            (after?.bars?.get(label)?.takeIf { it != before.bars[label] }?.let { " → ${Diagnostics.formatInstant(it)}" } ?: "")
+                    },
+            )
+        }
     }
 
     /**
@@ -2546,7 +2652,8 @@ class SchedulerEngine(
             )
         val inputs =
             BreakInputs(
-                state.panels, state.sleep, state.periodKindStyles, state.screenBreaks, evidence, env.periods,
+                state.panels, state.sleep, state.periodKindStyles, state.periodCombinations, state.screenBreaks, evidence,
+                env.periods,
                 org.example.project.scheduler.domain.BreakMachine.chainsOf(env.periods),
                 SchedulerDomain.dynamicPeriodSpecs(state.screenBreaks),
                 now + BREAK_INPUTS_REACH_MILLIS / 2,
@@ -2633,6 +2740,7 @@ class SchedulerEngine(
                 Diagnostics.log("screen break: ${breakEventLabel(e)} (mode $mode)")
             }
         }
+        noteLineStretch(previous?.machine, step.record.machine, now)
         if (step.record == previous) return
         _frozenBreaks.value = step.record
         if (step.removed.isNotEmpty()) {
@@ -2691,17 +2799,16 @@ class SchedulerEngine(
 
     /**
      * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a stretch nothing ran in is
-     * WALKED, not jumped — *"it is similar to a case where no CPU were available during this period"*, in mode 2. A
-     * device sleep is detected by the tick loop; an app that was not RUNNING at all is detected here, before anything
-     * is launched that could bank — otherwise the first advance banked the whole of the old plan as work done while
-     * nothing ran (seven hours of it on account 3, 2026-09-27, with the breaks drawn over it).
+     * WALKED, not jumped — *"it is similar to a case where no CPU were available during this period"*. A device sleep
+     * is detected by the tick loop; an app that was not RUNNING at all is detected here, before anything is launched
+     * that could bank — otherwise the first advance banked the whole of the old plan as work done while nothing ran
+     * (seven hours of it on account 3, 2026-09-27, with the breaks drawn over it).
      *
      * Where the line last was is the latest of what this device persisted while it ran: the banked record's line, the
      * end of its own last active session, the end of the last work recorded (any recorded work was banked by a line
-     * that had passed it). The mode-3 stretches of the journey are the ones this device recorded; the server is not
-     * asked, since nothing may be banked while it answers.
+     * that had passed it). Returns `(lastLine, now)`, or null when there is nothing to walk.
      */
-    private fun catchUpAfterNotRunning() {
+    private fun notRunningGap(): Pair<Long, Long>? {
         val now = clock.nowMillis()
         val state = vm.state.value
         val recorded = state.tasks.values.maxOfOrNull { t -> t.record.maxOfOrNull { it.endEpochMillis } ?: Long.MIN_VALUE }
@@ -2711,14 +2818,44 @@ class SchedulerEngine(
                 ?.filter { it.deviceId == ownDevice }?.maxOfOrNull { it.endMillis }
         val lastLine =
             listOfNotNull(_frozenBreaks.value?.lineMillis, session, recorded?.takeIf { it != Long.MIN_VALUE })
-                .filter { it <= now }.maxOrNull() ?: return
-        if (now - lastLine <= DEVICE_SLEEP_THRESHOLD_MILLIS) return
+                .filter { it <= now }.maxOrNull() ?: return null
+        if (now - lastLine <= DEVICE_SLEEP_THRESHOLD_MILLIS) return null
+        return lastLine to now
+    }
+
+    /**
+     * Walk the line over `[lastLine, now]`, the stretch the app did not run in, **in the mode the devices were in**.
+     *
+     * The app not running is not the device asleep: closed while the computer stayed unlocked, the user was at a
+     * screen the whole time, and requirements § *$now line$ 3 modes* make that mode 1 — no "no screen" period, so
+     * no rest either. Walking it in mode 2 (as a wake from device sleep is) counted the whole stretch as "no screen",
+     * which barred the 5-min break for the hour after every restart (account 3, 2026-09-30: closed 15:52–16:29 at an
+     * unlocked computer, next 5-min break 17:29:49 instead of dragged by the line). So the OS is asked what it
+     * recorded for this device over the stretch ([lockedIntervalsQuery], the same history the no-screen evidence
+     * reads): the unlocked parts are walked in mode 1, the rest in mode 2, and mode 3 where this device recorded an
+     * "I'm away" (the server is not asked, since nothing may be banked while it answers). A log that cannot be read
+     * in [CATCH_UP_LOCK_QUERY_MILLIS] says nothing, and the whole stretch is walked in mode 2 as before.
+     */
+    private suspend fun catchUpAfterNotRunning(lastLine: Long, now: Long) {
+        val query = scope.async(Dispatchers.Default) { runCatching { lockedIntervalsQuery(lastLine, now) }.getOrNull() }
+        val locked = withTimeoutOrNull(CATCH_UP_LOCK_QUERY_MILLIS) { query.await() }
+        val atScreen =
+            if (locked == null) emptyList()
+            else SchedulerDomain.subtractRegions(
+                listOf(TaskTimeRange(lastLine, now)),
+                SchedulerDomain.mergeOccupied(locked.map { TaskTimeRange(it.startMillis, it.endMillis) }),
+            )
         Diagnostics.log(
             "the app was not running for ${(now - lastLine) / 60_000}min (${Diagnostics.formatInstant(lastLine)}): " +
-                "walking the line there",
+                "walking the line there" +
+                when {
+                    locked == null -> " (lock history unavailable: all of it in mode 2)"
+                    atScreen.isEmpty() -> " (the device was locked or asleep throughout: mode 2)"
+                    else -> ", in mode 1 where the device was unlocked: ${Diagnostics.formatRanges(atScreen)}"
+                },
         )
         val away = _declaredAwaySpans.value.filter { it.endEpochMillis > lastLine && it.startEpochMillis < now }
-        reportTimeGap(lastLine, now, away)
+        reportTimeGap(lastLine, now, away, atScreen)
     }
 
     /**
@@ -3028,7 +3165,7 @@ class SchedulerEngine(
         // cue/boundary sweep behind it. `App.kt` hands its own layer scan off the same way.
         val locked =
             withContext(Dispatchers.Default) {
-                runCatching { deviceLockedIntervals(since, until) }
+                runCatching { lockedIntervalsQuery(since, until) }
                     .getOrNull()
                     ?.map { TaskTimeRange(it.startMillis, it.endMillis) }
             }
@@ -3045,6 +3182,7 @@ class SchedulerEngine(
             untilMillis = until,
             computerAway = if (isComputer) away else emptyList(),
             phoneAway = if (isComputer) emptyList() else away,
+            config = vm.state.value.periodKindConfig,
         )
     }
 

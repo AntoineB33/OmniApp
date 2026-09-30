@@ -77,6 +77,19 @@ persisted keys.
   devices observed late (`noScreenEvidence`, the swept cover of a wake) raises the bars the machine carries where it
   stands — it never MOVES the machine (moving it to the clock before a journey made the journey's steps all fall
   behind it, and the whole walk was skipped: start-up of account 3, 2026-09-30). Bars only rise.
+- **A re-run of the scheduler drops what was deduced and not saved in history** (requirements § *Use of the set of rules
+  output*; `SchedulerEngine.rebuildBreaksFromHistory`, after every set of rules the scheduler FINDS — `RefreshSchedule`,
+  `ExtendSchedule`, `AdoptScheduleRules`; not `SwitchTpMode`, which lays a plan already held). The machine's bars are
+  deduced, so they are REBUILT from history (`BreakMachine.rebuildFromHistory`) — and may go down: the banked breaks, the
+  conducted breaks, the "no screen" observed (`noScreenEvidence`) and the stretches the line itself lived through in
+  this process (`lineStretches`, in memory only, so a restart does not carry a mode a previous process deduced). A label
+  history says nothing about keeps its carried bar (the rested start — rebuilding it would push it one cadence on at
+  every re-run). A drag history still owes keeps its due, so an owed pose is announced once. The rebuild arms the next
+  step, which moves the line on to the clock. The plan itself was already found from the line the run started at and
+  published by compare-and-set; the calendar keeps the previous rules until then.
+  - Drop the line's own stretches from the history and `ServerQuotaTest` goes over budget (≈ +3 MB of egress a
+    month): in its scenario, as on a peer, a lock the OS log does not show is a stretch only the line saw, and dropping
+    its bar re-publishes the pose windows.
 - **A materialized break is never an input to its own placement.** `restrictivePeriodsOf` drops `screenBreak` panels.
 
 ### The modes
@@ -85,7 +98,10 @@ persisted keys.
   one place it is decided). **Which devices are unlocked** — mode 1 while any device of the account is,
   `anyDeviceUnlockedAt` reading the input once off the **account-wide pause the calendar already draws**
   (`displayInactivityGaps`), so the mode and the Inactivity band can never disagree. And, where none is, **has a device
-  SAID it is away**: mode 3 if at least one has the "I'm away" button on, mode 2 if none has. The engine reads it
+  SAID it is away**: mode 3 if at least one has the "I'm away" button on, mode 2 if none has. "I'm away" is the
+  requirements' *"fake no computer unlocked"* (or phone) period, which *"can't be with 'no computer unlocked'"*: a
+  device's flag cannot stand while that device is really locked (below), so mode 2 is every device really locked and
+  mode 3 at least one device away at an unlocked screen. The engine reads it
   through a cache held on its inputs (`SchedulerEngine.baseTpMode`): for the same inputs the answer only changes where
   the line crosses an edge they hold, so it is not re-derived from the pause history at every move of the line.
 - **The away flag LEAVES the device it was pressed on, or the second question is unanswerable**
@@ -136,6 +152,13 @@ persisted keys.
   (`ExtendSchedule(unrollOnly = true)`, `ScheduleFill.Input.unrollOnly`) and where no rule reaches, nothing is placed.
   The landing re-plans. An engine that starts far past where the line last was walks the line there the same way
   (`catchUpAfterNotRunning`); the account's declared-away spans are asked of the server (`awaySpansFor`).
+- **An app that was not RUNNING is not a device asleep** (`catchUpAfterNotRunning`, 2026-09-30): the requirements' mode-2
+  fast move is for a device put to sleep. For a stretch the app was closed, the OS lock history of it is asked first
+  (`lockedIntervalsQuery`, the reader the no-screen evidence uses, off the start path, bounded by
+  `CATCH_UP_LOCK_QUERY_MILLIS`): the parts the device was UNLOCKED for are walked in **mode 1** and are no "no screen"
+  (`reportTimeGap`'s `atScreenSpans`); only the rest is mode 2 and noted as swept. A history that cannot be read walks it
+  all in mode 2. Walking an unlocked stretch in mode 2 barred the 5-min break for the hour after every restart (account
+  3). Nothing that can bank is launched until the walk has landed (`start` → `startRunning`).
 - **A mode flip applies the plan for the new mode CLASS, at once and on this device** (`launchTpModeReschedule` →
   `switchTpModePlan`), and moves the break machine at the edge (`advanceBreaks`), not at the next tick.
 - **The SCHEDULER RETURNS A SET OF RULES, and that set is the whole of what the server is told about where breaks fall**
@@ -147,8 +170,10 @@ persisted keys.
   cursor holds): in either away mode an ON-SCREEN task is not at the line, whatever a plan built under mode 1 says.
 - **That is NOT the away flag silencing the device** (`AwayVersusLockedCueTest`). A LOCK gates the OUTPUT
   (`deviceUnlocked`); "I'm away" gates nothing — it changes what is SCHEDULED. Neither suppression is marked delivered.
-- **An UNLOCK clears "I'm away", and it is an EDGE, not a poll** (`SchedulerEngine.noteScreenSignal`). **Never add a
-  timer for it.**
+- **A LOCK ends "I'm away" — a level — and an UNLOCK clears it — an edge** (`SchedulerEngine.noteScreenSignal`, requirements
+  2026-09-30: the fake period cannot be with the real one). The declared-away stretch closes at the lock; the OS lock
+  history covers what follows. Both are read off the platform's own lock/unlock notification. **Never add a timer for
+  it.**
 - **A LOCK silences this device; "I'm away" does NOT.** `effectiveScreenActive()` answers *is anybody working here* (the
   away flag masks it); `deviceUnlocked()` answers *may this device say anything* (the raw lock). **Every §11/§15 output
   gates on `deviceUnlocked`**; a task switch and a pose due are suppressed, not spent. **An ALARM is the one deliberate

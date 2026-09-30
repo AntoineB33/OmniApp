@@ -194,23 +194,26 @@ class AccountAwayModeTest {
     }
 
     @Test
-    fun the_unlock_that_clears_the_button_closes_the_stretch_too() = runTest {
-        // The other of the flag's two edges (PRD §15: an unlock is the user visibly coming back). The record
-        // must close there as well, or the layer would go on hatching a machine somebody is sitting at.
+    fun the_lock_that_ends_the_button_closes_the_stretch_there() = runTest {
+        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): the button is the device's "fake no
+        // computer unlocked" period, which "can't be with 'no computer unlocked'" — so the machine locking itself while
+        // the user is away ENDS it, and the record closes at the lock: the OS's own lock history covers the rest, and a
+        // line with every device really locked is in mode 2.
         val h = Harness(NOW, FakeGateway())
         h.engine.setUserAway(true)
         h.now += 2 * 60_000L
 
+        val locked = h.now
         h.unlocked = false // the machine locks itself while the user is away
         h.engine.onPlatformActivityChanged()
-        assertTrue(h.engine.userAway.value, "a lock is not a return")
-        assertEquals(NOW, h.engine.declaredAwaySince.value, "and it does not close the stretch")
+        assertTrue(!h.engine.userAway.value, "the fake period stood beside the real one")
+        assertEquals(null, h.engine.declaredAwaySince.value)
+        assertEquals(listOf(TaskTimeRange(NOW, locked)), h.engine.declaredAwaySpans.value, "the stretch closes at the lock")
 
         h.now += 60_000L
-        val returned = h.now
-        h.unlocked = true // the user comes back and unlocks
+        h.unlocked = true // the user comes back and unlocks: nothing left to clear
         h.engine.onPlatformActivityChanged()
         assertTrue(!h.engine.userAway.value)
-        assertEquals(listOf(TaskTimeRange(NOW, returned)), h.engine.declaredAwaySpans.value)
+        assertEquals(listOf(TaskTimeRange(NOW, locked)), h.engine.declaredAwaySpans.value)
     }
 }
