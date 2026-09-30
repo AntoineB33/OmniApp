@@ -1,0 +1,3 @@
+# Commands that open a window in this project (one regex per line), for ~/.claude/hooks/screen_guard.py.
+:desktopApp:run
+account[123]-[A-Za-z0-9_-]*\.bat
