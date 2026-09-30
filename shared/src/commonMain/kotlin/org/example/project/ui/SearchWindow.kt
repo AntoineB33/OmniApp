@@ -69,7 +69,6 @@ import org.example.project.scheduler.ui.contextMenuModifier
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isMetaPressed
-import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.Color
@@ -408,7 +407,23 @@ fun SearchWindow(
     // picking some for the Add button, not a fact about them — nor a configuration.
     // A cell of an expanded row's sub-tree has a box too, keyed by its task as that task's own row would be.
     var checkedKeys by remember { mutableStateOf(emptySet<String>()) }
-    val setChecked = { key: String, on: Boolean -> checkedKeys = if (on) checkedKeys + key else checkedKeys - key }
+    // Shift+click sets every box from the last one clicked (`CheckRange`), in the order the boxes are drawn: each
+    // row, then — under an expanded task row — its sub-tree's cells as that sub-tree shows them. Read at the click.
+    val checkRange = rememberCheckRange<String>()
+    fun boxOrder(): List<String> =
+        buildList {
+            for (result in results) {
+                add(resultKey(result))
+                if (result !is SearchDomain.TaskResult || result.taskId !in expandedTasks) continue
+                val childListId = state.tasks[result.taskId]?.childListId ?: continue
+                SchedulerDomain.visibleOccurrences(state.projectSearchSubtree(childListId), childListId).forEach { row ->
+                    state.cells[row.cellId]?.taskId
+                        ?.takeIf { state.tasks[it]?.title?.isNotBlank() == true }
+                        ?.let { add(SearchDomain.taskKey(it)) }
+                }
+            }
+        }.distinct()
+    val toggleChecked = { key: String -> checkedKeys = checkRange.toggle(boxOrder(), checkedKeys, key) }
     val resultKeys = remember(results) { results.map(::resultKey) }
     // Every key a box is shown for: the result rows, then the tasks of the expanded rows' sub-trees. A box
     // checked on a row the list no longer shows is not counted, nor added.
@@ -556,6 +571,7 @@ fun SearchWindow(
                             .padding(end = 12.dp)
                             .focusRequester(listFocus)
                             .focusable()
+                            .checkRangeShift(checkRange)
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 // A row's sub-tree reads its own keys (it is the tree's own view).
@@ -588,11 +604,12 @@ fun SearchWindow(
                                         taskActions(current, null).onCopyTaskId()
                                         true
                                     }
-                                    // PRD §4: typing on a selected task row enters Edit Mode — renaming, always.
+                                    // PRD §4: typing on a selected task row enters Edit Mode — renaming, always. What
+                                    // counts as typing is the tree's own rule ([printableChar]): a bare Shift (held
+                                    // for a shift-click) is no text, though desktop reports it as U+FFFF.
                                     current is SearchDomain.TaskResult && !ctrl && !event.isAltPressed -> {
-                                        val code = event.utf16CodePoint
-                                        if (code < 32 || code == 127) return@onPreviewKeyEvent false
-                                        beginEdit(current, code.toChar().toString())
+                                        val typed = event.printableChar() ?: return@onPreviewKeyEvent false
+                                        beginEdit(current, typed)
                                         true
                                     }
                                     else -> false
@@ -607,7 +624,7 @@ fun SearchWindow(
                                         result = result,
                                         query = query,
                                         checkedKeys = checkedKeys,
-                                        onSetChecked = setChecked,
+                                        onToggleChecked = toggleChecked,
                                         selected = rowSelected(index),
                                         editing = editingTaskId == result.taskId,
                                         editDraft = editDraft,
@@ -646,7 +663,7 @@ fun SearchWindow(
                                     ItemResultRow(
                                         item = result,
                                         checked = resultKey(result) in checkedKeys,
-                                        onCheckedChange = { on -> setChecked(resultKey(result), on) },
+                                        onCheckedChange = { toggleChecked(resultKey(result)) },
                                         selected = rowSelected(index),
                                         onSelect = { selectRow(index) },
                                         onOpen = { openers.open(state, result) },
@@ -832,6 +849,7 @@ internal fun KindsDropDown(
     modifier: Modifier = Modifier.width(170.dp),
 ) {
     var open by remember { mutableStateOf(false) }
+    val range = rememberCheckRange<SearchDomain.Kind>()
     Box(modifier) {
         Text(
             text = kindsLabel(kinds) + "  ▾",
@@ -850,6 +868,7 @@ internal fun KindsDropDown(
             expanded = open,
             onDismissRequest = { open = false },
             properties = PopupProperties(focusable = false),
+            modifier = Modifier.checkRangeShift(range),
         ) {
             SelectAllMenuItem(
                 allChecked = kinds.containsAll(SearchDomain.Kind.entries),
@@ -860,7 +879,7 @@ internal fun KindsDropDown(
                 DropdownMenuItem(
                     text = { Text(option.label) },
                     leadingIcon = { Checkbox(checked = option in kinds, onCheckedChange = null) },
-                    onClick = { onKindsChange(if (option in kinds) kinds - option else kinds + option) },
+                    onClick = { onKindsChange(range.toggle(SearchDomain.Kind.entries, kinds, option)) },
                 )
             }
         }
@@ -938,7 +957,7 @@ private fun SearchTaskRow(
     query: String,
     /** The window's checked keys — this row's and its sub-tree cells' boxes read them ([SearchDomain.taskKey]). */
     checkedKeys: Set<String>,
-    onSetChecked: (key: String, on: Boolean) -> Unit,
+    onToggleChecked: (key: String) -> Unit,
     selected: Boolean,
     editing: Boolean,
     editDraft: String,
@@ -1056,7 +1075,7 @@ private fun SearchTaskRow(
             categoryCell = live?.let { { TaskCategoryCell(state, taskId, onIntent, onOpenCategory) } },
             rowLeading = {
                 val key = SearchDomain.taskKey(taskId)
-                ResultCheckBox(key in checkedKeys) { on -> onSetChecked(key, on) }
+                ResultCheckBox(key in checkedKeys) { onToggleChecked(key) }
                 KindSection(result.kind)
             },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
@@ -1075,7 +1094,7 @@ private fun SearchTaskRow(
                 readOnly = readOnlySubtree,
                 priorities = priorities,
                 checkedKeys = checkedKeys,
-                onSetChecked = onSetChecked,
+                onToggleChecked = onToggleChecked,
                 focused = subtreeFocused,
                 onFocus = onSubtreeFocus,
                 onIntent = onIntent,
@@ -1104,7 +1123,7 @@ private fun SearchSubtree(
     readOnly: Boolean,
     priorities: Map<TaskId, Double>,
     checkedKeys: Set<String>,
-    onSetChecked: (key: String, on: Boolean) -> Unit,
+    onToggleChecked: (key: String) -> Unit,
     focused: Boolean,
     onFocus: (Boolean) -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
@@ -1139,7 +1158,7 @@ private fun SearchSubtree(
         rowLeading = { cellId ->
             state.cells[cellId]?.taskId?.takeIf { state.tasks[it]?.title?.isNotBlank() == true }?.let { taskId ->
                 val key = SearchDomain.taskKey(taskId)
-                ResultCheckBox(key in checkedKeys) { on -> onSetChecked(key, on) }
+                ResultCheckBox(key in checkedKeys) { onToggleChecked(key) }
             }
         },
         modifier = Modifier

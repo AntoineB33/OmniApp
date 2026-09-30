@@ -52,6 +52,7 @@ import org.example.project.scheduler.domain.CalendarLockDomain
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.VerticalDivider
 import org.example.project.ui.outsidePressPart
+import org.example.project.ui.checkRangeShift
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -3937,6 +3938,7 @@ internal fun PeriodKindEditWindow(
     // query: a selection is a way of looking at the list, never a fact about the account. Rows that leave
     // under it (a task deleted while the window is open) are dropped rather than kept as phantom targets.
     var selected by remember(kind) { mutableStateOf(emptySet<TaskId>()) }
+    val checkRange = remember(kind) { org.example.project.ui.CheckRangeState<TaskId>() }
     val present = rows.map { it.taskId }.toSet()
     val checked = selected.intersect(present)
     val common = SchedulerDomain.commonResilience(rows, checked)
@@ -3968,16 +3970,19 @@ internal fun PeriodKindEditWindow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                for (other in allKinds) {
-                    if (other == kind) continue
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = other in style.companions,
-                            onCheckedChange = { on ->
-                                onSetCompanions(if (on) style.companions + other else style.companions - other)
-                            },
-                        )
-                        Text(other, style = MaterialTheme.typography.bodyMedium)
+                val companionOrder = allKinds.filter { it != kind }
+                val companionRange = org.example.project.ui.rememberCheckRange<String>()
+                Column(Modifier.checkRangeShift(companionRange)) {
+                    for (other in companionOrder) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = other in style.companions,
+                                onCheckedChange = {
+                                    onSetCompanions(companionRange.toggle(companionOrder, style.companions, other))
+                                },
+                            )
+                            Text(other, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
                 val throughOthers = impliedKinds - style.companions
@@ -4063,17 +4068,16 @@ internal fun PeriodKindEditWindow(
                     )
                 }
 
+                val rowOrder = rows.map { it.taskId }
                 for (row in rows) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().checkRangeShift(checkRange),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Checkbox(
                             checked = row.taskId in checked,
-                            onCheckedChange = { on ->
-                                selected = if (on) checked + row.taskId else checked - row.taskId
-                            },
+                            onCheckedChange = { selected = checkRange.toggle(rowOrder, checked, row.taskId) },
                         )
                         TaskTitleLabel(
                             label = SchedulerDomain.taskTitleLabel(row.title),

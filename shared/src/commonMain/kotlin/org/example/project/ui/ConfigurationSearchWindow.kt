@@ -303,6 +303,7 @@ private fun SortMethodPicker(
     var open by remember { mutableStateOf(false) }
     val methods = SearchDomain.sortKeysOf(kind).map { SearchDomain.SortMethod(kind, it) }
     fun inList(method: SearchDomain.SortMethod) = sorts.any { it.sameMethod(method) }
+    val range = rememberCheckRange<SearchDomain.SortMethod>()
     Box {
         Text(
             text = methods.filter(::inList).joinToString(", ") { it.key.label }.ifEmpty { "none" } + "  ▾",
@@ -316,7 +317,12 @@ private fun SortMethodPicker(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         )
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            properties = PopupProperties(focusable = false),
+            modifier = Modifier.checkRangeShift(range),
+        ) {
             // Checking them all adds the unchecked ones at the bottom, in the menu's order — what checking each
             // in turn would do; unchecking them all takes this section's methods out and leaves the others'.
             SelectAllMenuItem(
@@ -329,7 +335,11 @@ private fun SortMethodPicker(
                 DropdownMenuItem(
                     text = { Text(method.key.label) },
                     leadingIcon = { Checkbox(checked = checked, onCheckedChange = null) },
-                    onClick = { onChange(SearchDomain.withSortMethod(sorts, method, on = !checked)) },
+                    // A shift-click range lands at the bottom in the menu's order, as checking each in turn would.
+                    onClick = {
+                        val keys = range.press(methods, method)
+                        onChange(keys.fold(sorts) { list, m -> if (inList(m) != checked) list else SearchDomain.withSortMethod(list, m, on = !checked) })
+                    },
                 )
             }
         }
