@@ -841,6 +841,12 @@ sealed interface SchedulerIntent {
          * which the extension keeps: what was made definitive stays so.
          */
         val seeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
+        /**
+         * Lay only the repetition of the rules already returned — never search (a line walked across a stretch nothing
+         * ran in, `docs/scheduler_requirements.md` § *Progressive Calculation*). Where the rules do not repeat, the
+         * extension lays nothing.
+         */
+        val unrollOnly: Boolean = false,
     ) : SchedulerIntent
 
     /**
@@ -896,9 +902,9 @@ sealed interface SchedulerIntent {
      * task the now-line sits on at [nowMillis] is refused there, so the plan starts a *different* one from
      * [nowMillis] on.
      *
-     * Records the refusal ([org.example.project.scheduler.model.ForcedTaskSwitch]), lays the **switch entry**
-     * — an epsilon-long block on the task the plan hands the line to, placed by the user and drawn with the
-     * blue outline and the check box — and re-plans on the spot,
+     * Lays the **alternative** the rules name at the line on `[now line, now line + d]`
+     * ([org.example.project.scheduler.domain.SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS]) — a block placed by the user,
+     * drawn with the blue outline and the check box — and re-plans on the spot,
      * rather than leaving it to [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]:
      * the press IS the calculation event (the same reason `RemoveRecordPeriod` refills inside its own
      * reducer), and a marker in the signature would fire a second, *un*-refused re-plan the moment the marker
@@ -908,7 +914,16 @@ sealed interface SchedulerIntent {
      */
     data class ForceTaskSwitch(
         val nowMillis: Long,
+        /**
+         * § *Alternative Schedules*: who the rules name to run instead at [nowMillis], as the runtime's cursor holds it
+         * (`RuleProgram.Cursor.alternative`) — `docs/scheduler_requirements.md` § *Rule Structure* has the press read
+         * the rules rather than search the plan. Null: the reducer reads the panels itself (a shell with no engine).
+         */
+        val rules: RulesAlternative? = null,
     ) : SchedulerIntent
+
+    /** The alternative the rules name at the line — [taskId] null where they name nobody. */
+    data class RulesAlternative(val taskId: org.example.project.scheduler.model.TaskId?)
 
     /**
      * PRD §13 **"start this task now"** — the task cell's right-click menu: [taskId] must be the task the plan

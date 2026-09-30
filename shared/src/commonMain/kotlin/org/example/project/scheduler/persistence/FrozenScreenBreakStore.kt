@@ -21,8 +21,9 @@ interface FrozenScreenBreakStore {
 
     /**
      * Adds [added], deletes [removed] (the requirements' one exception to the frozen past: a pose the line is inside
-     * when it switches to mode 1), drops every break that ended at or before [pruneBeforeMillis], and stores the front
-     * and where the line was ([FrozenScreenBreaks.lineMillis]).
+     * when it switches to mode 1, and a break the chain rule re-banked as a longer one), drops every break that ended
+     * at or before [pruneBeforeMillis], and stores the front, where the line was ([FrozenScreenBreaks.lineMillis]) and
+     * the break machine at the front ([FrozenScreenBreaks.machine]).
      */
     fun saveFrozenScreenBreaks(
         added: List<BankedBreak>,
@@ -30,5 +31,6 @@ interface FrozenScreenBreakStore {
         lineMillis: Long,
         pruneBeforeMillis: Long,
         removed: List<BankedBreak> = emptyList(),
+        machine: org.example.project.scheduler.domain.BreakMachine.State? = null,
     )
 }

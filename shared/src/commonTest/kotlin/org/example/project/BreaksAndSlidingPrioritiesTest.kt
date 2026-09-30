@@ -155,10 +155,7 @@ class BreaksAndSlidingPrioritiesTest {
         // mode 1 a pose the line reaches is dragged and never happens, and while one is owed it bars every look-away
         // behind it, so the plan runs straight through those (the calendar clips them out of what it draws). The rest
         // that ended just before the line leaves no pose owed, so the look-aways ahead are real stretches.
-        val bands =
-            SchedulerDomain.breaksTheLineWillMeet(
-                s.screenBreaks, panels.filter { it.screenBreak }, now, DynamicPeriods.MODE_AT_SCREEN,
-            )
+        val bands = metBy(s, now, now + DAY)
         assertTrue(bands.isNotEmpty(), "the break grid must be materialized")
         val work = panels.filter { it.auto }
         fun overlaps(p: TaskPanel, b: TaskPanel) =

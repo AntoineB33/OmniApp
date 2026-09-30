@@ -137,12 +137,11 @@ class PerfBenchmarkTest {
                 val gaps = SchedulerDomain.derivePauses(rows, floor, now)
                 val active = SchedulerDomain.subtractRegions(listOf(TaskTimeRange(floor, now)), gaps)
                 SchedulerDomain.derivedInactivityBands(active, floor, now)
-                SchedulerDomain.screenBreakPanelsInWindow(
+                SchedulerDomain.screenBreakPanels(
                     screenBreaks = state.screenBreaks,
-                    fromMillis = visibleStart,
-                    toMillis = visibleEnd,
+                    nowMillis = now,
+                    horizonMillis = visibleEnd,
                     basePeriods = emptyList(),
-                    tasks = SchedulerDomain.planTasksOf(state, now),
                 )
             }
         }
@@ -199,7 +198,7 @@ class PerfBenchmarkTest {
                 medianNanos(times = 5) {
                     SchedulerDomain.otherModePlan(
                         state, now, liveRest = null, noScreenEvidence = emptyList(), frozenBreaks = null,
-                        conductingBreak = null, tpMode = mode, horizonMillis = now + 7 * day,
+                        tpMode = mode, horizonMillis = now + 7 * day,
                         lineModeUntilMillis = now + 7 * day, timeZone = tz,
                     )
                 }
@@ -209,16 +208,6 @@ class PerfBenchmarkTest {
         // recomposition of App. These are the numbers that multiply by the recomposition rate.
         rows += "derivePauses 120d" to medianNanos { SchedulerDomain.derivePauses(sessionRows, floor, now) }
         rows += "planTasksOf" to medianNanos { SchedulerDomain.planTasksOf(state, now) }
-        rows += "screenBreakPanelsInWindow 7d" to
-            medianNanos {
-                SchedulerDomain.screenBreakPanelsInWindow(
-                    screenBreaks = state.screenBreaks,
-                    fromMillis = visibleStart,
-                    toMillis = visibleEnd,
-                    basePeriods = emptyList(),
-                    tasks = tasks,
-                )
-            }
         rows += "screenBreakPanels now->7d" to
             medianNanos {
                 SchedulerDomain.screenBreakPanels(
@@ -226,7 +215,6 @@ class PerfBenchmarkTest {
                     nowMillis = now,
                     horizonMillis = visibleEnd,
                     basePeriods = emptyList(),
-                    tasks = tasks,
                 )
             }
         rows += "sleepPanels 7d" to

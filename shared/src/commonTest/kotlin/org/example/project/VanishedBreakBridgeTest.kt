@@ -18,8 +18,9 @@ import org.example.project.scheduler.state.SchedulerState
  * break re-anchors the recurrence bars — pressed just before a look-away falls due, it takes that look-away's
  * place), and ONE task touches both of its edges, the look-away is replaced by that task.
  *
- * The scenario is a real plan: one on-screen task, the default breaks, and a rest forty minutes back that bars both
- * poses, so the plan is `Write` up to +20 s, the look-away over [+20 s, +40 s), and `Write` again from +40 s.
+ * The scenario is a real plan: one on-screen task, the default breaks, and a twenty-minute rest that bars both poses
+ * and ends so that the next look-away falls due at +20 s — the plan is `Write` up to +20 s, the look-away over
+ * [+20 s, +40 s), and `Write` again from +40 s.
  */
 class VanishedBreakBridgeTest {
 
@@ -40,9 +41,10 @@ class VanishedBreakBridgeTest {
     private fun planned(): SchedulerState {
         var s = SchedulerState.empty().copy(screenBreaks = breaks)
         s = r(s, SchedulerIntent.SetCellTitle(freeRootCell(s), "Write"))
+        // Twenty minutes of rest ending so that the look-away it bars falls due twenty seconds past NOW.
         val rest =
             TaskPanel(
-                "rest", null, "Inactivity", NOW - 60 * MIN, NOW - 40 * MIN,
+                "rest", null, "Inactivity", NOW - 40 * MIN, NOW - 20 * MIN + 20 * SEC,
                 inactivity = true, periodKind = PeriodKinds.INACTIVITY,
             )
         s = r(s.copy(panels = s.panels + rest), SchedulerIntent.RefreshSchedule(NOW - 5 * MIN))
@@ -71,7 +73,7 @@ class VanishedBreakBridgeTest {
         val after = press(s, NOW + 30 * SEC)
         assertEquals(
             listOf(hole),
-            SchedulerDomain.vanishedPastBreaks(s, after, NOW - 4 * 60 * MIN, NOW + 30 * SEC - 1, NOW + 30 * SEC),
+            SchedulerDomain.vanishedPastBreaks(s, after, null, NOW - 4 * 60 * MIN, NOW + 30 * SEC),
         )
     }
 

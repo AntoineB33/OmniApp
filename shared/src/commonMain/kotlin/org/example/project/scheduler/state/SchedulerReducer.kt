@@ -170,17 +170,11 @@ object SchedulerReducer {
      * `docs/scheduler_requirements.md` § *frozen past*: **the screen breaks the line has already banked**
      * ([org.example.project.scheduler.domain.FrozenScreenBreaks]) — every fill places the three continuing from
      * them, so nothing a fill does can move a break behind the line. The engine owns the record (it banks it as the
-     * line advances, `SchedulerEngine`), exactly as it owns [noScreenEvidence]. The default is none: a shell with no
-     * engine re-derives the past off the environment, which is the behaviour before this seam existed.
+     * line advances, `SchedulerEngine`), exactly as it owns [noScreenEvidence] — and carries the break machine at its
+     * front ([org.example.project.scheduler.domain.BreakMachine]). The default is none: a shell with no engine starts
+     * the machine rested at the line.
      */
     var frozenScreenBreaks: () -> org.example.project.scheduler.domain.FrozenScreenBreaks? = { null }
-
-    /**
-     * PRD §15: the "Look away now" the engine is conducting right now, as the dynamic period it is
-     * ([SchedulerDomain.conductingBreakPeriod]) — part of the one break environment every placement reads. None by
-     * default.
-     */
-    var conductingBreak: () -> org.example.project.scheduler.domain.RestrictivePeriod? = { null }
 
     /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
@@ -543,14 +537,14 @@ object SchedulerReducer {
                 abandonable(state) {
                     reduceExtendSchedule(
                         state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.generation,
-                        intent.seeds,
+                        intent.seeds, intent.unrollOnly,
                     )
                 }
             is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
             is SchedulerIntent.SwitchTpMode -> reduceSwitchTpMode(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
-            is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis)
+            is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis, intent.rules)
             is SchedulerIntent.ForceTaskStart -> reduceForceTaskStart(state, intent.taskId)
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
@@ -2722,7 +2716,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
                 rulesSink = { rules = it },
@@ -2780,7 +2773,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
                 // A plan this device already holds for these rules is definitive as far as it is materialized: the
@@ -2822,7 +2814,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
                 lineModeUntilMillis = lineModeUntilMillis,
@@ -2875,7 +2866,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = plan.untilMillis,
                 rulesSink = { rules = it },
@@ -2951,7 +2941,11 @@ object SchedulerReducer {
      * switch away from, so the press is a no-op. The marker is stored even while §7 auto-scheduling is off:
      * the plan is not being computed at all then, and the refusal is honoured by the fill that resumes it.
      */
-    private fun reduceForceTaskSwitch(state: SchedulerState, nowMillis: Long): SchedulerState {
+    private fun reduceForceTaskSwitch(
+        state: SchedulerState,
+        nowMillis: Long,
+        rules: SchedulerIntent.RulesAlternative? = null,
+    ): SchedulerState {
         val taskId = SchedulerDomain.taskAtNowLine(state, nowMillis) ?: return state
         val refused = state.copy(forcedSwitch = ForcedTaskSwitch(taskId, nowMillis))
         // Who the plan hands the now-line to now — the task the switch entry below states the user has
@@ -2959,7 +2953,7 @@ object SchedulerReducer {
         // README use IS this press), which costs no fill at all. Where they do not — the panels of a payload
         // just loaded carry no derived rules yet — the same answer is arrived at the slow way, by re-planning
         // with the refusal standing and reading what the fill put at the line.
-        val named = SchedulerDomain.alternativeTaskAt(state.panels, nowMillis)
+        val named = if (rules != null) rules.taskId else SchedulerDomain.alternativeTaskAt(state.panels, nowMillis)
         val replanned = if (named == null) reduceInlineReplan(refused, nowMillis) else null
         val replacement =
             (named ?: replanned?.let { SchedulerDomain.taskAtNowLine(it, nowMillis) })
@@ -3091,6 +3085,7 @@ object SchedulerReducer {
         searchMillis: Long = 0,
         generation: Long = 0L,
         seeds: List<List<RulePlacement>> = emptyList(),
+        unrollOnly: Boolean = false,
     ): SchedulerState {
         if (abandoned(generation)) throw PlanAbandoned()
         val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
@@ -3110,7 +3105,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = mode,
                 horizonMillis = horizon,
                 keepExistingUntilMillis = materializedUntil,
@@ -3118,6 +3112,7 @@ object SchedulerReducer {
                 cycleSink = { cycle = it },
                 idleSink = { idle = it },
                 extraSeeds = seeds,
+                unrollOnly = unrollOnly,
                 searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 searchSink = { report, cost ->
                     search = report
@@ -3162,7 +3157,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
@@ -3200,7 +3194,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
@@ -3270,7 +3263,6 @@ object SchedulerReducer {
                 liveRest = liveRestGap(),
                 noScreenEvidence = noScreenEvidence(),
                 frozenBreaks = frozenScreenBreaks(),
-                conductingBreak = conductingBreak(),
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
@@ -4578,8 +4570,8 @@ private fun reduceRecordConductedBreak(
  *    ahead of the line pulls the task's next auto panel back onto the line.
  *
  * A hole with two different tasks, or nothing, on its sides is left as it is — and nothing a user placed is
- * moved. Which breaks vanished is asked the calendar's way, before and after the conducted panel
- * ([SchedulerDomain.vanishedPastBreaks]), over the bars' longest reach behind the line.
+ * moved. Which breaks vanished is the plan's own holes the line never banked a break in and the break machine no
+ * longer places ([SchedulerDomain.vanishedPastBreaks]), over the bars' longest reach behind the line.
  */
 private fun withVanishedBreaksBridged(
     before: SchedulerState,
@@ -4592,15 +4584,11 @@ private fun withVanishedBreaksBridged(
         SchedulerDomain.vanishedPastBreaks(
             before,
             after,
-            fromMillis = now - SchedulerDomain.DYNAMIC_PLACEMENT_LOOKBACK_MILLIS,
-            // What the calendar draws behind the line: a break that began before it, straddling it included.
-            toMillis = now - 1,
-            tpMillis = now,
-            liveRest = SchedulerReducer.liveRestGap(),
-            noScreenEvidence = evidence,
+            SchedulerReducer.frozenScreenBreaks(),
+            // From the press: a break that began before it happened; one due while it ran joined it (the chain rule).
+            fromMillis = intent.startEpochMillis,
+            nowMillis = now,
             mode = SchedulerReducer.tpMode(),
-            frozen = SchedulerReducer.frozenScreenBreaks(),
-            conducting = SchedulerReducer.conductingBreak(),
         )
     if (holes.isEmpty()) return after
     val noScreenRanges = noScreenRangesFor(after, evidence)

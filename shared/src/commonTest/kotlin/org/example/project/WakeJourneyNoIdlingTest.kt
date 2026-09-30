@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,18 +14,22 @@ import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
+import org.example.project.scheduler.state.SchedulerRunEntry
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: **the line a
- * wake walks in mode 2 is walked over the plan for mode 2, and that plan reaches as far as the line goes.**
+ * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: *"If the device bearing the running
+ * process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward in mode 2 to the
+ * current date. If the current date is beyond the definitive schedule, then it is similar to a case where no CPU were
+ * available during this period and the current set of rules output … is used to define the schedule as the $now line$
+ * does its fast move, while no better set of rules output was found."*
  *
- * A device sleep dropped the plan's tail and the journey never re-planned, so the whole swept stretch came out with
- * no task in it — even where a task resilient to "no on-screen task" could have run, and past the plan's front in
- * any case. The journey now makes the plan for its own mode at its first instant, extends it as the line reaches its
- * front, and the landing re-plans for the mode the line arrives in.
+ * So the journey walks the rules ALREADY HELD for its mode — the plan found for the covered class with the last plan
+ * ([SchedulerState.otherModePlan]), laid rather than searched — and searches nothing on the way; the landing re-plans.
+ * (It used to make a mode-2 plan at the journey's first instant and extend it as it went: computing that the
+ * requirements say did not happen.)
  */
 class WakeJourneyNoIdlingTest {
     private val MIN = 60_000L
@@ -34,6 +39,8 @@ class WakeJourneyNoIdlingTest {
     @AfterTest
     fun resetSeams() {
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_AT_SCREEN }
+        SchedulerReducer.recordSchedulerRun = {}
+        SchedulerReducer.scheduleHorizonEndMillis = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
     }
 
     /** An on-screen task and one resilient to "no on-screen task", the three production breaks, and no night. */
@@ -52,12 +59,10 @@ class WakeJourneyNoIdlingTest {
     }
 
     @Test
-    fun a_long_wake_is_worked_by_the_resilient_task_the_whole_way() {
+    fun a_wake_walks_the_rules_held_for_its_mode_and_searches_nothing() {
         val sleepStart = NOW - 30 * HOUR
         var now = sleepStart
-        // The plan in force before the sleep: made at the screen, a few hours long.
-        val before = SchedulerDomain.fillSchedule(account(), sleepStart, horizonMillis = sleepStart + 2 * HOUR)
-        val vm = TaskSchedulerViewModel(initial = account().copy(panels = before), store = null, saveDispatcher = Dispatchers.Default)
+        val vm = TaskSchedulerViewModel(initial = account(), store = null, saveDispatcher = Dispatchers.Default)
         val engine =
             SchedulerEngine(
                 vm = vm,
@@ -67,8 +72,22 @@ class WakeJourneyNoIdlingTest {
                 speak = {},
             )
         SchedulerReducer.tpMode = { engine.tpModeNow() }
+        SchedulerReducer.scheduleHorizonEndMillis = { it + 3 * HOUR }
+        // The plan in force before the sleep, made at the screen — and with it, the plan for the covered class.
+        vm.dispatch(SchedulerIntent.RefreshSchedule(sleepStart))
+        assertNotNull(vm.state.value.otherModePlan, "every plan reduction finds the plan for the other mode class")
+
+        val runs = mutableListOf<SchedulerRunEntry>()
+        SchedulerReducer.recordSchedulerRun = { runs += it }
         now = NOW
         engine.reportTimeGap(sleepStart, NOW)
+
+        val journeyRuns = runs.filter { it.nowMillis < NOW }
+        assertTrue(
+            journeyRuns.none { it.kind == SchedulerRunEntry.Kind.Replan },
+            "the journey searches nothing: ${journeyRuns.map { it.kind to (it.nowMillis - sleepStart) / MIN }}",
+        )
+        assertTrue(journeyRuns.any { it.kind == SchedulerRunEntry.Kind.ModeSwitch }, "it LAYS the rules held for mode 2")
 
         val st = vm.state.value
         val walk = st.tasks.values.single { it.title == "Walk" }
@@ -78,27 +97,11 @@ class WakeJourneyNoIdlingTest {
             SchedulerDomain.intersectRegions(screen.record, listOf(swept)).isEmpty(),
             "no on-screen work may be recorded over a stretch swept in mode 2",
         )
-        // The resilient task works the journey: the failure this pins left the WHOLE swept stretch empty, the plan
-        // never having been made for mode 2. Time the plan leaves to nobody is its own priced decision now
-        // (`docs/scheduler_requirements.md` requires no task anywhere) — a task well ahead of its share is let off
-        // for a while — so what is asked is that it works nearly all of it, with no hole anywhere near that long.
-        val breaks = engine.frozenBreaks.value?.breaks.orEmpty().map { TaskTimeRange(it.startMillis, it.endMillis) }
-        val idle = SchedulerDomain.subtractRegions(listOf(swept), SchedulerDomain.mergeOccupied(walk.record + breaks))
-        val sweptLength = swept.endEpochMillis - swept.startEpochMillis
-        val breakTime = SchedulerDomain.mergeOccupied(breaks).sumOf {
-            (minOf(it.endEpochMillis, swept.endEpochMillis) - maxOf(it.startEpochMillis, swept.startEpochMillis)).coerceAtLeast(0L)
-        }
-        assertTrue(
-            idle.sumOf { it.endEpochMillis - it.startEpochMillis } < (sweptLength - breakTime) / 2,
-            "the journey left most of the swept stretch empty although the resilient task could run: " +
-                idle.map { (it.startEpochMillis - sleepStart) / MIN to (it.endEpochMillis - it.startEpochMillis) / MIN },
-        )
-        assertTrue(
-            idle.none { it.endEpochMillis - it.startEpochMillis > 2 * HOUR },
-            "the journey left stretches with no task although the resilient one could run: " +
-                idle.filter { it.endEpochMillis - it.startEpochMillis > 2 * HOUR }.map { (it.startEpochMillis - sleepStart) / MIN to (it.endEpochMillis - it.startEpochMillis) / MIN },
-        )
-        // …and the landing is back on the live reading, planned for it.
+        // As far as the held rules reach, the resilient task works the journey.
+        val held = TaskTimeRange(sleepStart + 5 * MIN, sleepStart + 3 * HOUR - 10 * MIN)
+        val worked = SchedulerDomain.intersectRegions(walk.record, listOf(held)).sumOf { it.endEpochMillis - it.startEpochMillis }
+        assertTrue(worked > (held.endEpochMillis - held.startEpochMillis) / 2, "the held rules for mode 2 are walked: ${worked / MIN} min")
+        // …and the landing is back on the live reading.
         assertTrue(engine.tpModeNow(NOW) == DynamicPeriods.MODE_AT_SCREEN)
     }
 }

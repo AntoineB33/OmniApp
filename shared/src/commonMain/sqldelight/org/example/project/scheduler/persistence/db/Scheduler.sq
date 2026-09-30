@@ -195,9 +195,10 @@ CREATE TABLE network_mode (
 
 -- docs/scheduler_requirements.md § frozen past: the three dynamic periods (screen breaks) the now-line has
 -- BANKED, one row per occurrence, and the front they are the whole answer up to (screen_break_front, one row,
--- id always 0). Once banked a break never moves: the walk continues from this record instead of re-deriving the
--- past off an environment, a configuration or a mode that may all have changed since. LOCAL-ONLY, never synced
--- and never a History Unit; pruned past a retention bound. Added in migration 15.sqm.
+-- id always 0). Once banked a break never moves: the break machine continues from this record (and from the
+-- machine state kept with the front, 16.sqm) instead of re-deriving the past off an environment, a configuration
+-- or a mode that may all have changed since. LOCAL-ONLY, never synced and never a History Unit; pruned past a
+-- retention bound. Added in migration 15.sqm.
 CREATE TABLE screen_break_history (
     start_ms INTEGER NOT NULL,
     label    TEXT NOT NULL,
@@ -208,7 +209,9 @@ CREATE TABLE screen_break_history (
 CREATE TABLE screen_break_front (
     id       INTEGER NOT NULL PRIMARY KEY,
     until_ms INTEGER NOT NULL,
-    line_ms  INTEGER NOT NULL
+    line_ms  INTEGER NOT NULL,
+    -- The break machine at the front (BreakMachine.State, JSON). NULL on a row written before 16.sqm.
+    machine  TEXT
 );
 
 selectAppState:
@@ -342,7 +345,7 @@ deleteScreenBreak:
 DELETE FROM screen_break_history WHERE start_ms = :start_ms AND label = :label;
 
 selectScreenBreakFront:
-SELECT until_ms, line_ms FROM screen_break_front WHERE id = 0;
+SELECT until_ms, line_ms, machine FROM screen_break_front WHERE id = 0;
 
 upsertScreenBreakFront:
-INSERT OR REPLACE INTO screen_break_front(id, until_ms, line_ms) VALUES (0, ?, ?);
+INSERT OR REPLACE INTO screen_break_front(id, until_ms, line_ms, machine) VALUES (0, ?, ?, ?);

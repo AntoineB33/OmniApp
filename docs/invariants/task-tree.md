@@ -333,6 +333,39 @@ the SAME two scroll states (`treeScroll`, `treeHorizontalScroll`), in the direct
 Never make the column `fillMaxSize` to get this: that stretches every row. One rule, so all three drawings of
 the tree (the tree window, a Search sub-tree, the default sub-tree) have it.
 
+### The pinned parent row
+
+At the top of the viewport, the **direct parent** of the row appearing right below a band of one normal row
+height (`TASK_ROW_MIN_HEIGHT`) is drawn over that band, and only once the parent's own row has started to leave
+the top. A multi-line parent shows its **bottom** band only. All of this lives in `TaskTreeView`, so all three
+drawings have it.
+
+- **"Right below" is the first row whose bottom lies past the band**, so a row the band half covers still counts.
+  It is never the first *fully* visible row. When a parent row straddles the band, the first fully visible row is
+  that parent's child, so the copy pinned the straddling row itself. The row showing under the copy was then
+  labelled with its own title instead of its parent's.
+
+- **The parent is read off `SchedulerDomain.visibleRows`, never off a child's via.** A via names the parent
+  cell but not that cell's own via, and the root row is no via at all.
+- **A row's band is keyed by its PATH (`VisibleRow.path`), never by its occurrence.** A mirrored sub-list is
+  drawn under every cell of its task, so every row below the mirror's first level repeats the same (cell, via).
+  The release tree has six such pairs under a mirrored "english". Keyed by occurrence, the twins overwrote each
+  other's bands. The empty row under the first "writing" then read as sitting where its twin further down was,
+  and "writing" was pinned over "eye incision". The drag's `resolveRowAt` and the reveal read bands by path
+  too. The reveal takes the pinned copy's own path when the copy was pressed, and otherwise the first row
+  showing the selected occurrence (the selection cannot tell twins apart).
+- **The copy is the tree's own row drawing** (`CellListSection` with `pinnedCellId`), never a second row
+  implementation. It stays inert where two copies would fight: no Edit Mode and no min-time input (one field per
+  session), no contextual menus (the press that opens one scrolls the copy away), no children, and a no-op
+  `onRowBounds`. The real row's band must never be overwritten by the copy's.
+- **Every row reports its band**, including the root strip, a placeholder and the row being edited. The pinned
+  parent may be any of them, and a band that stops updating while its row is edited goes stale on the next
+  scroll. `resolveRowAt` still walks only the selectable occurrences.
+- **The reveal leaves one normal row height above a row it scrolls in from above.** That band is where the
+  row's own parent gets pinned, so a smaller margin puts the revealed row under the copy. Selecting the copy is
+  one such reveal, and a press on a copy that is already the main selection bumps the reveal's key itself,
+  because it changes no selection.
+
 ### Find & replace (Ctrl+F)
 
 → PRD §4. `TaskTreeSearch` is the whole of it; the bar (`ui/TaskTreeFindBar.kt`) is Compose-only state, like

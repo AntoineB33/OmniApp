@@ -2,35 +2,27 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.BreakMachine
+import org.example.project.scheduler.domain.BreakMachine.Event
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.DynamicPeriods.MODE_AT_SCREEN
 import org.example.project.scheduler.domain.DynamicPeriods.MODE_AWAY
-import org.example.project.scheduler.domain.PeriodKinds
-import org.example.project.scheduler.domain.PlanTask
-import org.example.project.scheduler.domain.RestrictivePeriod
+import org.example.project.scheduler.domain.DynamicPeriods.MODE_ON_BREAK
+import org.example.project.scheduler.domain.DynamicPeriods.Span
 import org.example.project.scheduler.domain.SchedulerDomain
-import org.example.project.scheduler.model.TaskId
 
 /**
- * `docs/scheduler_requirements.md` § *3 Dynamic Restrictive Period*, last bullet — **a dynamic period is
- * pulled back onto the start of the PeriodKinds.NO_SCREEN chain that touches it**:
+ * `docs/scheduler_requirements.md` § *Default restrictive periods*, last bullet — *"In a 'no screen' period, if t_b is
+ * the start of a screen break and $now line$ < t_b, then this screen break must now start at max($now line$, t_s)"* —
+ * and the line going on in an away mode.
  *
- * > When a PeriodKinds.NO_SCREEN period touches the start of a dynamic restrictive period, and that this chain
- * > of PeriodKinds.NO_SCREEN periods ends somewhere in $[now line;+infinity)$, then the dynamic restrictive
- * > period now starts at the start of this chain. If it means starting in the past, this is the only
- * > exception to the **frozen past** rule.
- *
- * What it is FOR is the line still moving in an away mode. The user walks away; a break falls due while they
- * are gone; any emptiness absorbs a period, so the break is pushed to the end of the stretch — which, while
- * the pause is still running, IS the now-line, and goes on being the now-line for as long as the user stays
- * away. Read without this rule the break rides the line and never happens, which is what the calendar showed:
- * the period vanished from the past instead of staying in it. With it, the minutes already spent away COUNT
- * towards the break, the break is placed where they began, and the stretch from its end to the line is
- * covered by the ordinary PeriodKinds.NO_SCREEN cover — an Inactivity band, or Sleep inside a §17 window.
- *
- * Where the pull-back is REFUSED is mode 1's own rule and not an exception to this one; that pair is the third
- * test here. The modes themselves are [TpModeTest] and [DynamicPeriodsTest].
+ * The machine applies the rule forward only: a break is never placed behind the line (the frozen past), so a break
+ * falling due while the user is away starts where the line meets it, and a known no-screen period AHEAD pulls the
+ * breaks falling due in it onto its start. (The walk this replaced re-derived the past and back-dated a break to the
+ * start of the pause the user was in; the requirements' `max($now line$, t_s)` never reaches behind the line.)
  */
 class ScreenBreakChainPullBackTest {
 
@@ -38,193 +30,123 @@ class ScreenBreakChainPullBackTest {
     private val MIN = 60_000L
     private val HOUR = 3_600_000L
 
-    /** One on-screen task, so a PeriodKinds.NO_SCREEN period is a stretch nobody can run in. */
-    private val onScreenOnly =
-        listOf(PlanTask(TaskId("task/user/0"), 1.0, 0L, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
+    /** A look-away (cadence 25 min) alone. */
+    private val lookAwayOnly = listOf(DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 25 * MIN))
 
-    /** The ongoing pause as `SchedulerDomain.liveRestPeriod` hands it over: closed at the line. */
-    private fun awayChain(startMillis: Long, endMillis: Long, closedEnd: Boolean) =
-        DynamicPeriods.Base(
-            listOf(RestrictivePeriod(startMillis, endMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd)),
-            emptyList(),
-            onScreenOnly,
+    /** A look-away pushed past the horizon, so the 5-min pose (positional labels) is the one in play. */
+    private val poseOnly =
+        listOf(
+            DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 10 * HOUR),
+            DynamicPeriods.Spec(DynamicPeriods.LABEL_5MIN, 5 * MIN, 50 * MIN),
         )
 
-    @Test
-    fun a_break_due_at_the_end_of_an_away_chain_starts_where_the_chain_did() {
-        val chainStart = 50 * MIN
-        val tp = 52 * MIN
-        val base = awayChain(chainStart, tp, closedEnd = true)
-        val spec = DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 25 * MIN)
-        // Mode 3: the line may enter a 20 s break (mode 2 may not — below).
-        val placed =
-            DynamicPeriods.instances(
-                base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_ON_BREAK, sweepFromMillis = 0L,
-            )
-        val crossed = placed.single { it.startMillis in chainStart..tp }
-        assertEquals(chainStart, crossed.startMillis, "the break starts where the away chain did: $placed")
-        assertEquals(20 * SEC, crossed.durationMillis, "and is NOT stretched to reach the line")
-        assertTrue(crossed.endMillis < tp, "so it is over, and frozen in the past behind the line")
-
-        // A line at a screen enters it too (and is in mode 3 for its twenty seconds), so mode 1 answers identically.
-        assertEquals(
-            placed,
-            DynamicPeriods.instances(
-                base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_AT_SCREEN, sweepFromMillis = 0L,
-            ),
-        )
-        // Mode 2 may not enter one — *"The $now line$ must be in mode 1 or 3 before entering the 20s break"* — so the
-        // look-away is dragged onto the line, `]now line; now line + 20s]`, and the chain does not take it.
-        val locked =
-            DynamicPeriods.instances(
-                base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_AWAY, sweepFromMillis = 0L,
-            )
-        assertTrue(locked.none { it.startMillis in chainStart until tp }, "mode 2 enters no look-away: $locked")
-        assertTrue(locked.any { it.startMillis == tp && it.openStart }, "it rides the line instead: $locked")
+    /** The line at a screen from 0 to [awayAt], then in [mode] up to [toMillis]; every transition on the way. */
+    private fun walkAway(
+        specs: List<DynamicPeriods.Spec>,
+        awayAt: Long,
+        mode: Int,
+        toMillis: Long,
+        chains: List<Span> = emptyList(),
+        events: MutableList<Event> = ArrayList(),
+    ): BreakMachine.State {
+        var s = BreakMachine.advance(BreakMachine.initial(0L, specs), awayAt, chains, specs, events)
+        s = BreakMachine.switchMode(s, mode, chains, specs, events)
+        return BreakMachine.advance(s, toMillis, chains, specs, events)
     }
 
     @Test
-    fun a_chain_the_line_has_left_still_holds_the_break_it_took() {
-        // The bullet's own clause — the chain has to END somewhere in [now line, +infinity) — is the PRESENT
-        // TENSE of "the chain took this break": a chain reaching the line is one the user is still inside, so
-        // the break is still being taken. Once the line is past it the question is no longer about the line at
-        // all, and answering it with the line's CURRENT position is what broke the frozen past: the break was
-        // placed at the chain's start for the whole time the line was inside the chain, and the instant the
-        // user came back it moved to the chain's end and was then dragged onto the line by mode 1. A chain
-        // that outlasted the break took it, and that answer never changes as the line advances.
-        val chainStart = 50 * MIN
-        val chainEnd = 52 * MIN
-        val base = awayChain(chainStart, chainEnd, closedEnd = false)
-        val spec = DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 25 * MIN)
-        fun placedAt(tp: Long) =
-            DynamicPeriods.instances(
-                base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_ON_BREAK, sweepFromMillis = 0L,
-            ).map { it.startMillis }.filter { it in chainStart..chainEnd }
-
-        assertEquals(listOf(chainStart), placedAt(51 * MIN), "while the line is inside the chain")
-        assertEquals(listOf(chainStart), placedAt(90 * MIN), "and still, once the line has left it")
-        assertEquals(chainStart, DynamicPeriods.chainTaking(base, spec, chainEnd, 90 * MIN, DynamicPeriods.MODE_ON_BREAK)?.startMillis)
-    }
-
-    @Test
-    fun a_chain_shorter_than_the_break_took_nothing() {
-        // The other half of the same sentence, and what keeps the exception to the frozen past confined to the
-        // case it is written for: the user came back too soon, so the break was never completed. It is owed
-        // again — mode 1 goes back to dragging it — and nothing is written into a past it did not happen in.
-        val chainStart = 50 * MIN
-        val chainEnd = chainStart + 2 * MIN
-        val base = awayChain(chainStart, chainEnd, closedEnd = false)
-        val specs =
-            listOf(
-                DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 10 * HOUR),
-                DynamicPeriods.Spec(DynamicPeriods.LABEL_5MIN, 5 * MIN, 50 * MIN),
-            )
-        val pose = specs.last()
-        assertEquals(null, DynamicPeriods.chainTaking(base, pose, chainEnd, 90 * MIN, MODE_AT_SCREEN))
-        val placed =
-            DynamicPeriods.instances(
-                base, specs, 0L, 2 * HOUR, tpMillis = 90 * MIN,
-                mode = DynamicPeriods.MODE_AT_SCREEN, sweepFromMillis = 0L,
-            )
-        assertTrue(
-            placed.none { it.startMillis in chainStart until chainEnd },
-            "a two-minute pause is no five-minute pose: $placed",
-        )
-    }
-
-    @Test
-    fun mode_one_refuses_a_pull_back_that_would_cover_the_line_with_a_pose() {
-        // Mode 1's rule: the now-line must NOT be covered by the period PeriodKinds.NO_SCREEN. A pose pulled
-        // back far enough to reach the line would cover it, so mode 1 keeps the drag — the half-open
-        // (t_p, t_p + d] — while the away modes, where the line is covered by definition, take the pull-back.
-        val chainStart = 53 * MIN
-        val tp = 55 * MIN
-        val base = awayChain(chainStart, tp, closedEnd = true)
-        // Two specs, because the labels are POSITIONAL: the shortest of them is the look-away, which is never
-        // dragged, so a pose needs something shorter beside it to BE the pose. The look-away's cadence is put
-        // past the horizon so only the pose is placed.
-        val specs =
-            listOf(
-                DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 10 * HOUR),
-                DynamicPeriods.Spec(DynamicPeriods.LABEL_5MIN, 4 * MIN, 25 * MIN),
-            )
-        fun placeAt(mode: Int) =
-            DynamicPeriods.instances(base, specs, 0L, 2 * HOUR, tpMillis = tp, mode = mode, sweepFromMillis = 0L)
-
-        val atScreen = placeAt(DynamicPeriods.MODE_AT_SCREEN).first { it.startMillis >= chainStart }
-        assertEquals(tp, atScreen.startMillis, "mode 1: the pose is still owed AT the line")
-        assertTrue(atScreen.openStart, "as the half-open (t_p, t_p + d], so t_p itself stays uncovered")
-
-        for (mode in listOf(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK)) {
-            val away = placeAt(mode).first { it.startMillis >= chainStart }
-            assertEquals(chainStart, away.startMillis, "mode $mode: the minutes already spent away count")
-            assertTrue(!away.openStart, "and nothing is being dragged, so it is an ordinary closed period")
-            assertTrue(
-                away.coveredFromMillis <= tp && tp < away.coveredUntilMillis,
-                "which is what covers the line: $away",
-            )
+    fun a_break_falling_due_while_the_user_is_away_starts_where_the_line_meets_it() {
+        // Away from 20 min; the look-away falls due at 25 min.
+        for (mode in listOf(MODE_ON_BREAK, MODE_AT_SCREEN)) {
+            val events = ArrayList<Event>()
+            walkAway(lookAwayOnly, 20 * MIN, mode, 26 * MIN, events = events)
+            val started = events.filterIsInstance<Event.Started>().single()
+            assertEquals(25 * MIN, started.startMillis, "mode $mode: the line enters it where it falls due")
+            assertEquals(20 * SEC, started.endMillis - started.startMillis, "and it is NOT stretched to reach the line")
         }
+        // Mode 2 may not enter one — "the $now line$ must be in mode 1 or 3 before entering the 20s break" — so it rides
+        // the line instead.
+        val events = ArrayList<Event>()
+        val locked = walkAway(lookAwayOnly, 20 * MIN, MODE_AWAY, 26 * MIN, events = events)
+        assertTrue(events.filterIsInstance<Event.Started>().isEmpty(), "mode 2 enters no look-away: $events")
+        assertEquals(DynamicPeriods.LABEL_20S, locked.drag?.label)
     }
 
     @Test
-    fun the_break_is_never_stretched_the_gap_behind_the_line_is_covered_instead() {
-        // The user's rule for a line still moving in mode 2 or 3: the 20 s / 5 min / 15 min period is NOT
-        // stretched to keep covering the line. It stays the length it is and is frozen where it happened, and
-        // what reaches from its end to the line is the ordinary PeriodKinds.NO_SCREEN cover.
-        val chainStart = 50 * MIN
-        val tp = 52 * MIN
-        val base = awayChain(chainStart, tp, closedEnd = true)
-        val spec = DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 25 * MIN)
-        val out =
-            DynamicPeriods.periods(
-                base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_AWAY, sweepFromMillis = 0L,
-            )
-        val crossed = out.single { it.kind == PeriodKinds.INACTIVITY && it.startMillis in chainStart..tp }
-        assertEquals(20 * SEC, crossed.durationMillis, "the break keeps its own length")
-        assertTrue(!crossed.covers(tp), "so it is not what covers the line")
-        // Here the live pause itself covers the line, which is why `awayCover` finds nothing left to do.
-        assertTrue(
-            (out + base.periods).any { it.covers(tp) && PeriodKinds.coversNoScreen(it.kind) },
-            "modes 2 and 3: t_p is covered by 'no on-screen task', by the stretch and not by the break: $out",
-        )
+    fun a_known_no_screen_period_ahead_pulls_the_break_falling_due_in_it_onto_its_start() {
+        // A no-screen period from 20 min to 40 min: the look-away due at 25 min starts at 20 min, where the period
+        // does — before the line gets there, so nothing behind the line is touched.
+        val period = Span(20 * MIN, 40 * MIN)
+        val specs = lookAwayOnly
+        assertEquals(20 * MIN, BreakMachine.dueOf(BreakMachine.initial(0L, specs), DynamicPeriods.LABEL_20S, listOf(period)))
+        val events = ArrayList<Event>()
+        BreakMachine.advance(BreakMachine.initial(0L, specs), 30 * MIN, listOf(period), specs, events)
+        assertEquals(20 * MIN, events.filterIsInstance<Event.Started>().single().startMillis)
     }
 
     @Test
-    fun a_break_the_line_crossed_while_away_is_still_drawn_in_the_past() {
-        // The report, at the level it was seen: *"when the now line reaches the end of a 20s/5min/15min screen
-        // break in mode 2 or 3, then it stays in the past (it currently disappears)"*. The calendar's past-side
-        // markers are the same placement asked about a window that has gone by
-        // (`SchedulerDomain.takenScreenBreakPanels`), so a POSE shows there exactly when it really happened —
-        // never in mode 1, where the line pushed it ahead of itself and it never did.
-        val now = 1_700_000_000_000L
+    fun a_break_the_line_has_passed_stays_where_it_was_banked() {
+        // What the line entered is banked, and nothing moves it once the line is past it — the frozen past.
+        var record: org.example.project.scheduler.domain.FrozenScreenBreaks? = null
         val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
-        val poseTitles = breaks.filter { it.restBreak }.map { it.title }.toSet()
-        fun past(mode: Int) =
-            walkedAtLine(
-                breaks, now - 6 * HOUR, now - 1, tpMillis = now, mode = mode,
-            )
-        assertTrue(
-            past(DynamicPeriods.MODE_AT_SCREEN).none { it.title in poseTitles },
-            "mode 1: a pose the line reached was dragged and never happened, so the past holds none",
-        )
-        for (mode in listOf(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK)) {
-            val elapsed = past(mode).filter { it.title in poseTitles }
-            assertTrue(elapsed.isNotEmpty(), "mode $mode: a pose the line crossed stays drawn where it happened")
-            assertTrue(
-                elapsed.all { it.endEpochMillis <= now },
-                "and it is frozen there, not stretched forward to the line: $elapsed",
-            )
+        val t0 = 1_700_000_000_000L
+        for (t in listOf(t0, t0 + 20 * MIN + SEC, t0 + 25 * MIN, t0 + 2 * HOUR)) {
+            record = SchedulerDomain.stepScreenBreaks(breaks, record, t, emptyList(), MODE_AT_SCREEN).record
         }
-        // The two away modes place the POSES identically; they differ on the look-away, which mode 2 drags.
-        assertEquals(
-            past(DynamicPeriods.MODE_ON_BREAK).filter { it.title in poseTitles },
-            past(DynamicPeriods.MODE_AWAY).filter { it.title in poseTitles },
-            "the two away modes draw one past of poses",
-        )
+        val first = record!!.breaks.first()
+        assertEquals(t0 + 20 * MIN, first.startMillis)
+        val later = SchedulerDomain.stepScreenBreaks(breaks, record, t0 + 5 * HOUR, emptyList(), MODE_ON_BREAK).record
+        assertEquals(first, later.breaks.first(), "a later mode does not move it")
+    }
+
+    @Test
+    fun a_pause_shorter_than_the_pose_leaves_the_pose_owed() {
+        // Away at the pose's due and back two minutes later: a line at a screen may not be inside a pose, so the one it
+        // was taking is REMOVED (the requirements' exception to the frozen past) and owed again.
+        val events = ArrayList<Event>()
+        val away = walkAway(poseOnly, 49 * MIN, MODE_ON_BREAK, 52 * MIN, events = events)
+        assertNotNull(away.active, "the pose started where it fell due: $events")
+        val back = BreakMachine.switchMode(away, MODE_AT_SCREEN, emptyList(), poseOnly, events)
+        assertTrue(events.any { it is Event.Removed }, "a two-minute pause is no five-minute pose")
+        assertEquals(DynamicPeriods.LABEL_5MIN, back.drag?.label)
+        assertNull(back.active)
+    }
+
+    @Test
+    fun mode_one_drags_the_pose_the_away_modes_enter() {
+        // Mode 1: the now-line must NOT be covered by "no screen", so the pose rides it, `]t_p; t_p + d]`. Modes 2 and 3:
+        // the line must be covered, and the pose is what covers it.
+        val atScreen = walkAway(poseOnly, 10 * MIN, MODE_AT_SCREEN, 52 * MIN)
+        assertEquals(DynamicPeriods.LABEL_5MIN, atScreen.drag?.label)
+        assertNull(atScreen.active)
+        for (mode in listOf(MODE_AWAY, MODE_ON_BREAK)) {
+            val away = walkAway(poseOnly, 10 * MIN, mode, 52 * MIN)
+            val active = away.active
+            assertNotNull(active, "mode $mode")
+            assertEquals(50 * MIN, active.startMillis, "mode $mode: the pose is taken where it falls due")
+            assertTrue(active.startMillis <= 52 * MIN && 52 * MIN < active.endMillis, "and it covers the line")
+        }
+    }
+
+    @Test
+    fun a_pose_the_line_crossed_while_away_is_banked_and_one_it_dragged_is_not() {
+        val t0 = 1_700_000_000_000L
+        val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
+        val poseLabels = setOf(DynamicPeriods.LABEL_5MIN, DynamicPeriods.LABEL_15MIN)
+        fun banked(mode: Int): List<org.example.project.scheduler.domain.BankedBreak> {
+            var record: org.example.project.scheduler.domain.FrozenScreenBreaks? = null
+            var t = t0
+            while (t <= t0 + 6 * HOUR) {
+                record = SchedulerDomain.stepScreenBreaks(breaks, record, t, emptyList(), mode).record
+                t += MIN
+            }
+            return record!!.breaks.filter { it.label in poseLabels }
+        }
+        assertTrue(banked(MODE_AT_SCREEN).isEmpty(), "mode 1: a pose the line reached was dragged and never happened")
+        for (mode in listOf(MODE_AWAY, MODE_ON_BREAK)) {
+            val elapsed = banked(mode)
+            assertTrue(elapsed.isNotEmpty(), "mode $mode: a pose the line crossed stays banked where it happened")
+            assertTrue(elapsed.all { it.endMillis - it.startMillis in setOf(5 * MIN, 15 * MIN) }, "each keeps its length")
+        }
     }
 }

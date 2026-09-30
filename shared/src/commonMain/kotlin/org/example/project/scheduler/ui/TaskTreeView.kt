@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -21,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -31,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -45,9 +51,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.example.project.perf.Perf
@@ -176,7 +185,10 @@ internal fun TaskTreeView(
     // none of them draws.
     val currentState by rememberUpdatedState(state)
     val visibleOrder = SchedulerDomain.selectableVisibleOrder(state)
-    val visibleOccurrences = SchedulerDomain.selectableVisibleOccurrences(state)
+    // Every drawn row, in order, with the row it hangs under and its PATH — the one key naming a single row
+    // (a mirrored sub-list repeats its rows' occurrences; see [SchedulerDomain.VisibleRow.path]).
+    val visibleRows =
+        remember(state.lists, state.cells, state.tasks, state.expanded) { SchedulerDomain.visibleRows(state) }
     // Each task's own colour (see [org.example.project.scheduler.domain.TaskColorSpace]). Derived here
     // rather than passed in, so BOTH trees this composable draws are coloured by the one rule over the very
     // state they are showing — the account's tree over the live state, the PRD §4 template over the
@@ -319,18 +331,22 @@ internal fun TaskTreeView(
     // only delivers move events to the row where the pointer went down (Compose retains the hit
     // path while a button is held), so the originating row resolves the cell under the cursor from
     // these shared bounds rather than relying on per-cell hover events that never fire mid-drag.
-    // Keyed by occurrence (cellId + renderVia) so a cell mirrored under several expanded parents
-    // keeps a distinct band per row and the resolved drop target carries the target row's own
-    // renderVia — letting the blue line land in any layer of the tree (PRD §3).
+    // Keyed by the row's PATH, never by its occurrence: a cell mirrored under several expanded parents
+    // keeps a distinct band per row even BELOW the mirror's first level, where the occurrence (cell + via)
+    // repeats — keyed by occurrence, the copies overwrote each other's bands and a row was taken to be where
+    // its twin further down was. The resolved drop target still carries the target row's own renderVia,
+    // letting the blue line land in any layer of the tree (PRD §3).
     val rowBounds =
-        remember { mutableStateMapOf<VisibleOccurrence, ClosedFloatingPointRange<Float>>() }
+        remember { mutableStateMapOf<List<CellId>, ClosedFloatingPointRange<Float>>() }
     // Read through the holder for the reason the two above are: this lambda is handed to EVERY row, so a
     // new instance of it on each pass is a changed argument for every one of them.
-    val currentVisibleOccurrences by rememberUpdatedState(visibleOccurrences)
+    val currentVisibleRows by rememberUpdatedState(visibleRows)
     val resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>? = resolve@{ windowY ->
         var last: Pair<VisibleOccurrence, Boolean>? = null
-        for (occurrence in currentVisibleOccurrences) {
-            val bounds = rowBounds[occurrence] ?: continue
+        for (row in currentVisibleRows) {
+            val occurrence = row.occurrence
+            if (!SchedulerDomain.isSelectableCell(currentState, occurrence.cellId)) continue
+            val bounds = rowBounds[row.path] ?: continue
             if (windowY < bounds.start) return@resolve last ?: (occurrence to true)
             val mid = (bounds.start + bounds.endInclusive) / 2f
             last = occurrence to (windowY < mid)
@@ -338,6 +354,41 @@ internal fun TaskTreeView(
         }
         last
     }
+
+    // THE PINNED PARENT ROW. At the top of the viewport, the direct parent of the row appearing right below a
+    // band of one normal row height is drawn over that band, so the user always sees what the rows under it
+    // belong to. Only when the parent's own row has started to leave the top: a parent still fully
+    // on screen needs no copy. A multi-line parent shows its last [TASK_ROW_MIN_HEIGHT] only, the part that
+    // sits just above its children. Read off the bands the rows already report, so it follows the scroll with
+    // no layout of its own, over the rows already drawn (bounded by the expanded tree), and stops at the
+    // first row below the band.
+    val rowHeightPx = with(LocalDensity.current) { TASK_ROW_MIN_HEIGHT.toPx() }
+    val pinnedRow by remember(rowHeightPx) {
+        derivedStateOf {
+            val viewport = treeViewport ?: return@derivedStateOf null
+            val bandBottom = viewport.start + rowHeightPx
+            val rows = currentVisibleRows
+            // The row appearing RIGHT BELOW the band: the first whose bottom lies past it, so a row the band
+            // half covers is still that row. Never the first FULLY visible one — when a half-covered parent
+            // row straddles the band, that one is its child, and the copy would name the half-covered row
+            // above it instead of what that row itself hangs under.
+            val first =
+                rows.firstOrNull { row ->
+                    rowBounds[row.path]?.let { it.endInclusive > bandBottom + 0.5f } == true
+                } ?: return@derivedStateOf null
+            if (first.parent == null) return@derivedStateOf null
+            val parentPath = first.path.dropLast(1)
+            val parentTop = rowBounds[parentPath]?.start ?: return@derivedStateOf null
+            if (parentTop >= viewport.start - 0.5f) return@derivedStateOf null
+            rows.firstOrNull { it.path == parentPath }
+        }
+    }
+    // Selecting the pinned copy scrolls ITS real row into view — the one at the copy's path, not a mirrored
+    // twin of it elsewhere, which the selection (a cell and a via) cannot tell apart. A press on a row that is
+    // ALREADY the main selection changes no selection, so the copy bumps the counter too, which the reveal
+    // below is keyed on.
+    var pinnedRevealRequests by remember { mutableStateOf(0) }
+    var pinnedRevealPath by remember { mutableStateOf<List<CellId>?>(null) }
 
     // Bring the SELECTED row into view. It is keyed on the selection rather than on the find bar's current
     // match because a match is not the only thing that reveals a row: PRD §8's "go to task tree" reaches the
@@ -349,22 +400,37 @@ internal fun TaskTreeView(
     // The rows of a freshly expanded ancestor are not positioned yet on the frame the reveal is dispatched,
     // so wait for their bounds to be reported (bounded, so a selection on a row that never lands — an
     // unexpandable ancestor — does not spin).
-    LaunchedEffect(state.selection.main, state.selection.renderVia, findCurrentMatch, findMatches.size) {
+    LaunchedEffect(
+        state.selection.main, state.selection.renderVia, findCurrentMatch, findMatches.size, pinnedRevealRequests,
+    ) {
         val selected = state.selection.main ?: return@LaunchedEffect
         val occurrence = VisibleOccurrence(selected, state.selection.renderVia)
-        var bounds = rowBounds[occurrence]
+        // The selected row's band: the pinned copy's own row when that is what was pressed, else the FIRST
+        // row showing the selected occurrence (a mirrored twin is the same selection).
+        fun selectedBounds(): ClosedFloatingPointRange<Float>? {
+            val rows = currentVisibleRows
+            val path =
+                pinnedRevealPath?.takeIf { p -> rows.any { it.path == p && it.occurrence == occurrence } }
+                    ?: rows.firstOrNull { it.occurrence == occurrence }?.path
+                    ?: return null
+            return rowBounds[path]
+        }
+        var bounds = selectedBounds()
         var frames = 0
         while (bounds == null && frames < 10) {
             withFrameNanos { }
-            bounds = rowBounds[occurrence]
+            bounds = selectedBounds()
             frames++
         }
         val row = bounds ?: return@LaunchedEffect
         val viewport = treeViewport ?: return@LaunchedEffect
         val margin = 24f
+        // Above, it leaves exactly one normal row height: the band the row's own parent is pinned in, so a row
+        // revealed from above lands just under what it belongs to, never under the pinned copy.
+        val topMargin = rowHeightPx
         val delta =
             when {
-                row.start < viewport.start + margin -> row.start - viewport.start - margin
+                row.start < viewport.start + topMargin -> row.start - viewport.start - topMargin
                 row.endInclusive > viewport.endInclusive - margin ->
                     row.endInclusive - viewport.endInclusive + margin
                 else -> 0f
@@ -416,6 +482,58 @@ internal fun TaskTreeView(
     // cell the column takes the wheel first (the innermost scrollable consumes it), so nothing scrolls twice.
     // The directions are the ones verticalScroll/horizontalScroll themselves pass to `scrollable`.
     val layoutDirection = LocalLayoutDirection.current
+    // What the rows' intents go through: the tree's own and the pinned copy's alike.
+    val rowIntent: (SchedulerIntent) -> Unit = { intent ->
+        // PRD §8 focus: a click into the tree hands focus back from the calendar, so typing
+        // resumes entering Edit Mode — even on an already-selected cell (whose selection
+        // doesn't change, so the selection-keyed refocus effect wouldn't fire) and even
+        // while the calendar window stays open.
+        if (intent is SchedulerIntent.ClickCell) {
+            // PRD §10: but when the click lands on the cell whose min-time input is open, the
+            // BasicTextField needs to keep the focus it just took — yanking it back to the root
+            // focusable here is what made the caret vanish right after clicking the field.
+            if (intent.cellId != minTimeEditCellId) {
+                focusRequester.requestFocus()
+            }
+            // PRD §7: clicking into the tree returns focus to it from whichever window held it.
+            // Null for a tree drawn inside a floating window — that window's own raise-on-press
+            // is what focuses it, and the app-wide focus never leaves the surface behind it.
+            if (refocusWindow != null && currentState.focusedWindow != refocusWindow) {
+                onIntent(SchedulerIntent.FocusWindow(refocusWindow))
+            }
+        }
+        onIntent(intent)
+    }
+    val toggleMinTimeEdit: (CellId) -> Unit = { cellId ->
+        if (minTimeEditCellId == cellId) {
+            minTimeEditCellId = null
+        } else {
+            // Snapshot the value the field opens with so Escape can revert to it (PRD §10).
+            minTimeEditOriginal =
+                currentState.cells[cellId]?.taskId
+                    ?.let { currentState.tasks[it]?.minimumMinutes } ?: 0
+            minTimeEditCellId = cellId
+        }
+    }
+    val onMoveDragStart: () -> Unit = { moveDragActive = true }
+    val onMoveDropHover: (CellId, Boolean, CellId?) -> Unit = { target, insertBefore, via ->
+        moveDropTarget = MoveDropTarget(target, insertBefore, via)
+    }
+    val onMoveDragEnd: () -> Unit = {
+        val target = moveDropTarget
+        if (moveDragActive && target != null) {
+            onIntent(
+                SchedulerIntent.MoveSelectedCells(
+                    targetCellId = target.cellId,
+                    insertBefore = target.insertBefore,
+                ),
+            )
+        }
+        moveDragActive = false
+        moveDropTarget = null
+    }
+    // The scrolled content's width, so the pinned copy is laid out exactly as wide as the rows it stands for.
+    var treeContentWidthPx by remember { mutableStateOf(0) }
     Box(
         modifier = modifier
             .scrollable(
@@ -656,7 +774,8 @@ internal fun TaskTreeView(
                 // Mode are moved by a press on another task CELL and by nothing else — a press beside the
                 // cells (or in another window) leaves both untouched, so a rename survives reaching for
                 // the calendar and coming back.
-                .width(IntrinsicSize.Max),
+                .width(IntrinsicSize.Max)
+                .onSizeChanged { treeContentWidthPx = it.width },
         ) {
             CellListSection(
                 state = state,
@@ -676,17 +795,7 @@ internal fun TaskTreeView(
                 onTogglePriorityWeights = { listId -> onSetWeightWindow(listId) },
                 onOpenRelativePriority = { clickedCellId -> onSetRelativeWindow(clickedCellId) },
                 minTimeEditCellId = minTimeEditCellId,
-                onToggleMinTimeEdit = { cellId ->
-                    if (minTimeEditCellId == cellId) {
-                        minTimeEditCellId = null
-                    } else {
-                        // Snapshot the value the field opens with so Escape can revert to it (PRD §10).
-                        minTimeEditOriginal =
-                            currentState.cells[cellId]?.taskId
-                                ?.let { currentState.tasks[it]?.minimumMinutes } ?: 0
-                        minTimeEditCellId = cellId
-                    }
-                },
+                onToggleMinTimeEdit = toggleMinTimeEdit,
                 onOpenTaskEdit = { taskId -> onSetEditTask(taskId) },
                 onOpenCategoryEdit = { categoryId -> onSetEditCategory(categoryId) },
                 // PRD §13 "copy task id (ctrl c)": the cell's task id alone, in the shape a Ctrl+V turns
@@ -704,51 +813,82 @@ internal fun TaskTreeView(
                 moveDragActive = moveDragActive,
                 moveDropTarget = moveDropTarget,
                 resolveRowAt = resolveRowAt,
-                onRowBounds = { occurrence, top, bottom -> rowBounds[occurrence] = top..bottom },
-                onMoveDragStart = { moveDragActive = true },
-                onMoveDropHover = { target, insertBefore, via ->
-                    moveDropTarget = MoveDropTarget(target, insertBefore, via)
-                },
-                onMoveDragEnd = {
-                    val target = moveDropTarget
-                    if (moveDragActive && target != null) {
-                        onIntent(
-                            SchedulerIntent.MoveSelectedCells(
-                                targetCellId = target.cellId,
-                                insertBefore = target.insertBefore,
-                            ),
-                        )
-                    }
-                    moveDragActive = false
-                    moveDropTarget = null
-                },
+                onRowBounds = { path, top, bottom -> rowBounds[path] = top..bottom },
+                onMoveDragStart = onMoveDragStart,
+                onMoveDropHover = onMoveDropHover,
+                onMoveDragEnd = onMoveDragEnd,
                 rowTrailing = rowTrailing,
                 onGoToTaskTree = onGoToTaskTree,
                 namingSource = namingSource,
-                onIntent = { intent ->
-                    // PRD §8 focus: a click into the tree hands focus back from the calendar, so typing
-                    // resumes entering Edit Mode — even on an already-selected cell (whose selection
-                    // doesn't change, so the selection-keyed refocus effect wouldn't fire) and even
-                    // while the calendar window stays open.
-                    if (intent is SchedulerIntent.ClickCell) {
-                        // PRD §10: but when the click lands on the cell whose min-time input is open, the
-                        // BasicTextField needs to keep the focus it just took — yanking it back to the root
-                        // focusable here is what made the caret vanish right after clicking the field.
-                        if (intent.cellId != minTimeEditCellId) {
-                            focusRequester.requestFocus()
-                        }
-                        // PRD §7: clicking into the tree returns focus to it from whichever window held it.
-                        // Null for a tree drawn inside a floating window — that window's own raise-on-press
-                        // is what focuses it, and the app-wide focus never leaves the surface behind it.
-                        if (refocusWindow != null && currentState.focusedWindow != refocusWindow) {
-                            onIntent(SchedulerIntent.FocusWindow(refocusWindow))
-                        }
-                    }
-                    onIntent(intent)
-                },
+                onIntent = rowIntent,
             )
         }
     }
+
+        // The pinned parent row (see `pinnedRow`), over the top of the viewport. Drawn after the tree so it
+        // covers the rows scrolled under it, and before the find bar so the bar stays on top. It is the tree's
+        // own row drawing ([CellListSection] with `pinnedCellId`), laid out at the content's width and shifted
+        // by the horizontal scroll so it lines up with the rows below; its band is opaque so nothing shows
+        // through beside a short row, and a taller row is cut to its bottom [TASK_ROW_MIN_HEIGHT].
+        val pinned = pinnedRow
+        val pinnedListId = pinned?.let { state.cells[it.occurrence.cellId]?.parentListId }
+        if (pinned != null && pinnedListId != null && treeContentWidthPx > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .height(TASK_ROW_MIN_HEIGHT)
+                    .clipToBounds()
+                    .background(MaterialTheme.colorScheme.surface),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .wrapContentSize(Alignment.BottomStart, unbounded = true)
+                        .offset { IntOffset(-treeHorizontalScroll.value, 0) }
+                        .width(with(LocalDensity.current) { treeContentWidthPx.toDp() }),
+                ) {
+                    CellListSection(
+                        state = state,
+                        listId = pinnedListId,
+                        renderVia = pinned.occurrence.renderVia,
+                        depth = pinned.depth,
+                        visibleOrder = visibleOrder,
+                        priorities = priorities,
+                        taskColors = taskColors,
+                        searchHighlight = searchHighlight,
+                        onTogglePriorityWeights = { listId -> onSetWeightWindow(listId) },
+                        onOpenRelativePriority = { clickedCellId -> onSetRelativeWindow(clickedCellId) },
+                        minTimeEditCellId = minTimeEditCellId,
+                        onToggleMinTimeEdit = toggleMinTimeEdit,
+                        onOpenTaskEdit = { taskId -> onSetEditTask(taskId) },
+                        onOpenCategoryEdit = { categoryId -> onSetEditCategory(categoryId) },
+                        // No contextual menu on the copy (see `pinnedCellId`), so these are never asked for.
+                        onCopyTaskIdCell = {},
+                        onDeepCopyCell = {},
+                        moveDragActive = moveDragActive,
+                        moveDropTarget = moveDropTarget,
+                        resolveRowAt = resolveRowAt,
+                        // The real row keeps its band: the copy must never report one over it.
+                        onRowBounds = { _, _, _ -> },
+                        onMoveDragStart = onMoveDragStart,
+                        onMoveDropHover = onMoveDropHover,
+                        onMoveDragEnd = onMoveDragEnd,
+                        rowTrailing = rowTrailing,
+                        onGoToTaskTree = onGoToTaskTree,
+                        namingSource = namingSource,
+                        onIntent = { intent ->
+                            if (intent is SchedulerIntent.ClickCell) {
+                                pinnedRevealPath = pinned.path
+                                pinnedRevealRequests++
+                            }
+                            rowIntent(intent)
+                        },
+                        pinnedCellId = pinned.occurrence.cellId,
+                        rowPath = pinned.path.dropLast(1),
+                    )
+                }
+            }
+        }
 
         // PRD §4: the find & replace bar, in the tree's top-right corner (VS Code's placement). A sibling
         // of the tree rather than a child, so the tree's own key handler never sees what is typed in it.

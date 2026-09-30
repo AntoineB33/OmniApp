@@ -553,10 +553,7 @@ class SchedulerSchedulerTest {
         // mode 1 a pose the line reaches is dragged and never happens, and while one is owed it bars every look-away
         // behind it, so the plan runs straight through those (the calendar clips them out of what it draws). The rest
         // that ended just before the line leaves no pose owed, so the look-aways ahead are real stretches.
-        val breaks =
-            SchedulerDomain.breaksTheLineWillMeet(
-                s0.screenBreaks, panels.filter { it.screenBreak }, now, DynamicPeriods.MODE_AT_SCREEN,
-            )
+        val breaks = metBy(s0, now, now + 4 * HOUR_MS)
         assertTrue(breaks.isNotEmpty(), "the case needs a break to be about")
         val mine = panels.filter { it.taskId == solo && it.auto }.sortedBy { it.startEpochMillis }
         assertTrue(mine.isNotEmpty())

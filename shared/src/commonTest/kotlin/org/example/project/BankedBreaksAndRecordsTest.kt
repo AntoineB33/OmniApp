@@ -9,8 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import org.example.project.scheduler.domain.BankedBreak
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.FrozenScreenBreaks
-import org.example.project.scheduler.domain.PeriodKinds
-import org.example.project.scheduler.domain.PlanTask
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.model.SleepSchedule
@@ -29,8 +27,8 @@ import org.example.project.time.AppClock
  * Three things met there, each pinned here:
  *  - the app had not been running for seven hours and nothing walked that stretch at start-up, so the old plan was
  *    banked as work done while nothing ran;
- *  - the breaks banked for the past and the work recorded there were decided apart, and a break landed on the work;
- *  - the record the first banking build wrote held such overlaps, and nothing healed them.
+ *  - the breaks banked for the past and the work recorded there were decided apart, and a break landed on the work
+ *    (a first banking now invents no past at all: the break machine starts rested at the line).
  */
 class BankedBreaksAndRecordsTest {
     private val SEC = 1_000L
@@ -67,19 +65,14 @@ class BankedBreaksAndRecordsTest {
     }
 
     @Test
-    fun a_first_banking_lays_no_break_over_work_already_recorded() {
-        // The line's first moment banks the walk's past as its initial past — but a break there that overlaps work
-        // already recorded never happened: the record is the fact kept.
-        val onScreen = listOf(PlanTask(org.example.project.scheduler.model.TaskId("t"), 1.0, 30 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
-        val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
-        val free = SchedulerDomain.bankScreenBreaks(breaks, null, NOW, emptyList(), emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN)
-        val someLookAway = free.breaks.last { it.label == DynamicPeriods.LABEL_20S && it.endMillis <= NOW }
-        val worked = listOf(TaskTimeRange(someLookAway.startMillis - MIN, someLookAway.endMillis + MIN))
+    fun a_first_banking_invents_no_past() {
+        // The line's first moment has nothing to continue from: the break machine starts rested at the line and banks
+        // nothing behind it — a break there would be a break nobody placed, and could lie over work already recorded.
         val banked =
-            SchedulerDomain.bankScreenBreaks(breaks, null, NOW, emptyList(), emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN, recordedWork = worked)
-        assertTrue(banked.breaks.none { it.startMillis == someLookAway.startMillis }, "the work is the fact kept")
-        assertTrue(banked.breaks.none { b -> worked.any { it.startEpochMillis < b.endMillis && b.startMillis < it.endEpochMillis } })
-        assertEquals(NOW, banked.untilMillis, "the front is the line")
+            SchedulerDomain.stepScreenBreaks(SchedulerDomain.DEFAULT_SCREEN_BREAKS, null, NOW, emptyList(), DynamicPeriods.MODE_AT_SCREEN)
+        assertTrue(banked.record.breaks.isEmpty(), "nothing is banked behind the line: ${banked.record.breaks}")
+        assertEquals(NOW, banked.record.untilMillis, "the front is the line")
+        assertTrue(banked.record.machine != null, "and the machine it carries on from starts there")
     }
 
     @Test

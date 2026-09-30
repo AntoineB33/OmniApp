@@ -1,0 +1,9 @@
+-- Schema v16 -> v17: the break machine the now-line carries, kept with the front it stands at.
+--
+-- Added 2026-09-30 for docs/scheduler_requirements.md § Rule Structure: the three screen breaks are a forward state
+-- machine driven by the line (BreakMachine) - a bar per break, the break the line is in, the one it drags, the stretch
+-- of "no screen" it is in. A restart continues from it instead of re-deriving where the breaks fall. NULL on a row an
+-- older build wrote: the machine then starts rested at the line, its bars raised by the banked breaks. LOCAL-ONLY,
+-- never synced.
+
+ALTER TABLE screen_break_front ADD COLUMN machine TEXT;

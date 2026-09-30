@@ -92,10 +92,7 @@ class ScreenBreakKindTest {
         val (state, resilient) = stateWithResilientTask()
         val rest = TaskPanel("rest/0", null, "No screen", NOW - 30 * MIN, NOW - 5 * MIN, noScreen = true)
         val panels = SchedulerDomain.fillSchedule(state.copy(panels = listOf(rest)), NOW, horizonMillis = NOW + 8 * HOUR)
-        val bands =
-            SchedulerDomain.breaksTheLineWillMeet(
-                state.screenBreaks, panels.filter { it.screenBreak }, NOW, DynamicPeriods.MODE_AT_SCREEN,
-            )
+        val bands = metBy(state.copy(panels = listOf(rest)), NOW, NOW + 8 * HOUR)
         fun workIn(from: Long, to: Long) =
             panels.filter { it.auto && it.taskId != null && it.startEpochMillis < to && it.endEpochMillis > from }
         val noTask = bands.flatMap { SchedulerDomain.screenBreakPeriods(it) }.filter { it.kind == PeriodKinds.INACTIVITY }

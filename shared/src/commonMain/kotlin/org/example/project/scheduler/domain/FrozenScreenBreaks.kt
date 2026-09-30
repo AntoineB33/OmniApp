@@ -13,10 +13,9 @@ data class BankedBreak(val label: String, val startMillis: Long, val endMillis: 
 /**
  * `docs/scheduler_requirements.md` § *frozen past*: **the three dynamic periods behind the banked front** —
  * every occurrence the line has made a fact of, and [untilMillis], the instant up to which they are the whole
- * answer. Before it the placement is this record; from it on the walk continues from the bars the record sets
- * ([DynamicPeriods.Frozen]).
+ * answer. Before it the placement is this record; from it on the break machine continues from [machine].
  *
- * The front is the line ([SchedulerDomain.bankScreenBreaks]): no rule of the requirements moves a break behind the
+ * The front is the line ([SchedulerDomain.stepScreenBreaks]): no rule of the requirements moves a break behind the
  * line, so nothing there waits to be decided. A break the line is inside is banked whole, from the instant it
  * started; the one thing that removes a banked break is the requirements' own exception (a pose the line is inside
  * when it switches to mode 1). **The calendar draws the past from this record and nothing else**
@@ -34,13 +33,19 @@ data class FrozenScreenBreaks(
      * the requirements' *"no CPU were available during this period"*: the line is walked there, in mode 2.
      */
     val lineMillis: Long = untilMillis,
+    /**
+     * The break machine at the front ([BreakMachine]) — what the line carries forward: the bars, the break it is in,
+     * the one it drags, the stretch of "no screen" it is in. Null on a record an older build wrote: the machine then
+     * starts rested at the line, its bars raised by what the record holds ([BreakMachine.absorbHistory]).
+     */
+    val machine: BreakMachine.State? = null,
 ) {
     /**
-     * Whether the walk may continue from this record at the line [nowMillis]: its front is not ahead of the line
+     * Whether the machine may continue from this record at the line [nowMillis]: its front is not ahead of the line
      * (the front never passes the line, so a record that is ahead was banked on another clock — a clock set back, a
-     * record read against a timeline it was not banked on) and not older than [STALE_AFTER_MILLIS] (the app was not
-     * running: nothing was banked for that stretch, and a walk across it is re-derived from the line's own origin
-     * rather than dragged across days). The older record still answers for the past it holds.
+     * record read against a timeline it was not banked on) and not older than [STALE_AFTER_MILLIS] (a stretch nothing
+     * ran in: the machine starts rested again rather than being dragged across days). The older record still answers
+     * for the past it holds.
      */
     fun continuesAt(nowMillis: Long): Boolean =
         untilMillis <= nowMillis && untilMillis >= nowMillis - STALE_AFTER_MILLIS
@@ -69,21 +74,7 @@ data class FrozenScreenBreaks(
         /** How far back a break covering an instant may have started: none lasts anywhere near a day. */
         private const val COVERING_REACH_MILLIS: Long = 24L * 60L * 60L * 1000L
 
-        /** How far behind the line a front may be for the walk to continue from it ([continuesAt]). */
+        /** How far behind the line a front may be for the machine to continue from it ([continuesAt]). */
         const val STALE_AFTER_MILLIS: Long = 2L * 24L * 60L * 60L * 1000L
-    }
-
-    /** The record as the walk reads it: each banked break with its role's CURRENT cadence and its own length. */
-    fun toWalk(specs: List<DynamicPeriods.Spec>): DynamicPeriods.Frozen {
-        val byLabel = specs.associateBy { it.label }
-        val instances =
-            breaks.filter { it.endMillis > it.startMillis }.sortedBy { it.startMillis }.map { banked ->
-                val cadence = byLabel[banked.label]?.cadenceMillis ?: 0L
-                DynamicPeriods.Instance(
-                    DynamicPeriods.Spec(banked.label, banked.endMillis - banked.startMillis, cadence),
-                    banked.startMillis,
-                )
-            }
-        return DynamicPeriods.Frozen(instances, untilMillis)
     }
 }

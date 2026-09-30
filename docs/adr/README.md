@@ -25,6 +25,7 @@ migration history.
 | [0014](0014-window-frame.md) | One window frame, and nothing that vanishes on a click | the end of the two sorts, the head's five buttons, fill/maximize algebra, the three resizable edges, the reduce bar, focus-based keyboard ownership |
 | [0015](0015-one-device-plans.md) | One device plans, and the others take its rules | the election on a re-plan, the ranking, adopting a peer's runs, the deadline, why not a server probe or CPU load |
 | [0016](0016-sync-by-rows-and-the-server-quota.md) | Sync by rows, history as diffs, and the server-quota test | the 2026-09-14 outage, rows per entity, tombstone life, per-device undo, what the quota test measures |
+| [0017](0017-rule-structure-break-machine-and-cursor.md) | Rule structure: the break machine and the rule cursor | the requirements' "no global lookups", the screen breaks as a forward state machine (replacing the recurrence-bar walk), the compiled task rules and their forward cursor, the strict wake journey |
 
 ## Related docs
 

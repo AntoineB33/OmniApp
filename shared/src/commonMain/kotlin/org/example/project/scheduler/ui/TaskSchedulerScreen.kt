@@ -195,6 +195,13 @@ private val MIN_TIME_COLUMN_WIDTH = 72.dp
 private val COMPACT_ROW_MIN_HEIGHT = 20.dp
 
 /**
+ * The **normal** height of a task row — a one-line title. A longer title wraps and grows its row; this is the
+ * height it grows from, and the band the tree's pinned parent row takes at the top of its viewport
+ * ([TaskTreeView]).
+ */
+internal val TASK_ROW_MIN_HEIGHT = 28.dp
+
+/**
  * Renders a priority fraction (0..1) as a percentage with at most one decimal: 50%, 33.3%, 0.4%.
  *
  * `internal`, not private: every readout of an absolute priority prints it through this one rounding — a
@@ -464,7 +471,11 @@ internal fun CellListSection(
     moveDragActive: Boolean,
     moveDropTarget: MoveDropTarget?,
     resolveRowAt: (Float) -> Pair<VisibleOccurrence, Boolean>?,
-    onRowBounds: (VisibleOccurrence, Float, Float) -> Unit,
+    /**
+     * Each drawn row's band in window coordinates, keyed by the row's PATH (see
+     * [SchedulerDomain.VisibleRow.path]) — never by its occurrence, which a mirrored sub-list repeats.
+     */
+    onRowBounds: (List<CellId>, Float, Float) -> Unit,
     onMoveDragStart: () -> Unit,
     onMoveDropHover: (CellId, Boolean, CellId?) -> Unit,
     onMoveDragEnd: () -> Unit,
@@ -475,8 +486,19 @@ internal fun CellListSection(
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
     /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [EditModeMenus]. */
     namingSource: SchedulerState = state,
+    /**
+     * Draw only THIS cell of the list, as the tree's **pinned parent row** ([TaskTreeView]): a second drawing
+     * of a row that is also drawn, scrolled off, in its place. Drawn by this same code so the two cannot look
+     * different, but inert where two copies would fight: never in Edit Mode or in the min-time input (one field
+     * per session), no contextual menus (the press that opens one scrolls the copy away), no children, and
+     * its caller passes a no-op `onRowBounds` so the real row keeps its band.
+     */
+    pinnedCellId: CellId? = null,
+    /** The path of the row this list is drawn under (empty for the drawing's first list). */
+    rowPath: List<CellId> = emptyList(),
 ) {
     val list = state.lists[listId] ?: return
+    val pinned = pinnedCellId != null
 
     // PRD §2 Priority Display: align this sublist's percentages at one horizontal position — the
     // widest cell text in the list, clamped to [MIN, MAX].
@@ -515,10 +537,15 @@ internal fun CellListSection(
     val currentVisibleOrder by rememberUpdatedState(visibleOrder)
 
     list.cellIds.forEach { cellId ->
+        if (pinned && cellId != pinnedCellId) return@forEach
         val cell = state.cells[cellId] ?: return@forEach
         // Captured by the row's callbacks in place of [cell]: a `Cell` carries its weight column, so a
         // lambda holding one is a new argument whenever any of them moves; the id is what they all mean.
         val cellTaskId = cell.taskId
+        val path = rowPath + cellId
+        // Held so the row gets the same callback on every pass (see `currentState` above).
+        val reportRowBounds: (VisibleOccurrence, Float, Float) -> Unit =
+            remember(path, onRowBounds) { { _, top, bottom -> onRowBounds(path, top, bottom) } }
         val title = cellTaskId?.let { state.tasks[it]?.title }.orEmpty()
         val selectable = SchedulerDomain.isSelectableCell(state, cellId)
         // PRD §2: the one inert row the tree is drawn under. It is drawn COMPACT — no title, no percentage,
@@ -531,7 +558,7 @@ internal fun CellListSection(
         val isMainSelection = selectable && showHighlight && state.selection.main == cellId
         val isInSelectionRange = selectable && showHighlight
         val isEditing =
-            state.editSession?.let { it.cellId == cellId && it.renderVia == renderVia } ?: false
+            !pinned && state.editSession?.let { it.cellId == cellId && it.renderVia == renderVia } ?: false
         val editDraft = if (isEditing) state.editSession!!.draftText else title
         val hasChildren = SchedulerDomain.hasExpandableSubTree(state, cellId)
         val expanded = cellId in state.expanded
@@ -558,7 +585,7 @@ internal fun CellListSection(
         val menuStartable = menuTaskId != null && SchedulerDomain.isLeafTask(state, menuTaskId)
         val menuHasTemplate = !state.defaultSubtreeIsEmpty
         val cellMenu: TaskCellMenuActions? =
-            if (menuTaskId == null) {
+            if (menuTaskId == null || pinned) {
                 null
             } else {
                 remember(
@@ -649,7 +676,7 @@ internal fun CellListSection(
                     ?.let { it.start until it.end },
             textOverflow = (cellTextPx[cellId] ?: 0) > priorityColumnPx,
             minMinutes = cell.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 0,
-            minTimeEditing = minTimeEditCellId == cellId,
+            minTimeEditing = !pinned && minTimeEditCellId == cellId,
             // PRD §13: the contextual menu appears for any populated cell (leaf or parent) and on the
             // PRD §2 root row; null only for an empty placeholder, which holds no task to act on.
             //
@@ -703,7 +730,7 @@ internal fun CellListSection(
             },
             moveDragActive = moveDragActive,
             resolveRowAt = resolveRowAt,
-            onRowBounds = onRowBounds,
+            onRowBounds = reportRowBounds,
             onMoveDragStart = onMoveDragStart,
             onMoveDropHover = { target, insertBefore, via ->
                 onMoveDropHover(target, insertBefore, via)
@@ -755,7 +782,7 @@ internal fun CellListSection(
             rowTrailing = rowTrailing,
         )
 
-        if (expanded && hasChildren) {
+        if (expanded && hasChildren && !pinned) {
             val childListId = state.tasks[cell.taskId]!!.childListId!!
             CellListSection(
                 state = state,
@@ -788,6 +815,7 @@ internal fun CellListSection(
                 rowTrailing = rowTrailing,
                 onGoToTaskTree = onGoToTaskTree,
                 namingSource = namingSource,
+                rowPath = path,
             )
         }
     }
@@ -2664,7 +2692,7 @@ internal fun TaskRow(
      * row height, and the cell must FILL that height — its colour and outline are the element — never sit in
      * the middle of a taller slot with a bare band above and below.
      */
-    minHeight: Dp = 28.dp,
+    minHeight: Dp = TASK_ROW_MIN_HEIGHT,
 ) {
     Perf.count("recompose.TaskRow")
     val editFocusRequester = remember { FocusRequester() }
@@ -2765,11 +2793,7 @@ internal fun TaskRow(
     fun selectionPointerModifier(): Modifier {
         if (!selectable || isEditing) return Modifier
         return Modifier
-            .onGloballyPositioned { coords ->
-                rowCoordinates.value = coords
-                val top = coords.positionInWindow().y
-                onRowBounds(VisibleOccurrence(cellId, renderVia), top, top + coords.size.height)
-            }
+            .onGloballyPositioned { coords -> rowCoordinates.value = coords }
             // Keyed only by cellId so selection-driven flags (which change during the gesture's own
             // clicks) never restart and cancel an in-progress drag; freshness comes from the
             // rememberUpdatedState snapshots above.
@@ -2907,6 +2931,13 @@ internal fun TaskRow(
                 .taskSheetGuideLines(depth)
                 .padding(start = (depth * INDENT_STEP_DP).dp)
                 .defaultMinSize(minHeight = if (compact) COMPACT_ROW_MIN_HEIGHT else minHeight)
+                // EVERY row reports its band — the root strip, a placeholder and the cell being edited
+                // included — so the tree can tell where any row is: its pinned parent row may be any of
+                // them. Only the drag and the reveal read these, both through the occurrences they walk.
+                .onGloballyPositioned { coords ->
+                    val top = coords.positionInWindow().y
+                    onRowBounds(VisibleOccurrence(cellId, renderVia), top, top + coords.size.height)
+                }
                 .background(cellBackground)
                 .then(cellBorder)
                 .then(selectionPointerModifier())

@@ -95,6 +95,13 @@ internal object ScheduleFill {
          * the first instant (to [RULE_SWITCH_RESOLUTION_MILLIS]) where the best first run under `R` there is another.
          */
         val ruleStateAt: ((Long) -> List<PlanTask>)? = null,
+        /**
+         * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a line walked across a
+         * stretch nothing ran in (a wake from device sleep) is given *"the current set of rules … while no better set
+         * was found"* — the repeating part of the rules already returned ([cycle]) unrolled, and NOTHING searched.
+         * Where the cycle does not apply, nothing is laid.
+         */
+        val unrollOnly: Boolean = false,
     )
 
     /** How finely the instant a moving rule state changes the first run is located. */
@@ -232,6 +239,8 @@ internal object ScheduleFill {
                 return Result(laid, unrolled.second, idle = idleSpans(model, laid, input.startMillis, emitEnd))
             }
         }
+
+        if (input.unrollOnly) return Result(emptyList(), input.cycle)
 
         val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to)
         val cursor = replay(model, input.history, input.startMillis)

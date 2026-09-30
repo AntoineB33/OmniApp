@@ -69,7 +69,7 @@ class RestPosePresenceWindowTest {
         val breaks = listOf(pose5(), pose15())
         val dues = SchedulerEngine.restPoseDueMillisByKey(breaks, NOW)
         val announced = SchedulerDomain.screenBreakOccurrencesBetween(
-            breaks, NOW, NOW + 12 * HOUR, anchorMillis = NOW,
+            breaks, NOW, NOW + 12 * HOUR, nowMillis = NOW,
         )
         for (side in breaks) {
             val next = announced.firstOrNull { it.title == side.title && it.startEpochMillis >= NOW } ?: continue
@@ -124,10 +124,9 @@ class RestPosePresenceWindowTest {
     }
 
     @Test
-    fun a_pose_the_environment_suspends_indefinitely_has_no_next_instant_to_name() {
-        // An open-ended "no task allowed" period — a night, a hand-drawn inactivity period with no end —
-        // places nothing inside the search window, and a key with no placed occurrence is simply absent rather
-        // than published at some invented instant.
+    fun a_pose_due_inside_the_no_screen_period_the_line_is_in_is_due_now() {
+        // `docs/scheduler_requirements.md`: a break falling due in a "no screen" period the line is in starts at
+        // max($now line$, t_s) — the line. At a screen that pose is owed at once, and published as due.
         val dues = SchedulerEngine.restPoseDueMillisByKey(
             listOf(pose5()),
             NOW,
@@ -140,7 +139,7 @@ class RestPosePresenceWindowTest {
                 ),
             ),
         )
-        assertFalse(SchedulerDomain.FIVE_MIN_BREAK_KEY in dues, "nothing placed ⇒ nothing published: $dues")
+        assertEquals(NOW, dues[SchedulerDomain.FIVE_MIN_BREAK_KEY], "pulled onto the line: $dues")
     }
 
     @Test

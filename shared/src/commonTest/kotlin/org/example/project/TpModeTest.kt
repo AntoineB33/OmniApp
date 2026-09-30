@@ -4,7 +4,9 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.BreakMachine
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.FrozenScreenBreaks
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.TaskTimeRange
@@ -35,8 +37,15 @@ class TpModeTest {
 
     @AfterTest
     fun resetSeam() {
-        // A global var: leaving one installed would put every later test in the wrong mode.
+        // Global vars: leaving one installed would put every later test in the wrong mode.
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_AT_SCREEN }
+        SchedulerReducer.frozenScreenBreaks = { null }
+        SchedulerReducer.scheduleHorizonEndMillis = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
+    }
+
+    /** Fills reach six hours ahead, so a break an hour out is in the plan. */
+    private fun sixHours() {
+        SchedulerReducer.scheduleHorizonEndMillis = { it + 6 * HOUR }
     }
 
     /**
@@ -72,6 +81,10 @@ class TpModeTest {
         // The 20 s look-away is deliberately not part of this: it is taken as done as it falls due, so it is
         // never dragged and may sit on or behind the line. That exemption is pinned in [DynamicPeriodsTest].
         val (s, _) = oneTask()
+        // The line has been at a screen for seventy minutes: the pose fell due ten minutes ago and is owed.
+        val specs = SchedulerDomain.dynamicPeriodSpecs(s.screenBreaks)
+        val owing = BreakMachine.advance(BreakMachine.initial(NOW - 70 * MIN, specs), NOW, emptyList(), specs)
+        SchedulerReducer.frozenScreenBreaks = { FrozenScreenBreaks(emptyList(), NOW, NOW, owing) }
         val filled = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW))
         val poses = filled.panels.filter { it.screenBreak && it.title == "5min" }
         assertTrue(poses.isNotEmpty(), "there must be poses for this to be about")
@@ -93,43 +106,38 @@ class TpModeTest {
         // dragged — the user declared they are away, so a pose the line reaches is BEING TAKEN — and the three
         // sit where the recurrence bars put them, which is the bars' own answer.
         val (s, _) = oneTask()
+        sixHours()
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_ON_BREAK }
         val away = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
             .filter { it.screenBreak }
             .map { it.startEpochMillis }
         val bars = SchedulerDomain.screenBreakOccurrencesBetween(
-            s.screenBreaks, NOW, away.max(), anchorMillis = NOW,
+            s.screenBreaks, NOW, away.max(), nowMillis = NOW, mode = DynamicPeriods.MODE_ON_BREAK,
         ).map { it.startEpochMillis }
         assertTrue(bars.isNotEmpty())
         assertTrue(away.containsAll(bars), "mode 3 places the three where the bars do: $away vs $bars")
     }
 
     @Test
-    fun the_two_away_modes_place_the_poses_alike_and_only_mode_2_drags_the_look_away() {
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* states them in ONE clause — *"Mode 2 & 3:
-        // $now line$ must be covered by the period 'no on-screen task'"* — so nothing the fill does may tell
-        // them apart. Mode 2 used to drag an owed pose onto the line exactly as mode 1 does, on the reading
-        // that a locked screen is not a break TAKEN; what tells the two apart now is whether the break is
-        // ANNOUNCED (`DynamicPeriods.breaksAreNotifiedAt`), which the fill has no part in.
+    fun mode_2_drags_the_look_away_and_the_pose_joins_its_chain_where_mode_3_enters_both() {
+        // `docs/scheduler_requirements.md`: *"The $now line$ must be in mode 1 or 3 before entering the 20s break"* — so a
+        // mode-2 line drags the look-away it reaches (`]now line; now line + 20s]`), and the pose falling due within the
+        // reach of that drag joins its chain: *"the interval of the whole chain only contains one screen break, which is
+        // the longest ... brought to the start of the interval"*. Mode 3 enters each where it falls.
         val (s, _) = oneTask()
+        sixHours()
 
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_AWAY }
         val locked = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
             .filter { it.screenBreak }.map { it.title to it.startEpochMillis }
-        assertTrue(locked.isNotEmpty(), "there must be breaks for this to be about")
-        assertTrue(
-            locked.none { (title, start) -> title == "5min" && start == NOW + 1 },
-            "mode 2: nothing is dragged onto the line any more: $locked",
-        )
+        assertTrue(locked.none { it.first == "20s" }, "mode 2 enters no look-away: $locked")
+        assertEquals(NOW + HOUR - 20 * SEC, locked.first { it.first == "5min" }.second, "the pose starts where the chain does")
 
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_ON_BREAK }
         val onBreak = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
             .filter { it.screenBreak }.map { it.title to it.startEpochMillis }
-        // The poses are one plan; the look-away is not: *"The $now line$ must be in mode 1 or 3 before entering the
-        // 20s break"*, so mode 2 drags the one it reaches onto the line (`]now; now + 20s]`) and mode 3 enters it.
-        assertEquals(onBreak.filter { it.first != "20s" }, locked.filter { it.first != "20s" }, "the two away modes place the poses alike")
-        assertTrue(locked.any { (title, start) -> title == "20s" && start == NOW + 1 }, "mode 2 drags the look-away it reaches: $locked")
-        assertTrue(onBreak.none { (title, start) -> title == "20s" && start == NOW + 1 }, "mode 3 does not: $onBreak")
+        assertEquals(NOW + 20 * MIN, onBreak.first { it.first == "20s" }.second, "mode 3 enters the look-away where it falls")
+        assertEquals(NOW + HOUR, onBreak.first { it.first == "5min" }.second, "and the pose")
     }
 
     @Test

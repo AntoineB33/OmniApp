@@ -650,7 +650,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: and whether any OTHER device of the account
         // has it on — the mode is a quantifier over the account, not a property of this install.
         val accountAway by engine.accountAway.collectAsState()
-        val lookAwayHoldUntil by engine.lookAwayHoldUntil.collectAsState()
         // PRD §8 + the same section: the stretches this device's button was ON for. The OS log cannot show
         // them (the machine stays unlocked while the user is away from it), so they are the only source there
         // is for the layer over a declared absence — and a stretch where every device of the account is either
@@ -668,7 +667,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // `docs/scheduler_requirements.md` § *frozen past*: the screen breaks the line has banked — the calendar
         // draws the past from them and every placement continues from their front.
         val frozenBreaks by engine.frozenBreaks.collectAsState()
-        val conductingBreak by engine.conductingBreak.collectAsState()
         // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
         // since a chord another application already owns is otherwise indistinguishable from a broken app.
         val globalHotkeyClaim by GlobalHotkeys.claim.collectAsState()
@@ -1588,16 +1586,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // reading the reducer's fills use (`SchedulerReducer.tpMode`, injected by the engine over these same
             // flows) — the display and the plan must not answer it differently, or the calendar would draw the
             // three dynamic periods somewhere the schedule did not put them.
-            val tpMode =
+            val baseTpMode =
                 SchedulerDomain.tpMode(
                     SchedulerDomain.anyDeviceUnlockedAt(inactivityGaps, inactiveSince, activeSince, nowMillis),
                     // This device's own flag OR the account's, exactly as the engine reads it: mode 3 is *at least
                     // one device away and every other one locked*, so a peer holding the account away puts this
                     // one in mode 3 too, with its own button off.
                     awayDeclared = userAway || accountAway,
-                    // …and held in mode 3 inside a look-away it entered at a screen, exactly as the engine is.
-                    lookAwayHold = lookAwayHoldUntil?.let { nowMillis < it } == true,
                 )
+            // …and held in mode 3 inside a 20 s break it entered at a screen, as the break machine the line carries
+            // says (`docs/scheduler_requirements.md` § *Mode switching*), exactly as the engine reads it.
+            val tpMode = SchedulerDomain.effectiveTpMode(frozenBreaks, baseTpMode, nowMillis)
             // Every forward DISPLAY projection stops here: the end of the displayed span, floored at the horizon
             // a closed calendar still needs. Never `now + 168h` unconditionally — a grid sitting on today
             // projects ~24h of sleep bands, not a week of them (PRD §9 "the horizon follows what is displayed").
@@ -1649,10 +1648,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val displayBreakEnv =
                 dynamicBaseMemo.get(
                     listOf(
-                        nowMillis, breakEnvUntil, tz, tpMode,
+                        nowMillis, breakEnvUntil, tz, baseTpMode,
                         schedulerState.panels, schedulerState.periodKindStyles, schedulerState.sleep,
                         inactiveSince, activeSince, observedNoScreenEvidence, frozenBreaks, displayDynamicTasks,
-                        conductingBreak,
                     ),
                 ) {
                     Perf.measure("display.dynamicBase") {
@@ -1663,16 +1661,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             timeZone = tz,
                             liveRest = SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
                             noScreenEvidence = observedNoScreenEvidence,
-                            mode = tpMode,
+                            mode = baseTpMode,
                             frozen = frozenBreaks,
                             tasks = displayDynamicTasks,
-                            conducting = conductingBreak,
                         )
                     }
                 }
             // `docs/scheduler_requirements.md` § *frozen past*: the elapsed part of the visible window — what the three
             // dynamic periods DID over a stretch the line has already crossed — is the banked record
-            // ([SchedulerDomain.bankScreenBreaks]) and nothing else: never the walk re-run with the mode or the
+            // ([SchedulerDomain.stepScreenBreaks]) and nothing else: never the placement re-run with the mode or the
             // environment of now, which drew breaks that never happened.
             val displayPastSidePanels =
                 pastSidePanelsMemo.get(
@@ -1702,7 +1699,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val displaySidePanels =
                 sidePanelsMemo.get(
                     listOf(
-                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tpMode,
+                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, baseTpMode,
                         schedulerState.screenBreaks, displayBreakEnv, displayPastSidePanels,
                         visibleSpanBeyondNearHorizon, farWeekPlan,
                     ),
@@ -1723,9 +1720,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         nowMillis = nowMillis,
                                         horizonMillis = visibleSpanEndMillis,
                                         basePeriods = displayBreakEnv.periods,
-                                        blocks = displayBreakEnv.blocks,
-                                        tasks = displayBreakEnv.tasks,
-                                        mode = tpMode,
+                                        // The machine is moved in the mode the devices report: the look-away hold is its own.
+                                        mode = baseTpMode,
                                         frozen = displayBreakEnv.frozen,
                                     ).filter {
                                         it.startEpochMillis >= nowMillis && it.endEpochMillis > visibleSpanStartMillis

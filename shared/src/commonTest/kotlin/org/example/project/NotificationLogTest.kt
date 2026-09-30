@@ -138,7 +138,7 @@ class NotificationLogTest {
         // start at all. The due is the fixed instant, and it is what the sweep keys on.
         val firstStart =
             SchedulerDomain.screenBreakOccurrencesBetween(
-                vm.state.value.screenBreaks, start, start + 24 * 60 * 60_000L, anchorMillis = start,
+                vm.state.value.screenBreaks, start, start + 24 * 60 * 60_000L, nowMillis = start,
             ).minOfOrNull { it.startEpochMillis }
         assertNotNull(firstStart)
         assertTrue(firstStart > start, "the first break must be ahead of the line for the sweep to cross it")

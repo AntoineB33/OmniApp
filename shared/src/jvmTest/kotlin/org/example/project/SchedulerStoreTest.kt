@@ -1497,6 +1497,115 @@ class SchedulerStoreTest {
         }
     }
 
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the *previous* schema (v16 — the banked screen breaks and
+     * their front, no break machine) must still load, with 16.sqm adding the front's `machine` column on open: the
+     * banked record and the front kept, no machine yet (the machine then starts rested at the line, its bars raised by
+     * the record), and the machine round-tripping at once.
+     */
+    @Test
+    fun upgrades_pre_break_machine_v16_db_and_keeps_the_banked_record() {
+        val dbFile = File.createTempFile("scheduler-v16", ".db").also { it.delete() }
+        try {
+            val payload = SchedulerStateCodec.encodeSnapshot(stateWithHistory()).statePayload
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            // The v16 shape, exactly as 15.sqm left it.
+            raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "seq INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
+                    "debug_tainted INTEGER NOT NULL, delta_length INTEGER NOT NULL DEFAULT -1, " +
+                    "delta_hash INTEGER, delta TEXT NOT NULL, window TEXT, " +
+                    "PRIMARY KEY (account_id, category, seq))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                    "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
+                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                    "acknowledged_logout_at INTEGER, base_payload TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                    "visible INTEGER NOT NULL, fill_width INTEGER NOT NULL DEFAULT 0, " +
+                    "fill_height INTEGER NOT NULL DEFAULT 0, minimized INTEGER NOT NULL DEFAULT 0, config TEXT)",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+                0,
+            )
+            raw.execute(
+                null,
+                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                    "PRIMARY KEY (device_id, start_ms))",
+                0,
+            )
+            raw.execute(null, "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)", 0)
+            raw.execute(null, "CREATE TABLE device_away_span (start_ms INTEGER NOT NULL PRIMARY KEY, end_ms INTEGER NOT NULL)", 0)
+            raw.execute(null, "CREATE TABLE network_mode (id INTEGER NOT NULL PRIMARY KEY, offline INTEGER NOT NULL)", 0)
+            raw.execute(
+                null,
+                "CREATE TABLE screen_break_history (start_ms INTEGER NOT NULL, label TEXT NOT NULL, " +
+                    "end_ms INTEGER NOT NULL, PRIMARY KEY (start_ms, label))",
+                0,
+            )
+            raw.execute(null, "CREATE TABLE screen_break_front (id INTEGER NOT NULL PRIMARY KEY, until_ms INTEGER NOT NULL, line_ms INTEGER NOT NULL)", 0)
+            raw.execute(null, "INSERT INTO screen_break_history(start_ms, label, end_ms) VALUES (1000, '20s', 21000)", 0)
+            raw.execute(null, "INSERT INTO screen_break_history(start_ms, label, end_ms) VALUES (100000, '5min', 400000)", 0)
+            raw.execute(null, "INSERT INTO screen_break_front(id, until_ms, line_ms) VALUES (0, 500000, 550000)", 0)
+            raw.execute(null, "INSERT INTO app_state(account_id, payload) VALUES ('user-1', ?)", 1) { bindString(0, payload) }
+            raw.execute(
+                null,
+                "INSERT INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email) " +
+                    "VALUES (0, 'dev-1', 'at', 'rt', 'user-1', 'u1@x.y')",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 16", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+
+            assertEquals(payload, store.load()!!.statePayload, "the upgrade kept the state")
+            val banked = listOf(BankedBreak("20s", 1_000, 21_000), BankedBreak("5min", 100_000, 400_000))
+            assertEquals(FrozenScreenBreaks(banked, 500_000, 550_000, machine = null), store.loadFrozenScreenBreaks(), "the record is kept, with no machine yet")
+
+            val specs = org.example.project.scheduler.domain.SchedulerDomain.dynamicPeriodSpecs(
+                org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS,
+            )
+            val machine =
+                org.example.project.scheduler.domain.BreakMachine.advance(
+                    org.example.project.scheduler.domain.BreakMachine.initial(500_000, specs), 600_000, emptyList(), specs,
+                )
+            store.saveFrozenScreenBreaks(emptyList(), 600_000, 600_000, pruneBeforeMillis = 0, machine = machine)
+            assertEquals(FrozenScreenBreaks(banked, 600_000, 600_000, machine), store.loadFrozenScreenBreaks(), "the machine round-trips")
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
     @Test
     fun file_backed_db_persists_across_reopen() {
         val dbFile = File.createTempFile("scheduler-test", ".db").also { it.delete() }

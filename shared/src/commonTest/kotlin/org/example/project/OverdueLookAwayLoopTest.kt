@@ -40,14 +40,20 @@ class OverdueLookAwayLoopTest {
     @AfterTest
     fun resetSeams() {
         SchedulerReducer.frozenScreenBreaks = { null }
-        SchedulerReducer.conductingBreak = { null }
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_AT_SCREEN }
         SchedulerReducer.recordSchedulerRun = {}
     }
 
     private class MemoryStore(var frozen: FrozenScreenBreaks?) : FrozenScreenBreakStore {
         override fun loadFrozenScreenBreaks() = frozen
-        override fun saveFrozenScreenBreaks(added: List<BankedBreak>, untilMillis: Long, lineMillis: Long, pruneBeforeMillis: Long, removed: List<BankedBreak>) {}
+        override fun saveFrozenScreenBreaks(
+            added: List<BankedBreak>,
+            untilMillis: Long,
+            lineMillis: Long,
+            pruneBeforeMillis: Long,
+            removed: List<BankedBreak>,
+            machine: org.example.project.scheduler.domain.BreakMachine.State?,
+        ) {}
     }
 
     @Test
@@ -99,7 +105,7 @@ class OverdueLookAwayLoopTest {
         // And the plan leaves no hole the rules put no break in: every gap ahead of the line holds a break.
         val st = vm.state.value
         val env = SchedulerDomain.breakEnvironment(st, now, now + 2 * HOUR, kotlinx.datetime.TimeZone.UTC, frozen = engine.frozenBreaks.value)
-        val drawn = SchedulerDomain.screenBreakPanels(st.screenBreaks, now, now + HOUR, env.periods, env.blocks, env.tasks, frozen = env.frozen)
+        val drawn = SchedulerDomain.screenBreakPanels(st.screenBreaks, now, now + HOUR, env.periods, frozen = env.frozen)
             .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val work2 = st.panels.filter { it.auto && it.endEpochMillis > now }.map { TaskTimeRange(maxOf(now, it.startEpochMillis), it.endEpochMillis) }
         // Time the plan DECIDED to leave to nobody is not a hole (`SchedulerState.plannedIdle`).
@@ -108,24 +114,5 @@ class OverdueLookAwayLoopTest {
         val front = minOf(now + HOUR, st.panels.filter { it.auto }.maxOf { it.endEpochMillis })
         val holes = SchedulerDomain.subtractRegions(listOf(TaskTimeRange(now, front)), SchedulerDomain.mergeOccupied(work2 + drawn + st.plannedIdle))
         assertTrue(holes.isEmpty(), "holes with neither a task, a break nor a decision: ${holes.map { (it.startEpochMillis - now) / SEC to (it.endEpochMillis - it.startEpochMillis) / SEC }}")
-    }
-
-    @Test
-    fun a_look_away_the_line_places_is_banked_even_where_the_last_record_ran_a_few_milliseconds_into_it() {
-        // The real sequence (account 3, 09:27:20): the front is the line, the look-away is overdue, so it is placed AT
-        // the front; the task panel under it is recorded up to the instant the at-line re-plan read the clock — a few
-        // milliseconds INTO the look-away. Refusing to bank a break over recorded work refused this one for good, and
-        // the next tick placed it again at the next front.
-        val onScreen = listOf(org.example.project.scheduler.domain.PlanTask(org.example.project.scheduler.model.TaskId("t"), 1.0, 30 * MIN, mapOf(org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN to 0.0)))
-        val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
-        val front = T0
-        val frozen = FrozenScreenBreaks(listOf(BankedBreak(DynamicPeriods.LABEL_20S, T0 - 2 * HOUR, T0 - 2 * HOUR + 20 * SEC)), front, front)
-        // A 15-minute rest ending just before: no pose owed, the look-away is what is overdue.
-        val rest = listOf(org.example.project.scheduler.domain.RestrictivePeriod(T0 - 40 * MIN, T0 - 22 * MIN, org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN, "rest"))
-        val next = SchedulerDomain.bankScreenBreaks(breaks, frozen, T0 + 30 * SEC, rest, emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN)
-        val banked = next.breaks.filter { it.label == DynamicPeriods.LABEL_20S && it.startMillis >= T0 }
-        assertTrue(banked.isNotEmpty(), "the look-away the line placed at the front is banked: ${next.breaks.map { it.label to (it.startMillis - T0) / SEC }}")
-        // It is banked the moment the line reaches it, so work is never recorded inside it (the record append leaves
-        // out every banked break) — there is no "started but not banked yet" any more.
     }
 }

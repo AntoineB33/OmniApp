@@ -41,22 +41,25 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   (rollout, seeds, improver) always run; what a fill is given WALL TIME for is reaching the best score (§ *The best
   score* below). Where two devices' plans differ, the score decides (§ *One device plans*). Do not reintroduce
   "every device must land on the same answer" as a reason to refuse a solver or a wall-time budget.
-- **BOTH switch chords lay an EPSILON ENTRY at the now-line and re-plan around it**
-  (`SchedulerReducer.placeSwitchEntry`, `SchedulerDomain.SWITCH_ENTRY_MILLIS` = 1 s). It is an ordinary
-  user-authored panel — `auto = false`, existence pin, built through the same two helpers the calendar's own
-  "add" uses — so it is a fixed obstacle the fill plans around (`isSchedulerFixed`), it is a Calendar history
-  unit, and it draws with the blue outline without the calendar knowing a chord exists
-  (`calendar.md`). It states *which task and when*, and **nothing about how long**: the length is the
-  scheduler's answer. `Ctrl+Shift+Alt+T` names the task; `Ctrl+Shift+Alt+Z` names it as the **alternative**
-  the last fill's rules already give (`alternativeTaskAt`, whose README use IS this press), falling back to
-  re-planning with the refusal standing and reading the line when the panels carry no derived rules yet.
+- **BOTH switch chords lay an ENTRY at the now-line and re-plan around it** (`SchedulerReducer.placeSwitchEntry`). It
+  is an ordinary user-authored panel — `auto = false`, existence pin, built through the same two helpers the calendar's
+  own "add" uses — so it is a fixed obstacle the fill plans around (`isSchedulerFixed`), it is a Calendar history unit,
+  and it draws with the blue outline without the calendar knowing a chord exists (`calendar.md`).
+  - `Ctrl+Shift+Alt+T` names the task; its entry is EPSILON long (`SchedulerDomain.SWITCH_ENTRY_MILLIS` = 1 s) and
+    states *which task and when*, **nothing about how long**: the length is the scheduler's answer (below).
+  - `Ctrl+Shift+Alt+Z` (and PRD §7's "Switch task") lays the **alternative** the rules name at the line on
+    `[now line, now line + d]` with `d` fixed beforehand (`SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS`, 10 min) —
+    `docs/scheduler_requirements.md` § *Alternative Schedules*, word for word — and runs the scheduler again with it.
+    The engine hands the reducer the alternative its runtime cursor holds (`SchedulerIntent.ForceTaskSwitch.rules`,
+    `RuleProgram.Cursor.alternative`) rather than letting it search the plan; a reducer with no engine reads the
+    panels (`alternativeTaskAt`). Where the rules name nobody, the press falls back to the refusal below.
 - **The seed does NOT grow; the request that rides with it is what makes the panel a usable length.** Without a
   `ForcedTaskStart` the seed is only a pre-placed block, and the best continuation after a block need not be the
   same task. With it, the seed and the first run after it are ONE panel on the score's clock, so criterion 2
   charges its shortfall until the task reaches its minimum — the soft *Minimum Execution Time* goal, yielding as
   ever to whatever the timeline restricts.
-- **PRD §7 "Switch task" constrains the FIRST RUN, not the task.** The button (and `Ctrl+Shift+Alt+Z`) records a
-  `ForcedTaskSwitch(task, at)` and the fill hands it to the search as `refusedFirst`: the first run may not be
+- **Where the rules name no alternative, PRD §7 "Switch task" constrains the FIRST RUN, not the task.** The press
+  records a `ForcedTaskSwitch(task, at)` and the fill hands it to the search as `refusedFirst`: the first run may not be
   that task while anybody else may run, so the refused task keeps its lag and its share and is an ordinary
   candidate again from the second run — and a task nothing can replace still runs. Do not give it a rule of its
   own, and do not put it in `schedulingSignature`: the press re-plans inside its own reducer, or dropping the spent
@@ -87,8 +90,31 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
 - **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed pose with the
   line, and the plan under it was materialized at the last rule change: the answer is a display clip
   (`clipPlanForPinnedScreenBreak`, over every break ahead of the line), cutting what a break **refuses** — not what
-  it covers. The plan itself is built around the breaks the line WILL MEET (`breaksTheLineWillMeet`,
-  `screen-breaks.md`), so it runs through a pose the line will drag rather than leaving it a hole.
+  it covers. The plan itself is built around the breaks the line WILL MEET (`breaksTheLineWillMeet` — the break
+  machine run forward with the mode held, `screen-breaks.md`), so it runs through a pose the line will drag rather
+  than leaving it a hole.
+
+### The rules are read by a forward cursor
+
+→ `docs/scheduler_requirements.md` § *Rule Structure*, ADR 0017.
+
+- **The runtime never scans, sorts or searches the timeline.** As the line moves, the one interpreter
+  (`SchedulerEngine.interpretTo`, called by the advance tick, by the cue sweep at the instant it armed itself for,
+  and at every journey step) compares the line with the next armed trigger and does nothing before it. Two parts:
+  - **the task side is compiled** into sequential branches with their trigger boundaries (`RuleProgram` — the work
+    panel holding each piece of the timeline, the alternative the rules name there, where a plan panel ends, the
+    wind-downs, the reminder tags) whenever the scheduler returns a new set of rules (a new panel list), and read by a
+    forward cursor (`RuleProgram.Cursor`) that only ever steps forward;
+  - **the three screen breaks are a state machine** (`BreakMachine`, `screen-breaks.md`): its next transition is the
+    trigger, and a mode edge and a history rewrite are triggers of their own.
+  Compiling is the scheduler's side, done when the rules change, never on a tick. **Do not add a per-tick reading of
+  `state.panels`, of the pause history or of the environment to the runtime**; a question the line asks goes to the
+  cursor or the machine.
+- **What ran is banked once a plan panel has ENDED or the tree changed** (the cursor's armed trigger, acted on by the
+  advance tick: `elapsePending`), never by an `AdvanceSchedule` at every tick. A tree edit is a trigger too: a task
+  that left the tree may not go on holding a panel (PRD §9). Banking stays on the tick's cadence: banked at the cue
+  sweep's exact instants, a record reached the wire on a different side of the sync throttle and the heavy hour of
+  `ServerQuotaTest` gained a round trip.
 
 ### What reaches the scheduler
 
@@ -215,23 +241,14 @@ model exists to prevent.
   covering period that **is or carries `no screen`** (`PeriodKindConfig.isOrImpliesNoScreen`) gives up
   `[now, its end)`, and the plan may then put a task at the line: what is left covering it is a layer
   period, whose default resilience is `1` and which prevents nobody.
-  - **`sleep` retracts WHOLLY**, and it has to: no resilience can ever be written against it
-    (`isResilienceEditable` is false), so if the window itself stayed the line would go on being covered by a
-    period admitting nobody however awake the user is. This is PRD §17's *"carved by activity"* rule for the
-    SCHEDULER — the carve (`carveSleepPanels`) shipped display-only, so a night worked through showed the
-    band retracting to the line while the fill kept the whole window as an obstacle, and the line sat in a
-    stretch with **no band and no task at all** (account 3, 00:43 on 2026-09-18). Same shape as the dragged
-    pose of 2026-09-05, same answer.
-  - **`before bed` keeps its own hour** — the same test answering the other way, not an exception: its
-    resilience IS editable, so §17's *"a value above 0"* is the sanctioned way anything runs there, and an hour
-    nobody runs in is what the requirements allow while nobody has one. Retracting it would delete the wind-down, the
-    hour the user is meant to stop working in being exactly an hour they are at a screen for. Only its
-    implied `no screen` period lifts, which is what lets the task they DID let through be an on-screen one.
-  - **By default `inactivity` and every kind the account defined never retract** — they say the timeline is
-    empty, not that nobody is at a screen. Giving one a `no screen` companion (the period edit window) is the
-    user saying otherwise: a non-editable kind (`inactivity`) then retracts like `sleep`, an editable one keeps
-    its span like `before bed` and only its companion lifts. The predicate is deliberately **not** `coversNoScreen` (the bars' question,
-    which grey answers a fortiori), or a period the user drew would be pulled out from under them.
+  - **Exactly the `no screen` periods retract** (`SchedulerDomain.retractsAtLine`, user rule 2026-09-28): a drawn one,
+    and the companion every §17 window, wind-down hour or other kind carries. **No other period gives way, whatever
+    it accepts**: at a mode-1 line inside a `sleep` window its no-screen companion lifts and the window itself stays —
+    nobody runs in it, which the requirements allow (they require no task anywhere). The same for `inactivity` with a
+    companion, `before bed` and every kind the account defined. (Until 2026-09-28 `sleep` retracted WHOLE, on PRD
+    §17's *"carved by activity"*; the requirements name the no-screen period and nothing else — the tests pinning the
+    old reading, `SleepWindowNoIdlingTest` among them, have been failing since.) The predicate is deliberately **not**
+    `coversNoScreen`, or a period the user drew would be pulled out from under them.
   - **The plan is searched AND materialized across the retracted span; the DISPLAY is what stops at the
     line** (`clipPlanForRetractedPeriod`, beside `clipPlanForPinnedScreenBreak` in `App.kt`, forward only).
     The rules must name which task holds and until when (*"task A from 00:40 to $now line$, until 01:25"*),
@@ -371,7 +388,8 @@ model exists to prevent.
   an unroll. **So do the re-plans that are the rules EVALUATED, not changed** (2026-09-27): a `t_p` mode flip (the
   rules are parameterized by the mode, and the plan for the new one applies from the flip — an election's deadline
   left the old mode's plan standing for seconds; since 2026-09-28 the flip LAYS that plan rather than re-planning,
-  § *The rules are parameterized by the mode* below) and a journey's plan. (The idle check at the line re-planned too
+  § *The rules are parameterized by the mode* below). A journey plans nothing at all: it lays the rules held for its
+  mode and unrolls their repetition (`screen-breaks.md`, 2026-09-30). (The idle check at the line re-planned too
   until 2026-09-29; it now only reports, `screen-breaks.md`.)
 - **"Who is present" is asked when a re-plan is due, and at no other time.** No presence timer, no poll: the probe,
   the one-second reply window and the ten-second rules deadline are one-shot waits after that event. Adding a

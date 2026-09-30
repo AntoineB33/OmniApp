@@ -377,7 +377,15 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             queries.selectScreenBreakHistory().executeAsList().map {
                 org.example.project.scheduler.domain.BankedBreak(it.label, it.start_ms, it.end_ms)
             }
-        return org.example.project.scheduler.domain.FrozenScreenBreaks(breaks, front.until_ms, front.line_ms)
+        // A machine that does not decode (a row from a newer build, or damaged) is no reason to lose the record: the
+        // machine then starts rested at the line, as on a row written before it was kept.
+        val machine =
+            front.machine?.let { json ->
+                runCatching {
+                    breakMachineJson.decodeFromString(org.example.project.scheduler.domain.BreakMachine.State.serializer(), json)
+                }.getOrNull()
+            }
+        return org.example.project.scheduler.domain.FrozenScreenBreaks(breaks, front.until_ms, front.line_ms, machine)
     }
 
     override fun saveFrozenScreenBreaks(
@@ -386,12 +394,15 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
         lineMillis: Long,
         pruneBeforeMillis: Long,
         removed: List<org.example.project.scheduler.domain.BankedBreak>,
+        machine: org.example.project.scheduler.domain.BreakMachine.State?,
     ) {
+        val machineJson =
+            machine?.let { breakMachineJson.encodeToString(org.example.project.scheduler.domain.BreakMachine.State.serializer(), it) }
         queries.transaction {
             for (b in removed) queries.deleteScreenBreak(start_ms = b.startMillis, label = b.label)
             for (b in added) queries.insertScreenBreak(start_ms = b.startMillis, label = b.label, end_ms = b.endMillis)
             queries.deleteScreenBreaksBefore(pruneBeforeMillis)
-            queries.upsertScreenBreakFront(untilMillis, lineMillis)
+            queries.upsertScreenBreakFront(untilMillis, lineMillis, machineJson)
         }
     }
 
@@ -402,6 +413,9 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
     }
 
     companion object {
+        /** The break machine's persisted form ([org.example.project.scheduler.domain.BreakMachine.State]). */
+        private val breakMachineJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
         /**
          * Partition key for scheduler data written while the device had no account at all — a first launch
          * that could not reach Supabase to create its guest account, or a pre-v9 DB migrated while signed

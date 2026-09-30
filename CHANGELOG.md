@@ -11,6 +11,62 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The task tree pins the parent row at the top of its viewport — 2026-09-30
+
+In the tree, the default sub-tree window and a Search window's expanded task, the direct parent of the row
+appearing right below a band of one normal row height is drawn over that band once its own row has started to
+leave the top. "Right below" is the first row whose bottom is past the band, half-covered rows included. The first
+version used the first *fully* visible row. So when a parent row straddled the band, it pinned that parent itself
+instead of the parent's own parent. A multi-line parent shows its bottom 28 dp only. Selecting the pinned copy scrolls its real row back so one
+normal row height stays above it, and the tree's reveal now leaves that same gap for every row it scrolls into view
+from above (it was 24 px), so a revealed row is never under the pinned copy.
+
+- `SchedulerDomain.visibleRows` (new) is the visible-order walk with each row's parent row, depth and path.
+  `visibleOccurrences` is now a view of it.
+- **Row bands are keyed by path, not by occurrence.** On account 3 this pinned "writing" over "eye incision".
+  The mirrored "english" draws "writing"'s rows twice with the same (cell, via), so the twins overwrote each
+  other's bands. The empty row under the first "writing" read as sitting further down, where its twin was. This
+  was a pre-existing collision, and the drag-move's drop resolution had it too. It now reads bands by path.
+- The copy is `CellListSection` with `pinnedCellId`: the same row drawing, with no Edit Mode, min-time input,
+  contextual menus or bounds of its own.
+- Every `TaskRow` now reports its band, including the root strip, placeholders and the row being edited. Before,
+  only selectable rows did, and a row stopped reporting while it was edited.
+
+### § *Rule Structure*: the break machine, the rule cursor, a strict wake journey — 2026-09-30
+
+`docs/scheduler_requirements.md` gained § *Rule Structure* (event-driven, cursor-based rules; no timeline-wide
+filtering, sorting or search at runtime). The runtime did all three at every move of the line. ADR 0017.
+
+- **The three screen breaks are a forward state machine** (`BreakMachine`, new): bars, the break the line is in, the
+  one it drags, the stretch of "no screen"; each requirement is a transition, each transition an armed trigger. The
+  runtime moves it (`SchedulerDomain.stepScreenBreaks`); the plan's obstacles, the calendar and the server's pose
+  windows run it forward (`BreakMachine.predict`). The recurrence-bar walk (`DynamicPeriods.instances`,
+  `dynamicPeriodPanels`, `screenBreakPanelsInWindow`, `screenBreakCueOccurrencesBetween`, `lookAwayHoldUntil`,
+  `bankScreenBreaks`, the conducting-period environment) is gone, and with it the put-down, the "outlasted" chain,
+  the day-quantized origin and the pull-back floor.
+- **The task side is compiled for a forward cursor** (`RuleProgram`, new): the current task, the alternative, where a
+  plan panel ends, wind-downs and reminders. One interpreter (`SchedulerEngine.interpretTo`) moves both from the tick,
+  the cue sweep and every journey step. `AdvanceSchedule` runs only once a plan panel has ended or the tree changed;
+  the cue sweep announces the machine's transitions and self-delays to the next armed trigger; the base mode is
+  cached on its inputs; `Ctrl+Shift+Alt+Z` reads the alternative off the cursor (`ForceTaskSwitch.rules`).
+- Behaviour, each the requirements' own: no break pushed out of a stretch nobody can run in; a break during a pause
+  starts where the line meets it (never back-dated); a line away takes each break once; mode 2's dragged look-away and
+  a pose due within its reach are one chain; a teleported pose is announced when it teleports; a machine with nothing
+  to continue from starts rested at the line with its bars from the past it can see; an owed pose publishes its own
+  window alone (so the published rules hold still).
+- **The wake journey searches nothing** (user choice): it lays the plan held for its mode class and unrolls the
+  cycle (`ExtendSchedule.unrollOnly`); the landing re-plans. `planJourney` is gone.
+- Found by `:shared:startupCheck` on account 3's DB and fixed before shipping: the swept cover's evidence advanced the
+  machine to the landing before the catch-up walk, so the whole walk was skipped; and a line back at a screen inside
+  the night it had walked into owed a 15-min pose again, announced twice.
+- **SQLite schema v17** (`16.sqm`): `screen_break_front.machine` (the machine at the front, JSON; NULL on older rows).
+  Migration test `upgrades_pre_break_machine_v16_db_and_keeps_the_banked_record`.
+- Docs: `docs/invariants/scheduler.md` § *The rules are read by a forward cursor*; `screen-breaks.md` rewritten on
+  the machine; the stale bullets on the sleep retraction (only no-screen retracts since 2026-09-28) and on
+  `Ctrl+Shift+Alt+Z` (the alternative on `[now line, now line + 10 min]` since 2026-09-29) corrected.
+- `ServerQuotaTest` heavy hour: 126 reconciles against 125, egress 511.8 MB of the 512 MB budget (was 508.7).
+- Client rebuild needed (desktop and Android); no Supabase change.
+
 ### The code brought to `docs/scheduler_requirements.md` (audit list, items 1–5 and 7) + OR-Tools packaging — 2026-09-29
 
 An audit of the requirements file against the code listed eight gaps; these were fixed. Item 6 (the exhaustive search

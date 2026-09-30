@@ -2,7 +2,9 @@
 
 **Status:** active (rewritten 2026-08-27 to `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive
 Period*; the two `t_p` modes wired through 2026-08-28; the wake from device sleep made a mode-2 journey of the
-line 2026-09-03). **Invariant summary:** see `CLAUDE.md` → *Screen breaks*.
+line 2026-09-03). **The placement — the recurrence-bar walk this record describes — was replaced on 2026-09-30 by a
+forward state machine ([ADR 0017](0017-rule-structure-break-machine-and-cursor.md)); what is said here about the walk
+is history.** **Invariant summary:** see `docs/invariants/screen-breaks.md`.
 
 Terminology: the eye-care breaks are named **"screen breaks"** everywhere (PRD §15) — UI, docs, code
 identifiers (`ScreenBreak`, `screenBreak*`, `showScreenBreaks`, `DEFAULT_SCREEN_BREAKS`, …) and persisted

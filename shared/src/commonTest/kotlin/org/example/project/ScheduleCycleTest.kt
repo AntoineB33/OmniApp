@@ -205,10 +205,7 @@ class ScheduleCycleTest {
         // the line reaches is dragged and never happens, so the plan is built straight through it.
         val periods =
             far.panels.filter { it.sleep } +
-                SchedulerDomain.breaksTheLineWillMeet(
-                    s.screenBreaks, far.panels.filter { it.screenBreak }, NOW,
-                    org.example.project.scheduler.domain.DynamicPeriods.MODE_AT_SCREEN,
-                )
+                metBy(s, NOW, far.panels.maxOf { it.endEpochMillis })
         assertTrue(
             far.panels.none { a ->
                 a.auto && a.startEpochMillis > NOW + HOUR &&

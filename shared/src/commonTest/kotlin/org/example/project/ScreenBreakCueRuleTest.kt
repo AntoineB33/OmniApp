@@ -3,6 +3,9 @@ package org.example.project
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.BreakMachine
+import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.FrozenScreenBreaks
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 
@@ -10,16 +13,15 @@ import org.example.project.scheduler.model.ScreenBreak
  * PRD §15 / CLAUDE.md: a break cue must be **mathematically accurate** — a pure function of which boundary
  * instants the clock crossed, never of how a sweep or heartbeat happens to align with the calendar.
  *
- * This replaces `RestPoseNotificationRuleTest`, which pinned the same rule on the retired mechanism: a pose
- * SLID along the now-line while owed, so its drawn start was not a boundary and the cue had to key on the
- * separate anchored due `lastRest + interval` (`reachedRestPoseDueByTitle`). Nothing slides now — the
- * recurrence bars put every break at a fixed instant (ADR 0003) — so **every cue keys on the START of the
- * placed period**, and what is announced and what is drawn are one instant by construction.
+ * `docs/scheduler_requirements.md` § *Rule Structure*: every cue is a transition of the break machine as the line
+ * crosses it — a look-away where the line enters it, a pose where it falls due — so what is announced and what is
+ * banked are one instant by construction.
  *
  * What survives unchanged is the property that mattered: a fast or leaping clock must not skip a crossing,
  * and a window swept twice must not announce twice.
  */
 class ScreenBreakCueRuleTest {
+    private val SEC = 1_000L
     private val MIN = 60_000L
     private val HOUR = 60 * MIN
     private val NOW = 1_000_000_000_000L
@@ -32,6 +34,15 @@ class ScreenBreakCueRuleTest {
         ScreenBreak("look 20 feet away", intervalMillis = 20 * MIN, durationMillis = 20_000L)
     private val breaks = listOf(lookAway, pose5, pose15)
 
+    /** The transitions a line at a screen crosses over `(from, to]`, from a machine rested at [NOW]. */
+    private fun events(from: Long, to: Long): List<BreakMachine.Event> {
+        val specs = SchedulerDomain.dynamicPeriodSpecs(breaks)
+        val s = BreakMachine.advance(BreakMachine.initial(NOW, specs), from, emptyList(), specs)
+        val out = ArrayList<BreakMachine.Event>()
+        BreakMachine.advance(s, to, emptyList(), specs, out)
+        return out
+    }
+
     private fun crossings(
         from: Long,
         to: Long,
@@ -39,6 +50,8 @@ class ScreenBreakCueRuleTest {
         notified: Map<String, Long> = emptyMap(),
     ) = SchedulerDomain.cueCrossings(
         screenBreaks = breaks,
+        breakEvents = events(from, to),
+        mode = DynamicPeriods.MODE_AT_SCREEN,
         windDownInstants = emptyList(),
         automaticSchedule = automatic,
         alreadyNotifiedPoseDues = notified,
@@ -47,41 +60,26 @@ class ScreenBreakCueRuleTest {
     )
 
     @Test
-    fun a_look_away_cue_fires_at_the_instant_the_calendar_draws_it_at() {
-        // The whole rule for the one break that is never dragged: what the app SAYS and what it DRAWS are one
-        // instant, in both directions. The window is behind the line (`to` IS the now-line, as the sweep's
-        // own window is), so the calendar's reading of it is the at-line past placement.
-        //
-        // The anomaly this pins (account 3, 2026-09-04): the cue read the UNDRAGGED run, in which an owed pose
-        // is a placed period barring the 20 s for twenty minutes after it. At the line that pose is dragged
-        // away and bars nothing there, so the calendar drew a look-away at 12:54 that was never announced —
-        // the last cue logged being the 15-min pose that had fallen due at 12:51.
+    fun a_look_away_cue_fires_at_the_instant_the_line_entered_it() {
+        // What the app SAYS and what it banks are one transition of the break machine: the line entering the break.
         val to = NOW + 6 * HOUR
-        val drawn =
-            walkedAtLine(breaks, NOW, to, anchorMillis = to, tpMillis = to)
-                .filter { it.title == lookAway.title }
-                .map { it.startEpochMillis }
-        val fired = crossings(NOW, to)
-            .filter { it.kind == SchedulerDomain.CueKind.LookAwayStart }
-            .map { it.instant }
-        assertTrue(drawn.isNotEmpty(), "the case needs look-aways to be about")
-        assertEquals(drawn, fired, "every look-away drawn is announced, and every one announced is drawn")
+        var record: FrozenScreenBreaks? = null
+        var t = NOW
+        while (t <= to) {
+            record = SchedulerDomain.stepScreenBreaks(breaks, record, t, emptyList(), DynamicPeriods.MODE_AT_SCREEN).record
+            t += 7 * SEC
+        }
+        val banked = record!!.breaks.filter { it.label == DynamicPeriods.LABEL_20S }.map { it.startMillis }
+        val fired = crossings(NOW, to).filter { it.kind == SchedulerDomain.CueKind.LookAwayStart }.map { it.instant }
+        assertTrue(banked.isNotEmpty(), "the case needs look-aways to be about")
+        assertEquals(banked, fired, "every look-away the line entered is announced, and every one announced was entered")
     }
 
     @Test
-    fun a_pose_cue_fires_at_its_undragged_due() {
-        // ...and the other half: a pose the line is dragging has no crossable start of its own, so its cue
-        // keys on the due the bars give it with nothing dragged.
+    fun a_pose_cue_fires_where_it_falls_due() {
         val to = NOW + 6 * HOUR
-        val dues =
-            SchedulerDomain.screenBreakOccurrencesBetween(breaks, NOW, to, anchorMillis = to)
-                .filter { it.title != lookAway.title }
-                .map { it.startEpochMillis }
-        val fired = crossings(NOW, to)
-            .filter { it.kind == SchedulerDomain.CueKind.RestPoseDue }
-            .map { it.instant }
-        assertTrue(dues.isNotEmpty(), "the case needs poses to be about")
-        assertEquals(dues, fired)
+        val fired = crossings(NOW, to).filter { it.kind == SchedulerDomain.CueKind.RestPoseDue }.map { it.instant }
+        assertEquals(NOW + HOUR, fired.first(), "the 5 min pose falls due one hour after a rested start")
     }
 
     @Test
@@ -95,7 +93,7 @@ class ScreenBreakCueRuleTest {
         assertEquals(fired.map { it.instant }.distinct().size, fired.map { it.instant }.size)
         // Sweeping the same span in two halves finds the same set: consecutive scans tile the timeline.
         val mid = NOW + 90 * MIN
-        val halves = crossings(NOW, mid) + crossings(mid + 1, to)
+        val halves = crossings(NOW, mid) + crossings(mid, to)
         assertEquals(
             fired.map { it.title to it.instant }.toSet(),
             halves.map { it.title to it.instant }.toSet(),

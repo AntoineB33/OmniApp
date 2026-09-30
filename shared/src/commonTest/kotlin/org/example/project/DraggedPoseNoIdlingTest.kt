@@ -3,7 +3,9 @@ package org.example.project
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.BreakMachine
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.FrozenScreenBreaks
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
@@ -50,8 +52,23 @@ class DraggedPoseNoIdlingTest {
         return s.copy(screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS)
     }
 
-    private fun fill(state: SchedulerState, now: Long, mode: Int = DynamicPeriods.MODE_AT_SCREEN) =
-        SchedulerDomain.fillSchedule(state, now, horizonMillis = now + 3 * HOUR, tpMode = mode)
+    /**
+     * The break machine a line at a screen carries at [now] after an hour and ten minutes without a rest: the 5-min pose
+     * fell due ten minutes ago and is owed — dragged — at the line.
+     */
+    private fun owing(now: Long): FrozenScreenBreaks {
+        val specs = SchedulerDomain.dynamicPeriodSpecs(SchedulerDomain.DEFAULT_SCREEN_BREAKS)
+        val machine = BreakMachine.advance(BreakMachine.initial(now - 70 * MIN, specs), now, emptyList(), specs)
+        check(machine.drag != null) { "the fixture must owe a pose" }
+        return FrozenScreenBreaks(emptyList(), now, now, machine)
+    }
+
+    private fun fill(
+        state: SchedulerState,
+        now: Long,
+        mode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozen: FrozenScreenBreaks? = owing(NOW).takeIf { mode == DynamicPeriods.MODE_AT_SCREEN },
+    ) = SchedulerDomain.fillSchedule(state, now, horizonMillis = now + 3 * HOUR, tpMode = mode, frozenBreaks = frozen)
 
     /** The pose the line is dragging, i.e. the one the fill must NOT plan around. */
     private fun draggedPose(panels: List<TaskPanel>): TaskPanel? =
@@ -103,7 +120,7 @@ class DraggedPoseNoIdlingTest {
         val first = fill(s, NOW)
         assertTrue(draggedPose(first) != null, "the case needs a dragged pose")
         val later = NOW + 10 * MIN
-        val second = fill(s.copy(panels = first), later)
+        val second = fill(s.copy(panels = first), later, frozen = owing(later))
         assertTrue(draggedPose(second) != null, "and it must still be owed ten minutes on")
 
         assertEquals(
@@ -123,7 +140,7 @@ class DraggedPoseNoIdlingTest {
         val s = account()
         val first = fill(s, NOW)
         val later = NOW + 10 * MIN
-        val second = fill(s.copy(panels = first), later)
+        val second = fill(s.copy(panels = first), later, frozen = owing(later))
         val drawn =
             SchedulerDomain.clipPlanForPinnedScreenBreak(
                 second.filterNot { it.screenBreak },
@@ -175,7 +192,7 @@ class DraggedPoseNoIdlingTest {
         val panels = fill(account(), now)
         assertTrue(draggedPose(panels) != null, "the case needs an owed pose")
         val met = SchedulerDomain.breaksTheLineWillMeet(
-            SchedulerDomain.DEFAULT_SCREEN_BREAKS, panels.filter { it.screenBreak }, now, DynamicPeriods.MODE_AT_SCREEN,
+            SchedulerDomain.DEFAULT_SCREEN_BREAKS, now, now + 3 * HOUR, emptyList(), DynamicPeriods.MODE_AT_SCREEN, owing(now),
         )
         assertEquals(emptyList(), met, "the line meets none of the breaks ahead while a pose is owed")
         val covered = panels.filter { it.auto && it.endEpochMillis > now }.map { TaskTimeRange(maxOf(it.startEpochMillis, now), it.endEpochMillis) }
@@ -192,9 +209,10 @@ class DraggedPoseNoIdlingTest {
         // where they are placed, and no task without a resilience to "no task allowed" may be in one.
         val rest = TaskPanel("rest/0", null, "No screen", NOW - 30 * MIN, NOW - 5 * MIN, noScreen = true)
         val s = account().let { it.copy(panels = it.panels + rest) }
-        val panels = fill(s, NOW)
+        val panels = fill(s, NOW, frozen = null)
+        val env = SchedulerDomain.breakEnvironment(s, NOW, NOW + 3 * HOUR, kotlinx.datetime.TimeZone.UTC)
         val standing = SchedulerDomain.breaksTheLineWillMeet(
-            s.screenBreaks, panels.filter { it.screenBreak }, NOW, DynamicPeriods.MODE_AT_SCREEN,
+            s.screenBreaks, NOW, NOW + 3 * HOUR, env.periods, DynamicPeriods.MODE_AT_SCREEN, null,
         )
         assertTrue(standing.isNotEmpty(), "the case needs a break the line will meet")
         val work = panels.filter { it.auto }

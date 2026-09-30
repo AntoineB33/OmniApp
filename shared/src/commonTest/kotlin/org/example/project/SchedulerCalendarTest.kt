@@ -6,6 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -844,37 +845,42 @@ class SchedulerCalendarTest {
             screenBreaks = listOf(org.example.project.scheduler.model.ScreenBreak("5min", 60 * MIN, 5 * MIN, restBreak = true)),
         )
 
-        val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
-        val first = t1.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(5 * MIN, first.endEpochMillis - first.startEpochMillis)
-        assertTrue(first.startEpochMillis > start, "the period is ahead of the line, never on it")
+        // The line carries its break machine from one fill to the next (the engine's record; here, stepped by hand).
+        var record = SchedulerDomain.stepScreenBreaks(s.screenBreaks, null, start, emptyList(), DynamicPeriods.MODE_AT_SCREEN).record
+        SchedulerReducer.frozenScreenBreaks = { record }
+        SchedulerReducer.scheduleHorizonEndMillis = { it + 3 * 60 * MIN }
+        try {
+            val t1 = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(start))
+            val first = t1.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
+            assertEquals(5 * MIN, first.endEpochMillis - first.startEpochMillis)
+            assertTrue(first.startEpochMillis > start, "the period is ahead of the line, never on it")
 
-        // `side-dev/README.md` mode 1: a POSE the line reaches is pushed ahead of it. The 20 s look-away is
-        // not — the app takes it as done the moment it falls due — so it stays exactly where the bars put it
-        // and the line simply walks across it (in mode 2, for its twenty seconds). The bar labels are
-        // positional, so this account's single break stands in the shortest-of-three role and is that one:
-        // twelve minutes later it has not moved, and the line is now inside it.
-        val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(start + 12 * MIN))
-        val same = t2.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
-        assertEquals(
-            first.startEpochMillis,
-            same.startEpochMillis,
-            "a look-away does not move with the line",
-        )
-        assertTrue(
-            same.startEpochMillis <= start + 12 * MIN && start + 12 * MIN < same.endEpochMillis,
-            "…the line crosses it instead of dragging it",
-        )
-
-        // And no task panel overlaps one — the fill leaves it a clean place (PRD §15).
-        for (band in t2.panels.filter { it.screenBreak }) {
+            // `docs/scheduler_requirements.md` mode 1: a POSE the line reaches is dragged. The 20 s break is not — the line
+            // enters it, in mode 3. The bar labels are positional, so this account's single break stands in the
+            // shortest-of-three role and is that one: the line walks into it, and it has not moved.
+            val inside = first.startEpochMillis + 10_000L
+            record = SchedulerDomain.stepScreenBreaks(s.screenBreaks, record, inside, emptyList(), DynamicPeriods.MODE_AT_SCREEN).record
+            val t2 = SchedulerReducer.reduce(t1, SchedulerIntent.RefreshSchedule(inside))
+            val same = t2.panels.filter { it.screenBreak }.minByOrNull { it.startEpochMillis }!!
+            assertEquals(first.startEpochMillis, same.startEpochMillis, "a look-away does not move with the line")
             assertTrue(
-                t2.panels.none {
-                    !it.screenBreak && it.taskId != null &&
-                        it.startEpochMillis < band.endEpochMillis && band.startEpochMillis < it.endEpochMillis
-                },
-                "a task panel overlaps the period at ${band.startEpochMillis}",
+                same.startEpochMillis <= inside && inside < same.endEpochMillis,
+                "...the line crosses it instead of dragging it",
             )
+
+            // And no task panel overlaps one — the fill leaves it a clean place (PRD §15).
+            for (band in t2.panels.filter { it.screenBreak }) {
+                assertTrue(
+                    t2.panels.none {
+                        !it.screenBreak && it.taskId != null &&
+                            it.startEpochMillis < band.endEpochMillis && band.startEpochMillis < it.endEpochMillis
+                    },
+                    "a task panel overlaps the period at ${band.startEpochMillis}",
+                )
+            }
+        } finally {
+            SchedulerReducer.frozenScreenBreaks = { null }
+            SchedulerReducer.scheduleHorizonEndMillis = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
         }
     }
 

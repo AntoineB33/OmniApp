@@ -56,7 +56,7 @@ class PoseWindowRulesTest {
         val rules = SchedulerDomain.poseWindowsBetween(breaks, NOW)
         val bars =
             SchedulerDomain.screenBreakOccurrencesBetween(
-                breaks, NOW, NOW + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS, anchorMillis = NOW,
+                breaks, NOW, NOW + SchedulerDomain.NEXT_BREAK_SEARCH_MILLIS, nowMillis = NOW,
             )
         val posesFromBars =
             bars.filter { panel -> breaks.any { it.restBreak && it.title == panel.title } }
@@ -73,16 +73,22 @@ class PoseWindowRulesTest {
         // The server's question is "is the line inside a break", so the window straddling the instant asked
         // about is precisely the one that must survive. Asking a moment after a pose has begun must still
         // return it.
-        val rules = SchedulerDomain.poseWindowsBetween(breaks, NOW)
+        // A line away (mode 3, the mode the server is asked about) enters the first pose where it falls due; the record
+        // it carries is what the set is read from, as the engine reads it.
+        val mode = org.example.project.scheduler.domain.DynamicPeriods.MODE_ON_BREAK
+        val rules = SchedulerDomain.poseWindowsBetween(breaks, NOW, mode = mode)
         val first = rules.first()
         val inside = first.startMillis + 1
-        val fromInside = SchedulerDomain.poseWindowsBetween(breaks, inside)
+        var record: org.example.project.scheduler.domain.FrozenScreenBreaks? = null
+        for (t in listOf(NOW, inside)) record = SchedulerDomain.stepScreenBreaks(breaks, record, t, emptyList(), mode).record
+        val fromInside = SchedulerDomain.poseWindowsBetween(breaks, inside, mode = mode, frozen = record)
         assertTrue(
             fromInside.any { it.startMillis <= inside && inside < it.endMillis },
             "the break the line is inside must be in the set: $fromInside",
         )
         // …and one that has wholly elapsed is not a rule about the future any more.
-        val after = SchedulerDomain.poseWindowsBetween(breaks, first.endMillis)
+        record = SchedulerDomain.stepScreenBreaks(breaks, record, first.endMillis, emptyList(), mode).record
+        val after = SchedulerDomain.poseWindowsBetween(breaks, first.endMillis, mode = mode, frozen = record)
         assertTrue(after.none { it.endMillis <= first.endMillis })
     }
 
@@ -96,24 +102,20 @@ class PoseWindowRulesTest {
 
     @Test
     fun the_environment_reaches_the_rules() {
-        // The set is a function of the same environment the fill and the cue sweep are handed — a night the
-        // account is asleep through holds no break, so the server must not be told one falls there. (An
-        // open-ended period nobody may run in suspends the bars indefinitely.)
-        val blocked =
+        // The set is a function of the same environment the fill and the cue sweep are handed. A no-screen period ahead
+        // takes every pose falling due in it at its own start (the chain rule keeps the longest), and bars the ones
+        // after it — so the server is told exactly that.
+        val night =
             listOf(
                 org.example.project.scheduler.domain.RestrictivePeriod(
-                    NOW, NOW + 12 * HOUR,
-                    org.example.project.scheduler.domain.PeriodKinds.INACTIVITY,
-                    "Inactivity",
+                    NOW + 90 * MIN, NOW + 12 * HOUR,
+                    org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN,
+                    "No screen",
                 ),
             )
-        val rules = SchedulerDomain.poseWindowsBetween(breaks, NOW, basePeriods = blocked)
-        assertTrue(
-            rules.none { it.startMillis >= NOW && it.startMillis < NOW + 12 * HOUR },
-            "no rule may START inside a stretch nobody can run in: $rules",
-        )
-        // A break that began BEFORE the stretch and runs into it is a different matter, and is kept: it is a
-        // window the line may legitimately be inside, which is the whole question the server asks.
-        assertTrue(rules.all { it.endMillis > NOW })
+        val rules = SchedulerDomain.poseWindowsBetween(breaks, NOW, basePeriods = night)
+        val inside = rules.filter { it.startMillis >= NOW + 90 * MIN && it.startMillis < NOW + 12 * HOUR }
+        assertEquals(listOf(NOW + 90 * MIN), inside.map { it.startMillis }, "one pose, at the period's start: $rules")
+        assertTrue(rules.none { it.startMillis in NOW + 12 * HOUR until NOW + 13 * HOUR }, "and the stretch bars the next")
     }
 }

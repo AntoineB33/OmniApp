@@ -219,42 +219,30 @@ class NowLineSweepTest {
 
     @Test
     fun the_swept_cover_bars_the_breaks_that_follow_it() {
-        // The behavioural payoff, in the bars' own terms: a stretch covered by PeriodKinds.NO_SCREEN with no task
-        // in it is the README's rest stretch, so a night of it bars the 20 s period for twenty minutes and the
-        // 15 min for two hours after the wake. An on-screen task is a 0 against `no on-screen task`, which is
-        // what "on screen" IS.
-        val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 45 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
-        fun place(covered: List<TaskTimeRange>): List<TaskPanel> =
-            SchedulerDomain.screenBreakPanels(
-                breaks, NOW, NOW + 3 * HOUR,
-                SchedulerDomain.observedNoScreenPeriods(covered),
-                emptyList(),
-                onScreen,
-                DynamicPeriods.MODE_AT_SCREEN,
+        // The behavioural payoff, in the requirements' own terms: a stretch covered by "no screen" is a rest, so a night
+        // of it bars the 20 s break for twenty minutes and the 15 min for two hours after the wake. The swept cover
+        // reaches the machine the line carries as history rewritten behind it ([SchedulerDomain.absorbScreenBreakHistory]).
+        val specs = SchedulerDomain.dynamicPeriodSpecs(breaks)
+        // Before the night the line was at a screen and owed a pose: without the cover the machine has no idea the night
+        // happened, and the owed pose is dragging AT the line the instant the user comes back.
+        val owing =
+            org.example.project.scheduler.domain.BreakMachine.advance(
+                org.example.project.scheduler.domain.BreakMachine.initial(NOW - 10 * HOUR, specs), NOW, emptyList(), specs,
             )
+        val blindRecord = org.example.project.scheduler.domain.FrozenScreenBreaks(emptyList(), NOW, NOW, owing)
+        fun place(record: org.example.project.scheduler.domain.FrozenScreenBreaks?): List<TaskPanel> =
+            SchedulerDomain.screenBreakPanels(breaks, NOW, NOW + 3 * HOUR, emptyList(), DynamicPeriods.MODE_AT_SCREEN, record)
+        assertEquals(NOW + 1, place(blindRecord).minOfOrNull { it.startEpochMillis }, "the scenario owes a break at the line")
 
-        // Without the cover the app has no idea the night happened: the owed chain is dragging AT the line, so
-        // a break falls due the instant the user comes back. That is the anomaly this fixes.
-        val blind = place(emptyList())
-        assertEquals(
-            NOW + 1,
-            blind.minOfOrNull { it.startEpochMillis },
-            "the scenario must contain the break the night is supposed to bar",
-        )
-
-        // With it, nothing is owed for twenty minutes — the shortest of the three bars after a rest stretch.
-        val swept = place(listOf(TaskTimeRange(NOW - 8 * HOUR, NOW)))
-        val earliest = swept.minOfOrNull { it.startEpochMillis }
+        val swept = SchedulerDomain.absorbScreenBreakHistory(breaks, blindRecord, listOf(TaskTimeRange(NOW - 8 * HOUR, NOW)))
+        val placed = place(swept)
+        val earliest = placed.minOfOrNull { it.startEpochMillis }
         assertTrue(
             earliest == null || earliest >= NOW + 20 * MIN,
-            "a swept night bars every dynamic period for twenty minutes; got ${earliest?.minus(NOW)?.div(MIN)}min",
+            "a swept night bars every break for twenty minutes; got ${earliest?.minus(NOW)?.div(MIN)}min",
         )
-        // …and the 15 min period for two hours, which is the bar a night of it fires in particular.
-        val pose = swept.filter { it.title == pose15 }.minOfOrNull { it.startEpochMillis }
-        assertTrue(
-            pose == null || pose >= NOW + 2 * HOUR,
-            "a swept night bars the 15 min period for two hours; got ${pose?.minus(NOW)?.div(MIN)}min",
-        )
+        val pose = placed.filter { it.title == pose15 }.minOfOrNull { it.startEpochMillis }
+        assertTrue(pose == null || pose >= NOW + 2 * HOUR, "a swept night bars the 15 min period for two hours")
     }
 
     @Test
