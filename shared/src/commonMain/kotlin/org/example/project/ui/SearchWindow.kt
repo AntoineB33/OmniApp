@@ -848,11 +848,35 @@ internal fun KindsDropDown(
     onKindsChange: (Set<SearchDomain.Kind>) -> Unit,
     modifier: Modifier = Modifier.width(170.dp),
 ) {
+    CheckBoxDropDown(
+        options = SearchDomain.Kind.entries,
+        checked = kinds,
+        face = kindsLabel(kinds),
+        label = { it.label },
+        onChange = onKindsChange,
+        modifier = modifier,
+    )
+}
+
+/**
+ * **The check-box drop-down**: a field whose face is [face] and which opens a list of [options], each with a check box
+ * (headed by [SelectAllMenuItem]); ticking one leaves the menu open, so several can be ticked in turn, and Shift ticks a
+ * range. The one drop-down of its kind — the search kinds and the period edit window's period selector fields.
+ */
+@Composable
+internal fun <T> CheckBoxDropDown(
+    options: List<T>,
+    checked: Set<T>,
+    face: String,
+    label: (T) -> String,
+    onChange: (Set<T>) -> Unit,
+    modifier: Modifier = Modifier.width(170.dp),
+) {
     var open by remember { mutableStateOf(false) }
-    val range = rememberCheckRange<SearchDomain.Kind>()
+    val range = rememberCheckRange<T>()
     Box(modifier) {
         Text(
-            text = kindsLabel(kinds) + "  ▾",
+            text = "$face  ▾",
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -871,15 +895,15 @@ internal fun KindsDropDown(
             modifier = Modifier.checkRangeShift(range),
         ) {
             SelectAllMenuItem(
-                allChecked = kinds.containsAll(SearchDomain.Kind.entries),
-                onSelectAll = { onKindsChange(SearchDomain.Kind.entries.toSet()) },
-                onDeselectAll = { onKindsChange(emptySet()) },
+                allChecked = checked.containsAll(options),
+                onSelectAll = { onChange(options.toSet()) },
+                onDeselectAll = { onChange(emptySet()) },
             )
-            SearchDomain.Kind.entries.forEach { option ->
+            options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(option.label) },
-                    leadingIcon = { Checkbox(checked = option in kinds, onCheckedChange = null) },
-                    onClick = { onKindsChange(range.toggle(SearchDomain.Kind.entries, kinds, option)) },
+                    text = { Text(label(option)) },
+                    leadingIcon = { Checkbox(checked = option in checked, onCheckedChange = null) },
+                    onClick = { onChange(range.toggle(options, checked, option)) },
                 )
             }
         }

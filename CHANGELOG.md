@@ -11,6 +11,31 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Period edit window: companions folded into combinations, "When" formulas — 2026-10-01
+
+User rule: *"remove the 'present with it' config, because it can be done by the 'combinations' config"*; *"only show a
+field that opens a drop-down list with check boxes"*; *"add the buttons 'or', 'and', '(' and ')' to make a formula with
+period selector fields"*.
+
+- **"Always present with it" is gone.** A companion set is the rule `when <kind> then <set>`
+  (`PeriodKinds.companionRule`); `PeriodKindStyle` holds the drawing only, and `SetPeriodCompanions` is deleted.
+  `PeriodKindConfig.kindsOf` is now the closure of every rule a kind's period satisfies alone. The old default sets
+  (sleep, before bed, both breaks → no screen) are the tail of `PeriodKinds.DEFAULT_COMBINATIONS`.
+- **`PeriodCombination(id, condition, then)`**: `condition` is a token formula (`PeriodFormulaToken`: a field of kinds,
+  `and`, `or`, `(`, `)`), read and edited only through `PeriodFormula`; `then` is fields joined by `and` only (user
+  choice: a "then A or B" says nothing about which period to put there).
+- **The default layer rule is one formula** (user rule): `(no computer unlocked or not on a computer) and (no phone
+  unlocked or not on a phone)` → no screen (`PeriodKinds.LAYERS_RULE`), replacing the four one-field rules
+  (`LEGACY_LAYER_COMBINATIONS`, same meaning). An older edited list holding all four untouched has them collapsed into
+  it on `decode`; one with any of them edited or removed is kept as is.
+- **UI**: every field is the shared check-box drop-down (`CheckBoxDropDown`, `KindsDropDown` now routes through it);
+  under "When" the buttons or / and / ( / ) / ⌫, under "then" and / ⌫.
+- **Persistence**: `PersistedPeriodCombination` gains `condition`/`then` (a one-field rule still writes `kinds`/`implies`
+  for older builds); `PersistedPeriodKindStyle` and `PersistedPeriodCombinations` gain `folded`. A payload without
+  `folded` has its companion sets (stored, or the old defaults) folded into rules on `decode`; an account at the
+  defaults decodes to exactly the new defaults. Pinned by `PeriodCombinationsTest` (`an_older_payload_…`).
+- **Deploy**: client rebuild only.
+
 ### "Fake no computer/phone unlocked" renamed "not on a computer/phone" — 2026-09-30
 
 The two "I'm away" kinds below are now `not on a computer` / `not on a phone` (`PeriodKinds.NOT_ON_A_COMPUTER` /

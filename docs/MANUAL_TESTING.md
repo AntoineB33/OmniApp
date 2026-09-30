@@ -123,11 +123,17 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
   - [ ] **"add…" → restrictive period → "no screen"** → an EMPTY box **outlined in blue**, labelled "No
         screen", with the "no screen" drawing (by default `(` half-circles) across it, **no** layer lines (by
         default "no screen" is not accompanied by the layer periods) and no fill.
-  - [ ] **Period edit window (✎ on a kind):** tick "no computer unlocked" and "no phone unlocked" under
-        "Always present with it" for "no screen" → the same box now also shows the `/` and `\` lines; untick
-        → they go. Pick another drawing → every period of that kind (and every period carrying it as a
-        companion) repaints at once, and the swatch in the window matches the calendar. Give a kind of your
-        own the "no screen" companion → an on-screen task leaves its periods on the next plan.
+  - [ ] **Period edit window (✎ on a kind):** no "Always present with it" section. Under "Combinations",
+        "Add a combination" for "no screen" → "When" shows one field reading "no screen"; open its drop-down
+        (check boxes, "Select all" first) and leave it; under "then" tick "no computer unlocked" and "no phone
+        unlocked" in the field → the same box now also shows the `/` and `\` lines; remove the combination → they
+        go. Pick another drawing → every period of that kind (and every period carrying it) repaints at once, and
+        the swatch in the window matches the calendar. Give a kind of your own a `when <kind> then no screen`
+        rule → an on-screen task leaves its periods on the next plan.
+  - [ ] **"When" formula buttons:** on a new rule only "or" / "and" are enabled; "and" adds a word and an empty
+        field, after which "(" is enabled; ")" is enabled only once a "(" is open and the last field follows it;
+        ⌫ undoes one step at a time down to the first field. Under "then" only "and" and ⌫. A rule
+        `sleep or <your kind>` → `before bed` hatches the zig-zags over both kinds' periods.
   - [ ] **Add a "no computer unlocked" period over a stretch you were REALLY at the machine for** (earlier
         today, at the keyboard, screen never locked) → the `/` "no computer unlocked" lines over it are **DOTTED**,
         while the same period drawn over last night's locked hours keeps them **solid**. Three marks, three

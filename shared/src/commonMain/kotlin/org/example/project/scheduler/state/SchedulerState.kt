@@ -915,11 +915,10 @@ data class SchedulerState(
      */
     val periodKinds: List<String> = emptyList(),
     /**
-     * The **period edit window**'s two settings, per kind: the kinds **always present wherever a period of it
-     * is** (its companions) and the **drawing** it wears on the calendar
+     * The **period edit window**'s per-kind setting: the **drawing** it wears on the calendar
      * ([org.example.project.scheduler.domain.PeriodKindStyle]). OVERRIDES only, like [shortcutBindings]: a kind
      * absent here is at [PeriodKinds.defaultStyle], so a built-in kind nobody edited costs nothing. Read it
-     * through [periodKindConfig], never directly — that is where the companions are made transitive.
+     * through [periodKindConfig], never directly.
      *
      * Authoritative user-authored data: persisted and synced (one row per kind). Like defining a kind, an
      * account setting and not an Undo/Redo unit.
@@ -927,12 +926,13 @@ data class SchedulerState(
     val periodKindStyles: Map<String, PeriodKindStyle> = emptyMap(),
     /**
      * The **period edit window**'s combination rules ([org.example.project.scheduler.domain.PeriodCombination]):
-     * wherever periods of every kind of a rule overlap, the kinds it implies are present too. Starts at
-     * [PeriodKinds.DEFAULT_COMBINATIONS] (each computer layer with each phone layer, real or fake, is "no screen").
-     * Read through [periodKindConfig], like the companions.
+     * wherever a rule's "when" formula holds, the kinds it implies are present too — what a kind carries with it
+     * included (`when <kind> then …`). Starts at [PeriodKinds.DEFAULT_COMBINATIONS] (each computer layer with each
+     * phone layer, real or fake, is "no screen"; sleep, before bed and the breaks bring "no screen"). Read through
+     * [periodKindConfig], where the rules are made transitive.
      *
      * Authoritative user-authored data: persisted and synced (one row for the whole list — a handful of rules), an
-     * account setting and not an Undo/Redo unit, like the companions.
+     * account setting and not an Undo/Redo unit, like the drawings.
      */
     val periodCombinations: List<org.example.project.scheduler.domain.PeriodCombination> = PeriodKinds.DEFAULT_COMBINATIONS,
     /**

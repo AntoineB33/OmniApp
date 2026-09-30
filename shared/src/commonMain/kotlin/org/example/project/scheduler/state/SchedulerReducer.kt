@@ -484,7 +484,6 @@ object SchedulerReducer {
             is SchedulerIntent.RecordConductedBreak -> commitRecordChanges(state, reduceRecordConductedBreak(state, intent))
             is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
-            is SchedulerIntent.SetPeriodCompanions -> reduceSetPeriodCompanions(state, intent.kind, intent.companions)
             is SchedulerIntent.SetPeriodDrawing -> reduceSetPeriodDrawing(state, intent.kind, intent.drawing)
             is SchedulerIntent.SetPeriodCombinations -> reduceSetPeriodCombinations(state, intent.combinations)
             is SchedulerIntent.SetScheduleUnit ->
@@ -4861,28 +4860,12 @@ private fun reduceAddPeriodKind(state: SchedulerState, kindRaw: String): Schedul
     val drawing = PeriodDrawing.entries.minBy { worn[it] ?: 0 }
     return state.copy(
         periodKinds = state.periodKinds + kind,
-        periodKindStyles = state.periodKindStyles + (kind to PeriodKindStyle(emptySet(), drawing)),
+        periodKindStyles = state.periodKindStyles + (kind to PeriodKindStyle(drawing)),
     )
 }
 
 /**
- * The period edit window's companions: **the kinds always present wherever a period of [kindRaw] is.** Only
- * kinds the account holds are kept, and never the kind itself. A set equal to what the kind already carries is
- * a no-op. The write is the whole style (companions + the drawing it already wears), so the override stays one
- * row per kind.
- */
-private fun reduceSetPeriodCompanions(state: SchedulerState, kindRaw: String, companions: Set<String>): SchedulerState {
-    val kind = PeriodKinds.normalize(kindRaw)
-    val kinds = state.allPeriodKinds
-    if (kind !in kinds) return state
-    val kept = companions.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it != kind && it in kinds }
-    val current = state.periodKindConfig.style(kind)
-    if (kept == current.companions) return state
-    return state.withPeriodKindStyle(kind, current.copy(companions = kept))
-}
-
-/**
- * The period edit window's combination rules. Each rule keeps only the kinds the account holds, and the ids stay unique
+ * The period edit window's combination rules. Each field keeps only the kinds the account holds, and the ids stay unique
  * (a second rule with an id already seen is dropped). The same list again is a no-op.
  */
 private fun reduceSetPeriodCombinations(
@@ -4890,12 +4873,19 @@ private fun reduceSetPeriodCombinations(
     combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
 ): SchedulerState {
     val kinds = state.allPeriodKinds.toSet()
+    fun keep(field: Set<String>) = field.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it in kinds }
     val kept =
         combinations
             .map { rule ->
                 rule.copy(
-                    kinds = rule.kinds.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it in kinds },
-                    implies = rule.implies.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it in kinds },
+                    condition = rule.condition.map {
+                        if (it is org.example.project.scheduler.domain.PeriodFormulaToken.Kinds) {
+                            org.example.project.scheduler.domain.PeriodFormulaToken.Kinds(keep(it.kinds))
+                        } else {
+                            it
+                        }
+                    },
+                    then = rule.then.map(::keep),
                 )
             }
             .filter { it.id.isNotBlank() }
@@ -4935,22 +4925,13 @@ private fun reduceRemovePeriodKind(state: SchedulerState, kindRaw: String): Sche
     val kind = PeriodKinds.normalize(kindRaw)
     if (!PeriodKinds.isUserDefined(kind)) return state
     if (state.periodKinds.none { it == kind }) return state
-    // Its style goes with it, and it stops being anybody's companion: a companion that no longer exists is
-    // unreachable state, and would silently come back if the kind were ever re-added under the same name.
-    // Only the OVERRIDES are touched — a default never names a user-defined kind.
-    val styles =
-        (state.periodKindStyles - kind).mapValues { (_, style) ->
-            if (kind in style.companions) style.copy(companions = style.companions - kind) else style
-        }
-    // …and it leaves every combination rule that names it.
-    val combinations =
-        state.periodCombinations.map { rule ->
-            if (kind in rule.kinds || kind in rule.implies) rule.copy(kinds = rule.kinds - kind, implies = rule.implies - kind)
-            else rule
-        }
+    // Its style goes with it, and it leaves every combination rule that names it: a kind that no longer exists is
+    // unreachable state, and would silently come back if the kind were ever re-added under the same name. A default
+    // rule never names a user-defined kind.
+    val combinations = state.periodCombinations.map { rule -> if (kind in rule.named) rule.without(kind) else rule }
     return state.copy(
         periodKinds = state.periodKinds.filterNot { it == kind },
-        periodKindStyles = styles,
+        periodKindStyles = state.periodKindStyles - kind,
         periodCombinations = combinations,
         tasks = state.tasks.mapValues { (_, t) -> if (kind in t.resilience) t.copy(resilience = t.resilience - kind) else t },
         panels = state.panels.filterNot { it.periodKind == kind },

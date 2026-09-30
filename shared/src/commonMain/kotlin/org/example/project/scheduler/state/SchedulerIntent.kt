@@ -411,17 +411,10 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * The **period edit window**: the kinds that are always present wherever a period of [kind] is. Kinds the
-     * account does not hold, and [kind] itself, are dropped. An account setting like [AddPeriodKind]: no history
-     * unit.
-     */
-    data class SetPeriodCompanions(val kind: String, val companions: Set<String>) : SchedulerIntent
-
-    /**
-     * The **period edit window**'s combination rules, the whole list as the window leaves it: wherever periods of every
-     * kind of a rule overlap, the kinds it implies are present too. Kinds the account does not hold are dropped from a
-     * rule; a rule with nothing on either side is kept (the window is still filling it in) but implies nothing. An
-     * account setting like [SetPeriodCompanions]: no history unit.
+     * The **period edit window**'s combination rules, the whole list as the window leaves it: wherever a rule's "when"
+     * formula holds, the kinds it implies are present too. Kinds the account does not hold are dropped from a rule's
+     * fields; a rule with nothing on either side is kept (the window is still filling it in) but implies nothing. An
+     * account setting like [AddPeriodKind]: no history unit.
      */
     data class SetPeriodCombinations(
         val combinations: List<org.example.project.scheduler.domain.PeriodCombination>,

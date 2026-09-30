@@ -38,44 +38,216 @@ enum class PeriodDrawing(val label: String) {
 }
 
 /**
+ * One token of a combination rule's **"when" formula** (user rule, 2026-10-01: *"add the buttons 'or', 'and', '(' and
+ * ')' to make a formula with period selector fields"*). A [Kinds] token is one period selector field — the kinds checked
+ * in its drop-down, ALL of which must be present (a field of one kind is that kind; an empty field matches nothing);
+ * the other four are the formula's operators and brackets.
+ */
+sealed interface PeriodFormulaToken {
+    data class Kinds(val kinds: Set<String>) : PeriodFormulaToken
+    data object And : PeriodFormulaToken
+    data object Or : PeriodFormulaToken
+    data object Open : PeriodFormulaToken
+    data object Close : PeriodFormulaToken
+}
+
+/**
  * The period edit window's **combination rule**: *"select a combination of periods, and select which periods appear when
- * this combination is present"* (user rule, 2026-09-30). Wherever a period of EVERY kind in [kinds] is present at once,
- * a period of each kind in [implies] is present too — over exactly the stretch they overlap on. Like a companion, an
- * implication and never a laid panel. [id] names the rule for the editor and the store.
+ * this combination is present"* (user rule, 2026-09-30). Wherever the [condition] formula holds — `and` is the stretch
+ * where both sides are present, `or` where either is — a period of each kind in [then] is present too, over exactly that
+ * stretch. An implication and never a laid panel. [id] names the rule for the editor and the store.
+ *
+ * [then] is its fields joined by "and" only (user rule, 2026-10-01): a "then A or B" would not say which period to put
+ * there. What used to be a kind's "always present with it" set is the rule `when <kind> then <companions>`
+ * ([PeriodKinds.companionRule]) — one mechanism, not two.
  */
 data class PeriodCombination(
     val id: String,
-    val kinds: Set<String>,
-    val implies: Set<String>,
-)
+    val condition: List<PeriodFormulaToken>,
+    val then: List<Set<String>>,
+) {
+    /** Every kind present wherever [condition] holds: the union of [then]'s fields. */
+    val implies: Set<String> get() = then.flatMapTo(LinkedHashSet()) { it }
+
+    /** Every kind the rule names, on either side. */
+    val named: Set<String>
+        get() = condition.filterIsInstance<PeriodFormulaToken.Kinds>().flatMapTo(LinkedHashSet()) { it.kinds } + implies
+
+    /** The same rule with [kind] taken out of every field on both sides — the kind was removed. */
+    fun without(kind: String): PeriodCombination =
+        PeriodCombination(
+            id,
+            condition.map { if (it is PeriodFormulaToken.Kinds && kind in it.kinds) PeriodFormulaToken.Kinds(it.kinds - kind) else it },
+            then.map { it - kind },
+        )
+}
 
 /**
- * `side-dev/README.md` § *Restrictive Period*, as the period edit window states it: **what a kind of period
- * carries with it** — the kinds that are ALWAYS present wherever a period of it is ([companions]), and the
- * drawing it wears ([drawing]).
+ * **The one reading and the one editing of a combination rule's "when" formula** ([PeriodFormulaToken]).
  *
- * A companion is an implication of the kind, not a second panel: nothing lays a companion period, so there is
- * nothing to drift from its host, to edit apart from it or to sync. [PeriodKindConfig] folds the companions in
- * wherever the question is "which kinds are in force here".
+ * The editor only ever APPENDS whole steps (an operator with the field after it, a `(` in place of an empty field, a
+ * `)`) or undoes the last one ([removeLast]), so a formula is always `field (op field)*` with brackets around runs of it;
+ * the one thing it can leave open is a `(` with no `)`, which [parse] closes at the end. `and` binds tighter than `or`.
+ */
+object PeriodFormula {
+    /** A parsed "when" formula. */
+    sealed interface Expr {
+        data class Field(val kinds: Set<String>) : Expr
+        data class And(val left: Expr, val right: Expr) : Expr
+        data class Or(val left: Expr, val right: Expr) : Expr
+    }
+
+    /** A formula of one field: the editor's starting point, and what every rule was before formulas. */
+    fun of(kinds: Set<String>): List<PeriodFormulaToken> = listOf(PeriodFormulaToken.Kinds(kinds))
+
+    /** [tokens] as an expression, or `null` when they do not form one (empty, a dangling operator, a stray `)`). */
+    fun parse(tokens: List<PeriodFormulaToken>): Expr? {
+        val parser = Parser(tokens)
+        val expr = parser.or() ?: return null
+        return if (parser.i == tokens.size) expr else null
+    }
+
+    /** Recursive descent: `or` over `and` over a field or a bracketed formula. */
+    private class Parser(val tokens: List<PeriodFormulaToken>) {
+        var i = 0
+
+        fun or(): Expr? {
+            var left = and() ?: return null
+            while (tokens.getOrNull(i) == PeriodFormulaToken.Or) {
+                i++
+                left = Expr.Or(left, and() ?: return null)
+            }
+            return left
+        }
+
+        fun and(): Expr? {
+            var left = primary() ?: return null
+            while (tokens.getOrNull(i) == PeriodFormulaToken.And) {
+                i++
+                left = Expr.And(left, primary() ?: return null)
+            }
+            return left
+        }
+
+        fun primary(): Expr? =
+            when (val t = tokens.getOrNull(i)) {
+                is PeriodFormulaToken.Kinds -> { i++; Expr.Field(t.kinds) }
+                PeriodFormulaToken.Open -> {
+                    i++
+                    val inner = or()
+                    if (tokens.getOrNull(i) == PeriodFormulaToken.Close) i++ // an unclosed `(` closes at the end
+                    inner
+                }
+                else -> null
+            }
+    }
+
+    /** Whether [expr] holds where exactly the kinds in [present] are present. */
+    fun holds(expr: Expr, present: Set<String>): Boolean =
+        when (expr) {
+            is Expr.Field -> expr.kinds.isNotEmpty() && present.containsAll(expr.kinds)
+            is Expr.And -> holds(expr.left, present) && holds(expr.right, present)
+            is Expr.Or -> holds(expr.left, present) || holds(expr.right, present)
+        }
+
+    /** The stretches where [expr] holds, given where each kind is ([at]; merged, sorted stretches). */
+    fun regions(expr: Expr, at: (String) -> List<TaskTimeRange>): List<TaskTimeRange> =
+        when (expr) {
+            is Expr.Field -> {
+                var overlap: List<TaskTimeRange>? = null
+                for (k in expr.kinds) {
+                    overlap = if (overlap == null) at(k) else SchedulerDomain.intersectRegions(overlap, at(k))
+                    if (overlap.isEmpty()) break
+                }
+                overlap.orEmpty()
+            }
+            is Expr.And -> {
+                val left = regions(expr.left, at)
+                if (left.isEmpty()) left else SchedulerDomain.intersectRegions(left, regions(expr.right, at))
+            }
+            is Expr.Or -> SchedulerDomain.mergeOccupied(regions(expr.left, at) + regions(expr.right, at))
+        }
+
+    private fun openCount(tokens: List<PeriodFormulaToken>): Int =
+        tokens.count { it == PeriodFormulaToken.Open } - tokens.count { it == PeriodFormulaToken.Close }
+
+    private fun endsOperand(tokens: List<PeriodFormulaToken>): Boolean =
+        tokens.lastOrNull().let { it is PeriodFormulaToken.Kinds || it == PeriodFormulaToken.Close }
+
+    /** "and" / "or" may follow a field or a `)`. */
+    fun canAppendOperator(tokens: List<PeriodFormulaToken>): Boolean = endsOperand(tokens)
+
+    /** [op] and the empty field it asks for. */
+    fun appendOperator(tokens: List<PeriodFormulaToken>, op: PeriodFormulaToken): List<PeriodFormulaToken> =
+        if (!canAppendOperator(tokens)) tokens else tokens + op + PeriodFormulaToken.Kinds(emptySet())
+
+    /** `(` takes the place of a field still empty — the one spot an operand is about to start. */
+    fun canOpen(tokens: List<PeriodFormulaToken>): Boolean =
+        tokens.isEmpty() || tokens.last().let { it is PeriodFormulaToken.Kinds && it.kinds.isEmpty() }
+
+    fun open(tokens: List<PeriodFormulaToken>): List<PeriodFormulaToken> =
+        if (!canOpen(tokens)) tokens
+        else tokens.dropLast(if (tokens.isEmpty()) 0 else 1) + PeriodFormulaToken.Open + PeriodFormulaToken.Kinds(emptySet())
+
+    /** `)` closes an open `(` after a finished operand. */
+    fun canClose(tokens: List<PeriodFormulaToken>): Boolean = endsOperand(tokens) && openCount(tokens) > 0
+
+    fun close(tokens: List<PeriodFormulaToken>): List<PeriodFormulaToken> =
+        if (!canClose(tokens)) tokens else tokens + PeriodFormulaToken.Close
+
+    /** Whether there is a step to undo: anything beyond the one starting field. */
+    fun canRemoveLast(tokens: List<PeriodFormulaToken>): Boolean = tokens.size > 1
+
+    /**
+     * Undo the last step: a `)`; an operator with the field after it; a `(` with the field after it (an empty field
+     * again in its place).
+     */
+    fun removeLast(tokens: List<PeriodFormulaToken>): List<PeriodFormulaToken> {
+        if (!canRemoveLast(tokens)) return tokens
+        val last = tokens.last()
+        val before = tokens[tokens.size - 2]
+        return when {
+            last == PeriodFormulaToken.Close -> tokens.dropLast(1)
+            before == PeriodFormulaToken.And || before == PeriodFormulaToken.Or -> tokens.dropLast(2)
+            before == PeriodFormulaToken.Open -> tokens.dropLast(2) + PeriodFormulaToken.Kinds(emptySet())
+            else -> tokens.dropLast(1)
+        }
+    }
+
+    /** How a formula reads in one line, for tests and logs: `(a & b) | c` spelled with the words. */
+    fun describe(tokens: List<PeriodFormulaToken>): String =
+        tokens.joinToString(" ") {
+            when (it) {
+                is PeriodFormulaToken.Kinds -> it.kinds.sorted().joinToString("+").ifEmpty { "?" }
+                PeriodFormulaToken.And -> "and"
+                PeriodFormulaToken.Or -> "or"
+                PeriodFormulaToken.Open -> "("
+                PeriodFormulaToken.Close -> ")"
+            }
+        }
+}
+
+/**
+ * `side-dev/README.md` § *Restrictive Period*, as the period edit window states it: **how a kind of period is drawn**.
+ * What a kind carries WITH it is a combination rule ([PeriodCombination]); until 2026-10-01 it was a companion set here.
  */
 data class PeriodKindStyle(
-    val companions: Set<String> = emptySet(),
     val drawing: PeriodDrawing,
 )
 
 /**
- * **The account's answer, per kind, to "which kinds come with it and how is it drawn"** — the overrides the
+ * **The account's answer, per kind, to "which kinds come with it and how is it drawn"** — the drawing overrides the
  * account holds ([org.example.project.scheduler.state.SchedulerState.periodKindStyles]) over the built-in
- * defaults ([PeriodKinds.defaultStyle]).
+ * defaults ([PeriodKinds.defaultStyle]), and its combination rules.
  *
- * The one reading of a companion set in the whole app: the scheduler's companion periods
+ * The one reading of the rules in the whole app: the scheduler's companion periods
  * ([SchedulerDomain.companionPeriods]), the mode-1 retraction, the layers a period hatches
  * ([assertedLayers]), the record bank's no-screen ranges and the calendar's drawings all ask through here, so
  * none of them can hold a second list.
  *
- * Companions are TRANSITIVE ([kindsOf]): a period of A accompanied by B, itself accompanied by C, has all three
- * in force — "always present when B is present" is true of C wherever B is, however B got there. A cycle is
- * harmless (A and B simply always come together).
+ * What a kind carries ([kindsOf]) is TRANSITIVE: every rule whose formula a kind's period satisfies ON ITS OWN (a
+ * `when A`, a `when A or B`) brings its kinds, and those may satisfy further rules. A cycle is harmless (A and B simply
+ * always come together).
  *
  * Immutable and precomputed, so it may be read from the reducer's off-thread re-plans and the frame loop alike.
  */
@@ -85,17 +257,26 @@ class PeriodKindConfig(
     val combinations: List<PeriodCombination> = PeriodKinds.DEFAULT_COMBINATIONS,
 ) {
 
+    /** The rules that can bring anything: a formula that parses, and at least one kind to bring. */
+    private val rules: List<Pair<PeriodFormula.Expr, Set<String>>> =
+        combinations.mapNotNull { rule ->
+            val implies = rule.implies
+            if (implies.isEmpty()) null else PeriodFormula.parse(rule.condition)?.let { it to implies }
+        }
+
     private val closures: Map<String, Set<String>> =
-        (PeriodKinds.BUILT_IN + styles.keys).distinct().associateWith(::walk)
+        (PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + styles.keys + combinations.flatMap { it.named })
+            .distinct().associateWith(::walk)
 
     private fun walk(kind: String): Set<String> {
-        val seen = LinkedHashSet<String>()
-        val queue = ArrayDeque(listOf(kind))
-        while (queue.isNotEmpty()) {
-            val next = queue.removeFirst()
-            if (!seen.add(next)) continue
-            queue.addAll(style(next).companions)
-        }
+        val seen = linkedSetOf(kind)
+        do {
+            var grew = false
+            for ((expr, implies) in rules) {
+                if (seen.containsAll(implies) || !PeriodFormula.holds(expr, seen)) continue
+                if (seen.addAll(implies)) grew = true
+            }
+        } while (grew)
         return seen
     }
 
@@ -104,7 +285,10 @@ class PeriodKindConfig(
 
     fun drawing(kind: String): PeriodDrawing = style(kind).drawing
 
-    /** **Every kind in force wherever a period of [kind] is** — [kind] itself first, then its companions, transitively. */
+    /**
+     * **Every kind in force wherever a period of [kind] is** — [kind] itself first, then what the rules its period
+     * satisfies alone bring, transitively.
+     */
     fun kindsOf(kind: String): Set<String> = closures[kind] ?: walk(kind)
 
     /** [kindsOf] without [kind] itself: the companion periods a period of [kind] carries. */
@@ -121,8 +305,8 @@ class PeriodKindConfig(
     /**
      * PRD §8: **which calendar LAYERS a period of [kind] asserts** — the layer kinds
      * ([PeriodKinds.NO_COMPUTER_UNLOCKED] / [PeriodKinds.NO_PHONE_UNLOCKED]) among [kindsOf]. A "no screen" period
-     * asserts none unless the account made the layers its companions: the reverse implication (both layers ⇒ no
-     * screen) is the layers' own definition and is taken by [SchedulerDomain.companionPeriods], not here.
+     * asserts none unless a rule of the account makes it bring the layers: the reverse implication (both layers ⇒ no
+     * screen) is a two-kind rule, which no single kind satisfies, and is taken by [closeRegions], not here.
      */
     fun assertedLayers(kind: String): Set<SchedulerDomain.ActivityLayer> {
         val kinds = kindsOf(kind)
@@ -139,8 +323,8 @@ class PeriodKindConfig(
 
     /**
      * **Every kind in force over the timeline, given where some kinds are** — the one closure of both settings the
-     * period edit window holds: each kind brings its companions ([kindsOf]), and wherever every kind of a
-     * [PeriodCombination] overlaps, its implied kinds (with THEIR companions) are present over the overlap. Repeated
+     * period edit window holds: each kind brings what it carries alone ([kindsOf]), and wherever the formula of a
+     * [PeriodCombination] holds, its implied kinds (with what THEY carry) are present over that stretch. Repeated
      * until nothing grows, so a combination may feed another (bounded by the number of rules plus one).
      *
      * [present] maps a kind to the stretches a period of it covers; the answer maps every kind in force to its merged
@@ -163,18 +347,12 @@ class PeriodKindConfig(
             return grew
         }
         for ((kind, spans) in present) if (spans.isNotEmpty()) add(kind, spans)
-        val rules = combinations.filter { it.kinds.isNotEmpty() && it.implies.isNotEmpty() }
         repeat(rules.size + 1) {
             var grew = false
-            for (rule in rules) {
-                var overlap: List<TaskTimeRange>? = null
-                for (k in rule.kinds) {
-                    val spans = out[k].orEmpty()
-                    overlap = if (overlap == null) spans else SchedulerDomain.intersectRegions(overlap, spans)
-                    if (overlap.isEmpty()) break
-                }
-                if (overlap.isNullOrEmpty()) continue
-                for (implied in rule.implies) if (add(implied, overlap)) grew = true
+            for ((expr, implies) in rules) {
+                val where = PeriodFormula.regions(expr) { out[it].orEmpty() }
+                if (where.isEmpty()) continue
+                for (implied in implies) if (add(implied, where)) grew = true
             }
             if (!grew) return out
         }

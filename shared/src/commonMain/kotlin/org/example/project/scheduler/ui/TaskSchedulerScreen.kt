@@ -42,6 +42,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import org.example.project.scheduler.domain.PeriodDrawing
+import org.example.project.scheduler.domain.PeriodFormula
+import org.example.project.scheduler.domain.PeriodFormulaToken
 import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.ui.periodDrawing
 import androidx.compose.material3.DropdownMenu
@@ -3876,18 +3878,14 @@ internal fun TaskEditWindow(
  * a period ("who may work through it?"), because defining one adds it to every task at the default `0`
  * ([PeriodKinds.defaultResilience]) and somebody has to be let back in.
  *
- * Five things it holds, and nothing else:
- * - **Always present with it** — the kinds whose periods are always present wherever a period of this kind
- *   is ([PeriodKindStyle.companions], written by
- *   [org.example.project.scheduler.state.SchedulerIntent.SetPeriodCompanions]). One check box per other kind;
- *   the kinds that come along only THROUGH one of them (companions are transitive,
- *   [org.example.project.scheduler.domain.PeriodKindConfig.kindsOf]) are named under the list, since a box for
- *   them would claim a setting this kind does not hold.
+ * Four things it holds, and nothing else:
  * - **Combinations** — the account's combination rules that involve this kind
  *   ([org.example.project.scheduler.domain.PeriodCombination], written whole by
- *   [org.example.project.scheduler.state.SchedulerIntent.SetPeriodCombinations]): for each, the kinds that must ALL be
- *   present, and the kinds that are then present too. "Add a combination" starts one with this kind in it. By default
- *   each computer layer with each phone layer, real or fake, brings "no screen" ([PeriodKinds.DEFAULT_COMBINATIONS]).
+ *   [org.example.project.scheduler.state.SchedulerIntent.SetPeriodCombinations]): for each, a "when" formula of period
+ *   selector fields and "and" / "or" / brackets, and the fields of kinds that are then present too. "Add a
+ *   combination" starts one with this kind in it. What used to be "always present with it" is the rule
+ *   `when <this kind> then …` (user rule, 2026-10-01). By default each computer layer with each phone layer, real or
+ *   fake, brings "no screen", and so do sleep, before bed and the breaks ([PeriodKinds.DEFAULT_COMBINATIONS]).
  * - **Drawing** — the pattern its periods wear on the calendar, one of [PeriodDrawing]'s fixed set, each shown
  *   as the swatch the calendar will draw ([org.example.project.ui.periodDrawing]).
  * - **Delete**, offered only for a user-defined kind: this is the one place a period is deleted, because it
@@ -3918,15 +3916,12 @@ internal fun PeriodKindEditWindow(
     taskColors: Map<TaskId, Color>,
     /** False for the two built-in kinds — the README names them, so the account cannot drop them. */
     canDelete: Boolean,
-    /** Every kind the account holds, this one included — the rows of "Always present with it". */
+    /** Every kind the account holds, this one included — the options of the combinations' period selector fields. */
     allKinds: List<String>,
-    /** This kind's companions and drawing as they stand. */
+    /** This kind's drawing as it stands. */
     style: PeriodKindStyle,
-    /** Every kind present wherever this one is, transitively, this one excluded. */
-    impliedKinds: Set<String>,
     /** The account's combination rules, all of them (the section shows the ones naming this kind). */
     combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
-    onSetCompanions: (Set<String>) -> Unit,
     /** The whole list of combination rules, as the section leaves it. */
     onSetCombinations: (List<org.example.project.scheduler.domain.PeriodCombination>) -> Unit,
     onSetDrawing: (PeriodDrawing) -> Unit,
@@ -3964,38 +3959,6 @@ internal fun PeriodKindEditWindow(
                 Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Always present with it", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Wherever a period of this kind is, a period of each checked kind is too.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                val companionOrder = allKinds.filter { it != kind }
-                val companionRange = org.example.project.ui.rememberCheckRange<String>()
-                Column(Modifier.checkRangeShift(companionRange)) {
-                    for (other in companionOrder) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = other in style.companions,
-                                onCheckedChange = {
-                                    onSetCompanions(companionRange.toggle(companionOrder, style.companions, other))
-                                },
-                            )
-                            Text(other, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-                val throughOthers = impliedKinds - style.companions
-                if (throughOthers.isNotEmpty()) {
-                    Text(
-                        "Also present through them: " + throughOthers.joinToString(", "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                HorizontalDivider()
-
                 PeriodCombinationsSection(kind, allKinds, combinations, onSetCombinations)
 
                 HorizontalDivider()
@@ -4395,9 +4358,14 @@ const val DEEP_COPY_FRAME_ID: String = "DeepCopy"
 
 /**
  * The period edit window's **Combinations** section (user rule, 2026-09-30: *"select a combination of periods, and select
- * which periods appear when this combination is present"*). One block per rule naming [kind] — on either side — with the
- * kinds that must all be present and the kinds that are then present too, each a row of toggles over [allKinds]; and a
- * button starting a new rule with [kind] in it. Every change writes the whole list ([onSetCombinations]).
+ * which periods appear when this combination is present"*). One block per rule naming [kind] — on either side — with its
+ * "When" formula and its "then" fields; and a button starting a new rule with [kind] in it. Every change writes the
+ * whole list ([onSetCombinations]).
+ *
+ * Each field is a period selector: a check-box drop-down over [allKinds] (user rule, 2026-10-01: *"instead of showing all
+ * periods, only show a field that opens a drop-down list with check boxes"*), whose checked kinds must all be present.
+ * Under "When" the buttons "or", "and", "(" and ")" build a formula of them ([PeriodFormula]); under "then" only "and",
+ * since a "then A or B" would not say which period to put there.
  */
 @Composable
 private fun PeriodCombinationsSection(
@@ -4410,12 +4378,12 @@ private fun PeriodCombinationsSection(
         onSetCombinations(combinations.map { if (it.id == rule.id) rule else it })
     Text("Combinations", style = MaterialTheme.typography.titleSmall)
     Text(
-        "Wherever periods of every kind of a combination are present together, a period of each kind it brings is " +
-            "present too.",
+        "Wherever the “When” formula holds, a period of each kind under “then” is present too. A field holds where " +
+            "every kind checked in it is present.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    val shown = combinations.filter { kind in it.kinds || kind in it.implies }
+    val shown = combinations.filter { kind in it.named }
     for (rule in shown) {
         Column(
             Modifier.fillMaxWidth()
@@ -4423,10 +4391,10 @@ private fun PeriodCombinationsSection(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text("When all of these are present", style = MaterialTheme.typography.labelMedium)
-            KindToggles(allKinds, rule.kinds) { update(rule.copy(kinds = it)) }
-            Text("these are present too", style = MaterialTheme.typography.labelMedium)
-            KindToggles(allKinds, rule.implies) { update(rule.copy(implies = it)) }
+            Text("When", style = MaterialTheme.typography.labelMedium)
+            PeriodFormulaEditor(allKinds, rule.condition) { update(rule.copy(condition = it)) }
+            Text("then", style = MaterialTheme.typography.labelMedium)
+            PeriodThenEditor(allKinds, rule.then) { update(rule.copy(then = it)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = { onSetCombinations(combinations.filterNot { it.id == rule.id }) }) {
                     Text("Remove combination")
@@ -4439,25 +4407,106 @@ private fun PeriodCombinationsSection(
             val taken = combinations.map { it.id }.toSet()
             val id = generateSequence(1) { it + 1 }.map { "combination-$it" }.first { it !in taken }
             onSetCombinations(
-                combinations + org.example.project.scheduler.domain.PeriodCombination(id, setOf(kind), emptySet()),
+                combinations +
+                    org.example.project.scheduler.domain.PeriodCombination(id, PeriodFormula.of(setOf(kind)), listOf(emptySet())),
             )
         },
     ) { Text("Add a combination") }
 }
 
-/** One toggle per kind, wrapping over as many lines as the window needs. */
+/** One period selector field: the check-box drop-down over [allKinds], its face the checked kinds. */
 @Composable
-private fun KindToggles(allKinds: List<String>, selected: Set<String>, onChange: (Set<String>) -> Unit) {
+private fun PeriodSelectorField(allKinds: List<String>, kinds: Set<String>, onChange: (Set<String>) -> Unit) {
+    org.example.project.ui.CheckBoxDropDown(
+        options = allKinds,
+        checked = kinds,
+        face = if (kinds.isEmpty()) "choose periods" else allKinds.filter { it in kinds }.joinToString(" + "),
+        label = { it },
+        onChange = onChange,
+    )
+}
+
+/** An operator or bracket of a formula, drawn between its fields. */
+@Composable
+private fun FormulaWord(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 2.dp, vertical = 14.dp),
+    )
+}
+
+/** One of the formula's step buttons: "or", "and", "(", ")" and the undo of the last step. */
+@Composable
+private fun FormulaButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        modifier = Modifier.height(32.dp),
+    ) { Text(text) }
+}
+
+/**
+ * A rule's "When" formula ([PeriodFormula]): its fields and words wrapping over as many lines as the window needs, and
+ * under them the buttons that append a step — each enabled only where that step can go, so the formula is always one
+ * the rule can read (a `(` left open closes at the end).
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PeriodFormulaEditor(
+    allKinds: List<String>,
+    tokens: List<PeriodFormulaToken>,
+    onChange: (List<PeriodFormulaToken>) -> Unit,
+) {
+    val shown = tokens.ifEmpty { PeriodFormula.of(emptySet()) }
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        for (k in allKinds) {
-            val on = k in selected
-            androidx.compose.material3.FilterChip(
-                selected = on,
-                onClick = { onChange(if (on) selected - k else selected + k) },
-                label = { Text(k, style = MaterialTheme.typography.bodySmall) },
-            )
+        shown.forEachIndexed { i, token ->
+            when (token) {
+                is PeriodFormulaToken.Kinds ->
+                    PeriodSelectorField(allKinds, token.kinds) { kinds ->
+                        onChange(shown.mapIndexed { j, t -> if (j == i) PeriodFormulaToken.Kinds(kinds) else t })
+                    }
+                PeriodFormulaToken.And -> FormulaWord("and")
+                PeriodFormulaToken.Or -> FormulaWord("or")
+                PeriodFormulaToken.Open -> FormulaWord("(")
+                PeriodFormulaToken.Close -> FormulaWord(")")
+            }
         }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FormulaButton("or", PeriodFormula.canAppendOperator(shown)) {
+            onChange(PeriodFormula.appendOperator(shown, PeriodFormulaToken.Or))
+        }
+        FormulaButton("and", PeriodFormula.canAppendOperator(shown)) {
+            onChange(PeriodFormula.appendOperator(shown, PeriodFormulaToken.And))
+        }
+        FormulaButton("(", PeriodFormula.canOpen(shown)) { onChange(PeriodFormula.open(shown)) }
+        FormulaButton(")", PeriodFormula.canClose(shown)) { onChange(PeriodFormula.close(shown)) }
+        FormulaButton("⌫", PeriodFormula.canRemoveLast(shown)) { onChange(PeriodFormula.removeLast(shown)) }
+    }
+}
+
+/** A rule's "then" side: its fields joined by "and", an "and" button adding one and `⌫` dropping the last. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PeriodThenEditor(allKinds: List<String>, fields: List<Set<String>>, onChange: (List<Set<String>>) -> Unit) {
+    val shown = fields.ifEmpty { listOf(emptySet()) }
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        shown.forEachIndexed { i, kinds ->
+            if (i > 0) FormulaWord("and")
+            PeriodSelectorField(allKinds, kinds) { next -> onChange(shown.mapIndexed { j, f -> if (j == i) next else f }) }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FormulaButton("and", true) { onChange(shown + listOf(emptySet())) }
+        FormulaButton("⌫", shown.size > 1) { onChange(shown.dropLast(1)) }
     }
 }

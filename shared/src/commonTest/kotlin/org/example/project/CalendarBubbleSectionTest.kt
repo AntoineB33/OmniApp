@@ -64,20 +64,11 @@ class CalendarBubbleSectionTest {
     @Test
     fun a_companion_the_account_removed_is_not_named_and_a_layer_is_left_to_its_band() {
         assertEquals(emptyList(), companionBubbleSections(PeriodKinds.INACTIVITY, PeriodKindConfig.DEFAULT, "x"))
-        val noCompanion =
-            PeriodKindConfig(mapOf(PeriodKinds.SLEEP to PeriodKindStyle(emptySet(), PeriodDrawing.HorizontalLines)))
+        val noCompanion = configWithCompanions(PeriodKinds.SLEEP to emptySet())
         assertEquals(emptyList(), companionBubbleSections(PeriodKinds.SLEEP, noCompanion, "x"))
         // A layer companion is named by the layer band (which unions it with the OS evidence), not twice.
         val layers =
-            PeriodKindConfig(
-                mapOf(
-                    PeriodKinds.SLEEP to
-                        PeriodKindStyle(
-                            setOf(PeriodKinds.NO_SCREEN, PeriodKinds.NO_PHONE_UNLOCKED),
-                            PeriodDrawing.HorizontalLines,
-                        ),
-                ),
-            )
+            configWithCompanions(PeriodKinds.SLEEP to setOf(PeriodKinds.NO_SCREEN, PeriodKinds.NO_PHONE_UNLOCKED))
         assertEquals(
             listOf(Kind.NoScreen),
             companionBubbleSections(PeriodKinds.SLEEP, layers, "x").map { it.kind },

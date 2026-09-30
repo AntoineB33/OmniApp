@@ -99,14 +99,8 @@ class LayerPeriodKindTest {
 
     @Test
     fun a_no_screen_period_asserts_both_layers_once_the_account_makes_them_its_companions() {
-        val config = PeriodKindConfig(
-            mapOf(
-                PeriodKinds.NO_SCREEN to PeriodKindStyle(
-                    setOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED),
-                    PeriodKinds.defaultStyle(PeriodKinds.NO_SCREEN).drawing,
-                ),
-            ),
-        )
+        val config =
+            configWithCompanions(PeriodKinds.NO_SCREEN to setOf(PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED))
         val panels = listOf(
             period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
             // before bed → no screen → both layers, transitively

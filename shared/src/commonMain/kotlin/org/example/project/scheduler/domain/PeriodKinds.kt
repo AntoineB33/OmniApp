@@ -168,21 +168,83 @@ object PeriodKinds {
             NOT_ON_A_COMPUTER, NOT_ON_A_PHONE,
         )
 
+    /** The kinds' default "always present with it" sets until 2026-10-01 — the rest had none. */
+    val LEGACY_DEFAULT_COMPANIONS: Map<String, Set<String>> =
+        linkedMapOf(
+            SLEEP to setOf(NO_SCREEN),
+            BEFORE_BED to setOf(NO_SCREEN),
+            BREAK_5MIN to setOf(NO_SCREEN),
+            BREAK_15MIN to setOf(NO_SCREEN),
+        )
+
     /**
      * **The combination rules an account starts with** (`docs/scheduler_requirements.md` § *$now line$ 3 modes*; user
      * rule 2026-09-30: *"when 'not on a computer' and 'no phone unlocked' are present, it is always accompanied
      * by 'no screen' (except if the user changes the period configurations)"*): **each computer layer with each phone
      * layer — real or fake — is a "no screen" period.** Where a computer's and a phone's "nobody here" overlap, nobody is
      * at any screen. Edited in the period edit window ([PeriodCombination], [PeriodKindConfig.combinations]); until the
-     * account edits them these are in force. Until 2026-09-30 the first of them was hard-coded.
+     * account edits them these are in force. Until 2026-09-30 the real-real case was hard-coded; since 2026-10-01 the
+     * four cases are ONE rule, as the user wrote it: *"'no screen' is present when ('no computer unlocked' or 'not on
+     * a computer') and ('no phone unlocked' or 'not on a phone')"* ([LAYERS_RULE]).
+     *
+     * After it, the rules that were the kinds' default "always present with it" sets until 2026-10-01
+     * ([LEGACY_DEFAULT_COMPANIONS], each as [companionRule]):
+     * - [SLEEP] and [BEFORE_BED] bring a [NO_SCREEN] period (PRD §17: a night and the hour of wind-down leading
+     *   into it are the plainest stretches there are of nobody being at a screen), and so do the two break kinds
+     *   (*"always accompanied by the 'no screen' period"*);
+     * - [INACTIVITY] brings **no** "no screen" period — it says the timeline is empty, not that nobody is at a
+     *   screen, and a grey stretch the user drew must not be retracted by a mode-1 line;
+     * - [NO_SCREEN] brings **neither** layer: since 2026-09-19 it is a period that refuses the tasks with a
+     *   resilience of 0 to it, and nothing about computers or phones.
      */
-    val DEFAULT_COMBINATIONS: List<PeriodCombination> =
-        listOf(
-            PeriodCombination("layers", setOf(NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
-            PeriodCombination("layers-fake-computer", setOf(NOT_ON_A_COMPUTER, NO_PHONE_UNLOCKED), setOf(NO_SCREEN)),
-            PeriodCombination("layers-fake-phone", setOf(NO_COMPUTER_UNLOCKED, NOT_ON_A_PHONE), setOf(NO_SCREEN)),
-            PeriodCombination("layers-fake-both", setOf(NOT_ON_A_COMPUTER, NOT_ON_A_PHONE), setOf(NO_SCREEN)),
+    val DEFAULT_COMBINATIONS: List<PeriodCombination> by lazy {
+        listOf(LAYERS_RULE) + LEGACY_DEFAULT_COMPANIONS.map { (kind, companions) -> companionRule(kind, companions) }
+    }
+
+    /** `(no computer unlocked or not on a computer) and (no phone unlocked or not on a phone)` ⇒ no screen. */
+    val LAYERS_RULE: PeriodCombination by lazy {
+        PeriodCombination(
+            "layers",
+            listOf(
+                PeriodFormulaToken.Open,
+                PeriodFormulaToken.Kinds(setOf(NO_COMPUTER_UNLOCKED)),
+                PeriodFormulaToken.Or,
+                PeriodFormulaToken.Kinds(setOf(NOT_ON_A_COMPUTER)),
+                PeriodFormulaToken.Close,
+                PeriodFormulaToken.And,
+                PeriodFormulaToken.Open,
+                PeriodFormulaToken.Kinds(setOf(NO_PHONE_UNLOCKED)),
+                PeriodFormulaToken.Or,
+                PeriodFormulaToken.Kinds(setOf(NOT_ON_A_PHONE)),
+                PeriodFormulaToken.Close,
+            ),
+            listOf(setOf(NO_SCREEN)),
         )
+    }
+
+    /**
+     * The four one-field rules [LAYERS_RULE] replaced on 2026-10-01 (same meaning). `SchedulerStateCodec` collapses them
+     * back into [LAYERS_RULE] where an older payload still holds all four untouched.
+     */
+    val LEGACY_LAYER_COMBINATIONS: List<PeriodCombination> by lazy {
+        listOf(
+            layerRule("layers", NO_COMPUTER_UNLOCKED, NO_PHONE_UNLOCKED),
+            layerRule("layers-fake-computer", NOT_ON_A_COMPUTER, NO_PHONE_UNLOCKED),
+            layerRule("layers-fake-phone", NO_COMPUTER_UNLOCKED, NOT_ON_A_PHONE),
+            layerRule("layers-fake-both", NOT_ON_A_COMPUTER, NOT_ON_A_PHONE),
+        )
+    }
+
+    /** "A computer layer and a phone layer ⇒ no screen", as one field of both. */
+    private fun layerRule(id: String, computer: String, phone: String): PeriodCombination =
+        PeriodCombination(id, PeriodFormula.of(setOf(computer, phone)), listOf(setOf(NO_SCREEN)))
+
+    /**
+     * What an "always present with it" set was until 2026-10-01, as the rule that replaced it: `when [kind] then
+     * [companions]`. `SchedulerStateCodec` folds an older payload's sets into the rules through here.
+     */
+    fun companionRule(kind: String, companions: Set<String>): PeriodCombination =
+        PeriodCombination("companion-$kind", PeriodFormula.of(setOf(kind)), listOf(companions))
 
     /**
      * **The kind a stored name means** — the one reading of every spelling a payload written before
@@ -251,22 +313,10 @@ object PeriodKinds {
     fun defaultResilience(kind: String): Double = if (isLayerKind(kind)) 1.0 else 0.0
 
     /**
-     * **The style a kind has until the account says otherwise** — its companions and its drawing
-     * ([PeriodKindStyle]). The account's overrides live in
-     * [org.example.project.scheduler.state.SchedulerState.periodKindStyles] and are read through
-     * [PeriodKindConfig], never beside it.
-     *
-     * The companions (user rule, 2026-09-18: *"the user can define a set of periods that are always present when
-     * this period is present"*):
-     * - [SLEEP] and [BEFORE_BED] carry a [NO_SCREEN] period (PRD §17: a night and the hour of wind-down leading
-     *   into it are the plainest stretches there are of nobody being at a screen);
-     * - [INACTIVITY] carries **no** "no screen" period — it says the timeline is empty, not that nobody is at a
-     *   screen, and a grey stretch the user drew must not be retracted by a mode-1 line;
-     * - [NO_SCREEN] carries **neither** "no computer unlocked" nor "no phone unlocked": it is its own statement,
-     *   drawn with its own pattern. Since 2026-09-19 that is what "no screen" MEANS: a period that refuses the
-     *   tasks with a resilience of 0 to it, and nothing about computers or phones. The reverse — a stretch where both layers fall IS a no-screen period — is the
-     *   layers' definition and stays true whatever the account sets ([SchedulerDomain.companionPeriods]);
-     * - every other kind carries nothing.
+     * **The style a kind has until the account says otherwise** — its drawing ([PeriodKindStyle]). The account's
+     * overrides live in [org.example.project.scheduler.state.SchedulerState.periodKindStyles] and are read through
+     * [PeriodKindConfig], never beside it. What a kind carries with it is a combination rule
+     * ([DEFAULT_COMBINATIONS]).
      *
      * The drawings are pairwise distinct across the built-ins, so the six can overlap in any combination and
      * still be told apart. A kind the account defines gets the least-used drawing when it is added
@@ -275,19 +325,19 @@ object PeriodKinds {
      */
     fun defaultStyle(kind: String): PeriodKindStyle =
         when (kind) {
-            INACTIVITY -> PeriodKindStyle(emptySet(), PeriodDrawing.VerticalLines)
-            SLEEP -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.HorizontalLines)
-            NO_SCREEN -> PeriodKindStyle(emptySet(), PeriodDrawing.HalfCirclesLeft)
-            BEFORE_BED -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.Zigzags)
-            NO_COMPUTER_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.RisingObliques)
-            NO_PHONE_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.FallingObliques)
+            INACTIVITY -> PeriodKindStyle(PeriodDrawing.VerticalLines)
+            SLEEP -> PeriodKindStyle(PeriodDrawing.HorizontalLines)
+            NO_SCREEN -> PeriodKindStyle(PeriodDrawing.HalfCirclesLeft)
+            BEFORE_BED -> PeriodKindStyle(PeriodDrawing.Zigzags)
+            NO_COMPUTER_UNLOCKED -> PeriodKindStyle(PeriodDrawing.RisingObliques)
+            NO_PHONE_UNLOCKED -> PeriodKindStyle(PeriodDrawing.FallingObliques)
             // The real layer's slope, DOTTED: the look an "I'm away" stretch has always had on the calendar (the
             // user's word against an unlocked machine).
-            NOT_ON_A_COMPUTER -> PeriodKindStyle(emptySet(), PeriodDrawing.DottedRisingObliques)
-            NOT_ON_A_PHONE -> PeriodKindStyle(emptySet(), PeriodDrawing.DottedFallingObliques)
-            // *"always accompanied by the 'no screen' period"*; drawn as the grey family the breaks belong to.
-            BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.VerticalLines)
-            else -> PeriodKindStyle(emptySet(), PeriodDrawing.Crosses)
+            NOT_ON_A_COMPUTER -> PeriodKindStyle(PeriodDrawing.DottedRisingObliques)
+            NOT_ON_A_PHONE -> PeriodKindStyle(PeriodDrawing.DottedFallingObliques)
+            // Drawn as the grey family the breaks belong to.
+            BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(PeriodDrawing.VerticalLines)
+            else -> PeriodKindStyle(PeriodDrawing.Crosses)
         }
 
     /**

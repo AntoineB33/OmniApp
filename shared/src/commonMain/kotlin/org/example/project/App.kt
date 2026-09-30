@@ -2608,11 +2608,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 canDelete = PeriodKinds.isUserDefined(kind),
                                 allKinds = popupState.allPeriodKinds,
                                 style = popupState.periodKindConfig.style(kind),
-                                impliedKinds = popupState.periodKindConfig.impliedKinds(kind),
                                 combinations = popupState.periodCombinations,
-                                onSetCompanions = { companions ->
-                                    popupDispatch(SchedulerIntent.SetPeriodCompanions(kind, companions))
-                                },
                                 onSetCombinations = { rules ->
                                     popupDispatch(SchedulerIntent.SetPeriodCombinations(rules))
                                 },

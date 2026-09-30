@@ -46,6 +46,8 @@ import org.example.project.scheduler.model.RelativePriorityPinKey
 import org.example.project.scheduler.model.ScheduleUnitEntry
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.domain.PeriodDrawing
+import org.example.project.scheduler.domain.PeriodFormula
+import org.example.project.scheduler.domain.PeriodFormulaToken
 import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.model.Task
@@ -626,23 +628,17 @@ object SchedulerStateCodec {
             shortcutBindings = shortcutBindings.toPersistedRows(),
             // `side-dev/README.md`: the kinds of restrictive period this account has defined.
             periodKinds = periodKinds,
-            // The period edit window's overrides, one entry per kind (so one sync row per kind), sorted by kind
-            // and with sorted companions so one setting has exactly one encoding.
+            // The period edit window's overrides, one entry per kind (so one sync row per kind), sorted by kind so
+            // one setting has exactly one encoding. `folded` says the kind's companions are in the rules below.
             periodKindStyles =
                 periodKindStyles.entries.sortedBy { it.key }.map { (kind, style) ->
-                    PersistedPeriodKindStyle(
-                        id = kind,
-                        companions = style.companions.sorted(),
-                        drawing = style.drawing.name,
-                    )
+                    PersistedPeriodKindStyle(id = kind, drawing = style.drawing.name, folded = true)
                 },
             // The period edit window's combination rules — absent while they are the defaults, so an account that
             // never edited them writes nothing (and one row, a field, once it has: an emptied list included).
             periodCombinations =
                 periodCombinations.takeIf { it != PeriodKinds.DEFAULT_COMBINATIONS }?.let { rules ->
-                    PersistedPeriodCombinations(
-                        rules.map { PersistedPeriodCombination(it.id, it.kinds.sorted(), it.implies.sorted()) },
-                    )
+                    PersistedPeriodCombinations(rules.map { it.toPersisted() }, folded = true)
                 },
             // PRD §5: the account's categories and the rules they impose. The tasks carrying each one are
             // written on the TASKS (`categoryIds`), so nothing here is a second copy of that; what lives
@@ -1249,10 +1245,14 @@ object SchedulerStateCodec {
             // know (the kind's default drawing instead).
             periodKindStyles = periodKindStyles.toPeriodKindStyles(PeriodKinds.BUILT_IN + decodedPeriodKinds()),
             // Heals a rule naming a kind the account does not hold (the kind is dropped from it), and a rule left with
-            // nothing on either side (dropped).
+            // nothing on either side (dropped). A payload written before 2026-10-01 has its "always present with it"
+            // sets folded into rules.
             periodCombinations =
-                periodCombinations?.toPeriodCombinations(PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + decodedPeriodKinds())
-                    ?: PeriodKinds.DEFAULT_COMBINATIONS,
+                decodePeriodCombinations(
+                    periodCombinations,
+                    periodKindStyles,
+                    PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + decodedPeriodKinds(),
+                ),
             // PRD §5: a blank-titled category is dropped (a category is named by its title; a blank one
             // could never be typed or picked), duplicate ids collapse, and a rule's share is healed into
             // `[0, 1]` — decode heals what an older or hand-edited payload holds rather than surfacing it.
@@ -2446,8 +2446,11 @@ private fun categoryIdSuffix(id: String): Int = id.substringAfterLast('/').toInt
 @Serializable
 private data class PersistedPeriodKindStyle(
     val id: String,
+    /** The kind's "always present with it" set, as written before 2026-10-01 (read only while [folded] is false). */
     val companions: List<String> = emptyList(),
     val drawing: String = "",
+    /** Written since 2026-10-01: what the kind carries is in the combination rules, not in [companions]. */
+    val folded: Boolean = false,
 )
 
 private fun List<PersistedPeriodKindStyle>.toPeriodKindStyles(kinds: List<String>): Map<String, PeriodKindStyle> {
@@ -2456,28 +2459,63 @@ private fun List<PersistedPeriodKindStyle>.toPeriodKindStyles(kinds: List<String
     for (p in this) {
         val kind = PeriodKinds.migrateStoredKind(p.id)
         if (kind !in known || kind in out) continue
-        val companions =
-            p.companions.map { PeriodKinds.migrateStoredKind(it) }.filterTo(LinkedHashSet()) { it != kind && it in known }
         val drawing =
             PeriodDrawing.entries.firstOrNull { it.name == p.drawing } ?: PeriodKinds.defaultStyle(kind).drawing
-        out[kind] = PeriodKindStyle(companions, drawing)
+        out[kind] = PeriodKindStyle(drawing)
     }
-    return out
+    // A style at the kind's default (only its old companion set was stored) is no override any more.
+    return out.filter { (kind, style) -> PeriodKinds.isUserDefined(kind) || style != PeriodKinds.defaultStyle(kind) }
 }
 
 /**
  * The period edit window's combination rules, as stored: ONE object (so one sync row of kind `field`), present only
  * once the account edited them — an emptied list still says "no rule", where an absent one says "the defaults".
+ * [folded] is written since 2026-10-01, when the kinds' "always present with it" sets became rules.
  */
 @Serializable
-private data class PersistedPeriodCombinations(val rules: List<PersistedPeriodCombination> = emptyList())
+private data class PersistedPeriodCombinations(
+    val rules: List<PersistedPeriodCombination> = emptyList(),
+    val folded: Boolean = false,
+)
 
+/**
+ * One rule. [condition] and [then] are written since 2026-10-01; before, a rule was one field on each side ([kinds],
+ * [implies]) — still written for a rule that is still that shape, so an older build reads it.
+ */
 @Serializable
 private data class PersistedPeriodCombination(
     val id: String,
     val kinds: List<String> = emptyList(),
     val implies: List<String> = emptyList(),
+    val condition: List<PersistedFormulaToken>? = null,
+    val then: List<List<String>>? = null,
 )
+
+/** A formula token: [op] is `and`, `or`, `(` or `)`, or empty for a field of [kinds]. */
+@Serializable
+private data class PersistedFormulaToken(
+    val op: String = "",
+    val kinds: List<String> = emptyList(),
+)
+
+private fun org.example.project.scheduler.domain.PeriodCombination.toPersisted(): PersistedPeriodCombination {
+    val single = (condition.singleOrNull() as? PeriodFormulaToken.Kinds)?.takeIf { then.size == 1 }
+    return PersistedPeriodCombination(
+        id = id,
+        kinds = single?.kinds?.sorted().orEmpty(),
+        implies = if (single != null) implies.sorted() else emptyList(),
+        condition = condition.map {
+            when (it) {
+                is PeriodFormulaToken.Kinds -> PersistedFormulaToken(kinds = it.kinds.sorted())
+                PeriodFormulaToken.And -> PersistedFormulaToken("and")
+                PeriodFormulaToken.Or -> PersistedFormulaToken("or")
+                PeriodFormulaToken.Open -> PersistedFormulaToken("(")
+                PeriodFormulaToken.Close -> PersistedFormulaToken(")")
+            }
+        },
+        then = then.map { it.sorted() },
+    )
+}
 
 private fun PersistedPeriodCombinations.toPeriodCombinations(
     known: List<String>,
@@ -2485,11 +2523,68 @@ private fun PersistedPeriodCombinations.toPeriodCombinations(
     val kinds = known.toSet()
     fun heal(names: List<String>) = names.map { PeriodKinds.migrateStoredKind(it) }.filterTo(LinkedHashSet()) { it in kinds }
     return rules.mapNotNull { r ->
-        val on = heal(r.kinds)
-        val implies = heal(r.implies)
-        if (r.id.isBlank() || on.isEmpty() || implies.isEmpty()) null
-        else org.example.project.scheduler.domain.PeriodCombination(r.id, on, implies)
+        val condition =
+            r.condition?.map { t ->
+                when (t.op) {
+                    "and" -> PeriodFormulaToken.And
+                    "or" -> PeriodFormulaToken.Or
+                    "(" -> PeriodFormulaToken.Open
+                    ")" -> PeriodFormulaToken.Close
+                    else -> PeriodFormulaToken.Kinds(heal(t.kinds))
+                }
+            } ?: PeriodFormula.of(heal(r.kinds))
+        val then = r.then?.map(::heal) ?: listOf(heal(r.implies))
+        val rule = org.example.project.scheduler.domain.PeriodCombination(r.id, condition, then)
+        val namesAny = condition.any { it is PeriodFormulaToken.Kinds && it.kinds.isNotEmpty() }
+        if (r.id.isBlank() || !namesAny || rule.implies.isEmpty() || PeriodFormula.parse(condition) == null) null
+        else rule
     }.distinctBy { it.id }
+}
+
+/**
+ * The account's combination rules. A payload written before 2026-10-01 kept, per kind, an "always present with it" set
+ * beside the rules: each becomes the rule `when <kind> then <set>` ([PeriodKinds.companionRule]) — the stored set where
+ * the kind's style held one, else the kind's default one ([PeriodKinds.LEGACY_DEFAULT_COMPANIONS]); and its four layer
+ * rules become [PeriodKinds.LAYERS_RULE] ([collapseLegacyLayerRules]). An account that never edited either therefore
+ * decodes to exactly [PeriodKinds.DEFAULT_COMBINATIONS].
+ */
+private fun decodePeriodCombinations(
+    stored: PersistedPeriodCombinations?,
+    styles: List<PersistedPeriodKindStyle>,
+    known: List<String>,
+): List<org.example.project.scheduler.domain.PeriodCombination> {
+    if (stored?.folded == true) return stored.toPeriodCombinations(known)
+    val knownSet = known.toSet()
+    val legacyStyles =
+        styles.filterNot { it.folded }.associateBy { PeriodKinds.migrateStoredKind(it.id) }
+            .filterKeys { it in knownSet }
+    val folded =
+        (PeriodKinds.LEGACY_DEFAULT_COMPANIONS.keys + known).distinct().mapNotNull { kind ->
+            if (kind !in knownSet) return@mapNotNull null
+            val companions =
+                legacyStyles[kind]?.companions
+                    ?.map { PeriodKinds.migrateStoredKind(it) }
+                    ?.filterTo(LinkedHashSet()) { it != kind && it in knownSet }
+                    ?: PeriodKinds.LEGACY_DEFAULT_COMPANIONS[kind].orEmpty()
+            companions.takeIf { it.isNotEmpty() }?.let { PeriodKinds.companionRule(kind, it) }
+        }
+    val rules = stored?.toPeriodCombinations(known)?.let(::collapseLegacyLayerRules) ?: listOf(PeriodKinds.LAYERS_RULE)
+    return (rules + folded).distinctBy { it.id }
+}
+
+/**
+ * The four one-field layer rules an account held by default until 2026-10-01, still all there and untouched, are the one
+ * formula rule that replaced them ([PeriodKinds.LAYERS_RULE], same meaning) — put where the first of them stood. An
+ * account that edited or removed any of them keeps what it has.
+ */
+private fun collapseLegacyLayerRules(
+    rules: List<org.example.project.scheduler.domain.PeriodCombination>,
+): List<org.example.project.scheduler.domain.PeriodCombination> {
+    val legacy = PeriodKinds.LEGACY_LAYER_COMBINATIONS
+    if (!rules.containsAll(legacy)) return rules
+    val at = rules.indexOfFirst { it in legacy }
+    val rest = rules.filterNot { it in legacy }
+    return rest.take(at) + PeriodKinds.LAYERS_RULE + rest.drop(at)
 }
 
 @Serializable

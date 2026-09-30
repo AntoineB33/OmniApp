@@ -38,7 +38,7 @@ Global rules that always apply: `CLAUDE.md`.
   answers). "Not asked yet" is a third state: the own layer draws nothing until its first scan lands.
 - **A "NO SCREEN" PERIOD SAYS NOTHING ABOUT DEVICES** (user rule, 2026-09-19): it only refuses the tasks
   with a resilience of `0` to it. It does not mean "no computer unlocked" or "no phone unlocked", asserts no
-  layer (unless the account makes them its companions), and is never edited together with a layer period.
+  layer (unless a rule of the account makes it bring them), and is never edited together with a layer period.
 - **A stretch carrying BOTH layers is a no-screen period** — ONE-WAY: nobody at any device means no on-screen
   work can happen there, so the overlap counts as no-screen time; the converse is false (above). Identical to
   the account-wide derived pause.
@@ -71,14 +71,23 @@ Global rules that always apply: `CLAUDE.md`.
   away stretches had before. A peer's fake layer is not drawn: nothing carries a peer's layers (its real one is
   assumed locked whole), and the mode reads the account's away flag.
 - **COMBINATION RULES** (`PeriodCombination`, `PeriodKindConfig.combinations`, `SchedulerState.periodCombinations`;
-  the period edit window's *Combinations* section, user rule 2026-09-30): wherever periods of every kind of a rule
-  overlap, the kinds it implies are present over the overlap. **One closure** reads companions and rules together
-  (`PeriodKindConfig.closeRegions`) for every question of "which kinds are here": the scheduler's companion periods
-  (`companionPeriods`), the bank's drawn no-screen (`assertedNoScreenRanges`) and the devices' observed no-screen
-  (`observedNoScreenRegions`). Defaults (`PeriodKinds.DEFAULT_COMBINATIONS`): each computer layer with each phone
-  layer, real or fake, brings "no screen". Stored only once edited (one `field` row, an emptied list included);
-  `decode` drops kinds the account does not hold; in `schedulingSignature`. The layer hatch itself still reads the
-  companions only (`assertedLayers` / `assertedFakeLayers`).
+  the period edit window's *Combinations* section, user rule 2026-09-30): wherever a rule's **"When" formula**
+  holds, the kinds under its **"then"** are present over that stretch. Since 2026-10-01 the "When" side is a formula
+  (`PeriodFormulaToken`, read ONLY by `PeriodFormula`): period selector fields — each the shared check-box drop-down
+  (`CheckBoxDropDown`), holding where every kind checked in it is — joined by `and` (overlap) / `or` (union), with
+  brackets; `and` binds tighter; a `(` left open closes at the end, anything else unreadable brings nothing. The
+  editor only appends whole steps and `⌫` undoes one (`PeriodFormula.canAppendOperator` / `canOpen` / `canClose` /
+  `removeLast`). The "then" side is fields joined by `and` ONLY (user choice, 2026-10-01: a "then A or B" says
+  nothing about which period to put there). **One closure** reads the rules (`PeriodKindConfig.closeRegions`) for
+  every question of "which kinds are here": the scheduler's companion periods (`companionPeriods`), the bank's drawn
+  no-screen (`assertedNoScreenRanges`) and the devices' observed no-screen (`observedNoScreenRegions`). Defaults
+  (`PeriodKinds.DEFAULT_COMBINATIONS`): ONE rule, `(no computer unlocked or not on a computer) and (no phone unlocked
+  or not on a phone)` → no screen (`PeriodKinds.LAYERS_RULE`, user rule 2026-10-01; it replaced four one-field rules
+  of the same meaning, which `decode` collapses into it where an older edited list still holds all four untouched);
+  then the old default companion sets (above). Stored only once edited (one `field` row, an emptied list included);
+  a one-field rule still writes the pre-formula `kinds`/`implies` beside it for older builds; `decode` drops kinds
+  the account does not hold and rules whose formula does not parse; in `schedulingSignature`. The layer hatch reads
+  the single-kind rules only (`assertedLayers` / `assertedFakeLayers` via `kindsOf`).
 - **The "I'm away" stretches are this device's FAKE layer** (`SchedulerEngine.declaredAwaySpans`/`declaredAwaySince` →
   `SchedulerDomain.declaredAwayRegions`, ADR 0002). The machine stays UNLOCKED while the button is on, so the
   OS log is silent over exactly the stretch the now-line is in mode 3 for, and the requirement is that such a
@@ -277,14 +286,19 @@ Global rules that always apply: `CLAUDE.md`.
 - **PERIOD COMPANIONS AND DRAWINGS** (the period edit window, user rule 2026-09-18;
   `PeriodKindStyle`/`PeriodKindConfig`, stored as `SchedulerState.periodKindStyles` — overrides only, one sync
   row per kind, not an Undo/Redo unit, like defining a kind).
-  - **Companions**: *"a set of periods that are always present when this period is present"*. TRANSITIVE
+  - **Companions**: *"a set of periods that are always present when this period is present"*. Since 2026-10-01
+    **a companion set is a combination rule** `when <kind> then …` (`PeriodKinds.companionRule`; the window's
+    "Always present with it" section was removed, user rule: *"it can be done by the combinations config"*), so
+    there is one mechanism, not two. What a kind carries is every rule its period satisfies ALONE, TRANSITIVE
     (`PeriodKindConfig.kindsOf`; a cycle is harmless). An implication, never a laid panel. Every reader asks
     the config: the scheduler (`SchedulerDomain.companionPeriods`, via `restrictivePeriodsOf` and the fill),
     the mode-1 retraction, the layers a period hatches (`assertedLayers`), the record bank
-    (`assertedNoScreenRanges`) and the calendar's drawings. **Defaults** (`PeriodKinds.defaultStyle`): `sleep`
-    and `before bed` carry `no screen`; `inactivity` carries **no** `no screen`; `no screen` carries **neither**
-    `no computer unlocked` nor `no phone unlocked`; everything else carries nothing. Companion changes are in
-    `schedulingSignature`; drawing changes are not (paint).
+    (`assertedNoScreenRanges`) and the calendar's drawings. **Defaults** (the tail of
+    `PeriodKinds.DEFAULT_COMBINATIONS`): `sleep`, `before bed` and the two break kinds carry `no screen`;
+    `inactivity` carries **no** `no screen`; `no screen` carries **neither** layer; everything else carries
+    nothing. Rule changes are in `schedulingSignature`; drawing changes are not (paint). A payload written
+    before 2026-10-01 has its sets folded into rules on `decode` (`PersistedPeriodKindStyle.folded` /
+    `PersistedPeriodCombinations.folded` mark the new shape).
   - **Drawings** (`PeriodDrawing`, rendered only by `ui/PeriodDrawings.kt`'s `Modifier.periodDrawing`): a
     CLOSED set of line patterns that differ by geometry alone (same colour, stroke and 35 % alpha), so any
     number overlap legibly. Defaults are pairwise distinct across the built-ins: `|` inactivity, `—` sleep,

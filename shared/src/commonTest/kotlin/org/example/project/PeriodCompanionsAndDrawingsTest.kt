@@ -31,7 +31,8 @@ import org.example.project.scheduler.state.SchedulerState
  * The **period edit window**'s two settings (user rule, 2026-09-18):
  *
  *  - *"the user can define a set of periods that are always present when this period is present"* — a kind's
- *    COMPANIONS ([PeriodKindStyle.companions], resolved transitively by [PeriodKindConfig.kindsOf]). By default
+ *    COMPANIONS, since 2026-10-01 the combination rule `when <kind> then …` ([PeriodKinds.companionRule], resolved
+ *    transitively by [PeriodKindConfig.kindsOf]). By default
  *    inactivity is not accompanied by "no screen", and "no screen" is not accompanied by "no computer unlocked"
  *    or "no phone unlocked";
  *  - *"the drawing of each period among a predefined set of drawings that are very distinguishable from one
@@ -55,8 +56,7 @@ class PeriodCompanionsAndDrawingsTest {
             periodKind = kind,
         )
 
-    private fun styled(vararg entries: Pair<String, Set<String>>) =
-        PeriodKindConfig(entries.associate { (kind, companions) -> kind to PeriodKindStyle(companions, DEFAULT.drawing(kind)) })
+    private fun styled(vararg entries: Pair<String, Set<String>>) = configWithCompanions(*entries)
 
     // ----- the defaults -------------------------------------------------------------------------
 
@@ -158,7 +158,7 @@ class PeriodCompanionsAndDrawingsTest {
 
         // …until the account says a commute always comes with "no screen", which an on-screen task is 0 to.
         val before = SchedulerDomain.schedulingSignature(s)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCompanions("commute", setOf(PeriodKinds.NO_SCREEN)))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCombinations(combinationsWithCompanions("commute" to setOf(PeriodKinds.NO_SCREEN))))
         assertNotEquals(before, SchedulerDomain.schedulingSignature(s), "a companion change must re-plan")
         val kept = SchedulerDomain.fillSchedule(s, NOW, TimeZone.UTC, horizonMillis = NOW + 6 * HOUR)
         assertEquals(0L, placedMillisIn(kept, solo, NOW + HOUR, NOW + 2 * HOUR))
@@ -192,28 +192,18 @@ class PeriodCompanionsAndDrawingsTest {
     // ----- the reducer ---------------------------------------------------------------------------
 
     @Test
-    fun companions_keep_only_kinds_the_account_holds_and_never_the_kind_itself() {
+    fun a_companion_rule_keeps_only_kinds_the_account_holds_and_the_same_list_again_is_a_no_op() {
         val s0 = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddPeriodKind("commute"))
         val s = SchedulerReducer.reduce(
             s0,
-            SchedulerIntent.SetPeriodCompanions("commute", setOf("commute", "nonexistent", PeriodKinds.NO_SCREEN)),
+            SchedulerIntent.SetPeriodCombinations(combinationsWithCompanions("commute" to setOf("nonexistent", PeriodKinds.NO_SCREEN))),
         )
-        assertEquals(setOf(PeriodKinds.NO_SCREEN), s.periodKindConfig.style("commute").companions)
+        assertEquals(setOf("commute", PeriodKinds.NO_SCREEN), s.periodKindConfig.kindsOf("commute"))
         assertSame(
             s,
-            SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCompanions("commute", setOf(PeriodKinds.NO_SCREEN))),
-            "the same set again is a no-op",
+            SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCombinations(s.periodCombinations)),
+            "the same list again is a no-op",
         )
-        assertSame(s, SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCompanions("nonexistent", emptySet())))
-    }
-
-    @Test
-    fun a_built_in_put_back_to_its_default_holds_no_override() {
-        val s0 = SchedulerState.empty()
-        val on = SchedulerReducer.reduce(s0, SchedulerIntent.SetPeriodCompanions(PeriodKinds.INACTIVITY, setOf(PeriodKinds.NO_SCREEN)))
-        assertTrue(PeriodKinds.INACTIVITY in on.periodKindStyles)
-        val off = SchedulerReducer.reduce(on, SchedulerIntent.SetPeriodCompanions(PeriodKinds.INACTIVITY, emptySet()))
-        assertEquals(emptyMap(), off.periodKindStyles)
     }
 
     @Test
@@ -228,7 +218,7 @@ class PeriodCompanionsAndDrawingsTest {
     @Test
     fun removing_a_kind_takes_its_style_and_every_reference_to_it() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddPeriodKind("commute"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCompanions(PeriodKinds.SLEEP, setOf(PeriodKinds.NO_SCREEN, "commute")))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCombinations(combinationsWithCompanions(PeriodKinds.SLEEP to setOf(PeriodKinds.NO_SCREEN, "commute"))))
         s = SchedulerReducer.reduce(s, SchedulerIntent.RemovePeriodKind("commute"))
         assertTrue("commute" !in s.periodKindStyles)
         assertEquals(setOf(PeriodKinds.NO_SCREEN), s.periodKindConfig.impliedKinds(PeriodKinds.SLEEP))
@@ -239,7 +229,7 @@ class PeriodCompanionsAndDrawingsTest {
     @Test
     fun the_settings_round_trip() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddPeriodKind("commute"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCompanions("commute", setOf(PeriodKinds.NO_SCREEN)))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCombinations(combinationsWithCompanions("commute" to setOf(PeriodKinds.NO_SCREEN))))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodDrawing(PeriodKinds.NO_SCREEN, PeriodDrawing.Crosses))
         val decoded = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
         assertEquals(s.periodKindStyles, decoded.periodKindStyles)
@@ -286,7 +276,9 @@ class PeriodCompanionsAndDrawingsTest {
         val decoded = assertNotNull(SchedulerStateCodec.decode(payload))
         assertEquals(setOf("commute"), decoded.periodKindStyles.keys)
         val commute = decoded.periodKindStyles.getValue("commute")
-        assertEquals(setOf(PeriodKinds.NO_SCREEN), commute.companions)
+        // The old companion set is a rule now, healed the same way.
+        assertTrue(PeriodKinds.companionRule("commute", setOf(PeriodKinds.NO_SCREEN)) in decoded.periodCombinations)
+        assertEquals(setOf("commute", PeriodKinds.NO_SCREEN), decoded.periodKindConfig.kindsOf("commute"))
         assertEquals(PeriodKinds.defaultStyle("commute").drawing, commute.drawing, "an unknown drawing heals to the default")
     }
 }

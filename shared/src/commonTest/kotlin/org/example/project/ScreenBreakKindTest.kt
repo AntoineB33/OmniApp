@@ -54,7 +54,7 @@ class ScreenBreakKindTest {
             assertTrue(panels.filter { it.title == side.title }.all { it.endEpochMillis - it.startEpochMillis == side.durationMillis })
         }
         for (kind in PeriodKinds.BREAK_KINDS) {
-            assertTrue(PeriodKinds.NO_SCREEN in PeriodKinds.defaultStyle(kind).companions, "$kind comes with no screen")
+            assertTrue(PeriodKinds.NO_SCREEN in org.example.project.scheduler.domain.PeriodKindConfig.DEFAULT.kindsOf(kind), "$kind comes with no screen")
         }
     }
 

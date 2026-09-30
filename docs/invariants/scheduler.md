@@ -273,8 +273,8 @@ model exists to prevent.
   rule, 2026-09-13; the sleep half added 2026-09-18). A night is the plainest stretch there is of nobody being
   at a screen, and the hour of wind-down running into it already said so. It is also what makes the mode-1
   retraction above reach a sleep window. Since 2026-09-18 this is a **COMPANION** — the period edit window's
-  *"periods always present when this period is present"* (`PeriodKindConfig`, `PeriodKinds.defaultStyle`),
-  transitive, editable per kind — and **`no screen` no longer carries the two layer periods** by default, so
+  *"periods always present when this period is present"* — since 2026-10-01 the combination rule `when sleep then
+  no screen` (`PeriodKinds.DEFAULT_COMBINATIONS`, read through `PeriodKindConfig`), transitive, editable — and **`no screen` no longer carries the two layer periods** by default, so
   neither the night nor the hour hatches a layer unless the account says so. Companions reach everything
   through ONE funnel, `SchedulerDomain.companionPeriods`: the scheduler and the recurrence bars (via
   `restrictivePeriodsOf`, the fill's `dynamicBase`/`restrictions`), the record bank

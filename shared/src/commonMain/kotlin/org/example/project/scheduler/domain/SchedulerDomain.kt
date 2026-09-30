@@ -5757,18 +5757,12 @@ object SchedulerDomain {
             // Its pattern: a period or a block that starts or stops recurring restricts the plan differently.
             result = 31 * result + (panel.repeat?.hashCode() ?: 0)
         }
-        // The period edit window's companion sets: a period that starts or stops carrying a kind restricts the
-        // plan differently. Only the companions — a period's DRAWING is paint, and re-planning on it would be
-        // a re-plan of unchanged rules.
-        for ((kind, style) in state.periodKindStyles.entries.sortedBy { it.key }) {
-            if (style.companions == PeriodKinds.defaultStyle(kind).companions) continue
-            result = 31 * result + kind.hashCode()
-            result = 31 * result + style.companions.sorted().hashCode()
-        }
-        // …and its combination rules, for the same reason (an account at the defaults hashes as it always did).
+        // The period edit window's combination rules: a period that starts or stops carrying a kind restricts the
+        // plan differently (an account at the defaults hashes as it always did). Not the styles — a period's DRAWING
+        // is paint, and re-planning on it would be a re-plan of unchanged rules.
         if (state.periodCombinations != PeriodKinds.DEFAULT_COMBINATIONS) {
             for (rule in state.periodCombinations) {
-                result = 31 * result + rule.kinds.sorted().hashCode()
+                result = 31 * result + PeriodFormula.describe(rule.condition).hashCode()
                 result = 31 * result + rule.implies.sorted().hashCode()
             }
         }
