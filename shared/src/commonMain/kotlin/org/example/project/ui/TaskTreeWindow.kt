@@ -11,6 +11,9 @@ import androidx.compose.ui.unit.dp
 /** The task tree window's frame id — also its `FloatingWindow` name in `App`. */
 const val TASK_TREE_WINDOW_ID: String = "TaskTree"
 
+/** How the task tree window opens when nothing is kept for it — and what the window bar's Reset puts back. */
+val TASK_TREE_DEFAULT_CHROME: WindowChrome = WindowChrome(WindowFill.Both, minimized = false)
+
 /**
  * PRD §4: the account's **task tree, as a window** — the lateral-menu window every other one used to float
  * over. It wears the same frame as all of them and takes its turn in the one stacking order; it opens
@@ -39,7 +42,7 @@ fun TaskTreeWindow(
             TASK_TREE_WINDOW_ID,
             initialOffset,
             initialSize,
-            defaultChrome = WindowChrome(WindowFill.Both, minimized = false),
+            defaultChrome = TASK_TREE_DEFAULT_CHROME,
         )
     AppWindowFrame(
         title = "Task tree",

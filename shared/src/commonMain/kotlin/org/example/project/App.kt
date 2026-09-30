@@ -119,6 +119,7 @@ import org.example.project.ui.LocalHeadObstacle
 import org.example.project.ui.REMINDER_EDIT_FRAME_ID
 import org.example.project.ui.TASK_TREE_WINDOW_ID
 import org.example.project.ui.TaskTreeWindow
+import org.example.project.ui.TASK_TREE_DEFAULT_CHROME
 import org.example.project.ui.windowInstanceId
 import org.example.project.ui.WindowInstance
 import org.example.project.ui.WindowCopy
@@ -3732,6 +3733,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             WindowBar(
                 host = windowFrames,
                 modifier = Modifier.align(Alignment.BottomStart).zIndex(135f),
+                // Reset also puts the task tree window back where a first run opens it: centred, default size,
+                // maximized. The close above already took it out of composition, so it reads this when reopened.
+                onReset = {
+                    taskTreeOffset = Offset.Zero
+                    taskTreeSize = Size.Zero
+                    persistPlacement(FloatingWindow.TaskTree, Offset.Zero, Size.Zero, visible = false)
+                    windowChromeMemory.save(FloatingWindow.TaskTree.name, TASK_TREE_DEFAULT_CHROME)
+                },
             )
 
             // The menu's collapse toggle: a bookmark/tab sticking out of the menu's top-right border,

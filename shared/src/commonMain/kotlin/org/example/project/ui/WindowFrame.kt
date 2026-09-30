@@ -1283,10 +1283,10 @@ private fun Modifier.unplaced(active: Boolean): Modifier =
  *
  * A tab is a taskbar's ([WindowFrameHost.onTabClicked]); its ✕ closes its window outright. **Reset**, at the bar's
  * right corner, closes every window at once (it was "Close all", and before that the lateral menu's "Close
- * windows").
+ * windows") and then does [onReset] — `App` puts the task tree window back to its default placement there.
  */
 @Composable
-fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier) {
+fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () -> Unit = {}) {
     val rows = host.registrations
     if (rows.isEmpty()) return
     Surface(
@@ -1313,7 +1313,10 @@ fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier) {
                     .padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(8.dp))
                     // Over a snapshot: each close takes its window out of the list being walked.
-                    .clickable { host.registrations.toList().forEach { it.onClose() } }
+                    .clickable {
+                        host.registrations.toList().forEach { it.onClose() }
+                        onReset()
+                    }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         }

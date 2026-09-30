@@ -133,7 +133,11 @@ means.
   the menu does not jump as the bar comes and goes.
 - **Reset (it was "Close all") is the bar's, at its right corner** — every registered window's own close, over a snapshot. It
   replaced the lateral menu's "Close windows" (2026-09-24), which listed the lateral-menu windows by hand and
-  so never closed a per-object window, a copy or a notice.
+  so never closed a per-object window, a copy or a notice. **It also resets the task tree window's placement**
+  (user rule, 2026-09-30; `WindowBar(onReset)` in `App`): offset and size back to zero and the chrome to
+  `TASK_TREE_DEFAULT_CHROME`, so the tree reopens as on a first run — maximized, and un-maximizing gives the
+  default size, centred. The chrome is WRITTEN as the default, not cleared: `WindowChromeMemory.saved` answers
+  for any existing row, so a cleared row would reopen un-maximized.
 - **A reduced window is still composed, merely not placed** (`Modifier.unplaced`). Not composing it throws
   away everything half-typed in it, which is not what pressing *reduce* asks for.
 - **A WINDOW'S HIT REGION IS ITS DRAWN RECTANGLE, so nothing may hang off it outside the frame's
