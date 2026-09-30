@@ -385,8 +385,10 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
         untilMillis: Long,
         lineMillis: Long,
         pruneBeforeMillis: Long,
+        removed: List<org.example.project.scheduler.domain.BankedBreak>,
     ) {
         queries.transaction {
+            for (b in removed) queries.deleteScreenBreak(start_ms = b.startMillis, label = b.label)
             for (b in added) queries.insertScreenBreak(start_ms = b.startMillis, label = b.label, end_ms = b.endMillis)
             queries.deleteScreenBreaksBefore(pruneBeforeMillis)
             queries.upsertScreenBreakFront(untilMillis, lineMillis)

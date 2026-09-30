@@ -12,6 +12,9 @@ every Supabase and SQLite migration, is in `CHANGELOG.md`.
 - `./gradlew :shared:check` — verify syntax/compile errors after editing the `shared` module.
 - `./gradlew :shared:jvmTest` — the real logic gate (see *Verification* below).
 - `./gradlew :desktopApp:run` — run the desktop app to verify UI/desktop changes.
+- `./gradlew :shared:startupCheck` — headless start-up on a copy of the release DB (never takes the screen); run it
+  before reporting a client change done — a green `jvmTest` once shipped a release that drew no window for 90 s.
+  `docs/PERFORMANCE.md` § *Start-up on a real account*.
 
 ## Agent safety: do not touch the live release app
 
@@ -125,7 +128,7 @@ re-derives something mark the state dirty or trigger a sync push.
 | Class | Contents | Rule |
 | --- | --- | --- |
 | **Authoritative** | task tree (task **resilience** included, and a task's **last path** once no task tree holds it), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels (their **repeat pattern** included) and the periods the app conducted, chores/reminders, sleep schedule, alarms, timers (**whether one is running**, **the current run's length** and **the instant a rung one reached zero** included), chronos (**whether one is running** included), settings, the system-wide chord bindings, the **task relations** the user kept or struck off, the account's **categories** and their **rules**, the **pins** of both priority windows, the **default configuration** of a new alarm, timer and reminder, Undo/Redo history units, manual record edits | persist + sync |
-| **Derived** | auto/screen-break/sleep panels, a repeating panel's later occurrences, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks, the rules' repeating part (`scheduleCycle` — in memory only, not even persisted), the elected device's rules on the peers' broadcast channel (never stored, adopted as derived panels) | persisted locally, **stripped from the wire**, never trigger a push on their own |
+| **Derived** | auto/screen-break/sleep panels, a repeating panel's later occurrences, task colours, a running timer's remaining time, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks, the rules' repeating part (`scheduleCycle` — in memory only, not even persisted), the plan for the other `t_p` mode class (`otherModePlan` — in memory only), the elected device's rules on the peers' broadcast channel (never stored, adopted as derived panels) | persisted locally, **stripped from the wire**, never trigger a push on their own |
 | **Local-only view state** | focused window, tree selection, the Search window's sub-trees' own expansion/selection/edit session, the Search and Task trees windows' selections (`windowSelections`, in memory only), the lateral menu's buttons the user made (`CustomMenuButtons`), `showScreenBreaks`/`showReminders`, WindowNav/Selection history, window placement (its filled axes and reduced state included, which per-object windows are open, on what, and the desktop app's own window) and the Search window's query, checked kinds, filters and added elements (and the Configuration Search and Added elements configurations windows' own configurations), OS-sleep scan checkpoint, the screen breaks the line has banked (the frozen past of the three dynamic periods, pruned at 90 days), the device's work-offline choice, the refused-edit notice (`categoryRuleError`, not even persisted) | persist locally, **never sync** |
 
 - Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a

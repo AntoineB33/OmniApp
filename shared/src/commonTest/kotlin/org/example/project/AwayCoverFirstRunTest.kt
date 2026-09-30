@@ -13,7 +13,7 @@ import org.example.project.scheduler.state.SchedulerState
 
 /**
  * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**modes 2 & 3**: *"$now line$ must be covered by the
- * period 'no on-screen task'"*) and § *No idling*: **while the mode holds, the plan is the plan for a covered line —
+ * period 'no on-screen task'"*): **while the mode holds, the plan is the plan for a covered line —
  * from the line to the end of what is searched.**
  *
  * The cover was first `[now, now + 1)` (the resilient task got one millisecond, an on-screen task the rest), then

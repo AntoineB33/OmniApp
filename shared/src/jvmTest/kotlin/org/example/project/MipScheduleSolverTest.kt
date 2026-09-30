@@ -28,7 +28,7 @@ class MipScheduleSolverTest {
     private fun assertLegal(m: ScoreModel, runs: List<ScheduleOptimizer.Run>, from: Double, until: Double) {
         var u = from
         for (r in runs.sortedBy { it.fromU }) {
-            assertEquals(u, r.fromU, 1e-3, "runs are contiguous from the start (no idling)")
+            assertEquals(u, r.fromU, 1e-3, "every instant is decided from the start")
             assertTrue(m.runLimit(r.task, r.fromU) >= r.toU - 1e-3, "task ${r.task} may run over [${r.fromU}, ${r.toU})")
             u = r.toU
         }

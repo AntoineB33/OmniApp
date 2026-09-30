@@ -15,37 +15,36 @@ package org.example.project.scheduler.domain
  *
  * ### The three bars, verbatim
  * - after **any** dynamic period, no 20 s period in the next **20 minutes** ([BAR_20S_AFTER_ANY_MILLIS]);
- * - after any **>= 5-minute** stretch covered by "no on-screen task" *without any task*, no 5 min period in
- *   the next **1 hour** ([BAR_5MIN_AFTER_STRETCH_MILLIS]);
+ * - after any **>= 5-minute** stretch of "no screen", no 5 min period in the next **1 hour**
+ *   ([BAR_5MIN_AFTER_STRETCH_MILLIS]);
  * - after a **>= 15-minute** such stretch, no 20 s period in the next **20 minutes** and no 15 min period in
  *   the next **2 hours** ([BAR_15MIN_AFTER_LONG_MILLIS]).
  *
- * A **rest stretch** is that phrase read literally, and it takes all three of its clauses ([isRestAt]):
- * *covered by* "no on-screen task" — a period of that kind, or [PeriodKinds.INACTIVITY], which turns the
- * on-screen tasks away a fortiori; *without any task* — so a period that still accepts somebody makes none
- * at all (the no-idling rule puts a task there), and neither does a pre-placed block, since a pre-placed task
- * IS a task; and it is a **stretch**, not a period — two that abut make one ([growStretch]).
+ * A **rest stretch** is that phrase read literally ([isRestAt]): a stretch *of "no screen"* — a period of that
+ * kind, or of a kind that covers it ([PeriodKinds.coversNoScreen]) — and a **stretch**, not a period: two that
+ * abut make one ([growStretch]). `docs/scheduler_requirements.md` says *"after a >= 5-minute of 'no screen'"* and
+ * nothing more: whether a task resilient to "no screen" may run there does not change that nobody was at a screen
+ * (until 2026-09-29 a stretch somebody could run in, or a pre-placed task, did not count — an older README's
+ * *"without any task"*, which the requirements no longer have).
  *
  * `blocked` and `rested` are deliberately two different sets. Everywhere nothing can be placed a dynamic
- * period is pointless and is pushed past; only the part of that which is a rest stretch bars what comes after
- * it. A pre-placed hour of maintenance is not a rest: the user was at the screen the whole time.
+ * period is pointless and is pushed past; only the part of that which is "no screen" bars what comes after it.
  *
  * ### The look-away is assumed taken; a pose is owed
  * When the line reaches a **pose** the user has not taken, [MODE_AT_SCREEN] drags it: `t_p` may not be covered
  * by a dynamic period there, so the period is pushed onto the line and goes on being pushed until a real rest
  * happens. The two AWAY modes do not — the line must BE covered there ([lineIsCoveredAt]), so the pose elapses
- * under the line and is frozen into the past behind it. When the line reaches the **20 s look-away** nothing
- * is dragged in any mode ([dragsAtLine]) — looking twenty feet away costs no working time, so the app assumes
- * it is being done. The occurrence stays where the bars put it, the line walks across it, and behind the line
- * it goes on being drawn where it happened.
+ * under the line and is frozen into the past behind it. The **20 s look-away** is the other way round
+ * ([dragsAt]): a line at a screen ENTERS it — looking twenty feet away costs no working time, so the app assumes
+ * it is being done, and the line is in mode 3 for its twenty seconds — while a line in mode 2 drags it, because
+ * *"the $now line$ must be in mode 1 or 3 before entering the 20s break"*.
  *
  * ### A chain of "no on-screen task" TAKES the break that falls due in it
- * `docs/scheduler_requirements.md`, last bullet of § *3 Dynamic Restrictive Period*: *"When a 'no on-screen
- * task' period touches the start of a dynamic restrictive period, and that this chain of 'no on-screen task'
- * periods ends somewhere in $[now line;+infinity)$, then the dynamic restrictive period now starts at the start
- * of this chain."* ([chainTaking]). The time already spent away COUNTS towards the break that falls due inside
- * it, which is what keeps a break from being owed all over again the moment the user comes back — and it is the
- * requirements' one sanctioned exception to the **frozen past**.
+ * `docs/scheduler_requirements.md`, last bullet of § *screen breaks*: a break falling in a "no screen" period
+ * the line has not reached starts at `max($now line$, $t_s$)` ([chainTaking]) — for a line that entered the
+ * period at `t_s`, the period's start. The time already spent away COUNTS towards the break that falls due inside
+ * it, which is what keeps a break from being owed all over again the moment the user comes back. It never moves a
+ * break behind the banked front: the frozen past has no exception for it.
  *
  * Three things follow, and each was a way the rule reached nothing at all until 2026-09-10:
  * - **a stretch does not BAR the break it takes** ([barStretch]'s `spared`): the bar is about what comes after
@@ -107,8 +106,8 @@ object DynamicPeriods {
      * `t_p` mode 1: *"$t_p$ must not be covered by the period 'no on-screen task'"* — the user is at the
      * screen, so a POSE the line reaches is pushed ahead of it and never happens until it is taken.
      *
-     * The 20 s look-away is exempt ([dragsAtLine]): it is assumed done as it falls due, so the line crosses it
-     * in [MODE_ON_BREAK] for its twenty seconds and it stays on the timeline behind the line.
+     * The 20 s look-away is not dragged here ([dragsAt]): the line enters it and is in [MODE_ON_BREAK] for its
+     * twenty seconds (`SchedulerDomain.lookAwayHoldUntil`), and it stays on the timeline behind the line.
      */
     const val MODE_AT_SCREEN: Int = 1
 
@@ -143,9 +142,9 @@ object DynamicPeriods {
      * the one watching, its screen is off, so the server moves the line over the rules it was last given and
      * pushes the phone a cue for the instant the break the line is inside finishes.
      *
-     * The 20 s look-away is *always* answered this way whatever the mode says, which is the same sentence read
-     * from the other end: looking twenty feet away costs no working time, so it is assumed taken as it falls
-     * due and the line crosses it — the line is in mode 3 for those twenty seconds ([dragsAtLine]).
+     * A line at a screen that enters a 20 s look-away is in this mode for its twenty seconds
+     * (`SchedulerDomain.lookAwayHoldUntil`) — *"When $now line$ enters a '20s screen break' restrictive period in mode
+     * 1, it gets in mode 3"*.
      */
     const val MODE_ON_BREAK: Int = 3
 
@@ -223,7 +222,7 @@ object DynamicPeriods {
             RestrictivePeriod(
                 startMillis = startMillis,
                 endMillis = endMillis,
-                kind = PeriodKinds.INACTIVITY,
+                kind = breakKind(spec.label),
                 label = spec.label,
                 openStart = openStart,
                 closedEnd = openStart,
@@ -346,9 +345,9 @@ object DynamicPeriods {
      * the drag's condition unsatisfiable. Never read it as the line having jumped — under the README the line
      * cannot.
      *
-     * Only the two poses are dragged ([dragsAtLine]). The 20 s look-away is placed at its due whatever the line
-     * is doing, so for a look-away the answer is the same at the line and away from it — which is what makes
-     * the break's **due** and where it is **drawn** one instant for that one of the three.
+     * Who is dragged depends on the mode ([dragsAt]): the two poses in mode 1, the 20 s look-away in mode 2. At a
+     * screen the look-away is placed at its due, so for a look-away there the answer is the same at the line and
+     * away from it — which is what makes its **due** and where it is **drawn** one instant.
      */
     fun instances(
         base: Base,
@@ -372,9 +371,8 @@ object DynamicPeriods {
         val rested = mutableListOf<Span>()
         for (seg in base.segments(startMillis, horizonMillis)) {
             val mid = seg.startMillis + (seg.endMillis - seg.startMillis) / 2
-            if (base.anybodyAt(mid)) continue
-            blocked += seg
             if (isRestAt(base, mid)) rested += seg
+            if (!base.anybodyAt(mid)) blocked += seg
         }
         val blockedSpans = mergeSpans(blocked)
         val restedSpans = mergeSpans(rested)
@@ -399,8 +397,11 @@ object DynamicPeriods {
         // just took it, is taken again, and the walk crawls forward a millisecond at a time until [MAX_STEPS]
         // stops it.
         val takenFrom = HashMap<String, Long>()
+        // § *frozen past*: behind the banked front nothing new is placed ([floorAtFrozen]) — not by the chain rule
+        // either, which then starts a break at `max(front, t_s)`.
+        val floor = frozen?.untilMillis?.takeIf { floorAtFrozen }
         fun takingChain(label: String, spec: Spec, bar: Long): Span? =
-            chainTaking(noScreenChains, spec, bar, tpMillis, mode)
+            chainTaking(noScreenChains, spec, bar, tpMillis, mode, floor)
                 ?.takeIf { takenFrom[label] != it.startMillis }
         // The README's stretch bars, with the ONE thing a stretch may not bar taken out of them: the
         // occurrence that same stretch is about to TAKE. The bar is about what comes AFTER a stretch, and the
@@ -431,7 +432,6 @@ object DynamicPeriods {
             if (chain != null && chain.startMillis == inst.startMillis) takenFrom[inst.spec.label] = chain.startMillis
             barInstance(bars, byLabel, restedSpans, inst, ::barRestStretch)
         }
-        val floor = frozen?.untilMillis?.takeIf { floorAtFrozen }
         val out = mutableListOf<Instance>()
         var steps = 0
         while (true) {
@@ -504,13 +504,12 @@ object DynamicPeriods {
             // (Mode 2 was dragging until the modes were restated; what tells the two apart is the CUE,
             // [breaksAreNotifiedAt].)
             //
-            // **The look-away is exempt in every mode, and is not dragged at all** ([dragsAtLine]). Looking
-            // twenty feet away for twenty seconds is not something the user has to stop working to do, so the
-            // app takes it as done the moment the line reaches it: the period stays where the bars put it, the
-            // line crosses it in mode 3 — covered, which is exactly what the drag exists to prevent elsewhere —
-            // and twenty seconds later it is an ordinary fact of the past, still drawn where it happened. A
-            // pose is the opposite: five or fifteen minutes away from the screen is something the user must
-            // actually do, so an untaken one it never declared is still OWED and goes on being dragged.
+            // **The look-away is dragged in mode 2 only** ([dragsAt]): *"the $now line$ must be in mode 1 or 3
+            // before entering the 20s break"*. At a screen the app takes it as done the moment the line reaches
+            // it: the period stays where the bars put it, the line crosses it in mode 3 (§ *Mode switching*) and
+            // twenty seconds later it is an ordinary fact of the past. A pose is the opposite: five or fifteen
+            // minutes away from the screen is something the user must actually do, so an untaken one it never
+            // declared is still OWED and goes on being dragged.
             //
             // Pushing it is a move like any other, so the loop goes round again and the ordinary rules get
             // their say at the new position: the line may be standing inside a stretch nobody can run in (a
@@ -533,7 +532,7 @@ object DynamicPeriods {
             // period in it at all, drawn as a plain "Inactivity" band. The chain still has to be able to TAKE
             // it ([chainTaking], asked at the top of the next turn round the loop): where it is too short the
             // break was not completed, so the drag picks it straight back up.
-            if (taken == null && !lineIsCoveredAt(mode) && dragsAtLine(label) &&
+            if (taken == null && dragsAt(label, mode) &&
                 start >= sweepFromMillis && start < tpMillis
             ) {
                 val putDown = chainAfter(noScreenChains, start)?.startMillis
@@ -550,11 +549,11 @@ object DynamicPeriods {
             // slot falling on that edge: the cue sweep would then read one break's due as `floor` in one scan
             // and `floor + 1` in the next, and fire it twice.
             val openStart =
-                !lineIsCoveredAt(mode) && dragsAtLine(label) && start == tpMillis && sweepFromMillis < tpMillis
+                dragsAt(label, mode) && start == tpMillis && sweepFromMillis < tpMillis
             // The requirements' last bullet: a chain of "no on-screen task" periods that touches this slot
             // pulls the period back onto its own start ([chainTaking], which is also where the two refusals
             // live) — the time already spent away counts towards the break that falls due inside it.
-            val place = taken?.startMillis?.coerceAtLeast(startMillis)
+            val place = taken?.startMillis?.coerceAtLeast(maxOf(startMillis, floor ?: Long.MIN_VALUE))
             val inst = if (place != null) Instance(spec, place) else Instance(spec, start, openStart)
             out += inst
             barInstance(bars, byLabel, restedSpans, inst, ::barRestStretch)
@@ -635,10 +634,15 @@ object DynamicPeriods {
      * `docs/scheduler_requirements.md` § *3 Dynamic Restrictive Period*, last bullet: **the chain of "no
      * on-screen task" periods that TOOK the occurrence falling at [startMillis]**, or `null` where none did.
      *
-     * *"When a 'no on-screen task' period touches the start of a dynamic restrictive period, and that this
-     * chain of 'no on-screen task' periods ends somewhere in $[now line;+infinity)$, then the dynamic
-     * restrictive period now starts at the start of this chain. If it means starting in the past, this is the
-     * only exception to the **frozen past** rule."*
+     * *"In a 'no screen' period, if $t_b$ is in a screen break, where $t_b$ is the start of a screen break, and
+     * that $now line$ < $t_b$, then this screen break must now start at max($now line$, $t_s$), where $t_s$ is the
+     * start of the continuous 'no screen' period."* The line moves continuously, so a line that entered the chain
+     * at `t_s` met the break right there: `max(line, t_s)` read at the line's every position is the chain's start.
+     * **It never moves a break behind the banked front** ([instances]' `floor`): there — a chain the line learns of
+     * only after it began, like observed no-screen evidence arriving late — the break starts at `max(front, t_s)`,
+     * which is the `max(now line, t_s)` of the requirements. Until 2026-09-29 the front waited at the chain's start
+     * and the calendar re-derived the past, so the old wording's *"if it means starting in the past"* was read as
+     * an exception to the frozen past; the requirements no longer have it.
      *
      * It is the ONE reading of that bullet, and the walk asks it three questions with one answer: where the
      * period is placed, which rest stretch may not bar it ([instances]' first loop), and whether the line
@@ -668,7 +672,7 @@ object DynamicPeriods {
      *   ([mergeChain]) is the rule, and letting both fire would be two answers to one question.
      */
     fun chainTaking(base: Base, spec: Spec, startMillis: Long, tpMillis: Long, mode: Int): Span? =
-        chainTaking(noScreenChains(base), spec, startMillis, tpMillis, mode)
+        chainTaking(noScreenChains(base), spec, startMillis, tpMillis, mode, null)
 
     /** [chainTaking] over chains already merged — the walk hoists them out of its loop. */
     private fun chainTaking(
@@ -677,6 +681,8 @@ object DynamicPeriods {
         startMillis: Long,
         tpMillis: Long,
         mode: Int,
+        /** The banked front, below which nothing is placed: the break then starts at `max(front, t_s)`. */
+        floorMillis: Long?,
     ): Span? {
         // The merged chains are disjoint, non-abutting and sorted, so the ONE candidate is the last chain
         // beginning at or before the slot — found by bisection, because this is asked once per label on every
@@ -686,9 +692,14 @@ object DynamicPeriods {
         } ?: return null
         // Still being taken (the chain reaches the line), or taken in full (it outlasted the break).
         if (chain.endMillis < tpMillis && chain.durationMillis < spec.durationMillis) return null
-        // Mode 1: `t_p` must not be covered by a pose.
-        if (!lineIsCoveredAt(mode) && dragsAtLine(spec.label) &&
-            chain.startMillis <= tpMillis && tpMillis < chain.startMillis + spec.durationMillis
+        // A break the line may not be inside in this mode ([dragsAt]) is not taken where the line would be inside it:
+        // - mode 1, a pose: `t_p` must not be covered by it — where it would start once the front has floored it;
+        // - mode 2, the look-away: *"the $now line$ must be in mode 1 or 3 before entering the 20s break"* — and a line
+        //   that moved continuously through the chain in mode 2 reached it wherever the chain put it, so it is never
+        //   taken, only dragged.
+        val starts = maxOf(chain.startMillis, floorMillis ?: Long.MIN_VALUE)
+        if (dragsAt(spec.label, mode) && starts <= tpMillis &&
+            (spec.label == LABEL_20S || tpMillis < starts + spec.durationMillis)
         ) {
             return null
         }
@@ -739,14 +750,6 @@ object DynamicPeriods {
         return found
     }
 
-    /**
-     * The "no on-screen task" chain the line [tpMillis] is in — one that began at or before it and *"ends
-     * somewhere in [now line; +infinity)"* — or null. It is the one stretch of the past the requirements' chain
-     * rule can still move a break into ([chainTaking]), which is why the banked front waits at its start.
-     */
-    fun chainReaching(base: Base, tpMillis: Long): Span? =
-        chainAtOrBefore(noScreenChains(base), tpMillis)?.takeIf { it.endMillis >= tpMillis }
-
     private fun noScreenChains(base: Base): List<Span> =
         mergeSpans(
             base.periods
@@ -755,32 +758,42 @@ object DynamicPeriods {
         )
 
     /**
-     * **Does the line DRAG this one when it reaches it?** — the two poses yes, the 20 s look-away no.
-     *
-     * Mode 1's rule is that `t_p` must not be covered, and the drag is how a period the line reaches obeys it:
-     * the period is pushed onto the line and goes on being pushed, so it never happens until the user actually
-     * rests. That is right for a pose — five or fifteen minutes away from the screen is a thing the user has
-     * to *do*, and an untaken one is owed, not spent.
-     *
-     * It is wrong for the look-away. Looking twenty feet away for twenty seconds costs no working time, so the
-     * app assumes it is being done the moment it falls due: the occurrence stays where the bars put it, the
-     * line walks across it in **mode 2** (covered, for those twenty seconds), and once the line is past, the
-     * break stays on the calendar as what really happened — the placement is a function of the environment, so
-     * asking about that stretch again puts it back in the same place. It is derived, not recorded, so a later
-     * change to the environment can still move it: a manual "Look away now" less than twenty minutes later
-     * re-anchors the 20 s bar off the break the user actually took ([RestrictivePeriod.dynamic]).
+     * **Does a line in [mode] DRAG this one when it reaches it?** — pushes it onto itself as `(t_p, t_p + d]`, and
+     * goes on pushing it, because the line may not be inside it in that mode. `docs/scheduler_requirements.md`:
+     * - **a pose, in mode 1**: *"$now line$ must not be covered by the period 'no screen'"*, and a pose comes with
+     *   one — *"If the $now line$ reaches a 5min break in mode 1, this 5min break becomes ]$now line$; $now line$ +
+     *   5min]"*. Five or fifteen minutes away from the screen is something the user must DO, so an untaken one is
+     *   owed and rides the line;
+     * - **the 20 s look-away, in mode 2**: *"The $now line$ must be in mode 1 or 3 before entering the 20s break"* —
+     *   *"If the $now line$ reaches a 20s break in mode 2, this 20s break becomes ]$now line$; $now line$ + 20s]"*.
+     *   In mode 1 the line enters it and is in mode 3 for its twenty seconds (§ *Mode switching*,
+     *   [SchedulerDomain.lookAwayHoldUntil]); in mode 3 it simply enters it. Until 2026-09-29 the look-away was
+     *   dragged in no mode at all.
      *
      * Keyed on the label, like every other bar rule here: [LABEL_20S] is the role of the shortest of the three,
      * not a title, so a retitled or debug-retimed account still answers this the same way.
      */
-    private fun dragsAtLine(label: String): Boolean = label != LABEL_20S
-
     /**
-     * The README's stretch, at one instant: covered by "no on-screen task", and no task there — a pre-placed
-     * block included, since a pre-placed task is a task.
+     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind a break in this role is** — the 20 s *"allows no
+     * task"* ([PeriodKinds.INACTIVITY], which nobody may be resilient to); the 5 min and the 15 min are kinds of their
+     * own ([PeriodKinds.BREAK_5MIN], [PeriodKinds.BREAK_15MIN]), with the 5 min's first minute allowing no task
+     * ([BREAK_5MIN_NO_TASK_MILLIS], `SchedulerDomain.screenBreakPeriods`). All three are accompanied by "no screen".
      */
-    private fun isRestAt(base: Base, millis: Long): Boolean =
-        base.blockAt(millis) == null && base.noScreenAt(millis) && !base.anybodyAt(millis)
+    fun breakKind(label: String): String =
+        when (label) {
+            LABEL_5MIN -> PeriodKinds.BREAK_5MIN
+            LABEL_15MIN -> PeriodKinds.BREAK_15MIN
+            else -> PeriodKinds.INACTIVITY
+        }
+
+    /** *"The 5min break is accompanied by two periods: the first minute that allow no tasks and the 4 next minutes."* */
+    const val BREAK_5MIN_NO_TASK_MILLIS: Long = 60_000L
+
+    internal fun dragsAt(label: String, mode: Int): Boolean =
+        if (label == LABEL_20S) mode == MODE_AWAY else mode == MODE_AT_SCREEN
+
+    /** The requirements' rest stretch, at one instant: "no screen" ([Base.noScreenAt]), whoever may run there. */
+    private fun isRestAt(base: Base, millis: Long): Boolean = base.noScreenAt(millis)
 
     /** Grow `[a, b)` through whatever pre-placed REST it touches — an abutting night makes one stretch. */
     private fun growStretch(rested: List<Span>, aIn: Long, bIn: Long): Span {
@@ -857,6 +870,14 @@ object DynamicPeriods {
      *
      * Touching counts as chaining — that is the README's own example: a 20 s dragged until its end meets a
      * 5 min is absorbed, and the 5 min teleports 20 seconds backward, keeping the line outside it.
+     *
+     * **A chain the line is dragging stays on the line.** `docs/scheduler_requirements.md`: *"When the $now line$ is
+     * in mode 1 and has dragged a 5min break until the break's end edge touches a 15min break, the 15min break
+     * teleports 5 minutes backward, starting right after $now line$"* — right after the line, never behind it. So
+     * where the longest member is the pose the line is dragging (`openStart`) and the chain began earlier (a
+     * look-away the line is crossing), the pose keeps its place `(t_p, t_p + d]` and the earlier member is removed —
+     * the requirements' own exception. Brought back to the look-away's start instead, the pose covered the mode-1
+     * line, was banked, was removed for covering it, and came back at the next advance (2026-09-29).
      */
     private fun mergeChain(instances: List<Instance>): List<Instance> {
         val sorted =
@@ -866,7 +887,9 @@ object DynamicPeriods {
             val prev = out.lastOrNull()
             if (prev != null && inst.coveredFromMillis <= prev.coveredUntilMillis) {
                 val longest = if (prev.durationMillis >= inst.durationMillis) prev else inst
-                out[out.size - 1] = Instance(longest.spec, prev.startMillis, prev.openStart)
+                out[out.size - 1] =
+                    if (longest === inst && inst.openStart && !prev.openStart) inst
+                    else Instance(longest.spec, prev.startMillis, prev.openStart)
             } else {
                 out += inst
             }

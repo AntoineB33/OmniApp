@@ -12,10 +12,11 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *No idling*, checked at the line ([SchedulerDomain.planMismatchAtLine]): the
- * rules place the three dynamic periods as a function of the line, so a plan built around one placement can be
- * left, as the line advances, either empty where somebody may run or running a task inside a break. The engine
- * re-plans from the line on either, once per mismatch.
+ * The plan checked at the line ([SchedulerDomain.planMismatchAtLine]): the rules place the three dynamic periods as
+ * a function of the line, so a plan built around one placement can be left, as the line advances, either empty
+ * where somebody may run or running a task inside a break. The engine re-plans from the line on either, once per
+ * mismatch. `docs/scheduler_requirements.md` requires no task anywhere, so an empty line the plan itself DECIDED
+ * ([SchedulerState.plannedIdle]) is the plan, not a mismatch.
  */
 class PlanMismatchAtLineTest {
     private val MIN = 60_000L
@@ -49,6 +50,18 @@ class PlanMismatchAtLineTest {
         // line is idle.
         val s = account(listOf(rest(NOW - 5 * MIN), auto("auto/0", NOW - 10 * MIN, NOW), auto("auto/1", NOW + 5 * MIN, NOW + 40 * MIN)))
         assertEquals("idle", mismatch(s)?.first())
+    }
+
+    @Test
+    fun a_hole_the_plan_chose_to_leave_to_nobody_is_not_a_mismatch() {
+        // The same hole, but the fill reported it as time it decided to leave to nobody: re-planning here would only
+        // ask the question again, with time passing and nothing changed.
+        val hole = org.example.project.scheduler.model.TaskTimeRange(NOW, NOW + 5 * MIN)
+        val s = account(listOf(rest(NOW - 5 * MIN), auto("auto/0", NOW - 10 * MIN, NOW), auto("auto/1", NOW + 5 * MIN, NOW + 40 * MIN)))
+            .copy(plannedIdle = listOf(hole))
+        assertNull(mismatch(s))
+        // A planned hole elsewhere says nothing about this one.
+        assertEquals("idle", mismatch(s.copy(plannedIdle = listOf(org.example.project.scheduler.model.TaskTimeRange(NOW + MIN, NOW + 5 * MIN))))?.first())
     }
 
     @Test

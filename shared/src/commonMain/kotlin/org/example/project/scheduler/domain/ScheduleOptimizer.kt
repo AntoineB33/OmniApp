@@ -38,6 +38,13 @@ import kotlin.math.abs
  * ### Candidate lengths
  * A run of task `i` starting at `u` is tried for what is left of its minimum execution time, that plus half, one
  * and two minimums, up to the next three environment edges, and as far as it may run within the window.
+ *
+ * ### Nobody is a candidate
+ * `docs/scheduler_requirements.md` requires no task anywhere, so every decision also tries leaving the time to
+ * nobody ([ScoreModel.IDLE], [ScoreModel.choicesAt]) — up to the next three edges, or as far as it may go. The score
+ * prices it: every lag falls behind its target (the shares add up to 100 %), and the panel it interrupts ends. It is
+ * kept only where that costs less than any task — typically a stretch before an edge too short for any minimum. A run
+ * of nobody is an ordinary [Run] whose task is [ScoreModel.IDLE]; it names no alternative and is placed as nothing.
  */
 class ScheduleOptimizer(
     val model: ScoreModel,
@@ -67,17 +74,30 @@ class ScheduleOptimizer(
 
     // ----- candidate runs --------------------------------------------------------------------------
 
-    /** The lengths a run of [task] starting at `cursor.u` is tried for, ascending, none past [untilU]. */
+    /**
+     * The lengths a run of [task] starting at `cursor.u` is tried for, ascending, none past [untilU]. An [ScoreModel.IDLE]
+     * run is tried up to each of the next three environment edges and as far as it may go: nobody has a minimum, and
+     * what leaving time to nobody can buy is a panel that would otherwise have to be cut short against an edge.
+     */
     fun lengthsFor(cursor: ScoreCursor, task: Int, untilU: Double): DoubleArray {
         val u = cursor.u
         val limit = minOf(model.runLimit(task, u), untilU)
         if (limit <= u + ScoreModel.EPS) return DoubleArray(0)
-        val m = maxOf(model.minimum[task], ScoreModel.MIN_WINDOW_MILLIS)
-        val owed = if (cursor.run == task) model.minimum[task] - cursor.runLen else model.minimum[task]
         val out = ArrayList<Double>(10)
         fun offer(d: Double) {
             if (d > ScoreModel.EPS) out += minOf(d, limit - u)
         }
+        if (task == ScoreModel.IDLE) {
+            var e = u
+            repeat(3) {
+                e = model.nextEdge(e)
+                if (e < limit) offer(e - u)
+            }
+            offer(limit - u)
+            return dedupSorted(out)
+        }
+        val m = maxOf(model.minimum[task], ScoreModel.MIN_WINDOW_MILLIS)
+        val owed = if (cursor.run == task) model.minimum[task] - cursor.runLen else model.minimum[task]
         if (owed > ScoreModel.EPS) {
             offer(owed)
             offer(owed + 0.5 * m)
@@ -95,6 +115,10 @@ class ScheduleOptimizer(
             if (e < limit) offer(e - u)
         }
         offer(limit - u)
+        return dedupSorted(out)
+    }
+
+    private fun dedupSorted(out: MutableList<Double>): DoubleArray {
         out.sort()
         val dedup = ArrayList<Double>(out.size)
         for (d in out) if (dedup.isEmpty() || d - dedup.last() > SAME_LENGTH_MILLIS) dedup += d
@@ -187,7 +211,7 @@ class ScheduleOptimizer(
                 return minOf(best, best(next, depth))
             }
             val trials = ArrayList<Pair<ScoreCursor, Double>>()
-            for (j in model.candidatesAt(c.u)) {
+            for (j in model.choicesAt(c.u)) {
                 for (d in lengthsFor(c, j, windowEnd)) {
                     val next = c.copy()
                     model.serve(next, j, c.u + d)
@@ -232,11 +256,14 @@ class ScheduleOptimizer(
             return best
         }
 
-        /** § *Alternative Schedules*: the best first task other than [scheduled], or -1. */
+        /**
+         * § *Alternative Schedules*: the best first TASK other than [scheduled], or -1 — never [ScoreModel.IDLE]: the
+         * alternative is a task set at the line when the scheduled one is refused.
+         */
         fun alternativeTo(scheduled: Int): Int {
             var best = -1
             for ((k, j) in candidates.withIndex()) {
-                if (j == scheduled || values[k] == Double.POSITIVE_INFINITY) continue
+                if (j == scheduled || j == ScoreModel.IDLE || values[k] == Double.POSITIVE_INFINITY) continue
                 if (best < 0 || better(values[k], values[best])) best = k
             }
             return if (best < 0) -1 else candidates[best]
@@ -251,7 +278,7 @@ class ScheduleOptimizer(
         if (fixed >= 0) {
             return Evaluation(emptyList(), DoubleArray(0), DoubleArray(0), fixed, minOf(untilU, model.fixedEnd(u)) - u)
         }
-        val candidates = model.candidatesAt(u)
+        val candidates = model.choicesAt(u)
         if (candidates.isEmpty()) return null
         // Every trial is valued from THIS instant: the discount is exponential, so rebasing it multiplies every
         // value by one factor and changes no comparison — while a far origin shrinks them towards the tie tolerance.
@@ -405,11 +432,13 @@ class ScheduleOptimizer(
     }
 
     /**
-     * The longest prefix of [runs] that is a legal continuation from [start] — every run starts where the previous
-     * one ended, is a task that may run over all of it, never enters another task's pre-placed block, and the first
-     * free run honours §13's [forcedFirst], §7's [refusedFirst] and the instant restriction at the line
-     * ([firstAmong]) — with the pre-placed blocks the environment holds laid in between. Null when the first free
-     * run breaks one of them (then the whole continuation is unusable).
+     * The longest prefix of [runs] that is a legal continuation from [start] — every run is a task that may run over
+     * all of it or [ScoreModel.IDLE], never enters another task's pre-placed block, and the first free run honours
+     * §13's [forcedFirst], §7's [refusedFirst] and the instant restriction at the line ([firstAmong]) — with the
+     * pre-placed blocks the environment holds laid in between. Schedulable time between two runs is time left to
+     * nobody, an idle run like an explicit one — unless [gapsAreIdle] is false, and then the prefix ends at the first
+     * gap; past the last run the prefix ends, unless [idleTail] says the runs are a WHOLE continuation, whose tail is
+     * then nobody's too. Null when the first free run breaks one of them (then the whole continuation is unusable).
      * The second value says whether a free run has been decided.
      */
     private fun legalPrefix(
@@ -419,10 +448,12 @@ class ScheduleOptimizer(
         forcedFirst: Int,
         refusedFirst: Int,
         firstAmong: Set<Int> = emptySet(),
+        idleTail: Boolean = false,
+        gapsAreIdle: Boolean = true,
     ): Pair<List<Run>, Boolean>? {
         val out = ArrayList<Run>()
         var u = start.u
-        val sorted = runs.filter { it.task >= 0 && it.toU > u + ScoreModel.EPS }.sortedBy { it.fromU }
+        val sorted = runs.filter { it.task >= ScoreModel.IDLE && it.toU > u + ScoreModel.EPS }.sortedBy { it.fromU }
         var idx = 0
         var decided = false
         var guard = 0
@@ -436,12 +467,16 @@ class ScheduleOptimizer(
                 continue
             }
             while (idx < sorted.size && sorted[idx].toU <= u + ScoreModel.EPS) idx++
-            val r = sorted.getOrNull(idx) ?: break
-            if (r.fromU > u + ScoreModel.EPS) break
-            val task = r.task
+            val r = sorted.getOrNull(idx)
+            if (r == null && !idleTail) break
+            // A gap before the next run (or after the last of a whole continuation) is nobody's.
+            val gap = r == null || r.fromU > u + ScoreModel.EPS
+            if (gap && r != null && !gapsAreIdle) break
+            val task = if (gap) ScoreModel.IDLE else r!!.task
+            val runEnd = if (r == null) untilU else if (gap) r.fromU else r.toU
             if (!model.permitted(task, u)) break
-            if (!decided && task !in firstOptions(model.candidatesAt(u), forcedFirst, refusedFirst, firstAmong)) return null
-            val e = minOf(r.toU, untilU, model.runLimit(task, u), model.nextFixedStart(u))
+            if (!decided && task !in firstOptions(model.choicesAt(u), forcedFirst, refusedFirst, firstAmong)) return null
+            val e = minOf(runEnd, untilU, model.runLimit(task, u), model.nextFixedStart(u))
             if (e <= u + ScoreModel.EPS) break
             out += Run(task, u, e, -1)
             decided = true
@@ -451,13 +486,16 @@ class ScheduleOptimizer(
     }
 
     /**
-     * Whether [runs], exactly as given, are a legal continuation from [start] all the way to [untilU]: no stretch left
-     * to nobody where somebody may run (§ *No idling*), no task where it may not run, no other task's pre-placed block
-     * entered. What a follower checks another device's runs against before laying them on its own timeline.
+     * Whether [runs], exactly as given, are a continuation from [start] all the way to [untilU] that a follower may lay
+     * on its own timeline without searching: no task where it may not run, no other task's pre-placed block entered,
+     * the first run one the line allows, and **no gap** between two runs where somebody may run here. A peer's gap is
+     * ambiguous — its own decision to leave time to nobody, or a stretch its environment had no room in (a break this
+     * device does not have) — so it is never taken as a decision: the runs then compete as a seed instead, where an
+     * interior gap IS read as time left to nobody and the score judges it.
      */
     fun isLegalContinuation(start: ScoreCursor, runs: List<Run>, untilU: Double, firstAmong: Set<Int> = emptySet()): Boolean {
         if (untilU <= start.u + ScoreModel.EPS) return true
-        val (prefix, _) = legalPrefix(start, runs, untilU, -1, -1, firstAmong) ?: return false
+        val (prefix, _) = legalPrefix(start, runs, untilU, -1, -1, firstAmong, gapsAreIdle = false) ?: return false
         return prefix.isNotEmpty() && prefix.last().toU >= untilU - ScoreModel.EPS
     }
 
@@ -508,12 +546,12 @@ class ScheduleOptimizer(
         firstAmong: Set<Int>,
         pinned: Run?,
     ): List<Run>? {
-        val (prefix, _) = legalPrefix(start, proposed, untilU, forcedFirst, refusedFirst, firstAmong) ?: return null
+        val (prefix, _) = legalPrefix(start, proposed, untilU, forcedFirst, refusedFirst, firstAmong, idleTail = true) ?: return null
         if (prefix.isEmpty() || prefix.last().toU < untilU - ScoreModel.EPS) return null
         if ((forcedFirst >= 0 || refusedFirst >= 0 || firstAmong.isNotEmpty()) && pinned != null) {
             val firstFree = prefix.firstOrNull { model.fixedAt(it.fromU) < 0 } ?: return null
-            val pinnedFree = if (model.fixedAt(pinned.fromU) < 0) pinned.task else -1
-            if (pinnedFree >= 0 && firstFree.task != pinnedFree) return null
+            val pinnedFree = if (model.fixedAt(pinned.fromU) < 0) pinned.task else NOT_PINNED
+            if (pinnedFree != NOT_PINNED && firstFree.task != pinnedFree) return null
         }
         return prefix
     }
@@ -531,11 +569,12 @@ class ScheduleOptimizer(
         val out = ArrayList<Run>(runs.size)
         var pending: PendingRun? = null
         for (r in runs) {
-            if (r.fromU > cursor.u + ScoreModel.EPS) model.serve(cursor, -1, r.fromU)
+            if (r.fromU > cursor.u + ScoreModel.EPS) model.serve(cursor, ScoreModel.IDLE, r.fromU)
             val eval = evaluate(cursor, untilU)
             pending?.let { out += it.close(if (eval != null && eval.fixed < 0) eval.alternativeTo(it.task) else -1, true) }
             pending = null
-            if (eval == null || eval.fixed >= 0) {
+            // A run of nobody names no alternative: nothing is scheduled there to be refused.
+            if (eval == null || eval.fixed >= 0 || r.task == ScoreModel.IDLE) {
                 model.serve(cursor, r.task, r.toU)
                 out += r.copy(alternative = -1)
                 continue
@@ -626,7 +665,7 @@ class ScheduleOptimizer(
             model.settle(settled)
             if (settled.cost + model.lowerBound(settled, untilU) >= bestCost * (1.0 - TIE)) return
             val fixed = model.fixedAt(c.u)
-            val options = if (fixed >= 0) listOf(fixed) else model.candidatesAt(c.u)
+            val options = if (fixed >= 0) listOf(fixed) else model.choicesAt(c.u)
             val allowed = if (first && fixed < 0) firstOptions(options, forcedFirst, refusedFirst, firstAmong) else options
             for (j in options) {
                 if (j !in allowed) continue
@@ -660,17 +699,22 @@ class ScheduleOptimizer(
         const val DEFAULT_SEARCH_BUDGET: Int = 20_000
 
         /**
-         * The tasks the first FREE run may be, out of the [candidates] the instant offers: PRD §13's [forced] task
-         * alone when it may run; else, when anybody in [among] may run, only them — the instant restriction at the
-         * line (`ScheduleFill.firstAmong`: modes 2 & 3 cover the line itself by "no on-screen task"); and never
-         * PRD §7's [refused] task while somebody else may.
+         * What the first FREE run may be, out of the [candidates] the instant offers: PRD §13's [forced] task alone
+         * when it may run; else, when anybody in [among] may run, only them — the instant restriction at the line
+         * (`ScheduleFill.firstAmong`: modes 2 & 3 cover the line itself by "no on-screen task"); never PRD §7's
+         * [refused] task while another task may; and, whenever nothing is forced, [ScoreModel.IDLE] when the
+         * instant offers it.
          */
         fun firstOptions(candidates: List<Int>, forced: Int, refused: Int, among: Set<Int>): List<Int> {
             if (forced >= 0 && forced in candidates) return listOf(forced)
-            val restricted =
-                if (among.isEmpty()) candidates else candidates.filter { it in among }.ifEmpty { candidates }
-            return if (refused >= 0 && restricted.size > 1) restricted.filter { it != refused } else restricted
+            val tasks = candidates.filter { it >= 0 }
+            val restricted = if (among.isEmpty()) tasks else tasks.filter { it in among }.ifEmpty { tasks }
+            val allowed = if (refused >= 0 && restricted.size > 1) restricted.filter { it != refused } else restricted
+            return if (ScoreModel.IDLE in candidates) allowed + ScoreModel.IDLE else allowed
         }
+
+        /** [accepted]'s "no pinned first run" — distinct from [ScoreModel.IDLE], which a pinned first run may be. */
+        private const val NOT_PINNED: Int = Int.MIN_VALUE
         const val DEFAULT_LOOKAHEAD_DEPTH: Int = 2
         const val DEFAULT_IMPROVE_BUDGET: Int = 5_000
         /** How many of the most promising trials are looked into one run deeper. */

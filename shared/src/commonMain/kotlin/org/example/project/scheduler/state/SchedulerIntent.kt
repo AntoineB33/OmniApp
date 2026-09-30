@@ -866,6 +866,17 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the now-line has just changed mode CLASS (at a screen
+     * vs covered) at [nowMillis]. The rules are parameterized by the mode, so the plan for the new class was found
+     * with the last one ([SchedulerState.otherModePlan]) and is laid from the line — not searched again, which would
+     * rewrite a schedule § *Progressive Calculation* has already made definitive. Where there is none for these
+     * rules, or it is no legal continuation on this timeline, it re-plans from the line as before.
+     */
+    data class SwitchTpMode(
+        val nowMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * PRD §9: the frequent tick — advance the schedule to [nowMillis] without refilling. Records the
      * elapsed period of any completed auto panel (and cuts the current one if its task was deleted or
      * gained a child), so the calendar stays truthful even while §7 auto-scheduling is off. Touches

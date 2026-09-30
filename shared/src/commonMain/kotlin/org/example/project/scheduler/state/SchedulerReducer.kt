@@ -547,6 +547,7 @@ object SchedulerReducer {
                     )
                 }
             is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
+            is SchedulerIntent.SwitchTpMode -> reduceSwitchTpMode(state, intent.nowMillis)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
             is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis)
@@ -2711,6 +2712,7 @@ object SchedulerReducer {
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
         var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
         var search: SearchReport? = null
         var score: Double? = null
         val filled =
@@ -2725,6 +2727,7 @@ object SchedulerReducer {
                 horizonMillis = horizon,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
+                idleSink = { idle = it },
                 searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 extraSeeds = seeds,
                 searchSink = { report, cost ->
@@ -2732,9 +2735,10 @@ object SchedulerReducer {
                     score = cost
                 },
             )
-        val result =
-            if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
-            else advanced.copy(panels = filled, scheduleCycle = cycle)
+        val planned =
+            if (filled == advanced.panels && cycle == advanced.scheduleCycle && idle == advanced.plannedIdle) advanced
+            else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
+        val result = withOtherModePlan(planned, nowMillis, mode, horizon, horizon) { abandoned(generation) }
         recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
@@ -2768,6 +2772,7 @@ object SchedulerReducer {
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
         var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
         val filled =
             SchedulerDomain.fillSchedule(
                 advanced,
@@ -2784,13 +2789,109 @@ object SchedulerReducer {
                     if (intent.keepHead) SchedulerDomain.firstFreeMoment(advanced.panels, nowMillis) else null,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
+                idleSink = { idle = it },
                 adoptedPlacements = intent.placements,
                 adoptedCycle = intent.cycle,
             )
-        val result =
-            if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
-            else advanced.copy(panels = filled, scheduleCycle = cycle)
+        val adopted =
+            if (filled == advanced.panels && cycle == advanced.scheduleCycle && idle == advanced.plannedIdle) advanced
+            else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
+        val result = withOtherModePlan(adopted, nowMillis, mode, horizon, horizon)
         recordRun(SchedulerRunEntry.Kind.Adopted, nowMillis, mode, horizon, result, rules)
+        return result
+    }
+
+    /**
+     * `docs/invariants/scheduler.md` § *The rules are parameterized by the mode*: the plan for the mode class the line
+     * is NOT in, found beside [state]'s own ([SchedulerDomain.otherModePlan]) out to [horizon] — every plan reduction
+     * ends here, so the two classes' plans reach the same front stage by stage. [lineModeUntilMillis] is how far the
+     * line's own plan now reaches.
+     */
+    private fun withOtherModePlan(
+        state: SchedulerState,
+        nowMillis: Long,
+        mode: Int,
+        horizon: Long,
+        lineModeUntilMillis: Long,
+        abandoned: () -> Boolean = { false },
+    ): SchedulerState {
+        val plan =
+            SchedulerDomain.otherModePlan(
+                state,
+                nowMillis,
+                liveRest = liveRestGap(),
+                noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
+                tpMode = mode,
+                horizonMillis = horizon,
+                lineModeUntilMillis = lineModeUntilMillis,
+                abandoned = abandoned,
+            )
+        return if (plan == state.otherModePlan) state else state.copy(otherModePlan = plan)
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* ([SchedulerIntent.SwitchTpMode]): the line has moved into
+     * the other mode CLASS, so the plan found for it ([SchedulerState.otherModePlan]) is **laid from the line**, and the
+     * plan the line leaves becomes the other class's — a flip and a flip back return to the schedule already published
+     * (§ *Progressive Calculation*: what is definitive stays so, for every mode).
+     *
+     * It is laid exactly as a peer's rules are ([SchedulerDomain.fillSchedule]'s `adoptedPlacements`): through this
+     * timeline's own environment, where a dynamic period the plan could not know about suspends a run, and only when
+     * that is a legal continuation here. Where it is not — a hard constraint the path to this instant made (a period
+     * retracting at the line that did not at the plan's own instant) — the hard constraint wins: the fill plans from the
+     * line with those runs as a seed, and the History row carries the search it made. With no plan found for these
+     * rules (a restart, a pull, a rule change not planned yet) it is the re-plan it always was.
+     */
+    private fun reduceSwitchTpMode(state: SchedulerState, nowMillis: Long): SchedulerState {
+        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
+        if (!advanced.automaticSchedule) return advanced
+        val mode = tpMode()
+        val plan =
+            SchedulerDomain.otherModePlanFor(advanced, mode, nowMillis)
+                ?: return reduceRefreshSchedule(
+                    state,
+                    nowMillis,
+                    horizonCapMillis = nowMillis + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS,
+                )
+        val leaving =
+            org.example.project.scheduler.model.OtherModePlan(
+                covered = !plan.covered,
+                placements = SchedulerDomain.placementsAhead(advanced.panels, nowMillis),
+                untilMillis = plan.lineModeUntilMillis,
+                lineModeUntilMillis = plan.untilMillis,
+                rulesKey = plan.rulesKey,
+            )
+        var rules = SchedulerRunRules.EMPTY
+        var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
+        var search: SearchReport? = null
+        var score: Double? = null
+        val filled =
+            SchedulerDomain.fillSchedule(
+                advanced,
+                nowMillis,
+                liveRest = liveRestGap(),
+                noScreenEvidence = noScreenEvidence(),
+                frozenBreaks = frozenScreenBreaks(),
+                conductingBreak = conductingBreak(),
+                tpMode = mode,
+                horizonMillis = plan.untilMillis,
+                rulesSink = { rules = it },
+                cycleSink = { cycle = it },
+                idleSink = { idle = it },
+                adoptedPlacements = plan.placements,
+                // Laid runs report no score; a score is the fill having planned for itself instead.
+                searchSink = { report, cost ->
+                    if (cost != null) {
+                        search = report
+                        score = cost
+                    }
+                },
+            )
+        val result = advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle, otherModePlan = leaving)
+        recordRun(SchedulerRunEntry.Kind.ModeSwitch, nowMillis, mode, plan.untilMillis, result, rules, search, score)
         return result
     }
 
@@ -2835,9 +2936,12 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §7 **"Switch task"** ([SchedulerIntent.ForceTaskSwitch]): record the user's refusal of the task the
-     * now-line is on, **lay the epsilon switch entry** on the task the plan hands the line to
-     * ([placeSwitchEntry]), then re-plan around it.
+     * PRD §7 **"Switch task"** ([SchedulerIntent.ForceTaskSwitch]) — `docs/scheduler_requirements.md` § *Alternative
+     * Schedules*: read the task the rules name as the alternative at the line, **set it at `[now line, now line + d]`**
+     * ([SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS], a pre-placed block, [placeSwitchEntry]) and run the scheduler
+     * again with that schedule. (Until 2026-09-29 it laid an epsilon entry and forced the task as the first run, leaving
+     * its length to the search; the requirements fix it to `d`.) The refusal marker below is only what stands where
+     * the rules name no alternative.
      *
      * The refusal is [org.example.project.scheduler.model.ForcedTaskSwitch] — a fact about the past, read by
      * the fill as the walk's `last` — not an edit to any rule, which is why it re-plans from inside this
@@ -2864,7 +2968,11 @@ object SchedulerReducer {
         // is no task the user has switched TO, so there is nothing to state and the press is the refusal
         // alone, exactly as before.
         val replacementTask = replacement ?: return replanned ?: reduceInlineReplan(refused, nowMillis)
-        return reduceInlineReplan(startTaskNow(refused, replacementTask, nowMillis), nowMillis)
+        // `docs/scheduler_requirements.md` § *Alternative Schedules*: the alternative is SET at
+        // `[now line, now line + d]` and the scheduler runs again with that schedule — nothing more is carried: the
+        // pre-placed block is the whole of the answer, so no refusal marker and no first-run request stand beside it.
+        val laid = placeSwitchEntry(state.copy(forcedSwitch = null), replacementTask, nowMillis, SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS)
+        return reduceInlineReplan(laid.copy(forcedStart = null), nowMillis)
     }
 
     /**
@@ -2917,6 +3025,7 @@ object SchedulerReducer {
         state: SchedulerState,
         taskId: TaskId,
         nowMillis: Long,
+        lengthMillis: Long = SchedulerDomain.SWITCH_ENTRY_MILLIS,
     ): SchedulerState {
         val pins = PanelPins(existence = true)
         val (panelId, allocated) = state.allocatePanelId()
@@ -2926,7 +3035,7 @@ object SchedulerReducer {
                 taskId = taskId,
                 title = state.tasks[taskId]?.title.orEmpty(),
                 startEpochMillis = nowMillis,
-                endEpochMillis = nowMillis + SchedulerDomain.SWITCH_ENTRY_MILLIS,
+                endEpochMillis = nowMillis + lengthMillis,
                 pinned = derivePinned(pins),
                 pins = pins,
                 auto = false,
@@ -2991,6 +3100,7 @@ object SchedulerReducer {
         val mode = tpMode()
         var rules = SchedulerRunRules.EMPTY
         var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
         var search: SearchReport? = null
         var score: Double? = null
         val filled =
@@ -3006,6 +3116,7 @@ object SchedulerReducer {
                 keepExistingUntilMillis = materializedUntil,
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
+                idleSink = { idle = it },
                 extraSeeds = seeds,
                 searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 searchSink = { report, cost ->
@@ -3013,9 +3124,11 @@ object SchedulerReducer {
                     score = cost
                 },
             )
+        val extended =
+            if (filled == advanced.panels && cycle == advanced.scheduleCycle && idle == advanced.plannedIdle) advanced
+            else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
         val result =
-            if (filled == advanced.panels && cycle == advanced.scheduleCycle) advanced
-            else advanced.copy(panels = filled, scheduleCycle = cycle)
+            withOtherModePlan(extended, nowMillis, mode, horizon, maxOf(horizon, materializedUntil)) { abandoned(generation) }
         recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
@@ -3041,6 +3154,7 @@ object SchedulerReducer {
         if (!committed.automaticSchedule) return committed
         val now = clock.nowMillis()
         var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
         val filled =
             SchedulerDomain.fillSchedule(
                 committed,
@@ -3052,9 +3166,10 @@ object SchedulerReducer {
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
+                idleSink = { idle = it },
                 searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
             )
-        return committed.copy(panels = filled, scheduleCycle = cycle)
+        return committed.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
     }
 
     /**
@@ -3077,6 +3192,7 @@ object SchedulerReducer {
         if (!updated.automaticSchedule) return updated
         val now = clock.nowMillis()
         var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
         val filled =
             SchedulerDomain.fillSchedule(
                 updated,
@@ -3088,9 +3204,10 @@ object SchedulerReducer {
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
+                idleSink = { idle = it },
                 searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
             )
-        return updated.copy(panels = filled, scheduleCycle = cycle)
+        return updated.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
     }
 
     /**
@@ -3145,6 +3262,7 @@ object SchedulerReducer {
         if (!stripped.automaticSchedule) return stripped
         val now = clock.nowMillis()
         var cycle: ScheduleCycle? = null
+        var idle: List<TaskTimeRange> = emptyList()
         val filled =
             SchedulerDomain.fillSchedule(
                 stripped,
@@ -3156,9 +3274,10 @@ object SchedulerReducer {
                 tpMode = tpMode(),
                 horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
                 cycleSink = { cycle = it },
+                idleSink = { idle = it },
                 searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
             )
-        return stripped.copy(panels = filled, scheduleCycle = cycle)
+        return stripped.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
     }
 
     /**
@@ -4242,12 +4361,12 @@ private fun appendRecordOutsideNoScreen(
     if (taskId == null || endMillis <= startMillis) return tasks
     val task = tasks[taskId]
     val onScreen = task?.onScreen ?: true
-    val refusedByBreaks = (task?.resilienceFor(PeriodKinds.INACTIVITY) ?: 0.0) <= 0.0
+    // What of each banked break refuses THIS task (`SchedulerDomain.breakRefusedRanges`): the whole 20 s; the 5 min's
+    // first minute always, the rest of it and the 15 min unless the task was given a resilience to their kinds.
     val breaks =
-        if (!refusedByBreaks) emptyList()
-        else SchedulerReducer.frozenScreenBreaks()?.let { it.breaks + it.pending }.orEmpty()
+        SchedulerReducer.frozenScreenBreaks()?.breaks.orEmpty()
             .filter { it.endMillis > startMillis && it.startMillis < endMillis }
-            .map { TaskTimeRange(it.startMillis, it.endMillis) }
+            .flatMap { SchedulerDomain.breakRefusedRanges(it, task) }
     val excluded = (if (onScreen) noScreenRanges else emptyList()) + breaks
     if (excluded.isEmpty()) return appendRecordMap(tasks, taskId, startMillis, endMillis)
     var out = tasks

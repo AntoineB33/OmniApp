@@ -18,7 +18,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**) and § *No idling*, over a §17 SLEEP
+ * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**), over a §17 SLEEP
  * WINDOW the user is still awake inside.
  *
  * The reported anomaly (account 3, 00:43 on 2026-09-18): bedtime 23:15, so the night's window is
@@ -27,11 +27,11 @@ import org.example.project.scheduler.state.SchedulerState
  * all**, because the carve was display-only and the fill went on handing the whole window to the plan as an
  * obstacle admitting nobody.
  *
- * Two requirements broken at once, which is why it is one test:
- *  - § *No idling* — *"anywhere that is not covered by restrictive periods which would PREVENT ANY TASK from
- *    being scheduled, the scheduler must schedule a task, for any $now line$ and $now line$ mode"*. In mode 1
- *    the only period left covering the line is a LAYER one ("no phone unlocked": the phone is locked, this
- *    machine is not), whose resilience defaults to `1` and which therefore prevents nobody.
+ * Two things broken at once, which is why it is one test:
+ *  - a hole no score chose: in mode 1 the only period left covering the line is a LAYER one ("no phone
+ *    unlocked": the phone is locked, this machine is not), whose resilience defaults to `1` and which therefore
+ *    prevents nobody. (Written against § *No idling*, which the requirements dropped on 2026-09-29: leaving time
+ *    to nobody is now a decision the score prices, and nothing here makes it score lower.)
  *  - § *mode 1* — *"$now line$ must not be covered by the period 'no on-screen task'. This means that if it
  *    reaches one of those periods, the passing of the $now line$ line creates task panels not covered by the
  *    period."* A sleep window IS one of those periods ([PeriodKindConfig.impliedKinds], the other half of the same
@@ -99,10 +99,10 @@ class SleepWindowNoIdlingTest {
         assertEquals(setOf(PeriodKinds.NO_SCREEN), config.impliedKinds(PeriodKinds.SLEEP))
         // …and (2026-09-18) "no screen" is by default not accompanied by the layer periods, so it hatches none.
         assertEquals(emptySet(), config.assertedLayers(PeriodKinds.SLEEP))
-        // It is an implication, not a second kind: `sleep` still admits nobody by its own name and still
-        // refuses to have a resilience written against it.
+        // It is an implication, not a second kind: `sleep` admits nobody by default — *"a task has a 0 resilience
+        // to it by default"* — and, a default being one, a resilience may be written against it (2026-09-29).
         assertEquals(0.0, PeriodKinds.defaultResilience(PeriodKinds.SLEEP))
-        assertTrue(!PeriodKinds.isResilienceEditable(PeriodKinds.SLEEP))
+        assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.SLEEP))
         // And the implied period really reaches the scheduler's period list over the window's own span.
         val window = SchedulerDomain.sleepPanels(sleep, NOW - 12 * HOUR, NOW + 12 * HOUR, tz)
             .single { it.startEpochMillis <= NOW && it.endEpochMillis > NOW }
@@ -135,7 +135,7 @@ class SleepWindowNoIdlingTest {
         assertEquals(
             1,
             atLine.size,
-            "§ No idling: a task must be at the line, the only period covering it being one that prevents " +
+            "a task must be at the line, the only period covering it being one that prevents " +
                 "nobody. Got: ${panels.filter { it.startEpochMillis <= NOW && it.endEpochMillis > NOW }.map { it.title }}",
         )
     }
@@ -193,7 +193,7 @@ class SleepWindowNoIdlingTest {
             "the plan for after the wake must still be on the calendar",
         )
         // …and the clip reaches FORWARD only, so the task at the line survives it. A clip reaching behind the
-        // line would put the empty stretch straight back (§ *No idling*).
+        // line would put back an empty stretch nothing decided.
         assertEquals(1, workAt(drawn, NOW).size, "the task at the line survives the display clip")
     }
 
@@ -272,7 +272,7 @@ class SleepWindowNoIdlingTest {
         // `before bed` is or implies a no-screen period too, so mode 1 lifts THAT — but not the wind-down
         // period itself, whose resilience is editable ([PeriodKinds.isResilienceEditable]). PRD §17's
         // *"a task the user gives a value above 0 works through the wind-down"* is the sanctioned way anything
-        // runs there, and § *No idling*'s own clause is satisfied while nobody has been given one: the hour is
+        // runs there, and an hour nobody runs in is what the requirements allow while nobody has been given one: the hour is
         // exactly an hour the user is at a screen for, so retracting it would delete the wind-down outright.
         val windDown = utc(17, 22, 30)
         val panels = fill(account(), now = windDown, horizon = windDown + 6 * HOUR)
@@ -285,7 +285,8 @@ class SleepWindowNoIdlingTest {
     @Test
     fun a_task_resilient_to_before_bed_works_through_the_wind_down_at_the_line() {
         // The other side of the same test: once the user HAS let somebody through, the line is no longer
-        // covered by anything that prevents every task — so § *No idling* requires that task to be there. It
+        // covered by anything that prevents every task — so the score, finding no edge that makes time left to nobody
+        // cheaper, puts that task there. It
         // reaches the line only because mode 1 lifted the hour's implied no-screen period; an on-screen task
         // would otherwise still be kept out by that.
         var s = account()

@@ -3,6 +3,7 @@ package org.example.project
 import kotlinx.datetime.TimeZone
 import org.example.project.perf.Perf
 import org.example.project.perf.PerfReport
+import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
@@ -189,6 +190,20 @@ class PerfBenchmarkTest {
             medianNanos(times = 5) {
                 SchedulerDomain.fillSchedule(state, now, tz, horizonMillis = now + 7 * day)
             }
+        // What every plan reduction adds beside the plan: the plan for the other mode class, found fresh (a re-plan).
+        // An extension only fills its tail, as the plan's own stages do.
+        // At a screen the other class is the covered one, which only tasks resilient to "no on-screen task" may run in;
+        // covered, it is the at-screen plan — a whole plan's cost.
+        for ((label, mode) in listOf("covered" to DynamicPeriods.MODE_AT_SCREEN, "at-screen" to DynamicPeriods.MODE_AWAY)) {
+            rows += "otherModePlan $label 168h" to
+                medianNanos(times = 5) {
+                    SchedulerDomain.otherModePlan(
+                        state, now, liveRest = null, noScreenEvidence = emptyList(), frozenBreaks = null,
+                        conductingBreak = null, tpMode = mode, horizonMillis = now + 7 * day,
+                        lineModeUntilMillis = now + 7 * day, timeZone = tz,
+                    )
+                }
+        }
 
         // Everything below runs on the DISPLAY path, i.e. once per resample of the now-line and once per
         // recomposition of App. These are the numbers that multiply by the recomposition rate.

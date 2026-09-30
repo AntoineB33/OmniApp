@@ -213,7 +213,7 @@ model exists to prevent.
   *"$now line$ must not be covered by the period 'no on-screen task'. This means that if it reaches one of
   those periods, the passing of the $now line$ line creates task panels not covered by the period."* So a
   covering period that **is or carries `no screen`** (`PeriodKindConfig.isOrImpliesNoScreen`) gives up
-  `[now, its end)`, and § *No idling* then puts a task at the line: what is left covering it is a layer
+  `[now, its end)`, and the plan may then put a task at the line: what is left covering it is a layer
   period, whose default resilience is `1` and which prevents nobody.
   - **`sleep` retracts WHOLLY**, and it has to: no resilience can ever be written against it
     (`isResilienceEditable` is false), so if the window itself stayed the line would go on being covered by a
@@ -223,8 +223,8 @@ model exists to prevent.
     stretch with **no band and no task at all** (account 3, 00:43 on 2026-09-18). Same shape as the dragged
     pose of 2026-09-05, same answer.
   - **`before bed` keeps its own hour** — the same test answering the other way, not an exception: its
-    resilience IS editable, so §17's *"a value above 0"* is the sanctioned way anything runs there and *No
-    idling*'s own clause is satisfied while nobody has one. Retracting it would delete the wind-down, the
+    resilience IS editable, so §17's *"a value above 0"* is the sanctioned way anything runs there, and an hour
+    nobody runs in is what the requirements allow while nobody has one. Retracting it would delete the wind-down, the
     hour the user is meant to stop working in being exactly an hour they are at a screen for. Only its
     implied `no screen` period lifts, which is what lets the task they DID let through be an on-screen one.
   - **By default `inactivity` and every kind the account defined never retract** — they say the timeline is
@@ -300,13 +300,22 @@ model exists to prevent.
   schedulable time), never over `τ_i`.** `λ` sets both how far a blockage's repayment reaches and how much a long
   one can buy (`π_i(1−π_i)·λ` of extra presence per side), so a 48-hour blockage buys barely more than a 24-hour
   one. Tied to `τ_i`, it made the repayment depend on the minimum time and shrank it to minutes (2026-09-19).
-- **NO IDLING is the hard constraint and the minimum time is the SOFT goal, and only one thing may empty a
-  stretch: that nobody may run in it.** It is held at the line as well as in the search: the idle check
-  (`planMismatchAtLine`, `screen-breaks.md`) re-plans from the line when the plan there no longer matches the
-  rules. `docs/scheduler_requirements.md` § *No idling* against § *Soft Minimum
-  Execution Time*, which is *"another optimization goal"*. A continuation that idles where a task may run is not a
-  candidate at all (`docs/scheduler_score.md`), so a gap shorter than every minimum is **worked**, and the panel
-  there is simply short and pays its shortfall. Do not put back a candidate filter on "does the minimum fit".
+- **LEAVING TIME TO NOBODY IS A DECISION THE SCORE PRICES, NOT A CONSTRAINT EITHER WAY** (2026-09-29, when
+  `docs/scheduler_requirements.md` dropped § *No idling*). Every decision tries nobody (`ScoreModel.IDLE`,
+  `ScoreModel.choicesAt`) beside every task — the rollout, the exhaustive search, the improver's reassign, the MIP's
+  "at most one task per slot" — and keeps it only where `J` goes down: the targets add up to 100 %, so every lag
+  falls behind, and the panel it interrupts ends. In practice that is a stretch before an edge too short for any
+  minimum, where a task would be a panel cut far short or a task served far past its share. Never put back a hard
+  "no gap" rule (it throws away continuations that score lower), and never a candidate filter on "does the minimum
+  fit" either (the score already weighs the shortfall against the lag).
+  - **A run of nobody is an explicit `Run` with task `IDLE`**: it names no alternative (§ *Alternative Schedules*
+    sets a task), is placed as nothing, and is reported as `ScheduleFill.Result.idle` →
+    `SchedulerState.plannedIdle` (in memory only, like `scheduleCycle`).
+  - **The check at the line tells the two holes apart through `plannedIdle`** (`planMismatchAtLine`,
+    `screen-breaks.md`): a hole the plan chose is the plan; a hole a moved break left behind is a mismatch, logged
+    (since 2026-09-29 the check never re-plans — a re-plan there rewrote a definitive schedule).
+  - **A peer's gap is not a decision** (§ *One device plans*): `isLegalContinuation` refuses gaps, and the runs then
+    compete as a seed, where a gap IS read as time left to nobody and the score judges it.
 - **The one panel shorter than a minute is at `t_p` itself**, and it is the README's: modes 1 and 2 push the swept
   period onto the line as the half-open `(t_p, t_p + d]`, so the line's own instant is uncovered and *"the
   passing of the $now line$ creates task panels not covered by the period"*.
@@ -361,8 +370,9 @@ model exists to prevent.
   there. Extensions (the horizon rolling, the calendar scrolling) stay local: they are cheap, and with a cycle they are
   an unroll. **So do the re-plans that are the rules EVALUATED, not changed** (2026-09-27): a `t_p` mode flip (the
   rules are parameterized by the mode, and the plan for the new one applies from the flip — an election's deadline
-  left the old mode's plan standing for seconds), the idle check at the line (`screen-breaks.md`) and a journey's
-  plan.
+  left the old mode's plan standing for seconds; since 2026-09-28 the flip LAYS that plan rather than re-planning,
+  § *The rules are parameterized by the mode* below) and a journey's plan. (The idle check at the line re-planned too
+  until 2026-09-29; it now only reports, `screen-breaks.md`.)
 - **"Who is present" is asked when a re-plan is due, and at no other time.** No presence timer, no poll: the probe,
   the one-second reply window and the ten-second rules deadline are one-shot waits after that event. Adding a
   heartbeat to "know earlier" is the timer-driven traffic CLAUDE.md forbids, and it buys nothing the deadline does
@@ -403,13 +413,48 @@ model exists to prevent.
   only when newer (`nowMillis`, then stage) than what it last took or planned.
 - **A follower lays the leader's runs only when they are a legal continuation ON ITS OWN TIMELINE**
   (`ScheduleOptimizer.isLegalContinuation`, `SchedulerPeerProtocolTest`). The leader planned over its own
-  environment: a period only the leader had leaves a hole in its runs that the follower would leave to nobody
-  (§ *No idling*), and a period only the follower has may refuse the task the leader put there (resilience `0`).
+  environment: a period only the leader had leaves a hole in its runs that is no DECISION to leave the time to
+  nobody — a peer's gap is ambiguous, so it is never laid (it is read as time left to nobody only as a seed, where the
+  score judges it) — and a period only the follower has may refuse the task the leader put there (resilience `0`).
   Either way the follower plans for itself with the leader's runs as a seed — never lays them anyway.
 - **The rules on the wire are derived and never stored**: a broadcast, not a row, and `AdoptScheduleRules` never
   pushes (`syncsToServer`). The channel is `realtime:scheduler:<userId>`, **private** — its RLS is migration
   20260916000000.
 - **The in-reducer presses stay local** (§7 switch, §13 start, sleep-schedule edit, record removal).
+
+### The rules are parameterized by the mode
+
+→ `docs/scheduler_requirements.md` § *$now line$ 3 modes* against § *Progressive Calculation*, 2026-09-28.
+
+- **What is definitive is definitive for EVERY mode.** *"… they will all indicate the same schedule rules for any
+  t < t₁ (task panel scheduling parameterized by now line and now line mode …)"*. A flip used to re-plan from the
+  line: a search whose answer depends on the time it is given, so locking and unlocking again rewrote the at-screen
+  schedule already published (`TpModeSwitchTest`, whose control shows the re-plan does not come back to it).
+- **So every plan reduction also finds the plan for the mode CLASS the line is not in** (`SchedulerDomain.otherModePlan`
+  → `SchedulerState.otherModePlan`, `SchedulerReducer.withOtherModePlan`), to the same front: a re-plan, an extension
+  and an adoption all end there. The classes are two, not three — modes 2 and 3 place everything identically and
+  differ in the cue alone (`DynamicPeriods.breaksAreNotifiedAt`), so **a 2↔3 flip changes nothing**
+  (`SchedulerDomain.tpModeFlipChangesPlan`; the engine does not even dispatch).
+- **It is extended exactly as the plan is**: the runs held for these rules (same class, same `schedulingSignature`)
+  are kept and only the tail past them is filled. Under other rules nothing held is kept.
+- **No dynamic period obstructs it** (`fillSchedule(breaksObstruct = false)`): where the three fall depends on when
+  the line changes mode, which it cannot know. A flip lays it on the schedulable clock of the timeline it lands on,
+  where each of them suspends a run — nobody may run in one — rather than leaving a hole nothing decided.
+- **It is the step-bounded passes only**, no wall-time search: the flip must find it made. The score it leaves is the
+  first exception of § *Strict Requirements*; the definitive clause is the constraint the score is optimized under.
+- **A class flip LAYS it** (`SchedulerIntent.SwitchTpMode` → `reduceSwitchTpMode`), the way a follower lays a
+  leader's rules (`adoptedPlacements`, the same legality check), and the plan the line leaves becomes the other
+  class's — so a flip and a flip back return to the schedule already published, both fronts swapped. **The hard
+  constraints still win**: where the runs are no legal continuation on this timeline (a period retracting at the line
+  that did not at the plan's own instant, § *Resilience*), the fill plans from the line with them as a seed and the
+  History row (`ModeSwitch`) carries the search it made. With none found for these rules (a restart, a pull, a rule
+  change still debouncing) the flip re-plans as it always did.
+- **Derived and in memory only**, like `scheduleCycle`: not in the codec, not in the sync fingerprint, not in the
+  signature.
+- **What it costs** (`PerfBenchmarkTest`, 2026-09-28, 12 tasks): the at-screen plan found from a covered line is
+  ~220 ms for a fresh week against ~115 ms for the plan itself; the covered plan found from the screen is ~2 ms when
+  no task is resilient to `no screen`. It runs on plan reductions only, never on a tick, and the pace cap measures
+  the whole reduction (`notePlanRate`), so the stages shrink to what the device can do.
 
 ### The rules repeat
 

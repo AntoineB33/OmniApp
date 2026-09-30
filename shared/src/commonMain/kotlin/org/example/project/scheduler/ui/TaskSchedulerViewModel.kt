@@ -371,6 +371,8 @@ class TaskSchedulerViewModel(
             is SchedulerIntent.ExtendSchedule,
             // Another device's answer to the same rules — derived panels, exactly like a local re-plan.
             is SchedulerIntent.AdoptScheduleRules,
+            // The rules already found for the other mode class, laid at a flip — derived panels, like a re-plan.
+            is SchedulerIntent.SwitchTpMode,
             // Another device's History Units, taken in: they arrived from the server, and never go back to it as an edit.
             is SchedulerIntent.MergePeerHistory,
             is SchedulerIntent.ReportDeviceSleep,

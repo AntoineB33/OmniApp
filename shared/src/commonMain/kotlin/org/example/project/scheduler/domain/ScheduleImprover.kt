@@ -15,7 +15,8 @@ import kotlin.math.exp
  * 1. **shift** the boundary between two neighbouring runs — to where one of them reaches its minimum, or by a few
  *    set amounts, or all the way (which removes one of them);
  * 2. **swap** two neighbouring runs;
- * 3. **reassign** one run to another task that may run over all of it.
+ * 3. **reassign** one run to another task that may run over all of it, or to nobody ([ScoreModel.IDLE]), and a run
+ *    of nobody to a task.
  * A move that would put a task where it may not run is never tried. The first move that lowers the score is kept,
  * and the passes repeat until one of them changes nothing or [budget] moves have been scored.
  *
@@ -71,7 +72,7 @@ internal class ScheduleImprover(
                 }
             }
             if (!ScheduleOptimizer.better(next, total)) return false
-            for ((a, i) in affected.withIndex()) taskCost[i] = fresh[a]
+            for ((a, i) in affected.withIndex()) if (i >= 0) taskCost[i] = fresh[a]
             total = next
             segs = merged
             return true
@@ -96,7 +97,7 @@ internal class ScheduleImprover(
                 if (scored >= budget) break
                 val s = segs.getOrNull(k2) ?: break
                 if (s.fixed || (pinFirstTask && k2 == 0)) continue
-                for (j in 0 until model.n) {
+                for (j in (0 until model.n) + ScoreModel.IDLE) {
                     if (j == s.task || model.runLimit(j, s.from) < s.to - ScoreModel.EPS || !model.permitted(j, s.from)) continue
                     val candidate = segs.toMutableList().also { it[k2] = s.copy(task = j) }
                     if (tryMove(candidate, intArrayOf(s.task, j))) {
@@ -119,8 +120,8 @@ internal class ScheduleImprover(
         val b = segs[k + 1]
         val boundary = a.to
         val positions = LinkedHashSet<Double>()
-        positions += a.from + model.minimum[a.task]
-        positions += b.to - model.minimum[b.task]
+        positions += a.from + model.minimumOf(a.task)
+        positions += b.to - model.minimumOf(b.task)
         for (step in SHIFT_STEPS_MILLIS) {
             positions += boundary - step
             positions += boundary + step

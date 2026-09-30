@@ -17,7 +17,7 @@ import org.example.project.scheduler.state.SchedulerState
 /**
  * `docs/scheduler_requirements.md` through the real calendar fill ([SchedulerDomain.fillSchedule]): the
  * alternation scale, the priority shares, a past or pre-placed exclusion buying a bounded compensation, the
- * zero-priority and sole-task edges, No idling over a week of screen breaks, and the trigger rule (the plan moves
+ * zero-priority and sole-task edges, no undecided hole over a week of screen breaks, and the trigger rule (the plan moves
  * only on a change to the rules, and an extension keeps what is materialized).
  */
 class SchedulerFillTest {
@@ -182,27 +182,31 @@ class SchedulerFillTest {
         // periods and ~500 exclusion spans per task — the walk must stay comfortably sub-second.
         val (s0, _) = stateWithTasks("A", "B", "C", "D", minMinutes = 30)
         val s = s0.copy(screenBreaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS)
-        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + SchedulerDomain.SCHEDULE_HORIZON_MILLIS)
+        var idle = emptyList<org.example.project.scheduler.model.TaskTimeRange>()
+        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + SchedulerDomain.SCHEDULE_HORIZON_MILLIS, idleSink = { idle = it })
         val autos = panels.filter { it.auto }
         assertTrue(autos.isNotEmpty(), "a week-long horizon must materialize work")
         assertTrue(
             autos.maxOf { it.endEpochMillis } >= NOW + 160 * HOUR,
             "the fill stopped short of the horizon: ${(autos.maxOf { it.endEpochMillis } - NOW) / HOUR}h",
         )
-        // `side-dev/README.md` § *No idling*, over the whole week: every gap between two consecutive blocks
-        // is covered by a restrictive period that refuses everybody. Nothing else may empty a stretch — this
-        // replaces an assertion that no panel could be shorter than a minute, which was the removed `crumb`
-        // rule stated as a test and is exactly what No idling forbids.
+        // Over the whole week, every gap between two consecutive blocks is covered by a restrictive period that
+        // refuses everybody, or is time the plan DECIDED to leave to nobody (`ScheduleFill.Result.idle`, priced by
+        // the score — `docs/scheduler_requirements.md` requires no task anywhere). A gap that is neither is a hole
+        // nothing decided — the 2026-09-05 dragged-pose failure shape.
         val ordered = autos.sortedBy { it.startEpochMillis }
         val periods = panels.filter { it.restrictiveKind.isNotEmpty() }
-            .map { it.startEpochMillis to it.endEpochMillis }
+            .map { it.startEpochMillis to it.endEpochMillis } + idle.map { it.startEpochMillis to it.endEpochMillis }
         for (i in 0 until ordered.size - 1) {
             val from = ordered[i].endEpochMillis
             val until = ordered[i + 1].startEpochMillis
             if (until <= from) continue
             assertTrue(
-                periods.any { (start, end) -> start <= from && until <= end },
-                "an idle stretch nothing restricts: ${(from - NOW) / MIN}min..${(until - NOW) / MIN}min",
+                periods.any { (start, end) -> start <= from && until <= end } ||
+                    // A gap may be a refusing period and a decided hole side by side.
+                    periods.filter { (start, end) -> start < until && from < end }.sortedBy { it.first }
+                        .fold(from) { at, (start, end) -> if (start <= at) maxOf(at, end) else at } >= until,
+                "a hole nothing decided: ${(from - NOW) / MIN}min..${(until - NOW) / MIN}min",
             )
         }
         // The one stretch shorter than a minute is the instant `t_p` itself: mode 1 pushes the swept period

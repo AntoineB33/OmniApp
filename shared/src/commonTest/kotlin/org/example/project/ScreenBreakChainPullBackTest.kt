@@ -56,18 +56,18 @@ class ScreenBreakChainPullBackTest {
         val tp = 52 * MIN
         val base = awayChain(chainStart, tp, closedEnd = true)
         val spec = DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 25 * MIN)
+        // Mode 3: the line may enter a 20 s break (mode 2 may not — below).
         val placed =
             DynamicPeriods.instances(
                 base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_AWAY, sweepFromMillis = 0L,
+                mode = DynamicPeriods.MODE_ON_BREAK, sweepFromMillis = 0L,
             )
         val crossed = placed.single { it.startMillis in chainStart..tp }
         assertEquals(chainStart, crossed.startMillis, "the break starts where the away chain did: $placed")
         assertEquals(20 * SEC, crossed.durationMillis, "and is NOT stretched to reach the line")
         assertTrue(crossed.endMillis < tp, "so it is over, and frozen in the past behind the line")
 
-        // The rule is stated of the PERIODS, not of the line's mode, so it is not a mode rule. The 20 s
-        // look-away is never dragged in any mode either, so mode 1 answers this one identically.
+        // A line at a screen enters it too (and is in mode 3 for its twenty seconds), so mode 1 answers identically.
         assertEquals(
             placed,
             DynamicPeriods.instances(
@@ -75,6 +75,15 @@ class ScreenBreakChainPullBackTest {
                 mode = DynamicPeriods.MODE_AT_SCREEN, sweepFromMillis = 0L,
             ),
         )
+        // Mode 2 may not enter one — *"The $now line$ must be in mode 1 or 3 before entering the 20s break"* — so the
+        // look-away is dragged onto the line, `]now line; now line + 20s]`, and the chain does not take it.
+        val locked =
+            DynamicPeriods.instances(
+                base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
+                mode = DynamicPeriods.MODE_AWAY, sweepFromMillis = 0L,
+            )
+        assertTrue(locked.none { it.startMillis in chainStart until tp }, "mode 2 enters no look-away: $locked")
+        assertTrue(locked.any { it.startMillis == tp && it.openStart }, "it rides the line instead: $locked")
     }
 
     @Test
@@ -93,12 +102,12 @@ class ScreenBreakChainPullBackTest {
         fun placedAt(tp: Long) =
             DynamicPeriods.instances(
                 base, listOf(spec), 0L, 2 * HOUR, tpMillis = tp,
-                mode = DynamicPeriods.MODE_AWAY, sweepFromMillis = 0L,
+                mode = DynamicPeriods.MODE_ON_BREAK, sweepFromMillis = 0L,
             ).map { it.startMillis }.filter { it in chainStart..chainEnd }
 
         assertEquals(listOf(chainStart), placedAt(51 * MIN), "while the line is inside the chain")
         assertEquals(listOf(chainStart), placedAt(90 * MIN), "and still, once the line has left it")
-        assertEquals(chainStart, DynamicPeriods.chainTaking(base, spec, chainEnd, 90 * MIN, MODE_AWAY)?.startMillis)
+        assertEquals(chainStart, DynamicPeriods.chainTaking(base, spec, chainEnd, 90 * MIN, DynamicPeriods.MODE_ON_BREAK)?.startMillis)
     }
 
     @Test
@@ -196,7 +205,7 @@ class ScreenBreakChainPullBackTest {
         val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
         val poseTitles = breaks.filter { it.restBreak }.map { it.title }.toSet()
         fun past(mode: Int) =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 breaks, now - 6 * HOUR, now - 1, tpMillis = now, mode = mode,
             )
         assertTrue(
@@ -211,10 +220,11 @@ class ScreenBreakChainPullBackTest {
                 "and it is frozen there, not stretched forward to the line: $elapsed",
             )
         }
+        // The two away modes place the POSES identically; they differ on the look-away, which mode 2 drags.
         assertEquals(
-            past(DynamicPeriods.MODE_ON_BREAK),
-            past(DynamicPeriods.MODE_AWAY),
-            "the two away modes draw one past",
+            past(DynamicPeriods.MODE_ON_BREAK).filter { it.title in poseTitles },
+            past(DynamicPeriods.MODE_AWAY).filter { it.title in poseTitles },
+            "the two away modes draw one past of poses",
         )
     }
 }

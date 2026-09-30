@@ -31,7 +31,10 @@ class PeriodKindNamingTest {
     @Test
     fun everyOfferedKindIsNamedInTheUsersWords() {
         assertEquals(
-            listOf("inactivity", "sleep", "no screen", "before bed", "no computer unlocked", "no phone unlocked"),
+            listOf(
+                "inactivity", "sleep", "no screen", "before bed", "no computer unlocked", "no phone unlocked",
+                "5min screen break", "15min screen break",
+            ),
             kinds,
         )
         // The two the user reported are reachable under the words they looked for, and neither legacy

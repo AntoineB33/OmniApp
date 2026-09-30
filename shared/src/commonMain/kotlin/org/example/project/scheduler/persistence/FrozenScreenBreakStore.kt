@@ -20,8 +20,15 @@ interface FrozenScreenBreakStore {
     fun loadFrozenScreenBreaks(): FrozenScreenBreaks?
 
     /**
-     * Adds [added], drops every break that ended at or before [pruneBeforeMillis], and stores the front and where the
-     * line was ([FrozenScreenBreaks.lineMillis]).
+     * Adds [added], deletes [removed] (the requirements' one exception to the frozen past: a pose the line is inside
+     * when it switches to mode 1), drops every break that ended at or before [pruneBeforeMillis], and stores the front
+     * and where the line was ([FrozenScreenBreaks.lineMillis]).
      */
-    fun saveFrozenScreenBreaks(added: List<BankedBreak>, untilMillis: Long, lineMillis: Long, pruneBeforeMillis: Long)
+    fun saveFrozenScreenBreaks(
+        added: List<BankedBreak>,
+        untilMillis: Long,
+        lineMillis: Long,
+        pruneBeforeMillis: Long,
+        removed: List<BankedBreak> = emptyList(),
+    )
 }

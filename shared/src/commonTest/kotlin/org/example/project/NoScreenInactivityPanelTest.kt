@@ -399,28 +399,6 @@ class NoScreenInactivityPanelTest {
         )
 
     @Test
-    fun a_task_resilient_to_no_task_allowed_may_work_inside_a_dynamic_period() {
-        // `side-dev/README.md`: all three dynamic periods are "no task allowed", and a resilience to THAT
-        // kind is the only thing that opens one. It replaces the old "doable during a screen break" switch,
-        // and unlike it there is no closed head and no restriction to the shorter pose: a break is a period
-        // of a kind like any other, and a task that declares itself resilient to it works straight through.
-        val (s0, solo) = stateWithOneTask(minMinutes = 5)
-        var s = SchedulerReducer.reduce(
-            s0,
-            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.INACTIVITY, 1.0),
-        )
-        s = withRestPose(s)
-        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 4 * HOUR)
-        val breakRange = panels.first { it.screenBreak }
-        val inBreak = panels.filter {
-            it.taskId == solo && it.auto &&
-                it.startEpochMillis < breakRange.endEpochMillis &&
-                it.endEpochMillis > breakRange.startEpochMillis
-        }
-        assertTrue(inBreak.isNotEmpty(), "a task resilient to \"no task allowed\" must fill the break")
-    }
-
-    @Test
     fun break_doable_task_with_a_too_long_minimum_never_fills_the_break() {
         // The pose leaves 14 min once its closed first minute is taken off, but the task needs 30.
         val (s0, solo) = stateWithOneTask(minMinutes = 30)
@@ -508,31 +486,6 @@ class NoScreenInactivityPanelTest {
                 ),
             ),
         )
-
-    @Test
-    fun a_dynamic_period_has_no_shape_left_to_read() {
-        // The 15-minute period is not a longer copy of the 5-minute one, and neither has a closed head any
-        // more: `side-dev/README.md` gives all three the single kind "no task allowed", end to end. So a task
-        // resilient to that kind fills one from its very FIRST second, and there is no opening minute to wait
-        // through.
-        val (s0, solo) = stateWithOneTask(minMinutes = 5)
-        var s = SchedulerReducer.reduce(
-            s0,
-            SchedulerIntent.SetTaskResilience(solo, PeriodKinds.INACTIVITY, 1.0),
-        )
-        s = with15MinPose(s)
-        val panels = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 4 * HOUR)
-        val pose = panels.first { it.screenBreak }
-        val inPose = panels.filter {
-            it.taskId == solo && it.auto &&
-                it.startEpochMillis < pose.endEpochMillis && it.endEpochMillis > pose.startEpochMillis
-        }
-        assertTrue(inPose.isNotEmpty(), "a resilient task must fill the period")
-        assertTrue(
-            inPose.any { it.startEpochMillis <= pose.startEpochMillis },
-            "there is no closed first minute to wait through",
-        )
-    }
 
     @Test
     fun the_shorter_dynamic_period_is_the_same_kind_as_the_longer_one() {

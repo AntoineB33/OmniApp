@@ -39,7 +39,7 @@ class ScheduleImproverTest {
     private fun assertValid(m: ScoreModel, runs: List<ScheduleOptimizer.Run>, until: Double) {
         var u = 0.0
         for (r in runs.sortedBy { it.fromU }) {
-            assertEquals(u, r.fromU, 1e-3, "the continuation is contiguous (no idling): $r")
+            assertEquals(u, r.fromU, 1e-3, "every instant of the continuation is decided: $r")
             assertTrue(m.runLimit(r.task, r.fromU) >= r.toU - 1e-3, "task ${r.task} may run over all of $r")
             u = r.toU
         }
@@ -89,7 +89,7 @@ class ScheduleImproverTest {
             else merged += Triple(r.task, r.fromU, r.toU)
         }
         // The last panel is cut by the end of the continuation, not by a choice.
-        val short = merged.dropLast(1).filter { (t, a, b) -> b - a < m.minimum[t] - 1.0 }
+        val short = merged.dropLast(1).filter { (t, a, b) -> t >= 0 && b - a < m.minimum[t] - 1.0 }
         assertTrue(short.size <= 1, "panels short of their minimum: $short")
     }
 

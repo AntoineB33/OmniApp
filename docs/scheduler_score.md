@@ -22,7 +22,9 @@ requirement: it only fixes what "best" means. Every § below names a section of 
   schedulable time elapsed up to $t$. Every duration and distance below is measured on this clock, so a stretch
   where no task may run (a night, a 20s period) is transparent to the score: it neither discounts, nor forgets,
   nor separates.
-* $\sigma(t)$ is the task scheduled at $t$ (none where $t$ is not schedulable).
+* $\sigma(t)$ is the task scheduled at $t$: none where $t$ is not schedulable, and none where the continuation
+  leaves schedulable time to **nobody**. The requirements require no task anywhere, so nobody is a choice like any
+  task, and the score prices it: the targets $f_i$ add up to 1, so every lag falls behind over time left to nobody.
 * $\tau_i = \max(M_i, 1) / \pi_i$ is **the smallest window in which task $i$ can get one slot of its minimum
   execution time at its share** (§ *Priority, Granularity and Compensation*: the window must be as small as
   possible while still allowing the minimum execution time). A task with $\pi_i = 0$ takes $\Theta$.
@@ -87,7 +89,7 @@ past, so the past has to be replayed far enough back that what is left out no lo
 
 * A **task panel** is a maximal run of task $i$ on the schedulable clock. A stretch where no task may run does
   not interrupt it (it is not schedulable time); the panel is interrupted only when schedulable time is given to
-  another task. Its length $\ell$ is measured on the schedulable clock, part before $x$ included.
+  another task or to nobody. Its length $\ell$ is measured on the schedulable clock, part before $x$ included.
 * Its **shortfall** is $s = (M_i - \ell)^+$. A panel short by $s$ costs what raising a lag of $M_i$ to
   $M_i + s$ costs over the task's own window in criterion 1, charged when the panel ends, for every panel ending
   after $x$ (the panel still open at the end of the continuation is not charged):
@@ -109,8 +111,11 @@ past, so the past has to be replayed far enough back that what is left out no lo
 ## The score
 
 * **The score of a continuation is $J = J_1 + J_2$, lower is better.** Hard constraints are not in the score:
-  a continuation that violates any requirement of `docs/scheduler_requirements.md` (no idling, resilience 0, pre-placed tasks, dynamic
-  restrictive periods, $now line$ modes, frozen past) is not a candidate at all.
+  a continuation that violates any requirement of `docs/scheduler_requirements.md` (resilience 0, pre-placed tasks,
+  dynamic restrictive periods, $now line$ modes, frozen past) is not a candidate at all. Leaving schedulable time to
+  nobody violates none of them: it is a candidate, and it is kept only where it scores lower than any task — as a
+  stretch before an edge can, where every task would be a panel cut far short of its minimum or a task served far
+  past its share.
 * **The best possible score** at $(x, m)$ is the infimum of $J$ over all candidate continuations of the frozen
   past. Because the discount is exponential, the score is time-consistent: the best continuation from a later
   $now line$ is the rest of the best continuation from an earlier one whenever $R$ and the environment did not
@@ -122,22 +127,23 @@ past, so the past has to be replayed far enough back that what is left out no lo
   ended at the first position $x$ of the $now line$ (located to one second) where the best first run under $R(x)$,
   with the run so far as the frozen past, is another task; the rules are made again from there.
 * **The alternative schedule** at $(x, m)$ is the first task of the best continuation among those that do not
-  start with $\sigma(x)$.
+  start with $\sigma(x)$ and do start with a task — the requirements set the alternative as a task at the
+  $now line$. Where $\sigma(x)$ is nobody, nothing is scheduled to be refused, and no alternative is named.
 * **Ties.** Two continuations whose scores differ by less than $10^{-9}$ relative are tied, and the tie is broken
   by the task order: higher priority first, then title.
 * **Degradation.** When the best score is not reached within the compute budget, the scheduler returns the best
   continuation it found. Nothing requires two devices to reach the same rules from the same inputs: where they
   differ, the one with the better score is kept (`docs/invariants/scheduler.md` § *One device plans*). The search
   has these passes over this one score:
-  1. a **rollout policy** builds the continuation one decision at a time: every candidate task with every
-     candidate length, looked into two runs deep, each trial completed by a simple base policy over a common
+  1. a **rollout policy** builds the continuation one decision at a time: every candidate task, and nobody, with
+     every candidate length, looked into two runs deep, each trial completed by a simple base policy over a common
      window and closed with a lower bound of every lag;
   2. **seeds compete**: the continuation the re-plan replaces, and another device's continuation for the same
      rules, are cut to their longest prefix that still keeps every hard constraint, completed by the rollout
      policy, re-scored under the rule state and environment in force, and kept when they score lower — so a
      re-plan never returns a continuation worse than one it was shown;
   3. a **whole-continuation improvement** then shifts boundaries between neighbouring runs, swaps neighbouring
-     runs and reassigns runs to other permitted tasks, keeping a change only when it lowers $J$ of the WHOLE
+     runs and reassigns runs to other permitted tasks or to nobody, keeping a change only when it lowers $J$ of the WHOLE
      continuation. It can therefore only move the result closer to the best score, never away from it. (A search
      that judged each decision over its own window was tried and rejected: it made $J$ worse, because what is
      best for a window can cost more over the continuation.)

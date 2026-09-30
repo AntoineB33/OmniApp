@@ -610,6 +610,31 @@ data class RulePlacement(
 )
 
 /**
+ * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and § *Progressive Calculation*: **the rules for the mode
+ * class the now-line is NOT in.** The set of rules is *"parameterized by $now line$ and $now line$ mode"*, and what
+ * it makes definitive it makes definitive for every mode — so the plan the line would follow in the other class
+ * is found alongside the one it follows, to the same front, and a flip LAYS it rather than searching again. The
+ * plan the line leaves becomes the new one, so a flip and a flip back return to the schedule already published.
+ *
+ * The modes form two classes, because modes 2 and 3 place everything identically and differ only in the cue
+ * (`DynamicPeriods.lineIsCoveredAt`): [covered] names the class these runs are for.
+ *
+ * [untilMillis] is how far these runs are materialized; [lineModeUntilMillis] how far the plan for the line's own
+ * class is (the two fronts a flip swaps). [rulesKey] is the `SchedulerDomain.schedulingSignature` they were found
+ * under: under other rules they are no answer at all.
+ *
+ * Derived and **in memory only**, exactly as [ScheduleCycle]: never persisted, never synced, never in the
+ * signature; a restart or a pull starts without one and the next plan reduction finds it again.
+ */
+data class OtherModePlan(
+    val covered: Boolean,
+    val placements: List<RulePlacement>,
+    val untilMillis: Long,
+    val lineModeUntilMillis: Long,
+    val rulesKey: Int,
+)
+
+/**
  * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
  * and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns."* — a pre-placed block
  * or a restrictive period that **recurs every [everyDays] days** at the same local time of day, from its own start

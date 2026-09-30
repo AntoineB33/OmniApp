@@ -11,6 +11,94 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The code brought to `docs/scheduler_requirements.md` (audit list, items 1–5 and 7) + OR-Tools packaging — 2026-09-29
+
+An audit of the requirements file against the code listed eight gaps; these were fixed. Item 6 (the exhaustive search
+tries a fixed set of run lengths, so the optimum is not guaranteed) and the O(1) rule-reading requirement are open.
+
+- **OR-Tools never ran in the release** (`OR-Tools unavailable (ProviderNotFoundException: Provider "jar" not found)`):
+  the jlink runtime lacked `jdk.zipfs`, which OR-Tools' loader needs to unpack its native library.
+  `desktopApp/build.gradle.kts` adds it; checked on a runtime built the same way.
+- **Rest stretch** (item 4): *"≥5-minute of 'no screen'"* counts whether or not a task could run there
+  (`DynamicPeriods.isRestAt`); the older README's *without any task* is gone.
+- **Mode 2 drags the look-away** (item 1): `dragsAtLine(label)` → `dragsAt(label, mode)` — poses in mode 1, the 20 s
+  in mode 2, as `]now line; now line + 20s]`.
+- **Automatic mode switch** (item 2): a mode-1 line inside a look-away is in mode 3 until it leaves it
+  (`SchedulerDomain.lookAwayHoldUntil`, read by the engine and the calendar); no return to mode 1 meanwhile; mode 2
+  never held. No re-plan for those twenty seconds.
+- **Break kinds** (item 3): the 20 s is `no task allowed`; the 5 min is one minute of `no task allowed` then four of
+  the new kind "5min screen break"; the 15 min is the new kind "15min screen break" (`PeriodKinds.BREAK_5MIN`,
+  `BREAK_15MIN`, `DynamicPeriods.breakKind`). Both start at resilience 0 and appear in the resilience editor. Sleep
+  resilience is now editable (the requirements call its 0 a default).
+- **Switch task** (item 5): the refused task is replaced by the alternative the rules name, SET at
+  `[now line, now line + 10 min]` (`SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS`), then the scheduler re-runs; no
+  refusal marker stands beside it. Where the rules name none, the old refusal marker still applies.
+- **No re-plan at the line** (item 7): `guardPlanAtLine` reports a plan/break mismatch to `diagnostics.log` once and
+  applies the rules (the break wins; an empty stretch stays empty) instead of rewriting a definitive schedule.
+- Tests: `ForcedTaskSwitchTest` (the switch now asserts the placed block), `ScreenBreakKindTest`,
+  `ScreenBreakCueRuleTest`, the long-wake and overdue look-away tests re-checked (the first now leaves "Walk" idle up
+  to about an hour where the score prefers it). ADR 0003 § *Each break is its own kind again*; `screen-breaks.md`.
+  Client rebuild needed (desktop and Android); no Supabase change.
+
+### A 15-min pose appeared in the past: the calendar re-derived it — 2026-09-29 11:32 (account 3)
+
+The banked record (`screen_break_history`) held two look-aways that morning; the calendar drew a 15-min pose at
+11:32 behind the line. The calendar's past was never read off the record: `takenScreenBreakPanels` re-ran the walk
+over the elapsed window with the mode and environment of NOW (a lock, the away chord, a restart or a failed load
+redrew it). Behind that, the banking front waited at the start of any "no screen" chain and of any break in
+progress, and re-derived everything from there at every advance — both built on an older wording of the chain rule
+(*"now starts at the start of this chain. If it means starting in the past, this is the only exception to the frozen
+past rule"*). `docs/scheduler_requirements.md` now says `max($now line$, $t_s$)` and has no such exception.
+
+- The calendar draws the past from the banked record ONLY (bisected to the visible window); no record, no past
+  breaks; a failed load is logged.
+- A break is banked the moment the line reaches it, whole; the front is the line. `FrozenScreenBreaks.pending` and
+  `DynamicPeriods.chainReaching` are gone.
+- The chain rule never places a break behind the banked front (`max(front, t_s)`); re-deriving a past no record
+  holds still gives the chain's start, which is what a continuous line meets.
+- The one removal: a pose the line is inside when it is in mode 1 (the requirements' exception), persisted with a new
+  `deleteScreenBreak` query (no schema change) and logged.
+- A chain merge led by the pose the mode-1 line drags stays on the line (the requirements' "right after $now line$");
+  brought back to a look-away's start it flipped banked ↔ removed every advance (`ServerQuotaTest` caught the extra
+  `screen_break_rule` writes).
+- Tests: `FrozenScreenBreaksTest` (four new), `BankedBreaksAndRecordsTest`, `SchedulerStoreTest`; tests that asked the
+  WALK over an elapsed window now say so (`walkedAtLine`). `docs/invariants/screen-breaks.md`. Client rebuild needed.
+
+### No idling dropped from the requirements: time left to nobody is a decision the score prices — 2026-09-29
+
+`docs/scheduler_requirements.md` removed § *No idling* (commit `4a07113`). The rule had been enforced as a hard
+constraint in the score's candidate definition, the rollout, the exhaustive search, the legality check and the MIP,
+which threw away continuations scoring lower.
+
+- Every decision now tries nobody (`ScoreModel.IDLE`, `ScoreModel.choicesAt`) beside every task; the improver can
+  reassign a run to nobody; the MIP asks for at most one task per free slot. `J` is unchanged — the targets add up to
+  100 %, so time left to nobody puts every lag behind and ends the panel it interrupts. It wins in practice on a
+  stretch before an edge that every task would fill with a panel cut far short.
+- A run of nobody is an explicit `Run(task = IDLE)`, placed as nothing, naming no alternative, and reported as
+  `ScheduleFill.Result.idle` → `SchedulerState.plannedIdle` (in memory only).
+- `planMismatchAtLine` does not re-plan inside `plannedIdle`: a hole the plan chose is the plan, a hole a moved break
+  left is still a mismatch.
+- A follower still never lays a peer's runs with a gap (`isLegalContinuation`); as a seed a gap reads as nobody's.
+- Tests: `IdleDecisionFillTest` (new), `ScheduleScoreTest` (three new), `PlanMismatchAtLineTest` (one new); the
+  week-long `SchedulerFillTest` check now accepts a decided hole. Every other "§ *No idling*" citation reworded.
+- ADR 0001 § 14; `scheduler.md` (the rule that replaced *NO IDLING is the hard constraint*), `scheduler_score.md`,
+  `screen-breaks.md`, PRD §10. Client rebuild needed (desktop and Android); no Supabase change.
+
+### A lock and an unlock rewrote the definitive schedule — 2026-09-28 (audit, no incident)
+
+`docs/scheduler_requirements.md` makes a schedule definitive *for every now-line mode*; a mode flip re-planned from the
+line with a search whose answer depends on the time it is given, so a flip and a flip back could hand the line a
+different schedule from the one already published.
+
+- Every plan reduction also finds the plan for the other mode class (`SchedulerDomain.otherModePlan` →
+  `SchedulerState.otherModePlan`, in memory only), extended stage by stage like the plan; a class flip lays it
+  (`SchedulerIntent.SwitchTpMode`) and keeps the plan left as the other class's. Illegal on the timeline it lands on,
+  it falls back to planning from the line (hard constraints win).
+- A 2↔3 flip no longer re-plans (the two place everything identically).
+- `SchedulerDomain.isPlanRun` is the one reading of "the plan's own runs" (the fill's seed, the peers' rules).
+- Tests: `TpModeSwitchTest` (its control fails the old behaviour); `PerfBenchmarkTest` rows `otherModePlan …`.
+- ADR 0001 § 13; `scheduler.md` § *The rules are parameterized by the mode*. Client rebuild needed.
+
 ### "Look 20 feet away" every thirty seconds; a 20 s hole with no break — 2026-09-28 09:27 (account 3)
 
 An overdue look-away was placed at the banked front (the line). The at-line check re-planned around it; the re-plan

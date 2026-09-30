@@ -43,7 +43,7 @@ class ProgressiveStageBoundaryTest {
         val placements = fill(emptyList(), horizon, searchUntil = horizon + 2 * HOUR)
         assertTrue(placements.isNotEmpty())
         assertTrue(placements.all { it.endMillis <= horizon }, "placements past the horizon: ${placements.map { it.endMillis - NOW }}")
-        assertTrue(placements.maxOf { it.endMillis } == horizon, "the stage reaches its horizon, no idling at its end")
+        assertTrue(placements.maxOf { it.endMillis } == horizon, "the stage reaches its horizon, nothing left to nobody at its end")
     }
 
     @Test

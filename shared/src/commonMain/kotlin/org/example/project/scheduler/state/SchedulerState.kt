@@ -345,6 +345,12 @@ data class SchedulerRunEntry(
 
         /** Another device of the account planned: its rules were taken in instead of searched. */
         Adopted("Rules adopted from a peer"),
+
+        /**
+         * The now-line changed mode class: the rules already found for the new one were laid
+         * ([org.example.project.scheduler.model.OtherModePlan]), or re-planned where they were no legal answer.
+         */
+        ModeSwitch("Now-line mode switch"),
     }
 
     companion object {
@@ -592,6 +598,19 @@ data class SchedulerState(
      * and the next fill finds it again.
      */
     val scheduleCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the rules for the mode class the line is not in**,
+     * found beside [panels] to the same front so a mode flip lays them instead of re-planning
+     * ([org.example.project.scheduler.model.OtherModePlan]). Derived and **in memory only**, like [scheduleCycle].
+     */
+    val otherModePlan: org.example.project.scheduler.model.OtherModePlan? = null,
+    /**
+     * `docs/scheduler_requirements.md` asks for no task anywhere, so the plan may leave schedulable time to nobody:
+     * **the stretches ahead of the line the last fill decided to leave empty** (`ScheduleFill.Result.idle`). What tells
+     * a hole the plan chose from a hole a moved break left behind (`SchedulerDomain.planMismatchAtLine`). Derived and
+     * **in memory only**, like [scheduleCycle]: a restart starts without it, and the next fill finds it again.
+     */
+    val plannedIdle: List<org.example.project.scheduler.model.TaskTimeRange> = emptyList(),
     /** Monotonic suffix for `panel/{n}` ids; never reused, so undo need not roll it back. */
     val nextPanelCounter: Int = 0,
     /**
@@ -1036,7 +1055,7 @@ data class SchedulerState(
      * so none of them can offer a kind another does not.
      */
     val allPeriodKinds: List<String>
-        get() = PeriodKinds.BUILT_IN + periodKinds.filter { PeriodKinds.isUserDefined(it) }
+        get() = PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + periodKinds.filter { PeriodKinds.isUserDefined(it) }
 
     /**
      * [periodKindStyles] resolved: every kind's companions (transitively) and drawing — the one reading of both

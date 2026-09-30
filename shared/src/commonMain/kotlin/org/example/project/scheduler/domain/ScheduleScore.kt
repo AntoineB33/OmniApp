@@ -377,29 +377,36 @@ class ScoreModel(
         return lo
     }
 
-    /** May task [i] run at the schedulable instant [u]? */
+    /**
+     * May task [i] run at the schedulable instant [u]? [IDLE] — nobody — may wherever the scheduler decides, i.e.
+     * everywhere but inside a pre-placed task.
+     */
     fun permitted(i: Int, u: Double): Boolean {
         val p = pieceAt(u)
         if (p < 0) return false
         val fixed = pieceFixed[p]
-        return if (fixed >= 0) fixed == i else pieceMult[p][i] > 0.0
+        return if (fixed >= 0) fixed == i else i == IDLE || pieceMult[p][i] > 0.0
     }
 
     /**
      * How far a run of [i] may go from [u]: up to the first piece where it may not run, or where a pre-placed task
-     * of somebody else begins. Running into its OWN pre-placed task is not an end (the two are one panel).
+     * of somebody else begins. Running into its OWN pre-placed task is not an end (the two are one panel). An [IDLE]
+     * run goes up to the next pre-placed task.
      */
     fun runLimit(i: Int, u: Double): Double {
         var p = pieceAt(u)
         if (p < 0) return u
         while (p < pieceCount) {
             val fixed = pieceFixed[p]
-            val ok = if (fixed >= 0) fixed == i else pieceMult[p][i] > 0.0
+            val ok = if (fixed >= 0) fixed == i else i == IDLE || pieceMult[p][i] > 0.0
             if (!ok) return maxOf(u, pieceUStart[p])
             p++
         }
         return uEnd
     }
+
+    /** `M_i`, and 0 for [IDLE] (nobody has a minimum to reach). */
+    fun minimumOf(i: Int): Double = if (i >= 0) minimum[i] else 0.0
 
     /** Where the pre-placed task [u] is inside ends (the consecutive pieces fixed to the same task), or [u]. */
     fun fixedEnd(u: Double): Double {
@@ -437,6 +444,19 @@ class ScoreModel(
         val fixed = pieceFixed[p]
         if (fixed >= 0) return listOf(fixed)
         return (0 until n).filter { pieceMult[p][it] > 0.0 }
+    }
+
+    /**
+     * What the scheduler may decide at [u]: [candidatesAt], then [IDLE] — `docs/scheduler_requirements.md` asks for
+     * no task anywhere, so leaving schedulable time to nobody is a candidate like any other, priced by the score (every
+     * lag falls behind its target, and the panel it interrupts ends). Last, so it loses every tie. Inside a pre-placed
+     * task, its owner alone.
+     */
+    fun choicesAt(u: Double): List<Int> {
+        val p = pieceAt(u)
+        if (p < 0) return emptyList()
+        if (pieceFixed[p] >= 0) return listOf(pieceFixed[p])
+        return candidatesAt(u) + IDLE
     }
 
     /** Is [u] inside a pre-placed task? Its owner, or -1. */
@@ -500,7 +520,8 @@ class ScoreModel(
         ScoreCursor(DoubleArray(n), DoubleArray(n) { u }, u, -1, 0.0, 0.0, originU)
 
     /**
-     * Serve [task] (an index, or -1 for schedulable time the frozen past gave to nobody) from `cursor.u` to
+     * Serve [task] (an index, or [IDLE] for schedulable time given to nobody — by the frozen past or by a decision)
+     * from `cursor.u` to
      * [untilU], adding both criteria to `cursor.cost`.
      *
      * Every other task's lag is advanced LAZILY: it is a function of its own service and of its own target only,
@@ -654,6 +675,8 @@ class ScoreModel(
     fun taskId(i: Int): TaskId = tasks[i].id
 
     companion object {
+        /** Schedulable time the scheduler leaves to no task — a run's `task` when it runs nobody. */
+        const val IDLE: Int = -1
         const val NOBODY: Int = -2
         const val MIN_WINDOW_MILLIS: Double = 60_000.0
 

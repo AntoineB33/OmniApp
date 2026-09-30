@@ -338,6 +338,9 @@ INSERT OR REPLACE INTO screen_break_history(start_ms, label, end_ms) VALUES (?, 
 deleteScreenBreaksBefore:
 DELETE FROM screen_break_history WHERE end_ms <= ?;
 
+deleteScreenBreak:
+DELETE FROM screen_break_history WHERE start_ms = :start_ms AND label = :label;
+
 selectScreenBreakFront:
 SELECT until_ms, line_ms FROM screen_break_front WHERE id = 0;
 

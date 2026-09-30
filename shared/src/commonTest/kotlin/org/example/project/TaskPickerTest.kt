@@ -267,13 +267,14 @@ class TaskPickerTest {
         // 1 is unaffected — and the picker writes exactly those three answers as red, orange and nothing.
         val (s0, ids) = stateWithTasks("A", "B", "C")
         val (a, b, c) = ids
-        // A grey period over the line: its kind refuses everybody by default...
-        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, T0 - 5 * MIN, T0 + 5 * MIN))
+        // A period of the account's own kind over the line: it refuses everybody by default...
+        var s = SchedulerReducer.reduce(s0, SchedulerIntent.AddPeriodKind("deep work"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod("deep work", T0 - 5 * MIN, T0 + 5 * MIN))
         // ... unless a task has deliberately been given a value for it.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(b, PeriodKinds.INACTIVITY, 0.5))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, PeriodKinds.INACTIVITY, 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(b, "deep work", 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, "deep work", 1.0))
 
-        assertEquals(setOf(PeriodKinds.INACTIVITY), SchedulerDomain.restrictiveKindsAt(s, T0))
+        assertEquals(setOf("deep work"), SchedulerDomain.restrictiveKindsAt(s, T0))
         assertEquals(0.0, SchedulerDomain.taskResilienceAt(s, a, T0))
         assertEquals(0.5, SchedulerDomain.taskResilienceAt(s, b, T0))
         assertEquals(1.0, SchedulerDomain.taskResilienceAt(s, c, T0))

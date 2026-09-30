@@ -415,9 +415,10 @@ every task in the account, and it is also how the reference's binary form is exp
 
 ### Consequences worth knowing
 
-- A gap too short for any minimum is **worked all the same**, and the panel there is short. `side-dev/README.md`
-  § *No idling* is a hard constraint and § *Soft Minimum Execution Time* is *"another optimization goal"*, so
-  the minimum yields where the two meet. This reverses what this ADR said until 2026-09-03 — "left empty (or
+- A gap too short for any minimum ~~is **worked all the same**~~ — **superseded by §14 (2026-09-29)**: it is left
+  to nobody when that scores lower. Until then: the panel there was short. `side-dev/README.md`
+  § *No idling* was a hard constraint and § *Soft Minimum Execution Time* is *"another optimization goal"*, so
+  the minimum yielded where the two met. This reversed what this ADR said until 2026-09-03 — "left empty (or
   absorbed by the previous slot, the reference's `free_tail`)" — which was read off `scheduler_logic.py`, a
   reference file that no longer exists; `side-dev/scheduler.py` idles only where the candidate set is empty,
   and `SchedulerPlanner.runRange` always did. PRD §9/§10 were amended to match.
@@ -427,7 +428,7 @@ every task in the account, and it is also how the reference's binary form is exp
   §17 for sleep in the same words). Load-bearing: without it the 20-min look-away cadence would make the
   default 45-min minimum permanently unschedulable. Note this is a rule about the chunk's REMAINDER only —
   since 2026-09-03 nothing asks "does the minimum fit?" at all, that question having been the candidate
-  filter No idling forbids.
+  filter No idling forbade — and since §14 the score weighs it instead of any filter.
 
 ## 5. A window bounds only the tasks it turns away
 
@@ -848,4 +849,87 @@ the exhaustive search, with the time the exhaustive search did not use, and neve
   `PerfBenchmarkTest`'s worst fill 145 → 1 076 ms) — on the UI thread, for a display fill. A seed is completed with the
   fresh plan's own tail, and the solver is resolved only for a fill given search time. The fill is back at its
   baseline (week 103 → 97 ms, worst 145 → 143 ms).
+
+## 13. 2026-09-28: the rules are parameterized by the mode, so a flip lays a plan instead of searching for one
+
+### The question
+
+Asked again whether the project strictly satisfies `docs/scheduler_requirements.md` (a proposal from another assistant
+to compile the rules into a state machine the client evaluates without the scheduler), the audit found the one clause
+§12 had not closed: the set of rules is *"parameterized by $now line$ and $now line$ mode"*, and a definitive schedule
+is one every later set of rules *"indicate[s] the same … for any t < t₁ (… parameterized by now line and now line
+mode …)"*. The app answered a mode flip by re-planning from the line. The rules it had published said nothing about
+the other mode, and the re-plan — a search given wall time, whose answer depends on that time — could rewrite what was
+already definitive: locking for half an hour and unlocking again handed the at-screen line a different schedule from
+the one published for it (`TpModeSwitchTest`'s control).
+
+### Three readings, and why the one shipped
+
+1. **A rule table in (now-line, mode) alone, evaluated without the scheduler** — the proposal's reading. Feasible only
+   as an approximation (the best continuation depends on the frozen past, which the mode's history writes), which the
+   first exception of § *Strict Requirements* allows. But the dynamic periods' own placement rules read the past
+   stretches (*"after any ≥ 5-minute stretch covered by the period 'no on-screen task'…"*), so a task table blind to
+   the path cannot be both legal and definitive around them — unless it is read on the schedulable clock, where a
+   period nobody may run in suspends a run rather than leaving a hole. That is what was taken from it.
+2. **Deterministic lazy evaluation** — keep re-planning at the flip, but make that re-plan a pure function of what was
+   published. Rejected: every later stage (wall-time search, stage boundaries sized by the device's measured speed)
+   would have to be deterministic too, as far as the front reaches — a week.
+3. **Shipped: the plan for the other mode CLASS is found beside the line's own, to the same front, and a flip lays
+   it.** The plan left becomes the other class's, so a flip and a flip back come back to what was published. The hard
+   constraints still win: where the runs are no legal continuation on the timeline the flip lands on (a period
+   retracting at the line that did not at the plan's own instant), the fill plans from the line with them as a seed.
+   Two classes, not three: modes 2 and 3 differ in the cue alone, and a 2↔3 flip no longer re-plans at all.
+
+### What it costs, and what it does not close
+
+- The other class's plan is the step-bounded passes only, with no dynamic period obstructing it. `PerfBenchmarkTest`
+  (12 tasks): a fresh week of the at-screen plan found from a covered line is ~220 ms beside ~115 ms for the plan
+  itself. On plan reductions only; the pace cap measures the whole reduction.
+- It is one flip deep in the sense that matters: each class's plan is continued from the actual past at every stage,
+  but between two stages it was made for "the line enters this class now". A flip at a later instant lays it from
+  there; the lags that half hour moved are the score it leaves, which exception 1 covers.
+- The same clause still bites in one place it did before: a mode-1 line walking INTO a period that retracts at the line
+  (a night worked through) finds a plan that put nobody there, and the idle check re-plans (`screen-breaks.md`). The
+  published rules had no legal answer at that (x, mode) to keep.
+
+## 14. 2026-09-29: time left to nobody is a decision the score prices
+
+`docs/scheduler_requirements.md` dropped § *No idling* (*"anywhere not covered by restrictive periods which would
+prevent any task from being scheduled, the scheduler must schedule a task"*), and the user asked for the project to
+satisfy the file **strictly**. What remains asks for a best score and says nothing against an empty stretch, so a
+hard "no gap" rule became a constraint the requirements do not impose — one that throws away continuations scoring
+lower. It had been enforced in five places: the score's candidate definition, the rollout and the exhaustive search
+(tasks only), the legality check (`legalPrefix` stopped at a gap), and the MIP (exactly one task per slot).
+
+### Three readings, and why the one shipped
+
+1. **Editorial only: keep the rule, cite it elsewhere.** Rejected: nothing left in the file implies it. The one place
+   it could come from — the percentages adding up to 100 % — makes an empty stretch COSTLY, not forbidden, and that
+   is already in the score.
+2. **Allow gaps but never choose them** (accept them from seeds and peers only). Rejected: it leaves the search short
+   of continuations the score calls better, which § *Strict Requirements* does not allow when they are reachable.
+3. **Shipped: nobody is a candidate at every decision, priced by the one score.** `ScoreModel.IDLE` (`-1`, the
+   value `serve` already took for the frozen past's empty time) joins `choicesAt`; the rollout, the exhaustive
+   search and the improver's reassign try it, and the MIP asks for at most one task per slot. `J` needed no change:
+   the targets add up to 1 over schedulable time, so every lag falls behind over an empty stretch, and the panel it
+   interrupts ends and pays its shortfall. It is chosen only where that is cheaper than any task — in practice a
+   stretch before an edge that every task would fill with a panel cut far short or a share far overshot.
+
+### What came with it
+
+- **A run of nobody is explicit** (`Run(task = IDLE)`): the legality check reads a gap between two runs as one, the
+  fill places it as nothing and reports it (`ScheduleFill.Result.idle`), and it names no alternative — the
+  requirements' alternative is a task set at the line.
+- **The check at the line had to learn the difference.** `planMismatchAtLine` re-planned on any empty line where
+  somebody may run, to catch a plan built around a break that has since moved. A hole the plan CHOSE would have
+  re-planned once per hole as time passed over it, which the definitive clause forbids. The fill's `idle` is kept as
+  `SchedulerState.plannedIdle` (in memory only, like `scheduleCycle`), and a line inside it is no mismatch. After a
+  restart it is empty until the next fill, so a chosen hole the line is standing in may re-plan once — the same
+  one-shot the check always had.
+- **A peer's gap is not a decision.** A follower lays a leader's runs only without gaps (`isLegalContinuation`): a
+  gap may be the leader's choice or a break only the leader had. As a seed the gap is read as time left to nobody and
+  re-scored.
+- **The repetition never contains nobody** (`repeatCopy` and `approximateCopy` already refused a negative task): a
+  continuation whose uniform tail idles is searched rather than unrolled. On a uniform stretch no edge cuts a panel
+  short, which is what nobody buys, so it is not expected there — none of the repetition tests found one.
 

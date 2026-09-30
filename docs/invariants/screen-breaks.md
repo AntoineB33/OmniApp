@@ -11,36 +11,49 @@ Global rules that always apply: `CLAUDE.md`.
 look-away, the 5-min pose, the 15-min pose. Terminology: **"screen breaks"** everywhere — UI, docs, code
 identifiers, persisted keys.
 
-- **All three have the kind `no task allowed`, end to end.** There is no shape to read any more: no closed
-  head, no "off-screen only" tail, no *doable during a screen break* switch. A task works through one exactly
-  when it has been given a non-zero resilience to that kind — the same sentence, and the same code path, as
-  any other kind. `ScreenBreakPeriod` is gone; do not reintroduce a per-break accepted set.
+- **Each break's kind is the requirements' own** (`DynamicPeriods.breakKind`, 2026-09-29): the 20 s look-away
+  is `no task allowed` end to end; the 5-min pose is one minute of `no task allowed` then four minutes of the
+  kind **"5min screen break"** (`PeriodKinds.BREAK_5MIN`); the 15-min pose is the kind **"15min screen break"**
+  (`PeriodKinds.BREAK_15MIN`). Both new kinds start at resilience 0 for every task and are edited in the
+  resilience editor like any other kind — a task works through one exactly when it has been given a non-zero
+  resilience to it. There is no *doable during a screen break* switch and no per-break accepted set
+  (`ScreenBreakPeriod` stays gone); the split is expressed as kinds, not as a shape.
 - **Where they fall is `DynamicPeriods`, and nothing else.** Three recurrence bars, verbatim from the README:
   after **any** dynamic period no 20 s for **20 min**; after a **≥ 5-min** rest stretch no 5 min for **1 h**;
   after a **≥ 15-min** one no 20 s for **20 min** and no 15 min for **2 h**. Where they would overlap, the
   chain collapses to its **longest member starting at the chain's earliest point**.
-- **A rest stretch takes all three of its clauses**: *covered by* "no on-screen task" (or `no task allowed`,
-  which refuses the on-screen tasks a fortiori), *without any task* (a period that still accepts somebody
-  makes none, and a **pre-placed task IS a task** — an hour of maintenance is not a rest), and it is a
-  **stretch**, not a period: two that abut make one. `blocked` and `rested` are deliberately different sets —
-  any emptiness absorbs a period that would fall inside it; only the part of it that is a rest bars what
-  follows.
+- **A rest stretch is a stretch of "no screen", and nothing more** (`DynamicPeriods.isRestAt`,
+  `PeriodKinds.coversNoScreen`): the requirements say *"after a ≥5-minute of 'no screen'"*. Whether a task
+  resilient to "no screen" may run there does not change that nobody was at a screen — the older README's
+  *without any task* clause was dropped on 2026-09-29. It is a **stretch**, not a period: two that abut make
+  one. `blocked` and `rested` are deliberately different sets — any emptiness absorbs a period that would fall
+  inside it; only the part of it that is "no screen" bars what follows.
 - **The anchors are DERIVED, not stored.** There is no `lastRest`-driven grid, no 5↔15 merge, no
   "a pause re-anchors shorter pauses", no decoupled-pose special case. Every one of those said "a rest bars
   the breaks that follow it", which the bars say once — and the rests are read out of the timeline itself, so
   a live pause reaches the placement as the period it is (`liveRestPeriod`) rather than as an anchor overlay.
 - **The three BEHIND the line are BANKED, and never move again** (`SchedulerDomain.bankScreenBreaks`,
-  `FrozenScreenBreaks`, requirements § *frozen past*, 2026-09-27). The engine banks at every advance of the line
-  (and at every step of a journey, in the mode it is walked in) each occurrence the walk AT THE LINE places that has
-  wholly elapsed; every placement then continues from that record (`DynamicPeriods.Frozen`): its bars are read off
-  the banked instances, and nothing new is placed behind the banked front. They used to be re-derived at every
+  `FrozenScreenBreaks`, requirements § *frozen past*, 2026-09-27, tightened 2026-09-29). The engine banks at every
+  advance of the line (and at every step of a journey, in the mode it is walked in) each occurrence the walk AT THE
+  LINE places that the line has REACHED — whole, the moment it starts; every placement then continues from that
+  record (`DynamicPeriods.Frozen`): its bars are read off the banked instances, and nothing new is placed behind the
+  banked front. **The calendar draws the past from this record and nothing else** (`takenScreenBreakPanels`,
+  bisected to the visible window): until 2026-09-29 it re-ran the walk over the elapsed window with the mode and
+  environment of NOW, so a lock, the away chord, a restart or a record that had not loaded drew breaks that never
+  happened (a 15-min pose at 11:32 on account 3, where the record held two look-aways). No record draws no past
+  breaks, and a failed load is logged. They used to be re-derived at every
   reading from a walk whose origin was the day before the line, so the calendar drew NO break older than about a
   day and a half and moved the rest whenever the origin rolled at UTC midnight, or the environment, the tasks, the
   configuration or the mode changed. Four rules the record rests on:
-  - **The front waits at the start of the "no on-screen task" chain the line is in** (`DynamicPeriods.chainReaching`)
-    and at the start of an occurrence the line is inside: the chain rule may still pull a break back onto that chain's
-    start — the requirements' one dynamic-period exception — so nothing from there on is a fact yet. The front never
-    moves back.
+  - **The front IS the line.** No rule of the requirements moves a break behind the line (the chain rule starts a
+    break at `max(now line, t_s)`, below), so nothing waits to be decided: an occurrence the line is inside is banked
+    whole from its start. The front waited at a chain's start and at a straddling occurrence's start until
+    2026-09-29, re-deriving everything from there at every advance in the current mode. The front never moves back.
+  - **The one removal is the requirements' own exception** (*"when a 'screen break' period needs to get removed to
+    satisfy its restrictive period rules"*): a POSE the line is inside when the line is in mode 1, which it may not
+    cover. It is removed whole (`saveFrozenScreenBreaks(removed = …)`, logged) and the drag carries it as owed.
+  - **The line's first moment banks its initial past** — the walk's past up to it, where no record can be continued
+    from — and from then on it never changes; a break there never lies over work already recorded.
   - **The walk starts at the day-quantized origin of the FRONT** (`dynamicWalkStartMillis`), not of the caller, and
     never at the front itself: a start that moved with the front carried every bar the record does not set (a pose
     never taken) along with it, and the pose's published due slid by one tick at every tick (`ServerQuotaTest`
@@ -52,9 +65,8 @@ identifiers, persisted keys.
     schema v16. `lineMillis` beside the front is where the line last was: an engine that starts far past it walks the
     line there in mode 2 (below).
   - **A banked break and recorded work never overlap** (account 3, 2026-09-27 21:09: a look-away drawn over a task
-    panel in the past). **At the line the break wins**: work is recorded minus every banked break refusing its task AND
-    every break the line has started but not banked yet (`FrozenScreenBreaks.pending`), and the breaks are banked
-    BEFORE the tick's records. **Only over a past no line saw does the record win** (a first banking, or one after a
+    panel in the past). **At the line the break wins**: work is recorded minus every banked break refusing its task
+    (a break is banked the moment the line reaches it), and the breaks are banked BEFORE the tick's records. **Only over a past no line saw does the record win** (a first banking, or one after a
     stretch too long to continue from — `bankScreenBreaks`' `recordedWork`): there the walk re-derives breaks the plan
     was never built around. Letting the record win at the line too was the loop of 2026-09-28 09:27 — the re-plan
     recorded the task a few milliseconds into the overdue look-away placed at the front, the look-away was refused
@@ -82,13 +94,14 @@ identifiers, persisted keys.
 - **A break has a DUE and a PLACE, and each of the three is announced from the run its own rule makes
   crossable** (`screenBreakCueOccurrencesBetween`, the ONE reading the cue sweep and its self-delay share).
   The due is where the recurrence bars put it with nothing dragged (`screenBreakOccurrencesBetween`,
-  `dynamicPeriodPanels`' `atLine = false`); the place is where the line leaves it (`screenBreakPanels` /
-  `takenScreenBreakPanels`, `atLine = true`) — what the calendar draws and what the fill obstructs on. A
+  `dynamicPeriodPanels`' `atLine = false`); the place is where the line leaves it (`screenBreakPanels`,
+  `atLine = true`, then the banked record once the line has reached it) — what the calendar draws and what the
+  fill obstructs on. A
   **POSE** is announced on its DUE: in mode 1 the line pushes it, so its place is always "starting now", is
   never crossed, and a sweep keyed on it would fire at every scan. (In the away modes nothing is dragged, so
   the due IS the place — the reading is safe in every mode, which is why it is the one asked.) The **20 s
-  look-away** is announced on its PLACE, because nothing drags it in any mode — its at-line start is already a
-  fixed instant, and it is the one the calendar draws.
+  look-away** is announced on its PLACE: at a screen nothing drags it — its at-line start is already a fixed
+  instant, and it is the one the calendar draws. (Mode 2, which drags it, announces nothing.)
 - **The two runs are NOT one run filtered, and that is why the look-away is read off the at-line one.** The
   drag re-anchors the bar it fires on, so an owed pose is a placed dynamic period in the undragged run — and
   therefore bars the 20 s for twenty minutes after itself — while at the line it has been dragged away and
@@ -136,14 +149,14 @@ identifiers, persisted keys.
   report (its screen stays unlocked), so the button feeds that layer itself
   (`SchedulerDomain.declaredAwayRegions`). Mode 3 and "a stretch carrying both layers" are the same set; keep
   them so.
-- **Mode 2 is not mode 3, and the difference is the CUE — it is not the placement.** The requirements state the
-  two in ONE clause — *"Mode 2 & 3: $now line$ must be covered by the period 'no on-screen task'"* — and a
-  dynamic period's kind (`no task allowed`) covers that a fortiori, so being covered and being coverable BY ONE
-  OF THE THREE are not two questions. `DynamicPeriods.lineIsCoveredAt` is the ONE predicate the placement reads
-  the mode through, and **the two away modes are byte-for-byte one plan**: neither drags, the line walks
-  through a break, and the break is then an ordinary fact of the frozen past. There was a second predicate here
-  (`breaksAreTakenAt`, mode 3 only) and it made mode 2 place the three where mode 3 did not; it is gone. What
-  tells them apart is `DynamicPeriods.breaksAreNotifiedAt`, read in exactly one place
+- **Mode 2 is not mode 3: they differ by the look-away's drag and by the CUE.** The requirements state the
+  two in ONE clause — *"Mode 2 & 3: $now line$ must be covered by the period 'no on-screen task'"* — so
+  `DynamicPeriods.lineIsCoveredAt` is the predicate the placement reads coverage through, and neither away mode
+  drags a pose: the line walks through it and it is then an ordinary fact of the frozen past. Since 2026-09-29 the
+  placement differs in exactly one place, `DynamicPeriods.dragsAt`: **mode 2 drags the 20 s look-away** (*"the $now
+  line$ must be in mode 1 or 3 before entering the 20s break"*), mode 3 enters it. There was a second predicate here
+  (`breaksAreTakenAt`, mode 3 only) that made mode 2 place the poses where mode 3 did not; it is gone — do not
+  grow a second one beside `dragsAt`. The other thing that tells them apart is `DynamicPeriods.breaksAreNotifiedAt`, read in exactly one place
   (`SchedulerDomain.cueCrossings`): **in mode 2 a screen break is never announced** — every screen of the
   account is locked and nobody has said they are taking a break, so there is neither anybody to tell nor a
   break being taken — while mode 1 and mode 3 both announce. The crossing is DROPPED rather than swallowed
@@ -176,33 +189,38 @@ identifiers, persisted keys.
   materialized as `[t_p + 1, t_p + d + 1)` when the fill runs, and the line sweeps into it before the next
   re-plan pushes it forward), which is exactly how the picker came to paint every task red under a dragged
   15-minute pose. **A third such answer must ask it too.** Until 2026-09-05 it was an
-  obstacle, and that broke *No idling* on a live account: the half-open form leaves exactly `[t_p, t_p + 1)`
-  free, so a fill placed **one millisecond** of work and idled for the pose's whole length, and every later
+  obstacle, and that left a hole on a live account that no score chose: the half-open form leaves exactly
+  `[t_p, t_p + 1)` free, so a fill placed **one millisecond** of work and idled for the pose's whole length, and every later
   re-plan regenerated the pose at the NEW line and left the entire stretch the line had swept with no panel at
   all — which the calendar draws as a growing grey "Inactivity" band while a device is unlocked and every task
   is free to run. **Neither away mode drags at all**, so neither has anything to drop: the line is covered in
   both, the pose elapses under it and really happens, and an on-screen task may no more run in it than in any
   other period of `no task allowed`. The filter is written as a mode-1 test rather than as "drop the dragged
   ones" so it stays true if a later mode ever drags again.
-- **The plan is built around the breaks the line WILL MEET** (`SchedulerDomain.breaksTheLineWillMeet`, § *No
-  idling*, 2026-09-27) — the same argument one step further. At the screen a pose the line reaches is dragged and
+- **The plan is built around the breaks the line WILL MEET** (`SchedulerDomain.breaksTheLineWillMeet`,
+  2026-09-27) — the same argument one step further. At the screen a pose the line reaches is dragged and
   never happens, and a pose riding the line bars every look-away behind it (*"after any dynamic restrictive period,
   no 20s period in the next 20 minutes"*); so in mode 1 only the look-aways before the first pose (dragged or still
   due) obstruct, and the plan runs straight through the rest. Planned around at its due, a future pose left a hole
   the line then swept with no task. **The calendar still draws every break**, clipped out of the plan it shows
   (`clipPlanForPinnedScreenBreak`, now over every break ahead of the line, not only the one on it), so a pose ahead
-  reads as the period it is and the task behind it is revealed as the line drags it. A mode flip re-plans at the
-  flip, and a break the rules move under the line is caught at the line (§ *the idle check* below). A pose the user actually TAKES is a different object — a
+  reads as the period it is and the task behind it is revealed as the line drags it. A mode flip lays the plan
+  already found for the new mode class (`scheduler.md` § *The rules are parameterized by the mode*), and a break the
+  rules move under the line is resolved at the line by the rules (§ *the idle check* below). A pose the user actually TAKES is a different object — a
   break the app conducted (`RecordConductedBreak`), a pre-placed period nothing drags — so nothing is lost by
   refusing to obstruct on one that never happened.
-- **The 20 s LOOK-AWAY IS NEVER DRAGGED — it is assumed taken** (`DynamicPeriods.dragsAtLine`, the ONE
-  predicate; the two poses are dragged, the look-away is not). Looking twenty feet away costs the user no
-  working time, so the app takes it as done the moment it falls due: the period stays exactly where the
-  recurrence bars put it, the line walks **through** it in mode 3 for its twenty seconds — covered, which is
-  precisely what modes 1 and 2 forbid of a pose — and once the line is past, it goes on being drawn where it
-  happened. A pose is the opposite case and that is the whole of the split: five or fifteen minutes away from
-  the screen is something the user must actually *do*, so an untaken one is **owed** and parks at the line.
-  Three things follow. Its **cue keys on its PLACE**, not on a due — the at-line run, the same one the
+- **Who is dragged depends on the mode** (`DynamicPeriods.dragsAt(label, mode)`, the ONE predicate, 2026-09-29):
+  the two poses in **mode 1**, the 20 s look-away in **mode 2** (*"the $now line$ must be in mode 1 or 3 before
+  entering the 20s break"* — it becomes `]now line; now line + 20s]`). Until 2026-09-29 the look-away was dragged
+  in no mode at all.
+- **A mode-1 line ENTERS the look-away and is in mode 3 for its twenty seconds** (`SchedulerDomain.lookAwayHoldUntil`,
+  the one function the engine and the calendar both read; *"When $now line$ enters a '20s screen break' restrictive
+  period in mode 1, it gets in mode 3"*). It cannot return to mode 1 meanwhile; mode 2 is never held this way. The
+  plan is NOT redone for those twenty seconds: the at-screen plan already includes the look-away. Looking twenty
+  feet away costs the user no working time, so the app takes it as done: the period stays exactly where the
+  recurrence bars put it and, once the line is past, goes on being drawn where it happened. A pose is the
+  opposite case: five or fifteen minutes away from the screen is something the user must actually *do*, so an
+  untaken one is **owed** and parks at the line. Three things follow for the look-away. Its **cue keys on its PLACE**, not on a due — the at-line run, the same one the
   calendar and the fill read, so those three cannot drift about it. Once the line has passed it, it is **banked**
   (above) and stays where it happened; a "Look away now" pressed less than twenty minutes later re-anchors the bar
   for the look-aways AFTER it (`RecordConductedBreak`, `RestrictivePeriod.dynamic`), not the banked one. And the labels are **positional** (the shortest of
@@ -220,10 +238,13 @@ identifiers, persisted keys.
   (`device_away_span`, schema v13) while the flag itself is not — see `calendar.md` § *an away episode
   outlives the process*: no OS log can re-supply a stretch the machine spent unlocked, so a restart that
   forgot them silenced the layer, the hatch and the §9 bank over a stretch the mode had been 3 for.
-- **A `no on-screen task` chain TAKES the break that falls due in it, and the break is drawn at the chain's
-  START** (`DynamicPeriods.chainTaking`, the ONE reading) — the requirements' last bullet in this section, and
-  their one sanctioned exception to the **frozen past**. The pause the user spends away IS the break they were
-  told to take: the minutes already spent away count towards it, so the calendar draws the pause's first five
+- **A `no on-screen task` chain TAKES the break that falls due in it, and the break starts at `max(now line,
+  t_s)`** (`DynamicPeriods.chainTaking`, the ONE reading) — the requirements' last bullet in this section. The line
+  moves continuously, so a line that entered the chain at `t_s` met the break right there: that is the chain's
+  START. **It never places a break behind the banked front**: a chain the line learns of only after it began
+  (evidence arriving late) starts the break at the front. (Until 2026-09-29 the old wording's *"if it means starting
+  in the past"* was an exception to the frozen past; the requirements no longer have it.) The pause the user spends
+  away IS the break they were told to take: the minutes already spent away count towards it, so the calendar draws the pause's first five
   (or fifteen, or twenty) as the break and whatever reaches from its end to the line as the ordinary cover
   below — the derived **Inactivity** band, or **Sleep** inside a §17 window. Clauses, each load-bearing:
   - it is a **chain**, so two periods that abut are one stretch exactly as they are for the bars;
@@ -254,10 +275,16 @@ identifiers, persisted keys.
 - **The mode-1 drag puts an owed pose DOWN at the first stretch the line was not at a screen for**, rather than
   carrying it to `t_p`. The line drags only while it is in mode 1, and a `no on-screen task` chain behind the
   line is the timeline's own record that it was not — the user walked away, and the pose they owed is what they
-  walked away to take. Asked with one mode for the whole journey (which is what the past-side re-derivation
-  does: `takenScreenBreakPanels` passes the mode NOW), every pose the day owed piled onto the line and the
+  walked away to take. Asked with one mode for the whole journey (a walk re-deriving a past no record holds, with
+  the mode of now), every pose the day owed piled onto the line and the
   pause the user actually spent taking one was left with no period in it at all. Where the chain is too short
-  to take it, the drag picks it straight back up and carries on to the next one.
+  to take it, the drag picks it straight back up and carries on to the next one. (Behind the banked front none of
+  this re-runs: the past is the record.)
+- **A chain the line is dragging stays on the line** (`DynamicPeriods.mergeChain`): where the longest member of a
+  chain is the pose the mode-1 line is dragging, it keeps `(t_p, t_p + d]` and the earlier member (a look-away the
+  line is crossing) is removed — the requirements' own example puts the merged break *"right after $now line$"*.
+  Brought back to the look-away's start, the pose covered the mode-1 line, was banked, removed, and banked again at
+  every advance, flipping the published rules each time (`ServerQuotaTest`, 2026-09-29).
 - A pull-back also **floors its own bar at the instant the period fell due**, or the walk can hand the label a
   bar below the slot it just left and spin on it — that guard is what keeps the loop monotone, not `MAX_STEPS`.
 - **Modes 2 and 3: `t_p` is covered**, so the gap back to the last such period's end is covered as `no on-screen
@@ -279,7 +306,7 @@ identifiers, persisted keys.
   such resilience"). It was the zero-wide `[now, now]` (and before that `[now, now + 1)`): it chose the first run and
   nothing more, the line walked out of that run into the on-screen task the plan had put after it, and the display
   clipped it and the bank refused it — an away stretch left empty where a resilient task could run. A flip back to
-  mode 1 re-plans at the flip.
+  mode 1 lays the at-screen plan already found (`scheduler.md` § *The rules are parameterized by the mode*).
 - **The now-line NEVER JUMPS — a distant position is a JOURNEY, and waking from device sleep is walked in
   mode 2 except where the account was in MODE 3** (`SchedulerEngine.sweepNowLineTo`,
   `SchedulerDomain.sweepStepMillis`). The README says both halves in
@@ -328,10 +355,13 @@ identifiers, persisted keys.
     needed: the local one covers a journey the clock made while the app ran (a debug leap), the server's the
     one case a local record cannot — the app was asleep for the whole episode, which is exactly the journey a
     wake has to walk.
-- **A mode flip re-plans, at once and on this device** (`launchTpModeReschedule` → `requestReschedule(local =
-  true)`), and that is not "time passing re-plans": the flip is an edge the platform announces. Local, because it is
-  not a rule change — the rules are parameterized by the mode, and the plan for the new mode applies from the flip;
-  an election's deadline left the old mode's plan standing for seconds. It cannot go in `schedulingSignature` — the mode is
+- **A mode flip applies the plan for the new mode CLASS, at once and on this device** (`launchTpModeReschedule`
+  → `switchTpModePlan`), and that is not "time passing re-plans": the flip is an edge the platform announces. Local,
+  because it is not a rule change — the rules are parameterized by the mode, and the plan for the new mode applies
+  from the flip; an election's deadline left the old mode's plan standing for seconds. Since 2026-09-28 it LAYS the
+  plan found beside the last one (`SchedulerIntent.SwitchTpMode`) and re-plans only when none was found for these
+  rules; a 2↔3 flip, which changes the cue and not the placement, does neither (`scheduler.md` § *The rules are
+  parameterized by the mode*). It cannot go in `schedulingSignature` — the mode is
   not in `SchedulerState`, being a fact about the devices and not about the account's data, which is also why
   it is never synced. The reducer reads it through the injected `SchedulerReducer.tpMode` seam.
 - **The SCHEDULER RETURNS A SET OF RULES, and that set is the whole of what the server is told about where
@@ -411,11 +441,14 @@ identifiers, persisted keys.
   length overlap — and it bars the next for twenty minutes. Recorded as the conducted panel once it completes;
   superseded, it leaves no trace. With it and the banked past, the vanish the bullet above bridges does not arise in
   the app; the bridge still answers for a reducer with no engine behind it.
-- **The idle check at the line** (`SchedulerDomain.planMismatchAtLine`, `SchedulerEngine.guardPlanAtLine`, § *No
-  idling*): after every advance, the plan at the line is compared with the rules there — no task where somebody may
-  run and no break is, or an auto task inside a break the line is in. Either re-plans from the line, locally, once
-  per mismatch (the fill is the authority), and in line during a journey. It is the rules evaluated where the line
-  now is — a placement the chain rule moves in an away mode — never a timer.
+- **The idle check at the line REPORTS, it never re-plans** (`SchedulerDomain.planMismatchAtLine`,
+  `SchedulerEngine.guardPlanAtLine`, 2026-09-29): after every advance, the plan at the line is compared with the
+  rules there — no task where somebody may run, no break is, and the plan did not DECIDE to leave the time to nobody
+  (`SchedulerState.plannedIdle`, `scheduler.md`), or an auto task inside a break the line is in. Re-planning from
+  the line rewrote a schedule already published as definitive (§ *Progressive Calculation*), so the rules apply
+  instead: **a task inside a break** — the break wins (the record is banked without it, the calendar clips it);
+  **an empty stretch where no break is left** — it stays empty. The mismatch is logged once to `diagnostics.log`,
+  because either case means the plan was built around a placement the line then moved.
 - **A break the app CONDUCTED is recorded as a period** (`RecordConductedBreak`), so the past is a fact and
   not a reconstruction. Only on completion: a manual "Look away now" that was superseded leaves no trace.
   **It is marked `TaskPanel.conductedBreak`, and that mark is load-bearing**: the README's FIRST bar keys on a

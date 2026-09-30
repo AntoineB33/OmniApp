@@ -131,6 +131,22 @@ history fails it by a factor in the tens.
 
 ---
 
+## Start-up on a real account
+
+`./gradlew :shared:startupCheck` — headless, never takes the screen. It copies `~/.omniapp-release/scheduler-state.db`
+(and its WAL) into `shared/build/startup-check/` (`-PstartupDb=<path>` for another DB), then runs
+`StartupOnRealDbTest`: what `App.kt` builds (store, sync engine offline with a transport that refuses every request,
+view-model, engine), with everything `App.kt` runs on the frame loop on one thread standing in for it, and the clock
+moved 12 hours ahead so the "app was not running" catch-up walks a night — the morning start. It fails if that thread
+is held longer than 5 s at any one time. The release app's own files are only read.
+
+Run it before reporting a client change done. It shows what a green `jvmTest` cannot: on 2026-09-30 the release
+drew no window for ~90 s on account 3 (the catch-up re-read the whole sync row once per stored session); the check
+measured 101 s on that code and ~1 s after the fix. Not covered: Compose's own composition and drawing — a slow
+calendar still needs the app launched (`perf-profile.bat`).
+
+---
+
 ## Adding instrumentation
 
 `org.example.project.perf.Perf` — `measure(name) { … }` for a span, `count(name)` for an occurrence,

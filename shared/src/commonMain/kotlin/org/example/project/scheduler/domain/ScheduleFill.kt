@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.CycleRun
 import org.example.project.scheduler.model.RulePlacement
 import org.example.project.scheduler.model.ScheduleCycle
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskTimeRange
 
 /**
  * `docs/scheduler_score.md`: **the schedule the rules give, from the now-line to the
@@ -109,7 +110,8 @@ internal object ScheduleFill {
      * [adopted] laid from [startMillis] to [endMillis]: each run cut at the alternative's changes and carried through
      * the model's wall stretches, so a stretch nobody may run in on THIS device — a break or a period the peer did not
      * have — is never given to a task. A run of a task this device does not know is dropped. The first run is pulled
-     * back onto the line when the peer's clock put it up to [ADOPT_SKEW_MILLIS] later, so the line is never idle.
+     * back onto the line when the peer's clock put it up to [ADOPT_SKEW_MILLIS] later: clock skew is not a decision
+     * to leave the line to nobody.
      */
     private fun layAdopted(
         model: ScoreModel,
@@ -149,13 +151,41 @@ internal object ScheduleFill {
     /**
      * What a fill returns: the placements, the repeating part of the rules when they repeat, what the extra passes
      * did ([report]) and the score of the continuation that was searched ([cost], null when nothing was searched).
+     * [idle] is the schedulable time between the start and the horizon the rules leave to NOBODY — a decision like a
+     * placement (`docs/scheduler_requirements.md` requires no task anywhere), told apart from a stretch nobody may
+     * run in, which is not on the schedulable clock at all.
      */
     class Result(
         val placements: List<Placement>,
         val cycle: ScheduleCycle?,
         val report: SearchReport = SearchReport(),
         val cost: Double? = null,
+        val idle: List<TaskTimeRange> = emptyList(),
     )
+
+    /**
+     * The schedulable wall time of `[startMillis, endMillis)` outside every pre-placed task that [placements] leave
+     * to nobody — what [Result.idle] reports, read off the placements themselves so every way a fill answers (a
+     * search, an unrolled cycle, a peer's adopted runs) reports it the same way.
+     */
+    private fun idleSpans(model: ScoreModel, placements: List<Placement>, startMillis: Long, endMillis: Long): List<TaskTimeRange> {
+        if (endMillis <= startMillis) return emptyList()
+        val taken = placements.filter { it.endMillis > startMillis && it.startMillis < endMillis }.sortedBy { it.startMillis }
+        val out = ArrayList<TaskTimeRange>()
+        for (w in model.wallIntervals(model.uAt(startMillis), model.uAt(endMillis))) {
+            if (w.fixed) continue
+            var a = maxOf(w.startMillis, startMillis)
+            val b = minOf(w.endMillis, endMillis)
+            for (p in taken) {
+                if (p.endMillis <= a) continue
+                if (p.startMillis >= b) break
+                if (p.startMillis > a) out += TaskTimeRange(a, p.startMillis)
+                a = maxOf(a, p.endMillis)
+            }
+            if (a < b) out += TaskTimeRange(a, b)
+        }
+        return out
+    }
 
     fun run(input: Input): Result {
         // Every entry, the recursion through a rule-state switch included: a fill nobody wants any more stops
@@ -172,8 +202,8 @@ internal object ScheduleFill {
 
         // `docs/invariants/scheduler.md` § *One device plans*: another device of the account searched; lay its runs —
         // when they are a legal continuation HERE. The peer planned over its own environment; a stretch it had a break
-        // in that this device does not (left to nobody: § *No idling*), or a period only this device has that turns
-        // the task away, makes its runs no answer on this timeline. Then this device plans for itself, the peer's
+        // in that this device does not (a gap here, which is not a decision to leave it to nobody), or a period only
+        // this device has that turns the task away, makes its runs no answer on this timeline. Then this device plans for itself, the peer's
         // runs competing as a seed, exactly as a device with no rules does.
         var adoptedSeed: List<RulePlacement>? = null
         input.adopted?.let { adopted ->
@@ -182,7 +212,8 @@ internal object ScheduleFill {
             val among = firstAmong(input, model)
             if (ScheduleOptimizer(model).isLegalContinuation(cursor, adoptedRuns(model, adopted, input.startMillis), model.uAt(emitEnd), among)) {
                 layAdopted(model, adopted, input.startMillis, emitEnd, raw)
-                return Result(group(raw), input.cycle)
+                val laid = group(raw)
+                return Result(laid, input.cycle, idle = idleSpans(model, laid, input.startMillis, emitEnd))
             }
             adoptedSeed = adopted
         }
@@ -197,7 +228,8 @@ internal object ScheduleFill {
             val unrolled = unroll(model, cycle, model.uAt(input.startMillis), model.uAt(emitEnd))
             if (unrolled != null) {
                 emit(model, unrolled.first, raw, model.uAt(emitEnd))
-                return Result(group(raw), unrolled.second)
+                val laid = group(raw)
+                return Result(laid, unrolled.second, idle = idleSpans(model, laid, input.startMillis, emitEnd))
             }
         }
 
@@ -230,7 +262,7 @@ internal object ScheduleFill {
                 val (cut, head) = switch
                 emit(model, head, raw, emitU)
                 val ended = head.last { model.fixedAt(it.fromU) < 0 }.task
-                val headHistory = head.flatMap { r ->
+                val headHistory = head.filter { it.task >= 0 }.flatMap { r ->
                     model.wallIntervals(r.fromU, r.toU).map { PlanBlock(model.taskId(r.task), it.startMillis, it.endMillis) }
                 }
                 // From the cut on, the rules are the ones in force THERE: a fill from the cut under R(cut), with the run
@@ -251,11 +283,13 @@ internal object ScheduleFill {
                         budget = input.budget,
                     ),
                 )
-                return Result(group(raw) + tail.placements, null, plan.report, plan.cost)
+                val laid = group(raw) + tail.placements
+                return Result(laid, null, plan.report, plan.cost, idleSpans(model, laid, input.startMillis, emitEnd))
             }
         }
         emit(model, settled.first, raw, emitU)
-        return Result(group(raw), settled.second, plan.report, plan.cost)
+        val laid = group(raw)
+        return Result(laid, settled.second, plan.report, plan.cost, idleSpans(model, laid, input.startMillis, emitEnd))
     }
 
     /**
@@ -307,7 +341,8 @@ internal object ScheduleFill {
         ruleStateAt: (Long) -> List<PlanTask>,
     ): Pair<Long, List<ScheduleOptimizer.Run>>? {
         val firstIndex = runs.indexOfFirst { model.fixedAt(it.fromU) < 0 }
-        if (firstIndex < 0) return null
+        // A first run of nobody holds no task for the moving rule state to turn against.
+        if (firstIndex < 0 || runs[firstIndex].task < 0) return null
         // The whole task run (consecutive pieces of one task), bounded by what is emitted.
         var lastIndex = firstIndex
         while (lastIndex + 1 < runs.size && runs[lastIndex + 1].task == runs[firstIndex].task &&
@@ -318,7 +353,7 @@ internal object ScheduleFill {
         val runStart = model.wallStartAt(first.fromU)
         val runEnd = minOf(model.wallEndAt(runs[lastIndex].toU), emitEnd)
         if (runEnd - runStart <= RULE_SWITCH_RESOLUTION_MILLIS) return null
-        val prefixHistory = runs.subList(0, firstIndex).flatMap { r ->
+        val prefixHistory = runs.subList(0, firstIndex).filter { it.task >= 0 }.flatMap { r ->
             model.wallIntervals(r.fromU, r.toU).map { PlanBlock(model.taskId(r.task), it.startMillis, it.endMillis) }
         }
 
@@ -583,6 +618,8 @@ internal object ScheduleFill {
     ) {
         for (r in runs) {
             if (r.fromU >= untilU - ScoreModel.EPS) break
+            // Time left to nobody is placed as nothing: it is [Result.idle].
+            if (r.task == ScoreModel.IDLE) continue
             val id = model.taskId(r.task)
             val alt = if (r.alternative >= 0) model.taskId(r.alternative) else null
             for (w in model.wallIntervals(r.fromU, minOf(r.toU, untilU))) {
@@ -649,7 +686,7 @@ internal object ScheduleFill {
      * It restricts the first run and never CUTS it. The cover was once `[now, now + 1)`: a one-millisecond window,
      * whose edge the search decides at like any other, so a resilient task got exactly one millisecond and an
      * on-screen task the rest — and since time passing never re-plans, an away line then swept on-screen tasks the
-     * display refuses to draw or bank: an idle stretch where the away plan had tasks to run (§ *No idling*).
+     * display refuses to draw or bank: an away stretch left empty where the away plan had tasks to run.
      */
     fun firstAmong(input: Input, model: ScoreModel): Set<Int> {
         val points = linePoints(input)

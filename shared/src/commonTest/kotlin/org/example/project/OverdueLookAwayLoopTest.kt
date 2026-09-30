@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +23,7 @@ import org.example.project.time.AppClock
 
 /**
  * Account 3, 2026-09-28 09:27–09:31: **"look 20 feet away" announced every thirty seconds, for ever**, and a 20 s hole
- * in the plan eighteen minutes ahead with no break drawn in it (`docs/scheduler_requirements.md` § *No idling*).
+ * in the plan eighteen minutes ahead with no break drawn in it — a hole no score chose.
  *
  * An overdue look-away is placed at the banked front — the line. The task the plan had there is recorded as the tick
  * banks it, over the look-away that has not ended yet; the look-away, once over, was then refused banking as a break
@@ -46,7 +47,7 @@ class OverdueLookAwayLoopTest {
 
     private class MemoryStore(var frozen: FrozenScreenBreaks?) : FrozenScreenBreakStore {
         override fun loadFrozenScreenBreaks() = frozen
-        override fun saveFrozenScreenBreaks(added: List<BankedBreak>, untilMillis: Long, lineMillis: Long, pruneBeforeMillis: Long) {}
+        override fun saveFrozenScreenBreaks(added: List<BankedBreak>, untilMillis: Long, lineMillis: Long, pruneBeforeMillis: Long, removed: List<BankedBreak>) {}
     }
 
     @Test
@@ -92,15 +93,21 @@ class OverdueLookAwayLoopTest {
         val banked = engine.frozenBreaks.value!!.breaks.filter { it.label == DynamicPeriods.LABEL_20S && it.startMillis >= T0 }
         assertTrue(banked.size in 1..2, "one look-away is due in twenty minutes, and it is banked: ${banked.map { (it.startMillis - T0) / SEC }}")
         val replans = runs.count { it.kind == SchedulerRunEntry.Kind.Replan }
-        assertTrue(replans <= 2, "the line re-plans once for the overdue look-away, not at every tick: $replans")
+        // The one re-plan here is a RULE change — the look-away the engine conducted is recorded as a period
+        // (`RecordConductedBreak`) — never the line: the check at the line reports a mismatch and the rules apply.
+        assertTrue(replans <= 2, "the line does not re-plan at every tick: $replans re-plans")
         // And the plan leaves no hole the rules put no break in: every gap ahead of the line holds a break.
         val st = vm.state.value
         val env = SchedulerDomain.breakEnvironment(st, now, now + 2 * HOUR, kotlinx.datetime.TimeZone.UTC, frozen = engine.frozenBreaks.value)
         val drawn = SchedulerDomain.screenBreakPanels(st.screenBreaks, now, now + HOUR, env.periods, env.blocks, env.tasks, frozen = env.frozen)
             .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val work2 = st.panels.filter { it.auto && it.endEpochMillis > now }.map { TaskTimeRange(maxOf(now, it.startEpochMillis), it.endEpochMillis) }
-        val holes = SchedulerDomain.subtractRegions(listOf(TaskTimeRange(now, now + HOUR)), SchedulerDomain.mergeOccupied(work2 + drawn))
-        assertTrue(holes.isEmpty(), "holes with neither a task nor a break: ${holes.map { (it.startEpochMillis - now) / SEC to (it.endEpochMillis - it.startEpochMillis) / SEC }}")
+        // Time the plan DECIDED to leave to nobody is not a hole (`SchedulerState.plannedIdle`).
+        // …as far as the plan is materialized: past its front there is nothing to check (no re-plan extends it
+        // any more — the check at the line reports and never re-plans).
+        val front = minOf(now + HOUR, st.panels.filter { it.auto }.maxOf { it.endEpochMillis })
+        val holes = SchedulerDomain.subtractRegions(listOf(TaskTimeRange(now, front)), SchedulerDomain.mergeOccupied(work2 + drawn + st.plannedIdle))
+        assertTrue(holes.isEmpty(), "holes with neither a task, a break nor a decision: ${holes.map { (it.startEpochMillis - now) / SEC to (it.endEpochMillis - it.startEpochMillis) / SEC }}")
     }
 
     @Test
@@ -115,11 +122,10 @@ class OverdueLookAwayLoopTest {
         val frozen = FrozenScreenBreaks(listOf(BankedBreak(DynamicPeriods.LABEL_20S, T0 - 2 * HOUR, T0 - 2 * HOUR + 20 * SEC)), front, front)
         // A 15-minute rest ending just before: no pose owed, the look-away is what is overdue.
         val rest = listOf(org.example.project.scheduler.domain.RestrictivePeriod(T0 - 40 * MIN, T0 - 22 * MIN, org.example.project.scheduler.domain.PeriodKinds.NO_SCREEN, "rest"))
-        val recorded = listOf(TaskTimeRange(T0 - 30 * SEC, T0 + 7))
-        val next = SchedulerDomain.bankScreenBreaks(breaks, frozen, T0 + 30 * SEC, rest, emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN, recordedWork = recorded)
+        val next = SchedulerDomain.bankScreenBreaks(breaks, frozen, T0 + 30 * SEC, rest, emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN)
         val banked = next.breaks.filter { it.label == DynamicPeriods.LABEL_20S && it.startMillis >= T0 }
         assertTrue(banked.isNotEmpty(), "the look-away the line placed at the front is banked: ${next.breaks.map { it.label to (it.startMillis - T0) / SEC }}")
-        // And work is never recorded inside it, not even the few milliseconds before it is banked.
-        assertTrue(next.pending.isEmpty() || next.pending.all { it.endMillis > T0 + 30 * SEC })
+        // It is banked the moment the line reaches it, so work is never recorded inside it (the record append leaves
+        // out every banked break) — there is no "started but not banked yet" any more.
     }
 }

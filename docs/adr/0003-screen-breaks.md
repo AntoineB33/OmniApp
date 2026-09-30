@@ -14,6 +14,10 @@ The three breaks: the **20-s look-away**, the **5-min pose**, the **15-min pose*
 
 ## What they are
 
+> **Superseded in part, 2026-09-29** — see § *Each break is its own kind again* at the end. The 5-min and 15-min
+> poses are no longer `no task allowed` end to end; the rest of this section (no shape, no per-break accepted set)
+> still holds.
+
 **All three are restrictive periods of the kind `no task allowed`, end to end.** That is the README's own
 sentence, and it settles what used to be three separate questions:
 
@@ -49,6 +53,9 @@ README's own example, a 20 s dragged until its end meets a 5 min is absorbed and
 seconds backward.
 
 ### A rest stretch takes all three of its clauses
+
+> **Superseded 2026-09-29**: clauses 1 and 2 are now one — a stretch of "no screen", whoever may run there. See the
+> section at the end.
 
 1. **covered by "no on-screen task"** — a period of that kind, or `no task allowed`, which turns the
    on-screen tasks away a fortiori. An emptiness of some *other* kind (a period nobody happens to be
@@ -310,6 +317,9 @@ Three things that fall out, and each is load-bearing:
   `t_p` line creates task panels not covered by the period", read exactly.
 
 ### The look-away is assumed taken; only a pose is owed
+
+> **Superseded in part 2026-09-29**: mode 2 now drags the look-away, and a mode-1 line that enters it switches to
+> mode 3 for real (the engine's mode, not only the walk's). See the section at the end.
 
 **The 20 s look-away is never dragged in any mode** (`DynamicPeriods.dragsAtLine` — the one predicate, keyed
 on the positional bar label, never on a title). Everything above about modes 1 and 2 dragging is about the two
@@ -592,3 +602,35 @@ in `ScreenBreakChainPullBackTest` and `DynamicPeriodsTest`.
 A consequence worth stating, because it is visible: a break falling due inside **any** `no on-screen task`
 chain is now drawn at that chain's start — a night, a long pause, a period the user drew. That is the
 requirements' rule rather than a new one; it was simply unreachable while the stretch's own bar fired first.
+
+---
+
+## Each break is its own kind again; the look-away has a mode — 2026-09-29
+
+`docs/scheduler_requirements.md` (changed 2026-09-29, commit `5398550` and after) states three things this ADR had
+decided the other way. The requirements are the authority, so the code followed them.
+
+**The kinds.** The 20 s break *"allows no task"*; the 5-min break is two periods, a first minute that allows no task
+and four minutes of a kind of its own; the 15-min break is a kind of its own. So the look-away stays `no task
+allowed`; the pose's last four minutes are **"5min screen break"** (`PeriodKinds.BREAK_5MIN`) and the 15-min pose is
+**"15min screen break"** (`PeriodKinds.BREAK_15MIN`), chosen by `DynamicPeriods.breakKind`. This is NOT the old
+closed-head/open-tail shape coming back: there is still no `ScreenBreakPeriod`, no `doableDuringBreak` switch and no
+per-break accepted set. Each part is an ordinary kind, and a task works through it exactly when it has a non-zero
+resilience to that kind. Both new kinds start at 0 for every task, so nothing changes until the user sets one.
+Sleep resilience became editable at the same time: the requirements call a sleep period's 0 a default.
+
+**The rest stretch.** *"after a ≥5-minute of 'no screen'"* — nothing more. The *without any task* clause (and with it
+"a pre-placed task is a task") came from an older README; `DynamicPeriods.isRestAt` is now `Base.noScreenAt`.
+Whether an off-screen task may run in the stretch does not change that nobody was at a screen.
+
+**The look-away and the mode.** *"The $now line$ must be in mode 1 or 3 before entering the 20s break"*, and
+*"When $now line$ enters a '20s screen break' restrictive period in mode 1, it gets in mode 3"* until it leaves it.
+- `DynamicPeriods.dragsAtLine(label)` became `dragsAt(label, mode)`: poses in mode 1, the look-away in mode 2
+  (`]now line; now line + 20s]`, as the requirements' example says).
+- A mode-1 line inside a look-away is in mode 3 for the ENGINE too (`SchedulerDomain.lookAwayHoldUntil`, read by the
+  engine and the calendar alike), so the cue, the away cover and the mode-1 pose removal follow it. It cannot return
+  to mode 1 meanwhile; mode 2 is never held this way. The plan is not redone for those twenty seconds: the at-screen
+  plan already includes the look-away.
+
+Rejected: keeping the look-away undragged in mode 2 on the grounds that it "costs no working time". That reasoning is
+about a user at a screen; in mode 2 nobody is, and the requirements forbid entering it there.

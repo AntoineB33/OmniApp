@@ -131,8 +131,9 @@ class SchedulerPeerProtocolTest {
 
     @Test
     fun a_stretch_the_leader_left_to_nobody_is_not_left_idle_on_the_follower() {
-        // `docs/scheduler_requirements.md` § *No idling*. The leader had a period the follower does not: its runs have
-        // a hole there, and laying them as they are left the follower's timeline empty where every task may run.
+        // The leader had a period the follower does not: its runs have a hole there, and laying them as they are left
+        // the follower's timeline empty where every task may run. A peer's gap is no DECISION to leave time to nobody
+        // (`ScheduleOptimizer.isLegalContinuation`), so the follower plans with the runs as a seed.
         val s = account()
         val holeStart = NOW + 3 * HOUR
         val period =

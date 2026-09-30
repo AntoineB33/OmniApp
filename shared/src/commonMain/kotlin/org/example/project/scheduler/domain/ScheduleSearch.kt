@@ -93,7 +93,7 @@ data class SearchReport(
  * other platforms provide none ([platformScheduleSolver] is null).
  *
  * It is never trusted: whatever it returns is re-scored by [ScoreModel] and kept only when the score of the WHOLE
- * continuation goes down, and it must keep every hard constraint (§ *No idling*, resilience 0, pre-placed tasks,
+ * continuation goes down, and it must keep every hard constraint (resilience 0, pre-placed tasks,
  * the first run §7/§13 decided) — the optimizer checks, and drops an answer that does not.
  */
 interface ExternalScheduleSolver {

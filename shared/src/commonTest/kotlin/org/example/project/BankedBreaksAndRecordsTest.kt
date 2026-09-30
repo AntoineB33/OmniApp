@@ -67,16 +67,19 @@ class BankedBreaksAndRecordsTest {
     }
 
     @Test
-    fun a_break_is_never_banked_over_work_already_recorded() {
+    fun a_first_banking_lays_no_break_over_work_already_recorded() {
+        // The line's first moment banks the walk's past as its initial past — but a break there that overlaps work
+        // already recorded never happened: the record is the fact kept.
         val onScreen = listOf(PlanTask(org.example.project.scheduler.model.TaskId("t"), 1.0, 30 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
         val breaks = SchedulerDomain.DEFAULT_SCREEN_BREAKS
         val free = SchedulerDomain.bankScreenBreaks(breaks, null, NOW, emptyList(), emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN)
-        val someLookAway = free.breaks.last { it.label == DynamicPeriods.LABEL_20S }
+        val someLookAway = free.breaks.last { it.label == DynamicPeriods.LABEL_20S && it.endMillis <= NOW }
         val worked = listOf(TaskTimeRange(someLookAway.startMillis - MIN, someLookAway.endMillis + MIN))
         val banked =
             SchedulerDomain.bankScreenBreaks(breaks, null, NOW, emptyList(), emptyList(), onScreen, DynamicPeriods.MODE_AT_SCREEN, recordedWork = worked)
         assertTrue(banked.breaks.none { it.startMillis == someLookAway.startMillis }, "the work is the fact kept")
         assertTrue(banked.breaks.none { b -> worked.any { it.startEpochMillis < b.endMillis && b.startMillis < it.endEpochMillis } })
+        assertEquals(NOW, banked.untilMillis, "the front is the line")
     }
 
     @Test

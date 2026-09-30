@@ -1484,6 +1484,13 @@ class SchedulerStoreTest {
                 store.loadFrozenScreenBreaks(),
                 "the prune drops what ended at or before its floor",
             )
+            // The requirements' one removal (a pose the line is inside when it switches to mode 1) is deleted by its key.
+            store.saveFrozenScreenBreaks(emptyList(), 720_000, 720_000, pruneBeforeMillis = 21_000, removed = listOf(BankedBreak("5min", 100_000, 400_000)))
+            assertEquals(
+                FrozenScreenBreaks(listOf(BankedBreak("20s", 600_000, 620_000)), 720_000, 720_000),
+                store.loadFrozenScreenBreaks(),
+                "a removed break is gone after a reload",
+            )
             driver.close()
         } finally {
             dbFile.delete()

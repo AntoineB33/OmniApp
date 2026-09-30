@@ -711,7 +711,12 @@ open class SchedulerSyncEngine(
 
     override val signedIn: Boolean get() = onlineSession() != null
 
-    override val deviceId: String get() = meta().deviceId
+    /**
+     * Read once: the id is allocated once and nothing rewrites it while the process runs, and [meta] reads the
+     * whole account row (its `base_payload` snapshot included) — asked per stored session at start-up, that pegged
+     * the UI thread for minutes before the first frame on account 3 (2026-09-30).
+     */
+    override val deviceId: String by lazy { meta().deviceId }
 
     override val realtimeUrl: String get() = client.config.realtimeUrl
     override val realtimeApiKey: String get() = client.config.anonKey

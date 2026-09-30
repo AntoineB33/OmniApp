@@ -364,7 +364,7 @@ class RestrictivePeriodKindTest {
         // The two legacy names were built-ins: they leave the account's own list, and only the kind the
         // user really defined stays in it — no built-in is duplicated under an old spelling.
         assertEquals(listOf("deep work"), decoded.periodKinds)
-        assertEquals(PeriodKinds.BUILT_IN + "deep work", decoded.allPeriodKinds)
+        assertEquals(PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + "deep work", decoded.allPeriodKinds)
     }
 
     @Test

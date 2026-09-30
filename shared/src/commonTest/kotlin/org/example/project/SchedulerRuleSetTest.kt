@@ -161,7 +161,8 @@ class SchedulerRuleSetTest {
         val (herePanels, here) = run(state)
 
         assertEquals(here.ruleState, later.ruleState, "the rule state is not a function of the now-line")
-        // Both lists open at the line itself — "no idling", so the first instruction is at +0:00:00.
+        // Both lists open at the line itself — nothing makes leaving it to nobody score lower here, so the first
+        // instruction is at +0:00:00.
         assertTrue(here.rules[1].startsWith("+0:00:00"), here.rules[1])
         assertTrue(later.rules[1].startsWith("+0:00:00"), later.rules[1])
         // …and the schedules they name are the two different futures the two lines have.

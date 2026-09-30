@@ -116,6 +116,31 @@ object PeriodKinds {
     const val NO_PHONE_UNLOCKED: String = "no phone unlocked"
 
     /**
+     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 5-minute screen break** — *"The 5min break is
+     * accompanied by two periods: the first minute that allow no tasks and the 4 next minutes"*. The break is a
+     * period of this kind end to end, accompanied by "no screen", and its first minute also by [INACTIVITY]
+     * (`SchedulerDomain.screenBreakPeriods`): nobody runs in that minute whatever their resilience, while in the four
+     * after it a task runs exactly when it has been given a resilience above `0` to this kind. Like every kind, it
+     * starts at `0` for every task — so an account nobody has touched keeps the whole break empty.
+     */
+    const val BREAK_5MIN: String = "5min screen break"
+
+    /**
+     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 15-minute screen break**, accompanied by "no
+     * screen". The requirements say nothing more of it, so it is an ordinary editable kind: `0` for every task until
+     * one is given more. (The 20-second break *"allows no task"* — it is [INACTIVITY], which nobody may be resilient
+     * to.)
+     */
+    const val BREAK_15MIN: String = "15min screen break"
+
+    /**
+     * The two kinds of the screen breaks a task may be resilient to ([BREAK_5MIN], [BREAK_15MIN]). Offered by every
+     * list of kinds a task can be resilient to (`SchedulerState.allPeriodKinds`), but not [BUILT_IN]: a break is laid by
+     * the rules, drawn as the break it is, and has no drawing of its own to keep apart from the others.
+     */
+    val BREAK_KINDS: List<String> = listOf(BREAK_5MIN, BREAK_15MIN)
+
+    /**
      * The kinds the README itself names (its grey one as two) plus the one PRD §17 lays and the two that
      * state a LAYER; the rest of the list is the account's.
      * A payload that predates [BEFORE_BED] and holds a *user-defined* kind of that very name decodes into
@@ -203,6 +228,8 @@ object PeriodKinds {
             BEFORE_BED -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.Zigzags)
             NO_COMPUTER_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.RisingObliques)
             NO_PHONE_UNLOCKED -> PeriodKindStyle(emptySet(), PeriodDrawing.FallingObliques)
+            // *"always accompanied by the 'no screen' period"*; drawn as the grey family the breaks belong to.
+            BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(setOf(NO_SCREEN), PeriodDrawing.VerticalLines)
             else -> PeriodKindStyle(emptySet(), PeriodDrawing.Crosses)
         }
 
@@ -230,15 +257,13 @@ object PeriodKinds {
     /**
      * Whether a task may be given a resilience to [kind] **at all**.
      *
-     * [INACTIVITY] and [SLEEP] are the two it may not: each says in its own name that nothing happens there,
-     * so the multiplier is always `0` and there is nothing for a task to choose. Every other kind — [NO_SCREEN]
-     * and every kind the user defines — is an ordinary editable value.
-     *
-     * This is a rule about the EDIT WINDOW, not about [resilienceFor]: the map is still read for both
-     * everywhere (that is how a grey period refuses everybody), and an override an older payload wrote is
-     * still honoured. What is gone is the row that offered to write one.
+     * [INACTIVITY] is the one it may not: it is the kind of what `docs/scheduler_requirements.md` says *"allows no
+     * task"* — the 20 s screen break and the 5 min break's first minute — so its multiplier is `0` for everybody,
+     * whatever a resilience map holds ([resilienceFor]). Every other kind is an ordinary editable value — [SLEEP]
+     * included: the requirements say a sleep period *"allows no task (a task has a 0 resilience to it by default)"*,
+     * a default and not a rule (until 2026-09-29 it could not be edited).
      */
-    fun isResilienceEditable(kind: String): Boolean = kind != INACTIVITY && kind != SLEEP
+    fun isResilienceEditable(kind: String): Boolean = kind != INACTIVITY
 
     /** A resilience is a multiplier in `[0, 1]`; anything outside is healed to the nearest bound. */
     fun clamp(value: Double): Double = if (value.isNaN()) 1.0 else value.coerceIn(0.0, 1.0)
@@ -249,7 +274,8 @@ object PeriodKinds {
      * the calendar and the edit window all ask through here, so none of them can invent a different default.
      */
     fun resilienceFor(overrides: Map<String, Double>, kind: String): Double =
-        overrides[kind]?.let { clamp(it) } ?: defaultResilience(kind)
+        // "Allows no task": an override a payload holds for it (the editor never wrote one) is not honoured.
+        if (kind == INACTIVITY) 0.0 else overrides[kind]?.let { clamp(it) } ?: defaultResilience(kind)
 
     /**
      * The product of every covering kind's resilience — `side-dev/scheduler.py` `Environment.multiplier`.
@@ -276,7 +302,8 @@ object PeriodKinds {
      * ([SchedulerDomain.companionPeriods]), so the wind-down hour is a no-screen stretch exactly where
      * that period is — and a second answer here would count it twice.
      */
-    fun coversNoScreen(kind: String): Boolean = kind == INACTIVITY || kind == SLEEP || kind == NO_SCREEN
+    fun coversNoScreen(kind: String): Boolean =
+        kind == INACTIVITY || kind == SLEEP || kind == NO_SCREEN || kind in BREAK_KINDS
 
     /**
      * **The title a period of [kind] the user lays carries** — the one place a kind becomes a name on the
@@ -320,7 +347,7 @@ object PeriodKinds {
     fun legacyInactivityFlag(kind: String): Boolean = kind == INACTIVITY
 
     /** A user-defined kind is any that is not one of the two the README names. Blank names are refused. */
-    fun isUserDefined(kind: String): Boolean = kind.isNotBlank() && kind !in BUILT_IN
+    fun isUserDefined(kind: String): Boolean = kind.isNotBlank() && kind !in BUILT_IN && kind !in BREAK_KINDS
 
     /** Trim + collapse whitespace, so "  deep   work " and "deep work" are one kind and not two. */
     fun normalize(raw: String): String = raw.trim().split(WHITESPACE).filter { it.isNotEmpty() }.joinToString(" ")

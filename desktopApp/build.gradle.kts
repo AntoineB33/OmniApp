@@ -27,7 +27,10 @@ compose.desktop {
             // The packaged app jlinks a minimal runtime; SQLDelight's SQLite driver needs java.sql
             // (java.sql.DriverManager), so include it or the release crashes when it opens the DB.
             // jdk.unsupported: protobuf-java (under OR-Tools, the desktop's scheduler solver) reaches sun.misc.Unsafe.
-            modules("java.sql", "jdk.unsupported")
+            // jdk.zipfs: OR-Tools' Loader unpacks its native library by mounting its own jar as a zip file system;
+            // without it the release logged `OR-Tools unavailable (ProviderNotFoundException: Provider "jar" not found)`
+            // and the desktop's MIP pass never ran (2026-09-29).
+            modules("java.sql", "jdk.unsupported", "jdk.zipfs")
         }
     }
 }

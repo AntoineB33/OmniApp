@@ -105,7 +105,7 @@ class TpModeTest {
     }
 
     @Test
-    fun the_two_away_modes_plan_identically_through_the_seam() {
+    fun the_two_away_modes_place_the_poses_alike_and_only_mode_2_drags_the_look_away() {
         // `docs/scheduler_requirements.md` § *$now line$ 3 modes* states them in ONE clause — *"Mode 2 & 3:
         // $now line$ must be covered by the period 'no on-screen task'"* — so nothing the fill does may tell
         // them apart. Mode 2 used to drag an owed pose onto the line exactly as mode 1 does, on the reading
@@ -125,7 +125,11 @@ class TpModeTest {
         SchedulerReducer.tpMode = { DynamicPeriods.MODE_ON_BREAK }
         val onBreak = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(NOW)).panels
             .filter { it.screenBreak }.map { it.title to it.startEpochMillis }
-        assertEquals(onBreak, locked, "the two away modes are one plan")
+        // The poses are one plan; the look-away is not: *"The $now line$ must be in mode 1 or 3 before entering the
+        // 20s break"*, so mode 2 drags the one it reaches onto the line (`]now; now + 20s]`) and mode 3 enters it.
+        assertEquals(onBreak.filter { it.first != "20s" }, locked.filter { it.first != "20s" }, "the two away modes place the poses alike")
+        assertTrue(locked.any { (title, start) -> title == "20s" && start == NOW + 1 }, "mode 2 drags the look-away it reaches: $locked")
+        assertTrue(onBreak.none { (title, start) -> title == "20s" && start == NOW + 1 }, "mode 3 does not: $onBreak")
     }
 
     @Test

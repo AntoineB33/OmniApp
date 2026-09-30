@@ -58,7 +58,7 @@ class ScreenBreakCueRuleTest {
         // the last cue logged being the 15-min pose that had fallen due at 12:51.
         val to = NOW + 6 * HOUR
         val drawn =
-            SchedulerDomain.takenScreenBreakPanels(breaks, NOW, to, anchorMillis = to, tpMillis = to)
+            walkedAtLine(breaks, NOW, to, anchorMillis = to, tpMillis = to)
                 .filter { it.title == lookAway.title }
                 .map { it.startEpochMillis }
         val fired = crossings(NOW, to)

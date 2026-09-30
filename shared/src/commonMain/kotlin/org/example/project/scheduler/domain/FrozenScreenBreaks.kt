@@ -1,7 +1,7 @@
 package org.example.project.scheduler.domain
 
 /**
- * One of the three dynamic restrictive periods, **banked as the now-line passed it** — `[startMillis, endMillis)`,
+ * One of the three dynamic restrictive periods, **banked as the now-line reached it** — `[startMillis, endMillis)`,
  * in the role [label] names ([DynamicPeriods.LABEL_20S] / [DynamicPeriods.LABEL_5MIN] / [DynamicPeriods.LABEL_15MIN]).
  *
  * A recorded fact, not a derivation: the walk that placed it read an environment, a set of tasks, a
@@ -16,9 +16,11 @@ data class BankedBreak(val label: String, val startMillis: Long, val endMillis: 
  * answer. Before it the placement is this record; from it on the walk continues from the bars the record sets
  * ([DynamicPeriods.Frozen]).
  *
- * The front trails the line only where the past may still legitimately move: a "no on-screen task" chain the
- * line is inside may still pull a break back onto its start (the requirements' dynamic-period rule), so the
- * front waits at that chain's start until the chain ends ([SchedulerDomain.bankScreenBreaks]).
+ * The front is the line ([SchedulerDomain.bankScreenBreaks]): no rule of the requirements moves a break behind the
+ * line, so nothing there waits to be decided. A break the line is inside is banked whole, from the instant it
+ * started; the one thing that removes a banked break is the requirements' own exception (a pose the line is inside
+ * when it switches to mode 1). **The calendar draws the past from this record and nothing else**
+ * ([SchedulerDomain.takenScreenBreakPanels]).
  *
  * Kept per device and never synced (`docs/invariants/screen-breaks.md`); pruned past
  * [SchedulerDomain.SCREEN_BREAK_HISTORY_RETENTION_MILLIS] — the requirements' exception 2, a limit on the memory the
@@ -28,18 +30,10 @@ data class FrozenScreenBreaks(
     val breaks: List<BankedBreak>,
     val untilMillis: Long,
     /**
-     * Where the line last was when this record was banked — at or past [untilMillis] (the front waits behind the line
-     * inside a chain). An engine that starts finding it far behind the clock was not running in between, which is
+     * Where the line last was when this record was banked — the front itself, since the front is the line. An engine that starts finding it far behind the clock was not running in between, which is
      * the requirements' *"no CPU were available during this period"*: the line is walked there, in mode 2.
      */
     val lineMillis: Long = untilMillis,
-    /**
-     * The breaks the line has STARTED but that are not banked yet (in progress at the line, or inside the "no
-     * on-screen task" chain the front waits at) — in memory only, never persisted. Work is never recorded inside one
-     * of these either: the task panel under a break the line has just reached is recorded up to the instant the plan
-     * is re-made, a few milliseconds into the break.
-     */
-    val pending: List<BankedBreak> = emptyList(),
 ) {
     /**
      * Whether the walk may continue from this record at the line [nowMillis]: its front is not ahead of the line
@@ -51,7 +45,30 @@ data class FrozenScreenBreaks(
     fun continuesAt(nowMillis: Long): Boolean =
         untilMillis <= nowMillis && untilMillis >= nowMillis - STALE_AFTER_MILLIS
 
+    /**
+     * The banked break covering [millis], or null — bisected, since it is asked at every advance of the line and the
+     * record holds up to 90 days ([breaks] is kept sorted by start, and no break lasts anywhere near a day).
+     */
+    fun coveringAt(millis: Long): BankedBreak? {
+        var lo = 0
+        var hi = breaks.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (breaks[mid].startMillis <= millis) lo = mid + 1 else hi = mid
+        }
+        var k = lo - 1
+        while (k >= 0 && breaks[k].startMillis > millis - COVERING_REACH_MILLIS) {
+            val b = breaks[k]
+            if (b.startMillis <= millis && millis < b.endMillis) return b
+            k--
+        }
+        return null
+    }
+
     companion object {
+        /** How far back a break covering an instant may have started: none lasts anywhere near a day. */
+        private const val COVERING_REACH_MILLIS: Long = 24L * 60L * 60L * 1000L
+
         /** How far behind the line a front may be for the walk to continue from it ([continuesAt]). */
         const val STALE_AFTER_MILLIS: Long = 2L * 24L * 60L * 60L * 1000L
     }

@@ -65,7 +65,6 @@ class CalendarRelabelEquivalenceTest {
             displayFloorMillis = T0,
             bandSignature = "sig",
             noScreenPeriods = emptyList(),
-            carvedSleepHoles = emptyList(),
             sidePanelCount = 0,
             workPlanPanelCount = panels.size,
         )

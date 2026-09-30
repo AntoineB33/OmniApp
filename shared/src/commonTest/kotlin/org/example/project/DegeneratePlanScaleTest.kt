@@ -10,8 +10,8 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *No idling* and § *Priority, Granularity and Compensation*, on the tree
- * that breaks the arithmetic behind both.
+ * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation* and § *Soft Minimum Execution Time*,
+ * on the tree that breaks the arithmetic behind both.
  *
  * Nothing bounds a priority percentage from below, so one leaf with a near-zero share makes its own window
  * `τ = M / π` (and the score's discount horizon `Θ`) astronomically large. The previous scheduler's arithmetic
@@ -49,7 +49,8 @@ class DegeneratePlanScaleTest {
             SchedulerDomain.fillSchedule(
                 degenerateState(), now, TimeZone.UTC, horizonMillis = horizon,
             )
-        // § *No idling*: nothing here restricts anybody, so every instant of the horizon carries a task.
+        // Nothing here restricts anybody, so no edge cuts a panel short and time left to nobody could only put every
+        // task behind (`docs/scheduler_score.md`): every instant of the horizon carries a task.
         val covered =
             panels.filter { it.taskId != null && it.endEpochMillis > now && it.startEpochMillis < horizon }
                 .map { maxOf(it.startEpochMillis, now) to minOf(it.endEpochMillis, horizon) }

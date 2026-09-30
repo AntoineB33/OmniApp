@@ -87,9 +87,11 @@ class ScreenBreakTakenWhileAwayTest {
         val walkedAway = 60 * MIN
         val cameBack = walkedAway + 6 * MIN
         val base = pause(walkedAway, cameBack)
+        // The POSES: a walk re-deriving the past with one mode for all of it cannot say where the look-aways were —
+        // mode 2 drags them, mode 1 enters them — and the calendar no longer asks it (the past is the banked record).
         fun placedAt(tp: Long, mode: Int) =
             DynamicPeriods.instances(base, specs, 0L, 3 * HOUR, tpMillis = tp, mode = mode, sweepFromMillis = 0L)
-                .filter { it.startMillis < cameBack }
+                .filter { it.startMillis < cameBack && it.spec.label != DynamicPeriods.LABEL_20S }
 
         val whileAway = placedAt(cameBack, DynamicPeriods.MODE_AWAY)
         assertEquals(whileAway, placedAt(cameBack + MIN, DynamicPeriods.MODE_AT_SCREEN), "one minute later")
@@ -112,7 +114,7 @@ class ScreenBreakTakenWhileAwayTest {
             ).last { it.title == pose5.title }.startEpochMillis
         val cameBack = walkedAway + 6 * MIN
         val panels =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 breaks,
                 now - 6 * HOUR,
                 now - 1,

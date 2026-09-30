@@ -143,6 +143,9 @@ class TaskResilienceTest {
                 // PRD §8's two layers, as kinds the user can DRAW rather than only read off a lock history.
                 PeriodKinds.NO_COMPUTER_UNLOCKED,
                 PeriodKinds.NO_PHONE_UNLOCKED,
+                // The kinds of the two poses, which a task may be resilient to.
+                PeriodKinds.BREAK_5MIN,
+                PeriodKinds.BREAK_15MIN,
                 "deep focus",
             ),
             s.allPeriodKinds,
@@ -168,10 +171,14 @@ class TaskResilienceTest {
         // What the edit window puts a row against: every kind the account knows, minus that one.
         assertEquals(
             listOf(
+                PeriodKinds.SLEEP,
                 PeriodKinds.NO_SCREEN,
                 PeriodKinds.BEFORE_BED,
                 PeriodKinds.NO_COMPUTER_UNLOCKED,
                 PeriodKinds.NO_PHONE_UNLOCKED,
+                // The two pose kinds (`docs/scheduler_requirements.md` § *screen breaks*).
+                PeriodKinds.BREAK_5MIN,
+                PeriodKinds.BREAK_15MIN,
                 "deep focus",
             ),
             s.allPeriodKinds.filter(PeriodKinds::isResilienceEditable),
@@ -179,15 +186,16 @@ class TaskResilienceTest {
     }
 
     /**
-     * The predicate governs the WINDOW, not the model: a resilience to "no task allowed" is still read
-     * everywhere (that is how a task works through a screen break), and an override an older payload wrote is
-     * still honoured. Only the field that offered to write one is gone.
+     * `docs/scheduler_requirements.md`: the 20 s screen break and the 5 min break's first minute *"allow no task"* —
+     * [PeriodKinds.INACTIVITY]. An override a payload holds for it is not honoured (until 2026-09-29 it was, which let a
+     * task into a look-away), and sleep, whose `0` is only a default, is editable like any kind.
      */
     @Test
-    fun a_no_task_allowed_override_already_stored_is_still_honoured() {
+    fun no_override_opens_what_allows_no_task() {
         val (s0, solo) = stateWithOneTask()
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.SetTaskResilience(solo, PeriodKinds.INACTIVITY, 0.5))
-        assertEquals(0.5, s.tasks[solo]!!.resilienceFor(PeriodKinds.INACTIVITY))
+        assertEquals(0.0, s.tasks[solo]!!.resilienceFor(PeriodKinds.INACTIVITY))
+        assertTrue(PeriodKinds.isResilienceEditable(PeriodKinds.SLEEP), "a sleep period's 0 is a default")
     }
 
     @Test

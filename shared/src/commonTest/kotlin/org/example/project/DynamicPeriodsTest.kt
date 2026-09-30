@@ -187,9 +187,9 @@ class DynamicPeriodsTest {
     // ----- the kind -----------------------------------------------------------------------------
 
     @Test
-    fun all_three_are_periods_of_the_kind_no_task_allowed() {
-        // `side-dev/README.md` states it in as many words, and it is what replaced the three different shapes
-        // (a closed look-away, a closed-head-then-break-doable pose, an off-screen-only pose).
+    fun each_of_the_three_is_a_period_of_the_kind_of_its_role() {
+        // `docs/scheduler_requirements.md` § *screen breaks*: the 20 s allows no task, the 5 min and the 15 min are
+        // kinds of their own (the 5 min's first minute allowing no task is `SchedulerDomain.screenBreakPeriods`).
         val base = DynamicPeriods.Base(emptyList(), emptyList(), emptyList())
         val specs = listOf(
             DynamicPeriods.Spec(DynamicPeriods.LABEL_20S, 20 * SEC, 20 * MIN),
@@ -198,7 +198,11 @@ class DynamicPeriodsTest {
         )
         val periods = DynamicPeriods.periods(base, specs, 0L, 6 * HOUR, tpMillis = 0L)
         assertTrue(periods.isNotEmpty())
-        assertTrue(periods.all { it.kind == PeriodKinds.INACTIVITY }, "every dynamic period is 'no task allowed'")
+        assertTrue(periods.all { it.kind == DynamicPeriods.breakKind(it.label) }, "each is the kind of its role: $periods")
+        assertEquals(
+            setOf(PeriodKinds.INACTIVITY, PeriodKinds.BREAK_5MIN, PeriodKinds.BREAK_15MIN),
+            periods.filter { it.label.isNotEmpty() }.map { it.kind }.toSet(),
+        )
     }
 
     // ----- the two t_p modes --------------------------------------------------------------------
@@ -264,7 +268,7 @@ class DynamicPeriodsTest {
         // there, and it is a fact of the past like any other.
         val only = listOf(ScreenBreak("20s", intervalMillis = 20 * MIN, durationMillis = 20 * SEC))
         val past =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 only,
                 fromMillis = NOW - 2 * HOUR,
                 toMillis = NOW - 1,
@@ -308,7 +312,7 @@ class DynamicPeriodsTest {
         assertTrue(!cover.label.equals("Away", ignoreCase = true), "the scheduler period is no-screen logic, not an Away band label")
         // The pose itself elapsed where the bars put it: mode 3 is the one mode the line walks through one in.
         assertTrue(
-            out.any { it.kind == PeriodKinds.INACTIVITY && it.startMillis == 2 * HOUR },
+            out.any { it.kind == PeriodKinds.BREAK_15MIN && it.startMillis == 2 * HOUR },
             "mode 3: the pose is taken where it fell due, not dragged: $out",
         )
     }
@@ -325,8 +329,9 @@ class DynamicPeriodsTest {
         val away = DynamicPeriods.periods(base, specs, 0L, 6 * HOUR, tpMillis = tp, mode = DynamicPeriods.MODE_AWAY)
         val onBreak =
             DynamicPeriods.periods(base, specs, 0L, 6 * HOUR, tpMillis = tp, mode = DynamicPeriods.MODE_ON_BREAK)
-        assertEquals(onBreak, away, "the two away modes place the three identically")
-        val pose = away.filter { it.kind == PeriodKinds.INACTIVITY }.minBy { it.startMillis }
+        // The two away modes place the POSES identically (only the look-away tells them apart: mode 2 drags it).
+        assertEquals(onBreak, away, "the two away modes place the poses identically")
+        val pose = away.filter { it.kind == PeriodKinds.BREAK_15MIN }.minBy { it.startMillis }
         assertEquals(2 * HOUR, pose.startMillis, "the pose elapsed where the bars put it; nothing dragged it")
         assertTrue(!pose.openStart, "…so it is an ordinary closed period, not the dragged (t_p, t_p + d]")
         val cover = away.single { it.kind == PeriodKinds.NO_SCREEN }
@@ -468,7 +473,7 @@ class DynamicPeriodsTest {
             toMillis = line,
         )
         val drawn =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 breaks, NOW, line, anchorMillis = line, tpMillis = line,
                 mode = DynamicPeriods.MODE_AT_SCREEN,
             ).filter { it.title == lookAway }.map { it.startEpochMillis }
@@ -508,7 +513,7 @@ class DynamicPeriodsTest {
         // happens to put near the line, the invariant is the README's: t_p is covered, by something the
         // on-screen tasks are turned away by.
         val away =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 breaks, NOW - 6 * HOUR, NOW - 1, tpMillis = NOW, mode = DynamicPeriods.MODE_ON_BREAK,
             )
         val covering = away.filter { it.startEpochMillis <= NOW && NOW <= it.endEpochMillis }
@@ -524,7 +529,7 @@ class DynamicPeriodsTest {
         val rare = listOf(ScreenBreak("rare", intervalMillis = 48 * HOUR, durationMillis = 15 * MIN))
         val standing = RestrictivePeriod(NOW - 2 * HOUR, NOW - 10 * MIN, PeriodKinds.NO_SCREEN, "No screen")
         val gap =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 rare, NOW - 6 * HOUR, NOW - 1,
                 basePeriods = listOf(standing),
                 tpMillis = NOW,
@@ -580,7 +585,7 @@ class DynamicPeriodsTest {
         assertTrue(held != null && !held.covers(NOW), "one the user has come back from does not")
 
         val away =
-            SchedulerDomain.takenScreenBreakPanels(
+            walkedAtLine(
                 breaks, NOW - 6 * HOUR, NOW - 1,
                 basePeriods = listOf(ongoing!!),
                 tpMillis = NOW,
@@ -633,29 +638,28 @@ class DynamicPeriodsTest {
     }
 
     @Test
-    fun an_observed_pause_is_no_on_screen_task_so_an_off_screen_task_keeps_it_from_being_a_rest() {
-        // The evidence says nobody was at a SCREEN, and that is all it says - which is why the period's kind
-        // is `no on-screen task` and not `no task allowed`. The README's clause takes all three of its parts:
-        // *covered by PeriodKinds.NO_SCREEN* **without any task**. A task that may run off a screen could have
-        // been working straight through it, so the stretch is correctly not a rest on such an account.
+    fun an_observed_pause_is_a_rest_whatever_tasks_could_run_off_a_screen() {
+        // `docs/scheduler_requirements.md`: *"After a >= 5-minute of 'no screen', no 5min break in the next 1 hour."*
+        // The evidence says nobody was at a SCREEN, and that is the whole of the rule: a task that may run off a
+        // screen does not make the stretch any less "no screen". (An older README added *"without any task"*, and
+        // until 2026-09-29 an off-screen task kept such a pause from barring anything.)
         val baselineFirst5 = starts(place(), pose5).minOrNull()
         assertTrue(baselineFirst5 != null)
         val restEnd = NOW + baselineFirst5 - 10 * MIN
         val periods = SchedulerDomain.observedNoScreenPeriods(listOf(TaskTimeRange(restEnd - 13 * MIN, restEnd)))
 
         val onScreen = listOf(PlanTask(TaskId("task/user/0"), 1.0, 15 * MIN, mapOf(PeriodKinds.NO_SCREEN to 0.0)))
-        // No override at all = resilience 1 to every kind but `no task allowed`: an off-screen task.
+        // No override at all = resilience 1 to "no screen": an off-screen task.
         val offScreen = listOf(PlanTask(TaskId("task/user/1"), 1.0, 15 * MIN))
 
-        assertEquals(
-            starts(place(tasks = offScreen), pose5),
-            starts(place(periods = periods, tasks = offScreen), pose5),
-            "somebody could have been working there, so it bars nothing",
-        )
         assertTrue(
-            starts(place(periods = periods, tasks = onScreen), pose5) !=
-                starts(place(tasks = onScreen), pose5),
-            "with only on-screen tasks the same stretch IS a rest",
+            starts(place(periods = periods, tasks = offScreen), pose5) != starts(place(tasks = offScreen), pose5),
+            "an off-screen task does not keep a no-screen stretch from barring the 5-min break",
+        )
+        assertEquals(
+            starts(place(periods = periods, tasks = onScreen), pose5),
+            starts(place(periods = periods, tasks = offScreen), pose5),
+            "the bar is the same whoever could have run there",
         )
     }
 

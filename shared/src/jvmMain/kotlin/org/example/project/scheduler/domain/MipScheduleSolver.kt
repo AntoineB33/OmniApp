@@ -26,7 +26,8 @@ import kotlin.math.exp
  *   back are forbidden (they would be one panel), and `x[i,k]` is the sum of the runs covering slot `k`. (A run-length
  *   variable with big-M constraints was tried first: its relaxation was so loose that SCIP proved nothing within a
  *   window's time limit.)
- * - **Hard constraints**: exactly one task per slot (§ *No idling*), `x = 0` where a task may not run (resilience 0),
+ * - **Hard constraints**: at most one task per slot — a free slot may be left to nobody, which
+ *   `docs/scheduler_requirements.md` allows and the score prices — `x = 0` where a task may not run (resilience 0),
  *   `x = 1` for the owner of a pre-placed slot.
  *
  * Everything inside the program is in MINUTES (the score is in millis): a cost of millis³ puts coefficients near
@@ -53,7 +54,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
         pinFirstRun: Boolean,
         budget: SearchBudget,
     ): List<ScheduleOptimizer.Run>? {
-        if (!OrTools.available || incumbent.isEmpty() || model.n < 2) return null
+        if (!OrTools.available || incumbent.isEmpty() || model.n < 1) return null
         val scorer = ScheduleOptimizer(model, improveBudget = 0)
         var runs = ScheduleOptimizer.coalesce(incumbent.map { it.copy(alternative = -1) })
         var cost = scorer.score(start, runs)
@@ -155,13 +156,15 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
             val mid = (slots[k].from + slots[k].to) / 2.0
             inside.firstOrNull { mid >= it.fromU && mid < it.toU }?.task ?: -1
         }
-        if (incumbentTask.any { it < 0 }) return null
+        // A slot inside a pre-placed task the incumbent does not hold, or a free slot holding a task that may not run
+        // there: not a continuation this program can start from.
+        if ((0 until K).any { k -> val t = incumbentTask[k]; if (t >= 0) !slots[k].allowed[t] else slots[k].fixed >= 0 }) return null
 
         // --- who may change: every task served in the window, the run coming in, the run going on, the most behind
         val chosen = LinkedHashSet<Int>()
-        for (r in inside) chosen += r.task
+        for (r in inside) if (r.task >= 0) chosen += r.task
         if (runIn >= 0) chosen += runIn
-        after.firstOrNull()?.let { chosen += it.task }
+        after.firstOrNull()?.task?.takeIf { it >= 0 }?.let { chosen += it }
         if (chosen.size > MAX_TASKS) return null
         val behind = (0 until model.n)
             .filter { it !in chosen && slots.any { s -> s.allowed[it] } }
@@ -172,7 +175,8 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
         }
         val tasks = chosen.toIntArray()
 
-        // --- the tail after the window: the panel it opens (consecutive runs of one task) and where that panel ends
+        // --- the tail after the window: the panel it opens (consecutive runs of one task) and where that panel ends.
+        // A tail that opens with nobody still ends whatever panel the window leaves open at its end.
         val tailPanel = after.firstOrNull()
         var tailLen = 0.0
         var tailEnd = b
@@ -236,9 +240,10 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                     for (q in k until K) row[q]?.let { link.setCoefficient(it, -1.0) }
                 }
             }
-            // § No idling: exactly one task per slot. A pre-placed slot admits its owner alone (allowed).
+            // At most one task per slot; a free slot may be left to nobody. A pre-placed slot admits its owner alone
+            // (allowed), and must hold it.
             for (k in 0 until K) {
-                val one = solver.makeConstraint(1.0, 1.0)
+                val one = solver.makeConstraint(if (slots[k].fixed >= 0) 1.0 else 0.0, 1.0)
                 for (t in tasks.indices) one.setCoefficient(x[t][k], 1.0)
             }
             // Two runs of one task back to back are ONE panel: never two variables for it.
@@ -257,7 +262,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 y[t][0]?.forEach { v -> v?.let { addObj(it, -c) } }
             }
             // The tail's panel is short on its own unless a run of its task runs into it.
-            if (tailPanel != null && tailCharged && model.minimum[tailPanel.task] > tailLen + ScoreModel.EPS) {
+            if (tailPanel != null && tailPanel.task >= 0 && tailCharged && model.minimum[tailPanel.task] > tailLen + ScoreModel.EPS) {
                 val j = tailPanel.task
                 val t = tasks.indexOf(j)
                 val m = model.minimum[j] / UNIT
@@ -368,7 +373,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
             for (k in 0 until K) {
                 var holder = -1
                 for ((t, i) in tasks.withIndex()) if (x[t][k].solutionValue() > 0.5) holder = i
-                if (holder < 0) return null
+                if (holder < 0 && slots[k].fixed >= 0) return null
                 if (holder != incumbentTask[k]) changed = true
                 windowRuns += ScheduleOptimizer.Run(holder, slots[k].from, slots[k].to, -1)
             }

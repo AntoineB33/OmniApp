@@ -9,9 +9,9 @@ migration history.
 
 | # | Record | Covers |
 | --- | --- | --- |
-| [0001](0001-scheduler-model.md) | The scheduler model | the walk it was (§1–§9), why not a solver (§10), the score-based scheduler that replaced the walk (§11: the score, its search, progressive stages), and reaching the best score when it is reachable (§12: wall-time search, seeds, the desktop MIP measured, the best score wins between devices) |
+| [0001](0001-scheduler-model.md) | The scheduler model | the walk it was (§1–§9), why not a solver (§10), the score-based scheduler that replaced the walk (§11: the score, its search, progressive stages), and reaching the best score when it is reachable (§12: wall-time search, seeds, the desktop MIP measured, the best score wins between devices), the plan per mode class (§13), and time left to nobody as a decision the score prices (§14) |
 | [0002](0002-calendar-layers-and-grey.md) | The calendar's two layers, and what GREY means | OS lock history as the layer source, assumed-unlocked default, derived grey bands, a panel's jump to its task |
-| [0003](0003-screen-breaks.md) | Screen breaks: the three dynamic restrictive periods | one kind end to end, the three recurrence bars, rest stretches, the derived anchors, the two `t_p` modes |
+| [0003](0003-screen-breaks.md) | Screen breaks: the three dynamic restrictive periods | a kind per break (since 2026-09-29), the three recurrence bars, rest stretches, the derived anchors, the look-away's mode, the `t_p` modes |
 | [0004](0004-relative-priority.md) | Relative priority (PRD §5) | the model, percentage-scaling solve, pin semantics, the task-relations list, categories and the rules that hold a share |
 | [0005](0005-sync-and-merge.md) | Snapshot sync and the three-way merge | auto push/pull, catch-up on resubscribe, merge rules, lost-ack repair |
 | [0006](0006-pause-cue-delivery.md) | Pause-cue delivery | presence `t_a`/`t_b`, e1 vs e2, the overdue gate, `device_break` |

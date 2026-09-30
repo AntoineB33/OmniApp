@@ -577,14 +577,10 @@ class SchedulerSchedulerTest {
         // resumes across it — PRD §9/§10, and the one place the app's driver is deliberately unlike the
         // reference is the screen break, never this.
         //
-        // The 20 minutes before it are shorter than any task's minimum, and they are FILLED all the same:
-        // `side-dev/README.md` § *No idling* — *"anywhere that is not covered by restrictive periods which
-        // would prevent any task from being scheduled, the scheduler must schedule a task"* — and the minimum
-        // execution time is a **soft** optimization goal beside it (*"another optimization goal"*), so it
-        // yields. Earlier revisions left the gap empty, citing a `fitting` rule from `scheduler_logic.py`, a
-        // reference file that no longer exists; the current `side-dev/scheduler.py` idles only where the
-        // candidate set is empty, and so does the score (`docs/scheduler_score.md`: a continuation that idles
-        // where a task may run is not a candidate at all).
+        // The 20 minutes before it are shorter than any task's minimum, and here they are FILLED: leaving them to
+        // nobody is a candidate (`docs/scheduler_requirements.md` requires no task anywhere, ADR 0001 §14), but B
+        // there joins its own pre-placed five minutes into one panel, which the score prices below putting every
+        // task twenty minutes behind.
         val (s0, a, b) = stateWithTwoTasks()
         val now = 1_000_000_000_000L
         val pin = pinned("panel/0", b, now + 20 * MIN, now + 25 * MIN)
@@ -592,7 +588,7 @@ class SchedulerSchedulerTest {
 
         val autos = SchedulerDomain.fillSchedule(s, now).filter { it.auto }.sortedBy { it.startEpochMillis }
 
-        // No idling: the stretch before the obstacle is worked, short though it is.
+        // The stretch before the obstacle is worked, short though it is.
         assertEquals(now, autos[0].startEpochMillis)
         assertEquals(now + 20 * MIN, autos[0].endEpochMillis)
         // `docs/scheduler_score.md`, criterion 2: the 20 minutes go to B, because

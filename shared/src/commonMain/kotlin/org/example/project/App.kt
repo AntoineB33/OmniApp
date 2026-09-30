@@ -650,6 +650,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: and whether any OTHER device of the account
         // has it on — the mode is a quantifier over the account, not a property of this install.
         val accountAway by engine.accountAway.collectAsState()
+        val lookAwayHoldUntil by engine.lookAwayHoldUntil.collectAsState()
         // PRD §8 + the same section: the stretches this device's button was ON for. The OS log cannot show
         // them (the machine stays unlocked while the user is away from it), so they are the only source there
         // is for the layer over a declared absence — and a stretch where every device of the account is either
@@ -1594,6 +1595,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // one device away and every other one locked*, so a peer holding the account away puts this
                     // one in mode 3 too, with its own button off.
                     awayDeclared = userAway || accountAway,
+                    // …and held in mode 3 inside a look-away it entered at a screen, exactly as the engine is.
+                    lookAwayHold = lookAwayHoldUntil?.let { nowMillis < it } == true,
                 )
             // Every forward DISPLAY projection stops here: the end of the displayed span, floored at the horizon
             // a closed calendar still needs. Never `now + 168h` unconditionally — a grid sitting on today
@@ -1667,15 +1670,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
                 }
-            // `side-dev/README.md` § *$t_p$ and 3 Dynamic Restrictive Period*: the elapsed part of the visible
-            // window — what the three dynamic periods DID over a stretch the line has already crossed. Behind the
-            // banked front that is the banked record ([SchedulerDomain.bankScreenBreaks]), whatever its age; from
-            // the front to the line it is the same walk, at the line.
+            // `docs/scheduler_requirements.md` § *frozen past*: the elapsed part of the visible window — what the three
+            // dynamic periods DID over a stretch the line has already crossed — is the banked record
+            // ([SchedulerDomain.bankScreenBreaks]) and nothing else: never the walk re-run with the mode or the
+            // environment of now, which drew breaks that never happened.
             val displayPastSidePanels =
                 pastSidePanelsMemo.get(
                     listOf(
-                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis, tpMode,
-                        schedulerState.screenBreaks, displayBreakEnv,
+                        nowMillis, visibleSpanStartMillis, visibleSpanEndMillis,
+                        schedulerState.screenBreaks, frozenBreaks,
                     ),
                 ) {
                     Perf.measure("display.pastSidePanels") {
@@ -1686,13 +1689,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 schedulerState.screenBreaks,
                                 visibleSpanStartMillis,
                                 minOf(nowMillis - 1, visibleSpanEndMillis),
-                                basePeriods = displayBreakEnv.periods,
-                                blocks = displayBreakEnv.blocks,
-                                tasks = displayBreakEnv.tasks,
-                                anchorMillis = nowMillis,
-                                tpMillis = nowMillis,
-                                mode = tpMode,
-                                frozen = displayBreakEnv.frozen,
+                                frozen = frozenBreaks,
                             )
                         }
                     }
@@ -1745,12 +1742,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
             val displayWorkPlanPanels =
                 Perf.measure("display.clipPlanForBreak") {
-                // `docs/scheduler_requirements.md` § *mode 1*: the same sliding-period regime for a period the
-                // LINE has retracted — a §17 window the user is still awake in. The plan runs across it (it
-                // must say which task holds and until when, and the line has to have something to be swept
-                // into between two fills); what is still ahead of the line is hidden here, so the Sleep band
-                // ahead stays whole while the stretch behind it — where §17's own activity carve has already
-                // opened the band — reads as the task panels the passing created.
+                // `docs/scheduler_requirements.md` § *mode 1*: the same sliding-period regime for the no-screen
+                // periods that give way to a line at a screen. The plan runs across them (it must say which task
+                // holds and until when, and the line has to have something to be swept into between two fills);
+                // what is still ahead of the line is hidden here, so a band ahead reads whole and the one the line
+                // is in reads ]now;end].
                 SchedulerDomain.clipPlanForRetractedPeriod(
                     SchedulerDomain.clipPlanForPinnedScreenBreak(
                         workPlanPanels, displaySidePanels, nowMillis,
@@ -1758,7 +1754,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // period keeps the off-screen work it accepts, which is the part the band draws hollow.
                         schedulerState.screenBreaks, schedulerState.tasks,
                     ),
-                    displaySleepPanels,
+                    workPlanPanels.filter { it.isRestrictivePeriod },
                     nowMillis,
                     tpMode,
                     schedulerState.periodKindConfig,
@@ -1845,16 +1841,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             val displayInactivityGaps =
                 SchedulerDomain.displayInactivityGaps(displayDerivedGaps, inactiveSince, activeSince, nowMillis)
-            val pastActivityWindow = TaskTimeRange(displayFloorMillis, nowMillis)
-            val accountActiveRegions =
-                if (activeSessions.isEmpty()) {
-                    emptyList()
-                } else {
-                    SchedulerDomain.subtractRegions(listOf(pastActivityWindow), displayInactivityGaps)
-                }
-            val activeRegions =
-                accountActiveRegions +
-                    (activeSince?.takeIf { it < nowMillis }?.let { listOf(TaskTimeRange(it, nowMillis)) } ?: emptyList())
             // The account-wide NO-SCREEN periods over the displayed past — the recorded pauses, carved around
             // the §17 sleep windows. Nothing draws these as a band any more (the calendar shows the two layers
             // instead, and their overlap IS this set); they are kept for the diagnostics timeline, which is what
@@ -1869,13 +1855,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // Keyed on a quantized INTERIOR-edge signature: the outermost edges track the sliding 168h window /
             // now-line every tick and would spam a line per second, but any real change — a band appearing,
             // vanishing, or a hole opening up inside the coverage — moves an interior edge or a count.
-            val carvedSleepHoles =
-                SchedulerDomain.subtractRegions(
-                    displaySleepRegions.filter { it.startEpochMillis < nowMillis },
-                    SchedulerDomain.carveSleepPanels(displaySleepPanels, activeRegions)
-                        .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
-                )
-            val bandSignature = diagnosticsBandSignature(noScreenPeriods, carvedSleepHoles)
+            val bandSignature = diagnosticsBandSignature(noScreenPeriods)
             // PRD §12 "∞ start": the earliest layer region is open-ended into the past when nothing precedes it
             // — no activity session, task record, or user-authored/materialized panel begins before it (an
             // emptied DB has none). Its start then renders as "∞" instead of a wall-clock time (which, clamped
@@ -1950,7 +1930,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     ),
                     displayReminderPanels, displaySidePanels, displaySleepPanels,
                     schedulerState.showScreenBreaks, schedulerState.showReminders,
-                    schedulerState.screenBreaks, activeRegions,
+                    schedulerState.screenBreaks,
                     // § *Progressive Calculation*: the same front the derived inactivity bands stop at, below —
                     // where the plan stops being the scheduler's settled answer and starts being the far-week
                     // fill's display-only continuation of it.
@@ -2148,7 +2128,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 displayFloorMillis = displayFloorMillis,
                 bandSignature = bandSignature,
                 noScreenPeriods = noScreenPeriods,
-                carvedSleepHoles = carvedSleepHoles,
                 sidePanelCount = displaySidePanels.size,
                 workPlanPanelCount = displayWorkPlanPanels.size,
             )
@@ -2203,11 +2182,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val bandSignature = calendarDisplay.bandSignature
         LaunchedEffect(bandSignature) {
             Diagnostics.log("calendar no-screen periods: ${Diagnostics.formatRanges(calendarDisplay.noScreenPeriods)}")
-            if (calendarDisplay.carvedSleepHoles.isNotEmpty()) {
-                Diagnostics.log(
-                    "calendar Sleep bands carved by activity at: ${Diagnostics.formatRanges(calendarDisplay.carvedSleepHoles)}",
-                )
-            }
         }
         // Both ends of the asked window are QUANTIZED to the refresh period, or the effect would relaunch on
         // every display tick: [CalendarDisplay.displayFloorMillis] is `now − 168h` whenever the calendar is not
@@ -4066,7 +4040,6 @@ internal data class CalendarDisplay(
     val displayFloorMillis: Long,
     val bandSignature: String,
     val noScreenPeriods: List<TaskTimeRange>,
-    val carvedSleepHoles: List<TaskTimeRange>,
     val sidePanelCount: Int,
     val workPlanPanelCount: Int,
 )
@@ -4190,17 +4163,10 @@ private class CalendarDisplayMemo<T> {
     }
 }
 
-private fun diagnosticsBandSignature(
-    noScreenPeriods: List<TaskTimeRange>,
-    carvedSleepHoles: List<TaskTimeRange>,
-): String {
-    val edges =
-        buildList {
-            noScreenPeriods.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
-            carvedSleepHoles.forEach { add(it.startEpochMillis); add(it.endEpochMillis) }
-        }.sorted()
+private fun diagnosticsBandSignature(noScreenPeriods: List<TaskTimeRange>): String {
+    val edges = noScreenPeriods.flatMap { listOf(it.startEpochMillis, it.endEpochMillis) }.sorted()
     val interior = if (edges.size > 2) edges.subList(1, edges.size - 1) else emptyList()
-    return "${noScreenPeriods.size}/${carvedSleepHoles.size}:" +
+    return "${noScreenPeriods.size}:" +
         interior.joinToString(",") { (it / 60_000).toString() }
 }
 
@@ -4228,10 +4194,6 @@ private fun mergePanelsForDisplay(
     // calendar can draw the part of a 5-/15-min break that accepts off-screen tasks hollow rather than
     // covering it with a solid band.
     screenBreaks: List<ScreenBreak> = emptyList(),
-    // PRD §15/§17: intervals the device/account was ACTIVE — the visible "Sleep" bands are carved here so a
-    // window the user worked through shows a gap. Bridging still uses the UNCARVED sleep windows (below), so
-    // hiding screen breaks doesn't fuse task blocks across a night just because part of it was carved.
-    activeRegions: List<TaskTimeRange> = emptyList(),
     // `docs/scheduler_requirements.md` § *Progressive Calculation*: the DEFINITIVE-SCHEDULE FRONT
     // ([SchedulerDomain.definitiveScheduleFrontMillis]). An auto panel reaching past it is the far-week display
     // fill's, not a schedule the scheduler has settled, and is marked [CalendarRecord.provisional] so the
@@ -4354,12 +4316,14 @@ private fun mergePanelsForDisplay(
                 provisional = group.any { SchedulerDomain.isProvisionalPanel(it, definitiveFrontMillis) },
             )
         }
-    // The sleep windows render as their own labeled band behind the task blocks (drawn first), carved wherever
-    // the device/account was active so a night the user worked through shows a gap rather than a solid block.
+    // The sleep windows render as their own labeled band behind the task blocks (drawn first), whole: a sleep window
+    // is a period every task has at 0, and a line at a screen lifts only the no-screen period it carries, never the
+    // window (`docs/invariants/scheduler.md` § *Resilience*). Carving it where the account was active opened a hole
+    // no task could fill, since the scheduler places nobody there.
     val sleepRecords =
         // Its "No screen" hover line is the sleep kind's companion, named by the calendar over the band's own
         // span (`companionBubbleSections`) — not read off any evidence here.
-        SchedulerDomain.carveSleepPanels(sleepPanels, activeRegions).map { sleepPanel ->
+        sleepPanels.map { sleepPanel ->
             CalendarRecord(
                 title = sleepPanel.title,
                 range = TaskTimeRange(sleepPanel.startEpochMillis, sleepPanel.endEpochMillis),

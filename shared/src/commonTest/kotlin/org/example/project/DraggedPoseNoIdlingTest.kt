@@ -12,7 +12,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**) and § *No idling*: **the period the
+ * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**): **the period the
  * line drags obstructs nothing.**
  *
  * The requirement is one sentence — in mode 1 the line reaching a pose *"would continuously delay that
@@ -27,7 +27,8 @@ import org.example.project.scheduler.state.SchedulerState
  * pose's whole length; every later re-plan regenerated the pose at the NEW line, and the stretch the line had
  * swept in between came out with no panel at all. The calendar draws whatever the past leaves uncovered as a
  * derived grey "Inactivity" band, which is what the user saw growing behind the now-line on account 3 —
- * while a device was unlocked and every task was free to run, which is precisely what § *No idling* forbids.
+ * while a device was unlocked and every task was free to run — a hole no score chose, the plan having been made
+ * around something that never happens.
  *
  * Modes 2 and 3 are the controls, and they are one control: the requirements state them in one clause, so
  * neither drags — the line must BE covered there, the pose elapses under it and really happens, and an
@@ -169,7 +170,7 @@ class DraggedPoseNoIdlingTest {
         // At the screen, the line going on drags the owed pose at every position it reaches, and that pose bars
         // every look-away behind it ("after any dynamic restrictive period, no 20s period in the next 20 minutes").
         // So none of the breaks drawn ahead will be met, and a plan built around them left holes the line then swept
-        // with no task in them (§ *No idling*). The calendar still draws them, clipped out of the plan it shows.
+        // with no task in them, which no score chose. The calendar still draws them, clipped out of the plan it shows.
         val now = NOW
         val panels = fill(account(), now)
         assertTrue(draggedPose(panels) != null, "the case needs an owed pose")

@@ -76,30 +76,6 @@ class SchedulerSleepTest {
         assertTrue(SchedulerDomain.sleepPanels(null, now, now + HOUR_MS, tz).isEmpty())
     }
 
-    // ----- Sleep-band carving by activity (working through a scheduled sleep window) -------------
-
-    @Test
-    fun carve_sleep_panels_splits_the_band_where_the_device_was_active() {
-        // One "Sleep" window [23:00, 07:30]; the user was active [01:00, 03:00] in the middle of it.
-        val start = utc(2024, 1, 1, 23, 0)
-        val end = utc(2024, 1, 2, 7, 30)
-        val panel = TaskPanel("sleep/1", null, "Sleep", start, end, sleep = true)
-        val active = listOf(TaskTimeRange(utc(2024, 1, 2, 1, 0), utc(2024, 1, 2, 3, 0)))
-        val carved = SchedulerDomain.carveSleepPanels(listOf(panel), active).sortedBy { it.startEpochMillis }
-        assertEquals(2, carved.size)
-        assertEquals(start, carved[0].startEpochMillis)
-        assertEquals(utc(2024, 1, 2, 1, 0), carved[0].endEpochMillis)
-        assertEquals(utc(2024, 1, 2, 3, 0), carved[1].startEpochMillis)
-        assertEquals(end, carved[1].endEpochMillis)
-        // The pieces stay distinct (id suffixed) so they don't collide as calendar entries.
-        assertEquals("sleep/1", carved[0].id)
-        assertTrue(carved[1].id != carved[0].id)
-        // No activity ⇒ the band is returned untouched (conservative: absent evidence, sleep stays solid).
-        assertEquals(listOf(panel), SchedulerDomain.carveSleepPanels(listOf(panel), emptyList()))
-        // Activity covering the whole window ⇒ the band drops out entirely.
-        assertTrue(SchedulerDomain.carveSleepPanels(listOf(panel), listOf(TaskTimeRange(start, end))).isEmpty())
-    }
-
     // ----- Incremental OS-log backfill checkpoint ------------------------------------------------
 
     @Test

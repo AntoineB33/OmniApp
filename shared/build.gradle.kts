@@ -130,3 +130,36 @@ tasks.whenTaskAdded {
         enabled = false
     }
 }
+// `StartupOnRealDbTest`: the desktop's start-up, minus its window, on a COPY of a real database — headless, so it
+// never takes the screen. Copies the release DB (or `-PstartupDb=<path to scheduler-state.db>`) into the build dir
+// first; the release app's own files are only read. `docs/PERFORMANCE.md` § *Start-up on a real account*.
+val startupCheck by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Times the app's start-up on a copy of the release DB and fails if the UI thread is held > 5 s."
+    val testCompilation = kotlin.jvm().compilations.getByName("test")
+    testClassesDirs = testCompilation.output.classesDirs
+    classpath = files(testCompilation.output.allOutputs, testCompilation.runtimeDependencyFiles)
+    dependsOn("jvmTestClasses")
+    filter { includeTestsMatching("org.example.project.StartupOnRealDbTest") }
+    val source =
+        File(
+            providers.gradleProperty("startupDb").orNull
+                ?: (System.getProperty("user.home") + "/.omniapp-release/scheduler-state.db"),
+        )
+    val copyDir = layout.buildDirectory.dir("startup-check").get().asFile
+    systemProperty("omniapp.startupCheckDir", copyDir.absolutePath)
+    systemProperty("omniapp.stateDir", copyDir.absolutePath)
+    maxHeapSize = "4g"
+    testLogging { showStandardStreams = true }
+    outputs.upToDateWhen { false }
+    doFirst {
+        require(source.isFile) { "no database at $source (pass -PstartupDb=<path>)" }
+        copyDir.deleteRecursively()
+        copyDir.mkdirs()
+        // The DB and its WAL together: a running app may hold committed pages only in the WAL.
+        for (suffix in listOf("", "-wal")) {
+            val f = File(source.path + suffix)
+            if (f.isFile) f.copyTo(File(copyDir, "scheduler-state.db$suffix"), overwrite = true)
+        }
+    }
+}

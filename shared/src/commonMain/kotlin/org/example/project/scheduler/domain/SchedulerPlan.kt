@@ -8,8 +8,9 @@ import org.example.project.scheduler.model.TaskId
  * over them is [ScoreModel]; the search for its best continuation is [ScheduleOptimizer]; the driver OmniApp's
  * calendar fill hands its world to is [ScheduleFill].
  *
- * A task with a priority of 0 is still a candidate wherever it may run: § *No idling* forbids leaving a stretch it
- * could fill empty, and the score gives it a target share only where nothing with a priority may run.
+ * A task with a priority of 0 is still a candidate wherever it may run, and the score gives it a target share only
+ * where nothing with a priority may run: there it is what the percentages ask for, where leaving the stretch to
+ * nobody would put it behind.
  */
 data class PlanTask(
     val id: TaskId,

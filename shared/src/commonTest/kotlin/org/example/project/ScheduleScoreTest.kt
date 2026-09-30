@@ -110,7 +110,7 @@ class ScheduleScoreTest {
     }
 
     @Test
-    fun no_idling_and_resilience_zero_forbids() {
+    fun every_instant_is_decided_and_resilience_zero_forbids() {
         // B may not run in [1h, 3h).
         val tasks = listOf(task("A", 0.5, 20), task("B", 0.5, 20))
         val w = PlanWindow(HOUR, 3 * HOUR, mapOf(TaskId("B") to 0.0))
@@ -118,11 +118,66 @@ class ScheduleScoreTest {
         val plan = ScheduleOptimizer(m).plan(m.cursor(), 6.0 * HOUR)
         var u = 0.0
         for (r in plan.runs) {
-            assertEquals(u, r.fromU, 1e-3, "the plan leaves no schedulable time empty")
+            // Every instant is a decision: a task, or nobody (an explicit run of [ScoreModel.IDLE]).
+            assertEquals(u, r.fromU, 1e-3, "every instant of the continuation is decided")
             u = r.toU
             if (r.task == 1) assertTrue(r.toU <= HOUR + 1e-3 || r.fromU >= 3 * HOUR - 1e-3, "B inside its ban: $r")
         }
         assertEquals(6.0 * HOUR, u, 1e-3)
+    }
+
+    @Test
+    fun nothing_is_left_to_nobody_where_leaving_it_cannot_score_lower() {
+        // `docs/scheduler_requirements.md` requires no task anywhere, but criterion 1 asks for the percentages over
+        // schedulable time, and they add up to 100 %: time left to nobody puts every task behind. With nothing
+        // restricting anybody and no panel to cut short, it can only cost.
+        for (tasks in listOf(listOf(task("A", 1.0, 30)), listOf(task("A", 0.5, 20), task("B", 0.5, 20)))) {
+            val m = model(tasks, 12)
+            val plan = ScheduleOptimizer(m).plan(m.cursor(), 6.0 * HOUR)
+            assertTrue(plan.runs.none { it.task == ScoreModel.IDLE }, "no reason to leave time to nobody: ${plan.runs}")
+        }
+    }
+
+    @Test
+    fun time_is_left_to_nobody_where_that_scores_lower_than_any_task() {
+        // Twelve minutes free, then an hour pre-placed for A. B there is a panel 18 minutes short of its minimum,
+        // and A there only runs A's pre-placed hour longer — while leaving the twelve minutes to nobody costs every
+        // lag twelve minutes of its share. The score is the judge; this pins that it is ASKED.
+        val tasks = listOf(task("A", 0.5, 30), task("B", 0.5, 30))
+        val m = model(tasks, 6, blocks = listOf(PlanBlock(TaskId("A"), 12 * MIN, 72 * MIN)))
+        val optimizer = ScheduleOptimizer(m)
+        val plan = optimizer.plan(m.cursor(), 3.0 * HOUR, alternatives = false)
+        val a = m.indexOf.getValue(TaskId("A"))
+        val b = m.indexOf.getValue(TaskId("B"))
+        val rest = plan.runs.filter { it.fromU >= 72.0 * MIN - 1e-3 }
+        fun withHead(task: Int) = listOf(ScheduleOptimizer.Run(task, 0.0, 12.0 * MIN, -1), ScheduleOptimizer.Run(a, 12.0 * MIN, 72.0 * MIN, -1)) + rest
+        val head = plan.runs.first()
+        val chosen = optimizer.score(m.cursor(), plan.runs)
+        // Whatever the first twelve minutes hold, it is the cheapest of the three heads over the same continuation.
+        for (t in listOf(a, b, ScoreModel.IDLE)) {
+            assertTrue(chosen <= optimizer.score(m.cursor(), withHead(t)) * (1 + 1e-9), "head ${head.task} beats head $t")
+        }
+    }
+
+    @Test
+    fun a_run_left_to_nobody_would_score_worse_given_to_any_task() {
+        // Wherever the plan leaves time to nobody, giving that run to any task that may run over it scores no lower.
+        val tasks = listOf(task("T2", 3.0, 45), task("T1", 2.0, 30), task("T0", 1.0, 15))
+        val windows = (0 until 8).map { k ->
+            PlanWindow(k * 3 * HOUR + 2 * HOUR, k * 3 * HOUR + 2 * HOUR + 30 * MIN, mapOf(TaskId("T1") to 0.0, TaskId("T2") to 0.0))
+        }
+        val m = model(tasks, 24, blocks = listOf(PlanBlock(TaskId("T0"), 7 * HOUR, 8 * HOUR)), windows = windows)
+        val optimizer = ScheduleOptimizer(m)
+        val runs = optimizer.plan(m.cursor(), 24.0 * HOUR, alternatives = false).runs
+        val cost = optimizer.score(m.cursor(), runs)
+        for ((k, r) in runs.withIndex()) {
+            if (r.task != ScoreModel.IDLE) continue
+            for (j in 0 until m.n) {
+                if (m.runLimit(j, r.fromU) < r.toU - 1e-3) continue
+                val given = runs.toMutableList().also { it[k] = r.copy(task = j) }
+                assertTrue(cost <= optimizer.score(m.cursor(), given) * (1 + 1e-9), "$r given to ${tasks[j].id} scores lower")
+            }
+        }
     }
 
     @Test
@@ -231,7 +286,7 @@ class ScheduleScoreTest {
         assertTrue(plan.runs.none { it.task == 0 && it.fromU < 2.0 * HOUR && it.toU > HOUR + 1e-3 }, "A never runs inside its ban")
         var u = 0.0
         for (r in plan.runs.sortedBy { it.fromU }) {
-            assertEquals(u, r.fromU, 1e-3, "no idling")
+            assertEquals(u, r.fromU, 1e-3, "every instant is decided")
             u = r.toU
         }
         assertEquals(until, u, 1e-3)
