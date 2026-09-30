@@ -234,7 +234,7 @@ class NowLineSweepTest {
             SchedulerDomain.screenBreakPanels(breaks, NOW, NOW + 3 * HOUR, emptyList(), DynamicPeriods.MODE_AT_SCREEN, record)
         assertEquals(NOW + 1, place(blindRecord).minOfOrNull { it.startEpochMillis }, "the scenario owes a break at the line")
 
-        val swept = SchedulerDomain.absorbScreenBreakHistory(breaks, blindRecord, listOf(TaskTimeRange(NOW - 8 * HOUR, NOW)))
+        val swept = SchedulerDomain.absorbScreenBreakHistory(breaks, blindRecord, listOf(TaskTimeRange(NOW - 8 * HOUR, NOW)), emptyList())
         val placed = place(swept)
         val earliest = placed.minOfOrNull { it.startEpochMillis }
         assertTrue(

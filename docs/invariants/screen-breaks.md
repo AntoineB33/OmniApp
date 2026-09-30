@@ -84,7 +84,11 @@ persisted keys.
   conducted breaks, the "no screen" observed (`noScreenEvidence`) and the stretches the line itself lived through in
   this process (`lineStretches`, in memory only, so a restart does not carry a mode a previous process deduced). A label
   history says nothing about keeps its carried bar (the rested start — rebuilding it would push it one cadence on at
-  every re-run). A drag history still owes keeps its due, so an owed pose is announced once. The rebuild arms the next
+  every re-run). A drag history still owes keeps its due, so an owed pose is announced once — and what it still owes is
+  re-derived under the restrictive periods at the line (`BreakMachine.stillOwed`: `dueOf` with the pull, then the drag's
+  reach), never read off a bar alone. A pose the pull brought in has its bar AHEAD of the line; reading "bar ≤ line"
+  dropped it at every re-run and the next step pulled it back in, re-announced at every progressive stage (account 3,
+  2026-09-30). The rebuild arms the next
   step, which moves the line on to the clock. The plan itself was already found from the line the run started at and
   published by compare-and-set; the calendar keeps the previous rules until then.
   - Drop the line's own stretches from the history and `ServerQuotaTest` goes over budget (≈ +3 MB of egress a

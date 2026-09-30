@@ -3296,6 +3296,7 @@ object SchedulerDomain {
         val history =
             BreakMachine.absorbHistory(
                 blank,
+                chains,
                 specs,
                 banked = frozen?.breaks.orEmpty(),
                 dynamic = basePeriods.filter { it.dynamic }.map { DynamicPeriods.Span(it.startMillis, it.endMillis) },
@@ -3406,6 +3407,8 @@ object SchedulerDomain {
         screenBreaks: List<ScreenBreak>,
         frozen: FrozenScreenBreaks?,
         observed: List<TaskTimeRange>,
+        /** The no-screen periods at the line ([BreakMachine.chainsOf]): what the drag is re-derived under. */
+        chains: List<DynamicPeriods.Span>,
         dynamic: List<TaskTimeRange> = emptyList(),
     ): FrozenScreenBreaks? {
         val record = frozen ?: return null
@@ -3414,6 +3417,7 @@ object SchedulerDomain {
         val absorbed =
             BreakMachine.absorbHistory(
                 machine,
+                chains,
                 specs,
                 dynamic = dynamic.map { DynamicPeriods.Span(it.startEpochMillis, it.endEpochMillis) },
                 stretches = observed.map { DynamicPeriods.Span(it.startEpochMillis, it.endEpochMillis) },
@@ -3431,6 +3435,8 @@ object SchedulerDomain {
         screenBreaks: List<ScreenBreak>,
         frozen: FrozenScreenBreaks?,
         observed: List<TaskTimeRange>,
+        /** The no-screen periods at the line ([BreakMachine.chainsOf]): what the drag is re-derived under. */
+        chains: List<DynamicPeriods.Span>,
         dynamic: List<TaskTimeRange> = emptyList(),
     ): FrozenScreenBreaks? {
         val record = frozen ?: return null
@@ -3439,6 +3445,7 @@ object SchedulerDomain {
         val rebuilt =
             BreakMachine.rebuildFromHistory(
                 BreakMachine.withSpecs(machine, specs),
+                chains,
                 specs,
                 banked = record.breaks,
                 dynamic = dynamic.map { DynamicPeriods.Span(it.startEpochMillis, it.endEpochMillis) },

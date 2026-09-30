@@ -229,7 +229,7 @@ class BreakMachineTest {
         val dragging = run(BreakMachine.initial(T0, specs), T0 + HOUR + 10 * MIN)
         assertEquals(LABEL_5MIN, dragging.drag?.label)
         val pause = Span(T0 + HOUR + MIN, T0 + HOUR + 8 * MIN)
-        val healed = BreakMachine.absorbHistory(dragging, specs, stretches = listOf(pause))
+        val healed = BreakMachine.absorbHistory(dragging, emptyList(), specs, stretches = listOf(pause))
         assertNull(healed.drag, "a 7-minute pause after the pose fell due is a rest: no 5 min break for an hour")
         assertEquals(pause.endMillis + HOUR, healed.bars[LABEL_5MIN])
         // The look-away the drag had taken in is due again, and a line at a screen enters it.

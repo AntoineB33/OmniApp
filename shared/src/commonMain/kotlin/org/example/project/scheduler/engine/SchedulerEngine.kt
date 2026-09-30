@@ -1780,8 +1780,10 @@ class SchedulerEngine(
         if (merged != _noScreenEvidence.value) {
             _noScreenEvidence.value = merged
             // § *Rule Structure*: a pause learned of behind the line rewrites history — a trigger of its own. The machine
-            // raises its bars where it stands; it is not moved (a journey is about to walk the line from there).
-            absorbBreakHistory()
+            // raises its bars where it stands; it is not moved (a journey is about to walk the line from there). The
+            // inputs are built again over the new evidence, and the history absorbed under their restrictive periods.
+            val now = clock.nowMillis()
+            breakInputsAt(now, machineMode(now))
         }
     }
 
@@ -2476,13 +2478,16 @@ class SchedulerEngine(
      * rebuild arms at once. On the engine's own thread, the machine's one writer.
      */
     private fun rebuildBreaksFromHistory() {
+        // The restrictive periods the rules are re-applied under: the drag is re-derived over them.
+        val now = clock.nowMillis()
+        val chains = breakInputsAt(now, machineMode(now)).chains
         val record = _frozenBreaks.value ?: return
         val before = record.machine ?: return
         val state = vm.state.value
         val dynamic = state.panels.filter { it.conductedBreak }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
         val rebuilt =
             SchedulerDomain.rebuildScreenBreaksFromHistory(
-                state.screenBreaks, record, _noScreenEvidence.value + lineStretches, dynamic,
+                state.screenBreaks, record, _noScreenEvidence.value + lineStretches, chains, dynamic,
             )
                 ?: return
         if (rebuilt === record) return
@@ -2660,7 +2665,7 @@ class SchedulerEngine(
             )
         breakInputs = inputs
         nextBreakTriggerMillis = Long.MIN_VALUE
-        if (held == null || held.evidence !== evidence) absorbBreakHistory()
+        if (held == null || held.evidence !== evidence) absorbBreakHistory(inputs.chains)
         return inputs
     }
 
@@ -2668,12 +2673,12 @@ class SchedulerEngine(
      * A history rewrite ([SchedulerDomain.absorbScreenBreakHistory]): the stretches of "no screen" the devices observed
      * behind the machine the line carries raise its bars, where it stands, and its next trigger is armed again.
      */
-    private fun absorbBreakHistory() {
+    private fun absorbBreakHistory(chains: List<DynamicPeriods.Span>) {
         val record = _frozenBreaks.value ?: return
         val at = record.machine?.atMillis ?: return
         val absorbed =
             SchedulerDomain.absorbScreenBreakHistory(
-                vm.state.value.screenBreaks, record, _noScreenEvidence.value.filter { it.endEpochMillis <= at },
+                vm.state.value.screenBreaks, record, _noScreenEvidence.value.filter { it.endEpochMillis <= at }, chains,
             )
         if (absorbed != record) {
             _frozenBreaks.value = absorbed

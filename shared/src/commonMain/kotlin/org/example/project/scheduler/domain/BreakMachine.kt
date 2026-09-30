@@ -481,7 +481,7 @@ object BreakMachine {
             // The stretch ends here — unless the line walks straight into the 20 s break mode 2 was dragging, which it
             // now enters: then it never left "no screen".
             val ended = endStretch(s, chains)
-            val drag = stillOwed(ended.drag, ended.bars, x, byLabel)
+            val drag = stillOwed(ended, chains, byLabel)
             s =
                 if (drag != null && drag.label == LABEL_20S) {
                     enter(s.copy(drag = null), byLabel.getValue(LABEL_20S), x, drag.members, chains, events, false, policy)
@@ -540,6 +540,8 @@ object BreakMachine {
      */
     fun absorbHistory(
         state: State,
+        /** The no-screen periods ([chainsOf]): the rules the drag is re-derived under ([stillOwed]). */
+        chains: List<Span>,
         specs: List<Spec>,
         banked: List<BankedBreak> = emptyList(),
         dynamic: List<Span> = emptyList(),
@@ -557,7 +559,7 @@ object BreakMachine {
         for (d in dynamic) if (d.endMillis <= x) afterBreak(null, d.endMillis)
         val rests = chainsOfSpans(stretches + banked.map { Span(it.startMillis, it.endMillis) } + dynamic)
         for (r in rests) if (r.endMillis <= x) bars = stretchBars(bars, r.startMillis, r.endMillis).toMutableMap()
-        val kept = stillOwed(state.drag, bars, x, byLabel)
+        val kept = stillOwed(state.copy(bars = bars), chains, byLabel)
         // What is left of it is dragged only if the mode drags it; otherwise its labels simply fall due at the line.
         val drag = kept?.takeIf { drags(it.label, state, Policy.HOLD) }
         return state.copy(bars = bars, drag = drag)
@@ -578,26 +580,47 @@ object BreakMachine {
      */
     fun rebuildFromHistory(
         state: State,
+        /** The no-screen periods ([chainsOf]): the rules the drag is re-derived under ([stillOwed]). */
+        chains: List<Span>,
         specs: List<Spec>,
         banked: List<BankedBreak>,
         dynamic: List<Span> = emptyList(),
         stretches: List<Span> = emptyList(),
     ): State {
-        val x = state.atMillis
         val byLabel = specs.associateBy { it.label }
         val blank = state.copy(bars = state.bars.mapValues { Long.MIN_VALUE }, drag = null)
-        val history = absorbHistory(blank, specs, banked, dynamic, stretches).bars
+        val history = absorbHistory(blank, chains, specs, banked, dynamic, stretches).bars
         val bars = state.bars.mapValues { (label, carried) -> history[label]?.takeIf { it != Long.MIN_VALUE } ?: carried }
-        val drag = stillOwed(state.drag, bars, x, byLabel)?.takeIf { drags(it.label, state, Policy.HOLD) }
+        val drag = stillOwed(state.copy(bars = bars), chains, byLabel)?.takeIf { drags(it.label, state, Policy.HOLD) }
         return state.copy(bars = bars, drag = drag)
     }
 
-    /** A drag after the bars moved: only the labels still due at [x] stay in it, the longest of them leading. */
-    private fun stillOwed(drag: Drag?, bars: Map<String, Long>, x: Long, byLabel: Map<String, Spec>): Drag? {
-        val d = drag ?: return null
-        val owed = d.members.filter { (bars[it] ?: Long.MAX_VALUE) <= x }
+    /**
+     * [state]'s drag after its bars moved: its members as the rules give them at the line, over the restrictive periods
+     * ([chains]) — by the same two questions [fire] asks, never by a bar of its own. A member stays when it falls due at
+     * the line ([dueOf], the pull included: a bar inside a no-screen period ahead is due at the line), or when its due
+     * comes within the reach of the members kept (the chain rule's join); the longest of them leads.
+     *
+     * Reading "bar ≤ line" instead dropped a member the pull had brought in at every re-run, and the next step pulled it
+     * back in, a new due each time (account 3, 2026-09-30: the 15-min bar at 23:00 inside "the hour before bed" was
+     * re-announced at every progressive stage). Reading the periods also drops such a member once no period pulls it any
+     * more: its bar governs again.
+     */
+    private fun stillOwed(state: State, chains: List<Span>, byLabel: Map<String, Spec>): Drag? {
+        val d = state.drag ?: return null
+        val x = state.atMillis
+        val free = state.copy(drag = null)
+        val dues = d.members.associateWith { dueOf(free, it, chains) }
+        val owed = d.members.filterTo(LinkedHashSet()) { m -> dues[m]?.let { it <= x } == true }
         if (owed.isEmpty()) return null
-        return d.copy(label = owed.maxBy { byLabel[it]?.durationMillis ?: 0L }, members = owed)
+        while (true) {
+            val reach = owed.maxOf { byLabel[it]?.durationMillis ?: 0L }
+            val joining = d.members.filter { m -> m !in owed && dues[m]?.let { it - reach <= x } == true }
+            if (joining.isEmpty()) break
+            owed += joining
+        }
+        val members = d.members.filter { it in owed }
+        return d.copy(label = members.maxBy { byLabel[it]?.durationMillis ?: 0L }, members = members)
     }
 
     private fun chainsOfSpans(spans: List<Span>): List<Span> {
