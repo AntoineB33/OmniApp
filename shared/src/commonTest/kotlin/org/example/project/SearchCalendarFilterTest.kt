@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SearchDomain
@@ -42,12 +43,13 @@ class SearchCalendarFilterTest {
         return s.copy(
             panels = s.panels + TaskPanel("panel/deep", null, "deep work", at - hour, at + hour, periodKind = "deep work"),
             chores = listOf(ChoreEntry(title = "Water", spanDays = 3.0, id = "reminder-0")),
-            alarms = listOf(org.example.project.scheduler.model.AlarmEntry(id = "alarm-0", label = "Wake", timeOfDayMinutes = 420)),
+            alarms = listOf(org.example.project.scheduler.model.AlarmEntry(id = "alarm-0", label = "Wake", timeOfDayMinutes = 420, days = emptySet())),
+            timers = listOf(org.example.project.scheduler.model.TimerEntry(id = "timer-0", label = "Tea")),
         )
     }
 
-    private fun names(state: SchedulerState, config: SearchDomain.Config): List<String> =
-        SearchDomain.results(state, SearchDomain.Kind.entries.toSet() - SearchDomain.Kind.Window, "", filters = config.filters)
+    private fun names(state: SchedulerState, config: SearchDomain.Config, now: Long = at - hour): List<String> =
+        SearchDomain.results(state, SearchDomain.Kind.entries.toSet() - SearchDomain.Kind.Window, "", filters = config.filters, nowMillis = now)
             .map { if (it is SearchDomain.TaskResult) state.tasks[it.taskId]!!.title else it.kind.name + ":" + (it as SearchDomain.ItemResult).id }
 
     @Test
@@ -58,8 +60,11 @@ class SearchCalendarFilterTest {
         assertFalse("Walk" in shown, "Walk's resilience to it is 0: it cannot be put there")
         assertTrue("RestrictivePeriod:deep work" in shown && "RestrictivePeriod:" + PeriodKinds.SLEEP in shown, "any kind of period")
         assertTrue("Reminder:reminder-0" in shown, "a tag of a reminder")
-        assertFalse(shown.any { it.startsWith("Alarm:") }, "an existing alarm's occurrences are its weekdays'")
-        assertFalse(shown.any { it.startsWith("Category:") || it.startsWith("Timer:") || it.startsWith("HistoryUnit:") })
+        assertTrue("Alarm:alarm-0" in shown, "an alarm: it then rings there (user rule 2026-10-01)")
+        assertTrue("Timer:timer-0" in shown, "a timer: it then ends there")
+        assertFalse("Timer:timer-0" in names(s, SearchDomain.calendarAddConfig(at), now = at + 1), "not once the instant is past")
+        assertFalse("Timer:timer-0" in names(s, SearchDomain.calendarAddConfig(at), now = at - 25 * hour), "nor beyond a timer's longest run")
+        assertFalse(shown.any { it.startsWith("Category:") || it.startsWith("Chrono:") || it.startsWith("HistoryUnit:") })
         // Outside the period Walk can go there too; the switch off keeps everything.
         assertTrue("Walk" in names(s, SearchDomain.calendarAddConfig(at + 2 * hour)))
         val off = SearchDomain.calendarAddConfig(at).let { it.copy(filters = it.filters.copy(calendarAddOn = false)) }
@@ -87,14 +92,30 @@ class SearchCalendarFilterTest {
         val read = taskWithTitle(s, "Read")
         val added = SearchDomain.resolve(
             s,
-            listOf("Task/" + read.value, "Task/" + taskWithTitle(s, "Walk").value, "RestrictivePeriod/deep work", "Reminder/reminder-0", "Alarm/alarm-0"),
+            listOf(
+                "Task/" + read.value, "Task/" + taskWithTitle(s, "Walk").value, "RestrictivePeriod/deep work", "Reminder/reminder-0",
+                "Alarm/alarm-0", "Timer/timer-0",
+            ),
         )
-        val drafts = SearchDomain.calendarDrafts(s, added, at)
+        val tz = kotlinx.datetime.TimeZone.UTC
+        val drafts = SearchDomain.calendarDrafts(s, added, at, tz)
         assertEquals(
-            listOf(CalendarElements.Kind.TaskPanel, CalendarElements.Kind.RestrictivePeriod, CalendarElements.Kind.Reminder),
+            listOf(CalendarElements.Kind.TaskPanel, CalendarElements.Kind.RestrictivePeriod, CalendarElements.Kind.Reminder, CalendarElements.Kind.Alarm),
             drafts.map { it.kind },
-            "Walk cannot go there, nor an existing alarm",
+            "Walk cannot go there; a timer is not a draft (it is put on the clock)",
         )
+        val alarm = drafts[3]
+        assertEquals("alarm-0", alarm.existingId, "the alarm itself, edited, not a new one")
+        assertEquals(at, alarm.startMillis)
+        assertTrue(alarm.alarmArmed)
+        val weekday = kotlin.time.Instant.fromEpochMilliseconds(at).toLocalDateTime(tz).dayOfWeek
+        assertEquals(setOf(weekday), alarm.alarmDays, "that weekday among its days")
+        // A timer ends there: one list edit that starts it to run out at the instant.
+        val now = at - 10 * 60_000L
+        val timerIntents = SearchDomain.calendarTimerIntents(s, added, at, now)
+        val started = (timerIntents.single() as SchedulerIntent.SetTimers).entries.single()
+        assertEquals(at, started.endsAtMillis)
+        assertEquals(emptyList(), SearchDomain.calendarTimerIntents(s, added, at, at + 1))
         val panel = drafts[0]
         assertEquals(read, panel.taskId)
         assertEquals(at, panel.startMillis)
@@ -102,8 +123,8 @@ class SearchCalendarFilterTest {
         assertEquals(at + hour, drafts[1].endMillis, "a period an hour")
         assertEquals(at, drafts[2].endMillis, "a tag has no duration")
         assertEquals("reminder-0", drafts[2].reminderId)
-        val alarm = SearchDomain.calendarAlarmDraft(s, at)
-        assertEquals(CalendarElements.Kind.Alarm, alarm.kind)
-        assertEquals(at + s.newAlarmDefaults.soundSeconds * 1000L, alarm.endMillis)
+        val newAlarm = SearchDomain.calendarAlarmDraft(s, at)
+        assertEquals(CalendarElements.Kind.Alarm, newAlarm.kind)
+        assertEquals(at + s.newAlarmDefaults.soundSeconds * 1000L, newAlarm.endMillis)
     }
 }

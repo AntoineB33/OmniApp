@@ -1269,6 +1269,8 @@ object SearchDomain {
         windows: List<WindowEntry> = emptyList(),
         /** For the calendar filters' days: the device's own. */
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        /** The clock's instant: whether a timer can still end at the calendar filter's position ([calendarAddable]). */
+        nowMillis: Long = 0L,
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
@@ -1289,7 +1291,7 @@ object SearchDomain {
                     // The calendar filter: about every kind, so asked of every row, once the instant's kinds are read.
                     val at = filters.calendarAddAt ?: return@let rows
                     val kindsAt = calendarKindsAt(state, at)
-                    rows.filter { calendarAddable(state, it, kindsAt) }
+                    rows.filter { calendarAddable(state, it, kindsAt, at, nowMillis) }
                 }
                 // Stable: ties keep the kind order and each kind's own order.
                 .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
@@ -1783,7 +1785,7 @@ object SearchDomain {
      * The kinds of what the calendar's "add…" can lay — what its Search window lists. Not "creation": its rows make an
      * element NOW, not at the right-click (the filter still keeps them when the user checks that kind).
      */
-    val CALENDAR_ADD_KINDS: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Reminder)
+    val CALENDAR_ADD_KINDS: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Reminder, Kind.Alarm, Kind.Timer)
 
     /** The kinds a "creation" row the calendar filter keeps can be: the ones the calendar lays a new one of. */
     private val CALENDAR_CREATABLE: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Alarm, Kind.Reminder)
@@ -1813,13 +1815,14 @@ object SearchDomain {
     }
 
     /**
-     * Whether [result] can be added to the calendar at the instant whose period kinds are [kindsAt] — what the calendar's
-     * element window could lay there: a task the scheduler may place (a leaf in the tree) whose resilience lets it run
-     * in those periods (their product above 0, [PeriodKinds.multiplier]); any kind of restrictive period; a reminder
-     * (a tag of it); and the "creation" rows of the kinds the calendar lays a new one of. An existing alarm is not:
-     * its occurrences come from its weekdays, so "add it here" would be an edit of its rule. Nothing else is.
+     * Whether [result] can be added to the calendar at [atMillis], whose period kinds are [kindsAt] — what the calendar
+     * can show there: a task the scheduler may place (a leaf in the tree) whose resilience lets it run in those periods
+     * (their product above 0, [PeriodKinds.multiplier]); any kind of restrictive period; a reminder (a tag of it); an
+     * alarm (user rule 2026-10-01: it then rings at that time of day, on that weekday too — [calendarDrafts]); a timer
+     * the instant is still ahead of and within its longest run (it then ends there — [calendarTimerIntents]); and the
+     * "creation" rows of the kinds the calendar lays a new one of. Nothing else is.
      */
-    fun calendarAddable(state: SchedulerState, result: Result, kindsAt: Set<String>): Boolean =
+    fun calendarAddable(state: SchedulerState, result: Result, kindsAt: Set<String>, atMillis: Long, nowMillis: Long): Boolean =
         when (result) {
             is TaskResult -> {
                 val task = state.tasks[result.taskId]
@@ -1829,10 +1832,32 @@ object SearchDomain {
             is ItemResult -> when (result.kind) {
                 Kind.RestrictivePeriod -> result.id in state.allPeriodKinds
                 Kind.Reminder -> true
+                Kind.Alarm -> state.alarms.any { it.id == result.id }
+                Kind.Timer -> state.timers.any { it.id == result.id } && timerCanEndAt(atMillis, nowMillis)
                 Kind.Creation -> Kind.entries.firstOrNull { it.name == result.id } in CALENDAR_CREATABLE
                 else -> false
             }
         }
+
+    /** Whether a timer started now can end at [atMillis]: ahead of the clock, and no further than its longest run. */
+    private fun timerCanEndAt(atMillis: Long, nowMillis: Long): Boolean =
+        atMillis > nowMillis && atMillis - nowMillis <= org.example.project.scheduler.model.TimerEntry.MAX_TIMER_SECONDS * 1_000L
+
+    /**
+     * "Add to the calendar" for the added TIMERS: each one put on the clock so that it ends at [atMillis] — reset, its
+     * time left `atMillis − now`, started ([TimerDomain.withRemaining], [TimerDomain.started]) — as ONE list edit. A
+     * timer that cannot end there is left alone; none to move is no intent.
+     */
+    fun calendarTimerIntents(state: SchedulerState, added: List<Result>, atMillis: Long, nowMillis: Long): List<SchedulerIntent> {
+        if (!timerCanEndAt(atMillis, nowMillis)) return emptyList()
+        val ids = addedIds(added, Kind.Timer).toSet()
+        if (ids.isEmpty()) return emptyList()
+        val timers = state.timers.map { timer ->
+            if (timer.id !in ids) timer
+            else TimerDomain.started(TimerDomain.withRemaining(TimerDomain.reset(timer), atMillis - nowMillis, nowMillis), nowMillis)
+        }
+        return if (timers == state.timers) emptyList() else listOf(SchedulerIntent.SetTimers(timers))
+    }
 
     /**
      * The "Add to the calendar" action: the element-window drafts of every added element that can be added at
@@ -1844,9 +1869,10 @@ object SearchDomain {
         state: SchedulerState,
         added: List<Result>,
         atMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
     ): List<CalendarElements.Draft> {
         val kindsAt = calendarKindsAt(state, atMillis)
-        return added.filter { calendarAddable(state, it, kindsAt) }.mapNotNull { row ->
+        return added.filter { calendarAddable(state, it, kindsAt, atMillis, nowMillis = atMillis - 1) }.mapNotNull { row ->
             val pick = when {
                 row is TaskResult -> CalendarElements.Draft(
                     kind = CalendarElements.Kind.TaskPanel,
@@ -1863,6 +1889,22 @@ object SearchDomain {
                     name = row.name,
                     reminderId = row.id,
                 )
+                // An alarm already there: it now rings at that time of day, that weekday among its days, switched on
+                // — the element window's own edit of an alarm (`existingId`), so its other settings stay.
+                row is ItemResult && row.kind == Kind.Alarm -> {
+                    val alarm = state.alarms.firstOrNull { it.id == row.id } ?: return@mapNotNull null
+                    val weekday = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(timeZone).dayOfWeek
+                    return@mapNotNull CalendarElements.Draft(
+                        kind = CalendarElements.Kind.Alarm,
+                        existingId = alarm.id,
+                        name = alarm.label,
+                        startMillis = atMillis,
+                        endMillis = atMillis + alarm.soundSeconds * 1000L,
+                        alarmDays = alarm.days + weekday,
+                        alert = alarm.alert,
+                        alarmArmed = true,
+                    )
+                }
                 else -> null
             } ?: return@mapNotNull null
             CalendarElements.seeded(

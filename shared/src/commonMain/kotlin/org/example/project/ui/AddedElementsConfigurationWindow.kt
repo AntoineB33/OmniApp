@@ -331,9 +331,16 @@ private fun AddedActionEditor(
                 )
             } else {
                 val drafts = SearchDomain.calendarDrafts(state, added, at)
+                // A timer is put on the clock to end there (it has no start on the calendar to give).
+                val timers = SearchDomain.calendarTimerIntents(state, added, at, nowMillis())
+                val timerCount = (timers.firstOrNull() as? SchedulerIntent.SetTimers)?.let { set ->
+                    set.entries.count { entry -> state.timers.none { it == entry } }
+                } ?: 0
+                val count = drafts.size + timerCount
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FrameButton(if (drafts.size == 1) "Add here" else "Add ${drafts.size} here", enabled = drafts.isNotEmpty()) {
-                        handlers.onPlaceOnCalendar(drafts)
+                    FrameButton(if (count == 1) "Add here" else "Add $count here", enabled = count > 0) {
+                        if (drafts.isNotEmpty()) handlers.onPlaceOnCalendar(drafts)
+                        timers.forEach { run(SearchDomain.AddedCommand.Raw(it)) }
                     }
                     // An alarm is added as a new one (an existing one's occurrences are its weekdays').
                     FrameButton("New alarm here") { handlers.onPlaceOnCalendar(listOf(SearchDomain.calendarAlarmDraft(state, at))) }

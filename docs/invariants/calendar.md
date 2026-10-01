@@ -640,10 +640,13 @@ Global rules that always apply: `CLAUDE.md`.
   a `YYYY-MM-DD HH:MM` position, and "Set to the right-click", offered only while `Config.calendarClickMillis` says the
   window came from the calendar) — keeps only `SearchDomain.calendarAddable` rows: a placeable task whose resilience to
   the periods covering that instant (`calendarKindsAt`, the panels' kinds with what each carries) is above 0; any kind
-  of period; a reminder; a "creation" row of a kind the calendar lays. Not an existing alarm (its weekdays make its
-  occurrences). Its action **"Add to the calendar"** lays the added ones at the filter's position through
-  `SearchDomain.calendarDrafts` — the element window's own seeding (`CalendarElements.seeded`) and Save
-  (`saveCalendarElementIntents`) — and "New alarm here" a new alarm. ONE such window: a later "add…" moves it to the
+  of period; a reminder; an **alarm** and a **timer** (user rule 2026-10-01 — a timer only while the instant is ahead
+  of the clock and within its longest run); a "creation" row of a kind the calendar lays. Its action **"Add to the
+  calendar"** lays the added ones at the filter's position through `SearchDomain.calendarDrafts` — the element window's
+  own seeding (`CalendarElements.seeded`) and Save (`saveCalendarElementIntents`); an alarm is the window's edit of that
+  alarm (`existingId`): it rings at that time of day, that weekday added to its days, switched on — and a timer is put
+  on the clock to END there (`calendarTimerIntents`: reset, time left = instant − now, started; one `SetTimers`).
+  "New alarm here" makes a new alarm. ONE such window: a later "add…" moves it to the
   new right-click, keeping what it holds.
 - **THE ONE ADD/EDIT WINDOW: "add…" AND "edit…" OPEN THE SAME THING** (`CalendarElementsWindow`,
   `CalendarElements`, `CalendarElementsTest`) — a **set** of elements and their configuration grouped by who

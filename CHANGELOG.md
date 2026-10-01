@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar "add…": alarms and timers too — 2026-10-01
+
+User request: *"In the calendar, the add... option from the right-click menu filters also for alarms and timers."* The
+calendar filter keeps every alarm and every timer that can still end at the instant (ahead of the clock, within 24 h);
+`CALENDAR_ADD_KINDS` lists both. "Add to the calendar": an alarm rings at that time of day (weekday added, switched on,
+through the element window's alarm edit); a timer is started to end there (`SearchDomain.calendarTimerIntents`).
+`SearchDomain.results(nowMillis)`. Tests: `SearchCalendarFilterTest`.
+
 ### A History Unit for almost every user action — 2026-10-01
 
 User report: *"I added an item in a Search window filtered for history unit, and it didn't create a history unit for

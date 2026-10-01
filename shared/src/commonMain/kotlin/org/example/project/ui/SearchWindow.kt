@@ -282,7 +282,7 @@ fun SearchWindow(
             state.panels, state.alarms, state.timers, state.chronos, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
-            SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts, windows)
+            SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis())
         }
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
