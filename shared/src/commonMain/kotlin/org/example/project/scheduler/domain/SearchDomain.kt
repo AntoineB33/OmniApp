@@ -246,6 +246,8 @@ object SearchDomain {
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
+                    calendarAtOn = filters.calendarAtOn,
+                    calendarAtMillis = filters.calendarAtMillis,
                     calendarClickMillis = calendarClickMillis,
                 ),
             )
@@ -297,6 +299,8 @@ object SearchDomain {
                         periodBoxesUntil = dateNamed(stored.periodBoxesUntil),
                         calendarAddOn = stored.calendarAddOn,
                         calendarAddAtMillis = stored.calendarAddAtMillis,
+                        calendarAtOn = stored.calendarAtOn,
+                        calendarAtMillis = stored.calendarAtMillis,
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                     added = stored.added.distinct(),
@@ -463,10 +467,21 @@ object SearchDomain {
          */
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
+        /**
+         * **The "is on the calendar at" filter** (user rule 2026-10-01, the calendar's "edit…"): GLOBAL like the one
+         * above — keeps only what is on the timeline at [calendarAtMillis] ([calendarElementsAt]). [calendarAtOn] is
+         * its switch; the position is kept while it is off.
+         */
+        val calendarAtOn: Boolean = false,
+        val calendarAtMillis: Long? = null,
     ) {
         /** The instant the calendar filter keeps rows for, while it is on and has one; else null. */
         val calendarAddAt: Long?
             get() = calendarAddAtMillis.takeIf { calendarAddOn }
+
+        /** The instant the "is on the calendar at" filter keeps rows for, while it is on and has one; else null. */
+        val calendarAt: Long?
+            get() = calendarAtMillis.takeIf { calendarAtOn }
 
         /** Whether any filter reads the calendar: the only case its boxes are gathered at all ([results]). */
         val readsCalendar: Boolean
@@ -485,6 +500,7 @@ object SearchDomain {
         fun isOn(setting: Setting): Boolean =
             when (setting) {
                 Setting.CalendarAdd -> calendarAddAt != null
+                Setting.CalendarAt -> calendarAt != null
                 Setting.TaskInTree -> taskInTree != Tri.Any
                 Setting.TaskSchedulable -> taskSchedulable != Tri.Any
                 Setting.TaskCategory -> taskCategory != null
@@ -608,6 +624,8 @@ object SearchDomain {
         SortResults(null, "Sort by", sorts = true),
         /** The calendar filter ([Filters.calendarAddOn]): about every row, so in the General section. */
         CalendarAdd(null, "Can be added to the calendar at"),
+        /** The "is on the calendar at" filter ([Filters.calendarAtOn]): the calendar's "edit…". */
+        CalendarAt(null, "Is on the calendar at"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -728,6 +746,9 @@ object SearchDomain {
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
         val calendarClickMillis: Long? = null,
+        /** New 2026-10-01 (the calendar's "edit…"): absent = off, no position. */
+        val calendarAtOn: Boolean = false,
+        val calendarAtMillis: Long? = null,
     )
 
     @Serializable
@@ -1271,6 +1292,11 @@ object SearchDomain {
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
         /** The clock's instant: whether a timer can still end at the calendar filter's position ([calendarAddable]). */
         nowMillis: Long = 0L,
+        /**
+         * The kinds of the calendar's LAYER bands at an instant — the hatch read off the lock history, which is not in
+         * the state — for the "is on the calendar at" filter ([calendarElementsAt]). `App` holds them.
+         */
+        layerKindsAt: (Long) -> Set<String> = { emptySet() },
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
@@ -1292,6 +1318,12 @@ object SearchDomain {
                     val at = filters.calendarAddAt ?: return@let rows
                     val kindsAt = calendarKindsAt(state, at)
                     rows.filter { calendarAddable(state, it, kindsAt, at, nowMillis) }
+                }
+                .let { rows ->
+                    // The "is on the calendar at" filter: the keys of what is there, read once.
+                    val at = filters.calendarAt ?: return@let rows
+                    val there = calendarElementsAt(state, at, timeZone, layerKindsAt)
+                    rows.filter { keyOf(it) in there }
                 }
                 // Stable: ties keep the kind order and each kind's own order.
                 .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
@@ -1800,6 +1832,69 @@ object SearchDomain {
             filters = Filters(calendarAddOn = true, calendarAddAtMillis = atMillis),
             calendarClickMillis = atMillis,
         )
+
+    /** The kinds of what can be on the calendar at an instant — what the calendar's "edit…" lists. */
+    val CALENDAR_AT_KINDS: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Reminder, Kind.Alarm, Kind.Timer)
+
+    /**
+     * How far from the right-click a mark with no length (a reminder tag, an alarm's ring, a timer's end) may be and
+     * still be "there": the calendar hit-tests those by the height they are DRAWN at, which no instant can say.
+     */
+    const val CALENDAR_MARK_TOLERANCE_MILLIS: Long = 15 * 60_000L
+
+    /**
+     * The Search window the calendar's "edit…" opens at [atMillis] (user rule 2026-10-01): what is on the timeline
+     * there, the filter on that instant, and the right-click remembered for the filter's button.
+     */
+    fun calendarAtConfig(atMillis: Long): Config =
+        Config(
+            kinds = CALENDAR_AT_KINDS,
+            filters = Filters(calendarAtOn = true, calendarAtMillis = atMillis),
+            calendarClickMillis = atMillis,
+        )
+
+    /**
+     * **The keys ([keyOf]) of what is on the calendar at [atMillis]**: a task one of whose placed boxes or records
+     * covers it; every kind of period covering it ([calendarKindsAt], what each carries included); a reminder with a tag,
+     * an armed alarm ringing (that weekday, that time of day) and a running timer ending, within
+     * [CALENDAR_MARK_TOLERANCE_MILLIS] of it.
+     */
+    fun calendarElementsAt(
+        state: SchedulerState,
+        atMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        /** The calendar's layer bands there ("no computer unlocked", "not on a phone"…): see [results]. */
+        layerKindsAt: (Long) -> Set<String> = { emptySet() },
+    ): Set<String> {
+        val out = HashSet<String>()
+        fun covers(start: Long, end: Long) = start <= atMillis && atMillis < end
+        fun near(instant: Long) = kotlin.math.abs(instant - atMillis) <= CALENDAR_MARK_TOLERANCE_MILLIS
+        for (panel in state.panels) {
+            if (panel.chore) {
+                if (near(panel.startEpochMillis)) {
+                    SchedulerDomain.reminderIdOfChorePanel(panel.id)?.let { out += Kind.Reminder.name + "/" + it }
+                }
+                continue
+            }
+            if (covers(panel.startEpochMillis, panel.endEpochMillis)) panel.taskId?.let { out += taskKey(it) }
+        }
+        for (task in state.tasks.values) {
+            if (task.record.any { covers(it.startEpochMillis, it.endEpochMillis) }) out += taskKey(task.id)
+        }
+        (calendarKindsAt(state, atMillis) + layerKindsAt(atMillis)).forEach { out += Kind.RestrictivePeriod.name + "/" + it }
+        val local = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(timeZone)
+        val minuteOfDay = local.hour * 60 + local.minute
+        val toleranceMinutes = (CALENDAR_MARK_TOLERANCE_MILLIS / 60_000L).toInt()
+        for (alarm in state.alarms) {
+            if (!alarm.enabled || (alarm.days.isNotEmpty() && local.dayOfWeek !in alarm.days)) continue
+            val distance = kotlin.math.abs(alarm.timeOfDayMinutes - minuteOfDay).let { minOf(it, 24 * 60 - it) }
+            if (distance <= toleranceMinutes) out += Kind.Alarm.name + "/" + alarm.id
+        }
+        for (timer in state.timers) {
+            if (timer.endsAtMillis?.let(::near) == true) out += Kind.Timer.name + "/" + timer.id
+        }
+        return out
+    }
 
     /**
      * Every kind of restrictive period covering [atMillis] on the calendar, with what each carries

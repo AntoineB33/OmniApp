@@ -213,6 +213,18 @@ enum class OmniPage(val label: String) {
  * [title] is what the window's head reads, for the one place that names a window while it is NOT open: the
  * Search window's "window" rows ([SearchDomain.WindowEntry]). An open window is named by its head itself.
  */
+/** The calendar's layer bands as last drawn ([kindsAt]: the kinds of those covering an instant). */
+private class CalendarLayersHolder {
+    var records: List<CalendarRecord> = emptyList()
+
+    fun kindsAt(atMillis: Long): Set<String> =
+        records
+            .filter { it.range.startEpochMillis <= atMillis && atMillis < it.range.endEpochMillis }
+            .mapNotNullTo(HashSet()) { record ->
+                record.layer?.let { if (record.layerFake) PeriodKinds.fakeLayerKind(it) else PeriodKinds.layerKind(it) }
+            }
+}
+
 /** The placement rows that are not a window's layout: they are recorded by what they hold, or not at all. */
 private val VIEW_ROWS: Set<String> =
     setOf(CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, "AppWindow")
@@ -450,6 +462,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §6 (user rule 2026-10-01): what `App` keeps — a window's layout, a Search window's configuration, the
         // menu's buttons — recorded as History Units ([SchedulerIntent.RecordExternal]) and put back when one is undone.
         val viewHistory = remember { ViewHistoryRecorder() }
+        // The calendar's layer bands as last drawn — the hatch read off the lock history, which is not in the state —
+        // for the Search window's "is on the calendar at" filter.
+        val calendarLayers = remember { CalendarLayersHolder() }
         // Keyed by the window's FRAME id: the lateral-menu window's name, or a copy's (`Search#2`).
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
@@ -1372,21 +1387,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowFrames.focus(id)
             historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
         }
-        // The calendar's "add…" at [atMillis]: the Search window a previous "add…" opened, moved to this right-click —
-        // its added elements and the rest of its configuration kept — or a new one ([SearchDomain.calendarAddConfig]).
-        fun openCalendarAddSearch(atMillis: Long) {
+        // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
+        // this right-click with the matching filter on and the other off — its added elements and the rest of its
+        // configuration kept, its types those the filter is about — or a new one ([SearchDomain.calendarAddConfig],
+        // [SearchDomain.calendarAtConfig]).
+        fun openCalendarSearch(atMillis: Long, add: Boolean) {
             val search = FloatingWindow.Search
             val open = listOfNotNull(search.name.takeIf { isWindowOpen(search) }) + windowCopies.filter { lateralWindowOf(it) == search }
             val existing = open.firstOrNull { searchConfigOf(it).calendarClickMillis != null }
+            val fresh = if (add) SearchDomain.calendarAddConfig(atMillis) else SearchDomain.calendarAtConfig(atMillis)
             if (existing == null) {
-                openNewWindow(search, SearchDomain.calendarAddConfig(atMillis).encode())
+                openNewWindow(search, fresh.encode())
                 return
             }
             val config = searchConfigOf(existing)
             setSearchConfig(
                 existing,
                 config.copy(
-                    filters = config.filters.copy(calendarAddOn = true, calendarAddAtMillis = atMillis),
+                    kinds = fresh.kinds,
+                    filters = config.filters.copy(
+                        calendarAddOn = add,
+                        calendarAddAtMillis = if (add) atMillis else config.filters.calendarAddAtMillis,
+                        calendarAtOn = !add,
+                        calendarAtMillis = if (add) config.filters.calendarAtMillis else atMillis,
+                    ),
                     calendarClickMillis = atMillis,
                 ),
             )
@@ -2380,6 +2404,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                 }
                 }
+            calendarLayers.records = layerRecords
             val calendarRecords = baseCalendarRecords + pastInactivityRecords + layerRecords +
                 displayAlarmOccurrences.map { occurrence ->
                     // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling
@@ -2999,23 +3024,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // User rule 2026-10-01: "add…" is the Search window of what can be added AT that instant (the
                             // calendar filter on, its position the right-click). One such window: a later right-click
                             // moves the one already open rather than opening another.
-                            onAddAt = { atMillis -> openCalendarAddSearch(atMillis) },
+                            onAddAt = { atMillis -> openCalendarSearch(atMillis, add = true) },
                             // PRD §8 "edit…" with two or more elements at the cursor: the SAME window,
                             // seeded with them and confined to them. Seeding is where `App` adds what only
                             // it holds — a panel's task resilience, an alarm's weekdays and ring length —
                             // so [calendarElementDrafts] stays a pure reading of what is drawn.
-                            onEditElementsAt = { atMillis, hits ->
-                                elementsWindows.open(
-                                    CalendarElementsDraftSet(
-                                        CalendarElementsMode.Edit,
-                                        atMillis,
-                                        seedCalendarElementDrafts(
-                                            calendarElementDrafts(hits),
-                                            schedulerState,
-                                        ),
-                                    ),
-                                )
-                            },
+                            // User rule 2026-10-01: "edit…" (and "edit [element]") is the Search window of what is on
+                            // the timeline at that instant — the same one window "add…" uses, its filter switched over.
+                            onEditElementsAt = { atMillis, _ -> openCalendarSearch(atMillis, add = false) },
                             // PRD §8 (uniform blocks): committing a drag/resize updates the panel
                             // (auto blocks become user-authored), or pins a record into a panel. The gesture
                             // itself sets the EXISTENCE pin ([SchedulerDomain.pinsAfterHandPlacement]): the
@@ -3753,6 +3769,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
                             actionHandlers = addedActionHandlers,
+                            calendarLayerKindsAt = calendarLayers::kindsAt,
                             // What this window commits is its own, even when it lands after the press that left it
                             // (a row's rename is committed on blur, once the focus has already moved).
                             onIntent = {

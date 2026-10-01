@@ -209,6 +209,8 @@ fun SearchWindow(
     onDeepCopyCell: (CellId) -> Unit,
     /** What the actions on the added elements open or draw ([AddedActionHandlers]): `App`'s, shared with the window of them all. */
     actionHandlers: AddedActionHandlers,
+    /** The calendar's layer bands' kinds at an instant, for the "is on the calendar at" filter (`App` draws them). */
+    calendarLayerKindsAt: (Long) -> Set<String> = { emptySet() },
     /**
      * The tree's own intents — the cell menu's entries that act on a cell, a row's minimum time and categories,
      * [SchedulerIntent.RenameTask] from a row's Edit Mode, and an expanded row's sub-tree
@@ -282,7 +284,9 @@ fun SearchWindow(
             state.panels, state.alarms, state.timers, state.chronos, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
-            SearchDomain.results(state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis())
+            SearchDomain.results(
+                state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
+            )
         }
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer

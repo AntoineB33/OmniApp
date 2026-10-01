@@ -648,6 +648,19 @@ Global rules that always apply: `CLAUDE.md`.
   on the clock to END there (`calendarTimerIntents`: reset, time left = instant − now, started; one `SetTimers`).
   "New alarm here" makes a new alarm. ONE such window: a later "add…" moves it to the
   new right-click, keeping what it holds.
+- **"edit…" (and "edit [element]") OPEN THE SEARCH WINDOW OF WHAT IS AT THE RIGHT-CLICK** (user rule 2026-10-01;
+  `App.openCalendarSearch(add = false)`, `SearchDomain.calendarAtConfig`): the GLOBAL filter "Is on the calendar at"
+  (`Setting.CalendarAt` — a switch, a position, "Set to the right-click") keeps the keys `SearchDomain.calendarElementsAt`
+  gives: a task one of whose boxes or records covers the instant, every kind of period covering it (with what each
+  carries), and — the marks with no length, which the calendar hit-tests by their drawn height — a reminder's tag, an
+  armed alarm's ring and a running timer's end within `CALENDAR_MARK_TOLERANCE_MILLIS` (15 min). "add…" and "edit…"
+  share ONE such window: each right-click moves it, its filter switched to the entry's. **"edit…" or "edit [element]" is
+  decided by the THINGS at the cursor** (`calendarThingsAt`, anomaly 2026-10-01): a task (however many boxes), a kind of
+  period, a reminder, an alarm, a timer — **the LAYER bands included**, which are in no hit list (drawn across the
+  column, they displace nothing), so a task over "no phone unlocked" is two things and reads "edit…". The Search filter
+  sees the same bands: `App` keeps the last drawn `layerRecords` (`CalendarLayersHolder`) and hands their kinds in
+  (`SearchDomain.results(layerKindsAt)`). A double-click on a block still
+  opens that block's own editor. The element window below is opened by neither entry any more.
 - **THE ONE ADD/EDIT WINDOW: "add…" AND "edit…" OPEN THE SAME THING** (`CalendarElementsWindow`,
   `CalendarElements`, `CalendarElementsTest`) — a **set** of elements and their configuration grouped by who
   shares it, rather than a router to one editor at a time. The window it replaced asked *what do you want to

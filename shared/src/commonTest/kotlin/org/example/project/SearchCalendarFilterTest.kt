@@ -127,4 +127,45 @@ class SearchCalendarFilterTest {
         assertEquals(CalendarElements.Kind.Alarm, newAlarm.kind)
         assertEquals(at + s.newAlarmDefaults.soundSeconds * 1000L, newAlarm.endMillis)
     }
+
+    // ----- The calendar's "edit…" (user rule 2026-10-01) -------------------------------------------------
+
+    @Test
+    fun the_is_at_filter_keeps_only_what_is_on_the_timeline_there() {
+        val tz = kotlinx.datetime.TimeZone.UTC
+        var s = account()
+        val read = taskWithTitle(s, "Read")
+        val local = kotlin.time.Instant.fromEpochMilliseconds(at).toLocalDateTime(tz)
+        s = s.copy(
+            panels = s.panels +
+                TaskPanel("panel/read", read, "Read", at - hour, at + hour) +
+                TaskPanel("chore/reminder-0/d1", null, "Water", at + 5 * 60_000L, at + 5 * 60_000L, chore = true),
+            alarms = listOf(
+                org.example.project.scheduler.model.AlarmEntry(id = "alarm-0", label = "Wake", timeOfDayMinutes = local.hour * 60 + local.minute + 10),
+                org.example.project.scheduler.model.AlarmEntry(id = "alarm-1", label = "Late", timeOfDayMinutes = (local.hour * 60 + local.minute + 120) % 1440),
+            ),
+            timers = listOf(org.example.project.scheduler.model.TimerEntry(id = "timer-0", label = "Tea", endsAtMillis = at - 60_000L)),
+        )
+        val there = SearchDomain.calendarElementsAt(s, at, tz)
+        assertEquals(
+            setOf(
+                "Task/" + read.value, "RestrictivePeriod/deep work", "Reminder/reminder-0", "Alarm/alarm-0", "Timer/timer-0",
+            ),
+            there.filterNot { it.startsWith("RestrictivePeriod/") && it != "RestrictivePeriod/deep work" }.toSet(),
+            "the task's box, the period, the tag, the ring and the timer's end there — not Walk, not the alarm two hours on",
+        )
+        val config = SearchDomain.calendarAtConfig(at)
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        assertTrue(config.filters.isOn(SearchDomain.Setting.CalendarAt))
+        val shown = SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = config.filters, timeZone = tz).map(SearchDomain::keyOf)
+        assertTrue("Task/" + read.value in shown && "Task/" + taskWithTitle(s, "Walk").value !in shown)
+        assertTrue("Alarm/alarm-0" in shown && "Alarm/alarm-1" !in shown)
+        // A layer band (read off the lock history, not in the state) is there too, as its kind.
+        val withLayer = SearchDomain.calendarElementsAt(s, at, tz) { instant -> if (instant == at) setOf(PeriodKinds.NO_PHONE_UNLOCKED) else emptySet() }
+        assertTrue("RestrictivePeriod/" + PeriodKinds.NO_PHONE_UNLOCKED in withLayer)
+        // Off: everything again.
+        val off = config.filters.copy(calendarAtOn = false)
+        assertTrue("Alarm/alarm-1" in SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = off, timeZone = tz).map(SearchDomain::keyOf))
+        assertFalse(SearchDomain.Config.decode("""{"kinds":["Task"]}""")!!.filters.calendarAtOn)
+    }
 }

@@ -396,4 +396,27 @@ class CalendarEditChoicesTest {
             segments.map(::periodSegmentOutline),
         )
     }
+
+    @Test
+    fun a_task_over_a_layer_band_is_two_things_so_the_menu_says_edit_with_dots() {
+        // Anomaly 2026-10-01: a right-click on a task inside a "no phone unlocked" band offered "edit task panel" — the
+        // layer band is in no hit list, so the count saw one thing.
+        val panel = PlacedRecord("Read", 9f, 10f, scheduled = true, entryId = "panel/1", taskId = TaskId("task/1"))
+        val band = PlacedRecord(
+            "No phone unlocked", 8f, 12f, scheduled = false,
+            layer = SchedulerDomain.ActivityLayer.NoPhoneUnlocked,
+        )
+        assertEquals(setOf("Task/task/1"), org.example.project.ui.calendarThingsAt(listOf(panel), emptyList()))
+        assertEquals(
+            setOf("Task/task/1", "RestrictivePeriod/" + PeriodKinds.NO_PHONE_UNLOCKED),
+            org.example.project.ui.calendarThingsAt(listOf(panel), listOf(band)),
+        )
+        // A fake band is its fake kind; two boxes of one task are one thing.
+        val fake = band.copy(layer = SchedulerDomain.ActivityLayer.NoComputerUnlocked, layerFake = true)
+        val second = panel.copy(entryId = "panel/2")
+        assertEquals(
+            setOf("Task/task/1", "RestrictivePeriod/" + PeriodKinds.NOT_ON_A_COMPUTER),
+            org.example.project.ui.calendarThingsAt(listOf(panel, second), listOf(fake)),
+        )
+    }
 }

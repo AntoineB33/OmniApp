@@ -973,6 +973,32 @@ fun calendarElementDrafts(hits: List<PlacedRecord>): List<CalendarElements.Draft
     }
 
 /**
+ * PRD §8 (user rule 2026-10-01): **the distinct THINGS at the cursor** — what the Search window the calendar's "edit…"
+ * opens lists there, so the menu says "edit…" exactly when that is more than one: a task (however many of its boxes),
+ * a kind of period — a drawn one or a LAYER band ([layerHits], the hatch read off the lock history, which is in no
+ * other hit list), a reminder, an alarm, a timer. Keyed as `SearchDomain.keyOf` keys them.
+ */
+fun calendarThingsAt(hits: List<PlacedRecord>, layerHits: List<PlacedRecord>): Set<String> =
+    buildSet {
+        for (hit in hits) {
+            when {
+                isTaskPanelRecord(hit) -> add(hit.taskId?.let { "Task/" + it.value } ?: ("Panel/" + hit.entryId))
+                isRestrictivePeriodRecord(hit) -> add("RestrictivePeriod/" + hit.restrictiveKind)
+                hit.reminder -> add("Reminder/" + (reminderIdOfPanel(hit.entryId).ifBlank { hit.entryId.orEmpty() }))
+                hit.alarm && hit.timer -> add("Timer/" + hit.entryId)
+                hit.alarm -> add("Alarm/" + hit.entryId)
+            }
+        }
+        for (band in layerHits) add("RestrictivePeriod/" + layerKindOf(band))
+    }
+
+/** The kind of period a layer band is: its layer's own, or its FAKE one ("not on a …"). */
+private fun layerKindOf(band: PlacedRecord): String {
+    val layer = band.layer ?: return ""
+    return if (band.layerFake) PeriodKinds.fakeLayerKind(layer) else PeriodKinds.layerKind(layer)
+}
+
+/**
  * PRD §14: **the reminder a manual tag's panel id names** — `chore-manual/{reminderId}/{n}` read back. Blank
  * for anything else (a generated tag, a null id), which is the same answer a blank field gives: mint a fresh
  * reminder on Save.
@@ -5342,15 +5368,27 @@ private fun DayColumn(
                 // more open the one window that holds them all, where they are configured together —
                 // which is the thing a chooser could never do: a chooser picks ONE of the truths at a
                 // point, and the reason there are several is that they were placed as a set.
-                val elements = remember(hits) { calendarElementDrafts(hits) }
-                when (elements.size) {
+                // User rule 2026-10-01: what "edit…" is about is what the Search window it opens lists here — every
+                // distinct thing at the cursor, the LAYER bands included (they are in no hit list: drawn across the
+                // column, they displace nothing), so a task over "no phone unlocked" is two things, not one.
+                val layerHits = remember(hits, anchor) {
+                    anchor?.let { a -> layerBands.filter { pressSpans(it, a.y, currentHourHeightPx) } }.orEmpty()
+                }
+                val things = remember(hits, layerHits) { calendarThingsAt(hits, layerHits) }
+                when (things.size) {
                     0 -> Unit
-                    1 -> choices.firstOrNull { it.label != EDIT_LABEL_TASK }?.let { single ->
-                        DropdownMenuItem(
-                            text = { Text("edit ${single.label}") },
-                            onClick = { pickChoice(single) },
-                        )
-                    }
+                    // "edit [element]" opens the Search window of what is here, as "edit…" does.
+                    1 ->
+                        (choices.firstOrNull { it.label != EDIT_LABEL_TASK }?.label ?: layerHits.firstOrNull()?.let { PeriodKinds.periodTitle(layerKindOf(it)) })
+                            ?.let { label ->
+                                DropdownMenuItem(
+                                    text = { Text("edit $label") },
+                                    onClick = {
+                                        anchor?.let { onEditElementsAt(millisAt(it.y), hits) }
+                                        closeMenu()
+                                    },
+                                )
+                            }
                     else -> DropdownMenuItem(
                         text = { Text("edit…") },
                         onClick = {

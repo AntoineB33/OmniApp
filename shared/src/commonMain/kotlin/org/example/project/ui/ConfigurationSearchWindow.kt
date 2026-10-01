@@ -241,6 +241,20 @@ private fun SettingEditor(
                     }
                 }
             }
+        // The calendar's "edit…": the same three controls, about what IS there.
+        SearchDomain.Setting.CalendarAt ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(
+                    checked = f.calendarAtOn,
+                    onCheckedChange = { filters(f.copy(calendarAtOn = it)) },
+                )
+                CalendarInstantField(f.calendarAtMillis) { filters(f.copy(calendarAtMillis = it)) }
+                config.calendarClickMillis?.let { click ->
+                    FrameButton("Set to the right-click", enabled = f.calendarAtMillis != click) {
+                        filters(f.copy(calendarAtMillis = click))
+                    }
+                }
+            }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
         SearchDomain.Setting.TaskSchedulable ->

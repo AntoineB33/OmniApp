@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar "edit…": a layer band counts — 2026-10-01
+
+User anomaly: *"I right-clicked in the calendar where there is a task and a 'no phone unlocked' period, and I didn't get
+the 'edit...' option, as if there was only one element to edit."* The menu counted the element window's drafts, which
+leave out the layer bands (and those are in no hit list). Now `calendarThingsAt(hits, layerHits)` counts the distinct
+things there, layer bands included; the Search filter gets the same bands (`CalendarLayersHolder`,
+`SearchDomain.results(layerKindsAt)`). Tests: `CalendarEditChoicesTest`, `SearchCalendarFilterTest`.
+
+### Calendar "edit…" → the Search window's "Is on the calendar at" filter — 2026-10-01
+
+User request: *"When right-clicking on the calendar, the edit... option (or edit [element] if there is only one element
+where the right-click is) opens a Search window filtered to only what is where the right-click is in the timeline."*
+`Filters.calendarAtOn` / `calendarAtMillis` (new, defaulted), `Setting.CalendarAt`, `SearchDomain.calendarElementsAt`
+(marks with no length within 15 min), `calendarAtConfig`; `App.openCalendarSearch` serves both entries with one window.
+`CalendarElementsWindow` is no longer opened from the menu (still in the code). Tests: `SearchCalendarFilterTest`.
+
 ### Calendar "add…": alarms and timers too — 2026-10-01
 
 User request: *"In the calendar, the add... option from the right-click menu filters also for alarms and timers."* The
