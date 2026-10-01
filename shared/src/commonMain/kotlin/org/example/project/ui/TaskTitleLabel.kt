@@ -19,9 +19,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
  * word and one colour on every surface that mentions it (ADR 0013).
  *
  * The colour is a **background**, never the text colour, and that is the whole reason the rule can be
- * universal. The foreground stays free for what a particular surface has to say about the row — PRD §7's
- * task picker writes a task the now-line's periods forbid in red and one they merely scale in orange — so
- * "which task is this" and "what is true of it here" are two channels that never compete for one.
+ * universal. The name on it is written in the colour of highest WCAG contrast with it (user rule 2026-10-01,
+ * [TaskPalette.foreground]); what a surface has to say about the row besides — PRD §7's task picker marks a
+ * task the now-line's periods forbid in red — is said beside the name, never in its letters.
  *
  * ### The one thing a caller configures
  *
@@ -64,7 +64,9 @@ internal fun TaskTitleLabel(
         modifier = modifier.taskTitleTint(taskColor),
         text = label,
         style = style,
-        color = textColor,
+        // User rule 2026-10-01: on a task's colour, the name is written in the colour of highest contrast with it
+        // (black or white, [TaskPalette.foreground]) — a caller's colour only where there is no task colour.
+        color = taskColor?.let(TaskPalette::foreground) ?: textColor,
         maxLines = maxLines,
         overflow = overflow,
         softWrap = softWrap,

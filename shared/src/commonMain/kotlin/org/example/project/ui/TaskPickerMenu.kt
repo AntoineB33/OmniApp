@@ -267,6 +267,11 @@ private fun TaskPickerRow(
             textColor = color ?: MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
+        // The name on its task colour is written for contrast (2026-10-01), so what the periods make of the task is
+        // said beside it: a mark in red (refused) or orange (scaled), on the row's own surface.
+        if (color != null && taskColor != null) {
+            Text(text = "●", style = MaterialTheme.typography.labelSmall, color = color)
+        }
         Text(
             text = ago,
             style = MaterialTheme.typography.labelSmall,

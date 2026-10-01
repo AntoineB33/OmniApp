@@ -173,6 +173,8 @@ internal fun TaskSheetExpandArrow(
     hasChildren: Boolean,
     expanded: Boolean,
     onToggle: () -> Unit,
+    /** The arrow's colour: the sheet's, or — on a task's colour — the colour of highest contrast with it. */
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     Box(
         modifier = Modifier
@@ -194,7 +196,7 @@ internal fun TaskSheetExpandArrow(
             Text(
                 text = if (expanded) "▾" else "▸",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = color,
             )
         }
     }

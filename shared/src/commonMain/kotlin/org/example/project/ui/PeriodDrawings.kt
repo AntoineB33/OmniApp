@@ -53,6 +53,13 @@ internal fun Modifier.periodDrawing(drawing: PeriodDrawing, color: Color): Modif
         onDrawBehind { drawRect(brush) }
     }
 
+/**
+ * The repeated tile of [drawing] in [color] as it is (no alpha of its own) — what a task panel redraws a marking
+ * crossing it with, in the colour of highest contrast with the panel (user rule 2026-10-01).
+ */
+internal fun periodDrawingBrush(drawing: PeriodDrawing, color: Color, density: Density): ShaderBrush =
+    ShaderBrush(ImageShader(periodDrawingTile(drawing, color, density), TileMode.Repeated, TileMode.Repeated))
+
 /** [periodDrawing] for every drawing in [drawings], in order. */
 internal fun Modifier.periodDrawings(drawings: List<PeriodDrawing>, color: Color): Modifier =
     drawings.fold(this) { acc, drawing -> acc.periodDrawing(drawing, color) }

@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task colours: every task, placed in the cube — 2026-10-01
+
+User correction: *"Make sure that only at more than 256*256*256 tasks there will be tasks with the same background
+color. Not just schedulable tasks. In the color space (a cube), the program first places the schedulable tasks as far
+away from each other as possible in the cube, then the not schedulable tasks. Another optimization (that never
+prevails on the first one) is that the more two tasks are close in the task tree, the more they are close in the
+cube."* `TaskColorCube` (new): the tasks to schedule on the widest `k³` lattice holding them, along a neighbour-to-
+neighbour path in tree order; the others at its cell centres near their sub-tree; the rest at the nearest free colour
+of the whole cube. `TaskColorSpace.TaskHue.leaf` (new, defaulted). `TaskPalette` colours all tasks together. Tests:
+`TaskColorCubeTest`.
+
+### Task colours: one per task to schedule up to 256³, and WCAG contrast on them — 2026-10-01
+
+User request: *"Make sure that only at more than 256*256*256 tasks to schedule there will be tasks with the same
+background color. Elements that appear above this background color … must use the right color to maximize
+readability … the color contrast ratio … (WCAG). If those elements continue outside of the background color (e.g.,
+dotted horizontal lines), this color is only applied to where it overlaps with it."*
+
+- `TaskColorCurve` (new): the circle position → a 3-D Hilbert curve of order 8 through all 256³ sRGB colours;
+  WCAG relative luminance / contrast ratio / `bestForeground` (black or white).
+- `TaskPalette`: one opaque colour (`color`; `sheet` = `accent`), no depth lightness, `foreground`.
+- Tree row, name chips, menu rows: text and marks in the contrast colour. Task picker: the restriction colour moved
+  to a mark beside the name.
+- Calendar: task panels opaque; the period / sleep / layer markings drawn under them; `PanelDecor` redraws markings,
+  outlines, hour and graduation lines over each panel in its contrast colour, aligned.
+- Tests: `TaskColorCurveTest`.
+
 ### Calendar "edit…": a layer band counts — 2026-10-01
 
 User anomaly: *"I right-clicked in the calendar where there is a task and a 'no phone unlocked' period, and I didn't get

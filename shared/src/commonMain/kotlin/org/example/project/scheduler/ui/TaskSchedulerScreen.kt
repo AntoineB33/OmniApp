@@ -2792,7 +2792,10 @@ internal fun TaskRow(
     // three drawings of the tree render through this composable and none of them may answer it separately.
     val outline = taskCellOutline(isEditing, isMainSelection, isInSelectionRange)
     val cellBorder = Modifier.border(outline.borderWidth, outline.borderColor)
-    val textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface)
+    // User rule 2026-10-01: on the task's colour, everything the row draws — its title, its percentage, its arrows —
+    // takes the colour of highest WCAG contrast with it ([TaskPalette.foreground]); off it, the sheet's own colours.
+    val onTaskColor = taskColor?.takeIf { cellBackground == it }?.let(org.example.project.ui.TaskPalette::foreground)
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(color = onTaskColor ?: MaterialTheme.colorScheme.onSurface)
 
     val currentCanMoveFromCell by rememberUpdatedState(canMoveFromCell)
 
@@ -2991,6 +2994,7 @@ internal fun TaskRow(
                     hasChildren = hasChildren,
                     expanded = expanded,
                     onToggle = onToggleExpand,
+                    color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (compact) {
@@ -3123,7 +3127,7 @@ internal fun TaskRow(
                             onTextChange(newValue.text)
                         },
                         textStyle = textStyle,
-                        cursorBrush = SolidColor(SheetColors.activeBorder),
+                        cursorBrush = SolidColor(onTaskColor ?: SheetColors.activeBorder),
                         decorationBox = { innerTextField ->
                             Box(
                                 modifier = Modifier.fillMaxWidth(),
@@ -3140,7 +3144,7 @@ internal fun TaskRow(
                                     .background(cellBackground),
                                 text = "▸",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = SheetColors.overflowArrow,
+                                color = onTaskColor ?: SheetColors.overflowArrow,
                             )
                         }
                     }
@@ -3178,7 +3182,7 @@ internal fun TaskRow(
                                     .background(cellBackground),
                                 text = "▸",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = SheetColors.overflowArrow,
+                                color = onTaskColor ?: SheetColors.overflowArrow,
                             )
                         }
                     }
@@ -3218,7 +3222,7 @@ internal fun TaskRow(
                         Text(
                             text = priorityLabel,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         // Same rule as the row's own menu: dismissed by the app-root observer, so the
                         // press that closes it still selects whatever it landed on.

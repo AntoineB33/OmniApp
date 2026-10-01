@@ -398,6 +398,28 @@ debounce, and `TaskPalette` is the only place a hue becomes something to paint w
 the calendar's panel read the **same** hue for a task — a second derivation is how the two surfaces start
 disagreeing about what colour a task is.
 
+- **EVERY TASK HAS ITS OWN COLOUR UNTIL THERE ARE MORE THAN 256³ TASKS** (user rule 2026-10-01, corrected the same
+  day from "tasks to schedule" to every task), **placed in the sRGB CUBE** (`TaskColorCube.colors`, from where
+  `TaskColorSpace` put each task — the order and the previous-answer stability stay its):
+  1. the **tasks to schedule** (the ring, `TaskHue.leaf`) **first, as far apart as the cube allows**: a `k³` lattice
+     spanning the cube, `k` the least with `k³ ≥` their number (step `255/(k−1)`), laid along a path that steps to a
+     neighbour every time (`snakeAxes`) in the circle's order — so **tree neighbours are lattice neighbours**, a
+     secondary rule paid for with the order alone, never with the spacing;
+  2. **then the others**, at the lattice's CELL CENTRES (the points furthest from every lattice point), each at the
+     free centre nearest its own place on the circle — among its sub-tree's colours;
+  3. **anything left**, at the free colour nearest its place along the curve through all `256³` colours
+     (`TaskColorCurve`, a 3-D Hilbert curve). Every colour is checked against those given out, so no two tasks share
+     one while there are at most `256³`.
+
+  There is ONE reading — the colour itself, OPAQUE (`TaskPalette.sheetColors` = `accentColors`): a pale tint, a 30 %
+  wash or a lightness step per depth each crushed the cube into a corner and merged colours. `TaskColorCubeTest` and
+  `TaskColorCurveTest` hold it.
+- **What is drawn ON a task's colour takes the colour of highest WCAG contrast with it**
+  (`TaskPalette.foreground`, `TaskColorCurve.bestForeground`: black or white — the ratio is monotone in the
+  foreground's luminance, so one extreme is always the maximum; the worst background still reads ≥ 4.58:1). In the
+  tree: the title, the percentage, the arrows, the edit caret (`TaskRow`'s `onTaskColor`); a name chip and a menu
+  row (`TaskTitleLabel`, `EditMenuRow`). A surface's own remark about a task (the picker's red / orange) is said
+  BESIDE the name, never in its letters. On the calendar see `calendar.md` § *A task panel is opaque*.
 - **The tasks with an empty sub-tree own the circle, spread as far apart as they can be.** `n` of them take
   the `n` hues `i/n` — the arrangement maximising the smallest distance between any two. They are the many,
   and they are what the calendar shows.
@@ -429,8 +451,8 @@ disagreeing about what colour a task is.
   as the cycle guard.
 - **Only populated cells take part** — an empty placeholder takes no colour and no room on the circle.
 - **The depth is no longer what tells two tasks apart** — the placement is, and a parent is kept off every hue
-  its own sub-tree holds. `TaskHue` still carries it and the palette still spends it on lightness, because a
-  parent and the leaf it was placed beside are *neighbouring* hues by design. Do not go back to averaging an
+  its own sub-tree holds. `TaskHue` still carries it, but the palette no longer spends it on lightness (since
+  2026-10-01): a darker parent could land on another task's exact colour. Do not go back to averaging an
   arc (that made `Book` and `Draft` the identical hue), and do not "fix" a collision by perturbing a hue.
 - **WHEREVER A TASK IS NAMED, IT IS NAMED THE SAME WAY** — the string from
   `SchedulerDomain.taskTitleLabel`, the tint from `TaskPalette` (`ui/TaskTitleLabel.kt`). There is no surface
@@ -441,10 +463,8 @@ disagreeing about what colour a task is.
     universal. The foreground stays free for what a surface has to say about the row *here* — PRD §7's task
     picker writes a task the now-line forbids in red and one it merely scales in orange — so "which task is
     this" and "what is true of it here" never compete for one channel.
-  - **The one thing a caller configures is WHICH READING of the hue**, and it follows the surface's own
-    background and nothing else: `TaskPalette.sheet` on a light surface (the tree, the menus, the windows),
-    `TaskPalette.accent` on a dark one (the calendar's hover bubble is drawn on `inverseSurface`, where a
-    sheet tint is invisible). A third reading is a third answer to what colour a task is.
+  - **There is one reading of the colour** (2026-10-01): opaque, the same on every surface, light or dark —
+    the name on it carries its own contrast. `sheet` / `accent` remain as names of that one colour.
   - **Two drawings, one rule**: the **block** form tints the whole row, because the row *is* the task — the
     tree's `TaskRow`, an `EditMenuItem` row. The **chip** form (`TaskTitleLabel`) tints a name sitting among
     other things — a bubble, a list row, the two ends of a task-relations pair. A third drawing that leaves a

@@ -648,6 +648,15 @@ Global rules that always apply: `CLAUDE.md`.
   on the clock to END there (`calendarTimerIntents`: reset, time left = instant − now, started; one `SetTimers`).
   "New alarm here" makes a new alarm. ONE such window: a later "add…" moves it to the
   new right-click, keeping what it holds.
+- **A task panel is opaque, in its task's colour, and redraws what crosses it for contrast** (user rule 2026-10-01;
+  `CalendarBlockBody(opaque)`, `PanelDecor`). The 30 % wash is gone for a task panel (it merged the colours
+  `TaskColorCurve` keeps apart); the title and the plain border take `TaskPalette.foreground`. The column's
+  decorations that run across it — the period markings and outlines, the sleep bands', the layer hatches, the hour and
+  graduation lines — are drawn UNDER the panels (`zIndex(-1f)`) in their own colour, and each panel redraws the parts
+  that cross it in the contrast colour, its tiles aligned on the column so a line crossing the panel's edge does not
+  break. A block with no task colour (a period-only no-screen / inactivity block, an orphan panel) keeps the wash, the
+  markings showing through. Not redrawn: the day boundaries and the now-line / alarm / reminder markers, which stay
+  above everything.
 - **"edit…" (and "edit [element]") OPEN THE SEARCH WINDOW OF WHAT IS AT THE RIGHT-CLICK** (user rule 2026-10-01;
   `App.openCalendarSearch(add = false)`, `SearchDomain.calendarAtConfig`): the GLOBAL filter "Is on the calendar at"
   (`Setting.CalendarAt` — a switch, a position, "Set to the right-click") keeps the keys `SearchDomain.calendarElementsAt`

@@ -57,7 +57,15 @@ object TaskColorSpace {
      * are, by design, neighbouring hues. The palette spends it on lightness alone, leaving the hue partition
      * untouched.
      */
-    data class TaskHue(val hue: Double, val depth: Int)
+    data class TaskHue(
+        val hue: Double,
+        val depth: Int,
+        /**
+         * One of the ring — a task with an empty sub-tree, a task to schedule — placed first and furthest apart in
+         * the colour cube ([TaskColorCube]); the others are placed after them.
+         */
+        val leaf: Boolean = false,
+    )
 
     /**
      * Where every task the tree colours sits in the colour space.
@@ -87,7 +95,7 @@ object TaskColorSpace {
         val placed = ArrayList<Double>(tree.order.size)
         for ((i, taskId) in ring.withIndex()) {
             val hue = wrap(offset + i.toDouble() / n)
-            hues[taskId] = TaskHue(hue, tree.depth.getValue(taskId))
+            hues[taskId] = TaskHue(hue, tree.depth.getValue(taskId), leaf = true)
             placed.add(hue)
         }
         placed.sort()

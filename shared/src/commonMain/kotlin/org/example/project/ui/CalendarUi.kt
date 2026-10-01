@@ -81,6 +81,9 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
@@ -5483,6 +5486,31 @@ private fun DayColumn(
         // recomputing it is work bought and thrown away. The key is the block list, which is exactly the
         // input [overlapLayout] reads, so a cached answer can never be a stale one.
         val layout = remember(effRecords) { overlapLayout(effRecords) }
+        // User rule 2026-10-01: what of this column crosses a task panel, which the panel redraws over itself in the
+        // colour of highest contrast with its task's ([PanelDecor]) — the same markings, outlines and lines the
+        // column draws under the panels below. Held on what it reads, so a keystroke elsewhere costs nothing.
+        val panelDecor = remember(sleepBands, drawnPeriods, layerBands, periodKindConfig, tickMinutes) {
+            val sleepDrawingsForPanels = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
+            PanelDecor(
+                bands =
+                    sleepBands.mapNotNull { band ->
+                        outlineColor(band.outline)?.let { PanelDecorBand(band.startHour, band.endHour, sleepDrawingsForPanels, outlined = true) }
+                    } +
+                        drawnPeriods.map { segment ->
+                            PanelDecorBand(
+                                segment.startHour,
+                                segment.endHour,
+                                segment.records.flatMap { periodKindConfig.boxDrawings(it.restrictiveKind) }.distinct(),
+                                outlined = outlineColor(periodSegmentOutline(segment)) != null,
+                            )
+                        } +
+                        layerBands.map { band ->
+                            val kind = if (band.layerFake) PeriodKinds.fakeLayerKind(band.layer!!) else PeriodKinds.layerKind(band.layer!!)
+                            PanelDecorBand(band.startHour, band.endHour, listOf(periodKindConfig.drawing(kind)), outlined = false)
+                        },
+                tickMinutes = tickMinutes,
+            )
+        }
         effRecords.forEach { record ->
             val key = calendarBlockKey(record)
             // Culled AFTER [overlapLayout] has seen the whole day: a block's width comes from what it
@@ -5517,6 +5545,7 @@ private fun DayColumn(
                 record = record,
                 slices = recordSlices,
                 hourHeight = hourHeight,
+                decor = panelDecor,
                 // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
                 taskColor = record.taskId?.let { taskColors[it] },
@@ -5708,6 +5737,8 @@ private fun DayColumn(
         // Purely decorative: this registers no pointer input — its bubble section comes from
         // [contextOverlays], carried either by the block on top or by the column-wide pickup below.
         val sleepDrawings = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
+        // Drawn UNDER the task panels (user rule 2026-10-01): a panel is opaque now, and redraws whatever of these
+        // crosses it in the colour of highest contrast with it ([PanelDecor]).
         sleepBands.forEach { band ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
             val bandOutline = outlineColor(band.outline) ?: return@forEach
@@ -5718,6 +5749,7 @@ private fun DayColumn(
                         hourHeight, band.startHour, band.endHour,
                         followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
                     )
+                    .zIndex(-1f)
                     .clipToBounds()
                     .periodDrawings(sleepDrawings, CalColors.muted)
                     .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
@@ -5768,6 +5800,8 @@ private fun DayColumn(
                         hourHeight, band.startHour, band.endHour,
                         followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
                     )
+                    // Under the task panels, which redraw it over themselves ([PanelDecor]).
+                    .zIndex(-1f)
                     .clipToBounds()
                     .periodDrawing(
                         periodKindConfig.drawing(
@@ -6982,6 +7016,8 @@ private fun CalendarBlock(
     /** ADR 0009: whether an hour this block is cut at follows the now-line — see [timelineSpan]. */
     followsLine: (Float) -> Boolean = { false },
     lineDriftHours: () -> Double = { 0.0 },
+    /** What of the column crosses this block, redrawn over it for contrast ([PanelDecor]); null = nothing. */
+    decor: PanelDecor? = null,
 ) {
     val key = calendarBlockKey(record)
     // Read inside the long-lived gesture closure so a mid-drag `O` toggle is picked up immediately.
@@ -7174,14 +7210,28 @@ private fun CalendarBlock(
                 // hover handlers, because a parent hover Move would overwrite a child's report.
                 Box(Modifier.fillMaxSize()) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
+                    // A task's own colour is the panel's opaque background, and what is drawn on it takes the colour
+                    // of highest contrast with it (user rule 2026-10-01); a block with no task colour keeps the
+                    // old 30 % wash, which the markings under it show through.
+                    val onTask = taskColor != null && !record.noScreen && !record.inactivity
                     CalendarBlockBody(
                         color,
                         record.title,
                         showTitle = isFirst && titleVisible,
                         titleTopInset = titleTopInset,
-                        titleColor = taskColor ?: CalColors.event,
+                        titleColor = if (onTask) TaskPalette.foreground(color) else taskColor ?: CalColors.event,
                         outline = record.outline,
                         provisional = record.provisional,
+                        opaque = onTask,
+                        decor = decor?.takeIf { onTask }?.let {
+                            PanelDecorPlacement(
+                                decor = it,
+                                originXPx = with(density) { (colWidth * slice.xFraction).toPx() + 1.dp.toPx() },
+                                topHour = slice.topHour,
+                                hourHeightPx = hourHeightPx,
+                                columnWidthPx = with(density) { colWidth.toPx() },
+                            )
+                        },
                     )
                     // The block's own section, one overlay per device-set segment, then re-tiled together
                     // with the grey periods and layers covering it so each tile reports one whole stack —
@@ -7321,6 +7371,8 @@ private fun PeriodSegmentMarking(
                     )
                 },
             )
+            // Under the task panels, which redraw it over themselves ([PanelDecor]).
+            .zIndex(-1f)
             .clipToBounds()
             .periodDrawings(drawings, CalColors.muted)
             .then(
@@ -7513,17 +7565,26 @@ private fun CalendarBlockBody(
      * is planned around here, and refuses to say where it starts and ends until the front has reached it.
      */
     provisional: Boolean = false,
+    /**
+     * User rule 2026-10-01: the block is painted in its task's colour, OPAQUE — the colour every task is told apart
+     * by ([TaskPalette]) — rather than a 30 % wash of it, which blends colours into each other.
+     */
+    opaque: Boolean = false,
+    /** What of the column crosses this block, redrawn over it in the colour of highest contrast ([PanelDecor]). */
+    decor: PanelDecorPlacement? = null,
 ) {
     val shape = RoundedCornerShape(3.dp)
+    val onColor = if (opaque) TaskPalette.foreground(color) else null
     // Every block this draws is a TASK PANEL — it occupies the timeline, so it is tinted. A restrictive period
     // does not and is not: it never reaches this composable at all, being drawn by [PeriodSegmentMarking] as a
     // full-width box with a marking, an outline and no fill.
     val paint = Modifier
         .clip(shape)
-        .background(color.copy(alpha = 0.30f))
+        .background(if (opaque) color else color.copy(alpha = 0.30f))
+        .then(if (decor != null && onColor != null) Modifier.panelDecor(decor, onColor) else Modifier)
         .border(
             if (outline == SchedulerDomain.PanelOutline.None) 1.dp else USER_PLACED_BORDER_DP,
-            outlineColor(outline) ?: color,
+            outlineColor(outline) ?: onColor ?: color,
             shape,
         )
     val label: @Composable () -> Unit = {
@@ -7557,6 +7618,82 @@ private fun CalendarBlockBody(
         Box(Modifier.matchParentSize().clip(shape)) { label() }
     }
 }
+
+/**
+ * User rule 2026-10-01: **what of the day column crosses a task panel**, which the panel — opaque, and drawn above
+ * them — redraws over itself in the colour of highest WCAG contrast with its task's colour ([TaskPalette.foreground]):
+ * the restrictive periods' markings and outlines, the sleep bands', the layer hatches, the hour and graduation lines.
+ * Outside the panel they keep their own colour, drawn under it; inside, the same pattern continues in the contrast
+ * colour — the tiles are aligned on the column, so a line crossing the panel's edge does not break.
+ */
+internal data class PanelDecor(val bands: List<PanelDecorBand>, val tickMinutes: Int)
+
+/** One full-width band of [PanelDecor]: its hours, its drawings, and its outline's thickness (none: null). */
+internal data class PanelDecorBand(
+    val startHour: Float,
+    val endHour: Float,
+    val drawings: List<org.example.project.scheduler.domain.PeriodDrawing>,
+    val outlined: Boolean,
+)
+
+/** Where a block sits in its column, for [panelDecor] to align the column's decor with it. */
+internal data class PanelDecorPlacement(
+    val decor: PanelDecor,
+    val originXPx: Float,
+    val topHour: Float,
+    val hourHeightPx: Float,
+    val columnWidthPx: Float,
+)
+
+/** [PanelDecor] drawn over this block in [color], aligned on the column ([placement]). */
+private fun Modifier.panelDecor(placement: PanelDecorPlacement, color: Color): Modifier =
+    this.drawWithCache {
+        val decor = placement.decor
+        val brushes = decor.bands.flatMap { it.drawings }.distinct().associateWith { periodDrawingBrush(it, color, this) }
+        val hh = placement.hourHeightPx
+        val top = placement.topHour * hh
+        val line = 1.dp.toPx()
+        val outline = USER_PLACED_BORDER_DP.toPx()
+        val corner = 3.dp.toPx()
+        onDrawBehind {
+            // The hour lines, and the graduation ticks between them when zoomed in.
+            val firstHour = kotlin.math.floor(placement.topHour).toInt()
+            val lastHour = kotlin.math.ceil(placement.topHour + size.height / hh).toInt()
+            for (h in firstHour..lastHour) {
+                val y = h * hh - top
+                drawLine(color, Offset(0f, y), Offset(size.width, y), strokeWidth = line)
+            }
+            if (decor.tickMinutes < 60) {
+                val ticks = 60 / decor.tickMinutes
+                for (h in firstHour..lastHour) {
+                    for (k in 1 until ticks) {
+                        val y = (h + k / ticks.toFloat()) * hh - top
+                        drawLine(color, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                    }
+                }
+            }
+            for (band in decor.bands) {
+                val bandTop = band.startHour * hh - top
+                val bandHeight = (band.endHour - band.startHour) * hh
+                if (bandTop > size.height || bandTop + bandHeight < 0f) continue
+                // The band's own tile origin is the column's left edge at its top: draw from there, clipped by the
+                // block, so the pattern continues across the block's edge.
+                translate(left = -placement.originXPx, top = bandTop) {
+                    val bandSize = androidx.compose.ui.geometry.Size(placement.columnWidthPx, bandHeight)
+                    for (drawing in band.drawings) brushes[drawing]?.let { drawRect(it, size = bandSize) }
+                    if (band.outlined) {
+                        drawRoundRect(
+                            color = color,
+                            topLeft = Offset(outline / 2f, outline / 2f),
+                            size = androidx.compose.ui.geometry.Size(bandSize.width - outline, bandSize.height - outline),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(corner, corner),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = outline),
+                        )
+                    }
+                }
+            }
+        }
+    }
 
 /**
  * `docs/scheduler_requirements.md` § *Progressive Calculation*: the blur radius a task panel past the
@@ -8614,7 +8751,8 @@ private fun EditMenuRow(
             style =
                 if (selected) MaterialTheme.typography.bodyMedium
                 else MaterialTheme.typography.bodySmall,
-            color = color ?: MaterialTheme.colorScheme.onSurface,
+            // On the task's colour: the colour of highest contrast with it (user rule 2026-10-01).
+            color = taskColor?.let(TaskPalette::foreground) ?: color ?: MaterialTheme.colorScheme.onSurface,
         )
         if (actions != null) {
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
