@@ -119,3 +119,6 @@ private fun triangle(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: 
 /** Desktop: the OS diagonal resize cursors — south-east for the bottom-right corner, south-west for the left. */
 actual fun diagonalResizePointerIcon(bottomRight: Boolean): PointerIcon =
     PointerIcon(Cursor(if (bottomRight) Cursor.SE_RESIZE_CURSOR else Cursor.SW_RESIZE_CURSOR))
+
+/** Desktop: the OS four-way move cursor — the joint of two separators moves on both axes. */
+actual fun jointResizePointerIcon(): PointerIcon = PointerIcon(Cursor(Cursor.MOVE_CURSOR))

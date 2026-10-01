@@ -684,7 +684,10 @@ titles" figure: the Search window and the per-object windows its rows open repla
   have their own window and a counter), and the Configuration Search window's never touches the Search
   window's configuration it lists.
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
-  elements** above the **added elements**. Every result row has a check box (Compose-only, like the selection),
+  elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
+  `SectionSeparator` + `draggedSplit`, each section kept above a minimum), and **their joint drags both at once**
+  (`SectionJoint`, under the four-way arrow); the splits are Compose-only view state,
+  starting at half, never persisted. Every result row has a check box (Compose-only, like the selection),
   and so does every task cell of an expanded row's sub-tree (`TaskTreeView`'s `rowLeading`): one box per TASK
   key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **Add** adds the checked
   rows listed now — the result rows, then the expanded rows' sub-tree tasks — else the selected row (the outline's own rule — none while the bar or a sub-tree

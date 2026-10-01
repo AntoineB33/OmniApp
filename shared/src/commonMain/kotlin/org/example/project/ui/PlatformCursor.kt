@@ -53,3 +53,9 @@ expect fun panelResizePointerIcon(edge: PanelResizeEdge): PointerIcon
  * diagonal), `↙↗` for the bottom-left one (and the top-right). The plain OS shape, like the frame's edges.
  */
 expect fun diagonalResizePointerIcon(bottomRight: Boolean): PointerIcon
+
+/**
+ * The joint of two section separators ([SectionJoint]): the four-way arrow that moves both lines at once. The
+ * plain OS shape, like the separators' own double arrows.
+ */
+expect fun jointResizePointerIcon(): PointerIcon

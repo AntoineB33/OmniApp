@@ -13,3 +13,6 @@ actual fun panelResizePointerIcon(edge: PanelResizeEdge): PointerIcon = PointerI
 
 /** No OS cursor concept off desktop — a window corner falls back to the crosshair too. */
 actual fun diagonalResizePointerIcon(bottomRight: Boolean): PointerIcon = PointerIcon.Crosshair
+
+/** No OS cursor concept off desktop — a separators' joint falls back to the crosshair too. */
+actual fun jointResizePointerIcon(): PointerIcon = PointerIcon.Crosshair

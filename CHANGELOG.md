@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: the three sections are resized by dragging — 2026-10-01
+
+User request: *"In the Search window, the user must be able to resize the 3 sections by dragging the separators."*
+The vertical line (search | right half) and the horizontal one (actions | added elements) are `SectionSeparator`s
+(`ui/SectionSeparator.kt`, new): a grab strip under the OS resize arrow; `draggedSplit` keeps each section above its
+minimum. The splits are Compose-only (they start at half each time the window opens), never persisted.
+Follow-up: *"At the joint of the vertical line with the horizontal line, the user must be able to resize the three
+sections at the same time."* `SectionJoint` (same file): a square over the crossing, under the four-way arrow
+(`jointResizePointerIcon`, new expect — the OS move cursor on desktop, the crosshair elsewhere), moving both splits.
+
 ### Task colours: every task, placed in the cube — 2026-10-01
 
 User correction: *"Make sure that only at more than 256*256*256 tasks there will be tasks with the same background

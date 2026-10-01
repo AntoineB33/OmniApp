@@ -24,7 +24,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -51,6 +50,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -93,6 +96,12 @@ private val RESULT_ROW_HEIGHT: Dp = 34.dp
 
 /** Every row's kind section is this one width, so the names line up whatever the kinds (fits "restrictive period"). */
 private val KIND_SECTION_WIDTH: Dp = 104.dp
+
+/** The narrowest a dragged separator may leave the left (search) or the right sections. */
+private val MIN_SEARCH_SECTION_WIDTH: Dp = 220.dp
+
+/** The shortest a dragged separator may leave either right section: its title and a row or two. */
+private val MIN_SEARCH_SECTION_HEIGHT: Dp = 90.dp
 
 /** The narrowest the path box may be squeezed to by a long title — room for its arrow and a sliver of text. */
 private val MIN_PATH_BOX_WIDTH: Dp = 34.dp
@@ -484,12 +493,30 @@ fun SearchWindow(
         onGeometryChange = onGeometryChange,
         claimsKeyboard = true,
     ) {
-      // Three sections: the search in the left half; on the right, the actions on the added elements above the
-      // list of the added elements.
-      Row(Modifier.fillMaxWidth().weight(1f)) {
+      // Three sections: the search on the left; on the right, the actions on the added elements above the list
+      // of the added elements. Both separators are dragged to share the room (Compose-only, like the zoom):
+      // each split starts at half and neither section shrinks below its minimum. Their joint moves both at once.
+      val density = LocalDensity.current
+      val separatorPx = with(density) { SECTION_SEPARATOR_THICKNESS.toPx() }
+      var leftShare by remember { mutableStateOf(0.5f) }
+      var topRightShare by remember { mutableStateOf(0.5f) }
+      var rowWidthPx by remember { mutableStateOf(0f) }
+      var rightHeightPx by remember { mutableStateOf(0f) }
+      val dragLeftShare = { delta: Float ->
+          leftShare = draggedSplit(
+              leftShare, delta, rowWidthPx - separatorPx, with(density) { MIN_SEARCH_SECTION_WIDTH.toPx() },
+          )
+      }
+      val dragTopRightShare = { delta: Float ->
+          topRightShare = draggedSplit(
+              topRightShare, delta, rightHeightPx - separatorPx, with(density) { MIN_SEARCH_SECTION_HEIGHT.toPx() },
+          )
+      }
+      Box(Modifier.fillMaxWidth().weight(1f)) {
+      Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
         Column(
             modifier = Modifier
-                .weight(1f)
+                .weight(leftShare)
                 .fillMaxHeight()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -696,9 +723,9 @@ fun SearchWindow(
             }
         }
 
-        VerticalDivider()
+        SectionSeparator(vertical = true, onDrag = dragLeftShare)
 
-        Column(Modifier.weight(1f).fillMaxHeight()) {
+        Column(Modifier.weight(1f - leftShare).fillMaxHeight().onSizeChanged { rightHeightPx = it.height.toFloat() }) {
             // --- The actions on every added element (top right) ------------------------------------
             AddedActionsSection(
                 state = state,
@@ -711,17 +738,35 @@ fun SearchWindow(
                 onOpenEach = { addedRows.forEach { openers.open(state, it) } },
                 onClear = { onConfigChange(config.copy(added = emptyList())) },
                 onOpenConfigurations = onOpenAddedConfigurations,
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().weight(topRightShare).padding(horizontal = 14.dp, vertical = 10.dp),
             )
-            HorizontalDivider()
+            SectionSeparator(vertical = false, onDrag = dragTopRightShare)
             // --- The added elements (bottom right) ---------------------------------------------------
             AddedElementsList(
                 rows = addedRows,
                 onOpen = { openers.open(state, it) },
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f - topRightShare).padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
+      }
+      // Where the two lines cross: drawn over both strips, it drags the three sections at once. Placed only once
+      // the row has been measured, since the crossing is read off the two splits and the room they share.
+      if (rowWidthPx > 0f && rightHeightPx > 0f) {
+          val jointHalfPx = with(density) { SECTION_JOINT_SIZE.toPx() } / 2f
+          SectionJoint(
+              onDrag = { delta ->
+                  dragLeftShare(delta.x)
+                  dragTopRightShare(delta.y)
+              },
+              modifier = Modifier.offset {
+                  IntOffset(
+                      (leftShare * (rowWidthPx - separatorPx) + separatorPx / 2f - jointHalfPx).roundToInt(),
+                      (topRightShare * (rightHeightPx - separatorPx) + separatorPx / 2f - jointHalfPx).roundToInt(),
+                  )
+              },
+          )
+      }
       }
     }
 }
