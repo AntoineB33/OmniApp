@@ -635,7 +635,11 @@ Global rules that always apply: `CLAUDE.md`.
   skips a blank-titled cell entirely: that cell is the deleted one, and the reveal could not expand it
   anyway. The one place that says "not in the task tree" is the handler, once, for every one of those cases.
 - **"add…" OPENS THE SEARCH WINDOW OF WHAT CAN GO AT THE RIGHT-CLICK** (user rule 2026-10-01; `App.openCalendarAddSearch`,
-  `SearchDomain.calendarAddConfig`). It no longer opens the element window below ("edit…" still does). The Search
+  `SearchDomain.calendarAddConfig`). **It opens with the type selector deployed** (user rule 2026-10-01), new window or
+  reused one, so the types are picked right away: `App.searchKindsToDeploy` names the window (`openNewWindow` returns
+  the frame id it opened or brought back) and the window's `CheckBoxDropDown(deploy)` opens the list once, a frame
+  after it is laid out, then takes the request back — a one-shot, never reopened by recomposition. "edit…" does not.
+  It no longer opens the element window below ("edit…" still does). The Search
   window's **calendar filter** — a GLOBAL setting of the Search configurations window (`Setting.CalendarAdd`: a switch,
   a `YYYY-MM-DD HH:MM` position, and "Set to the right-click", offered only while `Config.calendarClickMillis` says the
   window came from the calendar) — keeps only `SearchDomain.calendarAddable` rows: a placeable task whose resilience to

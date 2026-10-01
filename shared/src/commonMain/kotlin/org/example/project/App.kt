@@ -1352,18 +1352,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // instead; otherwise a NEW one opens: the original when it is not open (where it was left), else a copy set
         // off from it (`Search#2`, the head's ⧉ mechanism). Never closes one. The task tree and the calendar exist
         // once (`popups.md`, *Not duplicable*): theirs is opened when closed and brought back when open.
-        fun openNewWindow(kind: FloatingWindow, config: String? = null) {
+        // Returns the frame id of the window it opened or brought back.
+        fun openNewWindow(kind: FloatingWindow, config: String? = null): String {
             if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.Calendar || kind == FloatingWindow.TimeSim) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
                 windowFrames.present(kind.name)
-                return
+                return kind.name
             }
             val wanted = normalizedWindowConfig(kind, config)
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
             open.firstOrNull { windowConfigOf(it) == wanted }?.let { existing ->
                 presentWindow(kind, existing)
-                return
+                return existing
             }
             val id =
                 if (!isWindowOpen(kind)) {
@@ -1379,7 +1380,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 updatePlacementById(id) { it.copy(config = config, minimized = false) }
                 setWindowOpen(kind, true)
                 focusWindow(kind)
-                return
+                return id
             }
             val from = placements[kind.name] ?: WindowPlacement(x = 0f, y = 0f, visible = true)
             val step = COPY_CASCADE_PX * ((id.substringAfter('#').toInt() - 1) % 6)
@@ -1389,20 +1390,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowCopies.add(id)
             windowFrames.focus(id)
             historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
+            return id
         }
         // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
         // this right-click with the matching filter on and the other off — its added elements and the rest of its
         // configuration kept, its types those the filter is about — or a new one ([SearchDomain.calendarAddConfig],
         // [SearchDomain.calendarAtConfig]).
+        // The Search windows (by frame id) whose type selector opens deployed once they show — the calendar's "add…".
+        // A one-shot: the window takes its id off as it deploys the drop-down. Compose-only.
+        val searchKindsToDeploy = remember { mutableStateListOf<String>() }
         fun openCalendarSearch(atMillis: Long, add: Boolean) {
             val search = FloatingWindow.Search
             val open = listOfNotNull(search.name.takeIf { isWindowOpen(search) }) + windowCopies.filter { lateralWindowOf(it) == search }
             val existing = open.firstOrNull { searchConfigOf(it).calendarClickMillis != null }
             val fresh = if (add) SearchDomain.calendarAddConfig(atMillis) else SearchDomain.calendarAtConfig(atMillis)
             if (existing == null) {
-                openNewWindow(search, fresh.encode())
+                val id = openNewWindow(search, fresh.encode())
+                // "add…" opens with the type selector deployed, so the types are picked right away (user rule 2026-10-01).
+                if (add) searchKindsToDeploy.add(id)
                 return
             }
+            if (add) searchKindsToDeploy.add(existing)
             val config = searchConfigOf(existing)
             setSearchConfig(
                 existing,
@@ -3789,6 +3797,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
+                            deployKinds = searchId in searchKindsToDeploy,
+                            onKindsDeployed = { searchKindsToDeploy.remove(searchId) },
                             // Opened if closed, brought to the front either way — and pointed at THIS Search
                             // window, which is the one whose configurations it then lists and edits.
                             onOpenConfigurations = {

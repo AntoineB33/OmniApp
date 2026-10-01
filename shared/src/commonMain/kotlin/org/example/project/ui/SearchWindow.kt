@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -250,6 +251,12 @@ fun SearchWindow(
      */
     config: SearchDomain.Config,
     onConfigChange: (SearchDomain.Config) -> Unit,
+    /**
+     * Open with the type selector deployed (the calendar's "add…", user rule 2026-10-01): a one-shot — the drop-down
+     * opens once and [onKindsDeployed] takes the request back.
+     */
+    deployKinds: Boolean = false,
+    onKindsDeployed: () -> Unit = {},
     /** Opens the Configuration Search window, which lists every configuration of this window. */
     onOpenConfigurations: () -> Unit,
     /** Opens the Added elements configurations window, which lists every action on the added elements. */
@@ -609,7 +616,12 @@ fun SearchWindow(
                             true
                         },
                 )
-                KindsDropDown(kinds = kinds, onKindsChange = { onConfigChange(config.copy(kinds = it)) })
+                KindsDropDown(
+                    kinds = kinds,
+                    onKindsChange = { onConfigChange(config.copy(kinds = it)) },
+                    deploy = deployKinds,
+                    onDeployed = onKindsDeployed,
+                )
                 // Clears the bar and unticks every type. The filters are left alone: they have their own window,
                 // and the button beside it says how many are on.
                 ResetButton(enabled = query.isNotEmpty() || kinds.isNotEmpty()) {
@@ -987,6 +999,9 @@ internal fun KindsDropDown(
     kinds: Set<SearchDomain.Kind>,
     onKindsChange: (Set<SearchDomain.Kind>) -> Unit,
     modifier: Modifier = Modifier.width(170.dp),
+    /** Open the list now, once — see [CheckBoxDropDown]'s `deploy`. */
+    deploy: Boolean = false,
+    onDeployed: () -> Unit = {},
 ) {
     CheckBoxDropDown(
         options = SearchDomain.Kind.entries,
@@ -995,6 +1010,8 @@ internal fun KindsDropDown(
         label = { it.label },
         onChange = onKindsChange,
         modifier = modifier,
+        deploy = deploy,
+        onDeployed = onDeployed,
     )
 }
 
@@ -1011,9 +1028,23 @@ internal fun <T> CheckBoxDropDown(
     label: (T) -> String,
     onChange: (Set<T>) -> Unit,
     modifier: Modifier = Modifier.width(170.dp),
+    /**
+     * A request to open the list without a click — a one-shot: it opens once [deploy] turns true and [onDeployed]
+     * takes the request back, so the list closes like any other afterwards and never reopens on recomposition.
+     */
+    deploy: Boolean = false,
+    onDeployed: () -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
     val range = rememberCheckRange<T>()
+    val latestOnDeployed by rememberUpdatedState(onDeployed)
+    LaunchedEffect(deploy) {
+        if (!deploy) return@LaunchedEffect
+        // One frame later: the field is laid out, so the list hangs from it rather than from the window's corner.
+        withFrameNanos { }
+        open = true
+        latestOnDeployed()
+    }
     Box(modifier) {
         Text(
             text = "$face  ▾",

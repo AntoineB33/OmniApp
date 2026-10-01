@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar "add…": the Search window opens with the type selector deployed — 2026-10-01
+
+User request: *"The add… option from a right-click in the calendar opens the Search window with the type selector
+already deployed for the user to select the element types right away."* `App.searchKindsToDeploy` (one-shot, by frame
+id; `openNewWindow` now returns the id) → `SearchWindow(deployKinds)` → `KindsDropDown` / `CheckBoxDropDown(deploy)`.
+
 ### Search window: "add and remove the others"; a double-click adds — 2026-10-01
 
 User request: *"In the right-click menu of an element of the result list in a Search window, add the option to add it
