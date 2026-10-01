@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: "add and remove the others"; a double-click adds — 2026-10-01
+
+User request: *"In the right-click menu of an element of the result list in a Search window, add the option to add it
+while removing all the others from the selection list. Also, double-clicking an element should either make it enter
+edit mode (if a task cell), or add it, not open a new search window."* (The "others" are the added list's — the user's
+answer.) New entry `ADD_REPLACING_LABEL` in both row menus (`TaskCellMenuActions.onAddReplacing`); `addKeys` /
+`addSelected(replacing)`. `ItemResultRow` takes `onDoubleClick` (adds; a creation row still makes its element). Enter
+still opens the row.
+
 ### Search window: a click far down the list did not move the main selection — 2026-10-01
 
 Anomaly: *"When I click on an element, then click on another far away in the list, instead of making the last element

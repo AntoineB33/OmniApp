@@ -95,6 +95,7 @@ import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.windowSelectionKey
 import org.example.project.scheduler.ui.TaskCellMenuItems
 import org.example.project.scheduler.ui.TaskCellMenuActions
+import org.example.project.scheduler.ui.ADD_REPLACING_LABEL
 
 /** Every row of the result list has this one height, whatever it holds (PRD §7 *Search*). */
 private val RESULT_ROW_HEIGHT: Dp = 34.dp
@@ -162,7 +163,7 @@ class SearchRowOpeners(
     val onOpenPeriodKind: (String) -> Unit,
     /**
      * The per-object window of ONE alarm, timer or chrono, with every setting it has — what opening its row does
-     * (a double-click, Enter or a right-click).
+     * (Enter, or the menu; a double-click adds the row instead — user rule 2026-10-01).
      */
     val onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
     /** The per-object window of ONE reminder (by id), with every setting it has — opened like an alarm's. */
@@ -479,13 +480,20 @@ fun SearchWindow(
         multiSelection = next.selected
         selectionAnchor = next.anchor
     }
-    /** The row menu's "add": every SELECTED row into the added elements, in the list's order (not the checked ones). */
-    fun addSelected() {
-        val keys = latestSelectedShown
+    /**
+     * [keys] into the added elements, each once ([SearchDomain.withAdded]); [replacing]: every element added before
+     * leaves the list first, so it holds exactly these.
+     */
+    fun addKeys(keys: List<String>, replacing: Boolean = false) {
         val current = latestConfig
-        val next = SearchDomain.withAdded(current.added, keys)
+        val next = SearchDomain.withAdded(if (replacing) emptyList() else current.added, keys)
         if (next != current.added) onConfigChange(current.copy(added = next))
     }
+    /**
+     * The row menu's "add": every SELECTED row into the added elements, in the list's order (not the checked ones);
+     * [replacing] is its "add and remove the others" (user rule 2026-10-01).
+     */
+    fun addSelected(replacing: Boolean = false) = addKeys(latestSelectedShown, replacing)
     /**
      * A task row's menu — the TREE CELL's own ([TaskCellMenuActions], drawn by [TaskCellMenuItems]), so the two
      * offer the same entries. [path] is the one the right-click landed on (the row's shown path, or a line of its
@@ -512,6 +520,7 @@ fun SearchWindow(
             // User rule 2026-10-01: the menu's "add" adds every SELECTED row — the right-click selected this one first
             // when it was not among them.
             onAdd = { addSelected() },
+            onAddReplacing = { addSelected(replacing = true) },
             calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
@@ -774,7 +783,15 @@ fun SearchWindow(
                                         },
                                         onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
                                         onOpen = { openers.open(state, result) },
+                                        // User rule 2026-10-01: a double-click ADDS the element (a task row's enters
+                                        // Edit Mode, the tree's rule) — never opens another window on it. A
+                                        // "creation" row is the exception: it is a command, not an element to add.
+                                        onDoubleClick = {
+                                            if (result.kind == SearchDomain.Kind.Creation) openers.open(state, result)
+                                            else addKeys(listOf(resultKey(result)))
+                                        },
                                         onAdd = { addSelected() },
+                                        onAddReplacing = { addSelected(replacing = true) },
                                         // A "creation" row makes its element on the right-click straight away, as
                                         // opening the row does: there is nothing else to ask of it.
                                         opensOnRightClick = result.kind == SearchDomain.Kind.Creation,
@@ -1524,9 +1541,14 @@ private fun ItemResultRow(
     onSelect: () -> Unit,
     /** A right-click's selection: the row alone unless it is already selected. */
     onSecondarySelect: () -> Unit,
+    /** What the row's own window is — the menu's "open in …" entries and a "creation" row's right-click. */
     onOpen: () -> Unit,
+    /** A double-click on the row: it adds the element (or makes it, for a "creation" row). */
+    onDoubleClick: () -> Unit,
     /** The menu's "add": every selected row into the window's added elements. */
     onAdd: () -> Unit,
+    /** The menu's "add and remove the others": [onAdd], the added elements emptied first. */
+    onAddReplacing: () -> Unit,
     /** The right-click opens the row ([onOpen]) instead of the contextual menu: a "creation" row. */
     opensOnRightClick: Boolean = false,
 ) {
@@ -1534,14 +1556,14 @@ private fun ItemResultRow(
     // The gestures are keyed by the row and started once: they call the handlers of the LATEST composition.
     val currentOnSelect by rememberUpdatedState(onSelect)
     val currentOnSecondarySelect by rememberUpdatedState(onSecondarySelect)
-    val currentOnOpen by rememberUpdatedState(onOpen)
+    val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
         modifier = resultRowModifier(selected, inSelection)
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
                 onSelect = { currentOnSelect() },
                 onSecondarySelect = { currentOnSecondarySelect() },
-                onOpen = { currentOnOpen() },
+                onOpen = { currentOnDoubleClick() },
                 onOpenMenu = { if (opensOnRightClick) onOpen() else menuOpen = true },
             ),
         contentAlignment = Alignment.CenterStart,
@@ -1594,6 +1616,10 @@ private fun ItemResultRow(
                 MenuEntry("add") {
                     menuOpen = false
                     onAdd()
+                }
+                MenuEntry(ADD_REPLACING_LABEL) {
+                    menuOpen = false
+                    onAddReplacing()
                 }
             }
         }

@@ -3418,6 +3418,16 @@ internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit)
             },
         )
     }
+    // ... and the same, emptying the added elements first: they become what this adds (user rule 2026-10-01).
+    cellMenu.onAddReplacing?.let { addReplacing ->
+        DropdownMenuItem(
+            text = { Text(ADD_REPLACING_LABEL) },
+            onClick = {
+                close()
+                addReplacing()
+            },
+        )
+    }
     // PRD §13: named "edit task" — the calendar's panel menu offers the very same window
     // beside its own panel "Edit" (PRD §8), so the two surfaces must not call it two things.
     cellMenu.onEdit?.let { edit ->
@@ -3538,7 +3548,12 @@ internal class TaskCellMenuActions(
     val calendarTaskId: TaskId? = null,
     /** PRD §7 Search: "add" — the task into the Search window's added elements; null everywhere else. */
     val onAdd: (() -> Unit)? = null,
+    /** PRD §7 Search: [onAdd] with every element added before removed from the added elements; null elsewhere. */
+    val onAddReplacing: (() -> Unit)? = null,
 )
+
+/** The Search window's row-menu entry that adds while removing every other added element — one name in both menus. */
+const val ADD_REPLACING_LABEL: String = "add and remove the others"
 
 /**
  * PRD §8 "go to calendar", provided once by `App` to every surface that draws a task cell's menu (the tree, its

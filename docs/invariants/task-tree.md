@@ -577,7 +577,7 @@ titles" figure: the Search window and the per-object windows its rows open repla
   level so a cut drops the longest paths first. It is display-only; the stamp and the "not in any tree" logo
   read the exact walk. The window holds it on the tree fields, never per keystroke or per tick.
 - **The rows are not cells.** Every row has one fixed height and the list's full width, so a row answers a
-  cell's gestures in the form that fits — select, walk, open (`Enter`/double-click), `Ctrl+C`, the §13 menu's
+  cell's gestures in the form that fits — select, walk, open (`Enter`), `Ctrl+C`, the §13 menu's
   task entries — and never grows into an Edit Mode. Every action goes through the handler the rest of the app
   already has (`taskEditWindows`, the one `goToTaskTree`, `deepCopyWindows`, `categoryWindows`,
   `periodKindWindows`, `alarmWindows`, `reminderWindows`): the window adds no second path to any of them.
@@ -649,7 +649,13 @@ titles" figure: the Search window and the per-object windows its rows open repla
   raises and focuses the tree WINDOW before revealing the cell.
 - **Every row's selection is the tree's** — the outline (`taskCellOutline`), no fill — and moving it scrolls the
   list only when it would leave what is shown, by just enough to bring it to the nearer edge.
-- **Opening a row — double-click, `Enter`, or right-click on an alarm, a timer or a reminder (`ItemResultRow`'s
+- **A double-click on a result row never opens a window** (user rule 2026-10-01): on a task row's title it enters
+  Edit Mode (the tree's rule), on any other row it ADDS the element to the added elements (`addKeys`) — a "creation"
+  row excepted, which is a command and still makes its element.
+- **The row menu's "add and remove the others"** (`ADD_REPLACING_LABEL`, beside "add" in both menus — the task cell's
+  `TaskCellMenuActions.onAddReplacing` and `ItemResultRow`'s): the selected rows become the WHOLE added list, every
+  element added before leaving it (`addSelected(replacing = true)`).
+- **Opening a row — `Enter`, the menu, or right-click on an alarm, a timer or a reminder (`ItemResultRow`'s
   `opensOnRightClick`) — opens the Search window holding that element alone** (`popups.md`, user rule 2026-10-01; it
   was the element's own window). Its editing is that window's actions, one block per added element: "Edit" draws the
   Alarms window's rows (`AlarmWindow(embeddedSubjects)`) or the reminder's editor
