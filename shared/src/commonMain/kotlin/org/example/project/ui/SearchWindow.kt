@@ -49,6 +49,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed as isPointerCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed as isPointerMetaPressed
+import androidx.compose.ui.input.pointer.isShiftPressed as isPointerShiftPressed
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.offset
@@ -302,10 +307,23 @@ fun SearchWindow(
     // among the results (the question changed, the thing was deleted) reads as the first row.
     val selectedKey = state.windowSelections[windowSelectionKey(HistoryWindow.Search, instance)]
     val selected = results.indexOfFirst { resultKey(it) == selectedKey }.coerceAtLeast(0)
-    /** Select the row at [index]; [record] false is the window's own reset, not a position the user took. */
+    // The rows selected with Ctrl+click and Shift+click (user rule 2026-10-01), by result key — what the row menu's
+    // "add" adds. Null: the selection is the selected row alone. Compose-only, like the check boxes; the selected row
+    // above (the outline the keys move) stays the state's, so `Alt+←` still walks it.
+    var multiSelection by remember { mutableStateOf<Set<String>?>(null) }
+    // Where a Shift+click's range starts ([ClickSelection]): the last row clicked, or moved to with the keys.
+    var selectionAnchor by remember { mutableStateOf<String?>(null) }
+    /**
+     * Select the row at [index] — alone: the keys and every other way of selecting one row drop a multi-selection
+     * ([clickRow] puts its own back). [record] false is the window's own reset, not a position the user took.
+     */
     fun select(index: Int, record: Boolean = true) {
         val key = results.getOrNull(index)?.let(::resultKey)
-        if (key != selectedKey) onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, record))
+        multiSelection = null
+        selectionAnchor = key
+        // No "already selected?" test here: this runs from row gestures started long before, whose `selectedKey`
+        // would be that old composition's — the reducer answers it against the live state instead.
+        onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, record))
     }
     // A new question starts at its best answer.
     LaunchedEffect(kinds, query, filters, sorts) { select(0, record = false) }
@@ -347,48 +365,6 @@ fun SearchWindow(
 
     val currentState by rememberUpdatedState(state)
     val latestConfig by rememberUpdatedState(config)
-    /**
-     * A task row's menu — the TREE CELL's own ([TaskCellMenuActions], drawn by [TaskCellMenuItems]), so the two
-     * offer the same entries. [path] is the one the right-click landed on (the row's shown path, or a line of its
-     * list of paths): "go to task tree" goes to THAT occurrence, and the entries that act on a cell (deep copy,
-     * collapse, add the default sub-tree) act on it. Built on demand, so it never closes over a stale state.
-     */
-    /** A row's "add": its element into the added elements (bottom right), once — [SearchDomain.withAdded]. */
-    fun addToAdded(key: String) {
-        val current = latestConfig
-        val next = SearchDomain.withAdded(current.added, listOf(key))
-        if (next != current.added) onConfigChange(current.copy(added = next))
-    }
-    fun taskActions(result: SearchDomain.TaskResult, path: List<String>?): TaskCellMenuActions {
-        val state = currentState
-        val taskId = result.taskId
-        val live = state.tasks[taskId]
-        val atPath = path?.let { SearchDomain.occurrenceAtPath(state, taskId, it) }
-        val occurrence = atPath ?: SchedulerDomain.firstTaskOccurrence(state, taskId)
-        val hasChildren = live?.childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
-        return TaskCellMenuActions(
-            onStartNow =
-                if (live != null && SchedulerDomain.isPlaceableTask(state, taskId)) {
-                    { onStartTaskNow(taskId) }
-                } else {
-                    null
-                },
-            // User rule 2026-10-01: a result row's menu ADDS the task to this window's added elements instead of
-            // opening its edit window — the window that edits it is this one.
-            onEdit = null,
-            onAdd = { addToAdded(SearchDomain.keyOf(result)) },
-            calendarTaskId = taskId,
-            // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
-            onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
-            onCopyTaskId = { writeSystemClipboardText(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + taskId.value) },
-            onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
-            onCollapseSubtrees =
-                occurrence?.takeIf { hasChildren }?.let { { onIntent(SchedulerIntent.CollapseSubtrees(it.cellId)) } },
-            onAddDefaultSubtree =
-                occurrence?.takeIf { !state.defaultSubtreeIsEmpty }
-                    ?.let { { onIntent(SchedulerIntent.AddDefaultSubtree(listOf(it.cellId))) } },
-        )
-    }
     fun openSelected() {
         results.getOrNull(selected)?.let { openers.open(state, it) }
     }
@@ -435,6 +411,9 @@ fun SearchWindow(
     // Shift+click sets every box from the last one clicked (`CheckRange`), in the order the boxes are drawn: each
     // row, then — under an expanded task row — its sub-tree's cells as that sub-tree shows them. Read at the click.
     val checkRange = rememberCheckRange<String>()
+    // Ctrl and Shift as held on the last press in the list, for the rows whose own gesture does not say (a tree cell's
+    // does: [TaskRow] passes them).
+    val pressModifiers = remember { PressModifiers() }
     fun boxOrder(): List<String> =
         buildList {
             for (result in results) {
@@ -466,11 +445,85 @@ fun SearchWindow(
     // "A row is selected" is the outline's own rule: not while the bar holds the focus, nor while a row's
     // sub-tree does.
     val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null
-    // What Add adds: the checked rows (the list's order, then the sub-trees'), else the selected one, else
-    // nothing (greyed).
+    // What the Add button adds: the CHECKED rows (the list's order, then the sub-trees'), else nothing (greyed). The
+    // SELECTED rows are the row menu's "add" (user rule 2026-10-01) — two ways, never one falling back on the other.
     val checkedShown = checkableKeys.filter { it in checkedKeys }
-    val toAdd =
-        checkedShown.ifEmpty { if (hasSelection) listOfNotNull(resultKeys.getOrNull(selected)) else emptyList() }
+    val toAdd = checkedShown
+    // The selected rows, in the list's order: the Ctrl/Shift multi-selection, else the selected row; none while the
+    // bar or a sub-tree holds the focus (the outline's own rule).
+    val selectedShown =
+        if (!hasSelection) {
+            emptyList()
+        } else {
+            multiSelection?.let { picked -> resultKeys.filter { it in picked } } ?: listOfNotNull(resultKeys.getOrNull(selected))
+        }
+    val latestSelectedShown by rememberUpdatedState(selectedShown)
+    /**
+     * A press on the row at [index]: [ClickSelection]'s rule over the result list — Ctrl adds or takes it, Shift takes
+     * the range from the anchor, a plain press selects it alone. [keepIfSelected]: a press that must not collapse the
+     * selection it lands in — a right-click (its menu acts on the selection) and the first press of a tree cell's
+     * plain click, which the cell resolves a moment later. The row becomes the selected row either way.
+     */
+    fun clickRow(index: Int, ctrl: Boolean, shift: Boolean, keepIfSelected: Boolean) {
+        val key = resultKeys.getOrNull(index) ?: return
+        val current = latestSelectedShown.toSet()
+        val kept = multiSelection
+        val anchor = selectionAnchor
+        selectRow(index)
+        if (keepIfSelected && !ctrl && !shift && key in current) {
+            multiSelection = kept
+            selectionAnchor = anchor
+            return
+        }
+        val next = ClickSelection.click(resultKeys, current, anchor, key, shift = shift, ctrl = ctrl)
+        multiSelection = next.selected
+        selectionAnchor = next.anchor
+    }
+    /** The row menu's "add": every SELECTED row into the added elements, in the list's order (not the checked ones). */
+    fun addSelected() {
+        val keys = latestSelectedShown
+        val current = latestConfig
+        val next = SearchDomain.withAdded(current.added, keys)
+        if (next != current.added) onConfigChange(current.copy(added = next))
+    }
+    /**
+     * A task row's menu — the TREE CELL's own ([TaskCellMenuActions], drawn by [TaskCellMenuItems]), so the two
+     * offer the same entries. [path] is the one the right-click landed on (the row's shown path, or a line of its
+     * list of paths): "go to task tree" goes to THAT occurrence, and the entries that act on a cell (deep copy,
+     * collapse, add the default sub-tree) act on it. Built on demand, so it never closes over a stale state.
+     */
+    fun taskActions(result: SearchDomain.TaskResult, path: List<String>?): TaskCellMenuActions {
+        val state = currentState
+        val taskId = result.taskId
+        val live = state.tasks[taskId]
+        val atPath = path?.let { SearchDomain.occurrenceAtPath(state, taskId, it) }
+        val occurrence = atPath ?: SchedulerDomain.firstTaskOccurrence(state, taskId)
+        val hasChildren = live?.childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+        return TaskCellMenuActions(
+            onStartNow =
+                if (live != null && SchedulerDomain.isPlaceableTask(state, taskId)) {
+                    { onStartTaskNow(taskId) }
+                } else {
+                    null
+                },
+            // User rule 2026-10-01: a result row's menu ADDS the task to this window's added elements instead of
+            // opening its edit window — the window that edits it is this one.
+            onEdit = null,
+            // User rule 2026-10-01: the menu's "add" adds every SELECTED row — the right-click selected this one first
+            // when it was not among them.
+            onAdd = { addSelected() },
+            calendarTaskId = taskId,
+            // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
+            onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
+            onCopyTaskId = { writeSystemClipboardText(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + taskId.value) },
+            onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
+            onCollapseSubtrees =
+                occurrence?.takeIf { hasChildren }?.let { { onIntent(SchedulerIntent.CollapseSubtrees(it.cellId)) } },
+            onAddDefaultSubtree =
+                occurrence?.takeIf { !state.defaultSubtreeIsEmpty }
+                    ?.let { { onIntent(SchedulerIntent.AddDefaultSubtree(listOf(it.cellId))) } },
+        )
+    }
     // The added elements (the right half), read off the live state the way the result list reads its rows.
     val addedRows =
         remember(
@@ -607,6 +660,10 @@ fun SearchWindow(
                 } else {
                     // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
                     val rowSelected = { index: Int -> index == selected && !fieldFocused && subtreeFocusOwner == null }
+                    // A row of the multi-selection other than the selected one: the tree's thin selection outline.
+                    val rowInSelection = { index: Int ->
+                        index != selected && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
+                    }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -615,6 +672,7 @@ fun SearchWindow(
                             .focusRequester(listFocus)
                             .focusable()
                             .checkRangeShift(checkRange)
+                            .recordPressModifiers(pressModifiers)
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 // A row's sub-tree reads its own keys (it is the tree's own view).
@@ -669,6 +727,7 @@ fun SearchWindow(
                                         checkedKeys = checkedKeys,
                                         onToggleChecked = toggleChecked,
                                         selected = rowSelected(index),
+                                        inSelection = rowInSelection(index),
                                         editing = editingTaskId == result.taskId,
                                         editDraft = editDraft,
                                         expanded = result.taskId in expandedTasks,
@@ -677,6 +736,7 @@ fun SearchWindow(
                                         minTimeEditing = minTimeEditTaskId == result.taskId,
                                         actions = { path -> taskActions(result, path) },
                                         onSelect = { selectRow(index) },
+                                        onClickRow = { ctrl, shift, keep -> clickRow(index, ctrl, shift, keep) },
                                         onBeginEdit = { beginEdit(result, result.title) },
                                         onDraftChange = { editDraft = it },
                                         onEndEdit = { step -> endEdit(result, cancel = false, step = step) },
@@ -708,9 +768,13 @@ fun SearchWindow(
                                         checked = resultKey(result) in checkedKeys,
                                         onCheckedChange = { toggleChecked(resultKey(result)) },
                                         selected = rowSelected(index),
-                                        onSelect = { selectRow(index) },
+                                        inSelection = rowInSelection(index),
+                                        onSelect = {
+                                            clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false)
+                                        },
+                                        onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
                                         onOpen = { openers.open(state, result) },
-                                        onAdd = { addToAdded(resultKey(result)) },
+                                        onAdd = { addSelected() },
                                         // A "creation" row makes its element on the right-click straight away, as
                                         // opening the row does: there is nothing else to ask of it.
                                         opensOnRightClick = result.kind == SearchDomain.Kind.Creation,
@@ -791,7 +855,7 @@ private fun AddedElementsList(
         )
         if (rows.isEmpty()) {
             Text(
-                text = "Check rows of the results (or select one) and press Add.",
+                text = "Check rows of the results and press Add, or right-click selected rows and choose add.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1051,6 +1115,7 @@ private fun resultKey(result: SearchDomain.Result): String = SearchDomain.keyOf(
 private fun Modifier.resultRowGestures(
     key: Any,
     onSelect: () -> Unit,
+    onSecondarySelect: () -> Unit,
     onOpen: () -> Unit,
     onOpenMenu: () -> Unit,
 ): Modifier =
@@ -1061,10 +1126,10 @@ private fun Modifier.resultRowGestures(
             detectTapGestures(onPress = { onSelect() }, onDoubleTap = { onOpen() })
         }
         // Innermost, so it sees the press first and consumes a right-click before the tap detector does.
-        .then(contextMenuModifier(enabled = true, key = key, onSelect = onSelect, onOpen = onOpenMenu))
+        .then(contextMenuModifier(enabled = true, key = key, onSelect = onSecondarySelect, onOpen = onOpenMenu))
 
 @Composable
-private fun resultRowModifier(selected: Boolean): Modifier =
+private fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): Modifier =
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
@@ -1072,8 +1137,8 @@ private fun resultRowModifier(selected: Boolean): Modifier =
         // the OUTLINE alone — the main selection's thick active border ([taskCellOutline], the tree's one rule).
         .background(SheetColors.cellBackground)
         .border(
-            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = false).borderWidth,
-            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = false).borderColor,
+            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderWidth,
+            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderColor,
         )
         .padding(horizontal = 6.dp)
 
@@ -1096,6 +1161,8 @@ private fun SearchTaskRow(
     checkedKeys: Set<String>,
     onToggleChecked: (key: String) -> Unit,
     selected: Boolean,
+    /** Among the Ctrl/Shift-selected rows, without being the selected one: the tree's thin selection outline. */
+    inSelection: Boolean,
     editing: Boolean,
     editDraft: String,
     expanded: Boolean,
@@ -1105,6 +1172,8 @@ private fun SearchTaskRow(
     /** The cell menu for the path the right-click landed on — built on demand, never over a stale state. */
     actions: (path: List<String>?) -> TaskCellMenuActions,
     onSelect: () -> Unit,
+    /** A press on the row with what was held — [ctrl], [shift], and whether it keeps a selection it lands in. */
+    onClickRow: (ctrl: Boolean, shift: Boolean, keepIfSelected: Boolean) -> Unit,
     onBeginEdit: () -> Unit,
     onDraftChange: (String) -> Unit,
     /** Leaves Edit Mode, committing; the argument is the step the selection takes (Enter: +1, Shift+Enter: -1). */
@@ -1159,7 +1228,7 @@ private fun SearchTaskRow(
             renderVia = null,
             displayTitle = shownTitle,
             isMainSelection = selected,
-            isInSelectionRange = false,
+            isInSelectionRange = inSelection,
             selectable = true,
             isEditing = editing,
             hasChildren = hasChildren,
@@ -1183,7 +1252,9 @@ private fun SearchTaskRow(
             onOpenRelativePriority = { occurrence?.let { onSetRelativeWindow(it.cellId) } },
             onSetMinTime = { minutes -> onIntent(SchedulerIntent.SetTaskMinimumTime(taskId, minutes)) },
             onActivateMinTime = { if (live != null) onActivateMinTime() },
-            onClick = { _, _, _, _ -> onSelect() },
+            // The cell's own reading of the press: Ctrl / Shift as held; a plain click's first press (and a
+            // right-click's) keeps a selection it lands in, and its resolution a moment later (forceClear) collapses it.
+            onClick = { _, ctrl, shift, forceClear -> onClickRow(ctrl, shift, !forceClear) },
             onDragSelect = { _, _ -> },
             moveDragActive = false,
             resolveRowAt = { null },
@@ -1218,7 +1289,8 @@ private fun SearchTaskRow(
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
             afterTitle = {
                 Box(Modifier.fillMaxWidth().height(24.dp).padding(start = 8.dp)) {
-                    TaskPathBox(result, onSelect = onSelect, actions = actions)
+                    // A right-click on the path selects as one on the row does: the row alone unless it is selected.
+                    TaskPathBox(result, onSelect = { onClickRow(false, false, true) }, actions = actions)
                 }
             },
             afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
@@ -1338,6 +1410,9 @@ private fun TaskPathBox(
 ) {
     var listOpen by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<TaskCellMenuActions?>(null) }
+    // The right-click gestures below are keyed and started once: they select through the LATEST handler.
+    val latestOnSelect by rememberUpdatedState(onSelect)
+    val selectNow = { latestOnSelect() }
     var menuOpen by remember { mutableStateOf(false) }
     val onOpenMenu: (List<String>?) -> Unit = { path ->
         menu = actions(path)
@@ -1355,7 +1430,7 @@ private fun TaskPathBox(
             .clip(RoundedCornerShape(4.dp))
             .border(1.dp, onTaskCell(MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(4.dp))
             .then(
-                contextMenuModifier(enabled = true, key = result.taskId to "path", onSelect = onSelect) {
+                contextMenuModifier(enabled = true, key = result.taskId to "path", onSelect = selectNow) {
                     onOpenMenu(result.shownPath.takeIf { it.isNotEmpty() })
                 },
             )
@@ -1402,7 +1477,7 @@ private fun TaskPathBox(
                                     // Opening the row's menu closes this list (one menu at a time), and the
                                     // menu then speaks for this line's occurrence.
                                     .then(
-                                        contextMenuModifier(enabled = true, key = path, onSelect = onSelect) {
+                                        contextMenuModifier(enabled = true, key = path, onSelect = selectNow) {
                                             onOpenMenu(path)
                                         },
                                     )
@@ -1444,20 +1519,29 @@ private fun ItemResultRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     selected: Boolean,
+    /** Among the Ctrl/Shift-selected rows, without being the selected one: the thin outline. */
+    inSelection: Boolean,
     onSelect: () -> Unit,
+    /** A right-click's selection: the row alone unless it is already selected. */
+    onSecondarySelect: () -> Unit,
     onOpen: () -> Unit,
-    /** The menu's "add": the element into the window's added elements. */
+    /** The menu's "add": every selected row into the window's added elements. */
     onAdd: () -> Unit,
     /** The right-click opens the row ([onOpen]) instead of the contextual menu: a "creation" row. */
     opensOnRightClick: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // The gestures are keyed by the row and started once: they call the handlers of the LATEST composition.
+    val currentOnSelect by rememberUpdatedState(onSelect)
+    val currentOnSecondarySelect by rememberUpdatedState(onSecondarySelect)
+    val currentOnOpen by rememberUpdatedState(onOpen)
     Box(
-        modifier = resultRowModifier(selected)
+        modifier = resultRowModifier(selected, inSelection)
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
-                onSelect = onSelect,
-                onOpen = onOpen,
+                onSelect = { currentOnSelect() },
+                onSecondarySelect = { currentOnSecondarySelect() },
+                onOpen = { currentOnOpen() },
                 onOpenMenu = { if (opensOnRightClick) onOpen() else menuOpen = true },
             ),
         contentAlignment = Alignment.CenterStart,
@@ -1515,3 +1599,26 @@ private fun ItemResultRow(
         }
     }
 }
+
+/** Ctrl and Shift as held on the last press in a list — read by a row whose gesture does not report them. */
+private class PressModifiers {
+    var ctrl: Boolean = false
+    var shift: Boolean = false
+}
+
+/**
+ * Put on the list: records Ctrl (or Cmd) and Shift on every press, on the Initial pass and without consuming, so the
+ * row's own press handler that follows reads them (`checkRangeShift` does the same for the boxes).
+ */
+private fun Modifier.recordPressModifiers(holder: PressModifiers): Modifier =
+    this.pointerInput(holder) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.type != PointerEventType.Press) continue
+                val modifiers = event.keyboardModifiers
+                holder.ctrl = modifiers.isPointerCtrlPressed || modifiers.isPointerMetaPressed
+                holder.shift = modifiers.isPointerShiftPressed
+            }
+        }
+    }

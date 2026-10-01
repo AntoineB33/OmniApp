@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a click far down the list did not move the main selection — 2026-10-01
+
+Anomaly: *"When I click on an element, then click on another far away in the list, instead of making the last element
+the main selection and only selection, the main selection stays the first clicked element and the last element becomes
+selected."* The rows' gestures are keyed and started once, so they called the handlers of the composition that started
+them; `select` skipped the dispatch when the clicked key equalled THAT composition's selected key (a row composed while
+it was the selected one, e.g. after scrolling back to it). Fix: `TaskRow`'s gesture, the result rows' and the path
+box's call their handlers through `rememberUpdatedState`; `select` no longer pre-checks, the reducer does.
+
+### Search window: the row menu's "add" adds the selected rows; Add adds the checked ones — 2026-10-01
+
+User request: *"In the result list, elements can be added in the added elements list either by clicking on the add
+button to add the element with a checked box, or by right-clicking it which opens a menu with the option add, which
+will add all the elements selected (with ctrl+click and shift+click), not the ones checked."* The result list has a
+Ctrl/Shift multi-selection (`ClickSelection`, moved out of `WindowFrame.kt` as the window bar's `TabSelection`, now the
+one funnel for both); a right-click keeps a selection it lands in; the menu's "add" → `addSelected`. The Add button no
+longer falls back on the selected row.
+
 ### Window bar: Reset = only the calendar, maximized; "close selection" of every tab closes everything — 2026-10-01
 
 User correction: *"Reset must reset the default, which is having only the calendar open and maximized. When

@@ -694,9 +694,21 @@ titles" figure: the Search window and the per-object windows its rows open repla
   (`SectionJoint`, under the four-way arrow); the splits are Compose-only view state,
   starting at half, never persisted. Every result row has a check box (Compose-only, like the selection),
   and so does every task cell of an expanded row's sub-tree (`TaskTreeView`'s `rowLeading`): one box per TASK
-  key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **Add** adds the checked
-  rows listed now — the result rows, then the expanded rows' sub-tree tasks — else the selected row (the outline's own rule — none while the bar or a sub-tree
-  holds the focus), else it is greyed. The added list is `Config.added` — result KEYS (`SearchDomain.keyOf`), each
+  key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **TWO ways to add, never one
+  falling back on the other** (user rule 2026-10-01): the **Add** button adds the CHECKED rows listed now — the result
+  rows, then the expanded rows' sub-tree tasks — else it is greyed; a row's right-click menu **"add"** adds the
+  SELECTED rows, in the list's order. The result rows are selected with `ClickSelection` (the window bar's tabs' rule:
+  a click selects one row, Ctrl+click adds or takes one, Shift+click the range from the anchor); the selected row (the
+  thick outline, the state's, walked by `Alt+←`) is the last one clicked, the others take the thin outline; the
+  multi-selection is Compose-only and the keys (or any one-row selection) drop it. **A right-click selects its row
+  alone unless it is already selected**, so the menu acts on the selection it was opened on — a tree cell's plain
+  click keeps the selection on its first press and collapses it when it resolves (`forceClear`), and its right-click
+  is that first press. None is selected while the bar or a sub-tree holds the focus.
+  **A keyed gesture calls the LATEST handlers** (`rememberUpdatedState` — `TaskRow`'s gesture, the result rows',
+  the path box's): a row's gesture is started once, and a raw handler read inside it closes over the composition
+  that started it. The Search window's `select` compared the clicked row with THAT composition's selected key, found
+  it "already selected" and never moved the main selection (anomaly 2026-10-01); `select` now always dispatches and
+  the reducer answers "no change" against the live state. The added list is `Config.added` — result KEYS (`SearchDomain.keyOf`), each
   once, local-only with the rest of the configuration — and its rows are rebuilt by `SearchDomain.resolve` the way
   the result list builds them; a key whose element is gone lists nothing.
 - **Opening a row is `SearchRowOpeners.open`**, for the result list and for the added elements' "Open each" in both

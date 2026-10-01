@@ -140,7 +140,7 @@ means.
   reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window
   that HAS the focus is reduced — giving the focus up, so no hidden window keeps the keyboard. Its ✕ closes it
   outright.
-- **The bar's tabs are selected the file explorer's way** (user rule 2026-10-01; `TabSelection`,
+- **The bar's tabs are selected the file explorer's way** (user rule 2026-10-01; `ClickSelection` — shared with the Search window's result list —
   `WindowFrameHost.onTabPressed`): a click selects its tab alone (and is still the taskbar toggle above); Shift+click
   selects every tab from the last one clicked to it — the range is `CheckRange.keysToSet`, never a second reading;
   Ctrl+click adds or takes one tab; Ctrl+Shift adds the range. **A Shift or Ctrl click only selects** — it never

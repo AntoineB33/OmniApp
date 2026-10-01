@@ -583,7 +583,7 @@ class WindowFrameHost {
 
     /**
      * The window bar's **selected tabs**, by frame id (user rule 2026-10-01): a click selects its tab alone,
-     * Shift+click every tab from the last one clicked to it, Ctrl+click adds or takes one tab ([TabSelection]).
+     * Shift+click every tab from the last one clicked to it, Ctrl+click adds or takes one tab ([ClickSelection]).
      * Local view state held in memory only, like the other windows' selections; a closed window leaves it.
      */
     var selectedTabs: Set<String> by mutableStateOf(emptySet())
@@ -631,7 +631,7 @@ class WindowFrameHost {
      * a Shift or Ctrl click only changes the selection, so selecting several tabs never reduces or raises a window.
      */
     fun onTabPressed(id: String, shift: Boolean, ctrl: Boolean) {
-        val next = TabSelection.click(entries.map { it.id }, selectedTabs, tabAnchor, id, shift, ctrl)
+        val next = ClickSelection.click(entries.map { it.id }, selectedTabs, tabAnchor, id, shift, ctrl)
         selectedTabs = next.selected
         tabAnchor = next.anchor
         if (!shift && !ctrl) onTabClicked(id)
@@ -691,35 +691,6 @@ class WindowFrameHost {
     fun blur() {
         focusedId = null
     }
-}
-
-/**
- * **The window bar's tab selection** — the file explorer's rule over the tabs in bar order: a plain click selects the
- * clicked tab alone and makes it the anchor; Shift+click selects the range from the anchor to it (the range itself is
- * [CheckRange.keysToSet], the app's one reading of a Shift range), replacing the selection — or adding to it with Ctrl
- * held too — and keeps the anchor, so a second Shift+click re-draws the range from the same tab; Ctrl+click adds or
- * takes the clicked tab and makes it the anchor.
- */
-object TabSelection {
-    data class Result(val selected: Set<String>, val anchor: String?)
-
-    fun click(
-        order: List<String>,
-        selected: Set<String>,
-        anchor: String?,
-        clicked: String,
-        shift: Boolean,
-        ctrl: Boolean,
-    ): Result =
-        when {
-            shift -> {
-                val from = anchor?.takeIf { it in order }
-                val range = CheckRange.keysToSet(order, from, clicked, shift = true)
-                Result((if (ctrl) selected else emptySet()) + range, from ?: clicked)
-            }
-            ctrl -> Result(if (clicked in selected) selected - clicked else selected + clicked, clicked)
-            else -> Result(setOf(clicked), clicked)
-        }
 }
 
 val LocalWindowFrameHost = staticCompositionLocalOf<WindowFrameHost?> { null }

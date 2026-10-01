@@ -2807,6 +2807,15 @@ internal fun TaskRow(
     // captured instance must never call the click handler a recomposition has since replaced.
     val currentOnClick by rememberUpdatedState(onClick)
     val selectOnSecondaryPress = { currentOnClick(cellId, false, false, false) }
+    // The same for every handler the cellId-keyed gesture below calls: it is started once per cell, so a raw
+    // parameter read inside it is the one from the composition that started it. The Search window's row selected
+    // through such a stale handler compared against the selection of that old composition and was never made the
+    // main selection (anomaly 2026-10-01).
+    val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
+    val currentOnDragSelect by rememberUpdatedState(onDragSelect)
+    val currentOnMoveDragStart by rememberUpdatedState(onMoveDragStart)
+    val currentOnMoveDropHover by rememberUpdatedState(onMoveDropHover)
+    val currentOnMoveDragEnd by rememberUpdatedState(onMoveDragEnd)
 
     @OptIn(ExperimentalComposeUiApi::class)
     fun selectionPointerModifier(): Modifier {
@@ -2845,7 +2854,7 @@ internal fun TaskRow(
                     val ctrl = modifiers.pointerCtrlPressed
                     val shift = modifiers.pointerShiftPressed
 
-                    onClick(cellId, ctrl, shift, false)
+                    currentOnClick(cellId, ctrl, shift, false)
 
                     // Ctrl / Shift clicks never begin a drag — just wait for release.
                     if (ctrl || shift) {
@@ -2867,7 +2876,7 @@ internal fun TaskRow(
                             dragged = true
                             change.consume()
                             windowYOf(change)?.let { currentResolveRowAt(it) }?.let { (occ, _) ->
-                                onDragSelect(cellId, occ.cellId)
+                                currentOnDragSelect(cellId, occ.cellId)
                             }
                         }
                     }
@@ -2882,7 +2891,7 @@ internal fun TaskRow(
                             awaitFirstDown(requireUnconsumed = false)
                         }
                     if (secondDown == null) {
-                        onClick(cellId, false, false, true)
+                        currentOnClick(cellId, false, false, true)
                         return@awaitEachGesture
                     }
                     secondDown.consume()
@@ -2890,9 +2899,9 @@ internal fun TaskRow(
                     // Double-click on a non-movable selection (e.g. a disjoint Ctrl multi-select)
                     // can't be dragged anywhere, so it just enters Edit Mode (PRD §4).
                     if (!currentCanMoveFromCell) {
-                        onClick(cellId, false, false, true)
+                        currentOnClick(cellId, false, false, true)
                         waitForUpOrCancellation()
-                        if (onTitle) onDoubleClick()
+                        if (onTitle) currentOnDoubleClick()
                         return@awaitEachGesture
                     }
 
@@ -2905,10 +2914,10 @@ internal fun TaskRow(
                         val event = awaitPointerEvent()
                         if (!event.changes.any { it.pressed }) {
                             if (moveStarted) {
-                                onMoveDragEnd()
+                                currentOnMoveDragEnd()
                             } else {
-                                onClick(cellId, false, false, true)
-                                if (onTitle) onDoubleClick()
+                                currentOnClick(cellId, false, false, true)
+                                if (onTitle) currentOnDoubleClick()
                             }
                             break
                         }
@@ -2918,13 +2927,13 @@ internal fun TaskRow(
                         moveTraveled += change.positionChange().getDistance()
                         if (!moveStarted && moveTraveled > touchSlop) {
                             moveStarted = true
-                            onMoveDragStart()
+                            currentOnMoveDragStart()
                         }
                         if (moveStarted) {
                             change.consume()
                             windowYOf(change)?.let { currentResolveRowAt(it) }
                                 ?.let { (occ, before) ->
-                                    onMoveDropHover(occ.cellId, before, occ.renderVia)
+                                    currentOnMoveDropHover(occ.cellId, before, occ.renderVia)
                                 }
                         }
                     }

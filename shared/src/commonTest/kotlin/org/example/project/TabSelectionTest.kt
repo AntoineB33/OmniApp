@@ -2,7 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import org.example.project.ui.TabSelection
+import org.example.project.ui.ClickSelection
 import org.example.project.ui.WindowFrameHost
 import org.example.project.ui.WindowFrameState
 
@@ -21,7 +21,7 @@ class TabSelectionTest {
         clicked: String,
         shift: Boolean = false,
         ctrl: Boolean = false,
-    ) = TabSelection.click(order, selected, anchor, clicked, shift, ctrl)
+    ) = ClickSelection.click(order, selected, anchor, clicked, shift, ctrl)
 
     @Test
     fun a_click_then_a_shift_click_selects_every_tab_between_both_included_in_either_direction() {
