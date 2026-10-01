@@ -97,6 +97,14 @@ data class ObjectWindowKey(val kind: Kind, val id: String, val template: Boolean
     }
 
     companion object {
+        /**
+         * The kinds whose window was an element's own edit window — a Search window holding the element since
+         * 2026-10-01 (`SearchDomain.elementSearchConfig`). Their ☆ buttons open that; they are not listed as window
+         * types. The task's and the category's still exist for the default sub-tree's own ([template]).
+         */
+        val ELEMENT_KINDS: Set<Kind> =
+            setOf(Kind.TaskEdit, Kind.CategoryEdit, Kind.PeriodKindEdit, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder)
+
         private const val PREFIX = "object:"
         private const val TEMPLATE = "template"
         private const val LIVE = "live"

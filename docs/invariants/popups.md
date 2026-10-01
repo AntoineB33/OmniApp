@@ -219,6 +219,19 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - **A window may keep its own configuration on its row** (`config`, serialized by the window's owner): the
   Search window's query and checked kinds (`SearchDomain.Config`), so it reopens with them. Local-only view
   state like the rest of the row.
+- **An element's edit window IS a Search window holding that element** (user rule 2026-10-01). The period edit
+  window, the account's task edit and category edit windows, the single alarm / timer / chrono window and the single
+  reminder window are gone: every way of opening one — a Search row, "Open each", the cell menu's "edit task", a
+  calendar panel's "edit task", a category's ✎, a "creation" row, a ☆ button keyed by one of those kinds
+  (`ObjectWindowKey.ELEMENT_KINDS`) — opens `openElementSearch`: `openNewWindow` on
+  `SearchDomain.elementSearchConfig` (that kind, that one element added), so asking again brings the same window
+  back. What the window held is the Search window's actions on its added elements, drawn by the SAME components: the
+  category's body (`CategoryEditor`), the Alarms window's rows (`AlarmWindow(embeddedSubjects = …)`), the reminder's
+  editor (`ChoresManagerWindow(embeddedSubjects = …)`, its "constrained in" picker hoisted to `App` —
+  `reminderConstraintWindows` — because a full-size layer cannot sit in a scrolling list), the period's combinations
+  section and drawing swatch. **The default sub-tree's task and category windows stay**: the template's tasks are not
+  the account's, so no Search window lists them, and its category rules are scoped in the template's cells. A row of
+  a removed window that was open at the last stop does not come back.
 - **A per-object window about an object with a stable id comes back after a restart** (2026-09-25 — they used
   to persist nothing, and two open timer windows were gone after a rebuild). Each keeps a row of its own, by frame
   id (`TaskEdit#3`, `AlarmOrTimerEdit#2`), whose `config` is its `ObjectWindowKey`: written when it opens (a fresh

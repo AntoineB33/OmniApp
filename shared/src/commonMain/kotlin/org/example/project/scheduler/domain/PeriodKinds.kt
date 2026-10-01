@@ -240,6 +240,33 @@ object PeriodKinds {
     }
 
     /**
+     * **A default period put back as the app ships it** (the Search window's "Reset", user rule 2026-10-01): the
+     * combination rules [current] leaves once every kind of [kinds] — DEFAULT periods, named by their id, which is
+     * the fixed name the app gives them ([isUserDefined] false) — is reset.
+     *
+     * A default rule naming one of them comes back as it ships, matched by its rule id (so one the user edited until
+     * it no longer names the kind is still found), in its place or, if the user deleted it, at the end. A rule the
+     * user added that names one of them and only default kinds is dropped. A rule that also names one of the
+     * account's own kinds is kept: it is that kind's configuration too, which resetting a default period does not
+     * touch. Every other rule is left as it is. [current] itself when nothing changes.
+     */
+    fun combinationsReset(current: List<PeriodCombination>, kinds: Set<String>): List<PeriodCombination> {
+        val defaults = DEFAULT_COMBINATIONS.filter { rule -> rule.named.any { it in kinds } }.associateBy { it.id }
+        val out = ArrayList<PeriodCombination>(current.size + defaults.size)
+        val restored = HashSet<String>()
+        for (rule in current) {
+            val default = defaults[rule.id]
+            when {
+                default != null -> if (restored.add(default.id)) out += default
+                rule.named.any { it in kinds } && rule.named.none(::isUserDefined) -> Unit
+                else -> out += rule
+            }
+        }
+        defaults.values.filter { it.id !in restored }.forEach { out += it }
+        return if (out == current) current else out
+    }
+
+    /**
      * The four one-field rules [LAYERS_RULE] replaced on 2026-10-01 (same meaning). `SchedulerStateCodec` collapses them
      * back into [LAYERS_RULE] where an older payload still holds all four untouched.
      */

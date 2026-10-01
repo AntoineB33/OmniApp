@@ -298,17 +298,17 @@ model exists to prevent.
   with **no Edit and no Remove** — there is no object of its own behind it. The **cue keys on the period's
   own start** (`SchedulerEngine`'s `windDownInstants` reads the panels the fill laid, never a second reading
   of the sleep schedule), so the notification and the band cannot disagree.
-- **A period is an OBJECT, and its window is the task edit window's section read the other way round.** Every
-  row there carries a **✎** onto `PeriodKindEditWindow` — *one kind, every task*, where the section is *one
-  task, every kind*. It holds exactly three things: **Delete** (`RemovePeriodKind`, offered only for a
-  user-defined kind — the one place a period is deleted, because it is the one place a period is an object);
-  the **schedulable leaves** with a check box and a percentage each (`SchedulerDomain.periodKindTaskRows` — a
-  parent task is never placed, so a value on one is a number nothing reads); and a **bulk field** that appears
-  as soon as anything is checked, showing the value the checked tasks share or **blank** where they do not
-  (`SchedulerDomain.commonResilience`). That field and each row's own write through the **one** intent,
-  `SetPeriodResilience`, so checking twenty tasks and typing one percentage is **one** history unit — never a
-  fan-out of `SetTaskResilience`. It is a window about ONE kind; opening it on another kind opens a second
-  window, and neither it nor the window it was opened from leaves on a press elsewhere (`popups.md`).
+- **A period is an OBJECT; what was its window is the Search window holding it** (user rule 2026-10-01: the period
+  edit window was removed, `popups.md`). A resilience row's **✎** opens it — *one kind, every task*, where the row is
+  *one task, every kind*. Its actions: its combinations, its drawing (one drop-down field, `ChoiceDropDown`),
+  **Delete** (`RemovePeriodKind`, only for a user-defined kind — the one place a period is deleted, because it is the
+  one place a period is an object) and **"Search its tasks"** (user rule 2026-10-01): it opens a Search
+  window of the tasks alone, its "Schedulable" filter on yes, its actions' filter on the resilience action and that action's period field on this
+  period (`SearchDomain.resilienceSearchConfig`, through `openNewWindow`, so asking twice brings the same window
+  back). The list of every leaf with a check box and a percentage it replaced is the Search window's job now. The
+  action writes the added **schedulable leaves** only (`SearchDomain.addedLeafIds` — a parent task is never placed,
+  so a value on one is a number nothing reads) through the **one** intent `SetPeriodResilience`, so one value over
+  twenty tasks is **one** history unit — never a fan-out of `SetTaskResilience`.
 - **A panel's kind is `TaskPanel.restrictiveKind`**, the single reading of `periodKind` and the legacy
   `noScreen`/`inactivity`/`sleep`/`screenBreak` flags. A payload written before kinds existed is healed from
   those flags on decode. **Ask through it, never through the four flags**: a period of a kind that has no

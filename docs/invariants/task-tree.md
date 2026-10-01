@@ -498,8 +498,8 @@ User spec 2026-09-26. `scheduler/domain/TaskPathsDomain.kt`; the window's **Path
 
 ### Which tasks the tree holds
 
-→ PRD §7. `SchedulerDomain.tasksInTree` — what the period edit window's rows (`periodKindTaskRows`) are drawn
-from. (It was the membership of the "All tasks" window, removed 2026-09-25 with its sorter and its "similar
+→ PRD §7. `SchedulerDomain.tasksInTree` — what `periodKindTaskRows` is drawn from (the period edit window's rows
+until 2026-10-01, when a Search window replaced them). (It was the membership of the "All tasks" window, removed 2026-09-25 with its sorter and its "similar
 titles" figure: the Search window and the per-object windows its rows open replace it.)
 
 - **A mirrored task is held ONCE.** Cells are read off `state.cells` through `isPopulatedCell`, exactly as
@@ -617,15 +617,18 @@ titles" figure: the Search window and the per-object windows its rows open repla
   raises and focuses the tree WINDOW before revealing the cell.
 - **Every row's selection is the tree's** — the outline (`taskCellOutline`), no fill — and moving it scrolls the
   list only when it would leave what is shown, by just enough to bring it to the nearer edge.
-- **Opening an alarm, a timer or a reminder row — double-click, `Enter` or right-click alike — opens that ONE
-  element's own window** (`ItemResultRow`'s `opensOnRightClick`: those rows have no contextual menu) — the Alarms
-  window (`AlarmWindowSubject`) or the reminder window (`ChoresManagerWindow`, `REMINDER_EDIT_FRAME_ID`)
-  showing that row alone, never a second editor. There is no list of every reminder (removed 2026-09-25); the
-  full Alarms window is still the calendar's alarm/timer edit entry. The reminder window re-seeds from the list
-  whenever it is not the one it last pushed (the Alarms window's rule), which is what lets it stand beside a
-  copy of itself. **Its subject is the window's own state**: the "+ New …" button at the bottom adds an element
-  of the same kind (`addAlarm` / `addTimer` / `newRow`) and moves the window on to it;
-  so the window, not `App`, closes itself when the element it shows is gone.
+- **Opening a row — double-click, `Enter`, or right-click on an alarm, a timer or a reminder (`ItemResultRow`'s
+  `opensOnRightClick`) — opens the Search window holding that element alone** (`popups.md`, user rule 2026-10-01; it
+  was the element's own window). Its editing is that window's actions, one block per added element: "Edit" draws the
+  Alarms window's rows (`AlarmWindow(embeddedSubjects)`) or the reminder's editor
+  (`ChoresManagerWindow(embeddedSubjects)`), never a second editor; each re-seeds from the list whenever it is not the
+  one it last pushed (the Alarms window's rule), which lets several stand side by side. No "+ New" there (the
+  "creation" rows make one); the default configurations stay one link away. The full Alarms window is still the
+  calendar's alarm/timer edit entry.
+- **The element edit windows' sections are actions** (2026-10-01): a period's drawing (one drop-down over every added
+  period), combinations (each period's own section), "Search its tasks" (`resilienceSearchConfig`) and Delete (the
+  account's own periods only); a category's "Name and rules" (`CategoryEditor`); a task's "Paths" (each place, ✕ but
+  on its last).
 - **"creation" is a kind too** (`Kind.Creation`, user spec 2026-09-26): one row per kind the user makes
   (`SearchDomain.CREATABLE` — not history units, task relations or shortcuts). Opening it (double-click, Enter,
   right-click) makes one through the SAME path that kind's own "+ New …" uses — the account's default
@@ -662,6 +665,33 @@ titles" figure: the Search window and the per-object windows its rows open repla
   action (`SearchDomain.addedActions`) exactly as the Configuration Search window lists the settings — a name bar,
   the kind drop-down, "only the types in the added elements" — and acts on the added list of the Search window
   that opened it; the top right quarter draws the same sections for the kinds the list holds.
+- **The actions' filter is the Search window's** (`Config.actionQuery`, user rule 2026-10-01): the Added elements
+  configurations window's bar edits the configuration of the Search window it acts for, and the same filter narrows
+  that window's top right quarter (which says so, with "Show all"). The kind drop-down and "only the types in the
+  added elements" stay the configurations window's own. Stored with the configuration; an older payload has none.
+- **The task actions are the cell menu's and the task edit window's** (user rule 2026-10-01): start now, edit, go
+  to task tree, go to calendar, copy task ids, deep copy, collapse sub-trees, add default sub-tree; then add under,
+  resilience, schedule unit, text — besides add/remove a category and minimum time. They reach the SAME handlers
+  (`AddedTaskHandlers`: `ForceTaskStart`, `taskEditWindows`, `goToTaskTreeAt`, `deepCopyWindows`; "go to calendar"
+  through `LocalCalendarGoTo`). Start, go to task tree and go to calendar are about ONE task and are live only
+  while the list holds exactly one. A cell entry acts on each task's first live cell (`addedTaskCells`). Each edit
+  window section over several tasks is ONE intent and one Undo/Redo unit (`SetPeriodResilience`, `SetTasksText`,
+  `SetTasksScheduleUnit`, `AddTasksPath`); resilience and the schedule unit go to the schedulable leaves only, and a
+  schedule unit longer than a task's minimum time leaves that task's alone (the reducer's guard). The resilience
+  action's period field is `Config.resiliencePeriod`. Not offered: removing one path (it is about one cell) and
+  defining a new kind of period (not a task's).
+- **Reset, on the added DEFAULT periods** (user rule 2026-10-01; `AddedAction.PeriodReset`,
+  `SchedulerIntent.ResetPeriodKinds`): a period is named by its id — the kind's fixed name, never its title — and a
+  default one (`PeriodKinds.isUserDefined` false) goes back to how the app ships it: its drawing override dropped, and
+  its combination rules put back by `PeriodKinds.combinationsReset` (a shipped rule found by its RULE id even if edited
+  past naming the kind, re-added if deleted; a rule of the user's naming only default kinds dropped; one that also
+  names a kind of the account's own kept — it is that kind's configuration too). The tasks' resiliences are the
+  tasks' and stay. No history unit, like the drawings. The button is greyed while `modifiedDefaultPeriods` is empty.
+- **The tasks' "Schedulable" filter** (yes / no / any, user rule 2026-10-01; `Filters.taskSchedulable`): PRD §9's
+  schedulable, read through `SchedulerDomain.isPlaceableTask` — a leaf that still lives in the tree, the predicate
+  "start this task now" asks — so a parent, a task only a stored tree holds and a cut one are "no".
+- **The restrictive periods' "Default periods" filter** (yes / no / any; it was "Origin": built-in / yours, and
+  the stored names `BuiltIn`/`Yours` are kept) keeps the kinds the app ships or the account's own.
 - **The calendar filters** (tasks and restrictive-period kinds): on the calendar at all, every box from a day,
   every box until the end of a day. A day bound needs a box: an element with none fails it. A task's boxes are
   `SchedulerDomain.calendarBoxesOfTask` (its records and every panel placed for it — the scheduler's past reads the

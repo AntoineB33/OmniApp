@@ -11,6 +11,65 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The element edit windows are Search windows — 2026-10-01
+
+User request: *"Now all the actions in the period edit window, put them in the added elements configurations window, and
+remove the period edit window. Do the same with all the other edit windows."* Scope chosen by the user: the element
+edit windows (period, task, category, alarm/timer/chrono, reminder); every entry point opens a Search window with the
+element added (`SearchDomain.elementSearchConfig`, `App.openElementSearch`).
+
+- Removed: `PeriodKindEditWindow`, and the account's use of the task / category / alarm / reminder per-object windows
+  (`periodKindWindows`, `alarmWindows`, `reminderWindows` deleted). Kept for the default sub-tree's own tasks and
+  categories, which no Search window lists.
+- New actions: period Drawing / Combinations / Search its tasks / Delete; category "Name and rules"
+  (`CategoryEditor`, extracted from `CategoryEditWindow`); alarm, timer, chrono and reminder "Edit"
+  (`AlarmWindow` / `ChoresManagerWindow` gained `embeddedSubjects`; the reminder's constraint picker is hosted by
+  `App`); task "Paths". `AddedTaskHandlers` → `AddedActionHandlers`, built once in `App`.
+- `ObjectWindowKey.ELEMENT_KINDS`: their ☆ buttons open the Search window; their windows are no longer listed as window
+  types, and one open at the last stop does not come back.
+- Tests: `SearchTaskActionsTest` (element configs, drawing, delete, paths).
+
+### Search: the tasks' "Schedulable" filter — 2026-10-01
+
+User request: *"Add the 'schedulable' filter in the Search configurations window."* `Filters.taskSchedulable` (yes /
+no / any) reads `SchedulerDomain.isPlaceableTask`: a leaf still in the tree. Stored with the configuration; an older
+one decodes to any. The period edit window's resilience Search window opens with it on yes
+(`resilienceSearchConfig`). Test: `SearchTaskActionsTest.the_schedulable_filter_keeps_the_leaves_the_scheduler_may_place_or_the_others`.
+
+### Period edit window → Search; the task actions; the actions' filter — 2026-10-01
+
+User request: *"In the period edit window, replace the drawing section by a field with a drop-down menu (using existing
+code). Replace the section for task resilience by a button that opens a Search window where task is the only selected
+element type. In the actions section of a Search window, for the tasks, add the actions available from the right-click
+menu of a task cell, and those available in the task edit window. In the actions elements configurations of the Search
+window from the resilience section of the period edit window, a text in the search bar filters for only the resilience
+action. The action filter is applied to the actions elements configurations window, but also to the top right section
+of the Search window. This action configuration has two fields: one for the period, and one for the resilience value.
+The period field is set to the period of the origin period edit window."*
+
+- Period edit window: the drawing is one `ChoiceDropDown` (the single-choice sibling of `CheckBoxDropDown`, same
+  face) with swatches; the task list, its check boxes and the bulk field are gone, replaced by "Search the tasks"
+  (`SearchDomain.resilienceSearchConfig`). `BulkPercentField` removed.
+- `SearchDomain.Config.actionQuery` / `resiliencePeriod` (new, defaulted; older stored configs decode to none). The
+  Added elements configurations window's bar now edits the target Search window's `actionQuery`.
+- Task actions `TaskStartNow`…`TaskText`; new intents `SetTasksText`, `SetTasksScheduleUnit`, `AddTasksPath`;
+  `TaskPathsDomain.candidatesForAll`; `ScheduleUnitEditor` extracted from the task edit window.
+- Tests: `SearchTaskActionsTest`.
+
+### Search: the "Default periods" filter and Reset of a default period — 2026-10-01
+
+User request: *"In the Search configurations window, for restrictive periods, add the filters 'default periods'. In the
+actions section of the Search window, for default restrictive periods, add the button reset."*
+
+- The restrictive periods' "Origin" filter (built-in / yours) is now **"Default periods"** (yes / no); stored
+  configurations still decode (the entry names are unchanged). A row's detail says "default period".
+- New added-elements action **"Reset the default periods"** → `SchedulerIntent.ResetPeriodKinds`: drawing and
+  combination rules back to `PeriodKinds.defaultStyle` / `DEFAULT_COMBINATIONS` (`PeriodKinds.combinationsReset`),
+  keyed by the kind's id. Tasks' resiliences untouched. No history unit. A kind has no editable title today, so there
+  is none to reset.
+- Tests: `SearchAddedElementsTest.reset_puts_an_added_default_period_back_as_the_app_ships_it_and_leaves_the_others`,
+  `the_default_periods_filter_keeps_the_shipped_kinds_or_the_accounts_own`.
+
 ### The window bar shows which window has the focus — 2026-10-01
 
 User request: *"In the system tray, add a visual indication for which window has the focus."* The window bar's tab of

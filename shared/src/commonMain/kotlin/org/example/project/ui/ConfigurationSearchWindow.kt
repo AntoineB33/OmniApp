@@ -226,6 +226,8 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
+        SearchDomain.Setting.TaskSchedulable ->
+            Choices(SearchDomain.Tri.entries, f.taskSchedulable, { it.label }) { filters(f.copy(taskSchedulable = it)) }
         SearchDomain.Setting.TaskCategory ->
             CategoryPicker(state, f.taskCategory?.let { id -> state.categoryById(id)?.title ?: "(deleted)" }) {
                 filters(f.copy(taskCategory = it))

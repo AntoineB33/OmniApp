@@ -99,7 +99,6 @@ import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.scheduler.ui.PeriodKindEditWindow
 import org.example.project.scheduler.ui.PriorityWeightWindow
 import org.example.project.scheduler.ui.RelativePriorityWindow
 import org.example.project.scheduler.ui.OnlineWindow
@@ -138,6 +137,8 @@ import org.example.project.ui.AlarmWindowSubject
 import org.example.project.ui.CONFIGURATION_SEARCH_FRAME_ID
 import org.example.project.ui.ADDED_CONFIGURATION_FRAME_ID
 import org.example.project.ui.AddedElementsConfigurationWindow
+import org.example.project.ui.AddedActionHandlers
+import org.example.project.ui.ReminderConstraintEditWindow
 import org.example.project.ui.SearchRowOpeners
 import org.example.project.ui.ConfigurationSearchWindow
 import org.example.project.ui.TransientPopupLayer
@@ -708,41 +709,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val relativeWindows = remember {
             ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.RelativePriority) { it.value }, objectWindowMemory)
         }
-        // PRD §13: a task's "edit task" window, and a cell's "deep copy" window.
+        // PRD §13: a task's "edit task" window — the DEFAULT SUB-TREE's tasks only since 2026-10-01 (an account task is
+        // edited from a Search window: `openElementSearch`) — and a cell's "deep copy" window.
         val taskEditWindows = remember {
             ObjectWindows(treeKey<TaskId>(ObjectWindowKey.Kind.TaskEdit) { it.value }, objectWindowMemory)
         }
         val deepCopyWindows = remember {
             ObjectWindows(treeKey<CellId>(ObjectWindowKey.Kind.DeepCopy) { it.value }, objectWindowMemory)
         }
-        // The period edit window: one KIND of restrictive period, opened from a resilience row's pencil in the
-        // task edit window (of either tree) and from the Search window.
-        val periodKindWindows = remember {
-            ObjectWindows(treeKey<String>(ObjectWindowKey.Kind.PeriodKindEdit) { it }, objectWindowMemory)
-        }
-        // PRD §5: a category's own window.
+        // PRD §5: a category's own window — the default sub-tree's only (its rules are scoped in the template's cells);
+        // an account category is edited from a Search window.
         val categoryWindows = remember {
             ObjectWindows(treeKey<CategoryId>(ObjectWindowKey.Kind.CategoryEdit) { it.value }, objectWindowMemory)
         }
-        // PRD §7 Search: one alarm's or one timer's own window, and one reminder's.
-        val alarmWindows = remember {
-            ObjectWindows<AlarmWindowSubject>(
-                {
-                    val kind = when (it.kind) {
-                        AlarmWindowSubject.Kind.Alarm -> ObjectWindowKey.Kind.Alarm
-                        AlarmWindowSubject.Kind.Timer -> ObjectWindowKey.Kind.Timer
-                        AlarmWindowSubject.Kind.Chrono -> ObjectWindowKey.Kind.Chrono
-                    }
-                    ObjectWindowKey(kind, it.id).encode()
-                },
-                objectWindowMemory,
-            )
-        }
-        val reminderWindows = remember {
-            ObjectWindows<String>({ ObjectWindowKey(ObjectWindowKey.Kind.Reminder, it).encode() }, objectWindowMemory)
-        }
+        // PRD §14 "constrained in": the picker of the reminder (by id) a Search window's reminder editor asked it for.
+        val reminderConstraintWindows = remember { ObjectWindows<String>() }
+        // User rule 2026-10-01: an element's own edit window is a Search window holding that element alone — its
+        // actions are that window's. Set once `openNewWindow` exists (below); the ☆ buttons reach it through
+        // [openObjectWindow], which is declared before it.
+        var openElementSearch: (SearchDomain.Kind, String) -> Unit = { _, _ -> }
         // PRD §14/§18: the default configuration of a new alarm, timer and reminder — one window each, opened from
-        // the bottom of any such element's own window. The subject is the kind ([ObjectWindowKey.Kind.AlarmDefaults]…).
+        // the bottom of any such element's editor. The subject is the kind ([ObjectWindowKey.Kind.AlarmDefaults]…).
         val defaultsWindows = remember {
             ObjectWindows<ObjectWindowKey.Kind>({ ObjectWindowKey(it, "").encode() }, objectWindowMemory)
         }
@@ -751,17 +738,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // restore alike.
         fun openObjectWindow(key: ObjectWindowKey, number: Int? = null) {
             fun <T : Any> ObjectWindows<T>.openOn(subject: T) = if (number == null) open(subject) else restore(number, subject)
+            // An element's own window is gone (user rule 2026-10-01): its ☆ opens the Search window holding it, and a
+            // window of it that was open when the app last stopped does not come back.
+            fun search(kind: SearchDomain.Kind) { if (number == null) openElementSearch(kind, key.id) }
             when (key.kind) {
-                ObjectWindowKey.Kind.TaskEdit -> taskEditWindows.openOn(TreeObject(TaskId(key.id), key.template))
-                ObjectWindowKey.Kind.CategoryEdit -> categoryWindows.openOn(TreeObject(CategoryId(key.id), key.template))
-                ObjectWindowKey.Kind.PeriodKindEdit -> periodKindWindows.openOn(TreeObject(key.id, key.template))
+                ObjectWindowKey.Kind.TaskEdit ->
+                    if (key.template) taskEditWindows.openOn(TreeObject(TaskId(key.id), true)) else search(SearchDomain.Kind.Task)
+                ObjectWindowKey.Kind.CategoryEdit ->
+                    if (key.template) categoryWindows.openOn(TreeObject(CategoryId(key.id), true)) else search(SearchDomain.Kind.Category)
+                ObjectWindowKey.Kind.PeriodKindEdit -> search(SearchDomain.Kind.RestrictivePeriod)
                 ObjectWindowKey.Kind.PriorityWeights -> weightWindows.openOn(TreeObject(CellListId(key.id), key.template))
                 ObjectWindowKey.Kind.RelativePriority -> relativeWindows.openOn(TreeObject(CellId(key.id), key.template))
                 ObjectWindowKey.Kind.DeepCopy -> deepCopyWindows.openOn(TreeObject(CellId(key.id), key.template))
-                ObjectWindowKey.Kind.Alarm -> alarmWindows.openOn(AlarmWindowSubject(key.id, AlarmWindowSubject.Kind.Alarm))
-                ObjectWindowKey.Kind.Timer -> alarmWindows.openOn(AlarmWindowSubject(key.id, AlarmWindowSubject.Kind.Timer))
-                ObjectWindowKey.Kind.Chrono -> alarmWindows.openOn(AlarmWindowSubject(key.id, AlarmWindowSubject.Kind.Chrono))
-                ObjectWindowKey.Kind.Reminder -> reminderWindows.openOn(key.id)
+                ObjectWindowKey.Kind.Alarm -> search(SearchDomain.Kind.Alarm)
+                ObjectWindowKey.Kind.Timer -> search(SearchDomain.Kind.Timer)
+                ObjectWindowKey.Kind.Chrono -> search(SearchDomain.Kind.Chrono)
+                ObjectWindowKey.Kind.Reminder -> search(SearchDomain.Kind.Reminder)
                 ObjectWindowKey.Kind.AlarmDefaults, ObjectWindowKey.Kind.TimerDefaults, ObjectWindowKey.Kind.ReminderDefaults ->
                     defaultsWindows.openOn(key.kind)
             }
@@ -1152,6 +1144,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowFrames.focus(id)
             historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
         }
+        openElementSearch = { kind, id ->
+            openNewWindow(FloatingWindow.Search, SearchDomain.elementSearchConfig(kind, id).encode())
+        }
         // A window button that is NOT in the lateral menu (the default sub-tree's, atop the task tree window): open
         // it (and focus) when closed; close it when it is the window being worked in; otherwise bring it back to the
         // front and the focus without closing.
@@ -1227,7 +1222,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // Every per-object TYPE, for the one-per-type listing — "Timer" and "Default timer" are two types.
             val listedTypes = (open + closed).mapTo(HashSet()) { it.type }
             val types = ObjectWindowKey.Kind.entries
-                .filter { objectWindowType(it) !in listedTypes }
+                .filter { it !in ObjectWindowKey.ELEMENT_KINDS && objectWindowType(it) !in listedTypes }
                 .map { kind ->
                     SearchDomain.WindowEntry(
                         objectWindowType(kind), objectWindowTypeTitle(kind), SearchDomain.WindowStatus.NotOpen,
@@ -1250,38 +1245,42 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SearchDomain.Kind.Task -> {
                     val placeholder = TaskPathsDomain.placeholderOf(st, st.rootListId) ?: return
                     vm.dispatch(SchedulerIntent.CreateTask("New task"))
-                    vm.state.value.cells[placeholder]?.taskId?.let { taskEditWindows.open(TreeObject(it)) }
+                    vm.state.value.cells[placeholder]?.taskId?.let { openElementSearch(SearchDomain.Kind.Task, it.value) }
                 }
                 SearchDomain.Kind.Category -> {
                     val title = unique("New category", st.categories.map { it.title })
                     vm.dispatch(SchedulerIntent.CreateCategory(title))
-                    vm.state.value.categories.firstOrNull { it.title == title }?.let { categoryWindows.open(TreeObject(it.id)) }
+                    vm.state.value.categories.firstOrNull { it.title == title }?.let {
+                        openElementSearch(SearchDomain.Kind.Category, it.id.value)
+                    }
                 }
                 SearchDomain.Kind.RestrictivePeriod -> {
                     val name = unique("New period", st.allPeriodKinds)
                     vm.dispatch(SchedulerIntent.AddPeriodKind(name))
-                    if (name in vm.state.value.allPeriodKinds) periodKindWindows.open(TreeObject(name))
+                    if (name in vm.state.value.allPeriodKinds) openElementSearch(SearchDomain.Kind.RestrictivePeriod, name)
                 }
                 SearchDomain.Kind.Alarm -> {
                     val id = AlarmDomain.mintAlarmId(st.alarms.map { it.id })
                     vm.dispatch(SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, id, minutes)))
-                    alarmWindows.open(AlarmWindowSubject(id, AlarmWindowSubject.Kind.Alarm))
+                    openElementSearch(SearchDomain.Kind.Alarm, id)
                 }
                 SearchDomain.Kind.Timer -> {
                     val id = TimerDomain.mintTimerId(st.timers.map { it.id })
                     vm.dispatch(SchedulerIntent.SetTimers(st.timers + NewElementDefaults.newTimer(st.newTimerDefaults, id)))
-                    alarmWindows.open(AlarmWindowSubject(id, AlarmWindowSubject.Kind.Timer))
+                    openElementSearch(SearchDomain.Kind.Timer, id)
                 }
                 SearchDomain.Kind.Chrono -> {
                     val id = ChronoDomain.mintChronoId(st.chronos.map { it.id })
                     vm.dispatch(SchedulerIntent.SetChronos(st.chronos + ChronoEntry(id = id)))
-                    alarmWindows.open(AlarmWindowSubject(id, AlarmWindowSubject.Kind.Chrono))
+                    openElementSearch(SearchDomain.Kind.Chrono, id)
                 }
                 SearchDomain.Kind.Reminder -> {
                     val todayStart = today.atStartOfDayIn(tz).toEpochMilliseconds()
                     val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", minutes)
                     vm.dispatch(SchedulerIntent.SetChores(st.chores + created, todayStart, now))
-                    vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let { reminderWindows.open(it) }
+                    vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let {
+                        openElementSearch(SearchDomain.Kind.Reminder, it)
+                    }
                 }
                 SearchDomain.Kind.TaskTree -> {
                     vm.dispatch(SchedulerIntent.CreateTaskTree(unique("New tree", st.taskTrees.map { it.title })))
@@ -2488,8 +2487,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 },
                                 onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
                                 onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
-                                onSetEditTask = { taskEditWindows.setFrom(template = false, it) },
-                                onSetEditCategory = { categoryWindows.setFrom(template = false, it) },
+                                onSetEditTask = { it?.let { id -> openElementSearch(SearchDomain.Kind.Task, id.value) } },
+                                onSetEditCategory = { it?.let { id -> openElementSearch(SearchDomain.Kind.Category, id.value) } },
                                 onSetDeepCopyCell = { deepCopyWindows.setFrom(template = false, it) },
                             )
                             }
@@ -2569,7 +2568,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 isLeaf = SchedulerDomain.isLeafTask(popupState, taskId),
                                 periodKinds = popupState.allPeriodKinds,
                                 onAddPeriodKind = { popupDispatch(SchedulerIntent.AddPeriodKind(it)) },
-                                onEditPeriodKind = { periodKindWindows.open(TreeObject(it, template)) },
+                                onEditPeriodKind = { openElementSearch(SearchDomain.Kind.RestrictivePeriod, it) },
                                 onSave = { resilience, entries, text ->
                                     // One intent per section, and only for what actually changed — so
                                     // Save on an untouched window adds nothing to the Undo/Redo history
@@ -2602,46 +2601,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 pathCandidates = { query -> TaskPathsDomain.candidates(vm.state.value, taskId, query) },
                                 onAddPath = { parent -> vm.dispatch(SchedulerIntent.AddTaskPath(taskId, parent)) },
                                 onRemovePath = { cellId -> vm.dispatch(SchedulerIntent.RemoveTaskPath(cellId)) },
-                            )
-                        }
-                    }
-
-                    // `side-dev/README.md` § *Restrictive Period*: the PERIOD edit window — one kind, and
-                    // every task's resilience to it. The task edit window's resilience section read the
-                    // other way round, and the one place a period is deleted.
-                    ObjectWindowsHost(periodKindWindows) { w ->
-                        val (kind, template) = w.subject
-                        val close = w::close
-                        val popupState = popupStateOf(template)
-                        val popupDispatch = popupDispatchOf(template)
-                        if (kind !in popupState.allPeriodKinds) {
-                            // Deleted under it (from here, from a peer's sync, or by an undo).
-                            close()
-                        } else {
-                            PeriodKindEditWindow(
-                                kind = kind,
-                                rows = SchedulerDomain.periodKindTaskRows(popupState, kind),
-                                taskColors = taskSheetColors,
-                                // The two kinds the README names are the account's whether it likes it
-                                // or not; only a kind the user defined can be dropped.
-                                canDelete = PeriodKinds.isUserDefined(kind),
-                                allKinds = popupState.allPeriodKinds,
-                                style = popupState.periodKindConfig.style(kind),
-                                combinations = popupState.periodCombinations,
-                                onSetCombinations = { rules ->
-                                    popupDispatch(SchedulerIntent.SetPeriodCombinations(rules))
-                                },
-                                onSetDrawing = { drawing ->
-                                    popupDispatch(SchedulerIntent.SetPeriodDrawing(kind, drawing))
-                                },
-                                onSetResilience = { ids, value ->
-                                    popupDispatch(SchedulerIntent.SetPeriodResilience(ids, kind, value))
-                                },
-                                onDelete = {
-                                    popupDispatch(SchedulerIntent.RemovePeriodKind(kind))
-                                    close()
-                                },
-                                onDismiss = { close() },
                             )
                         }
                     }
@@ -2829,7 +2788,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 val head = choice.records.firstOrNull()
                                 when {
                                     choice.label == EDIT_LABEL_TASK ->
-                                        head?.taskId?.let { taskId -> taskEditWindows.open(TreeObject(taskId)) }
+                                        head?.taskId?.let { taskId -> openElementSearch(SearchDomain.Kind.Task, taskId.value) }
                                     choice.label == EDIT_LABEL_SLEEP_SCHEDULE -> sleepWindowOpen = true
                                     choice.label == EDIT_LABEL_ALARM ||
                                         choice.label == EDIT_LABEL_TIMER -> alarmWindowOpen = true
@@ -3109,38 +3068,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // It closes itself when its row is gone (ChoresManagerWindow). No existence check here: the
                     // window follows its row even when the id menu makes it adopt another reminder's id (and its
                     // "+ New reminder" moves it on), and closes itself once the row is gone — one rule, in one place.
-                    ObjectWindowsHost(reminderWindows) { w ->
-                        TransientPopupLayer(windowInstanceId(REMINDER_EDIT_FRAME_ID)) {
-                            // PRD §14: anchor the chore scheduler at local midnight of today, in the user's tz.
-                            val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
-                            ChoresManagerWindow(
-                                chores = schedulerState.chores,
-                                // PRD §14: pass `now` too so a reminder with no time-of-day lands at the current time.
-                                onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
-                                onDismiss = w::close,
-                                subject = w.subject,
-                                // What the window shows now, for asking for it again and for its ☆.
-                                onSubjectChange = w::retarget,
-                                newReminder = schedulerState.newReminderDefaults,
-                                onOpenDefaults = { defaultsWindows.open(ObjectWindowKey.Kind.ReminderDefaults) },
-                                // PRD §14: pre-fill a newly added reminder's Time field with the clock time at the click.
-                                newRowTimeOfDayMinutes = {
-                                    val t = Instant.fromEpochMilliseconds(clock.nowMillis()).toLocalDateTime(tz)
-                                    t.hour * 60 + t.minute
-                                },
-                                // PRD §14: title/id suggestion menus under the focused reminder name field —
-                                // existing reminders matching the draft, and distinct reminder titles.
+                    // PRD §14 "constrained in": the picker a Search window's reminder editor opened, on one reminder. It writes
+                    // that reminder's constraint into the account's list, the editor's own write.
+                    ObjectWindowsHost(reminderConstraintWindows) { w ->
+                        val reminderId = w.subject
+                        val reminder = schedulerState.chores.firstOrNull { it.id == reminderId }
+                        if (reminder == null) {
+                            w.close()
+                        } else {
+                            ReminderConstraintEditWindow(
+                                initialReminderId = reminder.constrainedToReminderId,
+                                // A reminder can't be constrained to itself, so hide its own identity from the picker.
+                                excludeReminderId = reminderId,
                                 reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
                                 titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                                // A new row's id must avoid every known reminder id (including calendar-only ones).
-                                knownReminderIds = { SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id } },
-                                // PRD §14: reminder ids kept alive by a checked or pinned tag — the focused row
-                                // shows its own id in the menu only when it is one of these (independently referenced).
-                                referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
-                                // PRD §14 "constrained in": resolve a reminder name ↔ id for the constraint picker.
                                 reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
                                 titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                                modifier = Modifier.align(Alignment.Center),
+                                onDismiss = w::close,
+                                onSave = { constraint ->
+                                    val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
+                                    vm.dispatch(
+                                        SchedulerIntent.SetChores(
+                                            schedulerState.chores.map {
+                                                if (it.id == reminderId) it.copy(constrainedToReminderId = constraint) else it
+                                            },
+                                            todayStartMillis,
+                                            nowMillis,
+                                        ),
+                                    )
+                                    w.close()
+                                },
                             )
                         }
                     }
@@ -3202,6 +3159,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // PRD §18: the window of the default configuration of a new alarm or timer ([subject]
                         // names its one row): it edits the account's defaults, not its alarms.
                         defaults: Boolean = false,
+                        // The Search window's actions: the rows of exactly these elements, embedded (AlarmWindow).
+                        embeddedSubjects: Set<AlarmWindowSubject>? = null,
                         initialOffset: Offset = Offset.Zero,
                         initialSize: Size = Size.Zero,
                         onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
@@ -3281,6 +3240,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 )
                             },
                             defaults = defaults,
+                            embeddedSubjects = embeddedSubjects,
                         )
                     }
 
@@ -3299,22 +3259,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRaise = { focusWindow(FloatingWindow.Alarms) },
                             modifier = Modifier.align(Alignment.Center),
                         )
-                    }
-
-                    // PRD §7 Search: the per-object window of one alarm or one timer; it closes itself when the
-                    // row is gone (its own bin, a peer, an undo). No existence check here: the window moves on to
-                    // an element its "+ New" button made, and closes itself once the element it shows is gone —
-                    // one rule, in one place (AlarmWindow).
-                    ObjectWindowsHost(alarmWindows) { w ->
-                        TransientPopupLayer(windowInstanceId(AlarmWindowSubject.FRAME_ID)) {
-                            AccountAlarmWindow(
-                                subject = w.subject,
-                                onDismiss = w::close,
-                                // What the window shows now, for asking for it again and for its ☆.
-                                onShownChange = w::retarget,
-                                modifier = Modifier.align(Alignment.Center),
-                            )
-                        }
                     }
 
                     // PRD §14/§18: the default configuration of a new alarm / timer / reminder — the element's own
@@ -3417,7 +3361,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onIntent = { vm.dispatch(it) },
                             // The account's own categories, never the template's projection — this window is
                             // about the live state, so the pop-up it opens must be too.
-                            onOpenCategoryEdit = { categoryWindows.open(TreeObject(it)) },
+                            onOpenCategoryEdit = { openElementSearch(SearchDomain.Kind.Category, it.value) },
                             onDismiss = { categoriesWindowOpen = false },
                             initialOffset = categoriesOffset,
                             initialSize = categoriesSize,
@@ -3440,11 +3384,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // "Open each" in both windows that offer it.
                     val searchRowOpeners =
                         SearchRowOpeners(
-                            onOpenTaskEdit = { taskEditWindows.open(TreeObject(it)) },
-                            onOpenCategory = { categoryWindows.open(TreeObject(it)) },
-                            onOpenPeriodKind = { periodKindWindows.open(TreeObject(it)) },
-                            onEditAlarmOrTimer = { alarmWindows.open(it) },
-                            onEditReminder = { reminderWindows.open(it) },
+                            // An element's row opens the Search window holding it alone (user rule 2026-10-01).
+                            onOpenTaskEdit = { openElementSearch(SearchDomain.Kind.Task, it.value) },
+                            onOpenCategory = { openElementSearch(SearchDomain.Kind.Category, it.value) },
+                            onOpenPeriodKind = { openElementSearch(SearchDomain.Kind.RestrictivePeriod, it) },
+                            onEditAlarmOrTimer = { subject ->
+                                val kind = when (subject.kind) {
+                                    AlarmWindowSubject.Kind.Alarm -> SearchDomain.Kind.Alarm
+                                    AlarmWindowSubject.Kind.Timer -> SearchDomain.Kind.Timer
+                                    AlarmWindowSubject.Kind.Chrono -> SearchDomain.Kind.Chrono
+                                }
+                                openElementSearch(kind, subject.id)
+                            },
+                            onEditReminder = { openElementSearch(SearchDomain.Kind.Reminder, it) },
                             // The windows that own a history unit, a task tree, a task relation or a shortcut —
                             // opened if closed and brought to the front either way, never closed by this.
                             onOpenHistory = {
@@ -3466,6 +3418,49 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenWindow = ::showWindow,
                             onCreate = ::createElement,
                         )
+                    // What the actions on the added elements open or draw — the cell menu's handlers, and the Alarms
+                    // window's and the reminder editor's components embedded over the same callbacks.
+                    val addedActionHandlers =
+                        AddedActionHandlers(
+                            onStartNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
+                            onEdit = { openElementSearch(SearchDomain.Kind.Task, it.value) },
+                            onGoToTaskTree = { taskId ->
+                                goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), null)
+                            },
+                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            onOpenResilienceSearch = { kind ->
+                                openNewWindow(FloatingWindow.Search, SearchDomain.resilienceSearchConfig(kind).encode())
+                            },
+                            alarmEditor = { subjects ->
+                                AccountAlarmWindow(
+                                    subject = null,
+                                    onDismiss = {},
+                                    modifier = Modifier,
+                                    embeddedSubjects = subjects,
+                                )
+                            },
+                            reminderEditor = { subjects ->
+                                val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
+                                ChoresManagerWindow(
+                                    chores = schedulerState.chores,
+                                    onChange = { vm.dispatch(SchedulerIntent.SetChores(it, todayStartMillis, nowMillis)) },
+                                    onDismiss = {},
+                                    subject = "",
+                                    embeddedSubjects = subjects,
+                                    onEditConstraint = { reminderConstraintWindows.open(it) },
+                                    newReminder = schedulerState.newReminderDefaults,
+                                    onOpenDefaults = { defaultsWindows.open(ObjectWindowKey.Kind.ReminderDefaults) },
+                                    reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
+                                    titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
+                                    knownReminderIds = {
+                                        SchedulerDomain.allReminderEntries(schedulerState).mapTo(mutableSetOf()) { it.id }
+                                    },
+                                    referencedReminderIds = { SchedulerDomain.referencedReminderIds(schedulerState) },
+                                    reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
+                                    titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
+                                )
+                            },
+                        )
                     LateralWindow(FloatingWindow.Search, searchWindowOpen) {
                         val searchId = windowInstanceId(FloatingWindow.Search.name)
                         val searchConfig = searchConfigOf(searchId)
@@ -3477,6 +3472,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
                             },
                             onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            actionHandlers = addedActionHandlers,
                             onIntent = { vm.dispatch(it) },
                             // A row's percentage, as a tree cell's: the weight table and the relative priority.
                             onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
@@ -3592,6 +3588,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         AddedElementsConfigurationWindow(
                             state = schedulerState,
                             added = added,
+                            config = targetConfig,
+                            onConfigChange = { setSearchConfig(target, it) },
+                            handlers = addedActionHandlers,
                             own = own,
                             onOwnChange = { setConfigSearch(configId, it) },
                             onIntent = { vm.dispatch(it) },

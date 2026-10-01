@@ -192,6 +192,66 @@ class SearchAddedElementsTest {
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.AlarmsOn(true), 0L))
     }
 
+    // ----- Reset of the default periods (user rule 2026-10-01) -------------------------------------
+
+    private fun periodKeys(state: SchedulerState, vararg kinds: String): List<String> =
+        SearchDomain.itemResults(state, SearchDomain.Kind.RestrictivePeriod, "")
+            .filter { it.id in kinds }
+            .map(SearchDomain::keyOf)
+
+    @Test
+    fun reset_puts_an_added_default_period_back_as_the_app_ships_it_and_leaves_the_others() {
+        var s = r(account(), SchedulerIntent.AddPeriodKind("deep work"))
+        val shipped = s.periodCombinations
+        s = r(s, SchedulerIntent.SetPeriodDrawing(PeriodKinds.NO_SCREEN, org.example.project.scheduler.domain.PeriodDrawing.Crosses))
+        s = r(s, SchedulerIntent.SetPeriodDrawing(PeriodKinds.SLEEP, org.example.project.scheduler.domain.PeriodDrawing.Crosses))
+        val layers = s.periodCombinations.first { it.id == PeriodKinds.LAYERS_RULE.id }
+        val mine = PeriodKinds.companionRule(PeriodKinds.NO_SCREEN, setOf(PeriodKinds.INACTIVITY)).copy(id = "combination-1")
+        val withDeepWork = PeriodKinds.companionRule("deep work", setOf(PeriodKinds.NO_SCREEN)).copy(id = "combination-2")
+        s = r(
+            s,
+            SchedulerIntent.SetPeriodCombinations(
+                // "layers" edited until it no longer names "no screen", the no-screen-layers rule deleted, and two of the
+                // user's own: one about default periods only, one that also names their own kind.
+                s.periodCombinations
+                    .filterNot { it.id == PeriodKinds.NO_SCREEN_LAYERS_RULE.id }
+                    .map { if (it.id == layers.id) it.copy(then = org.example.project.scheduler.domain.PeriodFormula.of(setOf(PeriodKinds.SLEEP))) else it } +
+                    mine + withDeepWork,
+            ),
+        )
+
+        val added = SearchDomain.resolve(s, periodKeys(s, PeriodKinds.NO_SCREEN, "deep work"))
+        assertEquals(listOf(PeriodKinds.NO_SCREEN), SearchDomain.modifiedDefaultPeriods(s, added), "your own kind has no default")
+        val after = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.ResetDefaultPeriods, 0L).fold(s, ::r)
+
+        assertEquals(PeriodKinds.defaultStyle(PeriodKinds.NO_SCREEN), after.periodKindConfig.style(PeriodKinds.NO_SCREEN))
+        assertEquals(org.example.project.scheduler.domain.PeriodDrawing.Crosses, after.periodKindConfig.drawing(PeriodKinds.SLEEP), "not added: untouched")
+        assertEquals(
+            shipped.filterNot { it.id == PeriodKinds.NO_SCREEN_LAYERS_RULE.id } + withDeepWork + PeriodKinds.NO_SCREEN_LAYERS_RULE,
+            after.periodCombinations,
+            "the edited default rule is found by its id, the deleted one comes back, the user's rule of default periods goes, " +
+                "the one naming their own kind stays",
+        )
+        assertEquals(emptyList(), SearchDomain.modifiedDefaultPeriods(after, added), "nothing left to reset: the button greys")
+        assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.ResetDefaultPeriods, 0L))
+        assertEquals(units(s), units(after), "an account setting, like the drawings: no history unit")
+    }
+
+    @Test
+    fun the_default_periods_filter_keeps_the_shipped_kinds_or_the_accounts_own() {
+        val s = r(account(), SchedulerIntent.AddPeriodKind("deep work"))
+        val stored = SearchDomain.Config.decode(
+            SearchDomain.Config(filters = SearchDomain.Filters(periodOrigin = SearchDomain.PeriodOrigin.BuiltIn)).encode(),
+        )
+        assertEquals(SearchDomain.PeriodOrigin.BuiltIn, stored?.filters?.periodOrigin)
+        assertEquals("Default periods", SearchDomain.Setting.PeriodOriginSetting.label)
+        fun ids(origin: SearchDomain.PeriodOrigin) =
+            SearchDomain.results(s, setOf(SearchDomain.Kind.RestrictivePeriod), "", filters = SearchDomain.Filters(periodOrigin = origin))
+                .map { (it as SearchDomain.ItemResult).id }
+        assertEquals(listOf("deep work"), ids(SearchDomain.PeriodOrigin.Yours))
+        assertTrue(PeriodKinds.NO_SCREEN in ids(SearchDomain.PeriodOrigin.BuiltIn) && "deep work" !in ids(SearchDomain.PeriodOrigin.BuiltIn))
+    }
+
     @Test
     fun the_actions_window_lists_the_general_actions_then_only_the_kinds_asked_for() {
         val all = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), setOf(SearchDomain.Kind.Alarm))

@@ -179,7 +179,13 @@ fun AlarmWindow(
      * element's editor with only its settings — no name, no time of day, no run, no bin, nothing to add.
      */
     defaults: Boolean = false,
+    /**
+     * EMBEDDED (user rule 2026-10-01): the rows of exactly these elements, drawn without a frame — the Search window's
+     * actions on its added alarms, timers and chronos, which replaced each element's own window. Null = a window.
+     */
+    embeddedSubjects: Set<AlarmWindowSubject>? = null,
 ) {
+    val embedded = embeddedSubjects != null
     val frame =
         rememberWindowFrameState(
             if (defaults) ALARM_DEFAULTS_FRAME_ID else subject?.frameId ?: "Alarms",
@@ -377,7 +383,7 @@ fun AlarmWindow(
     // window's own rule, as the Reminders window has it, so it holds whichever element [shown] names now.
     val latestDismiss by rememberUpdatedState(onDismiss)
     val shownGone =
-        shown?.let { current ->
+        shown?.takeIf { !embedded }?.let { current ->
             when (current.kind) {
                 AlarmWindowSubject.Kind.Alarm -> rows.none { it.id == current.id }
                 AlarmWindowSubject.Kind.Timer -> timerRows.none { it.id == current.id }
@@ -385,6 +391,205 @@ fun AlarmWindow(
             }
         } == true
     LaunchedEffect(shownGone) { if (shownGone) latestDismiss() }
+    // Which rows are drawn: null = every one (the lateral-menu window), else the single element's or the embedded set.
+    val only: Set<AlarmWindowSubject>? = embeddedSubjects ?: shown?.let { setOf(it) }
+    fun hidden(kind: AlarmWindowSubject.Kind, id: String) = only != null && AlarmWindowSubject(id, kind) !in only
+
+    @Composable
+    fun Body() {
+            if (only == null) SectionHeader("Alarms")
+            if (only == null && rows.isEmpty()) {
+                Text(
+                    text = "No alarm yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            rows.forEachIndexed { index, row ->
+                if (hidden(AlarmWindowSubject.Kind.Alarm, row.id)) return@forEachIndexed
+                AlarmRowEditor(
+                    row = row,
+                    onRowChange = { updated, field ->
+                        rows[index] = updated
+                        push(sessionKeyFor(row.id, field))
+                    },
+                    onRemove = {
+                        rows.removeAt(index)
+                        push()
+                    },
+                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                    settingsOnly = defaults,
+                )
+                if (only == null && index != rows.lastIndex) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            }
+
+            if (only == null) {
+                Text(
+                    text = "+ Add alarm",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { addAlarm() }
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                )
+                Text(
+                    text = "Alarms ring on every phone signed in to this account.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                // PRD §18 Timers: the second section. A timer is the same ring at a different kind of due
+                // instant, which is why it lives in this window and not in one of its own.
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                SectionHeader("Timers")
+            }
+            if (only == null && timerRows.isEmpty()) {
+                Text(
+                    text = "No timer yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            timerRows.forEachIndexed { index, row ->
+                if (hidden(AlarmWindowSubject.Kind.Timer, row.id)) return@forEachIndexed
+                TimerRowEditor(
+                    row = row,
+                    // The live entry, which is where the run state lives; null only for the instant
+                    // between adding a row and the push landing.
+                    entry = timers.firstOrNull { it.id == row.id },
+                    nowMillis = displayNowMillis,
+                    onRowChange = { updated, field ->
+                        timerRows[index] = updated
+                        pushTimers(sessionKeyFor(row.id, field))
+                    },
+                    onStart = { onStartTimer(row.id) },
+                    onPause = { onPauseTimer(row.id) },
+                    onReset = { onResetTimer(row.id) },
+                    onSetCountdownField = { field, value, held ->
+                        onSetTimerCountdownField(row.id, field, value, held)
+                    },
+                    onNudge = { onNudgeTimerRemaining(row.id, it) },
+                    // A single timer's editor (PRD §7 Search) moves the time by the fields' right-click menu
+                    // alone, and reads the run in reverse beside the countdown.
+                    nudgeButtons = only == null,
+                    showElapsed = only != null,
+                    onRemove = {
+                        timerRows.removeAt(index)
+                        pushTimers()
+                    },
+                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                    settingsOnly = defaults,
+                )
+                if (only == null && index != timerRows.lastIndex) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            }
+
+            if (only == null) {
+                Text(
+                    text = "+ Add timer",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { addTimer() }
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                )
+                Text(
+                    text = "A running timer belongs to the account, not to this device: every device rings " +
+                        "when it ends.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                // PRD §18 Chronos: the third section — a count up, with nothing to ring.
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                SectionHeader("Chronos")
+            }
+            if (only == null && chronoRows.isEmpty()) {
+                Text(
+                    text = "No chrono yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            chronoRows.forEachIndexed { index, row ->
+                if (hidden(AlarmWindowSubject.Kind.Chrono, row.id)) return@forEachIndexed
+                ChronoRowEditor(
+                    row = row,
+                    entry = chronos.firstOrNull { it.id == row.id },
+                    nowMillis = displayNowMillis,
+                    onRowChange = { updated, field ->
+                        chronoRows[index] = updated
+                        pushChronos(sessionKeyFor(row.id, field))
+                    },
+                    onStart = { onStartChrono(row.id) },
+                    onPause = { onPauseChrono(row.id) },
+                    onReset = { onResetChrono(row.id) },
+                    onRemove = {
+                        chronoRows.removeAt(index)
+                        pushChronos()
+                    },
+                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                )
+                if (only == null && index != chronoRows.lastIndex) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            }
+            if (only == null) {
+                Text(
+                    text = "+ Add chrono",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { addChrono() }
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                )
+            }
+            // The single element's window: a new one of the same kind, at the bottom — and the window moves on
+            // to it (the list window has its "+ Add" links above instead) — and, under it, the default
+            // configuration every new one of that kind starts with.
+            shown?.takeIf { !defaults && !embedded }?.let { current ->
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                WindowLink("+ New " + current.kind.title.lowercase()) {
+                    val id = when (current.kind) {
+                        AlarmWindowSubject.Kind.Alarm -> addAlarm()
+                        AlarmWindowSubject.Kind.Timer -> addTimer()
+                        AlarmWindowSubject.Kind.Chrono -> addChrono()
+                    }
+                    val next = AlarmWindowSubject(id, current.kind)
+                    shown = next
+                    onShownChange(next)
+                }
+                // A chrono has nothing to configure but its name, so no default configuration.
+                onOpenDefaults?.takeIf { current.kind != AlarmWindowSubject.Kind.Chrono }?.let { open ->
+                    WindowLink(if (current.isAlarm) "Default alarm configuration" else "Default timer configuration") {
+                        open(current.isAlarm)
+                    }
+                }
+            }
+            // Embedded: no "+ New" (the Search window's creation rows make one), but the default configuration of
+            // each kind it shows, as the single element's window had it.
+            if (embedded && !defaults) {
+                onOpenDefaults?.let { open ->
+                    if (only.orEmpty().any { it.kind == AlarmWindowSubject.Kind.Alarm }) {
+                        WindowLink("Default alarm configuration") { open(true) }
+                    }
+                    if (only.orEmpty().any { it.kind == AlarmWindowSubject.Kind.Timer }) {
+                        WindowLink("Default timer configuration") { open(false) }
+                    }
+                }
+            }
+    }
+
+    if (embedded) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) { Body() }
+        return
+    }
 
     AppWindowFrame(
         title = shown?.let { if (defaults) "Default " + it.title.lowercase() else it.title } ?: "Alarms",
@@ -426,181 +631,7 @@ fun AlarmWindow(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (shown == null) SectionHeader("Alarms")
-            if (shown == null && rows.isEmpty()) {
-                Text(
-                    text = "No alarm yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            rows.forEachIndexed { index, row ->
-                if (shown?.let { !it.isAlarm || it.id != row.id } == true) return@forEachIndexed
-                AlarmRowEditor(
-                    row = row,
-                    onRowChange = { updated, field ->
-                        rows[index] = updated
-                        push(sessionKeyFor(row.id, field))
-                    },
-                    onRemove = {
-                        rows.removeAt(index)
-                        push()
-                    },
-                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
-                    settingsOnly = defaults,
-                )
-                if (shown == null && index != rows.lastIndex) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                }
-            }
-
-            if (shown == null) {
-                Text(
-                    text = "+ Add alarm",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { addAlarm() }
-                        .padding(vertical = 4.dp, horizontal = 2.dp),
-                )
-                Text(
-                    text = "Alarms ring on every phone signed in to this account.",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                // PRD §18 Timers: the second section. A timer is the same ring at a different kind of due
-                // instant, which is why it lives in this window and not in one of its own.
-                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                SectionHeader("Timers")
-            }
-            if (shown == null && timerRows.isEmpty()) {
-                Text(
-                    text = "No timer yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            timerRows.forEachIndexed { index, row ->
-                if (shown?.let { it.kind != AlarmWindowSubject.Kind.Timer || it.id != row.id } == true) return@forEachIndexed
-                TimerRowEditor(
-                    row = row,
-                    // The live entry, which is where the run state lives; null only for the instant
-                    // between adding a row and the push landing.
-                    entry = timers.firstOrNull { it.id == row.id },
-                    nowMillis = displayNowMillis,
-                    onRowChange = { updated, field ->
-                        timerRows[index] = updated
-                        pushTimers(sessionKeyFor(row.id, field))
-                    },
-                    onStart = { onStartTimer(row.id) },
-                    onPause = { onPauseTimer(row.id) },
-                    onReset = { onResetTimer(row.id) },
-                    onSetCountdownField = { field, value, held ->
-                        onSetTimerCountdownField(row.id, field, value, held)
-                    },
-                    onNudge = { onNudgeTimerRemaining(row.id, it) },
-                    // The timer's own window (PRD §7 Search) moves the time by the fields' right-click menu
-                    // alone, and reads the run in reverse beside the countdown.
-                    nudgeButtons = shown == null,
-                    showElapsed = shown != null,
-                    onRemove = {
-                        timerRows.removeAt(index)
-                        pushTimers()
-                    },
-                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
-                    settingsOnly = defaults,
-                )
-                if (shown == null && index != timerRows.lastIndex) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                }
-            }
-
-            if (shown == null) {
-                Text(
-                    text = "+ Add timer",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { addTimer() }
-                        .padding(vertical = 4.dp, horizontal = 2.dp),
-                )
-                Text(
-                    text = "A running timer belongs to the account, not to this device: every device rings " +
-                        "when it ends.",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                // PRD §18 Chronos: the third section — a count up, with nothing to ring.
-                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                SectionHeader("Chronos")
-            }
-            if (shown == null && chronoRows.isEmpty()) {
-                Text(
-                    text = "No chrono yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            chronoRows.forEachIndexed { index, row ->
-                if (shown?.let { it.kind != AlarmWindowSubject.Kind.Chrono || it.id != row.id } == true) return@forEachIndexed
-                ChronoRowEditor(
-                    row = row,
-                    entry = chronos.firstOrNull { it.id == row.id },
-                    nowMillis = displayNowMillis,
-                    onRowChange = { updated, field ->
-                        chronoRows[index] = updated
-                        pushChronos(sessionKeyFor(row.id, field))
-                    },
-                    onStart = { onStartChrono(row.id) },
-                    onPause = { onPauseChrono(row.id) },
-                    onReset = { onResetChrono(row.id) },
-                    onRemove = {
-                        chronoRows.removeAt(index)
-                        pushChronos()
-                    },
-                    onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
-                )
-                if (shown == null && index != chronoRows.lastIndex) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                }
-            }
-            if (shown == null) {
-                Text(
-                    text = "+ Add chrono",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { addChrono() }
-                        .padding(vertical = 4.dp, horizontal = 2.dp),
-                )
-            }
-            // The single element's window: a new one of the same kind, at the bottom — and the window moves on
-            // to it (the list window has its "+ Add" links above instead) — and, under it, the default
-            // configuration every new one of that kind starts with.
-            shown?.takeIf { !defaults }?.let { current ->
-                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                WindowLink("+ New " + current.kind.title.lowercase()) {
-                    val id = when (current.kind) {
-                        AlarmWindowSubject.Kind.Alarm -> addAlarm()
-                        AlarmWindowSubject.Kind.Timer -> addTimer()
-                        AlarmWindowSubject.Kind.Chrono -> addChrono()
-                    }
-                    val next = AlarmWindowSubject(id, current.kind)
-                    shown = next
-                    onShownChange(next)
-                }
-                // A chrono has nothing to configure but its name, so no default configuration.
-                onOpenDefaults?.takeIf { current.kind != AlarmWindowSubject.Kind.Chrono }?.let { open ->
-                    WindowLink(if (current.isAlarm) "Default alarm configuration" else "Default timer configuration") {
-                        open(current.isAlarm)
-                    }
-                }
-            }
+            Body()
         }
     }
 }

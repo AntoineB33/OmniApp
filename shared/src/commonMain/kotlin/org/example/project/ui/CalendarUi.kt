@@ -1516,7 +1516,18 @@ fun ChoresManagerWindow(
     onOpenDefaults: (() -> Unit)? = null,
     /** This window IS the default configuration of a new reminder (see the class note). */
     defaults: Boolean = false,
+    /**
+     * EMBEDDED (user rule 2026-10-01): the editors of exactly these reminders (by id), drawn without a frame — the
+     * Search window's actions on its added reminders, which replaced each reminder's own window. Null = a window.
+     */
+    embeddedSubjects: Set<String>? = null,
+    /**
+     * "constrained in" opens its picker through this, on the reminder's id, where the editor cannot draw a window
+     * of its own (embedded in a list). Null = the picker windows are this window's own.
+     */
+    onEditConstraint: ((reminderId: String) -> Unit)? = null,
 ) {
+    val embedded = embeddedSubjects != null
     val frame = rememberWindowFrameState(if (defaults) REMINDER_DEFAULTS_FRAME_ID else REMINDER_EDIT_FRAME_ID)
     // The subject row's id as it now stands: the id menu can make the row adopt another reminder's id.
     var subjectId by remember { mutableStateOf(subject) }
@@ -1624,32 +1635,13 @@ fun ChoresManagerWindow(
     }
     // A single reminder's window whose row is gone (its own bin, another window, an undo, a peer) closes.
     val latestDismiss by rememberUpdatedState(onDismiss)
-    val subjectGone = rows.none { it.id == subjectId }
+    val subjectGone = !embedded && rows.none { it.id == subjectId }
     LaunchedEffect(subjectGone) { if (subjectGone) latestDismiss() }
 
-    AppWindowFrame(
-        title = if (defaults) "Default reminder" else "Reminder",
-        state = frame,
-        onClose = onDismiss,
-        defaultWidth = 560.dp,
-        defaultHeight = 480.dp,
-        // PRD §14: clicking anywhere in the window that is not the focused title field or its edit-mode
-        // menus leaves Edit mode — a tap on empty/non-interactive space clears focus, which the title
-        // field's onFocusChanged turns into focusedIndex = null (hiding the menus). Interactive children
-        // (the title field, menu rows, other inputs/buttons) consume their own taps, so this only fires
-        // for clicks that land on bare window chrome.
-        modifier = modifier.pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } },
-    ) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+    @Composable
+    fun Body() {
             rows.forEachIndexed { index, row ->
-              if (row.id != subjectId) return@forEachIndexed
+              if (if (embeddedSubjects != null) row.id !in embeddedSubjects else row.id != subjectId) return@forEachIndexed
               // The row is a focus group so that opening the Mode dropdown (a focusable anchor) keeps the
               // editor open rather than collapsing it. Entering Edit mode still requires focusing the
               // *title* field (set below); the group only governs *staying* in edit mode — the menus
@@ -1720,7 +1712,10 @@ fun ChoresManagerWindow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    TextButton(onClick = { constraintWindows.open(index) }) { Text("constrained in") }
+                    TextButton(onClick = {
+                        val edit = onEditConstraint
+                        if (edit != null) edit(resolvedRowIds().getOrNull(index) ?: row.id) else constraintWindows.open(index)
+                    }) { Text("constrained in") }
                     val constrainedName =
                         row.constrainedToReminderId.takeIf { it.isNotBlank() }?.let(titleForReminderId)
                     if (constrainedName != null) {
@@ -1807,7 +1802,7 @@ fun ChoresManagerWindow(
             }
             // A new reminder at the bottom — and the window moves on to it, the one the user means to set up
             // now (the Alarms window's "+ New" rule) — and, under it, the configuration every new one starts with.
-            if (!defaults) {
+            if (!defaults && !embedded) {
                 WindowLink("+ New reminder") {
                     val row = newRow()
                     rows.add(row)
@@ -1817,6 +1812,37 @@ fun ChoresManagerWindow(
                 }
                 onOpenDefaults?.let { WindowLink("Default reminder configuration", it) }
             }
+            if (!defaults && embedded) onOpenDefaults?.let { WindowLink("Default reminder configuration", it) }
+
+    }
+
+    if (embedded) {
+        Column(
+            modifier = modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } },
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) { Body() }
+    } else AppWindowFrame(
+        title = if (defaults) "Default reminder" else "Reminder",
+        state = frame,
+        onClose = onDismiss,
+        defaultWidth = 560.dp,
+        defaultHeight = 480.dp,
+        // PRD §14: clicking anywhere in the window that is not the focused title field or its edit-mode
+        // menus leaves Edit mode — a tap on empty/non-interactive space clears focus, which the title
+        // field's onFocusChanged turns into focusedIndex = null (hiding the menus). Interactive children
+        // (the title field, menu rows, other inputs/buttons) consume their own taps, so this only fires
+        // for clicks that land on bare window chrome.
+        modifier = modifier.pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } },
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Body()
         }
     }
 

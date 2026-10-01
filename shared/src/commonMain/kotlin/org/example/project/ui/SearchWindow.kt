@@ -207,6 +207,8 @@ fun SearchWindow(
      */
     onGoToTaskTree: (TaskId, SchedulerDomain.TaskOccurrence?) -> Unit,
     onDeepCopyCell: (CellId) -> Unit,
+    /** What the actions on the added elements open or draw ([AddedActionHandlers]): `App`'s, shared with the window of them all. */
+    actionHandlers: AddedActionHandlers,
     /**
      * The tree's own intents — the cell menu's entries that act on a cell, a row's minimum time and categories,
      * [SchedulerIntent.RenameTask] from a row's Edit Mode, and an expanded row's sub-tree
@@ -692,6 +694,9 @@ fun SearchWindow(
             AddedActionsSection(
                 state = state,
                 added = addedRows,
+                config = config,
+                onConfigChange = onConfigChange,
+                handlers = actionHandlers,
                 onIntent = onIntent,
                 nowMillis = nowMillis,
                 onOpenEach = { addedRows.forEach { openers.open(state, it) } },
@@ -904,6 +909,60 @@ internal fun <T> CheckBoxDropDown(
                     text = { Text(label(option)) },
                     leadingIcon = { Checkbox(checked = option in checked, onCheckedChange = null) },
                     onClick = { onChange(range.toggle(options, checked, option)) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * [CheckBoxDropDown]'s one-choice sibling: the same field (its face [selected]'s [label], drawn as that one is), whose
+ * list of [options] closes on the one picked. [leading] draws something before an option's name, on the face too (the
+ * period edit window's drawing swatches).
+ */
+@Composable
+internal fun <T> ChoiceDropDown(
+    options: List<T>,
+    selected: T?,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier.width(170.dp),
+    placeholder: String = "choose…",
+    enabled: Boolean = true,
+    leading: (@Composable (T) -> Unit)? = null,
+) {
+    var open by remember { mutableStateOf(false) }
+    val usable = enabled && options.isNotEmpty()
+    Box(modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                .then(if (usable) Modifier.menuToggleClickable(open) { open = it } else Modifier)
+                .padding(horizontal = 10.dp, vertical = 14.dp),
+        ) {
+            if (selected != null && leading != null) leading(selected)
+            Text(
+                text = (selected?.let(label) ?: placeholder) + "  ▾",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (usable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        transientMenuDismissal(open) { open = false }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(label(option)) },
+                    leadingIcon = leading?.let { draw -> { draw(option) } },
+                    onClick = {
+                        open = false
+                        onSelect(option)
+                    },
                 )
             }
         }

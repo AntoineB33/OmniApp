@@ -129,7 +129,7 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **A right-click on a countdown field nudges by THAT field's unit** (±1/5/10 s, min or h), through the same
   `NudgeTimerRemaining` as the ± buttons, **stays open when an entry is picked** (so a step repeats click after
   click; it leaves on the first press outside it), and replaces the text field's own cut/copy/paste menu. The timer's
-  own window (Search's right-click, `AlarmWindowSubject`) has the menu only — no ± buttons — and an
+  own editor (the Search window's "Edit" action, `AlarmWindow(embeddedSubjects)`) has the menu only — no ± buttons — and an
   **Elapsed** read-only field, the countdown in reverse (`TimerDomain.elapsedMillis`: the run's length − the
   countdown AS SHOWN; 0 when idle; negative once pushed above the run's length). **It mirrors the fields, not the
   live countdown**: while a field holds the caret, Elapsed counts against `TimerDomain.displayedCountdown` (the
@@ -217,8 +217,9 @@ arming, no sweep, no calendar marker, no alert block.
 - **The list is a Main History Unit (`SetChronos` → `ChronosDelta`), the run is not** (`StartChrono` /
   `PauseChrono` / `ResetChrono`) — the timers' rule and reason. Undo is three-way like every list: undoing the add
   of a chrono started since keeps it.
-- Each chrono has its own per-object window (`AlarmWindowSubject.Kind.Chrono`, `ObjectWindowKey.Kind.Chrono`, ☆,
-  kept across restarts), opened from its Search row. There is no default configuration: a chrono has nothing to
+- A chrono is edited, like an alarm and a timer, from the Search window holding it (its row's "Edit" action:
+  `AlarmWindow(embeddedSubjects)`, user rule 2026-10-01 — the element's own window was removed), opened from its
+  Search row; a ☆ made for its old window opens that. There is no default configuration: a chrono has nothing to
   configure but its name.
 
 ## One alert block, three kinds of row

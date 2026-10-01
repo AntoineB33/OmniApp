@@ -117,4 +117,16 @@ object TaskPathsDomain {
                 .toList()
         return (top + tasks).take(MAX_CANDIDATES)
     }
+
+    /**
+     * The Search window's "Add under" over several tasks: [candidates] for each of [taskIds], merged — a place is
+     * offered when at least one of them may go there (the others are skipped by `AddTasksPath`), in the order the
+     * first task that can go there ranks it.
+     */
+    fun candidatesForAll(state: SchedulerState, taskIds: List<TaskId>, query: String): List<Candidate> =
+        taskIds.distinct().asSequence()
+            .flatMap { candidates(state, it, query) }
+            .distinctBy { it.parentTaskId }
+            .take(MAX_CANDIDATES)
+            .toList()
 }

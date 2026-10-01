@@ -69,18 +69,7 @@ fun CategoryEditWindow(
     onIntent: (SchedulerIntent) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val category = state.categoryById(categoryId) ?: return
-    var title by remember(categoryId) { mutableStateOf(category.title) }
-    // The rule being added: which sub-tree, and how much of it. Compose-only state, like the calendar's
-    // zoom — a half-typed rule is not a fact about the account until it is added. The pick is the whole
-    // ROW and not its cell id, because `null` is a real answer there (the whole tree) and "nothing picked
-    // yet" has to stay a different one.
-    var scopeDraft by remember(categoryId) { mutableStateOf("") }
-    var scopePick by remember(categoryId) { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
-    var newShare by remember(categoryId) { mutableStateOf("") }
-
-    val rows = CategoryRules.ruleRows(state, categoryId)
-    val carriers = CategoryRules.tasksWith(state, categoryId)
+    state.categoryById(categoryId) ?: return
     val frame = rememberWindowFrameState(CATEGORY_EDIT_FRAME_ID)
 
     TransientPopupLayer(frame.id) {
@@ -97,6 +86,42 @@ fun CategoryEditWindow(
                 Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                CategoryEditor(state, categoryId, onIntent, onDeleted = onDismiss)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Everything [CategoryEditWindow] holds about one category — its name and Delete, the tasks carrying it, its rules
+ * and the field that adds one — without the frame: the window's content, and (user rule 2026-10-01) the Search
+ * window's action on each added category, which replaced the window for the account's categories. [onDeleted] runs
+ * after its Delete.
+ */
+@Composable
+fun CategoryEditor(
+    state: SchedulerState,
+    categoryId: CategoryId,
+    onIntent: (SchedulerIntent) -> Unit,
+    onDeleted: () -> Unit = {},
+) {
+    val category = state.categoryById(categoryId) ?: return
+    var title by remember(categoryId) { mutableStateOf(category.title) }
+    // The rule being added: which sub-tree, and how much of it. Compose-only state, like the calendar's
+    // zoom — a half-typed rule is not a fact about the account until it is added. The pick is the whole
+    // ROW and not its cell id, because `null` is a real answer there (the whole tree) and "nothing picked
+    // yet" has to stay a different one.
+    var scopeDraft by remember(categoryId) { mutableStateOf("") }
+    var scopePick by remember(categoryId) { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
+    var newShare by remember(categoryId) { mutableStateOf("") }
+
+    val rows = CategoryRules.ruleRows(state, categoryId)
+    val carriers = CategoryRules.tasksWith(state, categoryId)
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -117,7 +142,7 @@ fun CategoryEditWindow(
                     )
                     TextButton(onClick = {
                         onIntent(SchedulerIntent.DeleteCategory(categoryId))
-                        onDismiss()
+                        onDeleted()
                     }) { Text("Delete") }
                 }
 
@@ -262,12 +287,6 @@ fun CategoryEditWindow(
                         Text(if (exists) "Replace rule" else "Add rule")
                     }
                 }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { Text("Close") }
-                }
-            }
-        }
     }
 }
 

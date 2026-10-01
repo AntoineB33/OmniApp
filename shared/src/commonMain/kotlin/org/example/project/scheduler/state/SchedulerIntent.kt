@@ -342,6 +342,28 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 *Search*, the added elements' actions — the task edit window's sections over every task of [taskIds],
+     * each **one** Undo/Redo unit ([SetTasksMinimumTime]'s rule; a call that moves nobody records nothing):
+     * [SetTaskText] for every task.
+     */
+    data class SetTasksText(val taskIds: List<TaskId>, val text: String) : SchedulerIntent
+
+    /**
+     * [SetScheduleUnit] for every task of [taskIds]. A task whose minimum time the [entries] exceed keeps its own
+     * unit (the reducer's guard, as for one task); so does one that is not a schedulable leaf.
+     */
+    data class SetTasksScheduleUnit(
+        val taskIds: List<TaskId>,
+        val entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>,
+    ) : SchedulerIntent
+
+    /**
+     * [AddTaskPath] for every task of [taskIds] — each put at the bottom of [parentTaskId]'s list (null = the top
+     * level) where the tree's rule lets it go; the others are skipped. One tree History Unit.
+     */
+    data class AddTasksPath(val taskIds: List<TaskId>, val parentTaskId: TaskId?) : SchedulerIntent
+
+    /**
      * `side-dev/README.md` § *Restrictive Period*: set [taskId]'s **resilience** to one [kind] of restrictive
      * period — the multiplier in `[0, 1]` on its priority percentage inside such a period. `0` forbids it
      * there, `1` leaves it untouched. Replaces the old pair of screen switches: "on screen" is exactly a `0`
@@ -425,6 +447,16 @@ sealed interface SchedulerIntent {
         val kind: String,
         val drawing: org.example.project.scheduler.domain.PeriodDrawing,
     ) : SchedulerIntent
+
+    /**
+     * PRD §7 *Search*, the added elements' **Reset** on the default periods (user rule 2026-10-01): every kind of
+     * [kinds] the app ships (`PeriodKinds.isUserDefined` false — named by its id, the fixed name) goes back to how it
+     * ships: its drawing ([SetPeriodDrawing]) and the combination rules that name it
+     * (`PeriodKinds.combinationsReset`). A kind of the account's own is ignored — it has no default to go back to.
+     * The tasks' resiliences are the TASKS' configuration (an on-screen task is a 0 against "no screen") and are left
+     * alone. An account setting like the drawings: no history unit.
+     */
+    data class ResetPeriodKinds(val kinds: List<String>) : SchedulerIntent
 
     // ----- PRD §5 categories ---------------------------------------------------------------------
 

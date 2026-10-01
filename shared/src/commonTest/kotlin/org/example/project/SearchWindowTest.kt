@@ -353,7 +353,7 @@ class SearchWindowTest {
         // The two kinds the README names are the account's own, and say so.
         val periods = SearchDomain.itemResults(s, SearchDomain.Kind.RestrictivePeriod, "")
         assertTrue(periods.isNotEmpty())
-        assertTrue(periods.all { it.detail.startsWith("built-in") })
+        assertTrue(periods.all { it.detail.startsWith("default period") })
 
         assertTrue(SearchDomain.itemResults(s, SearchDomain.Kind.Alarm, "nothing like it").isEmpty())
     }

@@ -206,7 +206,8 @@ open window — so `SchedulerState.taskRelations` is keyed by the deliberately s
 ### Categories, and the rule that HOLDS a share
 
 → ADR 0004, PRD §5. `CategoryRules` is the whole of the rule; `ui/TaskCategoryField.kt` is the task cell's
-field and `ui/CategoryEditWindow.kt` the category's own window.
+field and `ui/CategoryEditWindow.kt` the category's editor (`CategoryEditor`) — drawn by the Search window's "Name and
+rules" action on an added category (user rule 2026-10-01: the window remains for the default sub-tree's only).
 
 A **category** is a label a task carries. A **category rule** is a standing statement about a share of a
 sub-tree — *the tasks carrying this category under that task cell always come to 33 % of it* — which is the
@@ -226,7 +227,7 @@ relative-priority window's number said once and then **kept**.
   about) could be neither seen nor made. Four things it is: **title order**, which is the window's answer and
   not a fact about the account (the categories are stored in minting order, which the user cannot predict);
   a row saying what the category is *doing* — the carriers, the rules, and how many of those are **asleep**;
-  a row's **✎** onto `CategoryEditWindow` and **no bin**, because a delete takes the label off every task and
+  a row's **✎** onto the Search window holding that category and **no bin**, because a delete takes the label off every task and
   every rule at once and so belongs where all of them are shown — the same pair the task cell's category row
   and the resilience row both make; and the **same naming field** the "add" option is, whose identity rows
   here **open** a category (there is no task to attach one to) so that `CreateCategory` only ever mints a

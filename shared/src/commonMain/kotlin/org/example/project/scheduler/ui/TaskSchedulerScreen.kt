@@ -3534,6 +3534,57 @@ val LocalCalendarGoTo = staticCompositionLocalOf<CalendarGoTo?> { null }
  * ([SchedulerDomain.canSaveScheduleUnit]).
  */
 /**
+ * PRD §13 the schedule unit's entries, edited: each a title field plus a spanning-time field with increment/decrement
+ * buttons, a bin (remove) and a plus (insert above); a single trailing plus appends. The one drawing of them — the
+ * task edit window's section and the Search window's action over several tasks.
+ */
+@Composable
+internal fun ScheduleUnitEditor(entries: List<ScheduleUnitEntry>, onChange: (List<ScheduleUnitEntry>) -> Unit) {
+    entries.forEachIndexed { index, entry ->
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            OutlinedTextField(
+                value = entry.title,
+                onValueChange = { newTitle -> onChange(entries.toMutableList().also { it[index] = entry.copy(title = newTitle) }) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = entry.spanMinutes.toString(),
+                onValueChange = { raw ->
+                    val parsed = raw.filter { it.isDigit() }.toIntOrNull() ?: 0
+                    onChange(entries.toMutableList().also { it[index] = entry.copy(spanMinutes = parsed) })
+                },
+                singleLine = true,
+                modifier = Modifier.width(72.dp),
+            )
+            Column {
+                WeightStepButton("+") {
+                    onChange(entries.toMutableList().also { it[index] = entry.copy(spanMinutes = entry.spanMinutes + 1) })
+                }
+                WeightStepButton("−") {
+                    onChange(
+                        entries.toMutableList().also {
+                            it[index] = entry.copy(spanMinutes = (entry.spanMinutes - 1).coerceAtLeast(0))
+                        },
+                    )
+                }
+            }
+            // Bin: remove this pair.
+            TextButton(onClick = { onChange(entries.toMutableList().also { it.removeAt(index) }) }) { Text("🗑") }
+            // Plus: insert a new pair above this one.
+            TextButton(onClick = { onChange(entries.toMutableList().also { it.add(index, ScheduleUnitEntry("", 0)) }) }) {
+                Text("+")
+            }
+        }
+    }
+    // Trailing single plus: append a new pair at the end of the list.
+    TextButton(onClick = { onChange(entries + ScheduleUnitEntry("", 0)) }) { Text("+ add step") }
+}
+
+/**
  * `side-dev/README.md`'s resilience, as a field: a multiplier in `[0, 1]` typed as a **percentage**, which
  * is what it means — 0 % forbids the task inside a period of that kind, 100 % leaves it untouched.
  *
@@ -3779,60 +3830,8 @@ internal fun TaskEditWindow(
                     Text("Schedule unit", style = MaterialTheme.typography.labelMedium)
                 }
 
-                if (isLeaf) entries.forEachIndexed { index, entry ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = entry.title,
-                            onValueChange = { newTitle ->
-                                entries = entries.toMutableList().also {
-                                    it[index] = entry.copy(title = newTitle)
-                                }
-                            },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                        OutlinedTextField(
-                            value = entry.spanMinutes.toString(),
-                            onValueChange = { raw ->
-                                val parsed = raw.filter { it.isDigit() }.toIntOrNull() ?: 0
-                                entries = entries.toMutableList().also {
-                                    it[index] = entry.copy(spanMinutes = parsed)
-                                }
-                            },
-                            singleLine = true,
-                            modifier = Modifier.width(72.dp),
-                        )
-                        Column {
-                            WeightStepButton("+") {
-                                entries = entries.toMutableList().also {
-                                    it[index] = entry.copy(spanMinutes = entry.spanMinutes + 1)
-                                }
-                            }
-                            WeightStepButton("−") {
-                                entries = entries.toMutableList().also {
-                                    it[index] = entry.copy(spanMinutes = (entry.spanMinutes - 1).coerceAtLeast(0))
-                                }
-                            }
-                        }
-                        // Bin: remove this pair.
-                        TextButton(onClick = {
-                            entries = entries.toMutableList().also { it.removeAt(index) }
-                        }) { Text("🗑") }
-                        // Plus: insert a new pair above this one.
-                        TextButton(onClick = {
-                            entries = entries.toMutableList().also { it.add(index, ScheduleUnitEntry("", 0)) }
-                        }) { Text("+") }
-                    }
-                }
-
                 if (isLeaf) {
-                    // Trailing single plus: append a new pair at the end of the list.
-                    TextButton(onClick = { entries = entries + ScheduleUnitEntry("", 0) }) {
-                        Text("+ add step")
-                    }
+                    ScheduleUnitEditor(entries) { entries = it }
 
                     Text(
                         text = "Total: $sum min (max $minimumMinutes)",
@@ -3870,222 +3869,17 @@ internal fun TaskEditWindow(
 }
 
 /**
- * `side-dev/README.md` § *Restrictive Period*: the **period edit window** — one KIND of restrictive period,
- * and every task's resilience to it.
- *
- * It is the task edit window's resilience section read the other way round. That section is *one task, every
- * kind*; this is *one kind, every task* — which is the question you actually have when you have just defined
- * a period ("who may work through it?"), because defining one adds it to every task at the default `0`
- * ([PeriodKinds.defaultResilience]) and somebody has to be let back in.
- *
- * Four things it holds, and nothing else:
- * - **Combinations** — the account's combination rules that involve this kind
- *   ([org.example.project.scheduler.domain.PeriodCombination], written whole by
- *   [org.example.project.scheduler.state.SchedulerIntent.SetPeriodCombinations]): for each, a "when" formula of period
- *   selector fields and "and" / "or" / brackets, and the fields of kinds that are then present too. "Add a
- *   combination" starts one with this kind in it. What used to be "always present with it" is the rule
- *   `when <this kind> then …` (user rule, 2026-10-01). By default each computer layer with each phone layer, real or
- *   fake, brings "no screen", and so do sleep, before bed and the breaks ([PeriodKinds.DEFAULT_COMBINATIONS]).
- * - **Drawing** — the pattern its periods wear on the calendar, one of [PeriodDrawing]'s fixed set, each shown
- *   as the swatch the calendar will draw ([org.example.project.ui.periodDrawing]).
- * - **Delete**, offered only for a user-defined kind: this is the one place a period is deleted, because it
- *   is the one place a period is an object in its own right. It takes every task's value for it and every
- *   panel laid with it ([org.example.project.scheduler.state.SchedulerIntent.RemovePeriodKind]). The two
- *   built-in kinds cannot be removed.
- * - **The list of tasks**, each with a check box and its own percentage field. The rows are the schedulable
- *   leaves ([SchedulerDomain.periodKindTaskRows]) — a parent task is a grouping the scheduler never places,
- *   so a resilience on one would be a number nothing reads.
- * - **The bulk field**, which appears as soon as anything is checked. It shows the value the checked tasks
- *   share, or **blank** where they do not agree ([SchedulerDomain.commonResilience]), and typing in it gives
- *   all of them that value as ONE history unit
- *   ([org.example.project.scheduler.state.SchedulerIntent.SetPeriodResilience]) — checking twenty tasks and
- *   typing one percentage is one gesture. "Select all" is the shortcut to the whole list, and reads "select
- *   none" once everything is checked, since that is the only thing left it can usefully do.
- *
- * A window about ONE object (`docs/invariants/popups.md`) — this period — so "the window of period
- * A" and "the window of period B" are two different windows and only the one just asked for is ever meant.
- * Opening it therefore dismisses the task edit window it was opened from, discarding whatever was half-typed
- * there; that is the sort's price, not an oversight. Unlike the task window it has no Save: every field
- * writes as it is typed, exactly like the row-level `×` it replaces.
+ * `side-dev/README.md` § *Restrictive Period*: what the **period edit window** held — removed 2026-10-01 (user rule:
+ * its actions are the Search window's on its added periods, `AddedElementsConfigurationWindow`). Its parts are drawn
+ * there from here: the combinations ([PeriodCombinationsSection]) and the drawing's swatch ([DrawingSwatch]).
  */
+/** A drawing as the calendar draws it, in a small box: the periods' drawing field and its options. */
 @Composable
-internal fun PeriodKindEditWindow(
-    kind: String,
-    rows: List<SchedulerDomain.PeriodKindTaskRow>,
-    /** Each row NAMES a task, so each is drawn in that task's colour ([org.example.project.ui.TaskTitleLabel]). */
-    taskColors: Map<TaskId, Color>,
-    /** False for the two built-in kinds — the README names them, so the account cannot drop them. */
-    canDelete: Boolean,
-    /** Every kind the account holds, this one included — the options of the combinations' period selector fields. */
-    allKinds: List<String>,
-    /** This kind's drawing as it stands. */
-    style: PeriodKindStyle,
-    /** The account's combination rules, all of them (the section shows the ones naming this kind). */
-    combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
-    /** The whole list of combination rules, as the section leaves it. */
-    onSetCombinations: (List<org.example.project.scheduler.domain.PeriodCombination>) -> Unit,
-    onSetDrawing: (PeriodDrawing) -> Unit,
-    onSetResilience: (List<TaskId>, Double) -> Unit,
-    onDelete: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    // Which tasks the bulk field acts on. Compose-only state, like the calendar's zoom and the find bar's
-    // query: a selection is a way of looking at the list, never a fact about the account. Rows that leave
-    // under it (a task deleted while the window is open) are dropped rather than kept as phantom targets.
-    var selected by remember(kind) { mutableStateOf(emptySet<TaskId>()) }
-    val checkRange = remember(kind) { org.example.project.ui.CheckRangeState<TaskId>() }
-    val present = rows.map { it.taskId }.toSet()
-    val checked = selected.intersect(present)
-    val common = SchedulerDomain.commonResilience(rows, checked)
-    val allChecked = rows.isNotEmpty() && checked.size == rows.size
-    val frame = rememberWindowFrameState(PERIOD_KIND_EDIT_FRAME_ID)
-
-    TransientPopupLayer(frame.id) {
-        AppWindowFrame(
-            title = kind,
-            state = frame,
-            onClose = onDismiss,
-            defaultWidth = 400.dp,
-            defaultHeight = 560.dp,
-            claimsKeyboard = true,
-            modifier = Modifier.align(Alignment.Center),
-            // The one place a period is deleted. A built-in kind has no button at all rather than a
-            // disabled one: it is not a thing the account could ever do.
-            headTrailing = {
-                if (canDelete) TextButton(onClick = onDelete) { Text("Delete period") }
-            },
-        ) {
-            Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PeriodCombinationsSection(kind, allKinds, combinations, onSetCombinations)
-
-                HorizontalDivider()
-
-                Text("Drawing", style = MaterialTheme.typography.titleSmall)
-                for (drawing in PeriodDrawing.entries) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { onSetDrawing(drawing) },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        RadioButton(selected = style.drawing == drawing, onClick = { onSetDrawing(drawing) })
-                        Box(
-                            Modifier.size(width = 56.dp, height = 28.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(3.dp))
-                                .periodDrawing(drawing, MaterialTheme.colorScheme.onSurface),
-                        )
-                        Text(drawing.label, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-
-                HorizontalDivider()
-
-                Text(
-                    "Each task’s resilience to a period of this kind: 0 % forbids it there, " +
-                        "100 % leaves it untouched.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                HorizontalDivider()
-
-                // The bulk field, and it exists only while something is checked — with nothing selected
-                // there is nothing for it to say. Blank means "the checked tasks disagree"; typing a value
-                // ends that disagreement in one history unit.
-                if (checked.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = "${checked.size} selected",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f),
-                        )
-                        BulkPercentField(
-                            value = common,
-                            onValueChange = { next -> onSetResilience(checked.toList(), next) },
-                        )
-                    }
-                    HorizontalDivider()
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(
-                        enabled = rows.isNotEmpty(),
-                        onClick = { selected = if (allChecked) emptySet() else present },
-                    ) { Text(if (allChecked) "Select none" else "Select all") }
-                }
-
-                if (rows.isEmpty()) {
-                    Text(
-                        "No schedulable task yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                val rowOrder = rows.map { it.taskId }
-                for (row in rows) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().checkRangeShift(checkRange),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Checkbox(
-                            checked = row.taskId in checked,
-                            onCheckedChange = { selected = checkRange.toggle(rowOrder, checked, row.taskId) },
-                        )
-                        TaskTitleLabel(
-                            label = SchedulerDomain.taskTitleLabel(row.title),
-                            taskColor = taskColors[row.taskId],
-                            modifier = Modifier.weight(1f),
-                        )
-                        // The row's own field. It goes through the same bulk intent with a one-element list,
-                        // so there is one write path and not two.
-                        PercentField(
-                            value = row.resilience,
-                            onValueChange = { next -> onSetResilience(listOf(row.taskId), next) },
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = onDismiss) { Text("Close") }
-                }
-            }
-        }
-    }
-}
-
-/**
- * [PercentField]'s two-state sibling: the period edit window's bulk field, which must be able to show
- * **nothing**. `null` is "the checked tasks do not agree", and it is a real answer rather than a missing one
- * — the field is blank until the user types the value that ends the disagreement.
- */
-@Composable
-private fun BulkPercentField(value: Double?, onValueChange: (Double) -> Unit) {
-    var text by remember(value) { mutableStateOf(value?.let(::formatPercent) ?: "") }
-    OutlinedTextField(
-        value = text,
-        onValueChange = { raw ->
-            text = raw
-            raw.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()?.let {
-                onValueChange(PeriodKinds.clamp(it / 100.0))
-            }
-        },
-        singleLine = true,
-        suffix = { Text("%") },
-        modifier = Modifier.width(88.dp),
+internal fun DrawingSwatch(drawing: PeriodDrawing) {
+    Box(
+        Modifier.size(width = 40.dp, height = 20.dp)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(3.dp))
+            .periodDrawing(drawing, MaterialTheme.colorScheme.onSurface),
     )
 }
 
@@ -4369,7 +4163,7 @@ const val DEEP_COPY_FRAME_ID: String = "DeepCopy"
  * each "or" is derived where neither side is already there ([PeriodCombination.isPlacement]).
  */
 @Composable
-private fun PeriodCombinationsSection(
+internal fun PeriodCombinationsSection(
     kind: String,
     allKinds: List<String>,
     combinations: List<org.example.project.scheduler.domain.PeriodCombination>,

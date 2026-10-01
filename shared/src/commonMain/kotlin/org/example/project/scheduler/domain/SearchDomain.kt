@@ -32,6 +32,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.defaultSubtreeIsEmpty
 
 /**
  * PRD §7 **Search**: the lateral-menu window that finds a thing of the account by name — a task, a task
@@ -95,6 +96,32 @@ object SearchDomain {
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder,
             Kind.TaskTree, Kind.Window,
         )
+
+    /**
+     * What the period edit window's resilience button types into the actions' filter ([Config.actionQuery]): the
+     * one action it finds is [AddedAction.TaskResilience].
+     */
+    const val RESILIENCE_ACTION_QUERY: String = "Resilience"
+
+    /**
+     * The Search window the period edit window's resilience button opens (user rule 2026-10-01): the tasks only, and
+     * of them only the schedulable ones ([Filters.taskSchedulable] yes — a resilience on a parent is a number nothing
+     * reads), its actions filtered down to the resilience one, whose period field is set to [periodKind].
+     */
+    fun resilienceSearchConfig(periodKind: String): Config =
+        Config(
+            kinds = setOf(Kind.Task),
+            filters = Filters(taskSchedulable = Tri.Yes),
+            actionQuery = RESILIENCE_ACTION_QUERY,
+            resiliencePeriod = periodKind,
+        )
+
+    /**
+     * **An element's own window** (user rule 2026-10-01): the Search window of [kind] holding the element [id] alone in
+     * its added list, so its top right quarter holds every action on it — what replaced the element's edit window.
+     */
+    fun elementSearchConfig(kind: Kind, id: String): Config =
+        Config(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
 
     /** The Search configuration a [Kind.Window] creation row opens: every window TYPE, once. */
     val WINDOW_TYPES_CONFIG: Config
@@ -161,6 +188,14 @@ object SearchDomain {
          * element is gone is kept but lists nothing ([resolve]).
          */
         val added: List<String> = emptyList(),
+        /**
+         * The **actions' filter** (user rule 2026-10-01): what finds an action by name — the Added elements
+         * configurations window's bar — applied to that window AND to this window's top right quarter. Kept with the
+         * rest of the configuration, so it belongs to this Search window and not to the configurations window.
+         */
+        val actionQuery: String = "",
+        /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
+        val resiliencePeriod: String? = null,
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
@@ -174,6 +209,7 @@ object SearchDomain {
                     query = query,
                     kinds = Kind.entries.filter { it in kinds }.map { it.name },
                     taskInTree = filters.taskInTree.name,
+                    taskSchedulable = filters.taskSchedulable.name,
                     taskCategory = filters.taskCategory?.value,
                     categoryHasRules = filters.categoryHasRules.name,
                     periodOrigin = filters.periodOrigin.name,
@@ -199,6 +235,8 @@ object SearchDomain {
                     periodBoxesFrom = filters.periodBoxesFrom?.toString(),
                     periodBoxesUntil = filters.periodBoxesUntil?.toString(),
                     added = added,
+                    actionQuery = actionQuery,
+                    resiliencePeriod = resiliencePeriod,
                 ),
             )
 
@@ -221,6 +259,7 @@ object SearchDomain {
                     kinds = kindsNamed(stored.kinds),
                     filters = Filters(
                         taskInTree = enumNamed(stored.taskInTree, Tri.Any),
+                        taskSchedulable = enumNamed(stored.taskSchedulable, Tri.Any),
                         taskCategory = stored.taskCategory?.let { CategoryId(it) },
                         categoryHasRules = enumNamed(stored.categoryHasRules, Tri.Any),
                         periodOrigin = enumNamed(stored.periodOrigin, PeriodOrigin.Any),
@@ -249,6 +288,8 @@ object SearchDomain {
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                     added = stored.added.distinct(),
+                    actionQuery = stored.actionQuery,
+                    resiliencePeriod = stored.resiliencePeriod,
                 )
             }
 
@@ -337,7 +378,12 @@ object SearchDomain {
     /** "Any", "yes" or "no" — a filter that can also be left off. */
     enum class Tri(val label: String) { Any("any"), Yes("yes"), No("no") }
 
-    enum class PeriodOrigin(val label: String) { Any("any"), BuiltIn("built-in"), Yours("yours") }
+    /**
+     * The "Default periods" filter: whether a restrictive period is one the app ships (named by its fixed id,
+     * `PeriodKinds.isUserDefined` false) or one of the account's own. Stored by the entries' names, which are kept as
+     * they were under the filter's first label ("Origin": built-in / yours).
+     */
+    enum class PeriodOrigin(val label: String) { Any("any"), BuiltIn("yes"), Yours("no") }
 
     enum class AlarmState(val label: String) { Any("any"), On("on"), Off("off") }
 
@@ -351,6 +397,11 @@ object SearchDomain {
      */
     data class Filters(
         val taskInTree: Tri = Tri.Any,
+        /**
+         * PRD §9's *schedulable*: a task the scheduler may place — a leaf (no sub-task) that still lives in the tree
+         * ([SchedulerDomain.isPlaceableTask], the predicate "start this task now" asks too).
+         */
+        val taskSchedulable: Tri = Tri.Any,
         /** Null = any category. */
         val taskCategory: CategoryId? = null,
         val categoryHasRules: Tri = Tri.Any,
@@ -410,6 +461,7 @@ object SearchDomain {
         fun isOn(setting: Setting): Boolean =
             when (setting) {
                 Setting.TaskInTree -> taskInTree != Tri.Any
+                Setting.TaskSchedulable -> taskSchedulable != Tri.Any
                 Setting.TaskCategory -> taskCategory != null
                 Setting.CategoryHasRules -> categoryHasRules != Tri.Any
                 Setting.PeriodOriginSetting -> periodOrigin != PeriodOrigin.Any
@@ -543,12 +595,13 @@ object SearchDomain {
         WindowSort(Kind.Window, "Sort by", sorts = true),
         CreationSort(Kind.Creation, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
+        TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
         TaskOnCalendar(Kind.Task, "On the calendar"),
         TaskBoxesFrom(Kind.Task, "Every box from"),
         TaskBoxesUntil(Kind.Task, "Every box until"),
         CategoryHasRules(Kind.Category, "Has rules"),
-        PeriodOriginSetting(Kind.RestrictivePeriod, "Origin"),
+        PeriodOriginSetting(Kind.RestrictivePeriod, "Default periods"),
         PeriodOnCalendar(Kind.RestrictivePeriod, "On the calendar"),
         PeriodBoxesFrom(Kind.RestrictivePeriod, "Every box from"),
         PeriodBoxesUntil(Kind.RestrictivePeriod, "Every box until"),
@@ -605,6 +658,8 @@ object SearchDomain {
         val query: String = "",
         val kinds: List<String> = listOf(Kind.Task.name),
         val taskInTree: String? = null,
+        /** New 2026-10-01: absent from an older build's = any. */
+        val taskSchedulable: String? = null,
         val taskCategory: String? = null,
         val categoryHasRules: String? = null,
         val periodOrigin: String? = null,
@@ -639,6 +694,9 @@ object SearchDomain {
         val periodBoxesFrom: String? = null,
         val periodBoxesUntil: String? = null,
         val added: List<String> = emptyList(),
+        /** New 2026-10-01: absent from an older build's = no filter, the first period. */
+        val actionQuery: String = "",
+        val resiliencePeriod: String? = null,
     )
 
     @Serializable
@@ -1080,7 +1138,7 @@ object SearchDomain {
                 }
                 Kind.RestrictivePeriod -> state.allPeriodKinds.map { periodKind ->
                     val placed = state.panels.count { it.periodKind == periodKind }
-                    val origin = if (PeriodKinds.isUserDefined(periodKind)) "your kind" else "built-in"
+                    val origin = if (PeriodKinds.isUserDefined(periodKind)) "your kind" else "default period"
                     ItemResult(kind, periodKind, periodKind, origin + " · " + plural(placed, "period") + " placed")
                 }
                 Kind.Alarm -> state.alarms.map { alarm ->
@@ -1297,6 +1355,8 @@ object SearchDomain {
                 val task = state.tasks[result.taskId]
                     ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[result.taskId] }
                 tri(filters.taskInTree, result.inTaskTree) &&
+                    (filters.taskSchedulable == Tri.Any ||
+                        tri(filters.taskSchedulable, SchedulerDomain.isPlaceableTask(state, result.taskId))) &&
                     (filters.taskCategory == null || task?.categoryIds?.contains(filters.taskCategory) == true) &&
                     (calendar == null ||
                         calendar.passes(
@@ -1564,9 +1624,35 @@ object SearchDomain {
         TaskAddCategory(Kind.Task, "Add a category"),
         TaskRemoveCategory(Kind.Task, "Remove a category"),
         TaskMinimumTime(Kind.Task, "Minimum time"),
+        // A task cell's right-click menu (`TaskCellMenuItems`), over every added task.
+        TaskStartNow(Kind.Task, "Start now"),
+        TaskEdit(Kind.Task, "Edit task"),
+        TaskGoToTree(Kind.Task, "Go to task tree"),
+        TaskGoToCalendar(Kind.Task, "Go to calendar"),
+        TaskCopyIds(Kind.Task, "Copy task ids"),
+        TaskDeepCopy(Kind.Task, "Deep copy"),
+        TaskCollapseSubtrees(Kind.Task, "Collapse sub-trees"),
+        TaskAddDefaultSubtree(Kind.Task, "Add default sub-tree"),
+        // The task edit window's sections (`TaskEditWindow`), over every added task.
+        TaskAddUnder(Kind.Task, "Add under"),
+        TaskResilience(Kind.Task, "Resilience"),
+        TaskScheduleUnit(Kind.Task, "Schedule unit"),
+        TaskText(Kind.Task, "Text"),
+        TaskPaths(Kind.Task, "Paths"),
+        CategoryEdit(Kind.Category, "Name and rules"),
         AlarmOnOff(Kind.Alarm, "State"),
+        AlarmEdit(Kind.Alarm, "Edit"),
         TimerRun(Kind.Timer, "Run"),
+        TimerEdit(Kind.Timer, "Edit"),
         ChronoRun(Kind.Chrono, "Run"),
+        ChronoEdit(Kind.Chrono, "Edit"),
+        ReminderEdit(Kind.Reminder, "Edit"),
+        // The period edit window's sections (removed 2026-10-01), over every added period.
+        PeriodDrawing(Kind.RestrictivePeriod, "Drawing"),
+        PeriodCombinations(Kind.RestrictivePeriod, "Combinations"),
+        PeriodTaskSearch(Kind.RestrictivePeriod, "Search its tasks"),
+        PeriodDelete(Kind.RestrictivePeriod, "Delete"),
+        PeriodReset(Kind.RestrictivePeriod, "Reset the default periods"),
     }
 
     /**
@@ -1596,7 +1682,90 @@ object SearchDomain {
         data class TimersRun(val step: RunStep) : AddedCommand
 
         data class ChronosRun(val step: RunStep) : AddedCommand
+
+        /** The task edit window's resilience over the added schedulable leaves ([SchedulerIntent.SetPeriodResilience]). */
+        data class Resilience(val kind: String, val value: Double) : AddedCommand
+
+        data class ScheduleUnit(val entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>) : AddedCommand
+
+        data class Text(val text: String) : AddedCommand
+
+        /** Null = the top level. */
+        data class AddUnder(val parentTaskId: TaskId?) : AddedCommand
+
+        data object CollapseSubtrees : AddedCommand
+
+        data object AddDefaultSubtree : AddedCommand
+
+        /** The drawing of every added period ([SchedulerIntent.SetPeriodDrawing]). */
+        data class Drawing(val drawing: PeriodDrawing) : AddedCommand
+
+        /** The task edit window's ✕ on one of a task's places ([SchedulerIntent.RemoveTaskPath]). */
+        data class RemovePath(val cellId: CellId) : AddedCommand
+
+        /**
+         * An intent an element's own editor writes as it is (a category's rules, a period's combinations) — the removed
+         * edit window's write, which needs no translation; routed here so the actions keep one write path.
+         */
+        data class Raw(val intent: SchedulerIntent) : AddedCommand
+
+        /** Every added period of the account's own deleted ([SchedulerIntent.RemovePeriodKind]); a default one stays. */
+        data object DeletePeriods : AddedCommand
+
+        /** Every added DEFAULT period back to how the app ships it ([SchedulerIntent.ResetPeriodKinds]). */
+        data object ResetDefaultPeriods : AddedCommand
     }
+
+    /** The periods among [added] the account still holds, each once, in the list's order. */
+    fun addedPeriodKinds(state: SchedulerState, added: List<Result>): List<String> =
+        added.filterIsInstance<ItemResult>()
+            .filter { it.kind == Kind.RestrictivePeriod && it.id in state.allPeriodKinds }
+            .map { it.id }
+            .distinct()
+
+    /** The ids of [kind]'s elements among [added], each once, in the list's order. */
+    fun addedIds(added: List<Result>, kind: Kind): List<String> =
+        added.filterIsInstance<ItemResult>().filter { it.kind == kind }.map { it.id }.distinct()
+
+    /** The live tasks among [added], each once, in the list's order. */
+    fun addedTaskIds(state: SchedulerState, added: List<Result>): List<TaskId> =
+        added.filterIsInstance<TaskResult>().map { it.taskId }.filter { it in state.tasks }.distinct()
+
+    /**
+     * The added tasks the task edit window's leaf-only sections act on (resilience, schedule unit): the schedulable
+     * leaves — a parent task is a grouping the scheduler never places, so a value on one is a number nothing reads.
+     */
+    fun addedLeafIds(state: SchedulerState, added: List<Result>): List<TaskId> =
+        addedTaskIds(state, added).filter { SchedulerDomain.isLeafTask(state, it) }
+
+    /** The cell each added task is acted on through, for the cell menu's entries: its first live occurrence. */
+    fun addedTaskCells(state: SchedulerState, added: List<Result>): List<CellId> =
+        addedTaskIds(state, added).mapNotNull { SchedulerDomain.firstTaskOccurrence(state, it)?.cellId }
+
+    /** The kinds the resilience action's period field offers: those a task may be given a value for. */
+    fun resilienceKinds(state: SchedulerState): List<String> =
+        state.allPeriodKinds.filter(PeriodKinds::isResilienceEditable)
+
+    /** The resilience action's period, as [Config.resiliencePeriod] names it, else the first kind it offers. */
+    fun resiliencePeriodOf(state: SchedulerState, config: Config): String? {
+        val kinds = resilienceKinds(state)
+        return config.resiliencePeriod?.takeIf { it in kinds } ?: kinds.firstOrNull()
+    }
+
+    /**
+     * The added DEFAULT periods a Reset would change — those whose drawing or combination rules are not as the app
+     * ships them, by their id (`ItemResult.id`, the kind's fixed name). Empty greys the button; a period of the
+     * account's own has no default and is never one of them.
+     */
+    fun modifiedDefaultPeriods(state: SchedulerState, added: List<Result>): List<String> =
+        added.filterIsInstance<ItemResult>()
+            .filter { it.kind == Kind.RestrictivePeriod && it.id in state.allPeriodKinds && !PeriodKinds.isUserDefined(it.id) }
+            .map { it.id }
+            .distinct()
+            .filter { kind ->
+                kind in state.periodKindStyles ||
+                    PeriodKinds.combinationsReset(state.periodCombinations, setOf(kind)) !== state.periodCombinations
+            }
 
     /**
      * [command] applied to the [added] rows of its kind, as the intents the app already has for it — never a
@@ -1638,6 +1807,36 @@ object SearchDomain {
                     }
                 }
             }
+            is AddedCommand.Resilience -> {
+                val ids = addedLeafIds(state, added)
+                if (ids.isEmpty()) emptyList() else listOf(SchedulerIntent.SetPeriodResilience(ids, command.kind, command.value))
+            }
+            is AddedCommand.ScheduleUnit -> {
+                val ids = addedLeafIds(state, added)
+                if (ids.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksScheduleUnit(ids, command.entries))
+            }
+            is AddedCommand.Text ->
+                if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksText(taskIds.distinct(), command.text))
+            is AddedCommand.AddUnder ->
+                if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.AddTasksPath(taskIds.distinct(), command.parentTaskId))
+            // The cell menu's own intents, per cell: collapsing is view state, and adding the template takes a list.
+            AddedCommand.CollapseSubtrees -> addedTaskCells(state, added).map { SchedulerIntent.CollapseSubtrees(it) }
+            AddedCommand.AddDefaultSubtree ->
+                addedTaskCells(state, added).takeIf { it.isNotEmpty() && !state.defaultSubtreeIsEmpty }
+                    ?.let { listOf(SchedulerIntent.AddDefaultSubtree(it)) }
+                    .orEmpty()
+            is AddedCommand.RemovePath -> listOf(SchedulerIntent.RemoveTaskPath(command.cellId))
+            is AddedCommand.Raw -> listOf(command.intent)
+            is AddedCommand.Drawing ->
+                addedPeriodKinds(state, added)
+                    .filter { state.periodKindConfig.drawing(it) != command.drawing }
+                    .map { SchedulerIntent.SetPeriodDrawing(it, command.drawing) }
+            AddedCommand.DeletePeriods ->
+                addedPeriodKinds(state, added).filter(PeriodKinds::isUserDefined).map { SchedulerIntent.RemovePeriodKind(it) }
+            AddedCommand.ResetDefaultPeriods ->
+                modifiedDefaultPeriods(state, added).takeIf { it.isNotEmpty() }
+                    ?.let { listOf(SchedulerIntent.ResetPeriodKinds(it)) }
+                    .orEmpty()
             is AddedCommand.ChronosRun -> {
                 val ids = idsOf(Kind.Chrono)
                 state.chronos.filter { it.id in ids }.mapNotNull { chrono ->

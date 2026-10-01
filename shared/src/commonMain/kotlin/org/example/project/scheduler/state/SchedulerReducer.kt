@@ -281,6 +281,8 @@ object SchedulerReducer {
             is SchedulerIntent.CreateTask -> createTaskDelta(state, intent.title)?.let { commitDelta(state, it) } ?: state
             is SchedulerIntent.AddTaskPath ->
                 addTaskPathDelta(state, intent.taskId, intent.parentTaskId)?.let { commitDelta(state, it) } ?: state
+            is SchedulerIntent.AddTasksPath ->
+                addTasksPathDelta(state, intent.taskIds, intent.parentTaskId)?.let { commitDelta(state, it) } ?: state
             is SchedulerIntent.RemoveTaskPath -> removeTaskPathDelta(state, intent.cellId)?.let { commitDelta(state, it) } ?: state
             is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
             is SchedulerIntent.CreateTaskTree -> reduceCreateTaskTree(state, intent.title)
@@ -486,10 +488,25 @@ object SchedulerReducer {
             is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
             is SchedulerIntent.SetPeriodDrawing -> reduceSetPeriodDrawing(state, intent.kind, intent.drawing)
             is SchedulerIntent.SetPeriodCombinations -> reduceSetPeriodCombinations(state, intent.combinations)
+            is SchedulerIntent.ResetPeriodKinds -> reduceResetPeriodKinds(state, intent.kinds)
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
                 commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
+            is SchedulerIntent.SetTasksText -> {
+                val apply = { working: SchedulerState ->
+                    intent.taskIds.distinct().fold(working) { acc, id -> applySetTaskText(acc, id, intent.text) }
+                }
+                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Task text", apply))
+            }
+            is SchedulerIntent.SetTasksScheduleUnit -> {
+                val apply = { working: SchedulerState ->
+                    intent.taskIds.distinct()
+                        .filter { SchedulerDomain.isLeafTask(working, it) }
+                        .fold(working) { acc, id -> applySetScheduleUnit(acc, id, intent.entries) }
+                }
+                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Schedule unit", apply))
+            }
             is SchedulerIntent.SetChores -> reduceSetChores(state, intent.entries, intent.todayStartMillis, intent.nowMillis)
             is SchedulerIntent.SetReminderChecked ->
                 reduceSetReminderChecked(state, intent.panelId, intent.checked, intent.nowMillis, intent.tag)
@@ -4124,6 +4141,24 @@ private fun createTaskDelta(state: SchedulerState, titleRaw: String): Delta? {
  */
 private fun addTaskPathDelta(state: SchedulerState, taskId: TaskId, parentTaskId: TaskId?): Delta? {
     if (state.editSession != null) return null
+    val working = applyAddTaskPath(state, taskId, parentTaskId) ?: return null
+    return TreeMutationDelta(before = state.captureTree(), after = working.captureTree(), label = "Add path")
+}
+
+/**
+ * [SchedulerIntent.AddTasksPath]: [applyAddTaskPath] for each task in turn, on the tree the previous one left, as ONE
+ * delta. A task the rule refuses is skipped; null when none of them could go.
+ */
+private fun addTasksPathDelta(state: SchedulerState, taskIds: List<TaskId>, parentTaskId: TaskId?): Delta? {
+    if (state.editSession != null) return null
+    var working = state
+    for (taskId in taskIds.distinct()) applyAddTaskPath(working, taskId, parentTaskId)?.let { working = it }
+    if (working === state) return null
+    return TreeMutationDelta(before = state.captureTree(), after = working.captureTree(), label = "Add path")
+}
+
+/** [taskId] put at the bottom of [parentTaskId]'s list (null = the top level), or null where the rule refuses it. */
+private fun applyAddTaskPath(state: SchedulerState, taskId: TaskId, parentTaskId: TaskId?): SchedulerState? {
     val task = state.tasks[taskId]?.takeIf { it.title.isNotEmpty() } ?: return null
     var working = state
     if (parentTaskId != null) {
@@ -4138,8 +4173,7 @@ private fun addTaskPathDelta(state: SchedulerState, taskId: TaskId, parentTaskId
     val placeholder = TaskPathsDomain.placeholderOf(working, listId) ?: return null
     if (!SchedulerDomain.canAssignTaskId(working, placeholder, taskId)) return null
     working = applyAssignTaskId(working, placeholder, taskId)
-    working = applySetCellTitle(working, placeholder, task.title, forceTaskId = taskId)
-    return TreeMutationDelta(before = state.captureTree(), after = working.captureTree(), label = "Add path")
+    return applySetCellTitle(working, placeholder, task.title, forceTaskId = taskId)
 }
 
 /**
@@ -4890,6 +4924,22 @@ private fun reduceSetPeriodCombinations(
             .distinctBy { it.id }
     if (kept == state.periodCombinations) return state
     return state.copy(periodCombinations = kept)
+}
+
+/**
+ * The Search window's Reset of the default periods [kindsRaw]: their drawing overrides dropped and their combination
+ * rules put back ([PeriodKinds.combinationsReset]). A kind of the account's own, or one the account does not hold, is
+ * ignored; a reset that changes nothing is a no-op.
+ */
+private fun reduceResetPeriodKinds(state: SchedulerState, kindsRaw: List<String>): SchedulerState {
+    val kinds =
+        kindsRaw.map(PeriodKinds::normalize)
+            .filterTo(HashSet()) { it in state.allPeriodKinds && !PeriodKinds.isUserDefined(it) }
+    if (kinds.isEmpty()) return state
+    val styles = state.periodKindStyles - kinds
+    val combinations = PeriodKinds.combinationsReset(state.periodCombinations, kinds)
+    if (styles.size == state.periodKindStyles.size && combinations === state.periodCombinations) return state
+    return state.copy(periodKindStyles = styles, periodCombinations = combinations)
 }
 
 /** The period edit window's drawing for [kindRaw]; the same drawing again is a no-op. */
