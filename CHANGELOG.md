@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task cell: every text takes the contrast colour — 2026-10-01
+
+Anomaly: *"In the task cell, the font color chosen to be opposite to the background color is not applied to all the
+text in the task cell."* Only the title, percentage, arrows and caret read `onTaskColor`; the minimum time, the
+categories, the weight fields and the slots other windows add (Search's kind, check box, path box and logo, the
+relative-priority pin) kept fixed sheet colours. Fix: the cell provides `LocalTaskCellForeground` (`TaskColorPalette.kt`)
+and every one of them reads `onTaskCell(default)`.
+
 ### Search window: the three sections are resized by dragging — 2026-10-01
 
 User request: *"In the Search window, the user must be able to resize the 3 sections by dragging the separators."*

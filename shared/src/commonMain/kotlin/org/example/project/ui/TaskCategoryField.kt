@@ -82,9 +82,10 @@ fun TaskCategoryCell(
                 .padding(horizontal = 6.dp, vertical = 2.dp),
             text = carried.joinToString(", ") { it.title }.ifEmpty { EMPTY_LABEL },
             style = MaterialTheme.typography.bodySmall,
-            color =
+            color = onTaskCell(
                 if (carried.isEmpty()) MaterialTheme.colorScheme.outline
                 else MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

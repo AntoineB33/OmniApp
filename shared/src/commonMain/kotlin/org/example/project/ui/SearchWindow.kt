@@ -857,7 +857,7 @@ private fun ResultCheckBox(checked: Boolean, onCheckedChange: (Boolean) -> Unit)
             .size(16.dp)
             .clip(shape)
             .background(if (checked) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
-            .border(1.dp, if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, shape)
+            .border(1.dp, if (checked) MaterialTheme.colorScheme.primary else onTaskCell(MaterialTheme.colorScheme.outline), shape)
             .clickable { onCheckedChange(!checked) },
         contentAlignment = Alignment.Center,
     ) {
@@ -871,7 +871,7 @@ private fun KindSection(kind: SearchDomain.Kind) {
     Text(
         text = kind.label,
         style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.width(KIND_SECTION_WIDTH),
@@ -1353,7 +1353,7 @@ private fun TaskPathBox(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(4.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+            .border(1.dp, onTaskCell(MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(4.dp))
             .then(
                 contextMenuModifier(enabled = true, key = result.taskId to "path", onSelect = onSelect) {
                     onOpenMenu(result.shownPath.takeIf { it.isNotEmpty() })
@@ -1366,7 +1366,7 @@ private fun TaskPathBox(
             text = if (result.shownPath.isEmpty()) "no path" else SearchDomain.pathLabel(result.shownPath),
             style = MaterialTheme.typography.labelMedium,
             fontStyle = if (result.shownPath.isEmpty()) FontStyle.Italic else FontStyle.Normal,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -1376,7 +1376,7 @@ private fun TaskPathBox(
                 Text(
                     text = if (listOpen) "▴" else "▾",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
                     modifier = Modifier
                         .fillMaxHeight()
                         .menuToggleClickable(listOpen) { listOpen = it }
@@ -1426,13 +1426,13 @@ private fun NotInTreeLogo() {
             modifier = Modifier
                 .size(20.dp)
                 .clip(CircleShape)
-                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                .border(1.dp, onTaskCell(MaterialTheme.colorScheme.outline), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "⊘",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = onTaskCell(MaterialTheme.colorScheme.outline),
             )
         }
     }

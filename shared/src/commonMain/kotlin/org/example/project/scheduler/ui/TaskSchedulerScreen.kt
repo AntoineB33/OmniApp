@@ -62,6 +62,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import org.example.project.ui.onTaskCell
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -1214,10 +1216,10 @@ private fun WeightInputCell(
             },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodySmall.copy(
-                color = MaterialTheme.colorScheme.onSurface,
+                color = onTaskCell(MaterialTheme.colorScheme.onSurface),
                 textAlign = TextAlign.End,
             ),
-            cursorBrush = SolidColor(SheetColors.activeBorder),
+            cursorBrush = SolidColor(onTaskCell(SheetColors.activeBorder)),
             modifier = Modifier
                 .weight(1f)
                 .border(1.dp, SheetColors.grid)
@@ -1251,7 +1253,7 @@ private fun WeightPinButton(pinned: Boolean, onClick: () -> Unit) {
         Text(
             text = if (pinned) "pinned" else "pin",
             style = MaterialTheme.typography.labelSmall,
-            color = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = onTaskCell(if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
         )
     }
 }
@@ -1271,7 +1273,7 @@ private fun WeightStepButton(label: String, onClick: () -> Unit) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
+            color = onTaskCell(MaterialTheme.colorScheme.primary),
         )
     }
 }
@@ -1317,10 +1319,10 @@ private fun MinTimeInputCell(
             },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodySmall.copy(
-                color = MaterialTheme.colorScheme.onSurface,
+                color = onTaskCell(MaterialTheme.colorScheme.onSurface),
                 textAlign = TextAlign.End,
             ),
-            cursorBrush = SolidColor(SheetColors.activeBorder),
+            cursorBrush = SolidColor(onTaskCell(SheetColors.activeBorder)),
             modifier = Modifier
                 .weight(1f)
                 .focusRequester(focusRequester)
@@ -1330,7 +1332,7 @@ private fun MinTimeInputCell(
         Text(
             text = "m",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
             modifier = Modifier.padding(horizontal = 2.dp),
         )
         Column {
@@ -1366,7 +1368,7 @@ private fun MinTimeDisplayCell(
         Text(
             text = "${minutes}m",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
         )
     }
 }
@@ -2453,12 +2455,7 @@ private fun RelativePriorityPinCell(pinned: Boolean, onTogglePin: () -> Unit) {
         Text(
             text = if (pinned) "pinned" else "pin",
             style = MaterialTheme.typography.labelSmall,
-            color =
-                if (pinned) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+            color = onTaskCell(if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
         )
     }
 }
@@ -2973,6 +2970,9 @@ internal fun TaskRow(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+          // Everything the row draws — its own columns and the slots other windows hand it — reads the one
+          // foreground ([onTaskCell]); the menus it opens have their own surface and do not.
+          CompositionLocalProvider(org.example.project.ui.LocalTaskCellForeground provides onTaskColor) {
             // PRD §13 right-click contextual menu on a populated cell.
             if (cellMenu != null) {
                 transientMenuDismissal(contextMenuOpen) { contextMenuOpen = false }
@@ -3269,6 +3269,7 @@ internal fun TaskRow(
                 if (afterTitle == null) Spacer(Modifier.weight(1f))
             }
             rowContent?.invoke()
+          }
         }
         if (moveDropAfter) {
             Box(

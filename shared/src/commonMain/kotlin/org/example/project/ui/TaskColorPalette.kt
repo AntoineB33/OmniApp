@@ -1,5 +1,8 @@
 package org.example.project.ui
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import org.example.project.scheduler.domain.TaskColorCube
@@ -40,3 +43,16 @@ internal object TaskPalette {
     /** Every task's colour, for the calendar. Same hues, same source, same colours — see [sheetColors]. */
     fun accentColors(hues: Map<TaskId, TaskColorSpace.TaskHue>): Map<TaskId, Color> = sheetColors(hues)
 }
+
+/**
+ * **What a task cell draws its text in**, provided by the cell ([org.example.project.scheduler.ui.TaskRow]'s drawing)
+ * to everything inside it: [TaskPalette.foreground] of the task's colour while the cell rests on it, else null. The
+ * slots other windows hand the cell (a path box, a check box, a logo, a pin) are drawn inside it too, so they read it
+ * through [onTaskCell] rather than each being told — one answer for the whole cell (user rule 2026-10-01).
+ */
+internal val LocalTaskCellForeground = compositionLocalOf<Color?> { null }
+
+/** The colour to draw text in inside a task cell: [LocalTaskCellForeground] on a task's colour, else [default]. */
+@Composable
+@ReadOnlyComposable
+internal fun onTaskCell(default: Color): Color = LocalTaskCellForeground.current ?: default

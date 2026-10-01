@@ -417,7 +417,12 @@ disagreeing about what colour a task is.
 - **What is drawn ON a task's colour takes the colour of highest WCAG contrast with it**
   (`TaskPalette.foreground`, `TaskColorCurve.bestForeground`: black or white — the ratio is monotone in the
   foreground's luminance, so one extreme is always the maximum; the worst background still reads ≥ 4.58:1). In the
-  tree: the title, the percentage, the arrows, the edit caret (`TaskRow`'s `onTaskColor`); a name chip and a menu
+  tree: EVERY text of the cell — the title, the percentage, the arrows, the edit caret, the minimum time, the
+  categories, the weight fields, and the slots other windows hand the cell (the Search window's kind, check box, path
+  box and logo, the relative-priority pin). The cell PROVIDES it (`LocalTaskCellForeground`) and each of them reads
+  `onTaskCell(default)`: a new column or slot inside the cell must read it too, never a fixed sheet colour (anomaly
+  2026-10-01: the minimum time, the categories and the Search slots stayed grey on dark colours). The menus the
+  cell opens have their own surface and never read it. A name chip and a menu
   row (`TaskTitleLabel`, `EditMenuRow`). A surface's own remark about a task (the picker's red / orange) is said
   BESIDE the name, never in its letters. On the calendar see `calendar.md` § *A task panel is opaque*.
 - **The tasks with an empty sub-tree own the circle, spread as far apart as they can be.** `n` of them take
