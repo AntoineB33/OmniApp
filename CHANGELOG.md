@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Dragging a maximized window's head un-maximizes it — 2026-10-01
+
+User request: *"When dragging the header of a maximized window, it must bring it to its previous size and get dragged by
+the mouse."* `WindowFrameState.unmaximizeUnder`, called by `windowHeadGestures`' new `onDragStart` once the drag passes
+the touch slop: normal size (else the window's default), the pointer at the same fraction along the head, the head
+under it. Tests: `WindowFrameStateTest`.
+
 ### The element edit windows are Search windows — 2026-10-01
 
 User request: *"Now all the actions in the period edit window, put them in the added elements configurations window, and

@@ -299,6 +299,28 @@ class WindowFrameState(
 
     fun setFillHeight(on: Boolean) = applyFill(fill.withHeight(on))
 
+    /**
+     * A drag of a MAXIMIZED window's head (user rule 2026-10-01): the window goes back to its normal size and is
+     * carried by the pointer — as a desktop's own windows are. [pointer] is where the pointer is, in the head's
+     * coordinates, which are the content area's while the window is maximized ([containerWidth] its width). The
+     * pointer keeps its place across the head proportionally — a grab at a third of the way along is a third of the
+     * way along the normal width — and its height, so the head stays under it; the drag then moves the window
+     * ([moveBy]). [fallbackSize] is the size the window opens at when it has never had one of its own (it was opened
+     * maximized). Anything but a maximized window is left alone.
+     */
+    fun unmaximizeUnder(pointer: Offset, containerWidth: Float, fallbackSize: Size) {
+        if (!maximized || containerWidth <= 0f) return
+        val width = normalSize.width.takeIf { it > 0f } ?: fallbackSize.width
+        val height = normalSize.height.takeIf { it > 0f } ?: fallbackSize.height
+        val fraction = (pointer.x / containerWidth).coerceIn(0f, 1f)
+        // The window is centred, so an offset is measured from where it would rest.
+        val left = pointer.x - fraction * width
+        val x = left - (containerWidth - width) / 2f
+        val y = if (containerHeight > 0f) -(containerHeight - height) / 2f else normalOffset.y
+        normalOffset = Offset(x, y)
+        applyFill(WindowFill.None)
+    }
+
     /** The maximize button, and the head's double-click: both axes, or back to the normal geometry. */
     fun toggleMaximize() = applyFill(if (maximized) WindowFill.None else WindowFill.Both)
 
@@ -978,6 +1000,7 @@ fun AppWindowFrame(
                     onCommit = commit,
                     onHeadHeight = { headHeight[0] = it },
                     headTrailing = headTrailing,
+                    defaultSizePx = with(density) { Size(defaultWidth.toPx(), defaultHeight.toPx()) },
                 )
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 // What is drawn inside keeps the suffix (a window nested in a copy is that copy's) but not the
@@ -1080,6 +1103,8 @@ private fun WindowHead(
     onCommit: () -> Unit,
     onHeadHeight: (Float) -> Unit,
     headTrailing: @Composable RowScope.() -> Unit,
+    /** The window's default size in px: what a maximized window that never had a size of its own is dragged out at. */
+    defaultSizePx: Size,
 ) {
     // Where the title must START so none of it is hidden: the head's first point that is both visible (a window
     // dragged past the content area's edge is cut there) and not under the obstacle, plus a small gap. The title
@@ -1124,6 +1149,8 @@ private fun WindowHead(
             }
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .windowHeadGestures(
+                // A maximized window comes back to its normal size under the pointer, then follows it.
+                onDragStart = { pointer, headWidth -> state.unmaximizeUnder(pointer, headWidth, defaultSizePx) },
                 onDrag = { state.moveBy(it) },
                 onDragEnd = onCommit,
                 onDoubleClick = {
@@ -1220,6 +1247,12 @@ private fun ResizeEdge(
  * its buttons (which consume theirs) never move the window; nothing else interactive belongs in the head.
  */
 private fun Modifier.windowHeadGestures(
+    /**
+     * The drag has gone past the touch slop — it is a drag and not a click — with the pointer at this point of the
+     * head, the head being this wide. Once per drag, before its first move past the slop. Past the slop so that the
+     * tremor of a double-click (which maximizes and restores) never drags a maximized window out instead.
+     */
+    onDragStart: (pointer: Offset, headWidth: Float) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onDoubleClick: () -> Unit,
@@ -1229,11 +1262,16 @@ private fun Modifier.windowHeadGestures(
         val down = awaitFirstDown(requireUnconsumed = true)
         var travelled = Offset.Zero
         var moved = false
+        var started = false
         val completed = drag(down.id) { change ->
             val delta = change.positionChange()
             travelled += delta
             if (delta != Offset.Zero) {
                 moved = true
+                if (!started && travelled.getDistance() > viewConfiguration.touchSlop) {
+                    started = true
+                    onDragStart(change.position, size.width.toFloat())
+                }
                 onDrag(delta)
             }
             change.consume()

@@ -100,6 +100,12 @@ means.
   only the click test above, never a threshold before moving. That is affordable because the head holds
   nothing interactive but its own buttons (which consume their press); a window's toggles belong
   inside the window (the calendar's configuration section), not in the head.
+- **Dragging a MAXIMIZED window's head un-maximizes it under the pointer** (user rule 2026-10-01;
+  `WindowFrameState.unmaximizeUnder`): the window takes back its normal size — its default one if it never had
+  one — with the pointer at the same fraction along the head and the head under it, and the drag carries it on.
+  It happens once the drag passes the touch slop (the one exception to "no dead zone": a maximized window cannot
+  move before it anyway), so a double-click's tremor never drags it out. A window filling ONE axis is not
+  un-filled by a drag; it moves along the other.
 - **A maximized window fills the content area**, which is the app minus the lateral menu — and grows to the
   whole app when the menu is retracted, because the content area does. Nothing in the frame knows about the
   menu: `fillMaxWidth`/`fillMaxHeight` inside the content `Box` is the entire mechanism.

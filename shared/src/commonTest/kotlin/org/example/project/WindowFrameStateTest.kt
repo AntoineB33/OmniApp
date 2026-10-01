@@ -31,6 +31,39 @@ class WindowFrameStateTest {
         assertEquals(Offset(30f, -20f), s.appliedOffset)
     }
 
+    @Test
+    fun `dragging a maximized head brings the normal size back under the pointer`() {
+        val s = state(width = 400f, height = 300f)
+        s.clampVertical(containerHeight = 800f, windowHeight = 300f, headHeight = 30f)
+        s.toggleMaximize()
+        // Grabbed a quarter of the way along a 1000-px head, 10 px down it.
+        s.unmaximizeUnder(Offset(250f, 10f), containerWidth = 1000f, fallbackSize = Size(999f, 999f))
+        assertFalse(s.maximized)
+        assertEquals(Size(400f, 300f), s.size, "its own size, not the fallback")
+        // A quarter of the way along the normal width too: its left edge at 250 - 100, its head at the top.
+        val left = (1000f - 400f) / 2f + s.offset.x
+        val top = (800f - 300f) / 2f + s.offset.y
+        assertEquals(150f, left)
+        assertEquals(0f, top)
+        // The drag then carries it.
+        s.moveBy(Offset(40f, 25f))
+        assertEquals(190f, (1000f - 400f) / 2f + s.offset.x)
+        // A window that is not maximized is left alone.
+        val before = s.offset
+        s.unmaximizeUnder(Offset(0f, 0f), containerWidth = 1000f, fallbackSize = Size(1f, 1f))
+        assertEquals(before, s.offset)
+    }
+
+    @Test
+    fun `a window opened maximized is dragged out at its default size`() {
+        val s = WindowFrameState("test", Offset.Zero, Size.Zero, initialChrome = WindowChrome(WindowFill.Both, minimized = false))
+        s.clampVertical(containerHeight = 800f, windowHeight = 800f, headHeight = 30f)
+        s.unmaximizeUnder(Offset(500f, 10f), containerWidth = 1000f, fallbackSize = Size(600f, 400f))
+        assertFalse(s.maximized)
+        assertEquals(200f, (1000f - 600f) / 2f + s.offset.x, "half-way along the head, half-way along the default width")
+        assertEquals(0f, (800f - 400f) / 2f + s.offset.y)
+    }
+
     // ----- the three resizable edges ------------------------------------------------------------------
     //
     // The window is drawn centred on its offset, so growing it by `d` on ONE edge has to move the centre by
