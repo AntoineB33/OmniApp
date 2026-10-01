@@ -11,6 +11,37 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Window bar: Reset = only the calendar, maximized; "close selection" of every tab closes everything — 2026-10-01
+
+User correction: *"Reset must reset the default, which is having only the calendar open and maximized. When
+right-clicking the system tray and clicking close selection when all tabs are selected, it must close everything and
+not have the calendar open."* Reset: `closeWindows`, then (two frames later) the calendar opened with
+`CALENDAR_RESET_CHROME`. Close-all reopening a window, second path: closing the calendar dispatched
+`SetCalendarFocus(false)` → the focus named the (closed) tree → the focus walk's effect reopened it. Now
+`SetCalendarFocus` is dispatched on opening only; a close's focus goes through `focusAfterClose` alone.
+
+### Window bar: "close selection" and Reset left a window open — 2026-10-01
+
+Anomaly: *"I selected all tabs and clicked on close selection, but it did like the reset button, instead of having
+every window closed."* Both looped over each window's close; each close hands the focus to the window under it at
+once, but closed windows leave the stack only a frame later, so the focus went to a window of the same batch and `App`
+reopened the window the focus named. Fix: `WindowFrameHost.closeWindows` marks the batch closing first and
+`frontIdExcluding` skips it. Test: `TabSelectionTest.a_batch_close_hands_the_focus_only_to_a_window_that_stays`.
+
+### Window bar: a right-click menu over the selected tabs — 2026-10-01
+
+User request: *"Right-clicking on the system tray opens a menu with the options close selection, minimize selection,
+open selection. When a window has the focus, its tab is selected. Right-clicking an unselected tab doesn't select it."*
+`WindowBar`'s menu → `WindowFrameHost.closeSelection` / `minimizeSelection` / `openSelection`; `focus` selects the
+focused tab (alone, unless already selected); the tab's gesture ignores a right-click. Tests: `TabSelectionTest`.
+
+### Window bar: Shift+click and Ctrl+click select tabs — 2026-10-01
+
+User request: *"The user must be able to click on a tab in the system tray, then shift+click on another, which selects
+all the tabs in between. The user can also do ctrl+click on the tabs."* `TabSelection` + `WindowFrameHost.selectedTabs`
+/ `onTabPressed` (`ui/WindowFrame.kt`); the range is `CheckRange.keysToSet`. Shift/Ctrl clicks only select; a plain
+click selects and keeps its taskbar toggle. In memory only. Tests: `TabSelectionTest`.
+
 ### Task cell: every text takes the contrast colour — 2026-10-01
 
 Anomaly: *"In the task cell, the font color chosen to be opposite to the background color is not applied to all the

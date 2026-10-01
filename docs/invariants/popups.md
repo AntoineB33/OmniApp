@@ -140,16 +140,45 @@ means.
   reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window
   that HAS the focus is reduced — giving the focus up, so no hidden window keeps the keyboard. Its ✕ closes it
   outright.
+- **The bar's tabs are selected the file explorer's way** (user rule 2026-10-01; `TabSelection`,
+  `WindowFrameHost.onTabPressed`): a click selects its tab alone (and is still the taskbar toggle above); Shift+click
+  selects every tab from the last one clicked to it — the range is `CheckRange.keysToSet`, never a second reading;
+  Ctrl+click adds or takes one tab; Ctrl+Shift adds the range. **A Shift or Ctrl click only selects** — it never
+  reduces, raises or focuses a window. A selected tab is filled in the secondary container, apart from the focused
+  tab's look. The selection is local view state, in memory only; a closed window leaves it. `TabSelectionTest`.
+  **The focused window's tab is selected** (`WindowFrameHost.focus`): alone, unless it is already among the selected
+  tabs — then the selection stands, which is what lets "open selection" focus one of its own windows.
+- **A right-click on the bar — anywhere, a tab included — opens the bar's menu at the pointer** (user rule 2026-10-01):
+  *close selection*, *minimize selection*, *open selection* (`closeSelection` / `minimizeSelection` /
+  `openSelection`), acting on the selected tabs only. **The right-click selects nothing and focuses nothing**: the tab's
+  own gesture lets a secondary press through unconsumed for the bar's handler. Minimize gives the focus up if the
+  focused window is among them; open restores and raises them in bar order and focuses the last — one focus change.
+  The menu is a menu (`transientMenuDismissal`, non-focusable).
+- **Closing several windows at once goes through `WindowFrameHost.closeWindows`** — the bar's Reset and "close
+  selection" both. It marks every one of them *closing* before the first close, so the focus each close hands on
+  (`frontIdExcluding`, `App`'s `focusAfterClose`) goes to a window that stays, or nowhere. A closed window leaves the
+  stack only when it leaves composition, a frame later; a loop of plain closes handed the focus to a window of the
+  same batch, and the state's focus then named a closed window, which `App` opens again (the Shift+Alt focus walk's
+  effect) — both Reset and "close selection" left a window open (anomaly 2026-10-01, `TabSelectionTest`).
 - **The lateral menu's scrolled content ends a bar's height lower** (`LateralMenu`'s bottom padding, `+
   MINIMIZED_BAR_HEIGHT`), always — so scrolled to the end, its last button clears the bar drawn over it, and
   the menu does not jump as the bar comes and goes.
-- **Reset (it was "Close all") is the bar's, at its right corner** — every registered window's own close, over a snapshot. It
+- **Reset (it was "Close all") is the bar's, at its right corner, and it puts back the DEFAULT layout: only the
+  calendar, open and maximized** (user rule 2026-10-01) — every window closed (`closeWindows`), then, two frames
+  later (once the closes have taken the windows out of composition — reopened in the same frame the calendar would
+  keep its old frame), the calendar's chrome written as `CALENDAR_RESET_CHROME` and the calendar opened and focused
+  (`openNewWindow`). It
   replaced the lateral menu's "Close windows" (2026-09-24), which listed the lateral-menu windows by hand and
   so never closed a per-object window, a copy or a notice. **It also resets the task tree window's placement**
   (user rule, 2026-09-30; `WindowBar(onReset)` in `App`): offset and size back to zero and the chrome to
   `TASK_TREE_DEFAULT_CHROME`, so the tree reopens as on a first run — maximized, and un-maximizing gives the
   default size, centred. The chrome is WRITTEN as the default, not cleared: `WindowChromeMemory.saved` answers
   for any existing row, so a cleared row would reopen un-maximized.
+- **A closing window hands the focus on in ONE place** (`ViewHistoryRecorder.focusAfterClose`: to the window under
+  it, or nowhere). The calendar's close no longer sends the focus to the tree (`SetCalendarFocus` is dispatched on
+  opening only): it named the tree even when the tree was closed too, and the focus walk's effect (which opens the
+  window the state's focus names) then reopened it — "close selection" over every tab left a window open
+  (anomaly 2026-10-01). Anything that moves the state's focus to a window must be sure that window is open.
 - **A reduced window is still composed, merely not placed** (`Modifier.unplaced`). Not composing it throws
   away everything half-typed in it, which is not what pressing *reduce* asks for.
 - **A WINDOW'S HIT REGION IS ITS DRAWN RECTANGLE, so nothing may hang off it outside the frame's

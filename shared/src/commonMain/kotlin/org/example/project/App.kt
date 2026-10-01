@@ -313,6 +313,9 @@ private class ViewHistoryRecorder {
     }
 }
 
+/** The calendar's chrome after the window bar's Reset: maximized, not reduced (user rule 2026-10-01). */
+private val CALENDAR_RESET_CHROME: WindowChrome = WindowChrome(WindowFill.Both, minimized = false)
+
 /** How many frames a ☆ button's click waits for the window it creates to register, to give its tab the button's name. */
 private const val TAB_TITLE_FRAMES: Int = 10
 
@@ -2621,8 +2624,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
         // PRD §8 focus: the floating calendar window is the focused surface while it is open — so the
         // tree stops hijacking letter typing into Edit Mode and Ctrl+Z/Y route to the calendar history.
+        // Opening only: a CLOSE hands the focus on like every window's ([ViewHistoryRecorder.focusAfterClose], to the
+        // window under it). The old "closed ⇒ the tree" named the tree even when it was closed too, and the focus
+        // walk's effect then reopened it — closing every window left one open (anomaly 2026-10-01).
         LaunchedEffect(calendarOpen) {
-            vm.dispatch(SchedulerIntent.SetCalendarFocus(calendarOpen))
+            if (calendarOpen) vm.dispatch(SchedulerIntent.SetCalendarFocus(true))
         }
 
         // PRD §7: switching focus to another window leaves Edit Mode in any window — close the calendar's
@@ -4052,13 +4058,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             WindowBar(
                 host = windowFrames,
                 modifier = Modifier.align(Alignment.BottomStart).zIndex(135f),
-                // Reset also puts the task tree window back where a first run opens it: centred, default size,
-                // maximized. The close above already took it out of composition, so it reads this when reopened.
+                // Reset is the DEFAULT layout (user rule 2026-10-01): every window closed, then the calendar alone,
+                // open and maximized. The task tree's placement goes back to a first run's too (centred, default
+                // size, maximized), for when it is next opened.
                 onReset = {
                     taskTreeOffset = Offset.Zero
                     taskTreeSize = Size.Zero
                     persistPlacement(FloatingWindow.TaskTree, Offset.Zero, Size.Zero, visible = false)
                     windowChromeMemory.save(FloatingWindow.TaskTree.name, TASK_TREE_DEFAULT_CHROME)
+                    calendarOffset = Offset.Zero
+                    calendarSize = Size.Zero
+                    engineScope.launch {
+                        // The closes take the windows out of composition first. Reopened in the same frame, the
+                        // calendar would never leave it and would keep its old frame — and its own close would
+                        // never be seen.
+                        repeat(2) { withFrameNanos { } }
+                        windowChromeMemory.save(FloatingWindow.Calendar.name, CALENDAR_RESET_CHROME)
+                        openNewWindow(FloatingWindow.Calendar)
+                    }
                 },
             )
 

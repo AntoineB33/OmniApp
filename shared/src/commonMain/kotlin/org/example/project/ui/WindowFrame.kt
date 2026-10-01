@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,6 +60,15 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -477,8 +487,27 @@ class WindowFrameHost {
      */
     val frontId: String? get() = stack.lastOrNull()
 
-    /** The front window once [id] is gone — where the focus goes when [id] closes. */
-    fun frontIdExcluding(id: String): String? = stack.lastOrNull { it != id }
+    /** The front window once [id] is gone — where the focus goes when [id] closes. Never one still [closing]. */
+    fun frontIdExcluding(id: String): String? = stack.lastOrNull { it != id && it !in closing }
+
+    /**
+     * The windows a [closeWindows] call has closed that have not unregistered yet. A window leaves the stack only when
+     * it leaves composition, a frame later, so without this the focus handed on by the first close of a batch went to
+     * a window closing in the same batch — and the state's focus then named a closed window, which `App` opens again
+     * (the bar's Reset and "close selection" each left a window open, 2026-10-01).
+     */
+    private val closing = mutableSetOf<String>()
+
+    /**
+     * **Several windows closed at once** — the bar's Reset and "close selection": each one's own close, over a
+     * snapshot, with all of them marked [closing] first, so the focus each close hands on goes to a window that STAYS
+     * ([frontIdExcluding]) or nowhere. The one way to close more than one window.
+     */
+    fun closeWindows(rows: List<Registration>) {
+        val snapshot = rows.toList()
+        closing += snapshot.map { it.id }
+        snapshot.forEach { it.onClose() }
+    }
 
     /**
      * Where [id] sits in the stack, as a `zIndex`. A window not in it yet — one composing for the first
@@ -525,6 +554,7 @@ class WindowFrameHost {
         get() = entries.any { it.id == focusedId && it.claimsKeyboard }
 
     fun register(registration: Registration) {
+        closing -= registration.id
         entries.removeAll { it.id == registration.id }
         entries += registration
         // A window that has just opened is the one the user asked for, so it opens on top.
@@ -546,6 +576,65 @@ class WindowFrameHost {
         stack.remove(id)
         if (focusedId == id) focusedId = null
         tabTitles.remove(id)
+        selectedTabs = selectedTabs - id
+        if (tabAnchor == id) tabAnchor = null
+        closing -= id
+    }
+
+    /**
+     * The window bar's **selected tabs**, by frame id (user rule 2026-10-01): a click selects its tab alone,
+     * Shift+click every tab from the last one clicked to it, Ctrl+click adds or takes one tab ([TabSelection]).
+     * Local view state held in memory only, like the other windows' selections; a closed window leaves it.
+     */
+    var selectedTabs: Set<String> by mutableStateOf(emptySet())
+        private set
+
+    /** The tab the last plain or Ctrl click landed on — where a Shift+click's range starts. */
+    private var tabAnchor: String? = null
+
+    /** The selected windows, in bar order — what the bar's menu acts on. */
+    private val selectedEntries: List<Registration> get() = entries.filter { it.id in selectedTabs }
+
+    /** Whether the bar menu's "minimize selection" has anything to reduce. */
+    val selectionHasShown: Boolean get() = selectedEntries.any { !it.state.minimized }
+
+    /** The bar menu's **close selection**: every selected window closed at once ([closeWindows]). */
+    fun closeSelection() {
+        closeWindows(selectedEntries)
+    }
+
+    /**
+     * The bar menu's **minimize selection**: every selected window is reduced; the focused one among them gives the
+     * focus up, as a reduce from its tab does, so no hidden window keeps the keyboard. The selection stays.
+     */
+    fun minimizeSelection() {
+        val selected = selectedEntries
+        selected.forEach { it.state.minimize() }
+        if (selected.any { it.id == focusedId }) blur()
+    }
+
+    /**
+     * The bar menu's **open selection**: every selected window comes back and to the top, in bar order, and the last
+     * of them takes the focus — one focus change, not one per window. The selection stays ([focus] keeps it).
+     */
+    fun openSelection() {
+        val selected = selectedEntries
+        for (entry in selected) {
+            entry.state.restore()
+            raise(entry.id)
+        }
+        selected.lastOrNull()?.let { focus(it.id) }
+    }
+
+    /**
+     * A press on [id]'s tab, with the modifiers held. A plain click is ALSO the taskbar's toggle ([onTabClicked]);
+     * a Shift or Ctrl click only changes the selection, so selecting several tabs never reduces or raises a window.
+     */
+    fun onTabPressed(id: String, shift: Boolean, ctrl: Boolean) {
+        val next = TabSelection.click(entries.map { it.id }, selectedTabs, tabAnchor, id, shift, ctrl)
+        selectedTabs = next.selected
+        tabAnchor = next.anchor
+        if (!shift && !ctrl) onTabClicked(id)
     }
 
     /**
@@ -560,6 +649,13 @@ class WindowFrameHost {
         val moved = focusedId != id
         focusedId = id
         raise(id)
+        // The focused window's tab is selected (user rule 2026-10-01). Already among the selected tabs, the selection
+        // stands — "open selection" focuses one of its own windows; outside it, the tab is selected alone, the way a
+        // plain click on it would.
+        if (id !in selectedTabs) {
+            selectedTabs = setOf(id)
+            tabAnchor = id
+        }
         if (moved) onFocus(id)
     }
 
@@ -595,6 +691,35 @@ class WindowFrameHost {
     fun blur() {
         focusedId = null
     }
+}
+
+/**
+ * **The window bar's tab selection** — the file explorer's rule over the tabs in bar order: a plain click selects the
+ * clicked tab alone and makes it the anchor; Shift+click selects the range from the anchor to it (the range itself is
+ * [CheckRange.keysToSet], the app's one reading of a Shift range), replacing the selection — or adding to it with Ctrl
+ * held too — and keeps the anchor, so a second Shift+click re-draws the range from the same tab; Ctrl+click adds or
+ * takes the clicked tab and makes it the anchor.
+ */
+object TabSelection {
+    data class Result(val selected: Set<String>, val anchor: String?)
+
+    fun click(
+        order: List<String>,
+        selected: Set<String>,
+        anchor: String?,
+        clicked: String,
+        shift: Boolean,
+        ctrl: Boolean,
+    ): Result =
+        when {
+            shift -> {
+                val from = anchor?.takeIf { it in order }
+                val range = CheckRange.keysToSet(order, from, clicked, shift = true)
+                Result((if (ctrl) selected else emptySet()) + range, from ?: clicked)
+            }
+            ctrl -> Result(if (clicked in selected) selected - clicked else selected + clicked, clicked)
+            else -> Result(setOf(clicked), clicked)
+        }
 }
 
 val LocalWindowFrameHost = staticCompositionLocalOf<WindowFrameHost?> { null }
@@ -1367,11 +1492,56 @@ private fun Modifier.unplaced(active: Boolean): Modifier =
 fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () -> Unit = {}) {
     val rows = host.registrations
     if (rows.isEmpty()) return
+    // Where the right-click landed, in the bar; null while the bar's menu is closed.
+    var menuAt by remember { mutableStateOf<Offset?>(null) }
+    val density = LocalDensity.current
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shadowElevation = 12.dp,
-        modifier = modifier.fillMaxWidth().height(MINIMIZED_BAR_HEIGHT),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(MINIMIZED_BAR_HEIGHT)
+            // A right-click anywhere on the bar — a tab included, which it neither selects nor focuses — opens
+            // the menu over the selected tabs, at the pointer. Main pass, after the tabs, which leave it unconsumed.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                        if (event.changes.any { it.isConsumed }) continue
+                        event.changes.forEach { it.consume() }
+                        menuAt = event.changes.first().position
+                    }
+                }
+            },
     ) {
+        // The bar's menu (user rule 2026-10-01): it acts on the SELECTED tabs ([WindowFrameHost.selectedTabs]).
+        // Non-focusable and closed by the app root's observer, like every menu (`popups.md` § Menus). The bar is
+        // the app's bottom edge, so the menu opens upward from it, at the pointer's x.
+        transientMenuDismissal(menuAt != null) { menuAt = null }
+        DropdownMenu(
+            expanded = menuAt != null,
+            onDismissRequest = { menuAt = null },
+            offset = with(density) { DpOffset((menuAt?.x ?: 0f).toDp(), 0.dp) },
+            properties = PopupProperties(focusable = false),
+        ) {
+            val any = host.selectedTabs.isNotEmpty()
+            DropdownMenuItem(
+                text = { Text("close selection") },
+                enabled = any,
+                onClick = { menuAt = null; host.closeSelection() },
+            )
+            DropdownMenuItem(
+                text = { Text("minimize selection") },
+                enabled = host.selectionHasShown,
+                onClick = { menuAt = null; host.minimizeSelection() },
+            )
+            DropdownMenuItem(
+                text = { Text("open selection") },
+                enabled = any,
+                onClick = { menuAt = null; host.openSelection() },
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxSize()) {
             Row(
                 modifier = Modifier
@@ -1390,9 +1560,9 @@ fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () 
                 modifier = Modifier
                     .padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    // Over a snapshot: each close takes its window out of the list being walked.
+                    // Every window closed at once ([WindowFrameHost.closeWindows]).
                     .clickable {
-                        host.registrations.toList().forEach { it.onClose() }
+                        host.closeWindows(host.registrations)
                         onReset()
                     }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -1406,18 +1576,30 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
     // A reduced window's tab is set back, so the bar tells at a glance which windows are on screen; the tab of
     // the window that has the FOCUS ([WindowFrameHost.focusedId]) stands out, so it also tells which one a
     // keystroke — or a click on its tab, which reduces it — goes to. A reduced window never has the focus.
+    // A SELECTED tab ([WindowFrameHost.selectedTabs]) is filled in the secondary container, so the selection reads
+    // apart from the focus; the focused tab keeps its own look whether it is selected or not.
     val reduced = row.state.minimized
     val focused = !reduced && host.focusedId == row.id
+    val selected = row.id in host.selectedTabs
     val colors = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = when {
             focused -> colors.primaryContainer
+            selected -> colors.secondaryContainer
             reduced -> colors.surfaceVariant
             else -> colors.surface
         },
-        contentColor = if (focused) colors.onPrimaryContainer else colors.onSurface,
-        border = if (focused) BorderStroke(2.dp, colors.primary) else BorderStroke(1.dp, colors.outlineVariant),
+        contentColor = when {
+            focused -> colors.onPrimaryContainer
+            selected -> colors.onSecondaryContainer
+            else -> colors.onSurface
+        },
+        border = when {
+            focused -> BorderStroke(2.dp, colors.primary)
+            selected -> BorderStroke(1.dp, colors.secondary)
+            else -> BorderStroke(1.dp, colors.outlineVariant)
+        },
     ) {
         Row(
             modifier = Modifier.padding(start = 10.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
@@ -1434,8 +1616,23 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 // The taskbar's toggle ([WindowFrameHost.onTabClicked]): a reduced window comes back, one without
                 // the focus takes it — on top and into the FOCUS, like every other way of asking for a window
                 // that is open, or a window that answers keystrokes would come back without its keyboard — and
-                // the window that has the focus is reduced.
-                modifier = Modifier.clickable { host.onTabClicked(row.id) },
+                // the window that has the focus is reduced. Shift and Ctrl clicks select tabs instead
+                // ([WindowFrameHost.onTabPressed]), so the modifiers are read off the press itself.
+                modifier = Modifier.pointerInput(row.id) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        // A right-click is the bar's menu ([WindowBar]) and selects nothing — left unconsumed for it.
+                        if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+                        val modifiers = currentEvent.keyboardModifiers
+                        if (waitForUpOrCancellation() != null) {
+                            host.onTabPressed(
+                                row.id,
+                                shift = modifiers.isShiftPressed,
+                                ctrl = modifiers.isCtrlPressed || modifiers.isMetaPressed,
+                            )
+                        }
+                    }
+                },
             )
             Box(
                 modifier = Modifier.size(20.dp).clip(CircleShape).clickable { row.onClose() },
@@ -1444,7 +1641,11 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 Text(
                     text = "✕",
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (focused) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                    color = when {
+                        focused -> colors.onPrimaryContainer
+                        selected -> colors.onSecondaryContainer
+                        else -> colors.onSurfaceVariant
+                    },
                 )
             }
         }
