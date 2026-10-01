@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The window bar shows which window has the focus — 2026-10-01
+
+User request: *"In the system tray, add a visual indication for which window has the focus."* The window bar's tab of
+the window `WindowFrameHost.focusedId` names is drawn in the primary container colour with a 2 dp primary border and a
+semi-bold title (`MinimizedChip`). Display only — no state, nothing persisted or synced.
+
 ### A period that carries "no screen" retracts at a mode-1 line — 2026-10-01
 
 User rule: *"When the user is still on the computer when 'sleep' was scheduled, then the 'sleep' period retracts at now

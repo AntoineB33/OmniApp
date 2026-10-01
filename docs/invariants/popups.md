@@ -122,7 +122,9 @@ means.
   by dragging its bottom edge, which is the whole point of the edge.
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
-  they were opened. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
+  they were opened. **The focused window's tab stands out** (2026-10-01: primary-container fill, a 2 dp primary
+  border, semi-bold title), read straight off `WindowFrameHost.focusedId` — no tab stands out while nothing
+  framed has the focus (a press on the background), and a reduced tab never does. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
   open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
   maximized window stops above it. **A tab is a taskbar's** (`WindowFrameHost.onTabClicked`, 2026-09-26): a
   reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window

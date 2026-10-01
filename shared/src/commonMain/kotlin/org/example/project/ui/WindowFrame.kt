@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -1325,12 +1326,21 @@ fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () 
 
 @Composable
 private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHost) {
-    // A reduced window's tab is set back, so the bar tells at a glance which windows are on screen.
+    // A reduced window's tab is set back, so the bar tells at a glance which windows are on screen; the tab of
+    // the window that has the FOCUS ([WindowFrameHost.focusedId]) stands out, so it also tells which one a
+    // keystroke — or a click on its tab, which reduces it — goes to. A reduced window never has the focus.
     val reduced = row.state.minimized
+    val focused = !reduced && host.focusedId == row.id
+    val colors = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = if (reduced) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = when {
+            focused -> colors.primaryContainer
+            reduced -> colors.surfaceVariant
+            else -> colors.surface
+        },
+        contentColor = if (focused) colors.onPrimaryContainer else colors.onSurface,
+        border = if (focused) BorderStroke(2.dp, colors.primary) else BorderStroke(1.dp, colors.outlineVariant),
     ) {
         Row(
             modifier = Modifier.padding(start = 10.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
@@ -1341,6 +1351,7 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 text = row.title,
                 style = MaterialTheme.typography.labelLarge,
                 fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
+                fontWeight = if (focused) FontWeight.SemiBold else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 // The taskbar's toggle ([WindowFrameHost.onTabClicked]): a reduced window comes back, one without
@@ -1356,7 +1367,7 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 Text(
                     text = "✕",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (focused) colors.onPrimaryContainer else colors.onSurfaceVariant,
                 )
             }
         }
