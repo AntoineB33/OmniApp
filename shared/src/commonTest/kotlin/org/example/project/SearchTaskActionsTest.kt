@@ -213,4 +213,77 @@ class SearchTaskActionsTest {
         s = apply(s, added(s, "Pie"), SearchDomain.AddedCommand.RemovePath(underApple))
         assertEquals(listOf("Banana"), TaskPathsDomain.occurrences(s, pie).map { it.label })
     }
+
+    // ----- New and Duplicate (user rule 2026-10-01) ------------------------------------------------------
+
+    @Test
+    fun a_duplicated_task_is_a_new_task_beside_it_titled_copy_with_its_settings_in_one_unit() {
+        var s = tree()
+        val pie = taskWithTitle(s, "Pie")
+        s = r(s, SchedulerIntent.SetTaskMinimumTime(pie, 40))
+        s = r(s, SchedulerIntent.SetTaskText(pie, "notes"))
+        s = r(s, SchedulerIntent.SetTaskResilience(pie, PeriodKinds.SLEEP, 0.25))
+        val before = units(s)
+        val list = added(s, "Pie")
+        val after = SearchDomain.duplicateIntents(s, list, SearchDomain.Kind.Task, 0L).fold(s, ::r)
+        val made = SearchDomain.newElementKeys(s, after, SearchDomain.Kind.Task)
+        val copyId = TaskId(made.single().removePrefix("Task/"))
+        val copy = after.tasks[copyId]!!
+        assertEquals("Pie copy", copy.title)
+        assertEquals(40, copy.minimumMinutes)
+        assertEquals("notes", copy.text)
+        assertEquals(0.25, copy.resilienceFor(PeriodKinds.SLEEP))
+        assertEquals(listOf("Apple"), TaskPathsDomain.occurrences(after, copyId).map { it.label }, "in the original's list")
+        assertEquals("Pie", after.tasks[pie]!!.title, "the original is untouched")
+        assertEquals(before + 1, units(after))
+        assertTrue(r(after, SchedulerIntent.Undo).tasks.values.none { it.title == "Pie copy" })
+    }
+
+    @Test
+    fun a_duplicated_category_and_period_take_the_next_free_copy_name_and_their_settings() {
+        var s = r(tree(), SchedulerIntent.CreateCategory("Home"))
+        val home = s.categories.single { it.title == "Home" }.id
+        val homeRow = SearchDomain.resolve(s, listOf("Category/" + home.value))
+        s = SearchDomain.duplicateIntents(s, homeRow, SearchDomain.Kind.Category, 0L).fold(s, ::r)
+        s = SearchDomain.duplicateIntents(s, homeRow, SearchDomain.Kind.Category, 0L).fold(s, ::r)
+        assertEquals(listOf("Home", "Home copy", "Home copy 2"), s.categories.map { it.title })
+
+        // "no screen": an on-screen task holds a 0 against it, an off-screen one 1 (its kind default) — the copy, a
+        // kind of the account's own, defaults to 0, so every task is written to stand to it as it stands to the original.
+        val banana = taskWithTitle(s, "Banana")
+        s = r(s, SchedulerIntent.SetTaskResilience(banana, PeriodKinds.NO_SCREEN, 0.0))
+        s = r(s, SchedulerIntent.SetTaskResilience(taskWithTitle(s, "Basket"), PeriodKinds.NO_SCREEN, 1.0))
+        val period = SearchDomain.resolve(s, listOf("RestrictivePeriod/" + PeriodKinds.NO_SCREEN))
+        val after = SearchDomain.duplicateIntents(s, period, SearchDomain.Kind.RestrictivePeriod, 0L).fold(s, ::r)
+        val copy = "no screen copy"
+        assertEquals(listOf("RestrictivePeriod/$copy"), SearchDomain.newElementKeys(s, after, SearchDomain.Kind.RestrictivePeriod))
+        assertEquals(s.periodKindConfig.drawing(PeriodKinds.NO_SCREEN), after.periodKindConfig.drawing(copy))
+        assertEquals(0.0, after.tasks[banana]!!.resilienceFor(copy))
+        assertEquals(1.0, after.tasks[taskWithTitle(s, "Basket")]!!.resilienceFor(copy))
+        assertTrue(after.periodCombinations.any { copy in it.named }, "the rules naming it are copied onto the copy")
+        assertEquals(s.periodCombinations, after.periodCombinations.filterNot { copy in it.named }, "and the original's stay")
+    }
+
+    @Test
+    fun a_duplicated_alarm_timer_chrono_and_reminder_are_one_more_idle_row_titled_copy() {
+        var s = tree().copy(
+            alarms = listOf(org.example.project.scheduler.model.AlarmEntry(id = "alarm-0", label = "Wake", timeOfDayMinutes = 420)),
+            timers = listOf(org.example.project.scheduler.model.TimerEntry(id = "timer-0", label = "Tea", endsAtMillis = 99_000L)),
+            chronos = listOf(org.example.project.scheduler.model.ChronoEntry(id = "chrono-0", label = "Run", startedAtMillis = 5L)),
+        )
+        s = r(s, SchedulerIntent.SetChores(listOf(org.example.project.scheduler.model.ChoreEntry(title = "Water", spanDays = 3.0, id = "reminder-0")), 0L, 0L))
+        val all = SearchDomain.resolve(s, listOf("Alarm/alarm-0", "Timer/timer-0", "Chrono/chrono-0", "Reminder/reminder-0"))
+        for (kind in listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Reminder)) {
+            val after = SearchDomain.duplicateIntents(s, all, kind, 0L).fold(s, ::r)
+            assertEquals(1, SearchDomain.newElementKeys(s, after, kind).size, "$kind")
+            s = after
+        }
+        assertEquals(listOf("Wake", "Wake copy"), s.alarms.map { it.label })
+        assertEquals(listOf("Tea", "Tea copy"), s.timers.map { it.label })
+        assertNull(s.timers.last().endsAtMillis, "a copy is not a second run")
+        assertEquals(listOf("Run", "Run copy"), s.chronos.map { it.label })
+        assertTrue(!s.chronos.last().running)
+        assertEquals(listOf("Water", "Water copy"), s.chores.map { it.title })
+        assertTrue(s.chores.last().id.isNotBlank() && s.chores.last().id != "reminder-0")
+    }
 }

@@ -634,6 +634,17 @@ Global rules that always apply: `CLAUDE.md`.
   — depth-first, **each LIST visited once** (a mirrored sub-tree is one list under many parents) — and it
   skips a blank-titled cell entirely: that cell is the deleted one, and the reveal could not expand it
   anyway. The one place that says "not in the task tree" is the handler, once, for every one of those cases.
+- **"add…" OPENS THE SEARCH WINDOW OF WHAT CAN GO AT THE RIGHT-CLICK** (user rule 2026-10-01; `App.openCalendarAddSearch`,
+  `SearchDomain.calendarAddConfig`). It no longer opens the element window below ("edit…" still does). The Search
+  window's **calendar filter** — a GLOBAL setting of the Search configurations window (`Setting.CalendarAdd`: a switch,
+  a `YYYY-MM-DD HH:MM` position, and "Set to the right-click", offered only while `Config.calendarClickMillis` says the
+  window came from the calendar) — keeps only `SearchDomain.calendarAddable` rows: a placeable task whose resilience to
+  the periods covering that instant (`calendarKindsAt`, the panels' kinds with what each carries) is above 0; any kind
+  of period; a reminder; a "creation" row of a kind the calendar lays. Not an existing alarm (its weekdays make its
+  occurrences). Its action **"Add to the calendar"** lays the added ones at the filter's position through
+  `SearchDomain.calendarDrafts` — the element window's own seeding (`CalendarElements.seeded`) and Save
+  (`saveCalendarElementIntents`) — and "New alarm here" a new alarm. ONE such window: a later "add…" moves it to the
+  new right-click, keeping what it holds.
 - **THE ONE ADD/EDIT WINDOW: "add…" AND "edit…" OPEN THE SAME THING** (`CalendarElementsWindow`,
   `CalendarElements`, `CalendarElementsTest`) — a **set** of elements and their configuration grouped by who
   shares it, rather than a router to one editor at a time. The window it replaced asked *what do you want to

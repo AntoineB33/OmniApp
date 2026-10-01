@@ -22,6 +22,17 @@ tree's (the calendar's for a Calendar-stack unit), which is where it was undone 
 is read off its delta, never off this stamp (`positionOf`): "go to task tree" pressed in Search selects a cell of
 the tree.
 
+**Every TYPE of window is a `HistoryWindow`** (user rule 2026-10-01 — the Search configurations window's "made in"
+lists them all): the lateral-menu ones and every other window — the default sub-tree's task and category windows,
+the weight table, relative priority, deep copy, the default alarm/timer and reminder, the calendar's element, block,
+period and reminder editors, the "constrained in" picker, a history entry's and a task tree's detail, a notice. A
+press in ANY window takes the focus for it **synchronously**, before the press commits anything:
+`WindowFrameHost.onFocus` → `App.historyWindowOfFrame` (the frame id's base) → `FocusWindow`. And **a change a window
+commits after the press that left it** (a Search row's rename, committed on blur) still names that window: the Search
+window and the Added elements configurations window send their intents `MadeIn` themselves
+(`SchedulerIntent.MadeIn` — the stamp, not the focus). A consequence: what is done in a per-object window is undone
+with `Ctrl+Z` from THAT window, not from the one it was opened from.
+
 The exception: a unit whose gesture is still open (`Delta.coalesceKey` — a field being typed into live, see
 `docs/invariants/alarms-and-timers.md`) is **replaced at the pointer** by the next keystroke's unit rather than
 appended after it. It costs the alignment below nothing special: the replacement's `(length, hash)` differ, so

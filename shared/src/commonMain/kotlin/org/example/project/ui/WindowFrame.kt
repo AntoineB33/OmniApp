@@ -44,6 +44,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
@@ -410,6 +411,17 @@ class WindowFrameHost {
 
     private val entries = mutableStateListOf<Registration>()
 
+    /**
+     * PRD §7 (user rule 2026-10-01): **a tab's own name**, by frame id — what the window bar's tab reads instead of
+     * the window's title: the name of the lateral-menu button the user made that created the window. Dropped when the
+     * window closes ([unregister]); kept by `App` on a placement row of its own so a window that comes back after a
+     * restart comes back with it.
+     */
+    val tabTitles = mutableStateMapOf<String, String>()
+
+    /** What the window bar's tab of [registration] reads: its own name ([tabTitles]), else the window's title. */
+    fun tabTitleOf(registration: Registration): String = tabTitles[registration.id] ?: registration.title
+
     val registrations: List<Registration> get() = entries
 
     /** The reduced windows, in the order they were opened — the order the bar lists them in. */
@@ -516,12 +528,22 @@ class WindowFrameHost {
         entries.removeAll { it.id == id }
         stack.remove(id)
         if (focusedId == id) focusedId = null
+        tabTitles.remove(id)
     }
+
+    /**
+     * Told the frame id of every window that TAKES the focus — `App` turns it into the window the user is in
+     * (`FocusWindow`), so whatever the press goes on to change is stamped with that window. Called synchronously from
+     * [focus], i.e. on the Initial pass of the press, before the press's own handlers commit anything.
+     */
+    var onFocus: (String) -> Unit = {}
 
     /** A press landed inside [id]: it takes the focus AND comes to the top of the stack. */
     fun focus(id: String) {
+        val moved = focusedId != id
         focusedId = id
         raise(id)
+        if (moved) onFocus(id)
     }
 
     /**
@@ -1386,7 +1408,7 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text = row.title,
+                text = host.tabTitleOf(row),
                 style = MaterialTheme.typography.labelLarge,
                 fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
                 fontWeight = if (focused) FontWeight.SemiBold else null,

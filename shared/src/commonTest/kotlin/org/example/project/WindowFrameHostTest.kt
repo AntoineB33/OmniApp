@@ -27,6 +27,24 @@ class WindowFrameHostTest {
     }
 
     @Test
+    fun `a tab named by the button that created its window reads that name until the window closes`() {
+        // User rule 2026-10-01: a window a lateral-menu button made has the button's name on its tab.
+        val host = WindowFrameHost()
+        register(host, "Search#2")
+        val row = host.registrations.single()
+        assertEquals("Search#2", host.tabTitleOf(row), "no name of its own: the window's title")
+        host.tabTitles["Search#2"] = "Today's tasks"
+        assertEquals("Today's tasks", host.tabTitleOf(row))
+        host.unregister("Search#2")
+        assertNull(host.tabTitles["Search#2"], "closed: the name goes with it, so a later window under that id is not named")
+        // The stored form, on its own placement row.
+        val titles = mapOf("Search#2" to "Today's tasks", "TaskEdit#1" to "Tea")
+        assertEquals(titles, org.example.project.ui.CustomMenuButtons.decodeTabTitles(org.example.project.ui.CustomMenuButtons.encodeTabTitles(titles)))
+        assertEquals(emptyMap(), org.example.project.ui.CustomMenuButtons.decodeTabTitles(null))
+        assertEquals(emptyMap(), org.example.project.ui.CustomMenuButtons.decodeTabTitles("not json"))
+    }
+
+    @Test
     fun `only reduced windows are in the bar, in the order they were opened`() {
         val host = WindowFrameHost()
         val a = register(host, "A")

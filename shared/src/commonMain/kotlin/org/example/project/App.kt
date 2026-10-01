@@ -125,6 +125,11 @@ import org.example.project.ui.WindowCopy
 import org.example.project.ui.LocalWindowInstance
 import org.example.project.ui.ObjectWindowKey
 import org.example.project.ui.ALARM_DEFAULTS_FRAME_ID
+import org.example.project.ui.CATEGORY_EDIT_FRAME_ID
+import org.example.project.scheduler.ui.TASK_EDIT_FRAME_ID
+import org.example.project.scheduler.ui.PRIORITY_WEIGHTS_FRAME_ID
+import org.example.project.scheduler.ui.RELATIVE_PRIORITY_FRAME_ID
+import org.example.project.scheduler.ui.DEEP_COPY_FRAME_ID
 import org.example.project.ui.DEFAULT_CONFIGURATION_ROW_ID
 import org.example.project.ui.REMINDER_DEFAULTS_FRAME_ID
 import org.example.project.scheduler.domain.NewElementDefaults
@@ -208,6 +213,9 @@ enum class OmniPage(val label: String) {
  * [title] is what the window's head reads, for the one place that names a window while it is NOT open: the
  * Search window's "window" rows ([SearchDomain.WindowEntry]). An open window is named by its head itself.
  */
+/** How many frames a ☆ button's click waits for the window it creates to register, to give its tab the button's name. */
+private const val TAB_TITLE_FRAMES: Int = 10
+
 private enum class FloatingWindow(val title: String) {
     Calendar("Calendar"),
     History("History"),
@@ -693,6 +701,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // …and every framed WINDOW registers here, which is what draws the bar of reduced windows along the
         // bottom of the app and what answers "does the tree still own the keyboard?" (see `WindowFrame.kt`).
         val windowFrames = remember { WindowFrameHost() }
+        // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
+        // a row the user closed since is not visible — and written whenever a button names a tab.
+        remember(placementStore) {
+            val visible = CustomMenuButtons.decodeTabTitles(placements[CustomMenuButtons.TAB_TITLES_PLACEMENT_ID]?.config)
+                .filterKeys { placements[it]?.visible == true }
+            windowFrames.tabTitles.putAll(visible)
+            true
+        }
+        fun saveTabTitles() =
+            updatePlacementById(CustomMenuButtons.TAB_TITLES_PLACEMENT_ID) {
+                it.copy(config = CustomMenuButtons.encodeTabTitles(windowFrames.tabTitles.toMap()))
+            }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
         // windows ([ObjectWindows]) — opening one on another object opens a second window, and the first stays.
         // All are hoisted here so they draw on the top layer, above whichever window stands over the tree. The
@@ -884,6 +904,40 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Online -> HistoryWindow.Online
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
+        }
+        // PRD §6 (user rule 2026-10-01): the window a frame id IS, for the stamp — a lateral-menu window (or a copy of
+        // one) by its own mapping, every other window by its frame id's base. Null for what is not a window of the app
+        // (the debug panel). The instance is what follows the base (`#2`, a task tree's `/id`).
+        fun historyWindowOfFrame(frameId: String): Pair<HistoryWindow, String>? {
+            lateralWindowOf(frameId)?.let { lateral ->
+                return historyWindowOf(lateral)?.let { it to frameId.removePrefix(lateral.name) }
+            }
+            if (frameId.startsWith("TaskTreeDetail/")) return HistoryWindow.TaskTreeDetail to frameId.removePrefix("TaskTreeDetail")
+            val base = frameId.substringBefore('#')
+            val window = when (base) {
+                TASK_EDIT_FRAME_ID -> HistoryWindow.TaskEdit
+                CATEGORY_EDIT_FRAME_ID -> HistoryWindow.CategoryEdit
+                PRIORITY_WEIGHTS_FRAME_ID -> HistoryWindow.PriorityWeights
+                RELATIVE_PRIORITY_FRAME_ID -> HistoryWindow.RelativePriority
+                DEEP_COPY_FRAME_ID -> HistoryWindow.DeepCopy
+                ALARM_DEFAULTS_FRAME_ID -> HistoryWindow.AlarmDefaults
+                REMINDER_DEFAULTS_FRAME_ID -> HistoryWindow.ReminderDefaults
+                "CalendarElements" -> HistoryWindow.CalendarElements
+                "CalendarEntryEdit" -> HistoryWindow.CalendarEntry
+                "CalendarPeriodEdit" -> HistoryWindow.CalendarPeriod
+                "CalendarReminderEdit" -> HistoryWindow.CalendarReminder
+                "ReminderConstraintEdit" -> HistoryWindow.ReminderConstraint
+                "HistoryEntryInfo" -> HistoryWindow.HistoryEntryInfo
+                "Notice", "AppNotice", "CategoryRuleNotice" -> HistoryWindow.Notice
+                else -> return null
+            }
+            return window to frameId.removePrefix(base)
+        }
+        // A press in ANY window moves the focus to it, synchronously, before the press commits anything — the
+        // lateral-menu windows' own `onRaise` already did; this is what covers every other window. A no-op when the
+        // focus is already there.
+        windowFrames.onFocus = { frameId ->
+            historyWindowOfFrame(frameId)?.let { (window, instance) -> vm.dispatch(SchedulerIntent.FocusWindow(window, instance)) }
         }
         // PRD §6: every History Unit is stamped with the window it was made in, which is the focused one
         // ([SchedulerState.focusedWindow]) — every window claims the focus, so there is one answer to "where is
@@ -1144,6 +1198,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowFrames.focus(id)
             historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
         }
+        // The calendar's "add…" at [atMillis]: the Search window a previous "add…" opened, moved to this right-click —
+        // its added elements and the rest of its configuration kept — or a new one ([SearchDomain.calendarAddConfig]).
+        fun openCalendarAddSearch(atMillis: Long) {
+            val search = FloatingWindow.Search
+            val open = listOfNotNull(search.name.takeIf { isWindowOpen(search) }) + windowCopies.filter { lateralWindowOf(it) == search }
+            val existing = open.firstOrNull { searchConfigOf(it).calendarClickMillis != null }
+            if (existing == null) {
+                openNewWindow(search, SearchDomain.calendarAddConfig(atMillis).encode())
+                return
+            }
+            val config = searchConfigOf(existing)
+            setSearchConfig(
+                existing,
+                config.copy(
+                    filters = config.filters.copy(calendarAddOn = true, calendarAddAtMillis = atMillis),
+                    calendarClickMillis = atMillis,
+                ),
+            )
+            presentWindow(search, existing)
+        }
         openElementSearch = { kind, id ->
             openNewWindow(FloatingWindow.Search, SearchDomain.elementSearchConfig(kind, id).encode())
         }
@@ -1185,13 +1259,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // per-object window on its object — the one open on it already, brought back, when there is one — or a
         // lateral-menu window with the configuration the ☆ saved. A button made before the snapshot existed opens
         // with what its window has now.
+        //
+        // The window it CREATES has the button's name on its tab (user rule 2026-10-01; [WindowFrameHost.tabTitles]):
+        // whichever window registers in the frames after the click and was not there before — a window only brought
+        // back keeps its tab as it was.
         fun onMenuButtonClicked(button: CustomMenuButton) {
+            val before = windowFrames.registrations.mapTo(HashSet()) { it.id }
             ObjectWindowKey.decode(button.windowId)?.let { key ->
                 openObjectWindow(key)
-                return
+            } ?: run {
+                val kind = lateralWindowOf(button.windowId) ?: return
+                openNewWindow(kind, button.config)
             }
-            val kind = lateralWindowOf(button.windowId) ?: return
-            openNewWindow(kind, button.config)
+            engineScope.launch {
+                // A new window registers as it is first composed: within a frame or two of the click.
+                repeat(TAB_TITLE_FRAMES) {
+                    withFrameNanos { }
+                    val created = windowFrames.registrations.map { it.id }.filter { it !in before }
+                    if (created.isNotEmpty()) {
+                        created.forEach { windowFrames.tabTitles[it] = button.title }
+                        saveTabTitles()
+                        return@launch
+                    }
+                }
+            }
         }
 
         // PRD §7 Search, the "window" kind: every window of the app, open or not. Each open window is its own entry
@@ -1234,7 +1325,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7 Search, a "creation" row (user spec 2026-09-26): a new element of [kind], made the way that kind's
         // own "+ New …" makes it — through the same intents and the account's default configuration — and opened in
         // its window. A new WINDOW is a Search window listing the window types.
-        fun createElement(kind: SearchDomain.Kind) {
+        // [open] false: made only — the Search window's "New" adds it to its own added elements instead.
+        fun createElement(kind: SearchDomain.Kind, open: Boolean = true) {
             val st = vm.state.value
             val now = clock.nowMillis()
             val minutes = Instant.fromEpochMilliseconds(now).toLocalDateTime(tz).let { it.hour * 60 + it.minute }
@@ -1245,41 +1337,41 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SearchDomain.Kind.Task -> {
                     val placeholder = TaskPathsDomain.placeholderOf(st, st.rootListId) ?: return
                     vm.dispatch(SchedulerIntent.CreateTask("New task"))
-                    vm.state.value.cells[placeholder]?.taskId?.let { openElementSearch(SearchDomain.Kind.Task, it.value) }
+                    vm.state.value.cells[placeholder]?.taskId?.let { if (open) openElementSearch(SearchDomain.Kind.Task, it.value) }
                 }
                 SearchDomain.Kind.Category -> {
                     val title = unique("New category", st.categories.map { it.title })
                     vm.dispatch(SchedulerIntent.CreateCategory(title))
                     vm.state.value.categories.firstOrNull { it.title == title }?.let {
-                        openElementSearch(SearchDomain.Kind.Category, it.id.value)
+                        if (open) openElementSearch(SearchDomain.Kind.Category, it.id.value)
                     }
                 }
                 SearchDomain.Kind.RestrictivePeriod -> {
                     val name = unique("New period", st.allPeriodKinds)
                     vm.dispatch(SchedulerIntent.AddPeriodKind(name))
-                    if (name in vm.state.value.allPeriodKinds) openElementSearch(SearchDomain.Kind.RestrictivePeriod, name)
+                    if (name in vm.state.value.allPeriodKinds) if (open) openElementSearch(SearchDomain.Kind.RestrictivePeriod, name)
                 }
                 SearchDomain.Kind.Alarm -> {
                     val id = AlarmDomain.mintAlarmId(st.alarms.map { it.id })
                     vm.dispatch(SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, id, minutes)))
-                    openElementSearch(SearchDomain.Kind.Alarm, id)
+                    if (open) openElementSearch(SearchDomain.Kind.Alarm, id)
                 }
                 SearchDomain.Kind.Timer -> {
                     val id = TimerDomain.mintTimerId(st.timers.map { it.id })
                     vm.dispatch(SchedulerIntent.SetTimers(st.timers + NewElementDefaults.newTimer(st.newTimerDefaults, id)))
-                    openElementSearch(SearchDomain.Kind.Timer, id)
+                    if (open) openElementSearch(SearchDomain.Kind.Timer, id)
                 }
                 SearchDomain.Kind.Chrono -> {
                     val id = ChronoDomain.mintChronoId(st.chronos.map { it.id })
                     vm.dispatch(SchedulerIntent.SetChronos(st.chronos + ChronoEntry(id = id)))
-                    openElementSearch(SearchDomain.Kind.Chrono, id)
+                    if (open) openElementSearch(SearchDomain.Kind.Chrono, id)
                 }
                 SearchDomain.Kind.Reminder -> {
                     val todayStart = today.atStartOfDayIn(tz).toEpochMilliseconds()
                     val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", minutes)
                     vm.dispatch(SchedulerIntent.SetChores(st.chores + created, todayStart, now))
                     vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let {
-                        openElementSearch(SearchDomain.Kind.Reminder, it)
+                        if (open) openElementSearch(SearchDomain.Kind.Reminder, it)
                     }
                 }
                 SearchDomain.Kind.TaskTree -> {
@@ -2730,9 +2822,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // PRD §8 contextual menu "add…": the ONE add entry, opening the one element
                             // window on an empty list. What is being put here, of which kind, and with
                             // which configuration is all answered there, and its Save is what lays it.
-                            onAddAt = { atMillis ->
-                                elementsWindows.open(CalendarElementsDraftSet(CalendarElementsMode.Add, atMillis, emptyList()))
-                            },
+                            // User rule 2026-10-01: "add…" is the Search window of what can be added AT that instant (the
+                            // calendar filter on, its position the right-click). One such window: a later right-click
+                            // moves the one already open rather than opening another.
+                            onAddAt = { atMillis -> openCalendarAddSearch(atMillis) },
                             // PRD §8 "edit…" with two or more elements at the cursor: the SAME window,
                             // seeded with them and confined to them. Seeding is where `App` adds what only
                             // it holds — a panel's task resilience, an alarm's weekdays and ring length —
@@ -3439,6 +3532,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     embeddedSubjects = subjects,
                                 )
                             },
+                            onCreate = { kind ->
+                                val before = vm.state.value
+                                createElement(kind, open = false)
+                                SearchDomain.newElementKeys(before, vm.state.value, kind)
+                            },
+                            onPlaceOnCalendar = { drafts ->
+                                saveCalendarElementIntents(drafts, vm.state.value, tz).forEach(vm::dispatch)
+                            },
+                            onDuplicate = { intents, kind ->
+                                val before = vm.state.value
+                                intents.forEach(vm::dispatch)
+                                SearchDomain.newElementKeys(before, vm.state.value, kind)
+                            },
                             reminderEditor = { subjects ->
                                 val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
                                 ChoresManagerWindow(
@@ -3473,7 +3579,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
                             actionHandlers = addedActionHandlers,
-                            onIntent = { vm.dispatch(it) },
+                            // What this window commits is its own, even when it lands after the press that left it
+                            // (a row's rename is committed on blur, once the focus has already moved).
+                            onIntent = {
+                                vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Search, searchId.removePrefix(FloatingWindow.Search.name), it))
+                            },
                             // A row's percentage, as a tree cell's: the weight table and the relative priority.
                             onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
                             onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
@@ -3593,7 +3703,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             handlers = addedActionHandlers,
                             own = own,
                             onOwnChange = { setConfigSearch(configId, it) },
-                            onIntent = { vm.dispatch(it) },
+                            onIntent = {
+                                vm.dispatch(
+                                    SchedulerIntent.MadeIn(HistoryWindow.AddedConfig, configId.removePrefix(FloatingWindow.AddedConfig.name), it),
+                                )
+                            },
                             nowMillis = clock::nowMillis,
                             onOpenEach = { added.forEach { searchRowOpeners.open(schedulerState, it) } },
                             onClear = { setSearchConfig(target, targetConfig.copy(added = emptyList())) },

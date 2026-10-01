@@ -257,6 +257,11 @@ The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
   "cancel every notification", and the loud half is not the one it may leave running. `notificationVoiceEnabled`
   (persisted under its original key `lookAwayVoiceEnabled`) is the switch for the spoken half — with it off
   the notifications still post, silently.
+- **Turning the voice switch off cuts what is already queued** (user rule 2026-10-01;
+  `SchedulerEngine.launchVoiceSwitchMute`): the phrase sounding and every one waiting behind it in the platform's
+  queue (`stopSpeaking`), at the switch's on→off edge — whichever device flipped it, since it syncs. `notifyUser`'s
+  gate stops the ones to come; this stops the ones handed over before the flip. Launched from `start()`, so it
+  holds during a restart's catch-up too.
 - **The ONE voice with no notification behind it** is the pause-over cue an OS alarm fires on a phone whose
   user has walked away from every screen (ADR 0006): there is nobody to read anything and the app is not even
   running. Every other phrase the app speaks is a notification.

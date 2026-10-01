@@ -47,6 +47,8 @@ import androidx.compose.ui.window.PopupProperties
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.isoDayNumber
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.state.HistoryWindow
@@ -223,6 +225,21 @@ private fun SettingEditor(
         SearchDomain.Setting.ResetSearch ->
             ResetButton(enabled = config.query.isNotEmpty() || config.kinds.isNotEmpty()) {
                 onChange(config.copy(query = "", kinds = emptySet()))
+            }
+        // The calendar filter: its switch, the instant, and — only for a window the calendar's "add…" opened — the
+        // button that puts the instant back on that right-click.
+        SearchDomain.Setting.CalendarAdd ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(
+                    checked = f.calendarAddOn,
+                    onCheckedChange = { filters(f.copy(calendarAddOn = it)) },
+                )
+                CalendarInstantField(f.calendarAddAtMillis) { filters(f.copy(calendarAddAtMillis = it)) }
+                config.calendarClickMillis?.let { click ->
+                    FrameButton("Set to the right-click", enabled = f.calendarAddAtMillis != click) {
+                        filters(f.copy(calendarAddAtMillis = click))
+                    }
+                }
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
@@ -564,6 +581,35 @@ private fun DayFilterField(day: LocalDate?, onChange: (LocalDate?) -> Unit) {
             )
         }
     }
+}
+
+/**
+ * The calendar filter's position: a day and a time of day, `YYYY-MM-DD HH:MM` on this device's clock. A text that does
+ * not parse leaves the position where it was (and shows the error state).
+ */
+@Composable
+private fun CalendarInstantField(millis: Long?, onChange: (Long) -> Unit) {
+    val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+    fun format(at: Long): String {
+        val t = kotlin.time.Instant.fromEpochMilliseconds(at).toLocalDateTime(tz)
+        return t.date.toString() + " " + t.hour.toString().padStart(2, '0') + ":" + t.minute.toString().padStart(2, '0')
+    }
+    fun parse(text: String): Long? =
+        runCatching {
+            kotlinx.datetime.LocalDateTime.parse(text.trim().replace(' ', 'T')).toInstant(tz).toEpochMilliseconds()
+        }.getOrNull()
+    var draft by remember(millis) { mutableStateOf(millis?.let(::format).orEmpty()) }
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { typed ->
+            draft = typed
+            parse(typed)?.let(onChange)
+        },
+        singleLine = true,
+        isError = draft.isNotBlank() && parse(draft) == null,
+        placeholder = { Text("YYYY-MM-DD HH:MM") },
+        modifier = Modifier.width(190.dp),
+    )
 }
 
 /** The alarm's "Rings on" filter: no day ticked = any day; else it rings on at least one ticked day. */

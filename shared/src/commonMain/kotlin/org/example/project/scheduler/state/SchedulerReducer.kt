@@ -493,6 +493,17 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
                 commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
+            is SchedulerIntent.DuplicateTasks ->
+                if (state.editSession != null) {
+                    state
+                } else {
+                    val apply = { working: SchedulerState ->
+                        intent.taskIds.distinct().fold(working) { acc, id -> applyDuplicateTask(acc, id) }
+                    }
+                    if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Duplicate task", apply))
+                }
+            is SchedulerIntent.DuplicateCategory -> reduceDuplicateCategory(state, intent.categoryId)
+            is SchedulerIntent.DuplicatePeriodKind -> reduceDuplicatePeriodKind(state, intent.kind)
             is SchedulerIntent.SetTasksText -> {
                 val apply = { working: SchedulerState ->
                     intent.taskIds.distinct().fold(working) { acc, id -> applySetTaskText(acc, id, intent.text) }
@@ -611,6 +622,7 @@ object SchedulerReducer {
             is SchedulerIntent.ReplaceTaskPanels -> reduceReplaceTaskPanels(state, intent)
             is SchedulerIntent.RemoveRecordPeriod -> reduceRemoveRecordPeriod(state, intent)
             is SchedulerIntent.FocusWindow -> reduceFocusWindow(state, intent.window, intent.instance)
+            is SchedulerIntent.MadeIn -> reduceMadeIn(state, intent)
             is SchedulerIntent.SetCalendarFocus ->
                 reduceFocusWindow(state, if (intent.focused) HistoryWindow.Calendar else HistoryWindow.Tree, "")
             is SchedulerIntent.SelectInWindow -> reduceSelectInWindow(state, intent)
@@ -2057,6 +2069,23 @@ object SchedulerReducer {
             FocusDelta(before = state.focusedWindow, after = window, beforeInstance = state.focusedInstance, afterInstance = instance),
             HistoryCategory.WindowNav,
         )
+    }
+
+    /**
+     * [SchedulerIntent.MadeIn]: the inner intent reduced as if [SchedulerIntent.MadeIn.window] had the focus — which
+     * is what the stamp reads ([HistoryUnit.window]) — and the focus put back where it was after. An inner intent
+     * that moves the focus itself keeps its move.
+     */
+    private fun reduceMadeIn(state: SchedulerState, intent: SchedulerIntent.MadeIn): SchedulerState {
+        if (state.focusedWindow == intent.window && state.focusedInstance == intent.instance) return reduce(state, intent.inner)
+        val inWindow = state.copy(focusedWindow = intent.window, focusedInstance = intent.instance)
+        val out = reduce(inWindow, intent.inner)
+        if (out === inWindow) return state
+        return if (out.focusedWindow == intent.window && out.focusedInstance == intent.instance) {
+            out.copy(focusedWindow = state.focusedWindow, focusedInstance = state.focusedInstance)
+        } else {
+            out
+        }
     }
 
     /** PRD §5: [SchedulerIntent.SelectInWindow] — a [WindowSelectionDelta] unless it is a reset or no change. */
@@ -4940,6 +4969,78 @@ private fun reduceResetPeriodKinds(state: SchedulerState, kindsRaw: List<String>
     val combinations = PeriodKinds.combinationsReset(state.periodCombinations, kinds)
     if (styles.size == state.periodKindStyles.size && combinations === state.periodCombinations) return state
     return state.copy(periodKindStyles = styles, periodCombinations = combinations)
+}
+
+/**
+ * `"<base> copy"`, or `"<base> copy 2"`, `"… copy 3"`, … — the first [taken] does not hold (case aside): the name a
+ * Duplicate gives where two things may not share one (a category, a kind of period).
+ */
+internal fun copyName(base: String, taken: Collection<String>): String =
+    generateSequence(1) { it + 1 }
+        .map { if (it == 1) "$base copy" else "$base copy $it" }
+        .first { name -> taken.none { it.equals(name, ignoreCase = true) } }
+
+/** [SchedulerIntent.DuplicateTasks] for one task, on the tree [state] is; [state] itself when it cannot be copied. */
+private fun applyDuplicateTask(state: SchedulerState, taskId: TaskId): SchedulerState {
+    val task = state.tasks[taskId]?.takeIf { it.title.isNotEmpty() } ?: return state
+    val listId =
+        SchedulerDomain.firstTaskOccurrence(state, taskId)?.cellId?.let { state.cells[it]?.parentListId } ?: state.rootListId
+    val placeholder = TaskPathsDomain.placeholderOf(state, listId) ?: return state
+    // An empty placeholder always mints a NEW task, whatever the title — a copy never attaches to the original.
+    val named = applySetCellTitle(state, placeholder, task.title + " copy")
+    val copyId = named.cells[placeholder]?.taskId?.takeIf { it != taskId } ?: return state
+    val copy = named.tasks[copyId] ?: return state
+    return named.copy(
+        tasks = named.tasks + (
+            copyId to copy.copy(
+                minimumMinutes = task.minimumMinutes,
+                scheduleUnit = task.scheduleUnit,
+                text = task.text,
+                resilience = task.resilience,
+                categoryIds = task.categoryIds,
+            )
+        ),
+    )
+}
+
+/** [SchedulerIntent.DuplicateCategory]. */
+private fun reduceDuplicateCategory(state: SchedulerState, categoryId: CategoryId): SchedulerState {
+    val original = state.categoryById(categoryId) ?: return state
+    val title = copyName(original.title, state.categories.map { it.title })
+    val (id, allocated) = state.allocateCategoryId()
+    return allocated.copy(categories = allocated.categories + Category(id = id, title = title, rules = original.rules))
+}
+
+/** [SchedulerIntent.DuplicatePeriodKind]. */
+private fun reduceDuplicatePeriodKind(state: SchedulerState, kindRaw: String): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    if (kind !in state.allPeriodKinds) return state
+    val name = PeriodKinds.normalize(copyName(kind, state.allPeriodKinds))
+    if (!PeriodKinds.isUserDefined(name)) return state
+    val taken = state.periodCombinations.mapTo(HashSet()) { it.id }
+    fun freshId(): String = generateSequence(1) { it + 1 }.map { "combination-$it" }.first { it !in taken }.also { taken += it }
+    fun renamed(tokens: List<org.example.project.scheduler.domain.PeriodFormulaToken>) =
+        tokens.map { token ->
+            if (token is org.example.project.scheduler.domain.PeriodFormulaToken.Kinds && kind in token.kinds) {
+                org.example.project.scheduler.domain.PeriodFormulaToken.Kinds(token.kinds.mapTo(LinkedHashSet()) { if (it == kind) name else it })
+            } else {
+                token
+            }
+        }
+    val copiedRules =
+        state.periodCombinations
+            .filter { kind in it.named }
+            .map { rule -> rule.copy(id = freshId(), condition = renamed(rule.condition), then = renamed(rule.then)) }
+    val default = PeriodKinds.defaultResilience(name)
+    return state.copy(
+        periodKinds = state.periodKinds + name,
+        periodKindStyles = state.periodKindStyles + (name to state.periodKindConfig.style(kind)),
+        periodCombinations = state.periodCombinations + copiedRules,
+        tasks = state.tasks.mapValues { (_, task) ->
+            val value = task.resilienceFor(kind)
+            if (value == default) task else task.copy(resilience = task.resilience + (name to value))
+        },
+    )
 }
 
 /** The period edit window's drawing for [kindRaw]; the same drawing again is a no-op. */

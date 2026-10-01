@@ -647,6 +647,8 @@ class SearchWindowTest {
                 SearchDomain.Setting.SearchText,
                 SearchDomain.Setting.Types,
                 SearchDomain.Setting.ResetSearch,
+                // The calendar filter (2026-10-01): about every row, so a general setting.
+                SearchDomain.Setting.CalendarAdd,
                 SearchDomain.Setting.SortResults,
             ),
             sections.first().second,

@@ -171,6 +171,15 @@ class AddedActionHandlers(
     val onOpenResilienceSearch: (String) -> Unit,
     val alarmEditor: @Composable (Set<AlarmWindowSubject>) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
+    /**
+     * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`, without opening a
+     * window for it); the keys of what it made, which join the window's added elements.
+     */
+    val onCreate: (SearchDomain.Kind) -> List<String>,
+    /** "Duplicate": these intents ([SearchDomain.duplicateIntents]) dispatched; the keys of the kind's elements they made. */
+    val onDuplicate: (List<SchedulerIntent>, SearchDomain.Kind) -> List<String>,
+    /** "Add to the calendar": these drafts saved as the calendar's element window saves its own. */
+    val onPlaceOnCalendar: (List<org.example.project.scheduler.domain.CalendarElements.Draft>) -> Unit,
 )
 
 /**
@@ -270,11 +279,11 @@ private fun AddedActionSections(
                 // An editor too tall for the label's row: under its label, at the section's width.
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(action.label, style = MaterialTheme.typography.bodyMedium)
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, onOpenEach, onClear)
+                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear)
                 }
             } else {
                 SettingRow(action.label) {
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, onOpenEach, onClear)
+                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear)
                 }
             }
         }
@@ -300,6 +309,7 @@ private fun AddedActionEditor(
     onConfigChange: (SearchDomain.Config) -> Unit,
     handlers: AddedActionHandlers,
     run: (SearchDomain.AddedCommand) -> Unit,
+    nowMillis: () -> Long,
     onOpenEach: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -310,6 +320,26 @@ private fun AddedActionEditor(
     when (action) {
         SearchDomain.AddedAction.OpenEach -> FrameButton("Open ${added.size}", enabled = added.isNotEmpty(), onClick = onOpenEach)
         SearchDomain.AddedAction.ClearList -> FrameButton("Remove all", enabled = added.isNotEmpty(), onClick = onClear)
+        // The calendar's "add…": at the calendar filter's instant, whether its switch is on or not.
+        SearchDomain.AddedAction.PlaceOnCalendar -> {
+            val at = config.filters.calendarAddAtMillis
+            if (at == null) {
+                Text(
+                    "Give the calendar filter a position first.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val drafts = SearchDomain.calendarDrafts(state, added, at)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FrameButton(if (drafts.size == 1) "Add here" else "Add ${drafts.size} here", enabled = drafts.isNotEmpty()) {
+                        handlers.onPlaceOnCalendar(drafts)
+                    }
+                    // An alarm is added as a new one (an existing one's occurrences are its weekdays').
+                    FrameButton("New alarm here") { handlers.onPlaceOnCalendar(listOf(SearchDomain.calendarAlarmDraft(state, at))) }
+                }
+            }
+        }
         SearchDomain.AddedAction.TaskAddCategory ->
             CategoryChooser(
                 options = state.categories.sortedBy { it.title.lowercase() }.map { it.id to it.title },
@@ -424,6 +454,27 @@ private fun AddedActionEditor(
                     FrameButton(step.label) { run(SearchDomain.AddedCommand.ChronosRun(step)) }
                 }
             }
+        // --- A new element of the kind, and a copy of each added one — both join the added elements -------------
+        SearchDomain.AddedAction.TaskNew, SearchDomain.AddedAction.CategoryNew, SearchDomain.AddedAction.PeriodNew,
+        SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
+        SearchDomain.AddedAction.ReminderNew -> {
+            val kind = action.section ?: return
+            FrameButton("New " + kind.label) {
+                val made = handlers.onCreate(kind)
+                if (made.isNotEmpty()) onConfigChange(config.copy(added = SearchDomain.withAdded(config.added, made)))
+            }
+        }
+        SearchDomain.AddedAction.TaskDuplicate, SearchDomain.AddedAction.CategoryDuplicate,
+        SearchDomain.AddedAction.PeriodDuplicate, SearchDomain.AddedAction.AlarmDuplicate,
+        SearchDomain.AddedAction.TimerDuplicate, SearchDomain.AddedAction.ChronoDuplicate,
+        SearchDomain.AddedAction.ReminderDuplicate -> {
+            val kind = action.section ?: return
+            val count = added.count { it.kind == kind }
+            FrameButton(if (count == 1) "Duplicate" else "Duplicate $count", enabled = count > 0) {
+                val made = handlers.onDuplicate(SearchDomain.duplicateIntents(state, added, kind, nowMillis()), kind)
+                if (made.isNotEmpty()) onConfigChange(config.copy(added = SearchDomain.withAdded(config.added, made)))
+            }
+        }
         // --- The removed edit windows' contents, one block per added element ----------------------------
         SearchDomain.AddedAction.TaskPaths -> {
             for (taskId in taskIds) {

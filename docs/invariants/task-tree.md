@@ -608,6 +608,13 @@ titles" figure: the Search window and the per-object windows its rows open repla
   inside the list. A task only a stored tree holds has no live sub-tree to open.
 - **While the search BAR holds the focus, no row is selected** (the tree's rule for its selector's field); ↓ or
   Enter move into the list, ↑ on its first row goes back. Leaving a row being renamed commits it.
+- **A result row's right-click "add" replaces "edit"** (user rule 2026-10-01): a task row's menu — the cell's own,
+  with `TaskCellMenuActions.onAdd` in the place of `onEdit` — and the menu of a category, a period, an alarm, a timer, a
+  chrono and a reminder (which no longer open on the right-click) put the element into the added elements, once
+  (`SearchDomain.withAdded`), since this window is the one that edits it. The rows whose opening goes to another window
+  (history unit, task tree, task relation, shortcut, window) keep their "open in …"; a "creation" row still makes its
+  element on the right-click. A tree cell's "edit task" opens the Search window holding that task
+  (`openElementSearch`).
 - **A task row is a tree cell to the user.** Its right-click menu is the cell's own — `TaskCellMenuItems`, the
   one drawing of those entries for both surfaces — built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): "go to task tree" reveals THAT occurrence
@@ -622,8 +629,16 @@ titles" figure: the Search window and the per-object windows its rows open repla
   was the element's own window). Its editing is that window's actions, one block per added element: "Edit" draws the
   Alarms window's rows (`AlarmWindow(embeddedSubjects)`) or the reminder's editor
   (`ChoresManagerWindow(embeddedSubjects)`), never a second editor; each re-seeds from the list whenever it is not the
-  one it last pushed (the Alarms window's rule), which lets several stand side by side. No "+ New" there (the
-  "creation" rows make one); the default configurations stay one link away. The full Alarms window is still the
+  one it last pushed (the Alarms window's rule), which lets several stand side by side. No "+ New" inside the editor;
+  the section's own "New" action makes one (below); the default configurations stay one link away.
+- **"New" and "Duplicate" are actions of every kind a user makes** (user rule 2026-10-01; task, category, period,
+  alarm, timer, chrono, reminder): "New" makes one through `App.createElement` (the "creation" row's path, without
+  opening a window) and "Duplicate" copies every added one of the kind, its title + `" copy"`
+  (`SearchDomain.duplicateIntents`: `DuplicateTasks` — one unit, the copy in the original's list with its settings, not
+  its sub-tree —, `DuplicateCategory` / `DuplicatePeriodKind` — `" copy 2"`, … where the name is taken, since those
+  names are unique; a period's copy keeps every task's resilience as it stood to the original —, and one more row of
+  the alarms / timers / chronos / reminders, a timer or chrono copy idle). What they made joins the window's added
+  elements (`newElementKeys`). The full Alarms window is still the
   calendar's alarm/timer edit entry.
 - **The element edit windows' sections are actions** (2026-10-01): a period's drawing (one drop-down over every added
   period), combinations (each period's own section), "Search its tasks" (`resilienceSearchConfig`) and Delete (the

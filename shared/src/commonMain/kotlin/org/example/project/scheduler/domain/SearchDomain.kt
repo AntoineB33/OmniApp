@@ -26,6 +26,7 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellList
 import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskId
@@ -196,6 +197,12 @@ object SearchDomain {
         val actionQuery: String = "",
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
+        /**
+         * The calendar right-click this window was opened from ("add…", user rule 2026-10-01) — what the
+         * calendar filter's "Set to the right-click" button sets its field to, and the button is offered only while
+         * this is set. Null for a window that did not come from the calendar.
+         */
+        val calendarClickMillis: Long? = null,
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
@@ -237,6 +244,9 @@ object SearchDomain {
                     added = added,
                     actionQuery = actionQuery,
                     resiliencePeriod = resiliencePeriod,
+                    calendarAddOn = filters.calendarAddOn,
+                    calendarAddAtMillis = filters.calendarAddAtMillis,
+                    calendarClickMillis = calendarClickMillis,
                 ),
             )
 
@@ -285,11 +295,14 @@ object SearchDomain {
                         periodOnCalendar = enumNamed(stored.periodOnCalendar, Tri.Any),
                         periodBoxesFrom = dateNamed(stored.periodBoxesFrom),
                         periodBoxesUntil = dateNamed(stored.periodBoxesUntil),
+                        calendarAddOn = stored.calendarAddOn,
+                        calendarAddAtMillis = stored.calendarAddAtMillis,
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                     added = stored.added.distinct(),
                     actionQuery = stored.actionQuery,
                     resiliencePeriod = stored.resiliencePeriod,
+                    calendarClickMillis = stored.calendarClickMillis,
                 )
             }
 
@@ -443,7 +456,18 @@ object SearchDomain {
         val periodBoxesFrom: LocalDate? = null,
         /** Every period of this kind on the calendar ends by the end of this day (and there is one). Null = any. */
         val periodBoxesUntil: LocalDate? = null,
+        /**
+         * **The calendar filter** (user rule 2026-10-01): a GLOBAL filter — about every row, whatever its kind — that
+         * keeps only what can be put on the calendar at [calendarAddAtMillis] ([calendarAddable]). Its switch is
+         * [calendarAddOn]; the position is kept while it is off, so turning it back on finds it.
+         */
+        val calendarAddOn: Boolean = false,
+        val calendarAddAtMillis: Long? = null,
     ) {
+        /** The instant the calendar filter keeps rows for, while it is on and has one; else null. */
+        val calendarAddAt: Long?
+            get() = calendarAddAtMillis.takeIf { calendarAddOn }
+
         /** Whether any filter reads the calendar: the only case its boxes are gathered at all ([results]). */
         val readsCalendar: Boolean
             get() = taskOnCalendar != Tri.Any || taskBoxesFrom != null || taskBoxesUntil != null ||
@@ -460,6 +484,7 @@ object SearchDomain {
          */
         fun isOn(setting: Setting): Boolean =
             when (setting) {
+                Setting.CalendarAdd -> calendarAddAt != null
                 Setting.TaskInTree -> taskInTree != Tri.Any
                 Setting.TaskSchedulable -> taskSchedulable != Tri.Any
                 Setting.TaskCategory -> taskCategory != null
@@ -581,6 +606,8 @@ object SearchDomain {
          */
         ResetSearch(null, "Reset text and types"),
         SortResults(null, "Sort by", sorts = true),
+        /** The calendar filter ([Filters.calendarAddOn]): about every row, so in the General section. */
+        CalendarAdd(null, "Can be added to the calendar at"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -697,6 +724,10 @@ object SearchDomain {
         /** New 2026-10-01: absent from an older build's = no filter, the first period. */
         val actionQuery: String = "",
         val resiliencePeriod: String? = null,
+        /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
+        val calendarAddOn: Boolean = false,
+        val calendarAddAtMillis: Long? = null,
+        val calendarClickMillis: Long? = null,
     )
 
     @Serializable
@@ -1254,6 +1285,12 @@ object SearchDomain {
                     }
                 }
                 .filter { passes(state, it, filters, calendar) }
+                .let { rows ->
+                    // The calendar filter: about every kind, so asked of every row, once the instant's kinds are read.
+                    val at = filters.calendarAddAt ?: return@let rows
+                    val kindsAt = calendarKindsAt(state, at)
+                    rows.filter { calendarAddable(state, it, kindsAt) }
+                }
                 // Stable: ties keep the kind order and each kind's own order.
                 .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
         if (sorts == DEFAULT_SORTS) return base
@@ -1620,10 +1657,27 @@ object SearchDomain {
      */
     enum class AddedAction(val section: Kind?, val label: String) {
         OpenEach(null, "Open each"),
+        /** The calendar's "add…" (user rule 2026-10-01): every added element that can go there, at the filter's instant. */
+        PlaceOnCalendar(null, "Add to the calendar"),
         ClearList(null, "Remove every element from the list"),
         TaskAddCategory(Kind.Task, "Add a category"),
         TaskRemoveCategory(Kind.Task, "Remove a category"),
         TaskMinimumTime(Kind.Task, "Minimum time"),
+        // A new element of the section's kind, and a copy of each added one (user rule 2026-10-01).
+        TaskNew(Kind.Task, "New"),
+        TaskDuplicate(Kind.Task, "Duplicate"),
+        CategoryNew(Kind.Category, "New"),
+        CategoryDuplicate(Kind.Category, "Duplicate"),
+        PeriodNew(Kind.RestrictivePeriod, "New"),
+        PeriodDuplicate(Kind.RestrictivePeriod, "Duplicate"),
+        AlarmNew(Kind.Alarm, "New"),
+        AlarmDuplicate(Kind.Alarm, "Duplicate"),
+        TimerNew(Kind.Timer, "New"),
+        TimerDuplicate(Kind.Timer, "Duplicate"),
+        ChronoNew(Kind.Chrono, "New"),
+        ChronoDuplicate(Kind.Chrono, "Duplicate"),
+        ReminderNew(Kind.Reminder, "New"),
+        ReminderDuplicate(Kind.Reminder, "Duplicate"),
         // A task cell's right-click menu (`TaskCellMenuItems`), over every added task.
         TaskStartNow(Kind.Task, "Start now"),
         TaskEdit(Kind.Task, "Edit task"),
@@ -1722,6 +1776,195 @@ object SearchDomain {
             .filter { it.kind == Kind.RestrictivePeriod && it.id in state.allPeriodKinds }
             .map { it.id }
             .distinct()
+
+    // ----- The calendar filter (user rule 2026-10-01) ----------------------------------------------------
+
+    /**
+     * The kinds of what the calendar's "add…" can lay — what its Search window lists. Not "creation": its rows make an
+     * element NOW, not at the right-click (the filter still keeps them when the user checks that kind).
+     */
+    val CALENDAR_ADD_KINDS: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Reminder)
+
+    /** The kinds a "creation" row the calendar filter keeps can be: the ones the calendar lays a new one of. */
+    private val CALENDAR_CREATABLE: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Alarm, Kind.Reminder)
+
+    /**
+     * The Search window the calendar's "add…" opens at [atMillis] (user rule 2026-10-01): what can be added there,
+     * the filter on that instant, and the right-click remembered for the filter's button.
+     */
+    fun calendarAddConfig(atMillis: Long): Config =
+        Config(
+            kinds = CALENDAR_ADD_KINDS,
+            filters = Filters(calendarAddOn = true, calendarAddAtMillis = atMillis),
+            calendarClickMillis = atMillis,
+        )
+
+    /**
+     * Every kind of restrictive period covering [atMillis] on the calendar, with what each carries
+     * ([PeriodKindConfig.kindsOf]) — the environment a task laid there would stand in. Read off the panels, the
+     * dynamic periods included: a task cannot be put inside a 20 s break that accepts nobody.
+     */
+    fun calendarKindsAt(state: SchedulerState, atMillis: Long): Set<String> {
+        val config = state.periodKindConfig
+        return state.panels
+            .filter { it.startEpochMillis <= atMillis && atMillis < it.endEpochMillis }
+            .mapNotNull { it.restrictiveKind.takeIf(String::isNotEmpty) }
+            .flatMapTo(HashSet()) { config.kindsOf(it) }
+    }
+
+    /**
+     * Whether [result] can be added to the calendar at the instant whose period kinds are [kindsAt] — what the calendar's
+     * element window could lay there: a task the scheduler may place (a leaf in the tree) whose resilience lets it run
+     * in those periods (their product above 0, [PeriodKinds.multiplier]); any kind of restrictive period; a reminder
+     * (a tag of it); and the "creation" rows of the kinds the calendar lays a new one of. An existing alarm is not:
+     * its occurrences come from its weekdays, so "add it here" would be an edit of its rule. Nothing else is.
+     */
+    fun calendarAddable(state: SchedulerState, result: Result, kindsAt: Set<String>): Boolean =
+        when (result) {
+            is TaskResult -> {
+                val task = state.tasks[result.taskId]
+                task != null && SchedulerDomain.isPlaceableTask(state, result.taskId) &&
+                    PeriodKinds.multiplier(task.resilience, kindsAt) > 0.0
+            }
+            is ItemResult -> when (result.kind) {
+                Kind.RestrictivePeriod -> result.id in state.allPeriodKinds
+                Kind.Reminder -> true
+                Kind.Creation -> Kind.entries.firstOrNull { it.name == result.id } in CALENDAR_CREATABLE
+                else -> false
+            }
+        }
+
+    /**
+     * The "Add to the calendar" action: the element-window drafts of every added element that can be added at
+     * [atMillis] ([calendarAddable]), seeded as that window seeds a fresh one ([CalendarElements.seeded]) — a task's
+     * panel, a period of that kind, a tag of that reminder. Saved through the window's own path (`App`), so one Save
+     * is what it always was.
+     */
+    fun calendarDrafts(
+        state: SchedulerState,
+        added: List<Result>,
+        atMillis: Long,
+    ): List<CalendarElements.Draft> {
+        val kindsAt = calendarKindsAt(state, atMillis)
+        return added.filter { calendarAddable(state, it, kindsAt) }.mapNotNull { row ->
+            val pick = when {
+                row is TaskResult -> CalendarElements.Draft(
+                    kind = CalendarElements.Kind.TaskPanel,
+                    name = state.tasks[row.taskId]?.title.orEmpty(),
+                    taskId = row.taskId,
+                )
+                row is ItemResult && row.kind == Kind.RestrictivePeriod -> CalendarElements.Draft(
+                    kind = CalendarElements.Kind.RestrictivePeriod,
+                    name = PeriodKinds.periodTitle(row.id),
+                    periodKind = row.id,
+                )
+                row is ItemResult && row.kind == Kind.Reminder -> CalendarElements.Draft(
+                    kind = CalendarElements.Kind.Reminder,
+                    name = row.name,
+                    reminderId = row.id,
+                )
+                else -> null
+            } ?: return@mapNotNull null
+            CalendarElements.seeded(
+                pick,
+                atMillis,
+                panelSpanMillis = (pick.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 45) * 60_000L,
+                noScreenResilience = pick.taskId?.let { state.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN) },
+                newAlarm = state.newAlarmDefaults,
+            )
+        }
+    }
+
+    /** "New alarm here": the element window's fresh alarm at [atMillis], the account's default configuration. */
+    fun calendarAlarmDraft(state: SchedulerState, atMillis: Long): CalendarElements.Draft =
+        CalendarElements.seeded(
+            CalendarElements.Draft(kind = CalendarElements.Kind.Alarm),
+            atMillis,
+            panelSpanMillis = 0L,
+            noScreenResilience = null,
+            newAlarm = state.newAlarmDefaults,
+        )
+
+    /** The ids of every element of [kind] the account holds — what tells which ones a New or a Duplicate made. */
+    fun elementIds(state: SchedulerState, kind: Kind): Set<String> =
+        when (kind) {
+            Kind.Task -> state.tasks.keys.mapTo(HashSet()) { it.value }
+            Kind.Category -> state.categories.mapTo(HashSet()) { it.id.value }
+            Kind.RestrictivePeriod -> state.allPeriodKinds.toSet()
+            Kind.Alarm -> state.alarms.mapTo(HashSet()) { it.id }
+            Kind.Timer -> state.timers.mapTo(HashSet()) { it.id }
+            Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
+            Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
+            else -> emptySet()
+        }
+
+    /** The keys ([keyOf]) of the elements of [kind] [after] holds and [before] did not, in a stable order. */
+    fun newElementKeys(before: SchedulerState, after: SchedulerState, kind: Kind): List<String> {
+        val old = elementIds(before, kind)
+        return (elementIds(after, kind) - old).sorted().map { kind.name + "/" + it }
+    }
+
+    /**
+     * The added elements' **Duplicate** (user rule 2026-10-01): a copy of every added element of [kind], its title
+     * with `" copy"` at the end. A task, a category and a period are copied by intents of their own
+     * ([SchedulerIntent.DuplicateTasks] — one Undo/Redo unit for them all —, [SchedulerIntent.DuplicateCategory],
+     * [SchedulerIntent.DuplicatePeriodKind]); an alarm, a timer, a chrono and a reminder are one more row of their
+     * list, written through the list's own intent (a timer and a chrono idle — a copy is not a second run). Nothing
+     * added of [kind] is no intent.
+     */
+    fun duplicateIntents(
+        state: SchedulerState,
+        added: List<Result>,
+        kind: Kind,
+        nowMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): List<SchedulerIntent> {
+        val rows = added.filterIsInstance<ItemResult>().filter { it.kind == kind }.distinctBy { it.id }
+        fun named(id: String) = rows.first { it.id == id }.name + " copy"
+        return when (kind) {
+            Kind.Task -> addedTaskIds(state, added).takeIf { it.isNotEmpty() }?.let { listOf(SchedulerIntent.DuplicateTasks(it)) }.orEmpty()
+            Kind.Category ->
+                rows.map { CategoryId(it.id) }.filter { state.categoryById(it) != null }.map { SchedulerIntent.DuplicateCategory(it) }
+            Kind.RestrictivePeriod -> addedPeriodKinds(state, added).map { SchedulerIntent.DuplicatePeriodKind(it) }
+            Kind.Alarm -> {
+                val ids = state.alarms.mapTo(HashSet()) { it.id }
+                val copies = state.alarms.filter { a -> rows.any { it.id == a.id } }.map { alarm ->
+                    alarm.copy(id = AlarmDomain.mintAlarmId(ids).also { ids += it }, label = named(alarm.id))
+                }
+                if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetAlarms(state.alarms + copies))
+            }
+            Kind.Timer -> {
+                val ids = state.timers.mapTo(HashSet()) { it.id }
+                val copies = state.timers.filter { t -> rows.any { it.id == t.id } }.map { timer ->
+                    timer.copy(
+                        id = TimerDomain.mintTimerId(ids).also { ids += it },
+                        label = named(timer.id),
+                        endsAtMillis = null, remainingMillis = null, runMillis = null, endedAtMillis = null,
+                    )
+                }
+                if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTimers(state.timers + copies))
+            }
+            Kind.Chrono -> {
+                val ids = state.chronos.mapTo(HashSet()) { it.id }
+                val copies = state.chronos.filter { c -> rows.any { it.id == c.id } }.map { chrono ->
+                    ChronoEntry(id = ChronoDomain.mintChronoId(ids).also { ids += it }, label = named(chrono.id))
+                }
+                if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetChronos(state.chronos + copies))
+            }
+            Kind.Reminder -> {
+                // A blank id is minted by the reducer, as for a new reminder.
+                val copies = state.chores.filter { c -> rows.any { it.id == c.id } }.map { it.copy(id = "", title = named(it.id)) }
+                if (copies.isEmpty()) {
+                    emptyList()
+                } else {
+                    val todayStart = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
+                        .atStartOfDayIn(timeZone).toEpochMilliseconds()
+                    listOf(SchedulerIntent.SetChores(state.chores + copies, todayStart, nowMillis))
+                }
+            }
+            else -> emptyList()
+        }
+    }
 
     /** The ids of [kind]'s elements among [added], each once, in the list's order. */
     fun addedIds(added: List<Result>, kind: Kind): List<String> =

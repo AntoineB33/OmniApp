@@ -361,29 +361,15 @@ private fun seedDraft(
     noScreenResilienceForTaskId: (TaskId) -> Double?,
     newAlarm: AlarmEntry,
 ): CalendarElements.Draft =
-    // An element already on the calendar (the "edit…" list) keeps its own bounds: the window is showing what
-    // is there, and re-anchoring it at the click would move it before the user asked for anything.
-    if (pick.existingId != null) {
-        pick
-    } else {
-        pick.copy(
-            startMillis = atMillis,
-            endMillis = atMillis + when (pick.kind) {
-                // PRD §8 Manual add: the task's own minimum time.
-                CalendarElements.Kind.TaskPanel -> panelSpanMillisFor(pick.taskId)
-                CalendarElements.Kind.RestrictivePeriod -> 3_600_000L
-                // PRD §18: the default ring length, so `end - start` is a real `soundSeconds` from the start.
-                CalendarElements.Kind.Alarm -> newAlarm.soundSeconds * 1000L
-                // PRD §14: a tag has no duration at all.
-                CalendarElements.Kind.Reminder -> 0L
-            },
-            noScreenResilience = pick.taskId?.let(noScreenResilienceForTaskId) ?: 0.0,
-        ).let { seeded ->
-            // PRD §18: a new alarm's own settings are the account's default configuration of one.
-            if (pick.kind != CalendarElements.Kind.Alarm) seeded
-            else seeded.copy(alarmDays = newAlarm.days, alert = newAlarm.alert, alarmArmed = newAlarm.enabled)
-        }
-    }
+    // An element already on the calendar (the "edit…" list) keeps its own bounds — [CalendarElements.seeded].
+    CalendarElements.seeded(
+        pick,
+        atMillis,
+        // PRD §8 Manual add: the task's own minimum time.
+        panelSpanMillis = panelSpanMillisFor(pick.taskId),
+        noScreenResilience = pick.taskId?.let(noScreenResilienceForTaskId),
+        newAlarm = newAlarm,
+    )
 
 /**
  * PRD §8 §1d: **the list of what the window will lay**, each row with the bin that gets rid of it

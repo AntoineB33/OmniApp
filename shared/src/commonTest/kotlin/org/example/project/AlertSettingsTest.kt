@@ -139,6 +139,7 @@ class AlertSettingsTest {
         val posted = mutableListOf<Pair<String, String>>()
         val spoken = mutableListOf<VoiceUtterance>()
         val rung = mutableListOf<ArmedAlarm>()
+        var cuts = 0
     }
 
     private fun engineWith(vm: TaskSchedulerViewModel, sink: Sink) =
@@ -148,6 +149,8 @@ class AlertSettingsTest {
             scope = CoroutineScope(Dispatchers.Unconfined),
             screenActive = { true },
             speak = { sink.spoken.add(it) },
+            stopSpeech = { sink.cuts++ },
+
             postNotification = { title, message -> sink.posted.add(title to message) },
             clearNotifications = {},
             ringAlarm = { sink.rung.add(it) },
@@ -160,6 +163,25 @@ class AlertSettingsTest {
             ArmedAlarm("alarm-0", 11_000L, "Wake up", 30, alert = alert),
         )
         return sink
+    }
+
+    @Test
+    fun turning_the_voice_switch_off_cuts_what_is_already_waiting_to_be_said() {
+        // User rule 2026-10-01: a stack of vocal messages is silenced at the flip, not only the ones to come.
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val sink = Sink()
+        val engine = engineWith(vm, sink)
+        engine.launchVoiceSwitchMute()
+        assertEquals(0, sink.cuts, "on: nothing to cut")
+        engine.onAlarmFire(ArmedAlarm("alarm-0", 11_000L, "Wake up", 30, alert = AlertSettings.RING))
+        engine.onAlarmFire(ArmedAlarm("alarm-1", 11_000L, "Stretch", 30, alert = AlertSettings.RING))
+        assertEquals(2, sink.spoken.size, "two phrases handed to the speaker's queue")
+        vm.dispatch(SchedulerIntent.SetNotificationVoice(false))
+        assertEquals(1, sink.cuts, "the flip cuts the one sounding and the one waiting")
+        engine.onAlarmFire(ArmedAlarm("alarm-2", 11_000L, "Later", 30, alert = AlertSettings.RING))
+        assertEquals(2, sink.spoken.size, "and nothing new is queued while it is off")
+        vm.dispatch(SchedulerIntent.SetNotificationVoice(true))
+        assertEquals(1, sink.cuts, "turning it back on cuts nothing")
     }
 
     @Test

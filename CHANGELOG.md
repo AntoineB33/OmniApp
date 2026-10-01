@@ -11,6 +11,65 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A tab created by a menu button is named after it — 2026-10-01
+
+User request: *"When clicking on a button in the left-side menu, the tab that is created gets the name of the button."*
+The built-in buttons already read as their windows do; a button the user made (☆, renamable) now names the window it
+creates on the window bar (`WindowFrameHost.tabTitles`, `App.onMenuButtonClicked`), kept on the local `TabTitles`
+placement row (no schema change). Test: `WindowFrameHostTest`.
+
+### "Made in": every type of window, and a Search rename stamped Search — 2026-10-01
+
+User request: *"In the Search Configurations window, for history units, in the 'made in' selector, I must see all the
+types of window. For example, if the user renames a task in the Search window, then the history unit must be associated
+with the Search window."*
+
+- `HistoryWindow` gains every non-lateral window type (stored by name; an older build reads an unknown one as null).
+- `WindowFrameHost.onFocus` + `App.historyWindowOfFrame`: a press in any window moves the focus to it before the press
+  commits. Behaviour change: a per-object window's edits are undone from that window.
+- `SchedulerIntent.MadeIn`: the Search and Added elements configurations windows' intents carry their window, so a rename
+  committed on blur (after the focus left) is Search's.
+- Tests: `HistoryChordsByWindowTest` (two new).
+
+### Calendar "add…" → the Search window's calendar filter — 2026-10-01
+
+User request: *"In the calendar, the add... option in the right-click menu must open the Search window with a filter for
+only element that can be added in the calendar at the exact position of the right-click. It is a global filter
+configuration in the Search configurations window, with a field to define the position in the calendar, a button to set
+this field to the right-click mouse (this button appears only if the Search window comes from a right-click in the
+calendar), and a switch button to turn the filter off/on."*
+
+- `Filters.calendarAddOn` / `calendarAddAtMillis`, `Config.calendarClickMillis` (new, defaulted — an older stored
+  configuration decodes to off); `Setting.CalendarAdd` (General section); `SearchDomain.calendarAddable`,
+  `calendarKindsAt`, `calendarAddConfig`.
+- Added so that "add…" still adds: the action "Add to the calendar" (`calendarDrafts`, `calendarAlarmDraft`) through
+  the element window's seeding, now `CalendarElements.seeded` (one funnel), and its Save.
+- Tests: `SearchCalendarFilterTest`.
+
+### Search: "New" and "Duplicate" actions — 2026-10-01
+
+User request: *"In the actions configurations section of the Search window, add buttons to create a new element of the
+same type, and to duplicate it, with the title of the element getting ' copy' at the end."* `AddedAction.*New` /
+`*Duplicate` per kind; new intents `DuplicateTasks`, `DuplicateCategory`, `DuplicatePeriodKind`;
+`SearchDomain.duplicateIntents`, `newElementKeys`; `App.createElement(open = false)`. Created elements join the added
+list. Tests: `SearchTaskActionsTest` (three new).
+
+### Search: a result row's right-click "add" — 2026-10-01
+
+User request: *"In the Search window, in the right-click menu of elements in the result list, replace the option to open
+the edit window by the option 'add' to add to the selection list in the bottom right section. In the task tree, the
+right-click menu of a task cell has the option 'edit' that opens the Search window with this task in the selection
+list."* `TaskCellMenuActions.onAdd` (Search rows) in place of `onEdit`; `ItemResultRow`'s "edit …" → "add", and
+alarm / timer / chrono / reminder rows open the menu on a right-click instead of their window. The tree's "edit task"
+already opened the Search window holding the task (previous entry).
+
+### The voice switch mutes the queued vocal messages too — 2026-10-01
+
+User request: *"When there is a stack of notifications with vocal messages, if the user turns the vocal messages
+switch button off, the voice must be mute even if the notification was already in the waiting room."*
+`SchedulerEngine.launchVoiceSwitchMute` cuts the speaker (`stopSpeaking`, now the injectable `stopSpeech` seam) at the
+switch's on→off edge. Test: `AlertSettingsTest.turning_the_voice_switch_off_cuts_what_is_already_waiting_to_be_said`.
+
 ### Dragging a maximized window's head un-maximizes it — 2026-10-01
 
 User request: *"When dragging the header of a maximized window, it must bring it to its previous size and get dragged by

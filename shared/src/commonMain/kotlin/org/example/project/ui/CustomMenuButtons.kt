@@ -76,6 +76,22 @@ object CustomMenuButtons {
 
     fun encode(buttons: List<CustomMenuButton>): String = json.encodeToString(Stored.serializer(), Stored(buttons))
 
+    /**
+     * The placement row the window bar's tab names are kept on ([WindowFrameHost.tabTitles]) — frame id → the name
+     * of the button that created that window. No window has this frame id.
+     */
+    const val TAB_TITLES_PLACEMENT_ID: String = "TabTitles"
+
+    @Serializable
+    private data class StoredTabTitles(val titles: Map<String, String> = emptyMap())
+
+    fun encodeTabTitles(titles: Map<String, String>): String =
+        json.encodeToString(StoredTabTitles.serializer(), StoredTabTitles(titles))
+
+    /** [encodeTabTitles]' reverse; nothing stored, or nothing readable, is no name. */
+    fun decodeTabTitles(text: String?): Map<String, String> =
+        text?.let { runCatching { json.decodeFromString(StoredTabTitles.serializer(), it).titles }.getOrNull() }.orEmpty()
+
     /** [encode]'s reverse; nothing stored, or nothing readable, is no button. */
     fun decode(text: String?): List<CustomMenuButton> =
         text?.let { runCatching { json.decodeFromString(Stored.serializer(), it).buttons }.getOrNull() }.orEmpty()

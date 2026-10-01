@@ -475,6 +475,9 @@ class SchedulerEngine(
     // PRD §11/§15: the voice sink (defaults to the platform speaker — the bundled shared cue audio where the
     // phrase has a recording, live synthesis otherwise); injectable so what was SAID is assertable in tests.
     private val speak: (VoiceUtterance) -> Unit = ::platformSpeak,
+    // PRD §15: the speaker's cut — the phrase sounding now and every one queued behind it ([stopSpeaking]); injectable
+    // so the voice switch's mute ([launchVoiceSwitchMute]) is assertable.
+    private val stopSpeech: () -> Unit = ::stopSpeaking,
     // PRD §11: the notification sink and the "withdraw what is already showing" seam (default to the platform
     // notifier); injectable for the same reason [speak] is — what the app POSTED is otherwise unassertable,
     // and the mute below is precisely a rule about that call and not about the log beside it.
@@ -901,6 +904,9 @@ class SchedulerEngine(
         SchedulerReducer.planAbandoned = { generation -> generation != 0L && generation != planGeneration }
         // Nothing that can bank is launched before the line is where the clock is: a stretch the app did not run in is
         // walked first, and the walk needs the OS's answer about that stretch (a process launch, so off this thread).
+        // The voice switch's mute holds from the first instant, the catch-up of a stretch the app did not run in
+        // included: a phrase queued then is as much the user's to silence.
+        launchVoiceSwitchMute()
         val gap = notRunningGap()
         if (gap == null) startRunning()
         else scope.launch {
@@ -3328,6 +3334,21 @@ class SchedulerEngine(
         }
     }
 
+    /**
+     * PRD §11 (user rule 2026-10-01): **the voice switch turned off mutes at once** — the phrase being said and every
+     * one waiting behind it, not only the notifications to come ([notifyUser] gates those). The queue is the
+     * platform's ([speak] returns at once and the worker says them in turn), so what was handed to it before the
+     * flip is cut here ([stopSpeech]). Event-driven: the switch's own edge, whichever device flipped it (it syncs).
+     */
+    internal fun launchVoiceSwitchMute() = scope.launch {
+        vm.state.map { it.notificationVoiceEnabled }.distinctUntilChanged().collect { on ->
+            if (!on) {
+                Diagnostics.log("voice switch off: queued vocal messages dropped")
+                stopSpeech()
+            }
+        }
+    }
+
     // PRD §7: fire the single deferred reschedule when the switch is turned on.
     private fun launchPendingRescheduleOnSwitch() = scope.launch {
         vm.state.map { it.automaticSchedule }.distinctUntilChanged().collectLatest { on ->
@@ -3722,7 +3743,7 @@ class SchedulerEngine(
     fun restartLookAway() {
         val st = vm.state.value
         val lookAway = st.screenBreaks.firstOrNull { !it.restBreak } ?: return
-        stopSpeaking()
+        stopSpeech()
         pendingEnds = emptySet()
         manualLookAwayJob?.cancel()
         manualLookAwayJob = scope.launch {

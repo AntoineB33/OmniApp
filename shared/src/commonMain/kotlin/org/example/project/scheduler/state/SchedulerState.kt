@@ -116,6 +116,25 @@ enum class HistoryWindow(val label: String) {
     ConfigSearch("Search configurations"),
     Online("Online"),
     AddedConfig("Added elements configurations"),
+
+    // Every other window type (user rule 2026-10-01: "made in" lists ALL the types of window). A press in one of
+    // them moves the focus to it like a press in any window (`WindowFrameHost.onFocus` → `FocusWindow`), so what is
+    // done there is stamped with it rather than with the window it was opened from.
+    TaskEdit("Task (default sub-tree)"),
+    CategoryEdit("Category (default sub-tree)"),
+    PriorityWeights("Priority weights"),
+    RelativePriority("Relative priority"),
+    DeepCopy("Deep copy"),
+    AlarmDefaults("Default alarm or timer"),
+    ReminderDefaults("Default reminder"),
+    CalendarElements("Calendar elements"),
+    CalendarEntry("Calendar block"),
+    CalendarPeriod("Calendar period"),
+    CalendarReminder("Calendar reminder"),
+    ReminderConstraint("Constrained in"),
+    HistoryEntryInfo("History entry"),
+    TaskTreeDetail("Task tree details"),
+    Notice("Notice"),
 }
 
 /**

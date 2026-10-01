@@ -3393,6 +3393,17 @@ internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit)
             },
         )
     }
+    // PRD §7 Search (user rule 2026-10-01): a result row's menu ADDS its task to the window's added elements, in the
+    // place "edit task" has elsewhere — the row is already in the window that edits it.
+    cellMenu.onAdd?.let { add ->
+        DropdownMenuItem(
+            text = { Text("add") },
+            onClick = {
+                close()
+                add()
+            },
+        )
+    }
     // PRD §13: named "edit task" — the calendar's panel menu offers the very same window
     // beside its own panel "Edit" (PRD §8), so the two surfaces must not call it two things.
     cellMenu.onEdit?.let { edit ->
@@ -3511,6 +3522,8 @@ internal class TaskCellMenuActions(
     val onAddDefaultSubtree: (() -> Unit)?,
     /** PRD §8 "go to calendar": the task it is about, where there is one ([LocalCalendarGoTo] decides the rest). */
     val calendarTaskId: TaskId? = null,
+    /** PRD §7 Search: "add" — the task into the Search window's added elements; null everywhere else. */
+    val onAdd: (() -> Unit)? = null,
 )
 
 /**

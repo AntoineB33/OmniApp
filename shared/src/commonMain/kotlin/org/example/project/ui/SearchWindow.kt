@@ -333,12 +333,19 @@ fun SearchWindow(
     }
 
     val currentState by rememberUpdatedState(state)
+    val latestConfig by rememberUpdatedState(config)
     /**
      * A task row's menu — the TREE CELL's own ([TaskCellMenuActions], drawn by [TaskCellMenuItems]), so the two
      * offer the same entries. [path] is the one the right-click landed on (the row's shown path, or a line of its
      * list of paths): "go to task tree" goes to THAT occurrence, and the entries that act on a cell (deep copy,
      * collapse, add the default sub-tree) act on it. Built on demand, so it never closes over a stale state.
      */
+    /** A row's "add": its element into the added elements (bottom right), once — [SearchDomain.withAdded]. */
+    fun addToAdded(key: String) {
+        val current = latestConfig
+        val next = SearchDomain.withAdded(current.added, listOf(key))
+        if (next != current.added) onConfigChange(current.copy(added = next))
+    }
     fun taskActions(result: SearchDomain.TaskResult, path: List<String>?): TaskCellMenuActions {
         val state = currentState
         val taskId = result.taskId
@@ -353,7 +360,10 @@ fun SearchWindow(
                 } else {
                     null
                 },
-            onEdit = if (live != null) ({ openers.onOpenTaskEdit(taskId) }) else null,
+            // User rule 2026-10-01: a result row's menu ADDS the task to this window's added elements instead of
+            // opening its edit window — the window that edits it is this one.
+            onEdit = null,
+            onAdd = { addToAdded(SearchDomain.keyOf(result)) },
             calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
@@ -669,15 +679,10 @@ fun SearchWindow(
                                         selected = rowSelected(index),
                                         onSelect = { selectRow(index) },
                                         onOpen = { openers.open(state, result) },
-                                        // An alarm, a timer or a reminder has its own window, and the
-                                        // right-click opens it straight away, as opening the row does: its
-                                        // settings are what the user is asking about.
-                                        opensOnRightClick =
-                                            result.kind == SearchDomain.Kind.Alarm ||
-                                                result.kind == SearchDomain.Kind.Timer ||
-                                                result.kind == SearchDomain.Kind.Chrono ||
-                                                result.kind == SearchDomain.Kind.Creation ||
-                                                result.kind == SearchDomain.Kind.Reminder,
+                                        onAdd = { addToAdded(resultKey(result)) },
+                                        // A "creation" row makes its element on the right-click straight away, as
+                                        // opening the row does: there is nothing else to ask of it.
+                                        opensOnRightClick = result.kind == SearchDomain.Kind.Creation,
                                     )
                             }
                         }
@@ -1392,7 +1397,9 @@ private fun ItemResultRow(
     selected: Boolean,
     onSelect: () -> Unit,
     onOpen: () -> Unit,
-    /** The right-click opens the row ([onOpen]) instead of the contextual menu: an alarm, a timer, a reminder. */
+    /** The menu's "add": the element into the window's added elements. */
+    onAdd: () -> Unit,
+    /** The right-click opens the row ([onOpen]) instead of the contextual menu: a "creation" row. */
     opensOnRightClick: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -1434,18 +1441,27 @@ private fun ItemResultRow(
             onDismissRequest = { menuOpen = false },
             properties = PopupProperties(focusable = false),
         ) {
-            MenuEntry(
+            // The rows whose opening goes to ANOTHER window keep it; an element whose edit window this Search
+            // window is (user rule 2026-10-01) is added to its added elements instead.
+            val elsewhere =
                 when (item.kind) {
                     SearchDomain.Kind.HistoryUnit -> "open in History"
                     SearchDomain.Kind.TaskTree -> "open in All task trees"
                     SearchDomain.Kind.TaskRelation -> "open in Task relations"
                     SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
                     SearchDomain.Kind.Window -> "show window"
-                    else -> "edit " + item.kind.label
-                },
-            ) {
-                menuOpen = false
-                onOpen()
+                    else -> null
+                }
+            if (elsewhere != null) {
+                MenuEntry(elsewhere) {
+                    menuOpen = false
+                    onOpen()
+                }
+            } else {
+                MenuEntry("add") {
+                    menuOpen = false
+                    onAdd()
+                }
             }
         }
     }

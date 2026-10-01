@@ -76,6 +76,38 @@ class HistoryChordsByWindowTest {
     }
 
     @Test
+    fun a_change_committed_after_the_press_that_left_its_window_is_still_that_windows() {
+        // User rule 2026-10-01: a Search row's rename lands on blur, when the press elsewhere has already moved the
+        // focus — the Search window's intents travel MADE IN it, so the unit says Search and the focus stays put.
+        var s = SchedulerState.empty()
+        s = r(s, SchedulerIntent.SetCellTitle(firstCell(s), "Daily"))
+        val task = s.cells[firstCell(s)]!!.taskId!!
+        s = focus(s, HistoryWindow.Calendar)
+        s = r(s, SchedulerIntent.MadeIn(HistoryWindow.Search, "#2", SchedulerIntent.RenameTask(task, "Weekly")))
+        assertEquals("Weekly", s.tasks[task]!!.title)
+        val unit = s.histories.forCategory(HistoryCategory.Main).units.last()
+        assertEquals(HistoryWindow.Search, unit.window)
+        assertEquals(HistoryWindow.Calendar, s.focusedWindow, "the focus is where the user went")
+        // So it is undone from the Search window, not from the calendar the user went to.
+        assertEquals("Weekly", r(s, SchedulerIntent.Undo).tasks[task]!!.title)
+        assertEquals("Daily", r(focus(s, HistoryWindow.Search, "#2"), SchedulerIntent.Undo).tasks[task]!!.title)
+        // An intent that changes nothing is no change at all.
+        val same = r(s, SchedulerIntent.MadeIn(HistoryWindow.Search, "", SchedulerIntent.RenameTask(task, "Weekly")))
+        assertSame(s, same)
+    }
+
+    @Test
+    fun every_window_type_is_a_window_a_unit_can_be_made_in_and_it_survives_the_store() {
+        var s = SchedulerState.empty()
+        s = focus(s, HistoryWindow.PriorityWeights, "#3")
+        s = r(s, SchedulerIntent.SetCellTitle(firstCell(s), "Daily"))
+        assertEquals(HistoryWindow.PriorityWeights, s.histories.forCategory(HistoryCategory.Main).units.last().window)
+        val back = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
+        assertEquals(HistoryWindow.PriorityWeights, back.histories.forCategory(HistoryCategory.Main).units.last().window)
+        assertEquals(HistoryWindow.PriorityWeights, back.focusedWindow)
+    }
+
+    @Test
     fun ctrl_z_undoes_the_last_change_made_in_the_focused_window_only() {
         var s = SchedulerState.empty()
         val cell = firstCell(s)

@@ -342,6 +342,39 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §7 *Search*, the added elements' **Duplicate** (user rule 2026-10-01): each task of [taskIds] copied as a NEW
+     * task titled `"<title> copy"`, put in the list its first occurrence is in (the top level for a task no cell holds),
+     * carrying the original's minimum time, schedule unit, text, resilience and categories — not its sub-tree, its
+     * records or its place in a priority table (the copy's cell starts at the list's default row). ONE tree History
+     * Unit; a no-op while a cell is in Edit Mode.
+     */
+    data class DuplicateTasks(val taskIds: List<TaskId>) : SchedulerIntent
+
+    /**
+     * PRD §6 (user rule 2026-10-01): [inner] as **made in** [window] ([instance] its copy) — the History Units it
+     * commits are stamped with that window whichever window has the focus when it lands. What a window commits on
+     * leaving (a Search row's rename, committed when the press that left it has already moved the focus elsewhere)
+     * is still that window's. The focus itself is not moved.
+     */
+    data class MadeIn(val window: HistoryWindow, val instance: String, val inner: SchedulerIntent) : SchedulerIntent
+
+    /**
+     * The added elements' Duplicate on a category: a new category titled `"<title> copy"` (`"… copy 2"`, … where taken —
+     * two categories may not share a name) with the original's rules; no task carries it. An account setting like
+     * [CreateCategory]: no history unit.
+     */
+    data class DuplicateCategory(val categoryId: CategoryId) : SchedulerIntent
+
+    /**
+     * The added elements' Duplicate on a period: a kind of the account's own named `"<kind> copy"` (`"… copy 2"`, …
+     * where taken) wearing the original's drawing, with a copy of every combination rule naming the original (the
+     * original's name replaced by the copy's) and every task's resilience to the original — written as an override
+     * wherever it differs from the copy's own default, so each task stands to the copy exactly as it stands to the
+     * original. An account setting like [AddPeriodKind]: no history unit.
+     */
+    data class DuplicatePeriodKind(val kind: String) : SchedulerIntent
+
+    /**
      * PRD §7 *Search*, the added elements' actions — the task edit window's sections over every task of [taskIds],
      * each **one** Undo/Redo unit ([SetTasksMinimumTime]'s rule; a call that moves nobody records nothing):
      * [SetTaskText] for every task.

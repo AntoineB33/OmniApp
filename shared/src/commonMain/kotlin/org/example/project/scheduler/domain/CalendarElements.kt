@@ -138,6 +138,38 @@ object CalendarElements {
             Kind.TaskPanel, Kind.Alarm, Kind.Reminder -> setOf(Bound.At)
         }
 
+    /**
+     * **A freshly picked element given the bounds it starts life with**, anchored at [atMillis] — the element window's
+     * *add* button and the Search window's "Add to the calendar" alike (one funnel). An element already on the
+     * calendar ([Draft.existingId]) keeps its own bounds. A panel lasts [panelSpanMillis] (its task's minimum time), a
+     * period an hour, an alarm its default ring ([newAlarm]), a reminder tag nothing; a panel's task brings its
+     * resilience to "no screen" ([noScreenResilience]), a new alarm the account's default configuration.
+     */
+    fun seeded(
+        pick: Draft,
+        atMillis: Long,
+        panelSpanMillis: Long,
+        noScreenResilience: Double?,
+        newAlarm: AlarmEntry,
+    ): Draft =
+        if (pick.existingId != null) {
+            pick
+        } else {
+            pick.copy(
+                startMillis = atMillis,
+                endMillis = atMillis + when (pick.kind) {
+                    Kind.TaskPanel -> panelSpanMillis
+                    Kind.RestrictivePeriod -> 3_600_000L
+                    Kind.Alarm -> newAlarm.soundSeconds * 1000L
+                    Kind.Reminder -> 0L
+                },
+                noScreenResilience = noScreenResilience ?: 0.0,
+            ).let { seeded ->
+                if (pick.kind != Kind.Alarm) seeded
+                else seeded.copy(alarmDays = newAlarm.days, alert = newAlarm.alert, alarmArmed = newAlarm.enabled)
+            }
+        }
+
     /** The bound modes every element of [drafts] can express — what a shared bound field may offer. */
     fun offeredBounds(drafts: List<Draft>): Set<Bound> =
         if (drafts.isEmpty()) emptySet()

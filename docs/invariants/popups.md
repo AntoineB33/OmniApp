@@ -130,7 +130,11 @@ means.
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. **The focused window's tab stands out** (2026-10-01: primary-container fill, a 2 dp primary
   border, semi-bold title), read straight off `WindowFrameHost.focusedId` — no tab stands out while nothing
-  framed has the focus (a press on the background), and a reduced tab never does. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
+  framed has the focus (a press on the background), and a reduced tab never does. **A tab a button made is named
+  after it** (user rule 2026-10-01): the window a lateral-menu button the user made (☆) CREATES carries that button's
+  name on its tab (`WindowFrameHost.tabTitles`, `tabTitleOf`) — the window registering in the frames after the click;
+  one only brought back keeps its tab. The name goes when the window closes (`unregister`) and is kept locally on the
+  `TabTitles` placement row, read back at startup for the windows that come back. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
   open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
   maximized window stops above it. **A tab is a taskbar's** (`WindowFrameHost.onTabClicked`, 2026-09-26): a
   reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window
