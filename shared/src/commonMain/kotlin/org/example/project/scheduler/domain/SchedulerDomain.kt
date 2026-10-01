@@ -2374,12 +2374,15 @@ object SchedulerDomain {
      */
     fun companionPeriods(periods: List<RestrictivePeriod>, config: PeriodKindConfig): List<RestrictivePeriod> {
         val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
+        val manual = LinkedHashMap<String, MutableList<TaskTimeRange>>()
         for (period in periods) {
             if (period.kind.isEmpty() || period.endMillis <= period.startMillis) continue
-            own.getOrPut(period.kind) { ArrayList() } += TaskTimeRange(period.startMillis, period.endMillis)
+            val span = TaskTimeRange(period.startMillis, period.endMillis)
+            own.getOrPut(period.kind) { ArrayList() } += span
+            if (period.manual) manual.getOrPut(period.kind) { ArrayList() } += span
         }
         if (own.isEmpty()) return emptyList()
-        val closed = config.closeRegions(own)
+        val closed = config.closeRegions(own, manual)
         return closed.flatMap { (kind, spans) ->
             val explicit = own[kind]?.let(::mergeOccupied).orEmpty()
             subtractRegions(spans, explicit).map {
@@ -2422,43 +2425,55 @@ object SchedulerDomain {
     ): List<TaskTimeRange> {
         if (tpMode != DynamicPeriods.MODE_AT_SCREEN) return emptyList()
         return mergeOccupied(
-            periods.filter { retractsAtLine(it.kind) && it.endMillis > nowMillis }
+            periods.filter { retractsAtLine(it, nowMillis, config) && it.endMillis > nowMillis }
                 .map { TaskTimeRange(maxOf(it.startMillis, nowMillis), it.endMillis) },
         )
     }
 
     /**
-     * Whether a period of [kind] **gives way to a mode-1 line** — the one predicate [retractedAtLineSpans] and
+     * Whether [period] **gives way to a mode-1 line at [nowMillis]** — the one predicate [retractedAtLineSpans] and
      * [retractAtLine] are both written against, so the span a period contributes and the span it loses can never
      * be two different sets.
      *
-     * **Exactly the [PeriodKinds.NO_SCREEN] periods**, the ones the clause names (*"$now line$ must not be covered
-     * by the period 'no on-screen task'"*): a drawn one, and the companion every §17 window, wind-down hour or other
-     * kind carries ([companionPeriods]). **No other period gives way, whatever it accepts** (user rule, 2026-09-28):
-     * `sleep` is a period every task has at `0` that always comes with a no-screen period, so at a mode-1 line its
-     * no-screen period lifts and the window itself stays — nobody runs in it, which the requirements allow (they
-     * require no task anywhere). The same for
-     * `inactivity` with a companion, `before bed` and every kind the account defined.
+     * **Every period that IS or CARRIES a [PeriodKinds.NO_SCREEN] period** ([PeriodKindConfig.isOrImpliesNoScreen])
+     * — the clause names the no-screen period (*"$now line$ must not be covered by the period 'no on-screen
+     * task'"*), and a period whose kind brings one (`when sleep then no screen`) cannot stand at the line without
+     * its no-screen period standing there too (user rule, 2026-10-01). So a user still at a screen when a §17
+     * sleep window was scheduled retracts the WINDOW at the line, not only its companion; the same for `before
+     * bed` and any kind the account's rules make carry `no screen`. A kind that carries none (`inactivity` by
+     * default, an account's own kind) never gives way.
      *
-     * Until 2026-09-28 `sleep` (and `inactivity` given a companion) retracted WHOLE, on the reading that a period
-     * nobody can be let through could otherwise cover a line at a screen; the requirements' rules name the
-     * no-screen period and nothing else, and sleep is not a special case of them.
+     * **A carrier gives way only where the line is IN it**: a night still ahead stays an obstacle in the plan (user
+     * rule, 2026-10-01). Retracting it too would plan every future night and wind-down hour as working time — the
+     * morning's plan, the shares and the repeating cycle all built as if nobody slept. A line that reaches bedtime
+     * still at a screen meets the window, and [planMismatchAtLine] asks the fill once at that edge. The [PeriodKinds.NO_SCREEN]
+     * periods themselves keep giving up their whole span ahead ([retractedAtLineSpans] says why) — a future night's
+     * companion included, which is why [retractAtLine] must ask this with the same [nowMillis], or that companion's
+     * span would carve the night it belongs to.
+     *
+     * Only the single-kind closure counts: a no-screen period a TWO-kind rule brings ([PeriodKindConfig.closeRegions])
+     * is a companion that retracts itself, and which of its two causes should give way is not the clause's to say.
+     *
+     * History: until 2026-09-28 `sleep` retracted whole on PRD §17's *"carved by activity"*; 2026-09-28 to
+     * 2026-10-01 only the companion lifted and the window stayed over the line.
      */
-    private fun retractsAtLine(kind: String): Boolean = kind == PeriodKinds.NO_SCREEN
+    private fun retractsAtLine(period: RestrictivePeriod, nowMillis: Long, config: PeriodKindConfig): Boolean =
+        config.isOrImpliesNoScreen(period.kind) && (period.kind == PeriodKinds.NO_SCREEN || period.startMillis <= nowMillis)
 
     /**
      * [retractedAtLineSpans] applied: the periods that **give their remainder up** ([retractsAtLine], where
-     * the whole rule and its reasons live) with those spans taken out of them. Every other period is returned
-     * untouched — including the `before bed` hour whose own implied no-screen period contributed a span.
+     * the whole rule and its reasons live) with those spans taken out of them — a `sleep` window or a `before bed`
+     * hour the line is in as well as its companion. Every other period is returned untouched.
      */
     fun retractAtLine(
         periods: List<RestrictivePeriod>,
         retracted: List<TaskTimeRange>,
+        nowMillis: Long,
         config: PeriodKindConfig,
     ): List<RestrictivePeriod> {
         if (retracted.isEmpty()) return periods
         return periods.flatMap { period ->
-            if (!retractsAtLine(period.kind)) {
+            if (!retractsAtLine(period, nowMillis, config)) {
                 listOf(period)
             } else {
                 subtractRegions(listOf(TaskTimeRange(period.startMillis, period.endMillis)), retracted)
@@ -2595,7 +2610,7 @@ object SchedulerDomain {
             restrictivePeriodsOf(standingPanels, state.periodKindConfig) +
                 projectedSleepPeriods(state, nowMillis, nowMillis + 1, timeZone)
         val periods =
-            retractAtLine(standing, retractedAtLineSpans(standing, nowMillis, mode, state.periodKindConfig), state.periodKindConfig) +
+            retractAtLine(standing, retractedAtLineSpans(standing, nowMillis, mode, state.periodKindConfig), nowMillis, state.periodKindConfig) +
                 listOfNotNull(
                     RestrictivePeriod(nowMillis, nowMillis, PeriodKinds.NO_SCREEN, "no screen", closedEnd = true)
                         .takeIf { DynamicPeriods.lineIsCoveredAt(mode) },
@@ -2898,6 +2913,25 @@ object SchedulerDomain {
     }
 
     /**
+     * The past stretches the OS log KNOWS a device of one layer's kind was unlocked for: the asked window
+     * `[sinceMillis, untilMillis]` minus what [layerRegions] reads as locked (the same seam rule). **Empty when the
+     * history cannot be asked** ([lockedIntervals] null): a device nobody can vouch for is assumed locked, which is not
+     * knowing it was unlocked. Fed to [PeriodKindConfig.closeRegions] as where the real layer kind is known absent, so a
+     * derived "no computer unlocked or not on a computer" picks the fake side there (user rule, 2026-10-01).
+     */
+    fun knownUnlockedRegions(
+        lockedIntervals: List<TaskTimeRange>?,
+        sinceMillis: Long,
+        untilMillis: Long,
+    ): List<TaskTimeRange> {
+        if (lockedIntervals == null || untilMillis <= sinceMillis) return emptyList()
+        return subtractRegions(
+            listOf(TaskTimeRange(sinceMillis, untilMillis)),
+            layerRegions(lockedIntervals, emptyList(), sinceMillis, untilMillis),
+        )
+    }
+
+    /**
      * The EVIDENCE half of one layer: that device kind'''s lock history clipped to the asked window, with the
      * sub-minute slivers dropped (the seam rule, [MIN_INACTIVITY_BAND_MILLIS]). Its own function because two
      * readings must agree on it — the hatch [layerRegions] draws, the seam rule the bank applies, and which
@@ -2919,7 +2953,9 @@ object SchedulerDomain {
 
     /**
      * PRD §8 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: which sub-stretches of one layer's
-     * [regions] the calendar draws **DOTTED** rather than solid — *"the oblique lines must be dotted if at
+     * [regions] are the user's word against the machine's — and so are **"not on a computer" / "not on a phone"**,
+     * which IS the dotted oblique lines (user, 2026-10-01): `App.kt` draws them as the fake band, under the fake kind's
+     * name and drawing, never as a dotted copy of the real layer. The rules that made them dotted: *"the oblique lines must be dotted if at
      * least one of the corresponding devices was unlocked but the I'm away button was clicked"*, and
      * *"when the user adds a no-screen period on a past time period where some computers were unlocked, the
      * oblique lines for the no computer unlocked restrictive period must be dotted there"* — for the
@@ -2994,35 +3030,58 @@ object SchedulerDomain {
      * PRD §8: **the stretches a PERIOD asserts [layer] over** — the hand-drawn half of a layer, as opposed to
      * the OS lock history [layerEvidence] reads.
      *
-     * One reading, off the panel's KIND and its companions ([PeriodKindConfig.assertedLayers]), so the places
-     * that care cannot disagree: the hatch the calendar paints, the no-screen stretch [assertedNoScreenRanges]
-     * takes out of two of these, and the record bank. Each one-sided kind appears in its own answer; a "No
-     * screen" period appears in neither unless the account made the layers its companions.
+     * One reading, the account's rules over the panels ([statedKindRegions]), so the places that care cannot
+     * disagree: the hatch the calendar paints, the no-screen stretch [assertedNoScreenRanges] takes out of two of
+     * these, and the record bank. Each one-sided kind appears in its own answer; a "No screen" period the user drew
+     * brings both by default (`when no screen then (no computer unlocked or not on a computer) and (…)`), except where
+     * the "or" already holds.
      */
     fun assertedLayerRanges(
         panels: List<TaskPanel>,
         layer: ActivityLayer,
         config: PeriodKindConfig,
-    ): List<TaskTimeRange> =
-        mergeOccupied(
-            panels.filter { it.restrictiveKind.isNotEmpty() && layer in config.assertedLayers(it.restrictiveKind) }
-                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
-        )
+        away: Map<String, List<TaskTimeRange>> = emptyMap(),
+    ): List<TaskTimeRange> = statedKindRegions(panels, config, away)[PeriodKinds.layerKind(layer)].orEmpty()
 
     /**
      * PRD §8: **the stretches a PERIOD asserts [layer] was FAKED over** — a period of "not on a computer" (or
-     * phone), or one carrying it ([PeriodKindConfig.assertedFakeLayers]). The hand-drawn half of the fake layer; the
-     * other half is the "I'm away" button ([fakeLayerRegions]).
+     * phone), or one carrying it. The hand-drawn half of the fake layer; the other half is the "I'm away" button
+     * ([fakeLayerRegions]).
      */
     fun assertedFakeLayerRanges(
         panels: List<TaskPanel>,
         layer: ActivityLayer,
         config: PeriodKindConfig,
-    ): List<TaskTimeRange> =
-        mergeOccupied(
-            panels.filter { it.restrictiveKind.isNotEmpty() && layer in config.assertedFakeLayers(it.restrictiveKind) }
-                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
-        )
+        away: Map<String, List<TaskTimeRange>> = emptyMap(),
+    ): List<TaskTimeRange> = statedKindRegions(panels, config, away)[PeriodKinds.fakeLayerKind(layer)].orEmpty()
+
+    /**
+     * **Every kind in force over the periods [panels] hold**, through the account's rules ([PeriodKindConfig.closeRegions]),
+     * the periods the user stated ([isUserStated]: drawn, or their Sleep schedule) being the ones a "then … or …" fires from. [away] adds stretches the
+     * user stated outside the panels (the "I'm away" spells, as their fake layer kind), so a rule's "or" sees them as
+     * already verified, and [knownAbsent] the kinds the OS log knows are NOT there ([knownUnlockedRegions], under the
+     * real layer kind), so an "or" picks its other side there ([PeriodKindConfig.closeRegions]). The one reading
+     * [assertedLayerRanges] and [assertedFakeLayerRanges] share.
+     */
+    fun statedKindRegions(
+        panels: List<TaskPanel>,
+        config: PeriodKindConfig,
+        away: Map<String, List<TaskTimeRange>> = emptyMap(),
+        knownAbsent: Map<String, List<TaskTimeRange>> = emptyMap(),
+    ): Map<String, List<TaskTimeRange>> {
+        val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
+        val manual = LinkedHashMap<String, MutableList<TaskTimeRange>>()
+        for (panel in panels) {
+            val kind = panel.restrictiveKind
+            if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) continue
+            val span = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
+            own.getOrPut(kind) { ArrayList() } += span
+            if (isUserStated(panel)) manual.getOrPut(kind) { ArrayList() } += span
+        }
+        for ((kind, spans) in away) own.getOrPut(kind) { ArrayList() } += spans
+        if (own.isEmpty()) return emptyMap()
+        return config.closeRegions(own, manual, knownAbsent)
+    }
 
     /**
      * PRD §8: **the no-screen stretches the user has DRAWN** — every period that is or carries a "no screen"
@@ -3035,16 +3094,8 @@ object SchedulerDomain {
      * — so the two one-sided kinds reach the record bank through the rule "no screen" already has instead of
      * growing one of their own. It is the same set [companionPeriods] hands the scheduler, read as spans.
      */
-    fun assertedNoScreenRanges(panels: List<TaskPanel>, config: PeriodKindConfig): List<TaskTimeRange> {
-        val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
-        for (panel in panels) {
-            val kind = panel.restrictiveKind
-            if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) continue
-            own.getOrPut(kind) { ArrayList() } += TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
-        }
-        if (own.isEmpty()) return emptyList()
-        return config.closeRegions(own)[PeriodKinds.NO_SCREEN].orEmpty()
-    }
+    fun assertedNoScreenRanges(panels: List<TaskPanel>, config: PeriodKindConfig): List<TaskTimeRange> =
+        statedKindRegions(panels, config)[PeriodKinds.NO_SCREEN].orEmpty()
 
     /**
      * PRD §8/§9: the past stretches that were OBSERVED to be no-screen periods — the intersection of the two
@@ -3177,6 +3228,7 @@ object SchedulerDomain {
                     // placed occurrence does. Nothing else about the panel says so - it is a recorded
                     // `no task allowed` span like any other.
                     dynamic = panel.conductedBreak,
+                    manual = isUserStated(panel),
                 )
         }
         // Each arrives WITH the companion periods its kind carries ([companionPeriods]).
@@ -3198,10 +3250,11 @@ object SchedulerDomain {
     ): List<RestrictivePeriod> {
         val own =
             sleepRegions(state.sleep, fromMillis, toMillis, timeZone).map {
-                RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, PeriodKinds.SLEEP, SLEEP_PANEL_TITLE)
+                // The user's Sleep schedule, so `manual` ([isUserStated]: orange).
+                RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, PeriodKinds.SLEEP, SLEEP_PANEL_TITLE, manual = true)
             } +
                 beforeBedPanels(state.sleep, fromMillis, toMillis, timeZone).map {
-                    RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind, it.title)
+                    RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind, it.title, manual = true)
                 }
         return own + companionPeriods(own, state.periodKindConfig)
     }
@@ -3862,9 +3915,9 @@ object SchedulerDomain {
      * Only [isRegeneratedPanel] panels are cut, and never a restrictive period: a pinned or manual block is a
      * pre-placed block no period may move, and a period is what the cut is made OF.
      *
-     * [periodPanels] is what is DRAWN AS A BAND — the no-screen periods on the calendar — and that is the whole of
-     * what may be hidden: the no-screen period a §17 window or a wind-down hour carries has no band of its own
-     * (and the window or the hour still stands over it), so a task the user let through one goes on being drawn.
+     * [periodPanels] is what is DRAWN AS A BAND — the periods on the calendar that give way to the line, a §17
+     * window and a wind-down hour among them (they carry `no screen`) — and that is the whole of what may be
+     * hidden: a companion has no band of its own, so it hides nothing a band does not already.
      */
     fun clipPlanForRetractedPeriod(
         panels: List<TaskPanel>,
@@ -4782,6 +4835,21 @@ object SchedulerDomain {
     }
 
     /**
+     * **A period the USER stated** — on the calendar (blue, [PanelOutline.User]) or as a rule in a window off the left
+     * menu (orange, [PanelOutline.Pattern]: the §17 sleep windows and wind-down hours, a repeating period's
+     * occurrences) — as opposed to one the app placed by itself (the dynamic breaks, grey). These are the periods a
+     * combination rule's "then … or …" fires from (`PeriodKindConfig.closeRegions`' `manual`): the user's rule was
+     * *"when the user manually adds the period in the calendar"*, and a sleep window is the user's period too (user
+     * report, 2026-10-01: *"there should be a 'not on a computer' derived from the 'sleep' period behind the now
+     * line"*).
+     */
+    fun isUserStated(panel: TaskPanel): Boolean =
+        when (panelOutline(panel)) {
+            PanelOutline.User, PanelOutline.Pattern -> true
+            PanelOutline.Dynamic, PanelOutline.None -> false
+        }
+
+    /**
      * PRD §8/§18: **the outline an alarm's or a timer's ring wears — ORANGE**, the same as a §17 sleep
      * window's, and for the identical reason: it is a rule the user stated in a window off the LEFT MENU,
      * which the app then applies wherever the rule falls. A daily alarm rings on days the user never
@@ -5465,7 +5533,16 @@ object SchedulerDomain {
         val periodOwn =
             periodPanels.flatMap { panel ->
                 if (panel.screenBreak) screenBreakPeriods(panel)
-                else listOf(RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, panel.restrictiveKind, panel.title))
+                else
+                    listOf(
+                        RestrictivePeriod(
+                            panel.startEpochMillis,
+                            panel.endEpochMillis,
+                            panel.restrictiveKind,
+                            panel.title,
+                            manual = isUserStated(panel),
+                        ),
+                    )
             }
         val standingRestrictions =
             (
@@ -5484,7 +5561,7 @@ object SchedulerDomain {
         val retractedSpans =
             retractedAtLineSpans(standingRestrictions, nowMillis, tpMode, state.periodKindConfig)
         val restrictions =
-            retractAtLine(standingRestrictions, retractedSpans, state.periodKindConfig) +
+            retractAtLine(standingRestrictions, retractedSpans, nowMillis, state.periodKindConfig) +
                 // The away modes' cover, from the line to the end of what is searched (above).
                 listOfNotNull(awayCover)
 
@@ -5763,7 +5840,7 @@ object SchedulerDomain {
         if (state.periodCombinations != PeriodKinds.DEFAULT_COMBINATIONS) {
             for (rule in state.periodCombinations) {
                 result = 31 * result + PeriodFormula.describe(rule.condition).hashCode()
-                result = 31 * result + rule.implies.sorted().hashCode()
+                result = 31 * result + PeriodFormula.describe(rule.then).hashCode()
             }
         }
         return result

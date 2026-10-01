@@ -187,39 +187,56 @@ object PeriodKinds {
      * four cases are ONE rule, as the user wrote it: *"'no screen' is present when ('no computer unlocked' or 'not on
      * a computer') and ('no phone unlocked' or 'not on a phone')"* ([LAYERS_RULE]).
      *
-     * After it, the rules that were the kinds' default "always present with it" sets until 2026-10-01
+     * Then its reverse for the periods the user draws ([NO_SCREEN_LAYERS_RULE]). After them, the rules that were the
+     * kinds' default "always present with it" sets until 2026-10-01
      * ([LEGACY_DEFAULT_COMPANIONS], each as [companionRule]):
      * - [SLEEP] and [BEFORE_BED] bring a [NO_SCREEN] period (PRD §17: a night and the hour of wind-down leading
      *   into it are the plainest stretches there are of nobody being at a screen), and so do the two break kinds
      *   (*"always accompanied by the 'no screen' period"*);
      * - [INACTIVITY] brings **no** "no screen" period — it says the timeline is empty, not that nobody is at a
      *   screen, and a grey stretch the user drew must not be retracted by a mode-1 line;
-     * - [NO_SCREEN] brings **neither** layer: since 2026-09-19 it is a period that refuses the tasks with a
-     *   resilience of 0 to it, and nothing about computers or phones.
+     * - [NO_SCREEN] CARRIES **neither** layer: since 2026-09-19 it is a period that refuses the tasks with a
+     *   resilience of 0 to it, and nothing about computers or phones — only one the user draws brings them, by
+     *   [NO_SCREEN_LAYERS_RULE].
      */
     val DEFAULT_COMBINATIONS: List<PeriodCombination> by lazy {
-        listOf(LAYERS_RULE) + LEGACY_DEFAULT_COMPANIONS.map { (kind, companions) -> companionRule(kind, companions) }
+        listOf(LAYERS_RULE, NO_SCREEN_LAYERS_RULE) +
+            LEGACY_DEFAULT_COMPANIONS.map { (kind, companions) -> companionRule(kind, companions) }
+    }
+
+    /** `(no computer unlocked or not on a computer) and (no phone unlocked or not on a phone)`, the two layers' formula. */
+    private val BOTH_LAYERS: List<PeriodFormulaToken> by lazy {
+        listOf(
+            PeriodFormulaToken.Open,
+            PeriodFormulaToken.Kinds(setOf(NO_COMPUTER_UNLOCKED)),
+            PeriodFormulaToken.Or,
+            PeriodFormulaToken.Kinds(setOf(NOT_ON_A_COMPUTER)),
+            PeriodFormulaToken.Close,
+            PeriodFormulaToken.And,
+            PeriodFormulaToken.Open,
+            PeriodFormulaToken.Kinds(setOf(NO_PHONE_UNLOCKED)),
+            PeriodFormulaToken.Or,
+            PeriodFormulaToken.Kinds(setOf(NOT_ON_A_PHONE)),
+            PeriodFormulaToken.Close,
+        )
     }
 
     /** `(no computer unlocked or not on a computer) and (no phone unlocked or not on a phone)` ⇒ no screen. */
     val LAYERS_RULE: PeriodCombination by lazy {
-        PeriodCombination(
-            "layers",
-            listOf(
-                PeriodFormulaToken.Open,
-                PeriodFormulaToken.Kinds(setOf(NO_COMPUTER_UNLOCKED)),
-                PeriodFormulaToken.Or,
-                PeriodFormulaToken.Kinds(setOf(NOT_ON_A_COMPUTER)),
-                PeriodFormulaToken.Close,
-                PeriodFormulaToken.And,
-                PeriodFormulaToken.Open,
-                PeriodFormulaToken.Kinds(setOf(NO_PHONE_UNLOCKED)),
-                PeriodFormulaToken.Or,
-                PeriodFormulaToken.Kinds(setOf(NOT_ON_A_PHONE)),
-                PeriodFormulaToken.Close,
-            ),
-            listOf(setOf(NO_SCREEN)),
-        )
+        PeriodCombination("layers", BOTH_LAYERS, PeriodFormula.of(setOf(NO_SCREEN)))
+    }
+
+    /**
+     * The other direction, for the periods the user draws (user rule, 2026-10-01: *"By default, when 'no screen' then
+     * ('no computer unlocked' or 'not on a computer') and ('no phone unlocked' or 'not on a phone')"*): a "No screen"
+     * period the USER stated — drawn on the calendar, or carried by a sleep window or wind-down hour of their Sleep
+     * schedule — brings "no computer unlocked" and "no phone unlocked" over its span, except where a computer (or
+     * phone) layer, real or fake, is there already, and "not on a …" where the OS saw that device unlocked. A break or a
+     * no-screen stretch the layers themselves make is the app's, so it brings nothing ([PeriodCombination.isPlacement],
+     * `SchedulerDomain.isUserStated`).
+     */
+    val NO_SCREEN_LAYERS_RULE: PeriodCombination by lazy {
+        PeriodCombination("no-screen-layers", PeriodFormula.of(setOf(NO_SCREEN)), BOTH_LAYERS)
     }
 
     /**
@@ -237,14 +254,14 @@ object PeriodKinds {
 
     /** "A computer layer and a phone layer ⇒ no screen", as one field of both. */
     private fun layerRule(id: String, computer: String, phone: String): PeriodCombination =
-        PeriodCombination(id, PeriodFormula.of(setOf(computer, phone)), listOf(setOf(NO_SCREEN)))
+        PeriodCombination(id, PeriodFormula.of(setOf(computer, phone)), PeriodFormula.of(setOf(NO_SCREEN)))
 
     /**
      * What an "always present with it" set was until 2026-10-01, as the rule that replaced it: `when [kind] then
      * [companions]`. `SchedulerStateCodec` folds an older payload's sets into the rules through here.
      */
     fun companionRule(kind: String, companions: Set<String>): PeriodCombination =
-        PeriodCombination("companion-$kind", PeriodFormula.of(setOf(kind)), listOf(companions))
+        PeriodCombination("companion-$kind", PeriodFormula.of(setOf(kind)), PeriodFormula.of(companions))
 
     /**
      * **The kind a stored name means** — the one reading of every spelling a payload written before

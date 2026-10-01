@@ -4364,8 +4364,9 @@ const val DEEP_COPY_FRAME_ID: String = "DeepCopy"
  *
  * Each field is a period selector: a check-box drop-down over [allKinds] (user rule, 2026-10-01: *"instead of showing all
  * periods, only show a field that opens a drop-down list with check boxes"*), whose checked kinds must all be present.
- * Under "When" the buttons "or", "and", "(" and ")" build a formula of them ([PeriodFormula]); under "then" only "and",
- * since a "then A or B" would not say which period to put there.
+ * Under "When" the buttons "not", "or", "and", "(" and ")" build a formula of them ([PeriodFormula]); under "then" the
+ * same but "not" (user rule, 2026-10-01). A "then" with an "or" fires from the periods the user draws: the kind left of
+ * each "or" is derived where neither side is already there ([PeriodCombination.isPlacement]).
  */
 @Composable
 private fun PeriodCombinationsSection(
@@ -4378,8 +4379,9 @@ private fun PeriodCombinationsSection(
         onSetCombinations(combinations.map { if (it.id == rule.id) rule else it })
     Text("Combinations", style = MaterialTheme.typography.titleSmall)
     Text(
-        "Wherever the “When” formula holds, a period of each kind under “then” is present too. A field holds where " +
-            "every kind checked in it is present.",
+        "Wherever the “When” formula holds, the “then” formula is made true there (never stored). A field holds " +
+            "where every kind checked in it is present; “not” wherever there is none on the whole timeline. Under " +
+            "“then”, for “A or B” the left period is added over the periods you draw, except where A or B already is.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -4394,7 +4396,7 @@ private fun PeriodCombinationsSection(
             Text("When", style = MaterialTheme.typography.labelMedium)
             PeriodFormulaEditor(allKinds, rule.condition) { update(rule.copy(condition = it)) }
             Text("then", style = MaterialTheme.typography.labelMedium)
-            PeriodThenEditor(allKinds, rule.then) { update(rule.copy(then = it)) }
+            PeriodFormulaEditor(allKinds, rule.then, allowNot = false) { update(rule.copy(then = it)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = { onSetCombinations(combinations.filterNot { it.id == rule.id }) }) {
                     Text("Remove combination")
@@ -4408,7 +4410,7 @@ private fun PeriodCombinationsSection(
             val id = generateSequence(1) { it + 1 }.map { "combination-$it" }.first { it !in taken }
             onSetCombinations(
                 combinations +
-                    org.example.project.scheduler.domain.PeriodCombination(id, PeriodFormula.of(setOf(kind)), listOf(emptySet())),
+                    org.example.project.scheduler.domain.PeriodCombination(id, PeriodFormula.of(setOf(kind)), PeriodFormula.of(emptySet())),
             )
         },
     ) { Text("Add a combination") }
@@ -4437,7 +4439,7 @@ private fun FormulaWord(text: String) {
     )
 }
 
-/** One of the formula's step buttons: "or", "and", "(", ")" and the undo of the last step. */
+/** One of the formula's step buttons: "not", "or", "and", "(", ")" and the undo of the last step. */
 @Composable
 private fun FormulaButton(text: String, enabled: Boolean, onClick: () -> Unit) {
     androidx.compose.material3.OutlinedButton(
@@ -4449,15 +4451,16 @@ private fun FormulaButton(text: String, enabled: Boolean, onClick: () -> Unit) {
 }
 
 /**
- * A rule's "When" formula ([PeriodFormula]): its fields and words wrapping over as many lines as the window needs, and
+ * One of a rule's formulas ([PeriodFormula]): its fields and words wrapping over as many lines as the window needs, and
  * under them the buttons that append a step — each enabled only where that step can go, so the formula is always one
- * the rule can read (a `(` left open closes at the end).
+ * the rule can read (a `(` left open closes at the end). [allowNot] is false for a "then", which has no "not".
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PeriodFormulaEditor(
     allKinds: List<String>,
     tokens: List<PeriodFormulaToken>,
+    allowNot: Boolean = true,
     onChange: (List<PeriodFormulaToken>) -> Unit,
 ) {
     val shown = tokens.ifEmpty { PeriodFormula.of(emptySet()) }
@@ -4473,12 +4476,14 @@ private fun PeriodFormulaEditor(
                     }
                 PeriodFormulaToken.And -> FormulaWord("and")
                 PeriodFormulaToken.Or -> FormulaWord("or")
+                PeriodFormulaToken.Not -> FormulaWord("not")
                 PeriodFormulaToken.Open -> FormulaWord("(")
                 PeriodFormulaToken.Close -> FormulaWord(")")
             }
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (allowNot) FormulaButton("not", PeriodFormula.canOpen(shown)) { onChange(PeriodFormula.negate(shown)) }
         FormulaButton("or", PeriodFormula.canAppendOperator(shown)) {
             onChange(PeriodFormula.appendOperator(shown, PeriodFormulaToken.Or))
         }
@@ -4491,22 +4496,3 @@ private fun PeriodFormulaEditor(
     }
 }
 
-/** A rule's "then" side: its fields joined by "and", an "and" button adding one and `⌫` dropping the last. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun PeriodThenEditor(allKinds: List<String>, fields: List<Set<String>>, onChange: (List<Set<String>>) -> Unit) {
-    val shown = fields.ifEmpty { listOf(emptySet()) }
-    androidx.compose.foundation.layout.FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        shown.forEachIndexed { i, kinds ->
-            if (i > 0) FormulaWord("and")
-            PeriodSelectorField(allKinds, kinds) { next -> onChange(shown.mapIndexed { j, f -> if (j == i) next else f }) }
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        FormulaButton("and", true) { onChange(shown + listOf(emptySet())) }
-        FormulaButton("⌫", shown.size > 1) { onChange(shown.dropLast(1)) }
-    }
-}

@@ -78,17 +78,22 @@ class LayerPeriodKindTest {
     }
 
     @Test
-    fun by_default_no_screen_before_bed_and_grey_periods_assert_no_layer() {
-        // User rule (2026-09-18): by default "no screen" is NOT accompanied by "no computer unlocked" or "no
-        // phone unlocked", and inactivity is not accompanied by "no screen". `before bed` carries a no-screen
-        // period, which therefore carries no layer either.
+    fun by_default_every_stated_no_screen_asserts_the_layers() {
+        // User rule (2026-10-01): by default, when "no screen" then ("no computer unlocked" or "not on a computer") and
+        // ("no phone unlocked" or "not on a phone"), the left of each "or" laid over a no-screen period the user STATED —
+        // a drawn one, and the one a `before bed` period carries. Inactivity is not accompanied by "no screen", so it
+        // asserts no layer.
         val panels = listOf(
             period(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR),
             period(PeriodKinds.INACTIVITY, NOW + 2 * HOUR, NOW + 3 * HOUR),
             period(PeriodKinds.BEFORE_BED, NOW + 4 * HOUR, NOW + 5 * HOUR),
         )
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
-            assertEquals(emptyList(), SchedulerDomain.assertedLayerRanges(panels, layer, CONFIG), layer.name)
+            assertEquals(
+                listOf(range(NOW, NOW + HOUR), range(NOW + 4 * HOUR, NOW + 5 * HOUR)),
+                SchedulerDomain.assertedLayerRanges(panels, layer, CONFIG),
+                layer.name,
+            )
         }
         // They are still no-screen stretches for the record bank — by kind, not through the layers.
         assertEquals(

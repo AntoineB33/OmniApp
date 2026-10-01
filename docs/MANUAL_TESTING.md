@@ -132,8 +132,14 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         rule → an on-screen task leaves its periods on the next plan.
   - [ ] **"When" formula buttons:** on a new rule only "or" / "and" are enabled; "and" adds a word and an empty
         field, after which "(" is enabled; ")" is enabled only once a "(" is open and the last field follows it;
-        ⌫ undoes one step at a time down to the first field. Under "then" only "and" and ⌫. A rule
-        `sleep or <your kind>` → `before bed` hatches the zig-zags over both kinds' periods.
+        ⌫ undoes one step at a time down to the first field. "not" is enabled where "(" is (under "When" only);
+        "then" has or / and / ( / ) / ⌫. A rule `sleep or <your kind>` → `before bed` hatches the zig-zags over
+        both kinds' periods.
+  - [ ] **Drawn "no screen" → layers (default rule):** add a "no screen" period on the calendar → both the `/` and
+        `\` layer hatches appear over it. Press "I'm away" over part of it first → no `/` (real computer) hatch
+        over the away spell, the dotted fake one stays. A 15-min break shows no layer hatch; a sleep window and its wind-down hour show both (solid ahead of the line; behind it, "not on a computer" over hours this computer was unlocked).
+        Draw a "no screen" over an hour of the PAST this computer was unlocked for → there the computer band is the
+        dotted "not on a computer" one (not a dotted `/` hatch); over any part it was locked, the solid `/`.
   - [ ] **Add a "no computer unlocked" period over a stretch you were REALLY at the machine for** (earlier
         today, at the keyboard, screen never locked) → the `/` "no computer unlocked" lines over it are **DOTTED**,
         while the same period drawn over last night's locked hours keeps them **solid**. Three marks, three

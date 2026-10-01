@@ -85,9 +85,10 @@ class BeforeBedPeriodTest {
     }
 
     @Test
-    fun the_wind_down_hour_carries_its_no_screen_period_and_no_layer() {
-        // The no-screen period the scheduler reads over the next before-bed hour — and, since "no screen" is not
-        // accompanied by the layer periods by default, no layer hatch over it.
+    fun the_wind_down_hour_carries_its_no_screen_period_and_both_layers() {
+        // The no-screen period the scheduler reads over the next before-bed hour — and, the wind-down hour and the
+        // night being the user's own Sleep schedule, the default rule "when no screen then (no computer unlocked or not
+        // on a computer) and (no phone unlocked or not on a phone)" (2026-10-01) hatches both layers over it.
         val now = utc(2024, 1, 1, 10, 0)
         val panels = SchedulerDomain.fillSchedule(sleeping(), now, tz)
         val windDowns = panels.filter { it.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) }
@@ -103,7 +104,7 @@ class BeforeBedPeriodTest {
         val hatched = SchedulerDomain.mergeOccupied(spans + sleeps)
         val config = PeriodKindConfig.DEFAULT
         SchedulerDomain.ActivityLayer.entries.forEach { layer ->
-            assertEquals(emptyList(), SchedulerDomain.assertedLayerRanges(panels, layer, config), "$layer hatch")
+            assertEquals(hatched, SchedulerDomain.assertedLayerRanges(panels, layer, config), "$layer hatch")
         }
         assertEquals(hatched, SchedulerDomain.assertedNoScreenRanges(panels, config))
         // …and each night's hatch really does start at the wind-down hour rather than at bedtime.
@@ -121,11 +122,14 @@ class BeforeBedPeriodTest {
         )
         assertEquals(hatched, implied.map { TaskTimeRange(it.startMillis, it.endMillis) }.sortedBy { it.startEpochMillis })
         assertTrue(implied.all { it.kind == PeriodKinds.NO_SCREEN })
-        // restrictivePeriodsOf (the display's and the cue's environment) carries both kinds over the hour.
+        // restrictivePeriodsOf (the display's and the cue's environment) carries both kinds over the hour, and the two layers.
         val periods = SchedulerDomain.restrictivePeriodsOf(windDowns, config)
         spans.forEach { span ->
             val here = periods.filter { it.startMillis == span.startEpochMillis && it.endMillis == span.endEpochMillis }
-            assertEquals(setOf(PeriodKinds.BEFORE_BED, PeriodKinds.NO_SCREEN), here.map { it.kind }.toSet())
+            assertEquals(
+                setOf(PeriodKinds.BEFORE_BED, PeriodKinds.NO_SCREEN, PeriodKinds.NO_COMPUTER_UNLOCKED, PeriodKinds.NO_PHONE_UNLOCKED),
+                here.map { it.kind }.toSet(),
+            )
         }
     }
 

@@ -71,24 +71,55 @@ Global rules that always apply: `CLAUDE.md`.
   away stretches had before. A peer's fake layer is not drawn: nothing carries a peer's layers (its real one is
   assumed locked whole), and the mode reads the account's away flag.
 - **COMBINATION RULES** (`PeriodCombination`, `PeriodKindConfig.combinations`, `SchedulerState.periodCombinations`;
-  the period edit window's *Combinations* section, user rule 2026-09-30): wherever a rule's **"When" formula**
-  holds, the kinds under its **"then"** are present over that stretch. Since 2026-10-01 the "When" side is a formula
-  (`PeriodFormulaToken`, read ONLY by `PeriodFormula`): period selector fields — each the shared check-box drop-down
-  (`CheckBoxDropDown`), holding where every kind checked in it is — joined by `and` (overlap) / `or` (union), with
-  brackets; `and` binds tighter; a `(` left open closes at the end, anything else unreadable brings nothing. The
-  editor only appends whole steps and `⌫` undoes one (`PeriodFormula.canAppendOperator` / `canOpen` / `canClose` /
-  `removeLast`). The "then" side is fields joined by `and` ONLY (user choice, 2026-10-01: a "then A or B" says
-  nothing about which period to put there). **One closure** reads the rules (`PeriodKindConfig.closeRegions`) for
-  every question of "which kinds are here": the scheduler's companion periods (`companionPeriods`), the bank's drawn
-  no-screen (`assertedNoScreenRanges`) and the devices' observed no-screen (`observedNoScreenRegions`). Defaults
-  (`PeriodKinds.DEFAULT_COMBINATIONS`): ONE rule, `(no computer unlocked or not on a computer) and (no phone unlocked
-  or not on a phone)` → no screen (`PeriodKinds.LAYERS_RULE`, user rule 2026-10-01; it replaced four one-field rules
-  of the same meaning, which `decode` collapses into it where an older edited list still holds all four untouched);
-  then the old default companion sets (above). Stored only once edited (one `field` row, an emptied list included);
-  a one-field rule still writes the pre-formula `kinds`/`implies` beside it for older builds; `decode` drops kinds
-  the account does not hold and rules whose formula does not parse; in `schedulingSignature`. The layer hatch reads
-  the single-kind rules only (`assertedLayers` / `assertedFakeLayers` via `kindsOf`).
-- **The "I'm away" stretches are this device's FAKE layer** (`SchedulerEngine.declaredAwaySpans`/`declaredAwaySince` →
+  the period edit window's *Combinations* section, user rules 2026-09-30 / 2026-10-01): wherever a rule's **"When"
+  formula** holds, its **"then" formula** is made true over that stretch — **always derived, never stored**. Both sides
+  are formulas (`PeriodFormulaToken`, read ONLY by `PeriodFormula`): period selector fields — each the shared check-box
+  drop-down (`CheckBoxDropDown`), holding where every kind checked in it is — joined by `and` (overlap) / `or`
+  (union), with brackets; "When" also has `not`, which holds **wherever there is none on the whole infinite
+  timeline** (`PeriodFormula.TIMELINE`, a quarter of the Long range each way). `not` binds tightest, then `and`; a `(`
+  left open closes at the end, anything else unreadable brings nothing. The editor only appends whole steps and `⌫`
+  undoes one (`canAppendOperator` / `canOpen` (also `not`) / `canClose` / `removeLast`). No `not` in "then" (user
+  choice).
+  - **A "then" with an `or` is a PLACEMENT** (`PeriodCombination.isPlacement`; user rule: *"the period to the left of
+    'or' is placed automatically when the user manually adds the period in the calendar, except when the 'or'
+    condition is already verified on the timeline"*): its "When" is read over the periods the USER STATED only,
+    each with what it carries (`closeRegions`' `manual`, closed by `kindsOf` — `SchedulerDomain.isUserStated`: a blue
+    or ORANGE outline, so the Sleep schedule's windows and wind-down hours count, user report 2026-10-01; carried as
+    `RestrictivePeriod.manual`), and over that stretch a field is laid, `and` lays both sides, `A or B` lays A only
+    where neither A nor B already is. A break (grey, the app's) or a no-screen stretch the layers make never fires
+    one. Consequence of the default: every sleep window and wind-down hour hatches both layers (solid ahead of the
+    line; behind it, the dotted fake band where this device was seen unlocked — below). That replaces the
+    2026-09-18 rule "a sleep window carries no layer".
+  - **The one exception to "the left of `or`": where the OS KNOWS the left is not there, the right is laid**
+    (`closeRegions`' `knownAbsent`; user rule 2026-10-01: *"if 'then' derives somewhere in the past a ('no computer
+    unlocked' or 'not on a computer') where there is no 'no computer unlocked', then 'not on a computer' is placed
+    because the OS knows that one computer was unlocked. Same for the phone."*). Fed only with
+    `SchedulerDomain.knownUnlockedRegions` — this device's own layer, the asked past minus its locks (same seam
+    rule), and only once its history was read; a peer's layer and an unread history are never "known unlocked".
+    So a "No screen" drawn (or a sleep window lying) over hours this computer was really unlocked shows the
+    dotted "not on a computer" band there. (A "no computer unlocked" period drawn directly over them is shown the
+    same way, by `declaredLayerRegions`: dotted obliques are "not on a computer", whoever said it.)
+  - **Plain rules** (no `not` in "When", no `or` in "then") are what a kind CARRIES (`kindsOf`, transitive) and close
+    to a fixpoint; the others run after, once each in the account's order, each followed by the plain closure again
+    (stratified, so a `not` reads the timeline the rules before it left).
+  - **One closure** reads the rules (`PeriodKindConfig.closeRegions`) for every question of "which kinds are here":
+    the scheduler's companion periods (`companionPeriods`), the bank's drawn no-screen (`assertedNoScreenRanges`),
+    the devices' observed no-screen (`observedNoScreenRegions`) and the calendar's layer hatch over the user's own
+    periods (`statedKindRegions`, computed once per derivation in `App.kt`, the "I'm away" spells passed in as the
+    fake layer so an `or` sees them as already verified). `assertedLayers(kind)` (plain only) stays for the sleep
+    windows and breaks, which never place.
+  - **Defaults** (`PeriodKinds.DEFAULT_COMBINATIONS`): `(no computer unlocked or not on a computer) and (no phone
+    unlocked or not on a phone)` → no screen (`LAYERS_RULE`; it replaced four one-field rules of the same meaning,
+    which `decode` collapses into it where an older edited list still holds all four untouched); its reverse for
+    drawn periods, `when no screen then (no computer unlocked or not on a computer) and (no phone unlocked or not on
+    a phone)` (`NO_SCREEN_LAYERS_RULE`) — so a "No screen" period the user draws hatches both real layers except over
+    a fake (or real) one already there; then the old default companion sets (above).
+  - Stored only once edited (one `field` row, an emptied list included; an edited list is never given a later
+    default); older shapes are still written beside the formulas where a rule still has them (`kinds`/`implies`,
+    `then` as and-joined fields, `thenFormula` the full one); `decode` drops kinds the account does not hold and rules
+    whose formulas do not parse; in `schedulingSignature`.
+  - **Not built yet**: editing a derived period by hand to make it a stored, blue-outlined one (user rule: "then" is
+    derived *"except when modified by the user"*).- **The "I'm away" stretches are this device's FAKE layer** (`SchedulerEngine.declaredAwaySpans`/`declaredAwaySince` →
   `SchedulerDomain.declaredAwayRegions`, ADR 0002). The machine stays UNLOCKED while the button is on, so the
   OS log is silent over exactly the stretch the now-line is in mode 3 for, and the requirement is that such a
   stretch carries both layers. It rides the **asserted** slot, not the evidence one — the seam filter would
@@ -110,10 +141,13 @@ Global rules that always apply: `CLAUDE.md`.
   START, extended in place by the 30-s active-session beat and never by a timer of its own, so a kill
   mid-away lands the episode closed at its last beat exactly as a live `device_active_session` row does.
   LOCAL-ONLY, pruned to the same 24 h window the no-screen evidence answers over.
-- **A HATCH THE LOCK LOG CONTRADICTS IS DOTTED — WHOEVER SAID IT**
-  (`SchedulerDomain.declaredLayerRegions` -> `CalendarRecord.layerDeclared` -> `periodDrawing(dotted = …)`).
-  A hatch says *no device of this kind was unlocked*; the dots say that sentence is the USER'S WORD against
-  the machine's. Two things state it where the OS log disagrees, and they are **one rule**, in one funnel:
+- **A HATCH THE LOCK LOG CONTRADICTS IS "NOT ON A COMPUTER" (OR PHONE) — WHOEVER SAID IT**
+  (`SchedulerDomain.declaredLayerRegions` -> drawn as the FAKE band, `CalendarRecord.layerFake`). **"Not on a
+  computer" IS the dotted oblique lines** (user, 2026-10-01): a stretch the user says nobody was at while the OS
+  saw the device unlocked is that kind, under its name and its drawing — never a dotted copy of the real layer
+  (`CalendarRecord.layerDeclared` and `periodDrawing(dotted = …)` were deleted that day; dashes come only from
+  the dotted drawings themselves). Two things state it where the OS log disagrees, and they are **one rule**, in
+  one funnel:
   - the **"I'm away" button** (*"the oblique lines must be dotted if at least one of the corresponding
     devices was unlocked but the I'm away button was clicked"*) — the machine stays unlocked while the
     button is on, which is the whole reason the button exists;
@@ -137,8 +171,8 @@ Global rules that always apply: `CLAUDE.md`.
   - The app's **own** promises are not declarations: a projected sleep window and a screen break are
     nobody's statement about what happened, and each already wears the outline (orange, grey) that says who
     laid it. `App.kt` hands over the away spells and the drawn periods, and nothing else.
-  - **Only the LINE changes** — same slope, same spacing, same colour, same span, same bubble section. The
-    both-layers identity is untouched: the dots are a drawing, not a classification.
+  - The both-layers identity is untouched: the fake layer brings "no screen" with the real one, by the same
+    default rule (`LAYERS_RULE`).
   - **THREE MARKS, THREE QUESTIONS, AND THAT IS WHY DELETING THE DOTS DID NOT STICK.** They were removed on
     2026-09-12 under *one drawing per statement* — "a stretch a hand states is a restrictive period, and a
     period is outlined in the accent blue" — and restored the same day. The hatch says **what is claimed**

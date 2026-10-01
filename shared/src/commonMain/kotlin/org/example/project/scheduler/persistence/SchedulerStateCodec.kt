@@ -2479,8 +2479,9 @@ private data class PersistedPeriodCombinations(
 )
 
 /**
- * One rule. [condition] and [then] are written since 2026-10-01; before, a rule was one field on each side ([kinds],
- * [implies]) — still written for a rule that is still that shape, so an older build reads it.
+ * One rule. [condition] is written since 2026-10-01 and [thenFormula] since its "then" could hold an `or`; before, a
+ * rule was one field on each side ([kinds], [implies]), then a "then" of fields joined by `and` ([then]). Each older
+ * shape is still written for a rule that still has it, so an older build reads it.
  */
 @Serializable
 private data class PersistedPeriodCombination(
@@ -2489,31 +2490,44 @@ private data class PersistedPeriodCombination(
     val implies: List<String> = emptyList(),
     val condition: List<PersistedFormulaToken>? = null,
     val then: List<List<String>>? = null,
+    val thenFormula: List<PersistedFormulaToken>? = null,
 )
 
-/** A formula token: [op] is `and`, `or`, `(` or `)`, or empty for a field of [kinds]. */
+/** A formula token: [op] is `and`, `or`, `not`, `(` or `)`, or empty for a field of [kinds]. */
 @Serializable
 private data class PersistedFormulaToken(
     val op: String = "",
     val kinds: List<String> = emptyList(),
 )
 
+private fun List<PeriodFormulaToken>.toPersistedFormula(): List<PersistedFormulaToken> =
+    map {
+        when (it) {
+            is PeriodFormulaToken.Kinds -> PersistedFormulaToken(kinds = it.kinds.sorted())
+            PeriodFormulaToken.And -> PersistedFormulaToken("and")
+            PeriodFormulaToken.Or -> PersistedFormulaToken("or")
+            PeriodFormulaToken.Not -> PersistedFormulaToken("not")
+            PeriodFormulaToken.Open -> PersistedFormulaToken("(")
+            PeriodFormulaToken.Close -> PersistedFormulaToken(")")
+        }
+    }
+
+/** The fields of a formula that is only fields joined by `and`, else `null`. */
+private fun List<PeriodFormulaToken>.andFieldsOrNull(): List<Set<String>>? {
+    val fields = filterIsInstance<PeriodFormulaToken.Kinds>().map { it.kinds }
+    return if (this == PeriodFormula.allOf(fields)) fields else null
+}
+
 private fun org.example.project.scheduler.domain.PeriodCombination.toPersisted(): PersistedPeriodCombination {
-    val single = (condition.singleOrNull() as? PeriodFormulaToken.Kinds)?.takeIf { then.size == 1 }
+    val thenFields = then.andFieldsOrNull()
+    val single = (condition.singleOrNull() as? PeriodFormulaToken.Kinds)?.takeIf { thenFields?.size == 1 }
     return PersistedPeriodCombination(
         id = id,
         kinds = single?.kinds?.sorted().orEmpty(),
         implies = if (single != null) implies.sorted() else emptyList(),
-        condition = condition.map {
-            when (it) {
-                is PeriodFormulaToken.Kinds -> PersistedFormulaToken(kinds = it.kinds.sorted())
-                PeriodFormulaToken.And -> PersistedFormulaToken("and")
-                PeriodFormulaToken.Or -> PersistedFormulaToken("or")
-                PeriodFormulaToken.Open -> PersistedFormulaToken("(")
-                PeriodFormulaToken.Close -> PersistedFormulaToken(")")
-            }
-        },
-        then = then.map { it.sorted() },
+        condition = condition.toPersistedFormula(),
+        then = thenFields?.map { it.sorted() },
+        thenFormula = then.toPersistedFormula(),
     )
 }
 
@@ -2522,21 +2536,27 @@ private fun PersistedPeriodCombinations.toPeriodCombinations(
 ): List<org.example.project.scheduler.domain.PeriodCombination> {
     val kinds = known.toSet()
     fun heal(names: List<String>) = names.map { PeriodKinds.migrateStoredKind(it) }.filterTo(LinkedHashSet()) { it in kinds }
+    fun formula(tokens: List<PersistedFormulaToken>) =
+        tokens.map { t ->
+            when (t.op) {
+                "and" -> PeriodFormulaToken.And
+                "or" -> PeriodFormulaToken.Or
+                "not" -> PeriodFormulaToken.Not
+                "(" -> PeriodFormulaToken.Open
+                ")" -> PeriodFormulaToken.Close
+                else -> PeriodFormulaToken.Kinds(heal(t.kinds))
+            }
+        }
     return rules.mapNotNull { r ->
-        val condition =
-            r.condition?.map { t ->
-                when (t.op) {
-                    "and" -> PeriodFormulaToken.And
-                    "or" -> PeriodFormulaToken.Or
-                    "(" -> PeriodFormulaToken.Open
-                    ")" -> PeriodFormulaToken.Close
-                    else -> PeriodFormulaToken.Kinds(heal(t.kinds))
-                }
-            } ?: PeriodFormula.of(heal(r.kinds))
-        val then = r.then?.map(::heal) ?: listOf(heal(r.implies))
+        val condition = r.condition?.let(::formula) ?: PeriodFormula.of(heal(r.kinds))
+        val then =
+            r.thenFormula?.let(::formula)
+                ?: r.then?.let { fields -> PeriodFormula.allOf(fields.map(::heal)) }
+                ?: PeriodFormula.of(heal(r.implies))
         val rule = org.example.project.scheduler.domain.PeriodCombination(r.id, condition, then)
         val namesAny = condition.any { it is PeriodFormulaToken.Kinds && it.kinds.isNotEmpty() }
-        if (r.id.isBlank() || !namesAny || rule.implies.isEmpty() || PeriodFormula.parse(condition) == null) null
+        val readable = PeriodFormula.parse(condition) != null && PeriodFormula.parse(then) != null
+        if (r.id.isBlank() || !namesAny || rule.implies.isEmpty() || !readable) null
         else rule
     }.distinctBy { it.id }
 }
@@ -2568,7 +2588,8 @@ private fun decodePeriodCombinations(
                     ?: PeriodKinds.LEGACY_DEFAULT_COMPANIONS[kind].orEmpty()
             companions.takeIf { it.isNotEmpty() }?.let { PeriodKinds.companionRule(kind, it) }
         }
-    val rules = stored?.toPeriodCombinations(known)?.let(::collapseLegacyLayerRules) ?: listOf(PeriodKinds.LAYERS_RULE)
+    val rules = stored?.toPeriodCombinations(known)?.let(::collapseLegacyLayerRules)
+            ?: listOf(PeriodKinds.LAYERS_RULE, PeriodKinds.NO_SCREEN_LAYERS_RULE)
     return (rules + folded).distinctBy { it.id }
 }
 

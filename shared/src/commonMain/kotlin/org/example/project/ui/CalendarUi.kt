@@ -297,19 +297,12 @@ data class CalendarRecord(
      */
     val layer: SchedulerDomain.ActivityLayer? = null,
     /**
-     * PRD §8 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: this region of [layer] is one where
-     * the hatch stands on the **USER'S OWN WORD** rather than on a locked screen — a device of that layer's
-     * kind was sitting there UNLOCKED and the user said nobody was at it. Two things say that: the **"I'm
-     * away" button** (which is what a mode-3 period is made of) and a **period the user DREW** asserting the
-     * layer over hours already elapsed. Same slope, same span, same bubble section; drawn DOTTED.
-     * `SchedulerDomain.declaredLayerRegions` decides which sub-stretches those are, and `App.kt` emits one
-     * record per stretch of each kind — so a declaration that starts inside a locked stretch splits the band.
-     */
-    val layerDeclared: Boolean = false,
-    /**
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: this region is [layer]'s **fake** half — "not on a
      * computer" / "not on a phone", a device of that kind unlocked and declared away. Drawn with the
-     * fake kind's own drawing ([PeriodKinds.fakeLayerKind]) and named by it in the bubble.
+     * fake kind's own drawing ([PeriodKinds.fakeLayerKind], dotted obliques by default) and named by it in the bubble.
+     * It is also every stretch the user stated the real layer over while the OS saw the device unlocked
+     * (`SchedulerDomain.declaredLayerRegions`): "not on a computer" IS the dotted oblique lines (user, 2026-10-01), so
+     * there is no dotted copy of the real layer.
      */
     val layerFake: Boolean = false,
     /**
@@ -388,8 +381,6 @@ data class PlacedRecord(
     val inactivity: Boolean = false,
     /** PRD §8: one region of one decorative layer ("no computer/phone unlocked"). See [CalendarRecord.layer]. */
     val layer: SchedulerDomain.ActivityLayer? = null,
-    /** PRD §8: the user's word against the lock log over this [layer] region; drawn dotted. See [CalendarRecord.layerDeclared]. */
-    val layerDeclared: Boolean = false,
     /** The fake half of [layer]. See [CalendarRecord.layerFake]. */
     val layerFake: Boolean = false,
     /** PRD §8/§9 no-screen period: a user-authored "No screen" panel, rendered as a hatched block. */
@@ -521,7 +512,6 @@ fun recordsForDay(
             sleep = record.sleep,
             inactivity = record.inactivity,
             layer = record.layer,
-            layerDeclared = record.layerDeclared,
             layerFake = record.layerFake,
             noScreen = record.noScreen,
             restrictiveKind = record.restrictiveKind,
@@ -5720,7 +5710,6 @@ private fun DayColumn(
                             if (band.layerFake) PeriodKinds.fakeLayerKind(band.layer!!) else PeriodKinds.layerKind(band.layer!!),
                         ),
                         CalColors.muted,
-                        dotted = band.layerDeclared,
                     ),
             )
         }

@@ -241,14 +241,20 @@ model exists to prevent.
   covering period that **is or carries `no screen`** (`PeriodKindConfig.isOrImpliesNoScreen`) gives up
   `[now, its end)`, and the plan may then put a task at the line: what is left covering it is a layer
   period, whose default resilience is `1` and which prevents nobody.
-  - **Exactly the `no screen` periods retract** (`SchedulerDomain.retractsAtLine`, user rule 2026-09-28): a drawn one,
-    and the companion every §17 window, wind-down hour or other kind carries. **No other period gives way, whatever
-    it accepts**: at a mode-1 line inside a `sleep` window its no-screen companion lifts and the window itself stays —
-    nobody runs in it, which the requirements allow (they require no task anywhere). The same for `inactivity` with a
-    companion, `before bed` and every kind the account defined. (Until 2026-09-28 `sleep` retracted WHOLE, on PRD
-    §17's *"carved by activity"*; the requirements name the no-screen period and nothing else — the tests pinning the
-    old reading, `SleepWindowNoIdlingTest` among them, have been failing since.) The predicate is deliberately **not**
-    `coversNoScreen`, or a period the user drew would be pulled out from under them.
+  - **Every period that IS or CARRIES `no screen` retracts** (`SchedulerDomain.retractsAtLine` =
+    `PeriodKindConfig.isOrImpliesNoScreen`, user rule 2026-10-01): a drawn `no screen` period, its companions, and
+    the period that carries one — a `sleep` window (`when sleep then no screen`), a `before bed` hour, `inactivity`
+    or an account kind once a rule gives it the companion. A period that carries `no screen` cannot stand at the line
+    without its no-screen period standing there too, so a user still at a screen when sleep was scheduled retracts
+    the WINDOW at the line, not only its companion. **A carrier gives way only where the line is IN it**
+    (`startMillis <= now`): a night or a wind-down hour still ahead stays an obstacle in the plan, or every future
+    night would be planned as working time (the morning plan, the shares and `scheduleCycle` all built as if nobody
+    slept — `ScheduleCycleTest` caught it). A line reaching bedtime still at a screen meets the window, and
+    `planMismatchAtLine` asks the fill once at that edge. Only the single-kind closure counts: a no-screen period a
+    two-kind rule brings retracts itself and neither cause. (2026-09-28 → 2026-10-01 only the companion lifted and
+    the window stayed over the line; before that `sleep` retracted on PRD §17's *"carved by activity"*.) The
+    predicate is deliberately **not** `coversNoScreen`, or a grey period the user drew would be pulled out from
+    under them.
   - **The plan is searched AND materialized across the retracted span; the DISPLAY is what stops at the
     line** (`clipPlanForRetractedPeriod`, beside `clipPlanForPinnedScreenBreak` in `App.kt`, forward only).
     The rules must name which task holds and until when (*"task A from 00:40 to $now line$, until 01:25"*),

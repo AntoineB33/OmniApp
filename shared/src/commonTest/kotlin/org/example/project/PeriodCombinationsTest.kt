@@ -39,7 +39,7 @@ class PeriodCombinationsTest {
 
     /** A rule of one field on each side — the shape every rule had before formulas. */
     private fun rule(id: String, kinds: Set<String>, implies: Set<String>) =
-        PeriodCombination(id, PeriodFormula.of(kinds), listOf(implies))
+        PeriodCombination(id, PeriodFormula.of(kinds), PeriodFormula.of(implies))
 
     // ----- the defaults: each computer layer with each phone layer is "no screen" ----------------------------------
 
@@ -240,7 +240,7 @@ class PeriodCombinationsTest {
 
     private fun beforeBedWhere(vararg condition: PeriodFormulaToken): List<TaskTimeRange>? =
         PeriodKindConfig(
-            combinations = listOf(PeriodCombination("f", condition.toList(), listOf(setOf(PeriodKinds.BEFORE_BED)))),
+            combinations = listOf(PeriodCombination("f", condition.toList(), PeriodFormula.of(setOf(PeriodKinds.BEFORE_BED)))),
         ).closeRegions(present)[PeriodKinds.BEFORE_BED]
 
     @Test
@@ -277,7 +277,7 @@ class PeriodCombinationsTest {
                         PeriodCombination(
                             "f",
                             listOf(A, OR, PeriodFormulaToken.Kinds(setOf("commute"))),
-                            listOf(setOf(PeriodKinds.BEFORE_BED)),
+                            PeriodFormula.of(setOf(PeriodKinds.BEFORE_BED)),
                         ),
             )
         assertEquals(setOf(PeriodKinds.SLEEP, PeriodKinds.NO_SCREEN, PeriodKinds.BEFORE_BED), config.kindsOf(PeriodKinds.SLEEP))
@@ -290,7 +290,7 @@ class PeriodCombinationsTest {
     fun the_then_side_is_every_field_it_holds() {
         val config =
             PeriodKindConfig(
-                combinations = listOf(PeriodCombination("f", listOf(A), listOf(setOf(PeriodKinds.BEFORE_BED), setOf("commute")))),
+                combinations = listOf(PeriodCombination("f", listOf(A), PeriodFormula.allOf(listOf(setOf(PeriodKinds.BEFORE_BED), setOf("commute"))))),
             )
         val closed = config.closeRegions(present)
         assertEquals(listOf(span(0, 2)), closed[PeriodKinds.BEFORE_BED])
@@ -329,7 +329,7 @@ class PeriodCombinationsTest {
     @Test
     fun a_formula_round_trips_and_changes_the_scheduling_signature() {
         val rules =
-            listOf(PeriodCombination("f", listOf(OPEN, A, OR, B, CLOSE, AND, C), listOf(setOf(PeriodKinds.BEFORE_BED), setOf(PeriodKinds.NO_SCREEN))))
+            listOf(PeriodCombination("f", listOf(OPEN, A, OR, B, CLOSE, AND, C), PeriodFormula.allOf(listOf(setOf(PeriodKinds.BEFORE_BED), setOf(PeriodKinds.NO_SCREEN)))))
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetPeriodCombinations(rules))
         assertEquals(rules, assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))).periodCombinations)
         val other = SchedulerReducer.reduce(
@@ -397,7 +397,9 @@ class PeriodCombinationsTest {
                 """{"id":"layers-fake-both","kinds":["not on a computer","not on a phone"],"implies":["no screen"]}"""
         val mine = """{"id":"combination-1","kinds":["sleep"],"implies":["before bed"]}"""
         assertEquals(
-            listOf(rule("combination-1", setOf(PeriodKinds.SLEEP), setOf(PeriodKinds.BEFORE_BED))) + PeriodKinds.DEFAULT_COMBINATIONS,
+            // An edited list keeps what the account made of it: the later default (no screen → layers) is not added.
+            listOf(rule("combination-1", setOf(PeriodKinds.SLEEP), setOf(PeriodKinds.BEFORE_BED))) +
+                PeriodKinds.DEFAULT_COMBINATIONS.filterNot { it == PeriodKinds.NO_SCREEN_LAYERS_RULE },
             old("$mine,$four").periodCombinations,
         )
         // One of them struck off: the account's edit stands, nothing is collapsed.
@@ -414,5 +416,164 @@ class PeriodCombinationsTest {
         val decoded = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
         assertEquals(PeriodKinds.DEFAULT_COMBINATIONS, decoded.periodCombinations)
         assertEquals(s.periodKindStyles, decoded.periodKindStyles)
+    }
+
+    // ----- "not" in "When", "or" in "then" (2026-10-01) ------------------------------------------------------------
+
+    private val NOT = PeriodFormulaToken.Not
+
+    @Test
+    fun not_holds_wherever_there_is_none_on_the_whole_timeline() {
+        val closed = beforeBedWhere(NOT, A)
+        assertEquals(
+            listOf(TaskTimeRange(PeriodFormula.TIMELINE.startEpochMillis, T), TaskTimeRange(T + 2 * HOUR, PeriodFormula.TIMELINE.endEpochMillis)),
+            closed,
+        )
+        // "no computer unlocked and not sleep" = 2–5.
+        assertEquals(listOf(span(2, 5)), beforeBedWhere(B, AND, NOT, A))
+        // not binds tighter than and: "not sleep and no computer unlocked" reads the same.
+        assertEquals(listOf(span(2, 5)), beforeBedWhere(NOT, A, AND, B))
+        // A rule with a "not" is carried by no kind: adding a period can make it false.
+        val config = PeriodKindConfig(combinations = listOf(PeriodCombination("f", listOf(NOT, A), PeriodFormula.of(setOf("commute")))))
+        assertEquals(setOf(PeriodKinds.INACTIVITY), config.kindsOf(PeriodKinds.INACTIVITY))
+    }
+
+    @Test
+    fun the_not_button_starts_an_operand_and_undoes_like_a_bracket() {
+        var f = PeriodFormula.appendOperator(listOf(A), AND)
+        assertTrue(PeriodFormula.canOpen(f))
+        f = PeriodFormula.negate(f)
+        f = PeriodFormula.open(f)
+        assertEquals(listOf(A, AND, NOT, OPEN, PeriodFormulaToken.Kinds(emptySet())), f)
+        f = PeriodFormula.removeLast(f)
+        assertEquals(listOf(A, AND, NOT, PeriodFormulaToken.Kinds(emptySet())), f)
+        f = PeriodFormula.removeLast(f)
+        assertEquals(listOf(A, AND, PeriodFormulaToken.Kinds(emptySet())), f)
+    }
+
+    private val noScreenDrawn = mapOf(PeriodKinds.NO_SCREEN to listOf(span(0, 4)))
+
+    @Test
+    fun a_no_screen_period_the_user_draws_brings_both_layers_by_default() {
+        val closed = DEFAULT.closeRegions(noScreenDrawn, manual = noScreenDrawn)
+        assertEquals(listOf(span(0, 4)), closed[PeriodKinds.NO_COMPUTER_UNLOCKED])
+        assertEquals(listOf(span(0, 4)), closed[PeriodKinds.NO_PHONE_UNLOCKED])
+        assertEquals(null, closed[PeriodKinds.NOT_ON_A_COMPUTER], "only the left of each or is laid")
+    }
+
+    @Test
+    fun the_left_of_or_is_not_laid_where_the_or_already_holds() {
+        val present = noScreenDrawn + (PeriodKinds.NOT_ON_A_COMPUTER to listOf(span(1, 2))) + (PeriodKinds.NO_PHONE_UNLOCKED to listOf(span(3, 6)))
+        val closed = DEFAULT.closeRegions(present, manual = noScreenDrawn)
+        assertEquals(listOf(span(0, 1), span(2, 4)), closed[PeriodKinds.NO_COMPUTER_UNLOCKED])
+        assertEquals(listOf(span(0, 6)), closed[PeriodKinds.NO_PHONE_UNLOCKED])
+    }
+
+    @Test
+    fun a_no_screen_stretch_the_user_did_not_draw_brings_no_layer() {
+        // A sleep window carries no screen, and the layers make no screen: neither is drawn by the user.
+        val closed =
+            DEFAULT.closeRegions(
+                mapOf(PeriodKinds.SLEEP to listOf(span(0, 8)), PeriodKinds.NO_SCREEN to listOf(span(10, 12))),
+            )
+        assertEquals(listOf(span(0, 8), span(10, 12)), closed[PeriodKinds.NO_SCREEN])
+        assertEquals(null, closed[PeriodKinds.NO_COMPUTER_UNLOCKED])
+        assertEquals(null, closed[PeriodKinds.NO_PHONE_UNLOCKED])
+        assertEquals(setOf(PeriodKinds.NO_SCREEN), DEFAULT.kindsOf(PeriodKinds.NO_SCREEN), "no kind carries a placement")
+        assertEquals(emptySet(), DEFAULT.assertedLayers(PeriodKinds.SLEEP))
+    }
+
+    @Test
+    fun the_calendar_hatches_the_layers_of_a_drawn_no_screen_but_not_over_an_away_spell() {
+        val drawn =
+            org.example.project.scheduler.model.TaskPanel(
+                id = "p",
+                taskId = null,
+                title = PeriodKinds.periodTitle(PeriodKinds.NO_SCREEN),
+                startEpochMillis = T,
+                endEpochMillis = T + 4 * HOUR,
+                periodKind = PeriodKinds.NO_SCREEN,
+            )
+        assertTrue(SchedulerDomain.isUserPlaced(drawn))
+        val computer = SchedulerDomain.ActivityLayer.entries.first { PeriodKinds.layerKind(it) == PeriodKinds.NO_COMPUTER_UNLOCKED }
+        assertEquals(listOf(span(0, 4)), SchedulerDomain.assertedLayerRanges(listOf(drawn), computer, DEFAULT))
+        val away = mapOf(PeriodKinds.NOT_ON_A_COMPUTER to listOf(span(1, 2)))
+        assertEquals(listOf(span(0, 1), span(2, 4)), SchedulerDomain.statedKindRegions(listOf(drawn), DEFAULT, away)[PeriodKinds.NO_COMPUTER_UNLOCKED])
+    }
+
+    @Test
+    fun formulas_with_or_and_not_round_trip_and_yesterdays_then_fields_still_load() {
+        val rules =
+            listOf(
+                PeriodCombination("f", listOf(NOT, A, AND, B), listOf(OPEN, C, OR, PeriodFormulaToken.Kinds(setOf(PeriodKinds.NOT_ON_A_PHONE)), CLOSE)),
+            )
+        val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetPeriodCombinations(rules))
+        assertEquals(rules, assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))).periodCombinations)
+        val old =
+            withField(
+                SchedulerStateCodec.encode(SchedulerState.empty()),
+                "periodCombinations",
+                """{"folded":true,"rules":[{"id":"x","condition":[{"kinds":["sleep"]}],"then":[["before bed"],["no screen"]]}]}""",
+            )
+        assertEquals(
+            listOf(PeriodCombination("x", listOf(A), PeriodFormula.allOf(listOf(setOf(PeriodKinds.BEFORE_BED), setOf(PeriodKinds.NO_SCREEN))))),
+            assertNotNull(SchedulerStateCodec.decode(old)).periodCombinations,
+        )
+    }
+
+    // ----- the OS knows better than the left of "or" (2026-10-01) ------------------------------------------------
+
+    @Test
+    fun where_the_os_saw_a_computer_unlocked_the_or_lays_not_on_a_computer() {
+        // Drawn no screen 0–4; this computer was seen unlocked 1–3 (the phone's history cannot be asked).
+        val unlocked = mapOf(PeriodKinds.NO_COMPUTER_UNLOCKED to listOf(span(1, 3)))
+        val closed = DEFAULT.closeRegions(noScreenDrawn, manual = noScreenDrawn, knownAbsent = unlocked)
+        assertEquals(listOf(span(0, 1), span(3, 4)), closed[PeriodKinds.NO_COMPUTER_UNLOCKED])
+        assertEquals(listOf(span(1, 3)), closed[PeriodKinds.NOT_ON_A_COMPUTER])
+        assertEquals(listOf(span(0, 4)), closed[PeriodKinds.NO_PHONE_UNLOCKED], "nothing is known of the phone")
+        assertEquals(null, closed[PeriodKinds.NOT_ON_A_PHONE])
+        // Still nothing where the "or" already holds: an away spell over 2–3 is left as it is.
+        val away = noScreenDrawn + (PeriodKinds.NOT_ON_A_COMPUTER to listOf(span(2, 3)))
+        val withAway = DEFAULT.closeRegions(away, manual = noScreenDrawn, knownAbsent = unlocked)
+        assertEquals(listOf(span(1, 3)), withAway[PeriodKinds.NOT_ON_A_COMPUTER])
+    }
+
+    @Test
+    fun known_unlocked_is_the_asked_past_minus_the_locks_and_nothing_when_it_cannot_be_asked() {
+        assertEquals(
+            listOf(span(0, 1), span(3, 5)),
+            SchedulerDomain.knownUnlockedRegions(listOf(span(1, 3)), T, T + 5 * HOUR),
+        )
+        assertEquals(emptyList(), SchedulerDomain.knownUnlockedRegions(null, T, T + 5 * HOUR))
+    }
+
+    @Test
+    fun a_past_sleep_window_lays_not_on_a_computer_where_the_computer_was_unlocked() {
+        // User report (2026-10-01): "there should be a 'not on a computer' derived from the 'sleep' period behind the now
+        // line". A sleep window of the Sleep schedule is the user's own (orange), and it carries a no-screen period.
+        val sleep =
+            org.example.project.scheduler.model.TaskPanel(
+                id = "sleep/x",
+                taskId = null,
+                title = SchedulerDomain.SLEEP_PANEL_TITLE,
+                startEpochMillis = T,
+                endEpochMillis = T + 8 * HOUR,
+                sleep = true,
+                periodKind = PeriodKinds.SLEEP,
+            )
+        assertTrue(SchedulerDomain.isUserStated(sleep))
+        val stated =
+            SchedulerDomain.statedKindRegions(
+                listOf(sleep),
+                DEFAULT,
+                knownAbsent = mapOf(PeriodKinds.NO_COMPUTER_UNLOCKED to listOf(span(1, 3))),
+            )
+        assertEquals(listOf(span(1, 3)), stated[PeriodKinds.NOT_ON_A_COMPUTER])
+        assertEquals(listOf(span(0, 1), span(3, 8)), stated[PeriodKinds.NO_COMPUTER_UNLOCKED])
+        assertEquals(listOf(span(0, 8)), stated[PeriodKinds.NO_PHONE_UNLOCKED])
+        // A break is the app's own (grey): it carries no screen, but brings no layer.
+        val brk = sleep.copy(id = "break", sleep = false, screenBreak = true, periodKind = PeriodKinds.BREAK_15MIN)
+        assertTrue(!SchedulerDomain.isUserStated(brk))
+        assertEquals(null, SchedulerDomain.statedKindRegions(listOf(brk), DEFAULT)[PeriodKinds.NO_COMPUTER_UNLOCKED])
     }
 }

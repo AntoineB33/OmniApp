@@ -42,12 +42,13 @@ val LocalPeriodKindConfig = compositionLocalOf { PeriodKindConfig.DEFAULT }
  *
  * Drawn as ONE rectangle filled with a repeated tile rather than as a loop of lines, so the cost is the same
  * for a 20-minute box and for a night at the zoom ceiling (~150 000 px tall), and the pattern is continuous
- * across the tile seams. [dotted] breaks the strokes into dashes without touching anything else — the mark
- * of a layer the user declared against the machine's own log (see `SchedulerDomain.declaredLayerRegions`).
+ * across the tile seams. Dashes come only from a drawing of their own ([PeriodDrawing.DottedRisingObliques] /
+ * [PeriodDrawing.DottedFallingObliques], "not on a computer" / "not on a phone"): dotted obliques ARE that kind, so
+ * no other mark may dot a drawing (user, 2026-10-01).
  */
-internal fun Modifier.periodDrawing(drawing: PeriodDrawing, color: Color, dotted: Boolean = false): Modifier =
+internal fun Modifier.periodDrawing(drawing: PeriodDrawing, color: Color): Modifier =
     this.drawWithCache {
-        val tile = periodDrawingTile(drawing, color.copy(alpha = 0.35f), dotted, this)
+        val tile = periodDrawingTile(drawing, color.copy(alpha = 0.35f), this)
         val brush = ShaderBrush(ImageShader(tile, TileMode.Repeated, TileMode.Repeated))
         onDrawBehind { drawRect(brush) }
     }
@@ -71,21 +72,21 @@ private fun tileSizeDp(drawing: PeriodDrawing): Pair<Float, Float> =
         PeriodDrawing.Zigzags -> 8f to 14f
     }
 
-private fun periodDrawingTile(drawing: PeriodDrawing, color: Color, dotted: Boolean, density: Density): ImageBitmap {
+private fun periodDrawingTile(drawing: PeriodDrawing, color: Color, density: Density): ImageBitmap {
     val (wDp, hDp) = tileSizeDp(drawing)
     val w = ceil(wDp * density.density).roundToInt().coerceAtLeast(2)
     val h = ceil(hDp * density.density).roundToInt().coerceAtLeast(2)
     val image = ImageBitmap(w, h)
     CanvasDrawScope().draw(density, LayoutDirection.Ltr, Canvas(image), Size(w.toFloat(), h.toFloat())) {
-        drawTile(drawing, color, dotted)
+        drawTile(drawing, color)
     }
     return image
 }
 
-private fun DrawScope.drawTile(drawing: PeriodDrawing, color: Color, dotted: Boolean) {
+private fun DrawScope.drawTile(drawing: PeriodDrawing, color: Color) {
     val stroke = 1.dp.toPx()
-    // The two dotted drawings are their plain slope with the dashes always on.
-    val dashed = dotted || drawing == PeriodDrawing.DottedRisingObliques || drawing == PeriodDrawing.DottedFallingObliques
+    // The two dotted drawings are their plain slope with the dashes on.
+    val dashed = drawing == PeriodDrawing.DottedRisingObliques || drawing == PeriodDrawing.DottedFallingObliques
     val effect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(1.5.dp.toPx(), 2.5.dp.toPx())) else null
     val w = size.width
     val h = size.height

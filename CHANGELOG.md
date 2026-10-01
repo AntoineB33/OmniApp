@@ -11,6 +11,52 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A period that carries "no screen" retracts at a mode-1 line — 2026-10-01
+
+User rule: *"When the user is still on the computer when 'sleep' was scheduled, then the 'sleep' period retracts at now
+line, because when there is sleep there is 'no screen', and if now line is in mode 1, the now line must not be in 'no
+screen'."* Replaces the 2026-09-28 rule (only the `no screen` companion lifted; the window stayed over the line).
+
+- `SchedulerDomain.retractsAtLine` is now `PeriodKindConfig.isOrImpliesNoScreen`: a `sleep` window, a `before bed` hour
+  and any kind a single-kind rule gives `no screen` give up `[line, end)` with their companion — **only the one the line
+  is IN**: a window ahead stays an obstacle in the plan (user's choice, the same day), since retracting it planned every
+  future night as work. A line reaching bedtime at a screen gets one fill via `planMismatchAtLine`. The band is still
+  laid whole; `clipPlanForRetractedPeriod` hides the plan ahead of the line inside it.
+- Tests: `SleepWindowNoIdlingTest` (the four mode-1 cases failing since 09-28 pass again;
+  `the_wind_down_hour_keeps_its_own_period_when_the_line_is_in_it` → `the_wind_down_hour_retracts_at_a_line_still_at_a_screen`).
+
+### Combination rules: `not` in "When", `or` in "then", no screen → layers by default — 2026-10-01
+
+User rules: *"Add the 'not' button in 'When' and 'then'. Add 'or' in 'then'. By default, when 'no screen' then ('no
+computer unlocked' or 'not on a computer') and ('no phone unlocked' or 'not on a phone'). The period to the left of 'or'
+is placed automatically when the user manually adds the period in the calendar, except when the 'or' condition is
+already verified on the timeline."* Then, on asking: "then" is always derived, never stored; no `not` in "then"; `not X`
+holds wherever there is no X on the whole infinite timeline; keep "layers ⇒ no screen" beside the new default.
+
+- `PeriodFormulaToken.Not` (When only) and `PeriodCombination.then` is a formula too (`and`/`or`/brackets).
+- A "then" with `or` (`isPlacement`) fires only from the periods the user drew (`closeRegions(present, manual)`,
+  `RestrictivePeriod.manual`, `SchedulerDomain.statedKindRegions`), laying the left of each `or` where neither side is.
+- New default `PeriodKinds.NO_SCREEN_LAYERS_RULE`; the calendar's layer hatch over the user's periods now reads the
+  closure (with the "I'm away" spells as the fake layer) instead of `kindsOf`.
+- Persistence: `PersistedPeriodCombination.thenFormula` and the `not` op; yesterday's `then` (and-joined fields) still
+  written where it fits and read when `thenFormula` is absent. An account at the defaults gets the new rule; an edited
+  list is left as it is. Pinned by `PeriodCombinationsTest`, `LayerPeriodKindTest.by_default_only_a_drawn_no_screen_…`.
+- **OS exception** (follow-up rule the same day): in the past, where this device's OS log knows it was unlocked, a
+  derived `no computer unlocked or not on a computer` lays `not on a computer` (same for the phone) —
+  `closeRegions(…, knownAbsent)`, fed by `SchedulerDomain.knownUnlockedRegions` in the calendar's layer derivation.
+  Not fed to the scheduler's own closure (it has no lock history; both layer kinds restrict nobody by default).
+- **Sleep schedule counts as the user's** (user report the same day: *"there should be a 'not on a computer' derived
+  from the 'sleep' period behind the now line"*): the `or` placement fires from every period the user STATED
+  (`SchedulerDomain.isUserStated` = blue or orange outline), read with what it carries (a sleep window carries no
+  screen). Sleep windows and wind-down hours therefore hatch both layers (the fake one behind the line where this
+  device was seen unlocked), replacing the 2026-09-18 "a sleep window carries no layer". Breaks (grey) still don't.
+- **Dotted obliques are "not on a computer"** (user, same day): the stretches `declaredLayerRegions` finds (the user
+  stated the real layer while the OS saw the device unlocked) are drawn as the fake band — "Not on a computer" /
+  "Not on a phone", the fake kind's drawing — instead of a dotted copy of the real layer under its name.
+  `CalendarRecord.layerDeclared` and `periodDrawing(dotted = …)` deleted.
+- **Not built**: turning a derived period into a stored blue one by editing it.
+- **Deploy**: client rebuild only.
+
 ### Period edit window: companions folded into combinations, "When" formulas — 2026-10-01
 
 User rule: *"remove the 'present with it' config, because it can be done by the 'combinations' config"*; *"only show a

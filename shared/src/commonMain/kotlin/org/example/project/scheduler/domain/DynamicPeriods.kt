@@ -250,6 +250,12 @@ data class RestrictivePeriod(
      * by hand is a pre-placed restrictive period, which the README bars nothing after.
      */
     val dynamic: Boolean = false,
+    /**
+     * Whether the user stated this period — drew it on the calendar, or set it in the Sleep schedule
+     * (`SchedulerDomain.isUserStated`) — the periods a combination rule's "then … or …" fires from
+     * (`PeriodKindConfig.closeRegions`).
+     */
+    val manual: Boolean = false,
 ) {
     val durationMillis: Long get() = endMillis - startMillis
 

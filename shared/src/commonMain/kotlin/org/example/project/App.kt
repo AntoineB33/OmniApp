@@ -2008,6 +2008,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             val layerRecords =
                 Perf.measure("display.layerRecords") {
+                // Every kind the periods the user drew state, through the account's rules — the away spells counted
+                // as this device's fake layer, so a drawn "no screen" does not lay "no computer unlocked" over an
+                // away spell ("except when the 'or' condition is already verified"). And where this device's OS log
+                // KNOWS it was unlocked in the past, the "or" lays "not on a computer" instead (user rule,
+                // 2026-10-01) — known only once the history was read; a peer's layer is never known unlocked.
+                val ownKnownUnlocked =
+                    if (lockHistoryScanned) {
+                        SchedulerDomain.knownUnlockedRegions(lockedIntervals, displayFloorMillis, nowMillis)
+                    } else {
+                        emptyList()
+                    }
+                val stated =
+                    SchedulerDomain.statedKindRegions(
+                        workPlanPanels,
+                        periodKindConfig,
+                        away = mapOf(PeriodKinds.fakeLayerKind(ownLayer) to declaredAwayRegions),
+                        knownAbsent = mapOf(PeriodKinds.layerKind(ownLayer) to ownKnownUnlocked),
+                    )
                 SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
                     val layerLocked =
                         when {
@@ -2035,8 +2053,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // it is the second half of what the dots below are asked about: a hand-drawn period and an
                     // away spell are the same thing said two ways — the user's own word about who was at a
                     // screen — while everything in [layerAssertedAll] is the APP promising something.
-                    val layerStated =
-                        SchedulerDomain.assertedLayerRanges(workPlanPanels, layer, periodKindConfig)
+                    val layerStated = stated[PeriodKinds.layerKind(layer)].orEmpty()
                     val regions =
                         SchedulerDomain.layerRegions(
                             lockedIntervals = layerLocked,
@@ -2048,7 +2065,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // is not ("'not on a computer' can't be with 'no computer unlocked'").
                     val fakeRegions =
                         SchedulerDomain.fakeLayerRegions(
-                            layerAway + SchedulerDomain.assertedFakeLayerRanges(workPlanPanels, layer, periodKindConfig),
+                            layerAway + stated[PeriodKinds.fakeLayerKind(layer)].orEmpty(),
                             regions,
                         )
                     // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the sub-stretches of
@@ -2076,17 +2093,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // precedes it (an emptied DB) — its drawn start is only the display floor, so it reads "∞".
                     // Asked of the MERGED regions, so splitting a band for the dots cannot move the ∞.
                     val layerOpenStart = SchedulerDomain.derivedBandsOpenStart(regions, earliestEvidenceMillis)
+                    // "Not on a computer" IS the dotted oblique lines (user, 2026-10-01): a stretch the user said nobody
+                    // was at while the OS saw the device unlocked is that kind, drawn and named as its fake band — not a
+                    // dotted copy of the real layer under the real layer's name.
                     val solid = SchedulerDomain.subtractRegions(regions, declared)
-                    (solid.map { it to false } + declared.map { it to true }).map { (region, isDeclared) ->
+                    solid.map { region ->
                         CalendarRecord(
                             title = layer.calendarLabel,
                             range = region,
                             layer = layer,
-                            layerDeclared = isDeclared,
                             openStart = layerOpenStart != null && region.startEpochMillis == layerOpenStart,
                         )
                     } +
-                        fakeRegions.map { region ->
+                        SchedulerDomain.mergeOccupied(fakeRegions + declared).map { region ->
                             CalendarRecord(
                                 title = PeriodKinds.periodTitle(PeriodKinds.fakeLayerKind(layer)),
                                 range = region,

@@ -4873,21 +4873,19 @@ private fun reduceSetPeriodCombinations(
     combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
 ): SchedulerState {
     val kinds = state.allPeriodKinds.toSet()
-    fun keep(field: Set<String>) = field.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { it in kinds }
+    fun keep(tokens: List<org.example.project.scheduler.domain.PeriodFormulaToken>) =
+        tokens.map {
+            if (it is org.example.project.scheduler.domain.PeriodFormulaToken.Kinds) {
+                org.example.project.scheduler.domain.PeriodFormulaToken.Kinds(
+                    it.kinds.map(PeriodKinds::normalize).filterTo(LinkedHashSet()) { k -> k in kinds },
+                )
+            } else {
+                it
+            }
+        }
     val kept =
         combinations
-            .map { rule ->
-                rule.copy(
-                    condition = rule.condition.map {
-                        if (it is org.example.project.scheduler.domain.PeriodFormulaToken.Kinds) {
-                            org.example.project.scheduler.domain.PeriodFormulaToken.Kinds(keep(it.kinds))
-                        } else {
-                            it
-                        }
-                    },
-                    then = rule.then.map(::keep),
-                )
-            }
+            .map { rule -> rule.copy(condition = keep(rule.condition), then = keep(rule.then)) }
             .filter { it.id.isNotBlank() }
             .distinctBy { it.id }
     if (kept == state.periodCombinations) return state

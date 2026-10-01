@@ -224,9 +224,9 @@ class SleepWindowNoIdlingTest {
 
     @Test
     fun a_window_the_line_has_not_reached_is_never_retracted() {
-        // The clause is about the line being COVERED. A night still ahead is an ordinary pre-placed
-        // restrictive period, in mode 1 like any other, and the § *Starting timeline* rule that pre-placed
-        // periods never change is what it rests on.
+        // The clause is about the line being COVERED. A night still ahead is an ordinary pre-placed restrictive
+        // period, in mode 1 like any other (user rule, 2026-10-01): retracting it would plan every future night as
+        // working time. A line that reaches bedtime still at a screen meets it then, and only then.
         val daytime = utc(18, 12, 0)
         val panels = fill(account(), now = daytime, horizon = daytime + 24 * HOUR)
         val nextNight = sleepBands(panels).single { it.startEpochMillis > daytime }
@@ -268,27 +268,29 @@ class SleepWindowNoIdlingTest {
     }
 
     @Test
-    fun the_wind_down_hour_keeps_its_own_period_when_the_line_is_in_it() {
-        // `before bed` is or implies a no-screen period too, so mode 1 lifts THAT — but not the wind-down
-        // period itself, whose resilience is editable ([PeriodKinds.isResilienceEditable]). PRD §17's
-        // *"a task the user gives a value above 0 works through the wind-down"* is the sanctioned way anything
-        // runs there, and an hour nobody runs in is what the requirements allow while nobody has been given one: the hour is
-        // exactly an hour the user is at a screen for, so retracting it would delete the wind-down outright.
+    fun the_wind_down_hour_retracts_at_a_line_still_at_a_screen() {
+        // User rule 2026-10-01: `before bed` carries a no-screen period, so a period of it cannot cover a mode-1
+        // line without that no-screen period covering it too — the hour gives way at the line exactly as the night
+        // does. Its band is still laid whole (the display reads it ]line; end]), and nothing is DRAWN ahead of the line.
         val windDown = utc(17, 22, 30)
         val panels = fill(account(), now = windDown, horizon = windDown + 6 * HOUR)
         val hour = panels.single { it.restrictiveKind == PeriodKinds.BEFORE_BED && it.startEpochMillis <= windDown }
         assertEquals(utc(17, 22, 15), hour.startEpochMillis)
-        assertEquals(utc(17, 23, 15), hour.endEpochMillis, "the wind-down keeps its whole hour")
-        assertEquals(emptyList(), workAt(panels, windDown), "and nobody resilient to it means nobody in it")
+        assertEquals(utc(17, 23, 15), hour.endEpochMillis, "the band keeps its whole hour")
+        assertEquals(1, workAt(panels, windDown).size, "the line at a screen is not covered by the hour")
+        val drawn = SchedulerDomain.clipPlanForRetractedPeriod(
+            panels, panels.filter { it.isRestrictivePeriod }, windDown, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT,
+        )
+        assertTrue(
+            drawn.none { it.auto && it.taskId != null && it.startEpochMillis > windDown && it.startEpochMillis < hour.endEpochMillis },
+            "nothing may be drawn into the rest of the hour ahead of the line",
+        )
     }
 
     @Test
     fun a_task_resilient_to_before_bed_works_through_the_wind_down_at_the_line() {
-        // The other side of the same test: once the user HAS let somebody through, the line is no longer
-        // covered by anything that prevents every task — so the score, finding no edge that makes time left to nobody
-        // cheaper, puts that task there. It
-        // reaches the line only because mode 1 lifted the hour's implied no-screen period; an on-screen task
-        // would otherwise still be kept out by that.
+        // A task the user let through the hour is at the line too — the hour and its no-screen period both give
+        // way to a mode-1 line, so the one resilience the line still meets there is none.
         var s = account()
         val alpha = s.tasks.keys.first { s.tasks[it]!!.title == "Alpha" }
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(alpha, PeriodKinds.BEFORE_BED, 1.0))
