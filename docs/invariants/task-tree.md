@@ -417,11 +417,10 @@ disagreeing about what colour a task is.
 - **What is drawn ON a task's colour takes the colour of highest WCAG contrast with it**
   (`TaskPalette.foreground`, `TaskColorCurve.bestForeground`: black or white — the ratio is monotone in the
   foreground's luminance, so one extreme is always the maximum; the worst background still reads ≥ 4.58:1). In the
-  tree: EVERY text of the cell — the title, the percentage, the arrows, the edit caret, the minimum time, the
-  categories, the weight fields, and the slots other windows hand the cell (the Search window's kind, check box, path
-  box and logo, the relative-priority pin). The cell PROVIDES it (`LocalTaskCellForeground`) and each of them reads
-  `onTaskCell(default)`: a new column or slot inside the cell must read it too, never a fixed sheet colour (anomaly
-  2026-10-01: the minimum time, the categories and the Search slots stayed grey on dark colours). The menus the
+  tree that is the **expand arrow alone** (below: the task's colour is the swatch under it); the rest of the cell
+  rests on the sheet and reads the sheet's colours. `LocalTaskCellForeground` / `onTaskCell(default)` are still what
+  every column and slot of the cell reads — the cell provides `null`, so they fall back to `default`; a new column
+  must keep reading it, so the cell stays the one place that decides. The menus the
   cell opens have their own surface and never read it. A name chip and a menu
   row (`TaskTitleLabel`, `EditMenuRow`). A surface's own remark about a task (the picker's red / orange) is said
   BESIDE the name, never in its letters. On the calendar see `calendar.md` § *A task panel is opaque*.
@@ -470,34 +469,36 @@ disagreeing about what colour a task is.
     this" and "what is true of it here" never compete for one channel.
   - **There is one reading of the colour** (2026-10-01): opaque, the same on every surface, light or dark —
     the name on it carries its own contrast. `sheet` / `accent` remain as names of that one colour.
-  - **Two drawings, one rule**: the **block** form tints the whole row, because the row *is* the task — the
-    tree's `TaskRow`, an `EditMenuItem` row. The **chip** form (`TaskTitleLabel`) tints a name sitting among
-    other things — a bubble, a list row, the two ends of a task-relations pair. A third drawing that leaves a
-    name uncoloured is the drift the file exists to stop.
+  - **Three drawings, one rule**: the **block** form tints the whole row — an `EditMenuItem` row. The
+    **chip** form (`TaskTitleLabel`) tints a name sitting among other things — a bubble, a list row, the two
+    ends of a task-relations pair. The **swatch** form is the tree's `TaskRow` (below). A drawing that leaves
+    a name uncoloured is the drift the file exists to stop.
   - **The one sanctioned exception is the priority-weight window's pie legend**, whose SWATCH is its slice's
     colour and not its task's. The slices cannot be keyed by task: the rule above spreads childless tasks in
     depth-first order, so the leaves of one sub-list — exactly what that chart draws — are a contiguous run of
     neighbouring hues, and the pie would be a single smear. The legend's **name** is still tinted; only the
     swatch answers the other question.
-- **The tree's tint is the row's RESTING background only.** Drag-move and non-selectable still win outright —
-  a tint under either of them would be one more thing to read them against, and plain white is the strongest
-  possible marker on a coloured tree.
-- **SELECTION AND EDIT MODE ARE SAID IN THE OUTLINE ALONE**, and that is what keeps the tint readable where it
-  matters most. A cell that is the main selection, is among the selection, or is in Edit Mode keeps its own
-  background — its task colour — and is marked by its border alone. A fill repainted precisely the rows the
-  user is working on, so "which task is this" was unreadable in the middle of a rename and a whole selected
-  block lost its colours at once. `SheetColors.selectionFill` is now the find bar's latching-toggle fill and
-  nothing else — do not put it back behind a cell.
-- **THE THREE STATES ARE THREE OUTLINES, and the ranking is one function**: `taskCellOutline` (in
+- **IN THE TREE, THE TASK'S COLOUR IS THE SWATCH UNDER THE EXPAND ARROW, never the row's background** (user
+  rule 2026-10-01: *"Color background for tasks is great for the calendar, but for the task tree it becomes a
+  bit of a nuisance"*). `TaskSheetExpandArrow(background = …)` paints the arrow's 20 dp box — which is there
+  with or without children, so every task's row carries it — and the arrow takes `TaskPalette.foreground`. A
+  row drawn without the arrow (a relative-priority chain link) shows a bare swatch in its place. The row's
+  background is the sheet's, so no state of the cell ever hides the colour — drag-move and non-selectable
+  included.
+- **THE SELECTION IS SAID IN THE BACKGROUND: a grey, and a darker grey for the main selection** (same rule,
+  reversing "the outline alone" — that existed only to keep a full-row tint visible, and there is none now).
+  `SheetColors.selectedFill` / `mainSelectionFill`; `moveDragFill` is darker than both and wins while a cell
+  is dragged. `SheetColors.selectionFill` (the blue) is the find bar's latching-toggle fill and nothing else.
+- **THE THREE STATES ARE THREE DRAWINGS, and the ranking is one function**: `taskCellOutline` (in
   `ui/TaskSheetChrome.kt`, beside the colours) turns the three overlapping flags into one `TaskCellOutline`,
-  and `borderWidth`/`borderColor` draw it — 1 dp `grid` unselected, 1 dp `activeBorder` for a cell of the
-  selection, 2 dp `activeBorder` for the main selection, 2 dp `editBorder` for Edit Mode. The flags are
-  **nested** in the state (the edited cell is also main, which is also in range), so the ranking, never the
-  caller, is what keeps them apart: read `isEditing` first. Edit Mode gets its own **hue** and not merely a
-  third weight because it is not a third degree of selection but the state where the keyboard writes into the
-  cell — it used to share the main selection's 2 dp blue, and the two were indistinguishable. Three surfaces
-  draw task cells, so the rule may not be re-answered at a call site; `TaskCellOutlineTest` holds it,
-  including that the four drawings are pairwise different.
+  and `fill`/`borderWidth`/`borderColor` draw it — sheet + 1 dp `grid` unselected, `selectedFill` for a cell
+  of the selection, `mainSelectionFill` for the main selection, sheet + 2 dp `editBorder` for Edit Mode. The
+  flags are **nested** in the state (the edited cell is also main, which is also in range), so the ranking,
+  never the caller, is what keeps them apart: read `isEditing` first. Edit Mode keeps an **outline in its own
+  hue** and not a third grey because it is not a third degree of selection but the state where the keyboard
+  writes into the cell. Three surfaces draw task cells — and the Search window's non-task rows
+  (`resultRowModifier`) read the same three properties — so the rule may not be re-answered at a call site;
+  `TaskCellOutlineTest` holds it, including that the four drawings are pairwise different.
 - **The uniform §8 event blue survives as the fallback**, for a panel whose task the tree gives no colour. A
   no-screen / inactivity period takes no task colour at all: it is not a task.
 - **Colours are DERIVED, never persisted or synced** — recomputed from the tree, like the percentages.

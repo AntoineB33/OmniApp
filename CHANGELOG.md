@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task tree: the task's colour under the expand arrow; the selection as two greys — 2026-10-01
+
+User request: *"Color background for tasks is great for the calendar, but for the task tree it becomes a bit of a
+nuisance. Also I want the indication of main selection and selection to be a grayed and less grayed background instead
+of outlined. Maybe put the color of the task cell under the expansion arrow only?"* `TaskRow` no longer paints the
+task's colour behind the row: `TaskSheetExpandArrow(background)` paints it under the arrow's box (a bare swatch on the
+arrow-less relative-priority chain rows). `TaskCellOutline.fill` — `SheetColors.selectedFill` / `mainSelectionFill` —
+replaces the 1 dp / 2 dp blue outlines (Edit Mode keeps its purple one); `moveDragFill` darkened to stay apart from
+both. The cell provides a null `LocalTaskCellForeground`, so every `onTaskCell` reader is back on the sheet's colours.
+The Search window's rows follow (same cell code, and `resultRowModifier`). Reverses the same day's "the outline alone"
+and "the tint is the row's resting background". The calendar is untouched.
+
 ### Calendar "add…": the Search window opens with the type selector deployed — 2026-10-01
 
 User request: *"The add… option from a right-click in the calendar opens the Search window with the type selector

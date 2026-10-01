@@ -143,7 +143,7 @@ private const val NOT_IN_TREE_HINT: String =
  * right-click selects it and opens its contextual menu. A task's menu is the TREE CELL's own
  * ([TaskCellMenuItems]) — "go to task tree" included — on the row, on its path box and on each line of its list
  * of paths, each speaking for that path's occurrence ([SearchDomain.occurrenceAtPath]). The selection looks
- * as it does in the tree (the outline, [taskCellOutline]), and moving it scrolls the list only when it would
+ * as it does in the tree (the grey fill, [taskCellOutline]), and moving it scrolls the list only when it would
  * leave what is shown.
  *
  * The query and the checked kinds are **local-only view state** ([SearchDomain.Config]): `App` keeps them on this
@@ -681,7 +681,7 @@ fun SearchWindow(
                 } else {
                     // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
                     val rowSelected = { index: Int -> index == selected && !fieldFocused && subtreeFocusOwner == null }
-                    // A row of the multi-selection other than the selected one: the tree's thin selection outline.
+                    // A row of the multi-selection other than the selected one: the tree's lighter selection grey.
                     val rowInSelection = { index: Int ->
                         index != selected && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
                     }
@@ -1181,9 +1181,9 @@ private fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): 
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
-        // The TASK TREE's selection, not a look of its own: the cell's background, and the selection said by
-        // the OUTLINE alone — the main selection's thick active border ([taskCellOutline], the tree's one rule).
-        .background(SheetColors.cellBackground)
+        // The TASK TREE's selection, not a look of its own: the selection said by the cell's grey background,
+        // darker for the main selection ([taskCellOutline], the tree's one rule).
+        .background(taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).fill)
         .border(
             taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderWidth,
             taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderColor,
@@ -1192,7 +1192,7 @@ private fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): 
 
 /**
  * A task row: the TASK TREE's own cell ([TaskRow]) — its task colour, its expand arrow, its title and Edit
- * Mode, its percentage, minimum time and categories, its selection outline, its right-click menu — with the
+ * Mode, its percentage, minimum time and categories, its selection grey, its right-click menu — with the
  * Search window's sections set into it: the kind before the arrow, the path box between the title and the
  * percentage, the "in no task tree" logo last. The differences from a tree cell are the window's:
  *  - **Edit Mode is stuck to Rename** — no mode selector — and commits [SchedulerIntent.RenameTask]: the row IS
@@ -1209,7 +1209,7 @@ private fun SearchTaskRow(
     checkedKeys: Set<String>,
     onToggleChecked: (key: String) -> Unit,
     selected: Boolean,
-    /** Among the Ctrl/Shift-selected rows, without being the selected one: the tree's thin selection outline. */
+    /** Among the Ctrl/Shift-selected rows, without being the selected one: the tree's lighter selection grey. */
     inSelection: Boolean,
     editing: Boolean,
     editDraft: String,

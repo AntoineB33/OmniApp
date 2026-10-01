@@ -166,6 +166,7 @@ import org.example.project.ui.ShortcutHint
 import org.example.project.ui.TaskTreeFindBar
 import org.example.project.ui.borderColor
 import org.example.project.ui.borderWidth
+import org.example.project.ui.fill
 import org.example.project.ui.isModifierKey
 import org.example.project.ui.taskCellOutline
 import org.example.project.ui.TransientPopupLayer
@@ -2684,7 +2685,7 @@ internal fun TaskRow(
     rowTrailing: (@Composable (CellId) -> Unit)? = null,
     /**
      * PRD §7 *Search*: a section drawn INSIDE the cell before its expand arrow — the result row's kind. Inside,
-     * so the cell's background and its selection outline take the whole element. Null in the tree.
+     * so the cell's selection background takes the whole element. Null in the tree.
      */
     rowLeading: (@Composable RowScope.() -> Unit)? = null,
     /**
@@ -2765,34 +2766,25 @@ internal fun TaskRow(
             Modifier.widthIn(max = priorityColumnWidth).onSizeChanged { titleSqueezed = it.width + 0.5f < columnPx }
         }
 
+    // PRD §3/§4: which of the three states the cell is in. The rule itself lives in [taskCellOutline] because
+    // all three drawings of the tree render through this composable and none of them may answer it separately.
+    val outline = taskCellOutline(isEditing, isMainSelection, isInSelectionRange)
     val cellBackground =
         when {
             // PRD §3: a cell being drag-moved gets a grey background (not mirrored elsewhere).
             isBeingMoved -> SheetColors.moveDragFill
             !selectable -> SheetColors.nonSelectableFill
-            // The task's own colour is the row's RESTING background only: the two states above are the ones
-            // the user is being told about, and a tint under each of them would be one more thing to read
-            // them against. Falling back to plain white is itself the strongest possible marker on a
-            // coloured tree, so nothing is lost by letting them win outright.
-            //
-            // Selection and Edit Mode are deliberately NOT in this list: they are said in the OUTLINE alone
-            // (below), so a cell keeps its task colour while it is selected, is the main selection, or is
-            // being edited. A fill there repainted exactly the rows the user is working on — the one place
-            // the tree's colours matter most — and made "which task is this" unreadable in the middle of a
-            // rename.
-            taskColor != null -> taskColor
-            else -> SheetColors.cellBackground
+            // PRD §3: the selection is said in the BACKGROUND — a grey for a cell of the selection, a darker
+            // one for the main selection (user rule 2026-10-01). The task's own colour is not a background
+            // here at all: it is the swatch under the expand arrow, so no fill ever hides it.
+            else -> outline.fill
         }
-    // PRD §3/§4: the three states are told apart by the OUTLINE, not by a fill — and each of the three has
-    // its own: a thin active border for a cell of the selection, a thick one for the main selection, and a
-    // thick border in its own colour for Edit Mode. The rule itself lives in [taskCellOutline] because all
-    // three drawings of the tree render through this composable and none of them may answer it separately.
-    val outline = taskCellOutline(isEditing, isMainSelection, isInSelectionRange)
+    // Edit Mode alone keeps an outline, in its own colour.
     val cellBorder = Modifier.border(outline.borderWidth, outline.borderColor)
-    // User rule 2026-10-01: on the task's colour, everything the row draws — its title, its percentage, its arrows —
-    // takes the colour of highest WCAG contrast with it ([TaskPalette.foreground]); off it, the sheet's own colours.
-    val onTaskColor = taskColor?.takeIf { cellBackground == it }?.let(org.example.project.ui.TaskPalette::foreground)
-    val textStyle = MaterialTheme.typography.bodyMedium.copy(color = onTaskColor ?: MaterialTheme.colorScheme.onSurface)
+    // The row's text sits on the sheet, in the sheet's colours; only the expand arrow is drawn ON the task's
+    // colour, and takes the colour of highest WCAG contrast with it ([TaskPalette.foreground]).
+    val onTaskColor = taskColor?.let(org.example.project.ui.TaskPalette::foreground)
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface)
 
     val currentCanMoveFromCell by rememberUpdatedState(canMoveFromCell)
 
@@ -2979,9 +2971,9 @@ internal fun TaskRow(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-          // Everything the row draws — its own columns and the slots other windows hand it — reads the one
-          // foreground ([onTaskCell]); the menus it opens have their own surface and do not.
-          CompositionLocalProvider(org.example.project.ui.LocalTaskCellForeground provides onTaskColor) {
+          // The row rests on the sheet, so what it draws — its own columns and the slots other windows hand
+          // it — reads the sheet's colours: [onTaskCell] falls back to them on a null foreground.
+          CompositionLocalProvider(org.example.project.ui.LocalTaskCellForeground provides null) {
             // PRD §13 right-click contextual menu on a populated cell.
             if (cellMenu != null) {
                 transientMenuDismissal(contextMenuOpen) { contextMenuOpen = false }
@@ -3004,7 +2996,13 @@ internal fun TaskRow(
                     expanded = expanded,
                     onToggle = onToggleExpand,
                     color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                    background = taskColor,
                 )
+                Spacer(Modifier.width(4.dp))
+            } else if (taskColor != null) {
+                // No arrow to sit under (a relative-priority chain link): the task's colour as a bare swatch.
+                Box(Modifier.size(width = 8.dp, height = 20.dp).background(taskColor, RoundedCornerShape(3.dp)))
+                Spacer(Modifier.width(4.dp))
             }
             if (compact) {
                 // Nothing after the arrow: the root strip is the arrow and the space around it.
@@ -3136,7 +3134,7 @@ internal fun TaskRow(
                             onTextChange(newValue.text)
                         },
                         textStyle = textStyle,
-                        cursorBrush = SolidColor(onTaskColor ?: SheetColors.activeBorder),
+                        cursorBrush = SolidColor(SheetColors.activeBorder),
                         decorationBox = { innerTextField ->
                             Box(
                                 modifier = Modifier.fillMaxWidth(),
@@ -3153,7 +3151,7 @@ internal fun TaskRow(
                                     .background(cellBackground),
                                 text = "▸",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = onTaskColor ?: SheetColors.overflowArrow,
+                                color = SheetColors.overflowArrow,
                             )
                         }
                     }
@@ -3191,7 +3189,7 @@ internal fun TaskRow(
                                     .background(cellBackground),
                                 text = "▸",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = onTaskColor ?: SheetColors.overflowArrow,
+                                color = SheetColors.overflowArrow,
                             )
                         }
                     }
@@ -3231,7 +3229,7 @@ internal fun TaskRow(
                         Text(
                             text = priorityLabel,
                             style = MaterialTheme.typography.bodySmall,
-                            color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         // Same rule as the row's own menu: dismissed by the app-root observer, so the
                         // press that closes it still selects whatever it landed on.

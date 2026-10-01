@@ -1,6 +1,8 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -39,23 +41,26 @@ internal object SheetColors {
     val grid = Color(0xFFDADCE0)
     val cellBackground = Color.White
     /**
-     * The "on" fill of a latching toggle (the find bar's). **Not** a task cell's selection: a selected,
-     * main-selected or edited cell is marked by its OUTLINE alone, so its background stays whatever the
-     * task's own colour is.
+     * The "on" fill of a latching toggle (the find bar's). **Not** a task cell's selection, which has its own
+     * two greys ([selectedFill], [mainSelectionFill]).
      */
     val selectionFill = Color(0xFFE8F0FE)
+    /** PRD §3: the background of a cell of the selection that is not the main one — the lighter grey. */
+    val selectedFill = Color(0xFFECEEF1)
+    /** PRD §3: the background of the main selection — the darker of the two greys. */
+    val mainSelectionFill = Color(0xFFDADDE2)
     val activeBorder = Color(0xFF1A73E8)
     /**
-     * PRD §4: the outline of a cell **in Edit Mode**. Its own hue, not just its own weight: Edit Mode is
-     * not a third degree of selection, it is the state where the keyboard writes into the cell, and the
-     * user has to be able to tell it from the main selection at a glance ([TaskCellOutline]).
+     * PRD §4: the outline of a cell **in Edit Mode**. Its own hue: Edit Mode is not a third degree of
+     * selection, it is the state where the keyboard writes into the cell, and the user has to be able to
+     * tell it from the main selection at a glance ([TaskCellOutline]).
      */
     val editBorder = Color(0xFF9334E6)
     val nonSelectableFill = Color(0xFFF8F9FA)
     val guideLine = Color(0xFFC7CBD1)
     val overflowArrow = Color(0xFFD93025)
-    /** PRD §3 / §5: background of a cell or column while it is being drag-moved. */
-    val moveDragFill = Color(0xFFCFD3D8)
+    /** PRD §3 / §5: background of a cell or column while it is being drag-moved — darker than both selection greys. */
+    val moveDragFill = Color(0xFFBDC1C6)
     /** PRD §4 Find & replace: shading behind every hit of the Ctrl+F query inside a title. */
     val searchMatchFill = Color(0xFFFFF2A8)
     /** …and behind the one hit the find bar is currently sitting on. */
@@ -63,12 +68,13 @@ internal object SheetColors {
 }
 
 /**
- * PRD §3/§4: the three states a task cell can be in, each with its **own outline**.
+ * PRD §3/§4: the three states a task cell can be in, each with its **own drawing** ([fill], [borderWidth],
+ * [borderColor]).
  *
- * Selection and Edit Mode are said in the OUTLINE ALONE — never in a fill — so a cell keeps its task colour
- * while the user is working on it. The three are pairwise distinguishable by construction: `Selected` and
- * `Main` share the active colour and differ in weight, and `Editing` differs from both in colour, because it
- * is not a third degree of selection but the state where the keyboard writes into the cell.
+ * The selection is said in the cell's BACKGROUND — a grey for a cell of the selection, a darker grey for the
+ * main one (user rule 2026-10-01; the task's colour is the swatch under the expand arrow, so a fill hides
+ * nothing). `Editing` alone keeps an outline, in its own colour, because it is not a third degree of
+ * selection but the state where the keyboard writes into the cell.
  *
  * One decision, in one place: three surfaces draw task cells (the tree, the Search window's sub-trees
  * and the default sub-tree template) and a second copy of this rule is how two of them come to disagree about what
@@ -105,20 +111,28 @@ internal fun taskCellOutline(
         else -> TaskCellOutline.None
     }
 
-/** The outline's weight. */
+/** The cell's background: the sheet's at rest and in Edit Mode, a grey per degree of selection. */
+internal val TaskCellOutline.fill: Color
+    get() =
+        when (this) {
+            TaskCellOutline.None, TaskCellOutline.Editing -> SheetColors.cellBackground
+            TaskCellOutline.Selected -> SheetColors.selectedFill
+            TaskCellOutline.Main -> SheetColors.mainSelectionFill
+        }
+
+/** The outline's weight: the grid line, thickened for Edit Mode alone. */
 internal val TaskCellOutline.borderWidth: Dp
     get() =
         when (this) {
-            TaskCellOutline.None, TaskCellOutline.Selected -> 1.dp
-            TaskCellOutline.Main, TaskCellOutline.Editing -> 2.dp
+            TaskCellOutline.None, TaskCellOutline.Selected, TaskCellOutline.Main -> 1.dp
+            TaskCellOutline.Editing -> 2.dp
         }
 
 /** The outline's colour. */
 internal val TaskCellOutline.borderColor: Color
     get() =
         when (this) {
-            TaskCellOutline.None -> SheetColors.grid
-            TaskCellOutline.Selected, TaskCellOutline.Main -> SheetColors.activeBorder
+            TaskCellOutline.None, TaskCellOutline.Selected, TaskCellOutline.Main -> SheetColors.grid
             TaskCellOutline.Editing -> SheetColors.editBorder
         }
 
@@ -175,10 +189,16 @@ internal fun TaskSheetExpandArrow(
     onToggle: () -> Unit,
     /** The arrow's colour: the sheet's, or — on a task's colour — the colour of highest contrast with it. */
     color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    /**
+     * The task's colour, painted under the arrow's box — the one place a tree row shows it (user rule
+     * 2026-10-01). The box is there with or without children, so every task's row carries its swatch.
+     */
+    background: Color? = null,
 ) {
     Box(
         modifier = Modifier
             .size(20.dp)
+            .then(if (background != null) Modifier.background(background, RoundedCornerShape(3.dp)) else Modifier)
             .then(
                 if (hasChildren) {
                     Modifier.clickable(
