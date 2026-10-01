@@ -675,8 +675,8 @@ titles" figure: the Search window and the per-object windows its rows open repla
   windows that offer it — the one mapping from a row to its window, never a second copy.
 - **The actions act through the app's own intents** (`SearchDomain.addedIntents`): a tree edit over several tasks
   is ONE intent and one Undo/Redo unit (`SetTasksCategory`, `SetTasksMinimumTime`); the alarms' switch rides
-  `SetAlarms`; a timer's or a chrono's run is its row's own run-state intent per element (no History Unit, by
-  their rule). The **Added elements configurations** window (`ui/AddedElementsConfigurationWindow.kt`) lists every
+  `SetAlarms`; a timer's or a chrono's run is its row's own run-state intent per element (a unit each since
+  2026-10-01). The **Added elements configurations** window (`ui/AddedElementsConfigurationWindow.kt`) lists every
   action (`SearchDomain.addedActions`) exactly as the Configuration Search window lists the settings — a name bar,
   the kind drop-down, "only the types in the added elements" — and acts on the added list of the Search window
   that opened it; the top right quarter draws the same sections for the kinds the list holds.
@@ -701,7 +701,7 @@ titles" figure: the Search window and the per-object windows its rows open repla
   its combination rules put back by `PeriodKinds.combinationsReset` (a shipped rule found by its RULE id even if edited
   past naming the kind, re-added if deleted; a rule of the user's naming only default kinds dropped; one that also
   names a kind of the account's own kept — it is that kind's configuration too). The tasks' resiliences are the
-  tasks' and stay. No history unit, like the drawings. The button is greyed while `modifiedDefaultPeriods` is empty.
+  tasks' and stay. One History Unit (since 2026-10-01, every account setting is one). The button is greyed while `modifiedDefaultPeriods` is empty.
 - **The tasks' "Schedulable" filter** (yes / no / any, user rule 2026-10-01; `Filters.taskSchedulable`): PRD §9's
   schedulable, read through `SchedulerDomain.isPlaceableTask` — a leaf that still lives in the tree, the predicate
   "start this task now" asks — so a parent, a task only a stored tree holds and a cut one are "no".

@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A History Unit for almost every user action — 2026-10-01
+
+User report: *"I added an item in a Search window filtered for history unit, and it didn't create a history unit for
+this add. There must be history units for almost every user action."* Scope chosen by the user: the Search window's
+configuration, the account settings, the run state, the window layout — all undoable.
+
+- `ExternalDelta` + `SchedulerIntent.RecordExternal` + `SchedulerState.externalRestores` (transient): Search
+  configurations, window layouts and the menu buttons, recorded and put back by `App.ViewHistoryRecorder`.
+- `SettingsDelta` + `SchedulerReducer.settingsUnit`: period kinds (add, delete, reset, duplicate, drawing, combinations),
+  categories (create, rename, delete, duplicate, rules), the Notifications and voice switches.
+- Timer and chrono run-state writes are units (`TimerRang` is not) — reverses the earlier "not units" rule.
+- `commitDelta(committed = …)`; `WindowFrameState.applyLayout`; `WindowFrameHost.frontIdExcluding`; a closing window
+  hands the focus to the one under it.
+- Persisted: `PersistedDelta.External` / `Settings` (an older build skips them). Tests: `UserActionHistoryTest`; five
+  older tests that asserted "no unit" now assert the unit.
+
 ### A tab created by a menu button is named after it — 2026-10-01
 
 User request: *"When clicking on a button in the left-side menu, the tab that is created gets the name of the button."*

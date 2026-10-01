@@ -229,7 +229,8 @@ position. The machine's transitions and the cursor's crossings are queued until 
 ### The Notifications switch silences the OUTPUT, never the record
 
 The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever
-(`SchedulerState.notificationsEnabled`, persisted + synced, not an Undo/Redo unit).
+(`SchedulerState.notificationsEnabled`, persisted + synced; an Undo/Redo unit since 2026-10-01 — `SettingsDelta`, as the
+voice switch).
 
 - **`SchedulerEngine.notifyUser` is the ONE funnel and the ONE place the switch is read.** Every notification
   the app posts goes through it — a break's start and end, "task to do now", the wind-down, an alarm, a

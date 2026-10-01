@@ -455,7 +455,7 @@ object SchedulerReducer {
                     )
                 }
             }
-            is SchedulerIntent.CreateCategory -> reduceCreateCategory(state, intent.title)
+            is SchedulerIntent.CreateCategory -> settingsUnit(state, "New category") { reduceCreateCategory(it, intent.title) }
             is SchedulerIntent.AddTaskCategory -> reduceAddTaskCategory(state, intent.taskId, intent.title)
             is SchedulerIntent.AttachTaskCategory ->
                 reduceAttachTaskCategory(state, intent.taskId, intent.categoryId)
@@ -473,22 +473,26 @@ object SchedulerReducer {
                 if (state.categoryById(intent.categoryId) == null || apply(state) === state) state
                 else commitDelta(state, priorityTreeDelta(state, "Task category", apply))
             }
-            is SchedulerIntent.RenameCategory -> reduceRenameCategory(state, intent.categoryId, intent.title)
-            is SchedulerIntent.DeleteCategory -> reduceDeleteCategory(state, intent.categoryId)
+            is SchedulerIntent.RenameCategory ->
+                settingsUnit(state, "Rename category", coalesceKey = "rename-category/" + intent.categoryId.value) {
+                    reduceRenameCategory(it, intent.categoryId, intent.title)
+                }
+            is SchedulerIntent.DeleteCategory -> settingsUnit(state, "Delete category") { reduceDeleteCategory(it, intent.categoryId) }
             is SchedulerIntent.SetCategoryRule ->
-                reduceSetCategoryRule(state, intent.categoryId, intent.scopeCellId, intent.share)
+                settingsUnit(state, "Category rule") { reduceSetCategoryRule(it, intent.categoryId, intent.scopeCellId, intent.share) }
             is SchedulerIntent.RemoveCategoryRule ->
-                reduceRemoveCategoryRule(state, intent.categoryId, intent.scopeCellId)
+                settingsUnit(state, "Remove category rule") { reduceRemoveCategoryRule(it, intent.categoryId, intent.scopeCellId) }
             SchedulerIntent.DismissCategoryRuleError ->
                 if (state.categoryRuleError == null) state else state.copy(categoryRuleError = null)
             // A break that vanishes with it gives its hole back to the task on both sides: a record change,
             // committed as the advance commits the records it banks.
             is SchedulerIntent.RecordConductedBreak -> commitRecordChanges(state, reduceRecordConductedBreak(state, intent))
-            is SchedulerIntent.AddPeriodKind -> reduceAddPeriodKind(state, intent.kind)
-            is SchedulerIntent.RemovePeriodKind -> reduceRemovePeriodKind(state, intent.kind)
-            is SchedulerIntent.SetPeriodDrawing -> reduceSetPeriodDrawing(state, intent.kind, intent.drawing)
-            is SchedulerIntent.SetPeriodCombinations -> reduceSetPeriodCombinations(state, intent.combinations)
-            is SchedulerIntent.ResetPeriodKinds -> reduceResetPeriodKinds(state, intent.kinds)
+            is SchedulerIntent.AddPeriodKind -> settingsUnit(state, "New period") { reduceAddPeriodKind(it, intent.kind) }
+            is SchedulerIntent.RemovePeriodKind -> settingsUnit(state, "Delete period") { reduceRemovePeriodKind(it, intent.kind) }
+            is SchedulerIntent.SetPeriodDrawing -> settingsUnit(state, "Period drawing") { reduceSetPeriodDrawing(it, intent.kind, intent.drawing) }
+            is SchedulerIntent.SetPeriodCombinations ->
+                settingsUnit(state, "Period combinations") { reduceSetPeriodCombinations(it, intent.combinations) }
+            is SchedulerIntent.ResetPeriodKinds -> settingsUnit(state, "Reset periods") { reduceResetPeriodKinds(it, intent.kinds) }
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
             is SchedulerIntent.SetTaskText ->
@@ -502,8 +506,8 @@ object SchedulerReducer {
                     }
                     if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Duplicate task", apply))
                 }
-            is SchedulerIntent.DuplicateCategory -> reduceDuplicateCategory(state, intent.categoryId)
-            is SchedulerIntent.DuplicatePeriodKind -> reduceDuplicatePeriodKind(state, intent.kind)
+            is SchedulerIntent.DuplicateCategory -> settingsUnit(state, "Duplicate category") { reduceDuplicateCategory(it, intent.categoryId) }
+            is SchedulerIntent.DuplicatePeriodKind -> settingsUnit(state, "Duplicate period") { reduceDuplicatePeriodKind(it, intent.kind) }
             is SchedulerIntent.SetTasksText -> {
                 val apply = { working: SchedulerState ->
                     intent.taskIds.distinct().fold(working) { acc, id -> applySetTaskText(acc, id, intent.text) }
@@ -525,17 +529,20 @@ object SchedulerReducer {
             is SchedulerIntent.SetAlarms -> reduceSetAlarms(state, intent.entries, intent.editKey)
             is SchedulerIntent.SetAlarmEnabled -> reduceSetAlarmEnabled(state, intent.id, intent.enabled)
             is SchedulerIntent.SetTimers -> reduceSetTimers(state, intent.entries, intent.editKey)
-            is SchedulerIntent.StartTimer -> reduceTimerTransition(state, intent.id) {
+            // User rule 2026-10-01: a run the USER moves is a unit (the countdown fields' keystrokes one, by field);
+            // the ring — the engine's, not the user's — is none.
+            is SchedulerIntent.StartTimer -> reduceTimerTransition(state, intent.id, unit = true) {
                 TimerDomain.started(it, intent.nowMillis)
             }
-            is SchedulerIntent.PauseTimer -> reduceTimerTransition(state, intent.id) {
+            is SchedulerIntent.PauseTimer -> reduceTimerTransition(state, intent.id, unit = true) {
                 TimerDomain.paused(it, intent.nowMillis)
             }
-            is SchedulerIntent.ResetTimer -> reduceTimerTransition(state, intent.id, TimerDomain::reset)
-            is SchedulerIntent.SetTimerCountdownField -> reduceTimerTransition(state, intent.id) {
-                TimerDomain.withCountdownField(it, intent.field, intent.value, intent.nowMillis, intent.held)
-            }
-            is SchedulerIntent.TimerRang -> reduceTimerTransition(state, intent.id) {
+            is SchedulerIntent.ResetTimer -> reduceTimerTransition(state, intent.id, unit = true, transition = TimerDomain::reset)
+            is SchedulerIntent.SetTimerCountdownField ->
+                reduceTimerTransition(state, intent.id, unit = true, coalesceKey = "timer-field/" + intent.id + "/" + intent.field.name) {
+                    TimerDomain.withCountdownField(it, intent.field, intent.value, intent.nowMillis, intent.held)
+                }
+            is SchedulerIntent.TimerRang -> reduceTimerTransition(state, intent.id, unit = false) {
                 TimerDomain.rang(it, intent.nowMillis)
             }
             is SchedulerIntent.SetChronos -> reduceSetChronos(state, intent.entries, intent.editKey)
@@ -546,7 +553,7 @@ object SchedulerReducer {
                 ChronoDomain.paused(it, intent.nowMillis)
             }
             is SchedulerIntent.ResetChrono -> reduceChronoTransition(state, intent.id, ChronoDomain::reset)
-            is SchedulerIntent.NudgeTimerRemaining -> reduceTimerTransition(state, intent.id) {
+            is SchedulerIntent.NudgeTimerRemaining -> reduceTimerTransition(state, intent.id, unit = true) {
                 TimerDomain.nudged(it, intent.deltaMillis, intent.nowMillis)
             }
             is SchedulerIntent.SetScreenBreaks ->
@@ -584,11 +591,16 @@ object SchedulerReducer {
                 if (state.showReminders == intent.show) state
                 else state.copy(showReminders = intent.show)
             is SchedulerIntent.SetNotificationVoice ->
-                if (state.notificationVoiceEnabled == intent.enabled) state
-                else state.copy(notificationVoiceEnabled = intent.enabled)
+                settingsUnit(state, if (intent.enabled) "Voice on" else "Voice off") {
+                    if (it.notificationVoiceEnabled == intent.enabled) it else it.copy(notificationVoiceEnabled = intent.enabled)
+                }
             is SchedulerIntent.SetNotificationsEnabled ->
-                if (state.notificationsEnabled == intent.enabled) state
-                else state.copy(notificationsEnabled = intent.enabled)
+                settingsUnit(state, if (intent.enabled) "Notifications on" else "Notifications off") {
+                    if (it.notificationsEnabled == intent.enabled) it else it.copy(notificationsEnabled = intent.enabled)
+                }
+            is SchedulerIntent.RecordExternal ->
+                if (intent.before == intent.after) state
+                else commitDelta(state, ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey))
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
             is SchedulerIntent.InSearchSubtree -> reduceInSearchSubtree(state, intent.inner, intent.listId, intent.readOnly)
             is SchedulerIntent.RenameTask -> reduceRenameTask(state, intent.taskId, intent.title)
@@ -1254,12 +1266,16 @@ object SchedulerReducer {
     private fun reduceTimerTransition(
         state: SchedulerState,
         id: String,
+        /** A History Unit (user rule 2026-10-01) — every write but the engine's ring. */
+        unit: Boolean,
+        coalesceKey: String? = null,
         transition: (org.example.project.scheduler.model.TimerEntry) -> org.example.project.scheduler.model.TimerEntry,
     ): SchedulerState {
         val timer = state.timers.firstOrNull { it.id == id } ?: return state
         val next = transition(timer)
         if (next == timer) return state
-        return state.copy(timers = state.timers.map { if (it.id == id) next else it })
+        val timers = state.timers.map { if (it.id == id) next else it }
+        return if (unit) commitDelta(state, TimersDelta(state.timers, timers, coalesceKey)) else state.copy(timers = timers)
     }
 
     /** PRD §18 Chronos: store the chrono list — [reduceSetTimers]' rule, a Main History Unit. */
@@ -1273,7 +1289,7 @@ object SchedulerReducer {
         return commitDelta(state, ChronosDelta(state.chronos, withIds, editKey))
     }
 
-    /** PRD §18 Chronos: one run-state write on the chrono [id] — [reduceTimerTransition]'s rule, no unit. */
+    /** PRD §18 Chronos: one run-state write on the chrono [id] — a unit, as a timer's (user rule 2026-10-01). */
     private fun reduceChronoTransition(
         state: SchedulerState,
         id: String,
@@ -1282,7 +1298,26 @@ object SchedulerReducer {
         val chrono = state.chronos.firstOrNull { it.id == id } ?: return state
         val next = transition(chrono)
         if (next == chrono) return state
-        return state.copy(chronos = state.chronos.map { if (it.id == id) next else it })
+        return commitDelta(state, ChronosDelta(state.chronos, state.chronos.map { if (it.id == id) next else it }))
+    }
+
+    /**
+     * PRD §6 (user rule 2026-10-01): an **account setting** as a History Unit — [change] reduced, and what it changed
+     * of the settings (the kinds of period, their drawings, the combination rules, the categories, the two switches),
+     * of the tree and of the panels recorded as one [SettingsDelta]. A change that moved none of those (a refused
+     * rule, which only sets the notice) is applied without a unit.
+     */
+    private fun settingsUnit(
+        state: SchedulerState,
+        label: String,
+        coalesceKey: String? = null,
+        change: (SchedulerState) -> SchedulerState,
+    ): SchedulerState {
+        val after = change(state)
+        if (after === state) return state
+        val delta = SettingsDelta.of(state, after, label, coalesceKey)
+        if (delta.isEmpty()) return after
+        return commitDelta(state, delta, committed = after)
     }
 
     /**
@@ -3634,8 +3669,10 @@ object SchedulerReducer {
         state: SchedulerState,
         forward: Delta,
         category: HistoryCategory = HistoryCategory.Main,
+        /** The state the change already produced, when the reducer computed it: then [forward] only records it. */
+        committed: SchedulerState? = null,
     ): SchedulerState {
-        val newState = forward.commit(state)
+        val newState = committed ?: forward.commit(state)
         val history = state.histories.forCategory(category)
         val me = deviceId()
 
@@ -6379,7 +6416,8 @@ internal data class AlarmsDelta(
  *
  * It carries the rows as they are, run state included, so undoing a **deletion** brings the timer back
  * exactly as it was — a running one still running, and still due at the instant it was due at. What it never
- * records is a run-state *transition*: those are not units at all (see [SchedulerIntent.StartTimer]).
+ * records on its own is the ring (`TimerRang`); a run-state transition the USER makes is a unit of its own since
+ * 2026-10-01 ([reduceTimerTransition]).
  */
 internal data class TimersDelta(
     val changes: EntryChanges<String, org.example.project.scheduler.model.TimerEntry>,
@@ -6662,4 +6700,136 @@ private fun formatPanelRange(startMillis: Long, endMillis: Long): String {
         return t.hour.toString().padStart(2, '0') + ":" + t.minute.toString().padStart(2, '0')
     }
     return if (startMillis == endMillis) hm(startMillis) else "${hm(startMillis)}–${hm(endMillis)}"
+}
+
+/**
+ * PRD §6 (user rule 2026-10-01): a change to something `App` keeps outside the state — a Search window's configuration,
+ * a window's layout, the lateral menu's buttons — named by [key], with its value before and after as `App` encodes it.
+ * Committing changes nothing here (`App` made the change); undo and redo queue the value back for `App`
+ * ([SchedulerState.withExternalRestore]), which puts it back three-way.
+ */
+internal data class ExternalDelta(
+    val key: String,
+    val before: String?,
+    val after: String?,
+    override val label: String,
+    override val coalesceKey: String? = null,
+) : Delta {
+    override val details: List<String>
+        get() = listOf(key)
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is ExternalDelta && previous.key == key && previous.coalesceKey == coalesceKey) copy(before = previous.before)
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState = state.withExternalRestore(key, from = after, to = before)
+
+    override fun redo(state: SchedulerState): SchedulerState = state.withExternalRestore(key, from = before, to = after)
+
+    override fun commit(state: SchedulerState): SchedulerState = state
+}
+
+/**
+ * PRD §6 (user rule 2026-10-01): an **account setting** — what one of them changed of the kinds of period ([kinds],
+ * the list before and after), their drawings ([styles]), the combination rules ([combinations]), the categories
+ * ([categories]), the two switches ([notifications], [voice]), and the tree and the panels it reached as well
+ * (deleting a period takes every task's value for it and every period of it). Undone and redone three-way, piece by
+ * piece, like every unit (`persistence.md` § *One history, per-device undo*).
+ */
+internal data class SettingsDelta(
+    override val label: String,
+    val kinds: Pair<List<String>, List<String>>? = null,
+    val styles: EntryChanges<String, PeriodKindStyle> = EntryChanges(emptyMap(), emptyMap()),
+    val combinations: EntryChanges<String, org.example.project.scheduler.domain.PeriodCombination> = EntryChanges(emptyMap(), emptyMap()),
+    val categories: EntryChanges<org.example.project.scheduler.model.CategoryId, org.example.project.scheduler.model.Category> =
+        EntryChanges(emptyMap(), emptyMap()),
+    val notifications: Pair<Boolean, Boolean>? = null,
+    val voice: Pair<Boolean, Boolean>? = null,
+    val tree: TreeDiff? = null,
+    val panels: EntryChanges<String, TaskPanel> = EntryChanges(emptyMap(), emptyMap()),
+    override val coalesceKey: String? = null,
+) : Delta {
+    fun isEmpty(): Boolean =
+        kinds == null && styles.isEmpty() && combinations.isEmpty() && categories.isEmpty() && notifications == null &&
+            voice == null && (tree == null || tree.isEmpty()) && panels.isEmpty()
+
+    override val details: List<String>
+        get() = buildList {
+            kinds?.let { (b, a) -> (a - b.toSet()).forEach { add("period added: $it") }; (b - a.toSet()).forEach { add("period removed: $it") } }
+            styles.touched.forEach { add("drawing: $it") }
+            combinations.touched.forEach { add("combination: $it") }
+            categories.touched.forEach { id -> add("category: " + (categories.after[id] ?: categories.before[id])?.title) }
+            notifications?.let { add("notifications: ${it.first} → ${it.second}") }
+            voice?.let { add("voice: ${it.first} → ${it.second}") }
+            tree?.let { if (!it.isEmpty()) add("tasks") }
+            if (!panels.isEmpty()) add("${panels.touched.size} period(s) on the calendar")
+        }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is SettingsDelta && previous.coalesceKey == coalesceKey && tree == null && previous.tree == null) {
+            copy(
+                kinds = mergePair(previous.kinds, kinds),
+                styles = previous.styles.then(styles),
+                combinations = previous.combinations.then(combinations),
+                categories = previous.categories.then(categories),
+                notifications = mergePair(previous.notifications, notifications),
+                voice = mergePair(previous.voice, voice),
+                panels = previous.panels.then(panels),
+            )
+        } else {
+            null
+        }
+
+    private fun <T> mergePair(earlier: Pair<T, T>?, later: Pair<T, T>?): Pair<T, T>? =
+        when {
+            earlier == null -> later
+            later == null -> earlier
+            else -> earlier.first to later.second
+        }
+
+    private fun apply(state: SchedulerState, forward: Boolean, exact: Boolean): SchedulerState {
+        var s = state
+        kinds?.let { (b, a) ->
+            val from = if (forward) b else a
+            val to = if (forward) a else b
+            s = s.copy(periodKinds = if (exact) to else rebaseIds(s.periodKinds, from, to) { true })
+        }
+        if (!styles.isEmpty()) s = s.copy(periodKindStyles = styles.applyTo(s.periodKindStyles, forward, exact))
+        if (!combinations.isEmpty()) s = s.copy(periodCombinations = combinations.applyToList(s.periodCombinations, forward, exact) { it.id })
+        if (!categories.isEmpty()) s = s.copy(categories = categories.applyToList(s.categories, forward, exact) { it.id })
+        notifications?.let { (b, a) ->
+            s = s.copy(notificationsEnabled = if (exact) (if (forward) a else b) else rebaseField(s.notificationsEnabled, if (forward) b else a, if (forward) a else b))
+        }
+        voice?.let { (b, a) ->
+            s = s.copy(notificationVoiceEnabled = if (exact) (if (forward) a else b) else rebaseField(s.notificationVoiceEnabled, if (forward) b else a, if (forward) a else b))
+        }
+        tree?.let { if (!it.isEmpty()) s = it.applyTo(s, forward, exact) }
+        if (!panels.isEmpty()) s = s.copy(panels = panels.applyToList(s.panels, forward, exact) { it.id })
+        return s
+    }
+
+    override fun undo(state: SchedulerState): SchedulerState = apply(state, forward = false, exact = false)
+
+    override fun redo(state: SchedulerState): SchedulerState = apply(state, forward = true, exact = false)
+
+    override fun commit(state: SchedulerState): SchedulerState = apply(state, forward = true, exact = true)
+
+    companion object {
+        /** What [after] changed of [before]'s settings, tree and panels. The tree is diffed only when it moved. */
+        fun of(before: SchedulerState, after: SchedulerState, label: String, coalesceKey: String? = null): SettingsDelta =
+            SettingsDelta(
+                label = label,
+                kinds = (before.periodKinds to after.periodKinds).takeIf { it.first != it.second },
+                styles = EntryChanges.of(before.periodKindStyles, after.periodKindStyles),
+                combinations = EntryChanges.ofList(before.periodCombinations, after.periodCombinations) { it.id },
+                categories = EntryChanges.ofList(before.categories, after.categories) { it.id },
+                notifications = (before.notificationsEnabled to after.notificationsEnabled).takeIf { it.first != it.second },
+                voice = (before.notificationVoiceEnabled to after.notificationVoiceEnabled).takeIf { it.first != it.second },
+                tree =
+                    if (before.cells === after.cells && before.lists === after.lists && before.tasks === after.tasks) null
+                    else TreeDiff.of(before.captureTree(), after.captureTree()).takeIf { !it.isEmpty() },
+                panels = if (before.panels === after.panels) EntryChanges(emptyMap(), emptyMap()) else EntryChanges.ofList(before.panels, after.panels) { it.id },
+                coalesceKey = coalesceKey,
+            )
+    }
 }

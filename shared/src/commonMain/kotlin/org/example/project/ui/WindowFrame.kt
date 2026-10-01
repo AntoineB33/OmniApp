@@ -322,6 +322,20 @@ class WindowFrameState(
         applyFill(WindowFill.None)
     }
 
+    /**
+     * PRD §6 (user rule 2026-10-01): a window's layout put back by an undo or a redo — its normal geometry, its filled
+     * axes and whether it is reduced, all at once, as they were recorded. A size of zero on an axis is "never
+     * resized", the window's default.
+     */
+    fun applyLayout(offset: Offset, size: Size, fill: WindowFill, minimized: Boolean) {
+        normalOffset = offset
+        normalSize = size
+        this.offset = offset
+        this.size = size
+        this.fill = fill
+        this.minimized = minimized
+    }
+
     /** The maximize button, and the head's double-click: both axes, or back to the normal geometry. */
     fun toggleMaximize() = applyFill(if (maximized) WindowFill.None else WindowFill.Both)
 
@@ -462,6 +476,9 @@ class WindowFrameHost {
      * priority-weight table over the Alarms window it must bring Alarms **back** instead.
      */
     val frontId: String? get() = stack.lastOrNull()
+
+    /** The front window once [id] is gone — where the focus goes when [id] closes. */
+    fun frontIdExcluding(id: String): String? = stack.lastOrNull { it != id }
 
     /**
      * Where [id] sits in the stack, as a `zIndex`. A window not in it yet — one composing for the first

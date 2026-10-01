@@ -319,7 +319,7 @@ Global rules that always apply: `CLAUDE.md`.
   wash is what collided with every task drawn through a period. A marking made of lines does not.)
 - **PERIOD COMPANIONS AND DRAWINGS** (the period edit window, user rule 2026-09-18;
   `PeriodKindStyle`/`PeriodKindConfig`, stored as `SchedulerState.periodKindStyles` — overrides only, one sync
-  row per kind, not an Undo/Redo unit, like defining a kind).
+  row per kind; an Undo/Redo unit since 2026-10-01, like defining a kind — `SettingsDelta`).
   - **Companions**: *"a set of periods that are always present when this period is present"*. Since 2026-10-01
     **a companion set is a combination rule** `when <kind> then …` (`PeriodKinds.companionRule`; the window's
     "Always present with it" section was removed, user rule: *"it can be done by the combinations config"*), so

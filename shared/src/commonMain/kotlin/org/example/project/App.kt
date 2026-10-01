@@ -213,6 +213,94 @@ enum class OmniPage(val label: String) {
  * [title] is what the window's head reads, for the one place that names a window while it is NOT open: the
  * Search window's "window" rows ([SearchDomain.WindowEntry]). An open window is named by its head itself.
  */
+/** The placement rows that are not a window's layout: they are recorded by what they hold, or not at all. */
+private val VIEW_ROWS: Set<String> =
+    setOf(CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, "AppWindow")
+
+private const val MENU_KEY: String = "menu"
+private const val SEARCH_KEY: String = "search/"
+private const val WINDOW_KEY: String = "window/"
+
+/** A window's layout as its unit holds it — its row without the configuration, which has a unit of its own. */
+private fun layoutText(p: WindowPlacement): String =
+    listOf(p.x, p.y, p.width, p.height, p.visible, p.fillWidth, p.fillHeight, p.minimized).joinToString(";")
+
+private fun layoutOf(text: String): WindowPlacement? {
+    val parts = text.split(';')
+    if (parts.size != 8) return null
+    return runCatching {
+        WindowPlacement(
+            x = parts[0].toFloat(), y = parts[1].toFloat(), width = parts[2].toFloat(), height = parts[3].toFloat(),
+            visible = parts[4].toBooleanStrict(), fillWidth = parts[5].toBooleanStrict(), fillHeight = parts[6].toBooleanStrict(),
+            minimized = parts[7].toBooleanStrict(),
+        )
+    }.getOrNull()
+}
+
+/** What a window's layout change was, as the History window names it. */
+private fun layoutChangeLabel(before: WindowPlacement, after: WindowPlacement): String =
+    when {
+        !before.visible && after.visible -> "Open window"
+        before.visible && !after.visible -> "Close window"
+        before.minimized != after.minimized -> if (after.minimized) "Reduce window" else "Bring window back"
+        before.fillWidth != after.fillWidth || before.fillHeight != after.fillHeight -> "Fill window"
+        before.width != after.width || before.height != after.height -> "Resize window"
+        else -> "Move window"
+    }
+
+/** What a Search window's configuration change was, as the History window names it. */
+private fun searchChangeLabel(before: SearchDomain.Config, after: SearchDomain.Config): String =
+    when {
+        before.added != after.added ->
+            when {
+                after.added.isEmpty() -> "Clear added elements"
+                after.added.size > before.added.size -> "Add to the added elements"
+                else -> "Remove from the added elements"
+            }
+        before.query != after.query -> "Search text"
+        before.kinds != after.kinds -> "Search types"
+        before.filters != after.filters -> "Search filter"
+        before.sorts != after.sorts -> "Search sorting"
+        before.actionQuery != after.actionQuery -> "Actions filter"
+        else -> "Search configuration"
+    }
+
+/**
+ * PRD §6 (user rule 2026-10-01): the History Units of what `App` keeps outside the state. [record] dispatches one
+ * ([SchedulerIntent.RecordExternal]) unless the start-up is still settling ([enabled]) or an undo is being put back
+ * ([applying]); [onLayout] is a window row's change, and a close first hands the focus on ([focusAfterClose]) so the
+ * unit is stamped with the window the close can be undone from.
+ */
+private class ViewHistoryRecorder {
+    var enabled: Boolean = false
+    private var applyingDepth: Int = 0
+    var dispatch: (SchedulerIntent) -> Unit = {}
+    var focusAfterClose: (String) -> Unit = {}
+
+    fun applying(block: () -> Unit) {
+        applyingDepth++
+        try {
+            block()
+        } finally {
+            applyingDepth--
+        }
+    }
+
+    fun record(key: String, before: String?, after: String?, label: String, coalesceKey: String? = null) {
+        if (!enabled || applyingDepth > 0 || before == after) return
+        dispatch(SchedulerIntent.RecordExternal(key, before, after, label, coalesceKey))
+    }
+
+    fun onLayout(id: String, previous: WindowPlacement, next: WindowPlacement) {
+        if (!enabled || applyingDepth > 0) return
+        val before = layoutText(previous)
+        val after = layoutText(next)
+        if (before == after) return
+        if (previous.visible && !next.visible) focusAfterClose(id)
+        record(WINDOW_KEY + id, before, after, layoutChangeLabel(previous, next))
+    }
+}
+
 /** How many frames a ☆ button's click waits for the window it creates to register, to give its tab the button's name. */
 private const val TAB_TITLE_FRAMES: Int = 10
 
@@ -359,6 +447,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Search window's configuration) keeps the others: the store's upsert replaces the whole row. The one
         // funnel every placement write goes through. Plain, not Compose state — nothing is drawn from it.
         val placements = remember(placementStore) { initialPlacements.toMutableMap() }
+        // PRD §6 (user rule 2026-10-01): what `App` keeps — a window's layout, a Search window's configuration, the
+        // menu's buttons — recorded as History Units ([SchedulerIntent.RecordExternal]) and put back when one is undone.
+        val viewHistory = remember { ViewHistoryRecorder() }
         // Keyed by the window's FRAME id: the lateral-menu window's name, or a copy's (`Search#2`).
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
@@ -366,6 +457,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (next == previous && id in placements) return
             placements[id] = next
             placementStore?.savePlacement(id, next)
+            if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
         }
         fun updatePlacement(id: FloatingWindow, change: (WindowPlacement) -> WindowPlacement) =
             updatePlacementById(id.name, change)
@@ -472,8 +564,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             menuScroll.animateScrollTo(menuScroll.maxValue)
         }
         fun setMenuButtons(list: List<CustomMenuButton>) {
+            val before = menuButtons
             menuButtons = list
             updatePlacementById(CustomMenuButtons.PLACEMENT_ID) { it.copy(config = CustomMenuButtons.encode(list)) }
+            // A rename is typed: one unit for the run of its keystrokes.
+            val renameOnly = before.map { it.id } == list.map { it.id } && before.map { it.copy(title = "") } == list.map { it.copy(title = "") }
+            viewHistory.record(
+                MENU_KEY, CustomMenuButtons.encode(before), CustomMenuButtons.encode(list),
+                if (renameOnly) "Rename a menu button" else "Menu buttons",
+                coalesceKey = if (renameOnly) "menu/rename" else null,
+            )
         }
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
@@ -853,9 +953,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             searchConfigs[id] ?: (SearchDomain.Config.decode(placements[id]?.config) ?: SearchDomain.Config())
                 .also { searchConfigs[id] = it }
         fun setSearchConfig(id: String, config: SearchDomain.Config) {
-            if (config == searchConfigs[id]) return
+            val before = searchConfigOf(id)
+            if (config == before) return
             searchConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode()) }
+            // The text fields are typed: one unit for the run of a field's keystrokes.
+            val typed =
+                when (config) {
+                    before.copy(query = config.query) -> "query"
+                    before.copy(actionQuery = config.actionQuery) -> "actions"
+                    else -> null
+                }
+            viewHistory.record(
+                SEARCH_KEY + id, before.encode(), config.encode(), searchChangeLabel(before, config),
+                coalesceKey = typed?.let { SEARCH_KEY + id + "/" + it },
+            )
         }
         // The Configuration Search window: open or not, and — per window, by frame id — its OWN configuration
         // (which configurations it lists, and which Search window it edits).
@@ -932,6 +1044,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 else -> return null
             }
             return window to frameId.removePrefix(base)
+        }
+        // PRD §6 (user rule 2026-10-01): the units of what `App` keeps — recorded once the start-up has settled (the
+        // writes that restore the windows are not the user's), never while an undo or redo is being put back.
+        viewHistory.dispatch = { vm.dispatch(it) }
+        viewHistory.focusAfterClose = { closing ->
+            // A window that closes hands the focus to the one under it, which is where its close is undone from.
+            windowFrames.frontIdExcluding(closing)?.let { windowFrames.focus(it) }
+        }
+        LaunchedEffect(Unit) {
+            repeat(3) { withFrameNanos { } }
+            viewHistory.enabled = true
         }
         // A press in ANY window moves the focus to it, synchronously, before the press commits anything — the
         // lateral-menu windows' own `onRaise` already did; this is what covers every other window. A no-op when the
@@ -1018,6 +1141,57 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun closeWindowCopy(id: String) {
             windowCopies.remove(id)
             updatePlacementById(id) { it.copy(visible = false, minimized = false) }
+        }
+        // An undone or redone change to what `App` keeps, put back — three-way: only while it is still as the unit
+        // left it.
+        var restoredSeq by remember { mutableStateOf(0L) }
+        LaunchedEffect(schedulerState.externalRestores) {
+            for (restore in schedulerState.externalRestores) {
+                if (restore.seq <= restoredSeq) continue
+                restoredSeq = restore.seq
+                viewHistory.applying {
+                    when {
+                        restore.key == MENU_KEY ->
+                            if (CustomMenuButtons.encode(menuButtons) == restore.from) setMenuButtons(CustomMenuButtons.decode(restore.to))
+                        restore.key.startsWith(SEARCH_KEY) -> {
+                            val id = restore.key.removePrefix(SEARCH_KEY)
+                            if (searchConfigOf(id).encode() == restore.from) {
+                                setSearchConfig(id, SearchDomain.Config.decode(restore.to) ?: SearchDomain.Config())
+                            }
+                        }
+                        restore.key.startsWith(WINDOW_KEY) -> {
+                            val id = restore.key.removePrefix(WINDOW_KEY)
+                            val current = placements[id]?.let(::layoutText)
+                            val to = restore.to?.let(::layoutOf)
+                            if (current == restore.from && to != null) {
+                                updatePlacementById(id) {
+                                    it.copy(
+                                        x = to.x, y = to.y, width = to.width, height = to.height, visible = to.visible,
+                                        fillWidth = to.fillWidth, fillHeight = to.fillHeight, minimized = to.minimized,
+                                    )
+                                }
+                                val registration = windowFrames.registrations.firstOrNull { it.id == id }
+                                val kind = lateralWindowOf(id)
+                                when {
+                                    kind != null && id == kind.name -> setWindowOpen(kind, to.visible)
+                                    kind != null -> if (to.visible) { if (id !in windowCopies) windowCopies.add(id) } else closeWindowCopy(id)
+                                    !to.visible -> registration?.onClose()
+                                    registration == null ->
+                                        placements[id]?.config?.let(ObjectWindowKey::decode)?.let { key ->
+                                            openObjectWindow(key, id.substringAfter('#', "").toIntOrNull())
+                                        }
+                                }
+                                if (to.visible) {
+                                    registration?.state?.applyLayout(
+                                        Offset(to.x, to.y), Size(to.width, to.height),
+                                        org.example.project.ui.WindowFill.of(to.fillWidth, to.fillHeight), to.minimized,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         fun focusWindow(id: FloatingWindow) {
             bringWindowToFront(id)

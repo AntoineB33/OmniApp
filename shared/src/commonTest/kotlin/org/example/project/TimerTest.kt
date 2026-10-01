@@ -708,14 +708,16 @@ class TimerTest {
      * same thing when a delta is replayed later. `AlarmHistoryTest` is the whole of it.
      */
     @Test
-    fun the_timer_list_is_undoable_and_the_run_state_is_not() {
+    fun the_timer_list_and_the_run_state_are_both_undoable() {
         val s0 = SchedulerState.empty()
         val s1 = SchedulerReducer.reduce(s0, SchedulerIntent.SetTimers(listOf(timer())))
         assertEquals(1, s1.histories.forCategory(HistoryCategory.Main).units.size)
         assertTrue(SchedulerReducer.reduce(s1, SchedulerIntent.Undo).timers.isEmpty())
 
+        // Since 2026-10-01 a run the user moves is a unit too, and undoing it stops the run.
         val s2 = SchedulerReducer.reduce(s1, SchedulerIntent.StartTimer("timer-0", now))
-        assertEquals(s1.histories, s2.histories)
+        assertEquals(2, s2.histories.forCategory(HistoryCategory.Main).units.size)
+        assertTrue(SchedulerReducer.reduce(s2, SchedulerIntent.Undo).timers.single().idle)
     }
 
     // ----- persistence --------------------------------------------------------------------------

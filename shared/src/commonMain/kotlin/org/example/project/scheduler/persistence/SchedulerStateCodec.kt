@@ -27,6 +27,9 @@ import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.domain.ChronoDomain
 import org.example.project.scheduler.state.ChronosDelta
+import org.example.project.scheduler.state.ExternalDelta
+import org.example.project.scheduler.state.EntryChanges
+import org.example.project.scheduler.state.SettingsDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CategoryRule
@@ -879,6 +882,27 @@ object SchedulerStateCodec {
                 PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ChronosDelta ->
                 PersistedDelta.Chronos(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
+            is ExternalDelta -> PersistedDelta.External(key, before, after, label)
+            is SettingsDelta ->
+                PersistedDelta.Settings(
+                    label = label,
+                    kindsBefore = kinds?.first,
+                    kindsAfter = kinds?.second,
+                    stylesBefore = styles.before.map { (kind, style) -> style.toPersistedStyle(kind) },
+                    stylesAfter = styles.after.map { (kind, style) -> style.toPersistedStyle(kind) },
+                    combinationsBefore = combinations.before.values.map { it.toPersisted() },
+                    combinationsAfter = combinations.after.values.map { it.toPersisted() },
+                    categoriesBefore = categories.before.values.map { it.toPersistedCategory() },
+                    categoriesAfter = categories.after.values.map { it.toPersistedCategory() },
+                    notificationsBefore = notifications?.first,
+                    notificationsAfter = notifications?.second,
+                    voiceBefore = voice?.first,
+                    voiceAfter = voice?.second,
+                    treeBefore = tree?.side(forward = false),
+                    treeAfter = tree?.side(forward = true),
+                    panelsBefore = panels.before.values.map { it.toPersistedPanel() },
+                    panelsAfter = panels.after.values.map { it.toPersistedPanel() },
+                )
             NoOpDelta -> PersistedDelta.NoOp
         }
 
@@ -1408,6 +1432,31 @@ object SchedulerStateCodec {
                 )
             is PersistedDelta.ShortcutBindings ->
                 ShortcutBindingDelta(before.toShortcutBindings(), after.toShortcutBindings())
+            is PersistedDelta.External -> ExternalDelta(key, before, after, label)
+            is PersistedDelta.Settings ->
+                SettingsDelta(
+                    label = label,
+                    kinds = if (kindsBefore != null && kindsAfter != null) kindsBefore to kindsAfter else null,
+                    styles = EntryChanges(stylesBefore.associate { it.id to it.toStyle() }, stylesAfter.associate { it.id to it.toStyle() }),
+                    combinations =
+                        EntryChanges(
+                            combinationsBefore.associate { it.id to it.toCombinationAsWritten() },
+                            combinationsAfter.associate { it.id to it.toCombinationAsWritten() },
+                        ),
+                    categories =
+                        EntryChanges(
+                            categoriesBefore.associate { CategoryId(it.id) to it.toCategoryAsWritten() },
+                            categoriesAfter.associate { CategoryId(it.id) to it.toCategoryAsWritten() },
+                        ),
+                    notifications = if (notificationsBefore != null && notificationsAfter != null) notificationsBefore to notificationsAfter else null,
+                    voice = if (voiceBefore != null && voiceAfter != null) voiceBefore to voiceAfter else null,
+                    tree = if (treeBefore != null && treeAfter != null) TreeDiff.of(treeBefore.toSnapshot(), treeAfter.toSnapshot()) else null,
+                    panels =
+                        EntryChanges(
+                            panelsBefore.associate { it.id to it.toPanel() },
+                            panelsAfter.associate { it.id to it.toPanel() },
+                        ),
+                )
             PersistedDelta.NoOp -> NoOpDelta
         }
 
@@ -2211,10 +2260,86 @@ private sealed interface PersistedDelta {
         val after: List<PersistedChrono>,
     ) : PersistedDelta
 
+    /**
+     * New 2026-10-01: a change to something `App` keeps (a Search window's configuration, a window's layout, the lateral
+     * menu's buttons). An older build cannot read it and skips the unit (`decodeUnit`).
+     */
+    @Serializable
+    @SerialName("external")
+    data class External(val key: String, val before: String? = null, val after: String? = null, val label: String = "") : PersistedDelta
+
+    /** New 2026-10-01: an account setting — each piece only when it changed, entries as the state writes them. */
+    @Serializable
+    @SerialName("settings")
+    data class Settings(
+        val label: String = "",
+        val kindsBefore: List<String>? = null,
+        val kindsAfter: List<String>? = null,
+        val stylesBefore: List<PersistedPeriodKindStyle> = emptyList(),
+        val stylesAfter: List<PersistedPeriodKindStyle> = emptyList(),
+        val combinationsBefore: List<PersistedPeriodCombination> = emptyList(),
+        val combinationsAfter: List<PersistedPeriodCombination> = emptyList(),
+        val categoriesBefore: List<PersistedCategory> = emptyList(),
+        val categoriesAfter: List<PersistedCategory> = emptyList(),
+        val notificationsBefore: Boolean? = null,
+        val notificationsAfter: Boolean? = null,
+        val voiceBefore: Boolean? = null,
+        val voiceAfter: Boolean? = null,
+        val treeBefore: PersistedTreeSnapshot? = null,
+        val treeAfter: PersistedTreeSnapshot? = null,
+        val panelsBefore: List<PersistedPanel> = emptyList(),
+        val panelsAfter: List<PersistedPanel> = emptyList(),
+    ) : PersistedDelta
+
     @Serializable
     @SerialName("noOp")
     data object NoOp : PersistedDelta
 }
+
+/** A kind's drawing as a settings unit writes it: the state's own row shape, its id the kind. */
+private fun PeriodKindStyle.toPersistedStyle(kind: String): PersistedPeriodKindStyle =
+    PersistedPeriodKindStyle(id = kind, drawing = drawing.name, folded = true)
+
+private fun PersistedPeriodKindStyle.toStyle(): PeriodKindStyle =
+    PeriodKindStyle(PeriodDrawing.entries.firstOrNull { it.name == drawing } ?: PeriodKinds.defaultStyle(id).drawing)
+
+/**
+ * A combination rule read back exactly as a settings unit wrote it — no healing against the account's kinds: a unit
+ * puts back what was there, a rule still being filled in (nothing on one side) included.
+ */
+private fun PersistedPeriodCombination.toCombinationAsWritten(): org.example.project.scheduler.domain.PeriodCombination {
+    fun formula(tokens: List<PersistedFormulaToken>) =
+        tokens.map { t ->
+            when (t.op) {
+                "and" -> PeriodFormulaToken.And
+                "or" -> PeriodFormulaToken.Or
+                "not" -> PeriodFormulaToken.Not
+                "(" -> PeriodFormulaToken.Open
+                ")" -> PeriodFormulaToken.Close
+                else -> PeriodFormulaToken.Kinds(t.kinds.toCollection(LinkedHashSet()))
+            }
+        }
+    return org.example.project.scheduler.domain.PeriodCombination(
+        id,
+        condition?.let(::formula) ?: PeriodFormula.of(kinds.toSet()),
+        thenFormula?.let(::formula) ?: then?.let { fields -> PeriodFormula.allOf(fields.map { it.toSet() }) } ?: PeriodFormula.of(implies.toSet()),
+    )
+}
+
+/** A category as a settings unit writes it: its rules by scope CELL (blank-free: a unit is never read by an old build). */
+private fun Category.toPersistedCategory(): PersistedCategory =
+    PersistedCategory(
+        id = id.value,
+        title = title,
+        rules = rules.map { PersistedCategoryRule(scopeCellId = it.scopeCellId?.value, share = it.share) },
+    )
+
+private fun PersistedCategory.toCategoryAsWritten(): Category =
+    Category(
+        id = CategoryId(id),
+        title = title,
+        rules = rules.map { CategoryRule(it.scopeCellId?.let(::CellId), it.share) },
+    )
 
 @Serializable
 private data class PersistedChoreEntry(

@@ -33,6 +33,29 @@ window and the Added elements configurations window send their intents `MadeIn` 
 (`SchedulerIntent.MadeIn` — the stamp, not the focus). A consequence: what is done in a per-object window is undone
 with `Ctrl+Z` from THAT window, not from the one it was opened from.
 
+**A History Unit for almost every user action** (user rule 2026-10-01 — the anomaly was an element added to a Search
+window's list, which recorded nothing). Undoable, from the window it was made in, like every unit:
+
+- **What `App` keeps outside the state** — a Search window's configuration (`search/<frame id>`: its added elements,
+  text, types, filters, sorting, actions' filter), a window's layout (`window/<frame id>`: opened, closed, moved,
+  resized, reduced, filled — its row without the configuration) and the lateral menu's buttons (`menu`) — is an
+  `ExternalDelta` (`SchedulerIntent.RecordExternal`, recorded by `App.ViewHistoryRecorder`). Committing changes nothing
+  in the state; undo and redo queue the value for `App` (`SchedulerState.externalRestores`, transient — never stored,
+  synced or fingerprinted), which puts it back **three-way** (only while the thing is still what the unit left) and
+  records nothing while it does. Nothing is recorded until the start-up has settled (the restores of the windows are not
+  the user's). A text field typed into is one unit per run of keystrokes (`coalesceKey`). A window that closes hands
+  the focus to the one under it, so its close is stamped with — and undone from — that window.
+- **An account setting** — defining, deleting, resetting or duplicating a kind of period, its drawing and combination
+  rules, creating, renaming (one unit per run of keystrokes), deleting or duplicating a category and its rules, the
+  Notifications and voice switches — is a `SettingsDelta` (`SchedulerReducer.settingsUnit`): what the change moved of
+  those settings, of the tree and of the panels, applied three-way piece by piece.
+- **A timer's or a chrono's run the user moves** is a `TimersDelta` / `ChronosDelta` (`alarms-and-timers.md`); the ring
+  is not.
+- Still no unit: what the app authors itself (the plan, the ring, a peer's pull), the calendar's transient editors and
+  notices (they keep no layout row), and the account settings not listed above (the deep-copy depth and switches, the
+  default configurations of a new alarm / timer / reminder, the priority pins, the automatic-schedule switch).
+- An older build skips a unit whose delta it cannot read (`decodeUnit`), so the new kinds are safe across devices.
+
 The exception: a unit whose gesture is still open (`Delta.coalesceKey` — a field being typed into live, see
 `docs/invariants/alarms-and-timers.md`) is **replaced at the pointer** by the next keystroke's unit rather than
 appended after it. It costs the alignment below nothing special: the replacement's `(length, hash)` differ, so

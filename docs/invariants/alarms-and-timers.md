@@ -174,13 +174,12 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   the bin, and every settings field of both sections (`AlarmsDelta` / `TimersDelta`, committed by
   `reduceSetAlarms` / `reduceSetTimers`). Ctrl+Z in this window, therefore, and never Alt+←/→: that pair
   walks the focused window's *selections*, and this window has none.
-- **The five run-state writes are not units, and that is the rule.** `StartTimer` / `PauseTimer` /
-  `ResetTimer` / `SetTimerCountdownField` / `NudgeTimerRemaining` write `endsAtMillis`, an ABSOLUTE instant
-  measured against a now-line that keeps moving: a delta replayed later does not mean what it meant when it
-  was recorded, and undoing a pause would restore an instant now in the past and ring the timer on the spot.
-  A History Unit must be replayable. They also already carry their own inverses on the row (Pause ↔ Resume,
-  Reset ↔ Start), which the bin does not.
-- **Nothing the app authors itself is a unit**: the engine disarming a one-off that has rung
+- **The run-state writes the USER makes are units** (user rule 2026-10-01, *"history units for almost every user
+  action"*, reversing the earlier "not units" rule): `StartTimer` / `PauseTimer` / `ResetTimer` /
+  `SetTimerCountdownField` (one unit per field for the run of its keystrokes) / `NudgeTimerRemaining`, and the chronos'
+  three. Accepted with them is what that rule warned of: they write `endsAtMillis`, an ABSOLUTE instant, so undoing a
+  pause long after restores an instant that may be past — the timer then rings on the spot.
+- **Nothing the app authors itself is a unit**: the ring (`TimerRang`), the engine disarming a one-off that has rung
   (`SetAlarmEnabled` — the row's own switch is a *setting* and travels through `SetAlarms`, which is
   undoable), the reset after a ring, `healed`, a peer's pull. A machine-authored unit would sit on top of the
   Main stack and turn the next Ctrl+Z into "un-ring that".

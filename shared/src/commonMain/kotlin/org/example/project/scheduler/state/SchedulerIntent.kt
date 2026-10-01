@@ -359,9 +359,24 @@ sealed interface SchedulerIntent {
     data class MadeIn(val window: HistoryWindow, val instance: String, val inner: SchedulerIntent) : SchedulerIntent
 
     /**
+     * PRD §6 (user rule 2026-10-01): **record a change made to something `App` keeps** — a Search window's
+     * configuration, a window's layout, the lateral menu's buttons — as a History Unit ([ExternalDelta]): undone and
+     * redone like any other, by queueing the value back for `App` ([SchedulerState.externalRestores]). [key] names the
+     * thing, [before]/[after] are its value as `App` encodes it. [coalesceKey]: consecutive changes with the same one
+     * are one unit (a text typed into a field). Nothing changed is nothing recorded.
+     */
+    data class RecordExternal(
+        val key: String,
+        val before: String?,
+        val after: String?,
+        val label: String,
+        val coalesceKey: String? = null,
+    ) : SchedulerIntent
+
+    /**
      * The added elements' Duplicate on a category: a new category titled `"<title> copy"` (`"… copy 2"`, … where taken —
      * two categories may not share a name) with the original's rules; no task carries it. An account setting like
-     * [CreateCategory]: no history unit.
+     * [CreateCategory]: one History Unit (`SettingsDelta`, 2026-10-01).
      */
     data class DuplicateCategory(val categoryId: CategoryId) : SchedulerIntent
 
@@ -370,7 +385,7 @@ sealed interface SchedulerIntent {
      * where taken) wearing the original's drawing, with a copy of every combination rule naming the original (the
      * original's name replaced by the copy's) and every task's resilience to the original — written as an override
      * wherever it differs from the copy's own default, so each task stands to the copy exactly as it stands to the
-     * original. An account setting like [AddPeriodKind]: no history unit.
+     * original. An account setting like [AddPeriodKind]: one History Unit (`SettingsDelta`).
      */
     data class DuplicatePeriodKind(val kind: String) : SchedulerIntent
 
@@ -469,13 +484,13 @@ sealed interface SchedulerIntent {
      * The **period edit window**'s combination rules, the whole list as the window leaves it: wherever a rule's "when"
      * formula holds, the kinds it implies are present too. Kinds the account does not hold are dropped from a rule's
      * fields; a rule with nothing on either side is kept (the window is still filling it in) but implies nothing. An
-     * account setting like [AddPeriodKind]: no history unit.
+     * account setting like [AddPeriodKind]: one History Unit (`SettingsDelta`, 2026-10-01).
      */
     data class SetPeriodCombinations(
         val combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
     ) : SchedulerIntent
 
-    /** The **period edit window**: the drawing periods of [kind] wear on the calendar. No history unit. */
+    /** The periods' drawing: what periods of [kind] wear on the calendar. One History Unit (`SettingsDelta`). */
     data class SetPeriodDrawing(
         val kind: String,
         val drawing: org.example.project.scheduler.domain.PeriodDrawing,
@@ -487,7 +502,7 @@ sealed interface SchedulerIntent {
      * ships: its drawing ([SetPeriodDrawing]) and the combination rules that name it
      * (`PeriodKinds.combinationsReset`). A kind of the account's own is ignored — it has no default to go back to.
      * The tasks' resiliences are the TASKS' configuration (an on-screen task is a 0 against "no screen") and are left
-     * alone. An account setting like the drawings: no history unit.
+     * alone. An account setting like the drawings: one History Unit (`SettingsDelta`).
      */
     data class ResetPeriodKinds(val kinds: List<String>) : SchedulerIntent
 

@@ -234,7 +234,8 @@ class SearchAddedElementsTest {
         )
         assertEquals(emptyList(), SearchDomain.modifiedDefaultPeriods(after, added), "nothing left to reset: the button greys")
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.ResetDefaultPeriods, 0L))
-        assertEquals(units(s), units(after), "an account setting, like the drawings: no history unit")
+        assertEquals(units(s) + 1, units(after), "one History Unit (2026-10-01: an account setting is one too)")
+        assertEquals(s.periodKindConfig.drawing(PeriodKinds.NO_SCREEN), r(after, SchedulerIntent.Undo).periodKindConfig.drawing(PeriodKinds.NO_SCREEN))
     }
 
     @Test

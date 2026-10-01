@@ -35,15 +35,17 @@ class ChronoTest {
     }
 
     @Test
-    fun the_list_is_undoable_and_the_run_is_not() {
+    fun the_list_and_the_run_are_both_undoable() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetChronos(listOf(ChronoEntry(id = ""))))
         val id = s.chronos.single().id
         assertEquals("chrono-0", id)
         assertEquals(1, s.histories.forCategory(HistoryCategory.Main).units.size)
         s = SchedulerReducer.reduce(s, SchedulerIntent.StartChrono(id, now))
         s = SchedulerReducer.reduce(s, SchedulerIntent.PauseChrono(id, now + 5 * second))
-        assertEquals(1, s.histories.forCategory(HistoryCategory.Main).units.size, "start and pause are not units")
+        // Since 2026-10-01 a run the user moves is a unit too.
+        assertEquals(3, s.histories.forCategory(HistoryCategory.Main).units.size, "the start and the pause are units")
         assertEquals(5 * second, s.chronos.single().bankedMillis)
+        assertTrue(SchedulerReducer.reduce(s, SchedulerIntent.Undo).chronos.single().running, "undoing the pause runs it again")
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetChronos(listOf(s.chronos.single().copy(label = "Run"))))
         assertEquals("Run", s.chronos.single().label)
         assertEquals(5 * second, s.chronos.single().bankedMillis, "a label edit leaves the run alone")

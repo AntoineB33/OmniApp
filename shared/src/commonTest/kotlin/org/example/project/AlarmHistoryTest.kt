@@ -220,7 +220,7 @@ class AlarmHistoryTest {
     }
 
     @Test
-    fun no_timer_run_state_transition_records_a_unit() {
+    fun every_timer_run_state_transition_the_user_makes_is_a_unit_and_the_ring_is_not() {
         val now = 1_700_000_000_000L
         val s0 = stateWith(timers = listOf(timer("timer-0")))
         val started = SchedulerReducer.reduce(s0, SchedulerIntent.StartTimer("timer-0", now))
@@ -241,8 +241,14 @@ class AlarmHistoryTest {
         assertEquals(now + 300_000L, started.timers.single().endsAtMillis)
         assertNull(reset.timers.single().endsAtMillis)
         assertNull(reset.timers.single().remainingMillis)
-        // ...and not one of them left a History Unit behind.
-        assertEquals(s0.histories, reset.histories)
+        // ...and, since 2026-10-01 (a History Unit for almost every user action), each is a unit of its own.
+        val units = { s: SchedulerState -> s.histories.forCategory(HistoryCategory.Main).units.size }
+        assertEquals(5, units(reset))
+        // Undoing the reset puts the typed countdown back.
+        assertEquals(typed.timers, SchedulerReducer.reduce(reset, SchedulerIntent.Undo).timers)
+        // The ring is the engine's, not the user's: no unit.
+        val rang = SchedulerReducer.reduce(started, SchedulerIntent.TimerRang("timer-0", now + 300_000L))
+        assertEquals(started.histories, rang.histories)
     }
 
     /** Editing a row's settings while it runs is a unit, and undoing it leaves the countdown alone. */

@@ -2015,8 +2015,8 @@ object SearchDomain {
      * second write path. A tree edit over several tasks is ONE intent and so one Undo/Redo unit
      * ([SchedulerIntent.SetTasksCategory], [SchedulerIntent.SetTasksMinimumTime]); the alarms' switch rides
      * [SchedulerIntent.SetAlarms] like the row's own switch does. A timer's or a chrono's run is its own row's
-     * button per element — those writes are no History Unit by rule ([SchedulerIntent.StartTimer]). Nothing to
-     * change is no intent at all.
+     * button per element — a unit each since 2026-10-01 ([SchedulerIntent.StartTimer]). Nothing to change is no intent
+     * at all.
      */
     fun addedIntents(
         state: SchedulerState,

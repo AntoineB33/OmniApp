@@ -17,6 +17,7 @@ import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.HistoryCategory
 
 /**
  * PRD §5 **categories and their rules**: the field on a task cell, and the standing statement its edit
@@ -688,11 +689,15 @@ class CategoryRulesTest {
     }
 
     @Test
-    fun creating_a_category_records_no_history_unit() {
+    fun creating_a_category_is_a_unit_and_undoing_it_takes_it_away() {
         val f = fixture()
-        // An account setting, like defining a kind of restrictive period: no task's priority has moved.
+        // User rule 2026-10-01: a History Unit for almost every user action — an account setting included.
         val s = SchedulerReducer.reduce(f.state, SchedulerIntent.CreateCategory("deep"))
-        assertEquals(f.state.histories, s.histories)
+        val main = { st: SchedulerState -> st.histories.forCategory(HistoryCategory.Main).units.size }
+        assertEquals(main(f.state) + 1, main(s))
+        val undone = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
+        assertTrue(undone.categories.none { it.title == "deep" })
+        assertTrue(SchedulerReducer.reduce(undone, SchedulerIntent.Redo).categories.any { it.title == "deep" })
     }
 
     @Test

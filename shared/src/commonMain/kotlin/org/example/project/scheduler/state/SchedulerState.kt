@@ -138,6 +138,22 @@ enum class HistoryWindow(val label: String) {
 }
 
 /**
+ * One undone or redone change to something `App` keeps ([SchedulerState.externalRestores]): [key] names it
+ * (`search/<frame id>`, `window/<frame id>`, `menu`), [to] is what it goes back to — three-way: only while it is still
+ * [from]; another change made since is left alone.
+ */
+data class ExternalRestore(val seq: Long, val key: String, val from: String?, val to: String?)
+
+/** How many restores [SchedulerState.externalRestores] keeps: `App` reads them within a frame of being queued. */
+const val MAX_EXTERNAL_RESTORES: Int = 32
+
+/** [this] with a restore of [key] from [from] to [to] queued for `App`. */
+fun SchedulerState.withExternalRestore(key: String, from: String?, to: String?): SchedulerState {
+    val seq = (externalRestores.lastOrNull()?.seq ?: 0L) + 1
+    return copy(externalRestores = (externalRestores + ExternalRestore(seq, key, from, to)).takeLast(MAX_EXTERNAL_RESTORES))
+}
+
+/**
  * PRD §6: the History window's **other** origin dimension — the rows the app itself produced rather than
  * the user, in a window. The two dimensions partition the list: a row either came out of a window (it is a
  * History Unit and carries a [HistoryWindow]) or out of one of these (it is not a History Unit at all —
@@ -650,6 +666,14 @@ data class SchedulerState(
      */
     val focusedInstance: String = "",
     /**
+     * PRD §6 (user rule 2026-10-01: a History Unit for almost every user action): the undos and redos of changes
+     * kept OUTSIDE this state — a Search window's configuration, a window's layout, the lateral menu's buttons
+     * ([ExternalDelta]) — waiting for `App`, which holds those, to put them back. Each has a rising [ExternalRestore.seq]
+     * so `App` applies each once and in order. Transient: never persisted, never synced, never in the fingerprint; the
+     * last [MAX_EXTERNAL_RESTORES] only.
+     */
+    val externalRestores: List<ExternalRestore> = emptyList(),
+    /**
      * PRD §8 Overlap Mode: whether `O` has armed "allow overlap" for the next calendar move/resize.
      * Transient session state, not persisted and not undoable.
      */
@@ -940,7 +964,7 @@ data class SchedulerState(
      * through [periodKindConfig], never directly.
      *
      * Authoritative user-authored data: persisted and synced (one row per kind). Like defining a kind, an
-     * account setting and not an Undo/Redo unit.
+     * account setting, and since 2026-10-01 an Undo/Redo unit (`SettingsDelta`).
      */
     val periodKindStyles: Map<String, PeriodKindStyle> = emptyMap(),
     /**
@@ -951,7 +975,7 @@ data class SchedulerState(
      * [periodKindConfig], where the rules are made transitive.
      *
      * Authoritative user-authored data: persisted and synced (one row for the whole list — a handful of rules), an
-     * account setting and not an Undo/Redo unit, like the drawings.
+     * account setting and, like the drawings, an Undo/Redo unit since 2026-10-01 (`SettingsDelta`).
      */
     val periodCombinations: List<org.example.project.scheduler.domain.PeriodCombination> = PeriodKinds.DEFAULT_COMBINATIONS,
     /**
