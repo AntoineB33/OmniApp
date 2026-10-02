@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search: a right-click in the type selector picks that type alone — 2026-10-02
+
+User request: *"right-click on a type element in the type selector in the Search window means only this type is
+selected and the drop-down menu disappears."* `CheckBoxDropDown(soloOnRightClick)`, on for `KindsDropDown` (so the same
+selector in the Search configurations and Added elements configurations windows too): a secondary press on an option
+checks it alone and closes the list. A left click still ticks and leaves the list open.
+
 ### Calendar: an alarm's or a timer's ring can be dragged, and is then outlined in blue — 2026-10-02
 
 Anomaly: *"I double-clicked an alarm box in the calendar and drag it, but it didn't do anything. It should also outline

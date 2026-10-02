@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -1012,6 +1013,7 @@ internal fun KindsDropDown(
         modifier = modifier,
         deploy = deploy,
         onDeployed = onDeployed,
+        soloOnRightClick = true,
     )
 }
 
@@ -1034,6 +1036,8 @@ internal fun <T> CheckBoxDropDown(
      */
     deploy: Boolean = false,
     onDeployed: () -> Unit = {},
+    /** A right-click on an option checks it alone and closes the list (the Search type selector). */
+    soloOnRightClick: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     val range = rememberCheckRange<T>()
@@ -1075,6 +1079,20 @@ internal fun <T> CheckBoxDropDown(
                     text = { Text(label(option)) },
                     leadingIcon = { Checkbox(checked = option in checked, onCheckedChange = null) },
                     onClick = { onChange(range.toggle(options, checked, option)) },
+                    // A right-click picks this option ALONE and closes the list — the one-choice shortcut of
+                    // a list that otherwise stays open to be ticked in turn.
+                    modifier =
+                        if (!soloOnRightClick) Modifier
+                        else Modifier.onPointerEventCompat(
+                            androidx.compose.ui.input.pointer.PointerEventType.Press,
+                            androidx.compose.ui.input.pointer.PointerEventPass.Initial,
+                        ) { event ->
+                            if (event.buttons.isSecondaryPressed) {
+                                event.changes.forEach { it.consume() }
+                                onChange(setOf(option))
+                                open = false
+                            }
+                        },
                 )
             }
         }
