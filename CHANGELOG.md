@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: day / week display mode — 2026-10-01
+
+User request: *"add a field in the calendar configurations to select between day and week display mode. In day mode,
+the timeline is vertical but when reaching the bottom, it resumes at the top at the right. When lock to now is on, the
+now-line is locked to the vertical timeline that is the furthest to the left, and vertically in the middle. When the
+user scrolls down, the timeline moves forward […]. When the user zooms, the lines still don't move but the timeline on
+it zooms."* `CalendarDisplayMode` + the configuration section's **Display** field (`App.calendarDisplayMode`,
+session view state). The grid is unchanged in kind: each column reads the timeline one step past its neighbour
+(`columnStepPx` — a day, or the viewport's height), through `columnDayShift` / `columnOffsetPx`; per-column gutters,
+cull windows and day boundaries in day mode; `centerOnNowLine` and `applyZoom` each grew a day-mode branch.
+`CalendarDisplayModeTest`. `calendar.md` § *Day and week display modes*.
+
 ### Task tree: the task's colour under the expand arrow; the selection as two greys — 2026-10-01
 
 User request: *"Color background for tasks is great for the calendar, but for the task tree it becomes a bit of a

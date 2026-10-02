@@ -803,6 +803,34 @@ Global rules that always apply: `CLAUDE.md`.
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.
 
+### Day and week display modes
+
+User spec 2026-10-01. `ui/CalendarUi.kt` (`CalendarDisplayMode`, `columnStepPx`, `columnDayShift`,
+`columnOffsetPx`); the configuration section's **Display** field; `CalendarDisplayModeTest`.
+
+- **ONE grid, and the mode is one number.** Every column is the same endless vertical timeline read further
+  along than its left neighbour: by a whole day in **week** mode, by the **viewport's height** in **day** mode
+  — so the timeline reaching the bottom of a column resumes at the top of the column to its right. Never a
+  second grid, a second `DayColumn` or a second scroll: column `c` draws `anchorDay + columnDayShift(c)` at
+  `columnOffsetPx(c)`, and week mode is the case where those are `c` and `offsetPx` (said outright, not
+  computed, so no rounding can draw a column a day off).
+- **A scroll is the one `offsetPx`**, as before: scrolling down moves time forward in every column at once, so
+  the timeline leaves at the top of the leftmost column and enters at the bottom of the rightmost.
+- **A zoom never moves the columns**: the step is the viewport's height, which the zoom does not change. The
+  focal point is the pointer's height **plus its column's step** (`applyZoom`'s `focalColumn`), so the instant
+  under the pointer stays under it.
+- **Locked, the line is at the middle of the LEFTMOST column** (`centerOnNowLine`'s day-mode branch — an
+  absolute placement; the week's "nearest occurrence" rule has nothing to choose between here). The same lock
+  serves "Locked on task".
+- **Each day-mode column has its own time gutter and draws its own day boundaries** — its hours and its
+  midnights are not its neighbours'. That is why there are fewer columns than seven: as many as fit at
+  `DAY_MODE_COLUMN_MIN_WIDTH`. The cull windows are per column for the same reason (`hourWindows[column][row]`).
+- **`columnShifts` is a derived state**, so in day mode the columns recompose when a column's top crosses a
+  midnight and not per scrolled pixel; the rows are still placed by a layout-phase read (`display-hot-path.md`).
+- **A date pick in day mode** anchors on the picked day's midnight and zooms so the whole day spans the columns.
+- Compose-only view state held by `App` (it survives closing the window, not a restart): never persisted,
+  never synced.
+
 ### "Go to calendar" and the lock on a task
 
 User spec 2026-09-26. `scheduler/domain/CalendarLockDomain.kt`; the task cell menu's entry

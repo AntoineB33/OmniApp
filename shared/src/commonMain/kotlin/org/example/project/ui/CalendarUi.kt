@@ -3303,6 +3303,12 @@ fun CalendarFloatingWindow(
     lockTaskPending: Boolean = false,
     onLockOnTaskChange: (Boolean) -> Unit = {},
     lockOnTaskNonce: Int = 0,
+    /**
+     * PRD §8: the grid's display mode and its field in the configuration section. View state of the session,
+     * held by the caller so it outlives the window being closed and reopened.
+     */
+    displayMode: CalendarDisplayMode = CalendarDisplayMode.Week,
+    onDisplayModeChange: (CalendarDisplayMode) -> Unit = {},
     /** The month the day selector shows (its ‹ / › page it), and the day picked in it. */
     monthAnchor: LocalDate = LocalDate(today.year, today.month, 1),
     onMonthAnchorChange: (LocalDate) -> Unit = {},
@@ -3527,6 +3533,8 @@ fun CalendarFloatingWindow(
                 selectedDate = selectedDate,
                 today = today,
                 onSelectDate = onSelectDate,
+                displayMode = displayMode,
+                onDisplayModeChange = onDisplayModeChange,
                 lockNowLine = lockNowLine,
                 onLockNowLineChange = ::setLockNowLine,
                 lockedTaskTitle = lockedTaskTitle,
@@ -3568,6 +3576,7 @@ fun CalendarFloatingWindow(
                     onLockNowLineChange = ::setLockNowLine,
                     lockTaskMillis = lockTaskMillis?.takeIf { lockOnTask },
                     onReleaseTaskLock = { onLockOnTaskChange(false) },
+                    displayMode = displayMode,
                 )
             }
         }
@@ -3588,6 +3597,8 @@ private fun CalendarConfigurationSection(
     selectedDate: LocalDate,
     today: LocalDate,
     onSelectDate: (LocalDate) -> Unit,
+    displayMode: CalendarDisplayMode,
+    onDisplayModeChange: (CalendarDisplayMode) -> Unit,
     lockNowLine: Boolean,
     onLockNowLineChange: (Boolean) -> Unit,
     lockedTaskTitle: String?,
@@ -3615,6 +3626,7 @@ private fun CalendarConfigurationSection(
             onSelectDate = onSelectDate,
         )
         HorizontalDivider()
+        CalendarDisplayModeField(displayMode, onDisplayModeChange)
         CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
         // PRD §8 "locked on task": there once a task cell's "go to calendar" named a task. Held on the middle of
         // its panel closest to the now-line — or, while none exists yet, on the definitive-schedule front, which
@@ -3638,6 +3650,34 @@ private fun CalendarConfigurationSection(
         }
         CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders)
         CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks)
+    }
+}
+
+/**
+ * PRD §8: the configuration section's **Display** field — day or week ([CalendarDisplayMode]). The label, then
+ * the two modes side by side; the one in force is filled.
+ */
+@Composable
+private fun CalendarDisplayModeField(mode: CalendarDisplayMode, onModeChange: (CalendarDisplayMode) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Display", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+        Row(Modifier.clip(RoundedCornerShape(6.dp)).border(1.dp, CalColors.muted, RoundedCornerShape(6.dp))) {
+            listOf(CalendarDisplayMode.Day to "Day", CalendarDisplayMode.Week to "Week").forEach { (option, label) ->
+                val selected = option == mode
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .background(if (selected) CalColors.accent else Color.Transparent)
+                        .clickable { onModeChange(option) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
     }
 }
 
@@ -3924,6 +3964,69 @@ private class CalendarZoomActions {
 /** PRD §8: how many day columns the grid shows side by side. Each is its own endless timeline. */
 private const val DAY_COLUMNS = 7
 
+/**
+ * PRD §8: how the grid's columns follow one another (the configuration section's "Display" field).
+ *
+ * Every column is the SAME endless vertical timeline, read further along than its left neighbour; the mode is
+ * only how much further ([columnStepPx]):
+ *  - [Week] — one whole day, so the columns are consecutive days at the same time of day;
+ *  - [Day] — one viewport height, so the timeline that reaches the bottom of a column resumes at the top of the
+ *    column to its right, and the columns together are one unbroken stretch of time.
+ */
+enum class CalendarDisplayMode { Week, Day }
+
+/** PRD §8 day mode: a column and its own time gutter need at least this much width, which sets how many fit. */
+private val DAY_MODE_COLUMN_MIN_WIDTH = 200.dp
+
+/**
+ * PRD §8 day mode: how many columns a [viewportWidthPx]-wide grid is cut into — as many as fit at
+ * [minColumnPx] each, between one and [DAY_COLUMNS]. Each carries its own time gutter (its hours differ from
+ * its neighbours'), which is why it is fewer than the week's seven.
+ */
+internal fun dayModeColumnCount(viewportWidthPx: Float, minColumnPx: Float): Int =
+    if (viewportWidthPx <= 0f || minColumnPx <= 0f) 1
+    else floor(viewportWidthPx / minColumnPx).toInt().coerceIn(1, DAY_COLUMNS)
+
+/**
+ * PRD §8: how far along the timeline (px) each column is read past its left neighbour — a whole day in
+ * [CalendarDisplayMode.Week], the viewport's height in [CalendarDisplayMode.Day] (a day until the viewport is
+ * measured). The viewport's height does not change with the zoom, so in day mode a zoom scales the timeline
+ * ON the columns and never moves where one column hands over to the next.
+ */
+internal fun columnStepPx(mode: CalendarDisplayMode, dayHeightPx: Float, viewportPx: Float): Float =
+    if (mode == CalendarDisplayMode.Day && viewportPx > 0f) viewportPx else dayHeightPx
+
+/**
+ * PRD §8: how many whole days after the anchor day the day at the TOP of [column] is, for a grid scrolled
+ * [offsetPx] into its anchor day. In week mode that is the column's index — said outright rather than
+ * computed, so a rounding of `offset + column × day` can never draw a column a day off.
+ */
+internal fun columnDayShift(
+    mode: CalendarDisplayMode,
+    column: Int,
+    offsetPx: Float,
+    dayHeightPx: Float,
+    viewportPx: Float,
+): Int =
+    if (mode == CalendarDisplayMode.Week) column
+    else rollingDayShift(offsetPx + column * columnStepPx(mode, dayHeightPx, viewportPx), dayHeightPx)
+
+/**
+ * PRD §8: how far (px) [column] is scrolled into the day [dayShift] days after the anchor — the column's own
+ * reading of `offsetPx`, which every placement inside it uses. [dayShift] is passed in, not recomputed, so a
+ * layout-phase read places the rows against the very days the composition drew.
+ */
+internal fun columnOffsetPx(
+    mode: CalendarDisplayMode,
+    column: Int,
+    dayShift: Int,
+    offsetPx: Float,
+    dayHeightPx: Float,
+    viewportPx: Float,
+): Float =
+    if (mode == CalendarDisplayMode.Week) offsetPx
+    else offsetPx + column * columnStepPx(mode, dayHeightPx, viewportPx) - dayShift * dayHeightPx
+
 @Composable
 private fun WeekView(
     selectedDate: LocalDate,
@@ -3988,6 +4091,8 @@ private fun WeekView(
      */
     lockTaskMillis: Long? = null,
     onReleaseTaskLock: () -> Unit = {},
+    /** PRD §8: whether the columns are consecutive days or one timeline wrapping from column to column. */
+    displayMode: CalendarDisplayMode = CalendarDisplayMode.Week,
     /** Drawn at the end of the month-label row — the window's own view menu. */
     headerTrailing: @Composable RowScope.() -> Unit = {},
 ) {
@@ -4013,6 +4118,15 @@ private fun WeekView(
     // around) and the viewport height (the fallback focal — its centre — for keyboard zoom with no cursor).
     var focalYpx by remember { mutableStateOf<Float?>(null) }
     var viewportHpx by remember { mutableStateOf(0f) }
+    // PRD §8 day mode: the grid's width (how many columns fit) and the pointer's X (which column a zoom's
+    // focal point is in — each column reads the timeline one viewport height further than its neighbour).
+    var viewportWpx by remember { mutableStateOf(0f) }
+    var focalXpx by remember { mutableStateOf<Float?>(null) }
+    val modeState = rememberUpdatedState(displayMode)
+    val dayModeMinColumnPx = with(density) { DAY_MODE_COLUMN_MIN_WIDTH.toPx() }
+    val columnCount =
+        if (displayMode == CalendarDisplayMode.Day) dayModeColumnCount(viewportWpx, dayModeMinColumnPx) else DAY_COLUMNS
+    val columnCountState = rememberUpdatedState(columnCount)
     // PRD §8: while a block is being dragged/resized, lock the grid's vertical scroll so it doesn't
     // compete with the block's own drag gesture.
     var scrollLocked by remember { mutableStateOf(false) }
@@ -4081,6 +4195,14 @@ private fun WeekView(
         val lineTime = lockTaskState.value?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) } ?: lockLineTime()
         val dayFraction = lineTime?.time?.hourOfDay()?.div(24f) ?: nowFractionState.value
         val lineDay = lineTime?.date ?: todayState.value
+        // PRD §8 day mode: the columns are one timeline, so the line has ONE place — the middle of the
+        // LEFTMOST column — and there is no occurrence to choose between.
+        if (modeState.value == CalendarDisplayMode.Day) {
+            anchorDay = lineDay
+            offsetPx = dayFraction * dayH - viewportHpx / 2f
+            rebase(dayH)
+            return
+        }
         offsetPx = nowLineCenterOffset(
             dayFraction = dayFraction,
             dayHeightPx = dayH,
@@ -4123,7 +4245,17 @@ private fun WeekView(
             centerOnNowLine(dayH)
             return
         }
-        offsetPx = zoomAnchoredOffset(offsetPx, focal, f) + (focal - focalAfter)
+        // PRD §8 day mode: the column under the pointer reads the timeline that many viewport heights further
+        // on, so that is how far down the timeline the focal point really is. The step does not scale with the
+        // zoom — the columns stay where they are and the timeline zooms on them.
+        val focalColumn =
+            if (modeState.value == CalendarDisplayMode.Day && viewportWpx > 0f) {
+                val columns = columnCountState.value
+                focalXpx?.let { (it / (viewportWpx / columns)).toInt().coerceIn(0, columns - 1) } ?: 0
+            } else {
+                0
+            }
+        offsetPx = zoomAnchoredOffset(offsetPx, focal + focalColumn * viewportHpx, f) + (focal - focalAfter)
         rebase(dayH)
     }
 
@@ -4188,7 +4320,9 @@ private fun WeekView(
     // opening fit nor switch the default-on lock straight back off.
     var firstJumpRun by remember { mutableStateOf(true) }
     LaunchedEffect(jumpNonce, selectedDate) {
-        anchorDay = weekAnchorDay(selectedDate)
+        val dayMode = modeState.value == CalendarDisplayMode.Day
+        // Day mode shows the picked day itself, from its midnight, spread over the columns.
+        anchorDay = if (dayMode) selectedDate else weekAnchorDay(selectedDate)
         if (firstJumpRun) {
             firstJumpRun = false
             return@LaunchedEffect
@@ -4197,7 +4331,9 @@ private fun WeekView(
         // leave the zoom and the offset to the initial "open at the current hour" effect above. Only a real
         // pick (which can only happen once the calendar is on screen and measured) resets the view.
         if (viewportHpx > 0f) {
-            zoom = wholeDayZoom(viewportHpx, dayHeightPxAt(1f))
+            zoom =
+                if (dayMode) calendarSpanZoom(viewportHpx * columnCountState.value, dayHeightPxAt(1f), MINUTES_PER_DAY)
+                else wholeDayZoom(viewportHpx, dayHeightPxAt(1f))
             offsetPx = 0f
         }
         // PRD §8 now-line lock: a date pick is the same intent as a scroll — "take me elsewhere" — so it
@@ -4211,14 +4347,29 @@ private fun WeekView(
     // the day the middle of the view belongs to the neighbouring one), which is a composition-level change.
     // Cost follows the screen, not the history (CLAUDE.md hot-path rule): it is a handful of arithmetic per
     // observed now-line, and the observed now-line is already quantized upstream.
-    LaunchedEffect(lockNowLine, lockTaskMillis, nowMillis, zoom, viewportHpx) {
+    LaunchedEffect(lockNowLine, lockTaskMillis, nowMillis, zoom, viewportHpx, displayMode) {
         if (lockNowLine || lockTaskMillis != null) centerOnNowLine(dayHeightPxAt(zoom))
     }
 
-    // How many day-rows cover the viewport, and therefore which days are on screen: the columns span
-    // [anchorDay, anchorDay + DAY_COLUMNS - 1] at the top row and one day further down per row.
+    // PRD §8: which day each column's top row draws, as days past the anchor ([columnDayShift]). The column
+    // index in week mode; in day mode it follows the scroll, and changes only when a column's top crosses a
+    // midnight — so the columns recompose then and not per scrolled pixel.
+    val columnShifts by remember {
+        derivedStateOf {
+            val dayPx = dayHeightPxAt(zoom)
+            List(columnCountState.value) { column ->
+                columnDayShift(modeState.value, column, offsetPx, dayPx, viewportHpx)
+            }
+        }
+    }
+    // The column's own reading of [offsetPx], for the layout and draw phases; [dayShift] is the composed one.
+    fun columnOffset(column: Int, dayShift: Int): Float =
+        columnOffsetPx(modeState.value, column, dayShift, offsetPx, dayHeightPxAt(zoom), viewportHpx)
+
+    // How many day-rows cover the viewport, and therefore which days are on screen: from the anchor day to
+    // the last column's top day, and one day further down per row.
     val rowCount = rollingRowCount(viewportHpx, dayHeightPx)
-    val visibleDayCount = rowCount + DAY_COLUMNS - 1
+    val visibleDayCount = rowCount + (columnShifts.maxOrNull() ?: 0)
     // PRD §9: the schedule horizon and every display projection follow what is actually on screen, so the
     // span the scroll has landed on is reported up rather than derived from a "focused week" that no
     // longer exists.
@@ -4241,11 +4392,16 @@ private fun WeekView(
     // read INSIDE the gutter/column content lambdas below rather than here — so crossing a quantum
     // recomposes those lambdas only, and a scroll within one recomposes nothing at all: the day-rows are
     // still placed by the layout-phase `offset { ... }` read of [offsetPx], exactly as before.
+    // One list per COLUMN: in day mode each column is scrolled to a different place (in week mode they are
+    // all the same list).
     val hourWindows = remember {
         derivedStateOf {
             val dayPx = dayHeightPxAt(zoom)
-            List(rollingRowCount(viewportHpx, dayPx)) { row ->
-                visibleHourWindow(row, offsetPx, dayPx, viewportHpx)
+            val rows = rollingRowCount(viewportHpx, dayPx)
+            List(columnCountState.value) { column ->
+                val shift = columnDayShift(modeState.value, column, offsetPx, dayPx, viewportHpx)
+                val scrolled = columnOffsetPx(modeState.value, column, shift, offsetPx, dayPx, viewportHpx)
+                List(rows) { row -> visibleHourWindow(row, scrolled, dayPx, viewportHpx) }
             }
         }
     }
@@ -4261,11 +4417,13 @@ private fun WeekView(
     val recordsPerDayState = rememberUpdatedState(recordsPerDay)
     val framesWanted by remember {
         derivedStateOf {
-            val windows = hourWindows.value
-            windows.indices.any { row ->
-                val window = windows[row]
-                (0 until DAY_COLUMNS).any { column ->
-                    val day = rollingDayAt(anchorDay, row, column)
+            val columnWindows = hourWindows.value
+            val shifts = columnShifts
+            columnWindows.indices.any { column ->
+                val windows = columnWindows[column]
+                windows.indices.any { row ->
+                    val window = windows[row]
+                    val day = rollingDayAt(anchorDay, row, shifts.getOrElse(column) { column })
                     val lineHere =
                         day == todayState0.value && window.intersects(nowHourState.value, nowHourState.value)
                     lineHere ||
@@ -4341,10 +4499,13 @@ private fun WeekView(
 
         // Day-of-week + date headers, aligned over their columns. They name each column's day at the TOP of
         // the viewport, so they roll forward one day at a time as the grid scrolls past midnight.
+        val dayMode = displayMode == CalendarDisplayMode.Day
         Row(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.width(gutterWidth))
-            repeat(DAY_COLUMNS) { column ->
-                val day = rollingDayAt(anchorDay, row = 0, column = column)
+            if (!dayMode) Spacer(Modifier.width(gutterWidth))
+            repeat(columnCount) { column ->
+                // Day mode: every column has its own gutter, so its header sits past one too.
+                if (dayMode) Spacer(Modifier.width(gutterWidth))
+                val day = rollingDayAt(anchorDay, row = 0, column = columnShifts.getOrElse(column) { column })
                 DayHeader(
                     weekday = WEEKDAY_SHORT[day.dayOfWeek.isoDayNumber - 1],
                     dayOfMonth = day.dayOfMonth,
@@ -4362,7 +4523,10 @@ private fun WeekView(
             modifier = Modifier
                 .fillMaxSize()
                 .clipToBounds()
-                .onSizeChanged { viewportHpx = it.height.toFloat() }
+                .onSizeChanged {
+                    viewportHpx = it.height.toFloat()
+                    viewportWpx = it.width.toFloat()
+                }
                 // PRD §8 zoom-to-cursor: track the cursor's Y in the viewport, and on Ctrl+scroll zoom
                 // toward it (consumed at the Initial pass so the grid doesn't also scroll). A plain wheel
                 // turn isn't consumed, so it falls through to the scrollable below. Ctrl is read from the
@@ -4385,7 +4549,10 @@ private fun WeekView(
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
-                            event.changes.firstOrNull()?.let { focalYpx = it.position.y }
+                            event.changes.firstOrNull()?.let {
+                                focalYpx = it.position.y
+                                focalXpx = it.position.x
+                            }
                             val touch = event.changes.singleOrNull()?.takeIf { it.type == PointerType.Touch }
                             when {
                                 touch == null -> {
@@ -4491,9 +4658,11 @@ private fun WeekView(
             // columns are recomposed once per day boundary crossed instead of once per scrolled pixel.
             Row(Modifier.fillMaxSize()) {
                 // Time gutter: hour labels, plus sub-hour minute labels (":30", ":15", …) once zoomed in.
-                // Repeated per day-row — every column crosses midnight at the same height, so one gutter
-                // serves them all.
+                // Repeated per day-row. In week mode every column crosses midnight at the same height, so one
+                // gutter serves them all; in day mode each column reads different hours and has its own.
+                val gutter: @Composable (Int) -> Unit = { gutterColumn ->
                 Box(Modifier.width(gutterWidth).fillMaxHeight()) {
+                    val gutterShift = columnShifts.getOrElse(gutterColumn) { gutterColumn }
                     repeat(rowCount) { row ->
                         Column(
                             Modifier
@@ -4510,12 +4679,15 @@ private fun WeekView(
                                 // [offsetPx] says. See [DayColumn]'s own note below.
                                 .wrapContentHeight(Alignment.Top, unbounded = true)
                                 .height(hourHeight * 24)
-                                .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
+                                .offset {
+                                    IntOffset(0, (row * dayHeightPx - columnOffset(gutterColumn, gutterShift)).roundToInt())
+                                },
                         ) {
                             // PRD §8 / ADR 0009: cull the labels to the hours on screen. Zoomed in, a
                             // 24-hour gutter is hundreds of Text nodes per row and nearly all of them are
                             // scrolled out of view.
-                            val window = hourWindows.value.getOrElse(row) { HourWindow.WholeDay }
+                            val window =
+                                hourWindows.value.getOrNull(gutterColumn)?.getOrNull(row) ?: HourWindow.WholeDay
                             val tick = calendarTickMinutes(hourHeight)
                             val tickHeight = hourHeight * (tick / 60f)
                             val ticksPerDay = 24 * 60 / tick
@@ -4548,13 +4720,17 @@ private fun WeekView(
                         }
                     }
                 }
-                repeat(DAY_COLUMNS) { column ->
+                }
+                if (!dayMode) gutter(0)
+                repeat(columnCount) { column ->
+                    if (dayMode) gutter(column)
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         // Read HERE (inside the column's content lambda) so crossing a cull quantum
                         // recomposes the columns and nothing above them.
-                        val windows = hourWindows.value
+                        val windows = hourWindows.value.getOrNull(column).orEmpty()
+                        val columnShift = columnShifts.getOrElse(column) { column }
                         repeat(rowCount) { row ->
-                            val day = rollingDayAt(anchorDay, row, column)
+                            val day = rollingDayAt(anchorDay, row, columnShift)
                             // Keyed on the day so a column's transient state (an open contextual menu, an
                             // armed move) belongs to the date it was opened on and cannot be inherited by
                             // the next day that rolls into the same slot.
@@ -4606,7 +4782,9 @@ private fun WeekView(
                                         .fillMaxWidth()
                                         .wrapContentHeight(Alignment.Top, unbounded = true)
                                         .height(hourHeight * 24)
-                                        .offset { IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt()) },
+                                        .offset {
+                                            IntOffset(0, (row * dayHeightPx - columnOffset(column, columnShift)).roundToInt())
+                                        },
                                 )
                             }
                             // The header only names each column's TOP day, so every boundary scrolled into
@@ -4618,7 +4796,10 @@ private fun WeekView(
                                     color = if (day == today) CalColors.accent else CalColors.muted,
                                     modifier = Modifier
                                         .offset {
-                                            IntOffset(0, (row * dayHeightPx - offsetPx).roundToInt() + 2)
+                                            IntOffset(
+                                                0,
+                                                (row * dayHeightPx - columnOffset(column, columnShift)).roundToInt() + 2,
+                                            )
                                         }
                                         .background(
                                             CalColors.menuBackground.copy(alpha = 0.85f),
@@ -4628,10 +4809,29 @@ private fun WeekView(
                                 )
                             }
                         }
+                        // Day mode: each column crosses midnight at its own height, so each draws its own
+                        // day boundaries (over its rows, like the shared ones week mode draws below).
+                        if (dayMode) {
+                            Box(
+                                Modifier.fillMaxSize().drawBehind {
+                                    var row = 0
+                                    while (row <= rowCount) {
+                                        val y = row * dayHeightPx - columnOffset(column, columnShift)
+                                        drawLine(
+                                            color = CalColors.muted.copy(alpha = 0.55f),
+                                            start = Offset(0f, y),
+                                            end = Offset(size.width, y),
+                                            strokeWidth = 1.5.dp.toPx(),
+                                        )
+                                        row++
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }
-            Box(
+            if (!dayMode) Box(
                 Modifier.fillMaxSize().drawBehind {
                     // The day boundaries, drawn over the columns (a block crossing midnight must not hide
                     // the seam) and at one height for the whole grid — every column crosses into its own

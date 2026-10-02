@@ -1699,6 +1699,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var calendarLockTask by remember { mutableStateOf<TaskId?>(null) }
         var calendarLockOnTask by remember { mutableStateOf(false) }
         var calendarLockNonce by remember { mutableStateOf(0) }
+        // PRD §8: the calendar's day / week display mode. View state of this session too — held here rather
+        // than in the window so closing and reopening the calendar keeps it.
+        var calendarDisplayMode by remember { mutableStateOf(org.example.project.ui.CalendarDisplayMode.Week) }
         // A task cell's "go to calendar": the calendar opened (or brought back) and focused, locked on the task.
         fun goToCalendar(taskId: TaskId) {
             calendarLockTask = taskId
@@ -3010,6 +3013,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             lockTaskPending = calendarLockTarget.second,
                             onLockOnTaskChange = { calendarLockOnTask = it },
                             lockOnTaskNonce = calendarLockNonce,
+                            displayMode = calendarDisplayMode,
+                            onDisplayModeChange = { calendarDisplayMode = it },
                             // The day selector, in the window's configuration section (it left the lateral menu).
                             monthAnchor = monthAnchor,
                             onMonthAnchorChange = { monthAnchor = it },
