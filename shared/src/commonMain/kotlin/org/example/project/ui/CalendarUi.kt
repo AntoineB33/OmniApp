@@ -6940,6 +6940,9 @@ private fun CalendarTitleBubble(
     Column(
         Modifier
             .offset { IntOffset(pos.x.roundToInt(), pos.y.roundToInt() + yOffsetPx) }
+            // As wide as its widest line and no wider: the divider between two sections fills the width it
+            // is offered, so without this a bubble of several sections took the whole viewport's.
+            .width(androidx.compose.foundation.layout.IntrinsicSize.Max)
             .shadow(4.dp, RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.inverseSurface, RoundedCornerShape(4.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp),

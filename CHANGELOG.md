@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: a hover bubble of several sections is as wide as its text — 2026-10-02
+
+Anomaly: *"The info bubble when hovering over the calendar are often too wide even though the text isn't."* The
+`HorizontalDivider` between two sections fills the width it is offered, so any bubble with more than one section
+stretched across the viewport. `CalendarTitleBubble`'s column is now `width(IntrinsicSize.Max)`.
+
 ### Calendar: the configuration section moves to the right side — 2026-10-02
 
 User request: *"Put the calendar configurations at the right side instead of the left side."* In
