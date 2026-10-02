@@ -2185,6 +2185,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // layer below hatches (one record, so the hatch and the cut cannot disagree).
             val ownScannedLocked = lockedIntervals?.takeIf { lockHistoryScanned }
             val ownIsComputer = ownLayer == SchedulerDomain.ActivityLayer.NoComputerUnlocked
+            // Where this device's OS log KNOWS it was unlocked — known only once the history was read; a peer's
+            // layer is never known unlocked. With "I'm away" off that is the past the line crossed in MODE 1, where
+            // a period carrying "no screen" retracted to the line (`scheduler.md` § *A mode-1 line retracts*): the
+            // Sleep band, the wind-down hour and the layers they lay all give it up.
+            val ownKnownUnlocked =
+                SchedulerDomain.knownUnlockedRegions(ownScannedLocked, displayFloorMillis, nowMillis)
+            val atScreenPast = SchedulerDomain.subtractRegions(ownKnownUnlocked, declaredAwayRegions)
+            // The live band of the Sleep toggle is the user's own word, like a drawn period: it stays whole.
+            val retractedSleepPanels =
+                SchedulerDomain.retractOverAtScreenPast(
+                    displaySleepPanels.filterNot { it.id == "sleep-live" }, atScreenPast, schedulerState.periodKindConfig,
+                ) + liveSleepBand
             val observedNoScreenRegions =
                 if (ownScannedLocked == null && declaredAwayRegions.isEmpty()) {
                     emptyList()
@@ -2226,10 +2238,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // PRD §8/§9: an on-screen task's panel is CUT where the devices observed nobody at a screen —
                     // the same "a stretch carrying both layers is a no-screen period" the hatching draws, applied
                     // to the panels it covers. An off-screen task is left alone (§9 lets it run in one).
-                    SchedulerDomain.clipPanelsForObservedNoScreen(
-                        displayWorkPlanPanels, schedulerState.tasks, observedNoScreenRegions,
+                    SchedulerDomain.retractOverAtScreenPast(
+                        SchedulerDomain.clipPanelsForObservedNoScreen(
+                            displayWorkPlanPanels, schedulerState.tasks, observedNoScreenRegions,
+                        ),
+                        atScreenPast,
+                        schedulerState.periodKindConfig,
                     ),
-                    displayReminderPanels, displaySidePanels, displaySleepPanels,
+                    displayReminderPanels, displaySidePanels, retractedSleepPanels,
                     schedulerState.showScreenBreaks, schedulerState.showReminders,
                     schedulerState.screenBreaks,
                     // § *Progressive Calculation*: the same front the derived inactivity bands stop at, below —
@@ -2315,19 +2331,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // as this device's fake layer, so a drawn "no screen" does not lay "no computer unlocked" over an
                 // away spell ("except when the 'or' condition is already verified"). And where this device's OS log
                 // KNOWS it was unlocked in the past, the "or" lays "not on a computer" instead (user rule,
-                // 2026-10-01) — known only once the history was read; a peer's layer is never known unlocked.
-                val ownKnownUnlocked =
-                    if (lockHistoryScanned) {
-                        SchedulerDomain.knownUnlockedRegions(lockedIntervals, displayFloorMillis, nowMillis)
-                    } else {
-                        emptyList()
-                    }
+                // 2026-10-01).
                 val stated =
                     SchedulerDomain.statedKindRegions(
                         workPlanPanels,
                         periodKindConfig,
                         away = mapOf(PeriodKinds.fakeLayerKind(ownLayer) to declaredAwayRegions),
                         knownAbsent = mapOf(PeriodKinds.layerKind(ownLayer) to ownKnownUnlocked),
+                        atScreenPast = atScreenPast,
                     )
                 SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
                     val layerLocked =
@@ -4690,10 +4701,10 @@ private fun mergePanelsForDisplay(
                 provisional = group.any { SchedulerDomain.isProvisionalPanel(it, definitiveFrontMillis) },
             )
         }
-    // The sleep windows render as their own labeled band behind the task blocks (drawn first), whole: a sleep window
-    // is a period every task has at 0, and a line at a screen lifts only the no-screen period it carries, never the
-    // window (`docs/invariants/scheduler.md` § *Resilience*). Carving it where the account was active opened a hole
-    // no task could fill, since the scheduler places nobody there.
+    // The sleep windows render as their own labeled band behind the task blocks (drawn first). The caller has already
+    // cut out of them the past the line crossed in mode 1 (`SchedulerDomain.retractOverAtScreenPast`): a line at a
+    // screen retracts the window itself (`docs/invariants/scheduler.md` § *A mode-1 line retracts*), and the plan is
+    // materialized across the retracted span, so the hole is the tasks' to fill.
     val sleepRecords =
         // Its "No screen" hover line is the sleep kind's companion, named by the calendar over the band's own
         // span (`companionBubbleSections`) — not read off any evidence here.

@@ -548,9 +548,10 @@ class PeriodCombinationsTest {
     }
 
     @Test
-    fun a_past_sleep_window_lays_not_on_a_computer_where_the_computer_was_unlocked() {
-        // User report (2026-10-01): "there should be a 'not on a computer' derived from the 'sleep' period behind the now
-        // line". A sleep window of the Sleep schedule is the user's own (orange), and it carries a no-screen period.
+    fun a_sleep_window_lays_no_layer_where_the_line_crossed_it_at_a_screen() {
+        // User report (2026-10-01): "I didn't hit the I'm away button, so the now line must be in mode 1 and the sleep
+        // period must retract to the now line" — a sleep window (orange, the user's own, carrying a no-screen period)
+        // states nothing over the past this computer was unlocked for with the button off.
         val sleep =
             org.example.project.scheduler.model.TaskPanel(
                 id = "sleep/x",
@@ -562,15 +563,40 @@ class PeriodCombinationsTest {
                 periodKind = PeriodKinds.SLEEP,
             )
         assertTrue(SchedulerDomain.isUserStated(sleep))
+        val unlocked = mapOf(PeriodKinds.NO_COMPUTER_UNLOCKED to listOf(span(1, 3)))
         val stated =
-            SchedulerDomain.statedKindRegions(
-                listOf(sleep),
-                DEFAULT,
-                knownAbsent = mapOf(PeriodKinds.NO_COMPUTER_UNLOCKED to listOf(span(1, 3))),
-            )
-        assertEquals(listOf(span(1, 3)), stated[PeriodKinds.NOT_ON_A_COMPUTER])
+            SchedulerDomain.statedKindRegions(listOf(sleep), DEFAULT, knownAbsent = unlocked, atScreenPast = listOf(span(1, 3)))
+        assertEquals(null, stated[PeriodKinds.NOT_ON_A_COMPUTER])
+        assertEquals(listOf(span(0, 1), span(3, 8)), stated[PeriodKinds.SLEEP])
         assertEquals(listOf(span(0, 1), span(3, 8)), stated[PeriodKinds.NO_COMPUTER_UNLOCKED])
-        assertEquals(listOf(span(0, 8)), stated[PeriodKinds.NO_PHONE_UNLOCKED])
+        assertEquals(listOf(span(0, 1), span(3, 8)), stated[PeriodKinds.NO_PHONE_UNLOCKED])
+        // The Sleep band itself is what retracted: "Sleep is still just behind now line" (same day). The band the
+        // calendar projects carries no stored kind, only the flag.
+        val band = sleep.copy(periodKind = "")
+        assertEquals(
+            listOf(span(0, 1), span(3, 8)),
+            SchedulerDomain.retractOverAtScreenPast(listOf(band), listOf(span(1, 3)), DEFAULT)
+                .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+        )
+        assertEquals(
+            emptyList(),
+            SchedulerDomain.retractOverAtScreenPast(listOf(band), listOf(span(0, 8)), DEFAULT),
+            "a window worked through to the line leaves nothing behind it",
+        )
+        // "I'm away" pressed over 2–3: mode 3 there, so the window stands and the spell is its fake layer.
+        val away = mapOf(PeriodKinds.NOT_ON_A_COMPUTER to listOf(span(2, 3)))
+        val withAway =
+            SchedulerDomain.statedKindRegions(listOf(sleep), DEFAULT, away, unlocked, atScreenPast = listOf(span(1, 2)))
+        assertEquals(listOf(span(2, 3)), withAway[PeriodKinds.NOT_ON_A_COMPUTER])
+        assertEquals(listOf(span(0, 1), span(2, 8)), withAway[PeriodKinds.SLEEP])
+        // A "No screen" period the user DREW over those hours is their word about them: it keeps its dotted band.
+        val drawn = sleep.copy(id = "drawn", sleep = false, periodKind = PeriodKinds.NO_SCREEN)
+        assertEquals(
+            listOf(span(1, 3)),
+            SchedulerDomain.statedKindRegions(listOf(drawn), DEFAULT, knownAbsent = unlocked, atScreenPast = listOf(span(1, 3)))[
+                PeriodKinds.NOT_ON_A_COMPUTER,
+            ],
+        )
         // A break is the app's own (grey): it carries no screen, but brings no layer.
         val brk = sleep.copy(id = "break", sleep = false, screenBreak = true, periodKind = PeriodKinds.BREAK_15MIN)
         assertTrue(!SchedulerDomain.isUserStated(brk))

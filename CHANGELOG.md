@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A sleep window lays no "not on a computer" where the line crossed it in mode 1 — 2026-10-01
+
+Anomaly: *"I see the 'not on computer' period behind the now line. […] I didn't hit the I'm away button, so the now
+line must be in mode 1 and the sleep period must retract to the now line."* The same day's "the Sleep schedule's
+windows count as user-stated" fired the `or` placement over the window's whole span, the mode-1 past included.
+`SchedulerDomain.statedKindRegions(atScreenPast)`: an orange period that is or carries "no screen" gives up the past
+this device was unlocked for with the button off (`App.kt`: `ownKnownUnlocked` minus `declaredAwayRegions`). A drawn
+period is unchanged. Follow-up (*"Sleep is still just behind now line"*): the band itself was still drawn whole (the
+2026-09-28 "only the companion lifts" display); `SchedulerDomain.retractOverAtScreenPast` now cuts the Sleep bands and
+the wind-down hour in `App.kt` by the same regions, and `statedKindRegions` reads through it.
+`PeriodCombinationsTest.a_sleep_window_lays_no_layer_where_the_line_crossed_it_at_a_screen`
+(was `a_past_sleep_window_lays_not_on_a_computer_where_the_computer_was_unlocked`). `calendar.md` § *Combination rules*.
+
 ### Calendar: day / week display mode — 2026-10-01
 
 User request: *"add a field in the calendar configurations to select between day and week display mode. In day mode,

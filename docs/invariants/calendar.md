@@ -87,9 +87,18 @@ Global rules that always apply: `CLAUDE.md`.
     or ORANGE outline, so the Sleep schedule's windows and wind-down hours count, user report 2026-10-01; carried as
     `RestrictivePeriod.manual`), and over that stretch a field is laid, `and` lays both sides, `A or B` lays A only
     where neither A nor B already is. A break (grey, the app's) or a no-screen stretch the layers make never fires
-    one. Consequence of the default: every sleep window and wind-down hour hatches both layers (solid ahead of the
-    line; behind it, the dotted fake band where this device was seen unlocked — below). That replaces the
+    one. Consequence of the default: every sleep window and wind-down hour hatches both layers. That replaces the
     2026-09-18 rule "a sleep window carries no layer".
+  - **A period a RULE laid states nothing where the line crossed it in MODE 1** (`statedKindRegions`' `atScreenPast`
+    = this device's known-unlocked past minus the away spells; user report 2026-10-01: *"I didn't hit the I'm away
+    button, so the now line must be in mode 1 and the sleep period must retract to the now line"*). An orange period
+    (`PanelOutline.Pattern`) that is or carries "no screen" retracted there (`scheduler.md` § *A mode-1 line
+    retracts*), so no "not on a computer" band is derived from a sleep window behind the line unless the button was
+    on. A period the user DREW (blue) keeps its whole span — the rule just below. **The band is cut by the same
+    function** (`SchedulerDomain.retractOverAtScreenPast`, in `App.kt` over the Sleep bands and the plan's orange
+    periods): the Sleep band and the wind-down hour stop at the line while it is at a screen, and what is left
+    behind it is only what was crossed locked or away. The Sleep toggle's live band is not cut. (2026-09-28 →
+    2026-10-01 the band was drawn whole.)
   - **The one exception to "the left of `or`": where the OS KNOWS the left is not there, the right is laid**
     (`closeRegions`' `knownAbsent`; user rule 2026-10-01: *"if 'then' derives somewhere in the past a ('no computer
     unlocked' or 'not on a computer') where there is no 'no computer unlocked', then 'not on a computer' is placed

@@ -3062,16 +3062,24 @@ object SchedulerDomain {
      * already verified, and [knownAbsent] the kinds the OS log knows are NOT there ([knownUnlockedRegions], under the
      * real layer kind), so an "or" picks its other side there ([PeriodKindConfig.closeRegions]). The one reading
      * [assertedLayerRanges] and [assertedFakeLayerRanges] share.
+     *
+     * [atScreenPast] is the past the line crossed in **mode 1** (a device unlocked, "I'm away" off). A period a RULE
+     * laid ([PanelOutline.Pattern]: a §17 sleep window, a wind-down hour, a repeating period's occurrence) that is or
+     * carries "no screen" retracted to the line there ([retractedAtLineSpans]), so it states nothing over it — else a
+     * sleep window the user worked through laid "not on a computer" behind the line with the button never pressed
+     * (user report, 2026-10-01). A period the user DREW keeps its whole span: drawn over hours already elapsed, it is
+     * their word about that past ([declaredLayerRegions]).
      */
     fun statedKindRegions(
         panels: List<TaskPanel>,
         config: PeriodKindConfig,
         away: Map<String, List<TaskTimeRange>> = emptyMap(),
         knownAbsent: Map<String, List<TaskTimeRange>> = emptyMap(),
+        atScreenPast: List<TaskTimeRange> = emptyList(),
     ): Map<String, List<TaskTimeRange>> {
         val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
         val manual = LinkedHashMap<String, MutableList<TaskTimeRange>>()
-        for (panel in panels) {
+        for (panel in retractOverAtScreenPast(panels, atScreenPast, config)) {
             val kind = panel.restrictiveKind
             if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) continue
             val span = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
@@ -3081,6 +3089,29 @@ object SchedulerDomain {
         for ((kind, spans) in away) own.getOrPut(kind) { ArrayList() } += spans
         if (own.isEmpty()) return emptyMap()
         return config.closeRegions(own, manual, knownAbsent)
+    }
+
+    /**
+     * **What the mode-1 retraction left BEHIND the line**: every period a rule laid ([PanelOutline.Pattern]) that is
+     * or carries "no screen" ([PeriodKindConfig.isOrImpliesNoScreen], the predicate [retractedAtLineSpans] gives way
+     * by) with [atScreenPast] — the past the line crossed at a screen — cut out of it, in as many pieces as are left.
+     * Every other panel is returned untouched. The one reading the Sleep band, the wind-down hour and the layers
+     * they lay ([statedKindRegions]) share, so the band and its hatch cannot disagree.
+     */
+    fun retractOverAtScreenPast(
+        panels: List<TaskPanel>,
+        atScreenPast: List<TaskTimeRange>,
+        config: PeriodKindConfig,
+    ): List<TaskPanel> {
+        if (atScreenPast.isEmpty()) return panels
+        return panels.flatMap { panel ->
+            if (panelOutline(panel) != PanelOutline.Pattern || !config.isOrImpliesNoScreen(panel.restrictiveKind)) {
+                listOf(panel)
+            } else {
+                subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), atScreenPast)
+                    .map { panel.copy(startEpochMillis = it.startEpochMillis, endEpochMillis = it.endEpochMillis) }
+            }
+        }
     }
 
     /**
@@ -4839,9 +4870,9 @@ object SchedulerDomain {
      * menu (orange, [PanelOutline.Pattern]: the §17 sleep windows and wind-down hours, a repeating period's
      * occurrences) — as opposed to one the app placed by itself (the dynamic breaks, grey). These are the periods a
      * combination rule's "then … or …" fires from (`PeriodKindConfig.closeRegions`' `manual`): the user's rule was
-     * *"when the user manually adds the period in the calendar"*, and a sleep window is the user's period too (user
-     * report, 2026-10-01: *"there should be a 'not on a computer' derived from the 'sleep' period behind the now
-     * line"*).
+     * *"when the user manually adds the period in the calendar"*, and a sleep window is the user's period too — over
+     * what is left of it: where the line crossed it in mode 1 it retracted, and states nothing
+     * ([statedKindRegions]' `atScreenPast`).
      */
     fun isUserStated(panel: TaskPanel): Boolean =
         when (panelOutline(panel)) {
