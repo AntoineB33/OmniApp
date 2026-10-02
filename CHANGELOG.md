@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: Space turns "Lock to now" on — 2026-10-02
+
+While the calendar holds the keyboard, a plain Space sets "Lock to now" on (`setLockNowLine(true)`, which releases
+the task lock). Read on the bubble pass (`onKeyEvent`), so a field being edited in the calendar keeps its space.
+No state change.
+
 ### Calendar: "No screen" under both layers is named, and the layers retract under a placed panel — 2026-10-02
 
 Two anomalies at one instant carrying "no computer unlocked" and "no phone unlocked". (1) The hover bubble did not

@@ -98,9 +98,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -3904,6 +3907,18 @@ fun CalendarFloatingWindow(
                         true
                     }
                     else -> false
+                }
+            }
+            // User rule 2026-10-02: **Space turns "Lock to now" on.** On the way back UP from the focused element,
+            // not in the preview above: a field being edited in the calendar takes its own space first (it
+            // consumes the key it types), and only a space nothing took reaches here.
+            .onKeyEvent { event ->
+                val plain = !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Spacebar && plain) {
+                    setLockNowLine(true)
+                    true
+                } else {
+                    false
                 }
             },
         // PRD §8 focus: the frame observes every press inside the window on the Initial pass (without
