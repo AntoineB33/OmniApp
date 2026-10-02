@@ -6,7 +6,11 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.ui.PanelSlice
 import org.example.project.ui.PlacedRecord
+import org.example.project.scheduler.domain.PeriodKindConfig
+import org.example.project.ui.derivedLayerPeriods
+import org.example.project.ui.layerBandsAroundPlaced
 import org.example.project.ui.layoutWithBreakHoles
+import org.example.project.ui.placedPanelSpans
 import org.example.project.ui.periodsForBlockDrag
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,6 +39,59 @@ class CalendarDragPreviewTest {
             scheduled = false, inactivity = true, restrictiveKind = PeriodKinds.INACTIVITY,
             fullStartMillis = start, fullEndMillis = end,
         )
+
+    private fun layer(which: SchedulerDomain.ActivityLayer, start: Long, end: Long) =
+        PlacedRecord(
+            title = which.calendarLabel, startHour = start / HOUR.toFloat(), endHour = end / HOUR.toFloat(),
+            scheduled = false, layer = which, fullStartMillis = start, fullEndMillis = end,
+        )
+
+    private val computer = SchedulerDomain.ActivityLayer.NoComputerUnlocked
+    private val phone = SchedulerDomain.ActivityLayer.entries.first { it != computer }
+    /** An on-screen task: refused by "no screen", and by nothing else. */
+    private val onScreen = { _: TaskId?, kind: String -> kind == PeriodKinds.NO_SCREEN }
+
+    /** Anomaly 2026-10-02: both layers fall here, so the rules say "no screen" — and the bubble must name it. */
+    @Test
+    fun no_screen_is_derived_where_both_layers_fall_and_only_there() {
+        val bands = listOf(layer(computer, 0, 4 * HOUR), layer(phone, 2 * HOUR, 6 * HOUR))
+        val derived = derivedLayerPeriods(bands, emptyList(), PeriodKindConfig.DEFAULT, midnightMillis = 0L)
+        assertEquals(listOf(PeriodKinds.NO_SCREEN), derived.map { it.restrictiveKind })
+        assertEquals(listOf(range(2 * HOUR, 4 * HOUR)), derived.map { range(it.fullStartMillis, it.fullEndMillis) })
+        // One layer alone derives nothing.
+        assertEquals(emptyList(), derivedLayerPeriods(bands.take(1), emptyList(), PeriodKindConfig.DEFAULT, 0L))
+    }
+
+    /** Anomaly 2026-10-02: a task panel placed by hand that "no screen" refuses makes all three give way. */
+    @Test
+    fun the_layers_give_way_to_a_placed_panel_no_screen_refuses_and_grow_back_as_it_leaves() {
+        val bands = listOf(layer(computer, 0, 4 * HOUR), layer(phone, 2 * HOUR, 6 * HOUR))
+        val panel = block("p", 7 * HOUR, 8 * HOUR)
+        fun spans(live: List<PlacedRecord>) =
+            live.map { it.layer to range(it.fullStartMillis, it.fullEndMillis) }.sortedBy { it.second.startEpochMillis }
+        // Dragged onto 2:30–3:30, under both: each band is cut there, so no "no screen" is left under the panel.
+        val over = range(5 * HOUR / 2, 7 * HOUR / 2)
+        val live = layerBandsAroundPlaced(bands, placedPanelSpans(listOf(panel), "p" to over), PeriodKindConfig.DEFAULT, onScreen, 0L)
+        assertEquals(
+            listOf(
+                computer to range(0, 5 * HOUR / 2), phone to range(2 * HOUR, 5 * HOUR / 2),
+                computer to range(7 * HOUR / 2, 4 * HOUR), phone to range(7 * HOUR / 2, 6 * HOUR),
+            ),
+            spans(live),
+        )
+        assertEquals(
+            listOf(range(2 * HOUR, 5 * HOUR / 2), range(7 * HOUR / 2, 4 * HOUR)),
+            derivedLayerPeriods(live, emptyList(), PeriodKindConfig.DEFAULT, 0L).map { range(it.fullStartMillis, it.fullEndMillis) },
+        )
+        // Under ONE layer nothing refuses it, and a task resilient to "no screen" cuts nothing either.
+        assertSame(bands, layerBandsAroundPlaced(bands, placedPanelSpans(listOf(panel), "p" to range(0, HOUR)), PeriodKindConfig.DEFAULT, onScreen, 0L))
+        assertSame(bands, layerBandsAroundPlaced(bands, placedPanelSpans(listOf(panel), "p" to over), PeriodKindConfig.DEFAULT, { _, _ -> false }, 0L))
+        // At rest, only a panel the USER placed counts; the scheduler's own leaves the layers alone.
+        val resting = block("q", 5 * HOUR / 2, 7 * HOUR / 2)
+        assertSame(bands, layerBandsAroundPlaced(bands, placedPanelSpans(listOf(resting)), PeriodKindConfig.DEFAULT, onScreen, 0L))
+        val placed = resting.copy(outline = SchedulerDomain.PanelOutline.User)
+        assertEquals(spans(live), spans(layerBandsAroundPlaced(bands, placedPanelSpans(listOf(placed)), PeriodKindConfig.DEFAULT, onScreen, 0L)))
+    }
 
     @Test
     fun the_stretch_a_moved_block_leaves_is_idle_and_the_idle_stretch_it_enters_gives_way() {

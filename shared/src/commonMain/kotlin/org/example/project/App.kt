@@ -57,6 +57,7 @@ import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.ScreenBreak
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.Task
 import org.example.project.scheduler.model.TaskPanel
@@ -218,12 +219,36 @@ enum class OmniPage(val label: String) {
 private class CalendarLayersHolder {
     var records: List<CalendarRecord> = emptyList()
 
-    fun kindsAt(atMillis: Long): Set<String> =
-        records
-            .filter { it.range.startEpochMillis <= atMillis && atMillis < it.range.endEpochMillis }
-            .mapNotNullTo(HashSet()) { record ->
-                record.layer?.let { if (record.layerFake) PeriodKinds.fakeLayerKind(it) else PeriodKinds.layerKind(it) }
-            }
+    /** The account's rules, the task panels the user placed and its tasks — what the bands are read through. */
+    var config: PeriodKindConfig = PeriodKindConfig.DEFAULT
+    var placed: List<TaskPanel> = emptyList()
+    var tasks: Map<TaskId, Task> = emptyMap()
+
+    /**
+     * The layer kinds at [atMillis] with what the rules derive from them ("no screen" under both layers) — or none
+     * where a task panel placed by hand lies that a derived kind refuses: the layers give way to it there
+     * ([SchedulerDomain.layerRetractionCuts], asked at the one instant).
+     */
+    fun kindsAt(atMillis: Long): Set<String> {
+        val layers =
+            records
+                .filter { it.range.startEpochMillis <= atMillis && atMillis < it.range.endEpochMillis }
+                .mapNotNullTo(HashSet()) { record ->
+                    record.layer?.let { if (record.layerFake) PeriodKinds.fakeLayerKind(it) else PeriodKinds.layerKind(it) }
+                }
+        if (layers.isEmpty()) return layers
+        val here = listOf(TaskTimeRange(atMillis, atMillis + 1))
+        val regions = layers.associateWith { here }
+        val cuts =
+            SchedulerDomain.layerRetractionCuts(
+                regions,
+                placed.filter { it.startEpochMillis <= atMillis && atMillis < it.endEpochMillis }
+                    .map { it.taskId to TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+                config,
+            ) { taskId, kind -> SchedulerDomain.periodRefuses(tasks, taskId, kind) }
+        if (cuts.isNotEmpty()) return emptySet()
+        return layers + SchedulerDomain.kindsDerivedFromLayers(regions, config).keys
+    }
 }
 
 /** The placement rows that are not a window's layout: they are recorded by what they hold, or not at all. */
@@ -2466,6 +2491,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 }
             calendarLayers.records = layerRecords
+            calendarLayers.config = periodKindConfig
+            calendarLayers.placed =
+                workPlanPanels.filter { SchedulerDomain.isUserPlaced(it) && !it.isRestrictivePeriod }
+            calendarLayers.tasks = schedulerState.tasks
             val calendarRecords = baseCalendarRecords + pastInactivityRecords + layerRecords +
                 displayAlarmOccurrences.map { occurrence ->
                     // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling

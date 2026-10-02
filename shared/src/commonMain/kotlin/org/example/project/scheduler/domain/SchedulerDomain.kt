@@ -1773,6 +1773,48 @@ object SchedulerDomain {
         return task.resilienceFor(kind) <= 0.0
     }
 
+    /**
+     * PRD §8: **the periods the account's rules DERIVE from the calendar's layer bands** — by default "no screen"
+     * wherever "no computer unlocked" and "no phone unlocked" both lie ([PeriodKindConfig.closeRegions], the one
+     * reading of the rules). [layers] maps each layer kind to the stretches its band covers; the answer holds only
+     * the kinds that are not a band themselves. What the hover bubble names beside the two layers, and what a task
+     * panel placed by hand is asked against ([layerRetractionCuts]).
+     */
+    fun kindsDerivedFromLayers(
+        layers: Map<String, List<TaskTimeRange>>,
+        config: PeriodKindConfig,
+    ): Map<String, List<TaskTimeRange>> {
+        val present = layers.filterValues { it.isNotEmpty() }
+        if (present.isEmpty()) return emptyMap()
+        return config.closeRegions(present).filter { (kind, spans) -> kind !in present && spans.isNotEmpty() }
+    }
+
+    /**
+     * PRD §8 (user rule 2026-10-02): **where the layer bands give way to the task panels the user PLACED** — every
+     * stretch of a [placed] panel lying in a period the layers derive ([kindsDerivedFromLayers]) that [refuses] its
+     * task. The panel keeps its length; the derived period cannot stand there, so the bands it is derived from
+     * retract with it (*"the three periods should have retracted"*). A panel no derived period refuses — an
+     * off-screen task under both layers, any task under ONE layer — cuts nothing. Merged; read at rest and by the
+     * drag's live preview alike.
+     */
+    fun layerRetractionCuts(
+        layers: Map<String, List<TaskTimeRange>>,
+        placed: List<Pair<TaskId?, TaskTimeRange>>,
+        config: PeriodKindConfig,
+        refuses: (TaskId?, String) -> Boolean,
+    ): List<TaskTimeRange> {
+        if (placed.isEmpty()) return emptyList()
+        val derived = kindsDerivedFromLayers(layers, config)
+        if (derived.isEmpty()) return emptyList()
+        val cuts = ArrayList<TaskTimeRange>()
+        for ((taskId, range) in placed) {
+            for ((kind, spans) in derived) {
+                if (refuses(taskId, kind)) cuts += intersectRegions(listOf(range), spans)
+            }
+        }
+        return mergeOccupied(cuts)
+    }
+
     /** PRD §10: recorded sessions less than this many minutes apart count as one continuous effort. */
     const val SESSION_GAP_MINUTES: Int = 10
 
@@ -4082,7 +4124,10 @@ object SchedulerDomain {
         if (regions.isEmpty()) return panels
         return panels.flatMap { panel ->
             val task = panel.taskId?.let { tasks[it] }
-            if (task == null || panel.isRestrictivePeriod || !task.onScreen) listOf(panel)
+            // A panel the user PLACED ([isUserPlaced]) is their own word that the work happened there, which the
+            // OS's evidence does not overrule: it keeps its length and the derived period gives way instead (user
+            // rule 2026-10-02) — the pre-placed block no period may move, as in [clipPlanForPinnedScreenBreak].
+            if (task == null || panel.isRestrictivePeriod || !task.onScreen || isUserPlaced(panel)) listOf(panel)
             else panel.minus(regions)
         }
     }

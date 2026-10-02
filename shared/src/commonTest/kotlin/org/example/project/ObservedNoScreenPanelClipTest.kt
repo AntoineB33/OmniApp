@@ -97,6 +97,19 @@ class ObservedNoScreenPanelClipTest {
         assertEquals(panels, SchedulerDomain.clipPanelsForObservedNoScreen(panels, tasks, observed))
     }
 
+    /**
+     * User rule 2026-10-02 (anomaly: a past panel dragged there was cut on release, though the drag had drawn it
+     * whole): a panel the user placed keeps its length — the derived period gives way, not the panel.
+     */
+    @Test
+    fun a_panel_the_user_placed_keeps_its_length_across_the_observed_region() {
+        val placed = listOf(panel("panel/7", onScreenId, NOW - 3 * HOUR, NOW).copy(auto = false))
+        assertEquals(placed, SchedulerDomain.clipPanelsForObservedNoScreen(placed, tasks, observed))
+        // Nothing is left uncovered under it, so no "Inactivity" band is derived across it.
+        val covered = placed.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        assertTrue(SchedulerDomain.derivedInactivityBands(covered, NOW - 3 * HOUR, NOW).isEmpty())
+    }
+
     @Test
     fun a_panel_wholly_inside_the_observed_region_disappears() {
         val out =

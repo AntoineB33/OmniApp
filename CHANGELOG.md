@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: "No screen" under both layers is named, and the layers retract under a placed panel — 2026-10-02
+
+Two anomalies at one instant carrying "no computer unlocked" and "no phone unlocked". (1) The hover bubble did not
+name the "no screen" period the account's rules derive there: it now does (`SchedulerDomain.kindsDerivedFromLayers`,
+`derivedLayerPeriods`), and the Search window's "is on the calendar at" lists it. (2) A task panel dragged there,
+with a resilience of 0 to "no screen", left the layers standing: the layer bands are now cut under a task panel the
+user placed that a derived kind refuses (`layerRetractionCuts`, `layerBandsAroundPlaced`) — live while it is
+dragged, and at rest. Display only. No state, SQLite or Supabase change.
+
+### Calendar: a hand-placed panel is no longer cut where the devices observed no screen — 2026-10-02
+
+Anomaly: a past task panel dragged onto a stretch both layers cover was drawn whole during the drag and CUT on
+release, an "Inactivity" band in the hole. The saved panel was whole; the display clip
+(`SchedulerDomain.clipPanelsForObservedNoScreen`) cut every on-screen task panel there, the user's own included.
+It now leaves `isUserPlaced` panels alone, so the panel keeps its length and the derived band gives way — live in
+the preview (already) and at rest. The fill's own panels and banked records are still cut. No state, SQLite or
+Supabase change.
+
 ### Calendar: the "Auto schedule" switch moved from the lateral menu to the configuration section — 2026-10-02
 
 The same switch on the same intent (`SetAutomaticSchedule`), now drawn by `CalendarConfigurationSection` under the

@@ -884,7 +884,23 @@ Global rules that always apply: `CLAUDE.md`.
   lets them run there), a period is never cut (it is what the cut is made of), and a **failed** own scan is not
   evidence — no regions, no cut. Display-side, like `clipPlanForPinnedScreenBreak`: the regions are the past,
   the fill only places ahead of the now-line, and what the OS reports is not a user edit. What the cut vacates
-  is idle time and draws as a derived "Inactivity" band.
+  is idle time and draws as a derived "Inactivity" band. **A panel the user PLACED is never cut by it**
+  (`SchedulerDomain.isUserPlaced`, user rule 2026-10-02): a hand placement is the user's word that the work
+  happened there, it keeps its length, and the derived band gives way instead — at rest exactly as the drag's
+  preview draws it (`inactivityBandsAfterMove`). Cutting it was the anomaly "a past panel dragged there is cut on
+  release": the preview drew the release the reducer makes, and this display clip then cut what was saved.
+- **WHAT THE RULES DERIVE FROM THE LAYERS IS NAMED IN THE BUBBLE, AND THE LAYERS GIVE WAY TO A PLACED PANEL IT
+  REFUSES** (2026-10-02). Where "no computer unlocked" and "no phone unlocked" both fall, the account's rules
+  say "no screen" (`SchedulerDomain.kindsDerivedFromLayers`, i.e. `PeriodKindConfig.closeRegions` over the
+  bands — never a hard-coded intersection). It has no drawing (the two hatches are the drawing), so the hover
+  bubble names it (`derivedLayerPeriods` → `contextOverlays`), except over a stretch a stated period or sleep
+  band already names that kind for. A task panel the **user placed** that a derived kind refuses keeps its
+  length and the **layer bands are cut under it** — so the derived period is gone there too, "all three
+  retract" (`SchedulerDomain.layerRetractionCuts`, `layerBandsAroundPlaced`, `placedPanelSpans`). One layer
+  alone refuses nobody and is not cut. At rest the column cuts by its blocks outlined as the user's; during a
+  block drag `shownLayerBands` cuts by the dragged block at the preview's bounds, from the bands AT REST, so
+  they give way as the block arrives and grow back as it leaves. `App` still hands the column the UNCUT bands;
+  its Search filter (`CalendarLayersHolder.kindsAt`) asks the same two functions at the one instant.
 - **AN EMPTY PERIOD IS NEVER MANUFACTURED FROM EVIDENCE.** The calendar says "nothing is placed here" for
   exactly three reasons: a covering period every task has 0 resilience to, a period the **user** drew, or past
   beyond the app's memory. "The

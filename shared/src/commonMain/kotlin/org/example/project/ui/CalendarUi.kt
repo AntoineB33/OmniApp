@@ -1318,6 +1318,108 @@ private fun layerKindOf(band: PlacedRecord): String {
     return if (band.layerFake) PeriodKinds.fakeLayerKind(layer) else PeriodKinds.layerKind(layer)
 }
 
+private fun fullRange(r: PlacedRecord) = TaskTimeRange(r.fullStartMillis, r.fullEndMillis)
+
+/** [record] over [piece] of its own span, as this day's column draws it; null where the piece is not in the day. */
+private fun pieceOf(record: PlacedRecord, piece: TaskTimeRange, midnightMillis: Long): PlacedRecord? {
+    if (piece == fullRange(record)) return record
+    val startHour = maxOf(record.startHour, (piece.startEpochMillis - midnightMillis) / 3_600_000f)
+    val endHour = minOf(record.endHour, (piece.endEpochMillis - midnightMillis) / 3_600_000f)
+    if (endHour <= startHour) return null
+    return record.copy(
+        startHour = startHour,
+        endHour = endHour,
+        fullStartMillis = piece.startEpochMillis,
+        fullEndMillis = piece.endEpochMillis,
+        openStart = record.openStart && piece.startEpochMillis == record.fullStartMillis,
+        startFollowsLine = record.startFollowsLine && piece.startEpochMillis == record.fullStartMillis,
+        endFollowsLine = record.endFollowsLine && piece.endEpochMillis == record.fullEndMillis,
+    )
+}
+
+/** Each layer kind's stretches, off the bands ([SchedulerDomain.kindsDerivedFromLayers]'s input). */
+internal fun layerKindRegions(layerBands: List<PlacedRecord>): Map<String, List<TaskTimeRange>> =
+    layerBands.groupBy(::layerKindOf).mapValues { (_, bands) -> SchedulerDomain.mergeOccupied(bands.map(::fullRange)) }
+
+/**
+ * PRD §8 (user rule 2026-10-02): **the task panels the user placed among [blocks]**, as
+ * [SchedulerDomain.layerRetractionCuts] asks for them — each with its task and its span. [dragged] is the block a
+ * drag holds and where the drag has it: it counts whoever placed it (the release makes it the user's), at the
+ * bounds of the preview.
+ */
+internal fun placedPanelSpans(
+    blocks: List<PlacedRecord>,
+    dragged: Pair<String, TaskTimeRange>? = null,
+): List<Pair<TaskId?, TaskTimeRange>> =
+    blocks.mapNotNull { block ->
+        if (!isTaskPanelRecord(block) || block.inactivity) return@mapNotNull null
+        val held = dragged?.takeIf { calendarBlockKey(block) == it.first }
+        when {
+            held != null -> block.taskId to held.second
+            block.entryId != null && block.outline == SchedulerDomain.PanelOutline.User -> block.taskId to fullRange(block)
+            else -> null
+        }
+    }
+
+/**
+ * PRD §8 (user rule 2026-10-02): **the layer bands as the task panels placed by hand leave them** — cut wherever
+ * such a panel lies in a period the bands derive that refuses its task ([SchedulerDomain.layerRetractionCuts]): by
+ * default an on-screen task where both layers fall, which is a "no screen" period. Always from the bands AT REST,
+ * so what a drag retracts grows back as it recedes.
+ */
+internal fun layerBandsAroundPlaced(
+    layerBands: List<PlacedRecord>,
+    placed: List<Pair<TaskId?, TaskTimeRange>>,
+    config: PeriodKindConfig,
+    refuses: (TaskId?, String) -> Boolean,
+    midnightMillis: Long,
+): List<PlacedRecord> {
+    if (layerBands.isEmpty() || placed.isEmpty()) return layerBands
+    val cuts = SchedulerDomain.layerRetractionCuts(layerKindRegions(layerBands), placed, config, refuses)
+    if (cuts.isEmpty()) return layerBands
+    return layerBands.flatMap { band ->
+        SchedulerDomain.subtractRegions(listOf(fullRange(band)), cuts).mapNotNull { pieceOf(band, it, midnightMillis) }
+    }
+}
+
+/**
+ * PRD §8 (anomaly 2026-10-02): **the periods the account's rules derive from the layer bands, for the hover
+ * bubble** — "No screen" where "no computer unlocked" and "no phone unlocked" both fall. Nothing draws them (the
+ * two hatches are the drawing), so the bubble is where they are named; a stretch a [stated] period or sleep band
+ * already names that kind over (itself or as a companion) is left to it.
+ */
+internal fun derivedLayerPeriods(
+    layerBands: List<PlacedRecord>,
+    stated: List<PlacedRecord>,
+    config: PeriodKindConfig,
+    midnightMillis: Long,
+): List<PlacedRecord> {
+    val derived = SchedulerDomain.kindsDerivedFromLayers(layerKindRegions(layerBands), config)
+    if (derived.isEmpty()) return emptyList()
+    val dayEndMillis = midnightMillis + 24L * 3_600_000L
+    return derived.flatMap { (kind, spans) ->
+        val named =
+            stated.filter { kind in config.kindsOf(if (it.sleep) PeriodKinds.SLEEP else it.restrictiveKind) }.map(::fullRange)
+        SchedulerDomain.subtractRegions(spans, named).mapNotNull { span ->
+            val startHour = ((span.startEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+            val endHour = ((span.endEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+            if (endHour <= startHour || span.endEpochMillis <= midnightMillis || span.startEpochMillis >= dayEndMillis) {
+                null
+            } else {
+                PlacedRecord(
+                    title = PeriodKinds.periodTitle(kind),
+                    startHour = startHour,
+                    endHour = endHour,
+                    scheduled = false,
+                    restrictiveKind = kind,
+                    fullStartMillis = span.startEpochMillis,
+                    fullEndMillis = span.endEpochMillis,
+                )
+            }
+        }
+    }
+}
+
 /**
  * PRD §14: **the reminder a manual tag's panel id names** — `chore-manual/{reminderId}/{n}` read back. Blank
  * for anything else (a generated tag, a null id), which is the same answer a blank field gives: mint a fresh
@@ -5358,7 +5460,7 @@ private fun DayColumn(
     // drawn ACROSS the column over everything else and displace nothing, so they are kept out of every
     // pipeline that lays panels out or hit-tests them. An idle stretch that carries no panel now draws no
     // band at all (the derived "Inactivity"/"No screen" bands are gone); it simply shows the layers.
-    val layerBands = records.filter { it.layer != null }
+    val restLayerBands = records.filter { it.layer != null }
     // The period edit window's companions and drawings, for the layers, the sleep bands and the period boxes.
     val periodKindConfig = LocalPeriodKindConfig.current
     // PRD §8: **EVERY restrictive period leaves the block pipeline.** A period is not an object owning a
@@ -5379,6 +5481,21 @@ private fun DayColumn(
         records.filterNot {
             it.reminder || it.screenBreak || it.alarm || it.sleep || it.layer != null ||
                 isRestrictivePeriodRecord(it)
+        }
+    // User rule 2026-10-02: **the layers give way to the task panels the user placed** wherever such a panel
+    // lies in a period the layers derive that refuses its task — by default an on-screen task where both layers
+    // fall, a "no screen" period ([layerBandsAroundPlaced]). The bubble, the menu and the drawing all read these.
+    val refuses = LocalPeriodRefusal.current
+    val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
+        .toInstant(tz).toEpochMilliseconds()
+    val layerBands =
+        remember(restLayerBands, blockRecords, periodKindConfig, refuses, midnightMillis) {
+            layerBandsAroundPlaced(restLayerBands, placedPanelSpans(blockRecords), periodKindConfig, refuses, midnightMillis)
+        }
+    // What the account's rules derive from them ("No screen" under both): named in the hover bubble.
+    val derivedLayerPeriods =
+        remember(layerBands, periodHits, sleepBands, periodKindConfig, midnightMillis) {
+            derivedLayerPeriods(layerBands, periodHits + sleepBands, periodKindConfig, midnightMillis)
         }
     // PRD §8: the drawn period boxes — one per stretch over which the same set of periods is in force.
     // Cached on the record list like [overlapLayout], for the same reason: this column recomposes for every
@@ -5461,6 +5578,24 @@ private fun DayColumn(
                             bubbleKind(layer),
                             if (band.layerFake) PeriodKinds.periodTitle(PeriodKinds.fakeLayerKind(layer)) else layer.calendarLabel,
                             placedTimeRange(band, tz),
+                        ),
+                    ),
+                )
+            }
+            // What the rules derive from the layers — "No screen" where both fall — has no drawing of its own.
+            derivedLayerPeriods.forEach { period ->
+                add(
+                    BubbleOverlay(
+                        period.startHour,
+                        period.endHour,
+                        CalendarBubbleSection(
+                            if (period.restrictiveKind == PeriodKinds.NO_SCREEN) {
+                                CalendarBubbleSection.Kind.NoScreen
+                            } else {
+                                CalendarBubbleSection.Kind.Inactivity
+                            },
+                            period.title,
+                            placedTimeRange(period, tz),
                         ),
                     ),
                 )
@@ -5588,13 +5723,10 @@ private fun DayColumn(
     // A block mid-gesture stays mounted even if the drag carries it out of view: its slices are what hold
     // the gesture (see [CalendarBlock]), so culling them would cancel the drag under the user's finger.
     val gestureKey = dragPreview?.key ?: movePending?.let { calendarBlockKey(it) }
-    val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
-        .toInstant(tz).toEpochMilliseconds()
     // User rule 2026-10-02: **while anything is dragged the column is drawn the way a release would leave
     // it** — a dragged block shares the width with the task panels it is over and retracts the periods that
     // refuse it; a dragged period retracts the task panels it refuses. All of it from the bounds AT REST, so
     // what the drag has left grows back, and none of it saved before the release.
-    val refuses = LocalPeriodRefusal.current
     // The periods of the held box, where the drag has them.
     val movedPeriods =
         periodDrag?.let { drag ->
@@ -5620,6 +5752,15 @@ private fun DayColumn(
                 )
             }
         } ?: drawnPeriods
+    // The layer bands as DRAWN: at rest but while a task block is dragged — the layers give way under it live, as
+    // the release will leave them, and grow back where it was (the cut is taken from the bands at rest).
+    val shownLayerBands =
+        dragPreview?.let { preview ->
+            layerBandsAroundPlaced(
+                restLayerBands, placedPanelSpans(effRecords, preview.key to preview.range), periodKindConfig, refuses,
+                midnightMillis,
+            )
+        } ?: layerBands
 
     // Epoch millis at a vertical pixel offset within this 24-hour column. [currentHourHeightPx], never
     // `hourHeight`: this is called from the gesture closure, which outlives a zoom (above) — and it is what
@@ -6110,7 +6251,7 @@ private fun DayColumn(
         // User rule 2026-10-01: what of this column crosses a task panel, which the panel redraws over itself in the
         // colour of highest contrast with its task's ([PanelDecor]) — the same markings, outlines and lines the
         // column draws under the panels below. Held on what it reads, so a keystroke elsewhere costs nothing.
-        val panelDecor = remember(sleepBands, shownPeriods, layerBands, periodKindConfig, tickMinutes) {
+        val panelDecor = remember(sleepBands, shownPeriods, shownLayerBands, periodKindConfig, tickMinutes) {
             val sleepDrawingsForPanels = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
             PanelDecor(
                 bands =
@@ -6125,7 +6266,7 @@ private fun DayColumn(
                                 outlined = outlineColor(periodSegmentOutline(segment)) != null,
                             )
                         } +
-                        layerBands.map { band ->
+                        shownLayerBands.map { band ->
                             val kind = if (band.layerFake) PeriodKinds.fakeLayerKind(band.layer!!) else PeriodKinds.layerKind(band.layer!!)
                             PanelDecorBand(band.startHour, band.endHour, listOf(periodKindConfig.drawing(kind)), outlined = false)
                         },
@@ -6483,7 +6624,7 @@ private fun DayColumn(
         // have to stay crisp — the tags top everything, being the one marker that is clicked. A stretch carrying BOTH slopes is a no-screen period — the user's definition, and the same
         // set §9 places the off-screen tasks in. Non-interactive: a plain drawing Box registers no pointer
         // input, so every block underneath keeps its own hover, drag and right-click.
-        layerBands.forEach { band ->
+        shownLayerBands.forEach { band ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
             Box(
                 modifier = Modifier
