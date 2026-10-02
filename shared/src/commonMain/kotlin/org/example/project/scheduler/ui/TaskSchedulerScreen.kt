@@ -545,6 +545,12 @@ internal fun CellListSection(
     // reading the freshest value at the instant the user presses something.
     val currentState by rememberUpdatedState(state)
     val currentVisibleOrder by rememberUpdatedState(visibleOrder)
+    // Where the selected cells of OTHER sub-lists are drawn selected ([SchedulerDomain.selectionHighlightVias]):
+    // empty — one pass over the selection — unless a Ctrl or Shift click reached across sub-lists.
+    val otherListVias =
+        remember(state.selection, state.expanded, state.cells, state.lists, state.tasks) {
+            SchedulerDomain.selectionHighlightVias(state)
+        }
 
     list.cellIds.forEach { cellId ->
         if (pinned && cellId != pinnedCellId) return@forEach
@@ -564,7 +570,7 @@ internal fun CellListSection(
         // tree) and the right-click target its menu hangs off.
         val isRootRow = SchedulerDomain.isRootTask(cell.taskId)
         val showHighlight =
-            SchedulerDomain.shouldShowSelectionHighlight(state.selection, cellId, renderVia)
+            SchedulerDomain.shouldShowSelectionHighlight(state.selection, cellId, renderVia, otherListVias)
         val isMainSelection = selectable && showHighlight && state.selection.main == cellId
         val isInSelectionRange = selectable && showHighlight
         val isEditing =

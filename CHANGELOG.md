@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task tree: Ctrl+click and Shift+click across sub-lists are drawn — 2026-10-03
+
+Anomaly: they "did not work" when the two cells were not in the same sub-list. The selection did hold both cells;
+the highlight asked every selected cell for the main selection's render-via, which only the main's own sub-list has.
+A selected cell of another sub-list is now highlighted under its own parent
+(`SchedulerDomain.shouldShowSelectionHighlight`). Drawing only; no state change. Same day, second anomaly: a cell of a
+MIRRORED sub-list inside a Shift range stayed undrawn (its list names a parent other than the occurrence it is
+shown under) — the row is now read off the visible order, inside the range (`selectionHighlightVias`).
+
 ### Search window: the added elements are selected like the results, and their menu has "remove" — 2026-10-03
 
 The added-elements rows take the result list's selection (`ClickSelection`: click, Ctrl+click, Shift+click; a

@@ -1689,6 +1689,58 @@ class SchedulerReducerTest {
         assertEquals(branchB, s.selection.renderVia)
         assertFalse(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchA, localRenderVia = null))
         assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchBChild, localRenderVia = branchB))
+
+        // Anomaly 2026-10-03: Ctrl+click and Shift+click across two sub-lists. The selection held both cells and
+        // drew only the ones of the main selection's list.
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = branchA, ctrl = true, shift = false, visibleOrder = visible, renderVia = null),
+        )
+        assertEquals(setOf(branchA, branchBChild), s.selection.selected)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchA, localRenderVia = null, otherListVias = SchedulerDomain.selectionHighlightVias(s)))
+        assertTrue(
+            SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchBChild, localRenderVia = branchB, otherListVias = SchedulerDomain.selectionHighlightVias(s)),
+            "the cell of the other sub-list is drawn selected under its own parent",
+        )
+        assertFalse(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchBChild, localRenderVia = null, otherListVias = SchedulerDomain.selectionHighlightVias(s)))
+        // Shift+click from the top-level cell down into the sub-list: every row between them, in both lists.
+        s = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = branchBChild, ctrl = false, shift = true, visibleOrder = visible, renderVia = branchB),
+        )
+        assertTrue(branchA in s.selection.selected && branchB in s.selection.selected && branchBChild in s.selection.selected)
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchA, localRenderVia = null, otherListVias = SchedulerDomain.selectionHighlightVias(s)))
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchB, localRenderVia = null, otherListVias = SchedulerDomain.selectionHighlightVias(s)))
+        assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, branchBChild, localRenderVia = branchB, otherListVias = SchedulerDomain.selectionHighlightVias(s)))
+
+        // A MIRRORED sub-list (account 3, 2026-10-03): Branch A's child list is drawn under Branch A — and its cells
+        // are the shared task's, whose own list names another parent. A Shift range swept through that row must draw
+        // it selected where it was swept, not under the parent its list names.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.ToggleExpand(branchA))
+        val order = SchedulerDomain.selectableVisibleOccurrences(s)
+        val mirrored = order.firstOrNull { row ->
+            val listParent = s.cells[row.cellId]?.parentListId?.let { s.lists[it]?.parentCellId }
+            row.renderVia != null && listParent != null && SchedulerDomain.renderViaOf(s, listParent) != row.renderVia
+        }
+        if (mirrored != null) {
+            val first = order.first()
+            val last = order.last()
+            s = SchedulerReducer.reduce(
+                s, SchedulerIntent.ClickCell(first.cellId, ctrl = false, shift = false, visibleOrder = order.map { it.cellId }, renderVia = first.renderVia),
+            )
+            s = SchedulerReducer.reduce(
+                s, SchedulerIntent.ClickCell(last.cellId, ctrl = false, shift = true, visibleOrder = order.map { it.cellId }, renderVia = last.renderVia),
+            )
+            val vias = SchedulerDomain.selectionHighlightVias(s)
+            for (row in order) {
+                assertTrue(
+                    SchedulerDomain.shouldShowSelectionHighlight(s.selection, row.cellId, row.renderVia, vias) ||
+                        order.count { it.cellId == row.cellId } > 1,
+                    "every swept row is drawn selected: $row",
+                )
+            }
+            assertTrue(SchedulerDomain.shouldShowSelectionHighlight(s.selection, mirrored.cellId, mirrored.renderVia, vias) || order.count { it.cellId == mirrored.cellId } > 1)
+        }
     }
 
     @Test

@@ -445,14 +445,68 @@ object SchedulerDomain {
     fun renderViaOf(state: SchedulerState, parentCellId: CellId): CellId? =
         parentCellId.takeIf { isSelectableCell(state, it) }
 
+    /**
+     * Whether the row of [cellId] drawn under [localRenderVia] wears the selection.
+     *
+     * [SchedulerSelection.renderVia] names the ONE occurrence the main selection is drawn under, so a mirrored cell
+     * highlights in the copy that was clicked and not in its twins. It is the via of the main selection's SUB-LIST —
+     * every row of that list is drawn under it. A selected cell of ANOTHER sub-list is drawn under a parent of its
+     * own, which [otherListVias] names ([selectionHighlightVias]); asking it for the main's via left a Ctrl+click or
+     * a Shift+click across two sub-lists selected and not drawn (anomaly 2026-10-03).
+     */
     fun shouldShowSelectionHighlight(
         selection: SchedulerSelection,
         cellId: CellId,
         localRenderVia: CellId?,
+        otherListVias: Map<CellId, CellId?> = emptyMap(),
     ): Boolean {
         if (!isInActiveSelection(selection, cellId)) return false
+        if (otherListVias.containsKey(cellId)) return localRenderVia == otherListVias[cellId]
         val via = selection.renderVia ?: return localRenderVia == null
         return localRenderVia == via
+    }
+
+    /**
+     * **Which occurrence each selected cell OUTSIDE the main selection's sub-list is drawn selected under** — empty
+     * when the selection lies in one sub-list, which is the common case and costs one pass over the selection.
+     *
+     * A sub-list can be shown under several occurrences of its parent task (a mirrored sub-tree), and the selection
+     * holds cells, not rows. So the row is picked off the visible order: inside the Shift range (between the range
+     * anchor and the main selection) when there is one, else the occurrence nearest the main selection — the rows
+     * the click actually swept. A selected cell with no visible row falls back to the parent its own list names.
+     * (Reading that parent alone left a mirrored sub-list's cells undrawn: account 3, 2026-10-03, the empty cell
+     * above the range's anchor.)
+     */
+    fun selectionHighlightVias(state: SchedulerState): Map<CellId, CellId?> {
+        val selection = state.selection
+        val main = selection.main ?: return emptyMap()
+        val mainListId = state.cells[main]?.parentListId
+        val others = activeSelectionCells(selection).filter { it != main && state.cells[it]?.parentListId != mainListId }
+        if (others.isEmpty()) return emptyMap()
+        val order = selectableVisibleOccurrences(state)
+        val rowsOf = HashMap<CellId, MutableList<Int>>()
+        order.forEachIndexed { index, row -> rowsOf.getOrPut(row.cellId) { ArrayList() } += index }
+        val mainRow =
+            order.indexOfFirst { it.cellId == main && it.renderVia == selection.renderVia }
+                .takeIf { it >= 0 } ?: rowsOf[main]?.firstOrNull()
+        val anchorRow =
+            selection.rangeAnchor?.let { rowsOf[it] }?.minByOrNull { kotlin.math.abs(it - (mainRow ?: 0)) }
+        return others.associateWith { cellId ->
+            val rows = rowsOf[cellId].orEmpty()
+            val row =
+                when {
+                    rows.isEmpty() || mainRow == null -> null
+                    anchorRow != null ->
+                        rows.firstOrNull { it in minOf(mainRow, anchorRow)..maxOf(mainRow, anchorRow) }
+                            ?: rows.minByOrNull { kotlin.math.abs(it - mainRow) }
+                    else -> rows.minByOrNull { kotlin.math.abs(it - mainRow) }
+                }
+            if (row != null) {
+                order[row].renderVia
+            } else {
+                state.cells[cellId]?.parentListId?.let { state.lists[it]?.parentCellId }?.let { renderViaOf(state, it) }
+            }
+        }
     }
 
     /**

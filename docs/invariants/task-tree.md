@@ -267,6 +267,17 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
 
 ### The selection and Edit Mode belong to the TREE, not to the pointer
 
+- **A selected cell of ANOTHER sub-list is drawn selected on the row the click swept**
+  (`SchedulerDomain.shouldShowSelectionHighlight` + `selectionHighlightVias`, 2026-10-03). `selection.renderVia` is
+  the occurrence the MAIN selection is drawn under, which is the via of the main's sub-list only. For a selected cell
+  of another sub-list the row is read off the visible order — inside the Shift range (range anchor ↔ main) when there
+  is one, else the occurrence nearest the main selection; the parent its list names only when it has no visible row.
+  That parent alone is wrong for a MIRRORED sub-list, which is drawn under another occurrence of its parent task
+  (account 3: the empty cell above the range's anchor stayed undrawn). The map is empty — one pass over the
+  selection — while the selection lies in one sub-list. Asking every selected cell for the main's via is what made Ctrl+click and Shift+click across two
+  sub-lists select (the reducer never restricted them) and draw nothing — and a selection nobody can see is one
+  the user cannot use. A mirrored cell of the main's own list still highlights in the clicked copy alone.
+
 → PRD §3/§4/§7. `reduceClick` and `reduceFocusWindow` (`state/SchedulerReducer.kt`).
 
 - **A press on another task CELL is the only thing that moves the selection.** There is no "deselect"
