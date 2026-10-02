@@ -192,6 +192,26 @@ class SearchAddedElementsTest {
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.AlarmsOn(true), 0L))
     }
 
+    @Test
+    fun set_to_the_current_time_puts_the_added_alarms_and_reminders_on_the_clocks_minute() {
+        val reminder = org.example.project.scheduler.model.ChoreEntry(title = "Water", spanDays = 1.0, timeOfDayMinutes = 60, id = "reminder-1")
+        val other = reminder.copy(title = "Bins", id = "reminder-2")
+        val s = account().copy(
+            alarms = listOf(AlarmEntry(id = "a", label = "A", timeOfDayMinutes = 60), AlarmEntry(id = "b", label = "B", timeOfDayMinutes = 60)),
+            chores = listOf(reminder, other),
+        )
+        val now = millis("2026-10-02") + 14 * HOUR + 37 * 60_000L + 42_000L
+        val added = SearchDomain.resolve(s, listOf("Alarm/a", "Reminder/reminder-1"))
+        val alarms = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.AlarmsTimeNow, now, TimeZone.UTC)
+        val reminders = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.RemindersTimeNow, now, TimeZone.UTC)
+        val after = (alarms + reminders).fold(s, ::r)
+        assertEquals(listOf(14 * 60 + 37, 60), after.alarms.map { it.timeOfDayMinutes }, "the added alarm only, to the minute")
+        assertEquals(listOf(14 * 60 + 37, 60), after.chores.map { it.timeOfDayMinutes }, "the added reminder only")
+        // Already there: nothing to change, no intent.
+        assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.AlarmsTimeNow, now, TimeZone.UTC))
+        assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.RemindersTimeNow, now, TimeZone.UTC))
+    }
+
     // ----- Reset of the default periods (user rule 2026-10-01) -------------------------------------
 
     private fun periodKeys(state: SchedulerState, vararg kinds: String): List<String> =

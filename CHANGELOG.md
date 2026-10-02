@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: "Set to the current time" on the added alarms and reminders — 2026-10-02
+
+A new action in the alarm and the reminder sections of the actions on the added elements (button "Now"): every added
+alarm's / reminder's time of day becomes the clock's, to the minute (`AddedCommand.AlarmsTimeNow`,
+`RemindersTimeNow`), one `SetAlarms` / `SetChores`. An alarm's days and an isolated ring's date are kept. No state,
+SQLite or Supabase change.
+
 ### Search window: Reset goes back to the opening configuration, then to the default one — 2026-10-02
 
 Reset cleared the search text and unticked every type, leaving the filters and the added elements. It now restores

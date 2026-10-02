@@ -449,6 +449,14 @@ private fun AddedActionEditor(
             val shared = state.alarms.filter { it.id in ids }.map { it.enabled }.distinct().singleOrNull()
             Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { run(SearchDomain.AddedCommand.AlarmsOn(it == true)) }
         }
+        SearchDomain.AddedAction.AlarmTimeNow ->
+            FrameButton("Now", enabled = added.any { it.kind == SearchDomain.Kind.Alarm }) {
+                run(SearchDomain.AddedCommand.AlarmsTimeNow)
+            }
+        SearchDomain.AddedAction.ReminderTimeNow ->
+            FrameButton("Now", enabled = added.any { it.kind == SearchDomain.Kind.Reminder }) {
+                run(SearchDomain.AddedCommand.RemindersTimeNow)
+            }
         SearchDomain.AddedAction.TimerRun ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SearchDomain.RunStep.entries.forEach { step ->

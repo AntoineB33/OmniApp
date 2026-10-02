@@ -1780,6 +1780,9 @@ object SearchDomain {
         CategoryEdit(Kind.Category, "Name and rules"),
         AlarmOnOff(Kind.Alarm, "State"),
         AlarmEdit(Kind.Alarm, "Edit"),
+        // The time of day put on the clock's (user rule 2026-10-02): every added alarm, every added reminder.
+        AlarmTimeNow(Kind.Alarm, "Set to the current time"),
+        ReminderTimeNow(Kind.Reminder, "Set to the current time"),
         TimerRun(Kind.Timer, "Run"),
         TimerEdit(Kind.Timer, "Edit"),
         ChronoRun(Kind.Chrono, "Run"),
@@ -1816,6 +1819,12 @@ object SearchDomain {
         data class MinimumTime(val minutes: Int) : AddedCommand
 
         data class AlarmsOn(val on: Boolean) : AddedCommand
+
+        /** Every added alarm's time of day set to the clock's, to the minute — its days, and an isolated ring's date, kept. */
+        data object AlarmsTimeNow : AddedCommand
+
+        /** Every added reminder's time in the day set to the clock's, to the minute. */
+        data object RemindersTimeNow : AddedCommand
 
         data class TimersRun(val step: RunStep) : AddedCommand
 
@@ -2276,10 +2285,30 @@ object SearchDomain {
         added: List<Result>,
         command: AddedCommand,
         nowMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
     ): List<SchedulerIntent> {
         fun idsOf(kind: Kind) = added.filterIsInstance<ItemResult>().filter { it.kind == kind }.mapTo(HashSet()) { it.id }
         val taskIds = added.filterIsInstance<TaskResult>().map { it.taskId }.filter { it in state.tasks }
         return when (command) {
+            AddedCommand.AlarmsTimeNow -> {
+                val ids = idsOf(Kind.Alarm)
+                val local = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone)
+                val minutes = local.hour * 60 + local.minute
+                val alarms = state.alarms.map { if (it.id in ids) it.copy(timeOfDayMinutes = minutes) else it }
+                if (alarms == state.alarms) emptyList() else listOf(SchedulerIntent.SetAlarms(alarms))
+            }
+            AddedCommand.RemindersTimeNow -> {
+                val ids = idsOf(Kind.Reminder)
+                val local = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone)
+                val minutes = local.hour * 60 + local.minute
+                val chores = state.chores.map { if (it.id in ids) it.copy(timeOfDayMinutes = minutes) else it }
+                if (chores == state.chores) {
+                    emptyList()
+                } else {
+                    val todayStart = local.date.atStartOfDayIn(timeZone).toEpochMilliseconds()
+                    listOf(SchedulerIntent.SetChores(chores, todayStart, nowMillis))
+                }
+            }
             is AddedCommand.Category ->
                 if (taskIds.isEmpty()) emptyList()
                 else listOf(SchedulerIntent.SetTasksCategory(taskIds, command.categoryId, command.carried))

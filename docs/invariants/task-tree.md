@@ -675,6 +675,10 @@ titles" figure: the Search window and the per-object windows its rows open repla
   the alarms / timers / chronos / reminders, a timer or chrono copy idle). What they made joins the window's added
   elements (`newElementKeys`). The full Alarms window is still the
   calendar's alarm/timer edit entry.
+- **"Set to the current time" is an action of the alarms and of the reminders** (user rule 2026-10-02;
+  `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's
+  `timeOfDayMinutes` becomes the clock's, to the minute, as ONE list edit through the list's own intent (`SetAlarms`,
+  `SetChores`) — an alarm's days, and an isolated ring's date, are left alone; none to change is no intent.
 - **The element edit windows' sections are actions** (2026-10-01): a period's drawing (one drop-down over every added
   period), combinations (each period's own section), "Search its tasks" (`resilienceSearchConfig`) and Delete (the
   account's own periods only); a category's "Name and rules" (`CategoryEditor`); a task's "Paths" (each place, ✕ but
