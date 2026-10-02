@@ -216,6 +216,19 @@ class PeriodCompanionsAndDrawingsTest {
     }
 
     @Test
+    fun no_drawing_is_only_ever_chosen_and_it_round_trips() {
+        // More kinds than there are patterns: every one still gets a pattern, never "no drawing".
+        var s = SchedulerState.empty()
+        repeat(PeriodDrawing.entries.size * 2) { s = SchedulerReducer.reduce(s, SchedulerIntent.AddPeriodKind("kind $it")) }
+        assertTrue(s.allPeriodKinds.none { s.periodKindConfig.drawing(it) == PeriodDrawing.None })
+        // Chosen, it is kept — through a save and a load too.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodDrawing("kind 0", PeriodDrawing.None))
+        assertEquals(PeriodDrawing.None, s.periodKindConfig.drawing("kind 0"))
+        val decoded = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
+        assertEquals(PeriodDrawing.None, decoded.periodKindConfig.drawing("kind 0"))
+    }
+
+    @Test
     fun removing_a_kind_takes_its_style_and_every_reference_to_it() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddPeriodKind("commute"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCombinations(combinationsWithCompanions(PeriodKinds.SLEEP to setOf(PeriodKinds.NO_SCREEN, "commute"))))

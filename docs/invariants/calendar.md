@@ -346,7 +346,10 @@ Global rules that always apply: `CLAUDE.md`.
     CLOSED set of line patterns that differ by geometry alone (same colour, stroke and 35 % alpha), so any
     number overlap legibly. Defaults are pairwise distinct across the built-ins: `|` inactivity, `—` sleep,
     `/` no computer unlocked, `\` no phone unlocked, `(` no screen, zig-zags before bed. A kind the account
-    adds is given the least-worn drawing AT CREATION and stores it — never derived from the list position, or
+    adds is given the least-worn drawing (`PeriodDrawing.patterns`) AT CREATION and stores it. **`None` ("No
+    drawing") is the one member that is no pattern**: an account may hold more kinds than there are patterns, so
+    a kind may be left to its outline and label alone — only ever CHOSEN in the drawing selector, never handed
+    out, and the one renderer paints nothing for it. A drawing is stored — never derived from the list position, or
     deleting a kind would repaint the others. Drawn as a repeated TILE, one rect per box, so the cost does not
     grow with the box's height (a night at the zoom ceiling is ~150 000 px).
   - **Who paints what**: a period box (and the sleep band) paints its kind's drawing and every companion's

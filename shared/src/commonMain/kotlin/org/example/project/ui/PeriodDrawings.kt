@@ -47,7 +47,8 @@ val LocalPeriodKindConfig = compositionLocalOf { PeriodKindConfig.DEFAULT }
  * no other mark may dot a drawing (user, 2026-10-01).
  */
 internal fun Modifier.periodDrawing(drawing: PeriodDrawing, color: Color): Modifier =
-    this.drawWithCache {
+    if (drawing == PeriodDrawing.None) this
+    else this.drawWithCache {
         val tile = periodDrawingTile(drawing, color.copy(alpha = 0.35f), this)
         val brush = ShaderBrush(ImageShader(tile, TileMode.Repeated, TileMode.Repeated))
         onDrawBehind { drawRect(brush) }
@@ -67,6 +68,7 @@ internal fun Modifier.periodDrawings(drawings: List<PeriodDrawing>, color: Color
 /** The tile's side in dp, per drawing — wide enough to leave air between the marks of two overlapping ones. */
 private fun tileSizeDp(drawing: PeriodDrawing): Pair<Float, Float> =
     when (drawing) {
+        PeriodDrawing.None,
         PeriodDrawing.VerticalLines,
         PeriodDrawing.HorizontalLines,
         PeriodDrawing.RisingObliques,
@@ -100,6 +102,8 @@ private fun DrawScope.drawTile(drawing: PeriodDrawing, color: Color) {
     fun line(from: Offset, to: Offset) =
         drawLine(color, from, to, strokeWidth = stroke, pathEffect = effect, cap = StrokeCap.Butt)
     when (drawing) {
+        // An empty tile: what a task panel redraws over itself for a kind with no drawing is nothing too.
+        PeriodDrawing.None -> Unit
         PeriodDrawing.VerticalLines -> line(Offset(w / 2f, 0f), Offset(w / 2f, h))
         PeriodDrawing.HorizontalLines -> line(Offset(0f, h / 2f), Offset(w, h / 2f))
         // The diagonal plus its two neighbours, so the anti-aliased corners join into one continuous line.

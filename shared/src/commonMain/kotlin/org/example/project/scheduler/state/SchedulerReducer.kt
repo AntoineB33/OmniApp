@@ -4957,7 +4957,7 @@ private fun reduceAddPeriodKind(state: SchedulerState, kindRaw: String): Schedul
     // from the kind's position in the list: removing another kind must not repaint this one.
     val config = state.periodKindConfig
     val worn = state.allPeriodKinds.groupingBy { config.drawing(it) }.eachCount()
-    val drawing = PeriodDrawing.entries.minBy { worn[it] ?: 0 }
+    val drawing = PeriodDrawing.patterns.minBy { worn[it] ?: 0 }
     return state.copy(
         periodKinds = state.periodKinds + kind,
         periodKindStyles = state.periodKindStyles + (kind to PeriodKindStyle(drawing)),

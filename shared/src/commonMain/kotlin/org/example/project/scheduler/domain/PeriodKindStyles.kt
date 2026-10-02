@@ -12,9 +12,15 @@ import org.example.project.scheduler.model.TaskTimeRange
  * cross rather than blend, which a colour or a density would not do. A period has no fill at any depth: a task
  * resilient to its kind works straight through it and must stay readable (ADR 0002).
  *
+ * [None] is the one member that is no pattern: an account may define more kinds than there are drawings to tell
+ * apart, so a kind may be left to its outline and its label alone. It is only ever CHOSEN — a new kind is never
+ * given it ([PeriodDrawing.patterns]).
+ *
  * Stored by [name]; a name this build does not know decodes to the kind's default drawing.
  */
 enum class PeriodDrawing(val label: String) {
+    /** Nothing is drawn: the period keeps its outline and its label. */
+    None("No drawing"),
     /** `|` — the inactivity default. */
     VerticalLines("Vertical lines"),
     /** `—` — the sleep default. */
@@ -35,6 +41,12 @@ enum class PeriodDrawing(val label: String) {
     DottedRisingObliques("Dotted oblique lines /"),
     /** `\` in dashes — the "not on a phone" default. */
     DottedFallingObliques("Dotted oblique lines \\"),
+    ;
+
+    companion object {
+        /** Every drawing that IS one — what a new kind is given the least-worn of. */
+        val patterns: List<PeriodDrawing> = entries.filter { it != None }
+    }
 }
 
 /**

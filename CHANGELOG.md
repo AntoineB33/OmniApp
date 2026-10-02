@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Periods: "No drawing" in the drawing selector — 2026-10-02
+
+User request: *"In the actions for periods, in the drawing selector, add the option for no drawing (since the user can
+create lots of periods)."* `PeriodDrawing.None`, first in the selector (`AddedAction.PeriodDrawing` lists the enum's
+entries). The one renderer paints nothing for it (`Modifier.periodDrawing`; an empty tile for a panel's redraw). Only
+ever chosen: a new kind still gets the least-worn of `PeriodDrawing.patterns`. No migration — a drawing is stored by
+name, and an older build reading `None` falls back to the kind's default.
+`PeriodCompanionsAndDrawingsTest.no_drawing_is_only_ever_chosen_and_it_round_trips`.
+
 ### Calendar: no text is overlapped by anything — 2026-10-02
 
 User rule: *"In the calendar, text must never be overlapped by anything. If the title of a task panel and the title
