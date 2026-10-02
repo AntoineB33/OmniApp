@@ -213,6 +213,126 @@ class SearchAddedElementsTest {
     }
 
     @Test
+    fun the_groups_of_actions_are_listed_by_how_many_added_elements_they_reach() {
+        val s = account().copy(
+            alarms = listOf(AlarmEntry(id = "a", label = "Wake"), AlarmEntry(id = "b", label = "Wake"), AlarmEntry(id = "c", label = "Nap")),
+        )
+        val added = SearchDomain.resolve(s, listOf("Task/" + taskWithTitle(s, "Apple").value, "Alarm/a", "Alarm/b", "Alarm/c"))
+        val groups =
+            SearchDomain.sortedByReach(
+                SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), added.mapTo(HashSet()) { it.kind }), added,
+            ).map { it.first }
+        // Every element (4), then the alarms (3) before the tasks (1) — though "task" is first in the drop-down.
+        assertEquals(listOf(null, SearchDomain.Kind.Alarm, SearchDomain.Kind.Task), groups)
+    }
+
+    @Test
+    fun the_title_field_is_empty_unless_shared_types_into_every_added_one_and_escape_puts_each_back() {
+        val s = account().copy(
+            alarms = listOf(AlarmEntry(id = "a", label = "Wake"), AlarmEntry(id = "b", label = "Nap"), AlarmEntry(id = "c", label = "Tea")),
+        )
+        val added = SearchDomain.resolve(s, listOf("Alarm/a", "Alarm/b"))
+        val before = SearchDomain.addedTitles(s, added, SearchDomain.Kind.Alarm)
+        assertEquals(mapOf("a" to "Wake", "b" to "Nap"), before)
+        assertEquals("", SearchDomain.sharedTitle(before), "two titles: the field is empty")
+        // Typing: every ADDED alarm takes it, the other one keeps its own.
+        val typed = SearchDomain.AddedCommand.Titles(SearchDomain.Kind.Alarm, before.keys.associateWith { "Up" }, "k")
+        val after = SearchDomain.addedIntents(s, added, typed, 0L).fold(s, ::r)
+        assertEquals(listOf("Up", "Up", "Tea"), after.alarms.map { it.label })
+        assertEquals("Up", SearchDomain.sharedTitle(SearchDomain.addedTitles(after, added, SearchDomain.Kind.Alarm)))
+        // Escape: each its previous title.
+        val restored =
+            SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.Titles(SearchDomain.Kind.Alarm, before, "k"), 0L).fold(after, ::r)
+        assertEquals(s.alarms, restored.alarms)
+        assertEquals(emptyList(), SearchDomain.addedIntents(restored, added, SearchDomain.AddedCommand.Titles(SearchDomain.Kind.Alarm, before), 0L))
+    }
+
+    /** Anomaly 2026-10-02: the alarm group drew one editor PER added alarm; its settings are one field each. */
+    @Test
+    fun an_alarm_setting_is_one_field_over_every_added_alarm() {
+        val monday = kotlinx.datetime.DayOfWeek.MONDAY
+        val friday = kotlinx.datetime.DayOfWeek.FRIDAY
+        val s = account().copy(
+            alarms = listOf(
+                AlarmEntry(id = "a", timeOfDayMinutes = 60, days = setOf(monday, friday), soundSeconds = 3),
+                AlarmEntry(id = "b", timeOfDayMinutes = 90, days = setOf(monday), soundSeconds = 3),
+                AlarmEntry(id = "c", timeOfDayMinutes = 120),
+            ),
+        )
+        val added = SearchDomain.resolve(s, listOf("Alarm/a", "Alarm/b"))
+        val alarms = SearchDomain.addedAlarms(s, added)
+        assertEquals(listOf("a", "b"), alarms.map { it.id })
+        assertEquals(null, SearchDomain.sharedValue(alarms) { it.timeOfDayMinutes }, "two times: the field is empty")
+        assertEquals(3, SearchDomain.sharedValue(alarms) { it.soundSeconds })
+        // The time typed: both added alarms, one list edit; the third alarm is not touched.
+        val intents = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.AlarmsEdit("k") { it.copy(timeOfDayMinutes = 7 * 60) }, 0L)
+        assertEquals(1, intents.size)
+        val after = intents.fold(s, ::r)
+        assertEquals(listOf(420, 420, 120), after.alarms.map { it.timeOfDayMinutes })
+        assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.AlarmsEdit { it.copy(timeOfDayMinutes = 420) }, 0L))
+        // Days: Monday is lit (both have it). Pressing Friday gives it to both; pressing Monday off would leave "b"
+        // with no day, so "b" keeps its own.
+        val shown = setOf(monday)
+        assertEquals(setOf(monday, friday), SearchDomain.withDaysChange(setOf(monday), shown, shown + friday))
+        assertEquals(setOf(friday), SearchDomain.withDaysChange(setOf(monday, friday), shown, emptySet()))
+        assertEquals(setOf(monday), SearchDomain.withDaysChange(setOf(monday), shown, emptySet()))
+        // The alert: a channel is shown on only when every alarm has it, and a press writes that channel alone.
+        val loud = org.example.project.scheduler.model.AlertSettings(sound = true, voice = true)
+        val quiet = org.example.project.scheduler.model.AlertSettings(sound = false, voice = true)
+        val both = SearchDomain.sharedAlert(listOf(loud, quiet))!!
+        assertEquals(false to true, both.sound to both.voice)
+        val edited = both.copy(voice = false)
+        assertEquals(true to false, SearchDomain.withAlertChange(loud, both, edited).let { it.sound to it.voice })
+        assertEquals(false to false, SearchDomain.withAlertChange(quiet, both, edited).let { it.sound to it.voice })
+    }
+
+    @Test
+    fun the_alarm_groups_bin_deletes_every_added_alarm_as_one_undoable_edit() {
+        val s = account().copy(alarms = listOf(AlarmEntry(id = "a"), AlarmEntry(id = "b"), AlarmEntry(id = "c")))
+        val added = SearchDomain.resolve(s, listOf("Alarm/a", "Alarm/c"))
+        val intents = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.Delete(SearchDomain.Kind.Alarm), 0L)
+        assertEquals(1, intents.size)
+        val after = intents.fold(s, ::r)
+        assertEquals(listOf("b"), after.alarms.map { it.id })
+        assertEquals(units(s) + 1, units(after), "one History Unit: Undo brings them back")
+        assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.Delete(SearchDomain.Kind.Alarm), 0L))
+    }
+
+    /** User rule 2026-10-02: "don't do that just for alarms" — the timers and the reminders, one field for all. */
+    @Test
+    fun a_timers_and_a_reminders_settings_are_one_field_over_every_added_one_and_each_kind_has_its_bin() {
+        val timer = org.example.project.scheduler.model.TimerEntry(id = "t1", durationSeconds = 60)
+        val chore = org.example.project.scheduler.model.ChoreEntry(title = "Water", spanDays = 1.0, timeOfDayMinutes = 60, id = "r1")
+        var s = account().copy(
+            timers = listOf(timer, timer.copy(id = "t2", durationSeconds = 90), timer.copy(id = "t3")),
+            chores = listOf(chore, chore.copy(title = "Bins", id = "r2", spanDays = 7.0), chore.copy(title = "Post", id = "r3")),
+        )
+        val added = SearchDomain.resolve(s, listOf("Timer/t1", "Timer/t2", "Reminder/r1", "Reminder/r2"))
+        assertEquals(listOf("t1", "t2"), SearchDomain.addedTimers(s, added).map { it.id })
+        assertEquals(null, SearchDomain.sharedValue(SearchDomain.addedTimers(s, added)) { it.durationSeconds })
+        // A timer field: every added timer, one list edit.
+        val timed = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.TimersEdit("k") { it.copy(durationSeconds = 300) }, 0L)
+        assertEquals(1, timed.size)
+        s = timed.fold(s, ::r)
+        assertEquals(listOf(300, 300, 60), s.timers.map { it.durationSeconds })
+        // A reminder field: "every 2 weeks" over both added reminders, by the editor's own arithmetic.
+        val weeks = org.example.project.scheduler.model.ChoreRecurrenceUnit.Weeks
+        val every = SearchDomain.AddedCommand.RemindersEdit { SearchDomain.withReminderEvery(it, "2", weeks) }
+        s = SearchDomain.addedIntents(s, added, every, millis("2026-10-02")).fold(s, ::r)
+        assertEquals(listOf(14.0, 14.0, 1.0), s.chores.map { it.spanDays })
+        assertEquals("2", SearchDomain.sharedValue(SearchDomain.addedReminders(s, added), SearchDomain::reminderEveryText))
+        // The bins: the added ones of the kind, and only them.
+        s = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.Delete(SearchDomain.Kind.Timer), 0L).fold(s, ::r)
+        assertEquals(listOf("t3"), s.timers.map { it.id })
+        s = SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.Delete(SearchDomain.Kind.Reminder), millis("2026-10-02")).fold(s, ::r)
+        assertEquals(listOf("r3"), s.chores.map { it.id })
+        assertEquals(emptyList(), SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.Delete(SearchDomain.Kind.Timer), 0L))
+        // No kind keeps an editor per element for these any more.
+        val labels = SearchDomain.AddedAction.entries.filter { it.section in setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Reminder) }.map { it.label }
+        assertTrue("Edit" !in labels)
+    }
+
+    @Test
     fun remove_the_others_leaves_the_element_alone_and_a_stale_key_removes_nothing() {
         val added = listOf("Alarm/a", "Task/t", "Reminder/r")
         assertEquals(listOf("Task/t"), SearchDomain.keepingOnly(added, "Task/t"))

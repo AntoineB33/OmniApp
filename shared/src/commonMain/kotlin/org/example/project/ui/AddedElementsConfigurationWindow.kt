@@ -25,6 +25,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -40,7 +46,11 @@ import org.example.project.scheduler.ui.PeriodCombinationsSection
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.TaskPathsDomain
+import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.model.ChoreEntry
+import org.example.project.scheduler.model.TimerEntry
+import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.platform.writeSystemClipboardText
 import org.example.project.scheduler.state.defaultSubtreeIsEmpty
@@ -180,6 +190,8 @@ class AddedActionHandlers(
     val onDuplicate: (List<SchedulerIntent>, SearchDomain.Kind) -> List<String>,
     /** "Add to the calendar": these drafts saved as the calendar's element window saves its own. */
     val onPlaceOnCalendar: (List<org.example.project.scheduler.domain.CalendarElements.Draft>) -> Unit,
+    /** "Constrained in": the constraint picker over these reminders (by id) at once; what it saves, all of them get. */
+    val onEditReminderConstraint: (List<String>) -> Unit = {},
 )
 
 /**
@@ -267,8 +279,9 @@ private fun AddedActionSections(
     val run = { command: SearchDomain.AddedCommand ->
         SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
     }
-    for ((kind, actions) in sections) {
-        val count = added.count { kind == null || it.kind == kind }
+    // User rule 2026-10-02: the group whose actions reach the most added elements first.
+    for ((kind, actions) in SearchDomain.sortedByReach(sections, added)) {
+        val count = SearchDomain.reachOf(kind, added)
         Text(
             text = (kind?.label?.replaceFirstChar { it.uppercase() } ?: "Every element") + "  ·  $count",
             style = MaterialTheme.typography.titleSmall,
@@ -294,8 +307,8 @@ private fun AddedActionSections(
 private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
     setOf(
         SearchDomain.AddedAction.TaskScheduleUnit, SearchDomain.AddedAction.TaskText, SearchDomain.AddedAction.TaskAddUnder,
-        SearchDomain.AddedAction.TaskPaths, SearchDomain.AddedAction.CategoryEdit, SearchDomain.AddedAction.AlarmEdit,
-        SearchDomain.AddedAction.TimerEdit, SearchDomain.AddedAction.ChronoEdit, SearchDomain.AddedAction.ReminderEdit,
+        SearchDomain.AddedAction.TaskPaths, SearchDomain.AddedAction.CategoryEdit, SearchDomain.AddedAction.AlarmAlert,
+        SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
         SearchDomain.AddedAction.PeriodCombinations,
     )
 
@@ -457,6 +470,9 @@ private fun AddedActionEditor(
             FrameButton("Now", enabled = added.any { it.kind == SearchDomain.Kind.Reminder }) {
                 run(SearchDomain.AddedCommand.RemindersTimeNow)
             }
+        SearchDomain.AddedAction.AlarmTitle, SearchDomain.AddedAction.TimerTitle,
+        SearchDomain.AddedAction.ChronoTitle, SearchDomain.AddedAction.ReminderTitle ->
+            SharedTitleField(state, added, SearchDomain.TITLED_KINDS.getValue(action), run)
         // The sound setting's control: the app's global volume. Written on release, so a drag is one write.
         SearchDomain.AddedAction.SoundVolume -> {
             val enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound)
@@ -532,14 +548,178 @@ private fun AddedActionEditor(
                 HorizontalDivider()
             }
         }
-        SearchDomain.AddedAction.AlarmEdit ->
-            handlers.alarmEditor(SearchDomain.addedIds(added, SearchDomain.Kind.Alarm).mapTo(LinkedHashSet()) { AlarmWindowSubject(it, AlarmWindowSubject.Kind.Alarm) })
-        SearchDomain.AddedAction.TimerEdit ->
-            handlers.alarmEditor(SearchDomain.addedIds(added, SearchDomain.Kind.Timer).mapTo(LinkedHashSet()) { AlarmWindowSubject(it, AlarmWindowSubject.Kind.Timer) })
-        SearchDomain.AddedAction.ChronoEdit ->
-            handlers.alarmEditor(SearchDomain.addedIds(added, SearchDomain.Kind.Chrono).mapTo(LinkedHashSet()) { AlarmWindowSubject(it, AlarmWindowSubject.Kind.Chrono) })
-        SearchDomain.AddedAction.ReminderEdit ->
-            handlers.reminderEditor(SearchDomain.addedIds(added, SearchDomain.Kind.Reminder).toSet())
+        // --- The alarms' settings: ONE field each, over every added alarm (user rule 2026-10-02) ----------------
+        SearchDomain.AddedAction.AlarmTime ->
+            SharedTextField(
+                items = SearchDomain.addedAlarms(state, added),
+                idOf = { it.id },
+                field = "Alarm/time",
+                read = { formatAlarmTime(it.timeOfDayMinutes) },
+                parse = { text -> parseAlarmTime(text)?.let { minutes -> { a: AlarmEntry -> a.copy(timeOfDayMinutes = minutes) } } },
+                restore = { alarm, before -> alarm.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
+                write = { key, change -> run(SearchDomain.AddedCommand.AlarmsEdit(key, change)) },
+            )
+        SearchDomain.AddedAction.AlarmRingsFor ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                SharedTextField(
+                    items = SearchDomain.addedAlarms(state, added),
+                    idOf = { it.id },
+                    field = "Alarm/sound",
+                    read = { it.soundSeconds.toString() },
+                    parse = { text -> parseSoundSeconds(text)?.let { seconds -> { a: AlarmEntry -> a.copy(soundSeconds = seconds) } } },
+                    restore = { alarm, before -> alarm.copy(soundSeconds = before.soundSeconds) },
+                    write = { key, change -> run(SearchDomain.AddedCommand.AlarmsEdit(key, change)) },
+                )
+                Text("s", style = MaterialTheme.typography.bodySmall)
+            }
+        SearchDomain.AddedAction.AlarmDays -> {
+            val alarms = SearchDomain.addedAlarms(state, added)
+            // Lit: a day EVERY added alarm rings on. A press sets it for all of them, or takes it off all of them.
+            val shown = alarms.map { it.days }.reduceOrNull { all, days -> all intersect days }.orEmpty()
+            DayChips(
+                days = shown,
+                onChange = { edited -> run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(days = SearchDomain.withDaysChange(it.days, shown, edited)) }) },
+                emptyLabel = if (alarms.isEmpty()) "" else "no day in common",
+            )
+        }
+        // The bin, over every added element of the kind; what it deleted leaves the added list too.
+        SearchDomain.AddedAction.AlarmDelete, SearchDomain.AddedAction.TimerDelete, SearchDomain.AddedAction.ChronoDelete,
+        SearchDomain.AddedAction.ReminderDelete, SearchDomain.AddedAction.CategoryDelete -> {
+            val kind = action.section ?: return
+            val keys = added.filter { it.kind == kind }.map(SearchDomain::keyOf)
+            FrameButton(if (keys.size == 1) "🗑 Delete" else "🗑 Delete ${keys.size}", enabled = keys.isNotEmpty()) {
+                run(SearchDomain.AddedCommand.Delete(kind))
+                onConfigChange(config.copy(added = config.added - keys.toSet()))
+            }
+        }
+        // --- The timers' settings: ONE field each, over every added timer ----------------------------------------
+        SearchDomain.AddedAction.TimerDuration ->
+            SharedTextField(
+                items = SearchDomain.addedTimers(state, added),
+                idOf = { it.id },
+                field = "Timer/duration",
+                read = { TimerDomain.formatDuration(it.durationSeconds) },
+                parse = { text -> parseDurationSeconds(text)?.let { seconds -> { t: TimerEntry -> t.copy(durationSeconds = seconds) } } },
+                restore = { timer, before -> timer.copy(durationSeconds = before.durationSeconds) },
+                write = { key, change -> run(SearchDomain.AddedCommand.TimersEdit(key, change)) },
+            )
+        SearchDomain.AddedAction.TimerRingsFor ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                SharedTextField(
+                    items = SearchDomain.addedTimers(state, added),
+                    idOf = { it.id },
+                    field = "Timer/sound",
+                    read = { it.soundSeconds.toString() },
+                    parse = { text -> parseSoundSeconds(text)?.let { seconds -> { t: TimerEntry -> t.copy(soundSeconds = seconds) } } },
+                    restore = { timer, before -> timer.copy(soundSeconds = before.soundSeconds) },
+                    write = { key, change -> run(SearchDomain.AddedCommand.TimersEdit(key, change)) },
+                )
+                Text("s", style = MaterialTheme.typography.bodySmall)
+            }
+        SearchDomain.AddedAction.TimerBelowZero -> {
+            val shared = SearchDomain.sharedValue(SearchDomain.addedTimers(state, added)) { it.goesNegative }
+            Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { on ->
+                run(SearchDomain.AddedCommand.TimersEdit { it.copy(goesNegative = on == true) })
+            }
+        }
+        SearchDomain.AddedAction.TimerAlert -> {
+            val shown = SearchDomain.sharedAlert(SearchDomain.addedTimers(state, added).map { it.alert })
+            if (shown != null) {
+                AlertSettingsEditor(
+                    alert = shown,
+                    onChange = { edited ->
+                        run(SearchDomain.AddedCommand.TimersEdit { it.copy(alert = SearchDomain.withAlertChange(it.alert, shown, edited)) })
+                    },
+                )
+            }
+        }
+        // --- The reminders' settings: ONE field each, over every added reminder ----------------------------------
+        SearchDomain.AddedAction.ReminderEvery -> {
+            val reminders = SearchDomain.addedReminders(state, added)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SharedTextField(
+                    items = reminders,
+                    idOf = { it.id.ifEmpty { it.title } },
+                    field = "Reminder/every",
+                    read = SearchDomain::reminderEveryText,
+                    sanitize = ::sanitizeFormula,
+                    parse = { text -> { c: ChoreEntry -> SearchDomain.withReminderEvery(c, text, c.recurrenceUnit) } },
+                    restore = { chore, before -> chore.copy(daysFormula = before.daysFormula, spanDays = before.spanDays) },
+                    write = { _, change -> run(SearchDomain.AddedCommand.RemindersEdit(change)) },
+                )
+                // The unit every added reminder has; with several, the first one's — picking one gives it to all.
+                reminders.firstOrNull()?.let { first ->
+                    RecurrenceUnitDropdown(
+                        unit = SearchDomain.sharedValue(reminders) { it.recurrenceUnit } ?: first.recurrenceUnit,
+                        onSelect = { unit ->
+                            run(SearchDomain.AddedCommand.RemindersEdit { SearchDomain.withReminderEvery(it, SearchDomain.reminderEveryText(it), unit) })
+                        },
+                    )
+                }
+            }
+        }
+        SearchDomain.AddedAction.ReminderTime ->
+            SharedTextField(
+                items = SearchDomain.addedReminders(state, added),
+                idOf = { it.id.ifEmpty { it.title } },
+                field = "Reminder/time",
+                read = { formatTimeOfDay(it.timeOfDayMinutes) },
+                sanitize = ::sanitizeTimeOfDay,
+                parse = { text -> { c: ChoreEntry -> c.copy(timeOfDayMinutes = parseTimeOfDay(text)) } },
+                restore = { chore, before -> chore.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
+                write = { _, change -> run(SearchDomain.AddedCommand.RemindersEdit(change)) },
+            )
+        SearchDomain.AddedAction.ReminderConstraint -> {
+            val reminders = SearchDomain.addedReminders(state, added)
+            val shared = SearchDomain.sharedValue(reminders) { it.constrainedToReminderId }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FrameButton("Choose…", enabled = reminders.isNotEmpty()) {
+                    handlers.onEditReminderConstraint(reminders.map { it.id })
+                }
+                Text(
+                    text = when {
+                        reminders.isEmpty() -> ""
+                        shared == null -> "(they differ)"
+                        shared.isBlank() -> "(none)"
+                        else -> SchedulerDomain.reminderTitleForId(state, shared) ?: "(none)"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (reminders.any { it.constrainedToReminderId.isNotBlank() }) {
+                    FrameButton("✕") { run(SearchDomain.AddedCommand.RemindersEdit { it.copy(constrainedToReminderId = "") }) }
+                }
+            }
+        }
+        SearchDomain.AddedAction.ReminderAlert -> {
+            val shown = SearchDomain.sharedAlert(SearchDomain.addedReminders(state, added).map { it.alert })
+            if (shown != null) {
+                AlertSettingsEditor(
+                    alert = shown,
+                    onChange = { edited ->
+                        run(SearchDomain.AddedCommand.RemindersEdit { it.copy(alert = SearchDomain.withAlertChange(it.alert, shown, edited)) })
+                    },
+                )
+            }
+        }
+        SearchDomain.AddedAction.AlarmRepeat -> {
+            // Lit when every added alarm is in that state; neither chip when they differ.
+            val shared = SearchDomain.sharedValue(SearchDomain.addedAlarms(state, added)) { it.repeats }
+            Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { on ->
+                run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(repeats = on == true) })
+            }
+        }
+        SearchDomain.AddedAction.AlarmAlert -> {
+            val shown = SearchDomain.sharedAlert(SearchDomain.addedAlarms(state, added).map { it.alert })
+            if (shown != null) {
+                // Only what is pressed is written: the channels and the tone nobody touched stay each alarm's own.
+                AlertSettingsEditor(
+                    alert = shown,
+                    onChange = { edited ->
+                        run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(alert = SearchDomain.withAlertChange(it.alert, shown, edited)) })
+                    },
+                )
+            }
+        }
         SearchDomain.AddedAction.PeriodDrawing -> {
             val periods = SearchDomain.addedPeriodKinds(state, added)
             val shared = periods.map { state.periodKindConfig.drawing(it) }.distinct().singleOrNull()
@@ -596,6 +776,113 @@ private fun ElementHeading(name: String, count: Int) {
     if (count > 1) {
         Text(name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }
+}
+
+/**
+ * User rule 2026-10-02: **the one title field of a group** — empty unless every added element of [kind] has the same
+ * title; typing gives them all what is typed, as it is typed; Escape gives each back the title it had when the
+ * typing began. One typing session (from its first keystroke to Escape or the field losing the focus) is one History
+ * Unit where the kind's list has them.
+ */
+@Composable
+private fun SharedTitleField(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    kind: SearchDomain.Kind,
+    run: (SearchDomain.AddedCommand) -> Unit,
+) {
+    val titles = SearchDomain.addedTitles(state, added, kind)
+    // The titles as they stood when the typing began — what Escape puts back; null while nothing is being typed.
+    var before by remember(kind) { mutableStateOf<Map<String, String>?>(null) }
+    var draft by remember(kind) { mutableStateOf("") }
+    var session by remember(kind) { mutableStateOf(0) }
+    val editKey = "added/${kind.name}/title@$session"
+    OutlinedTextField(
+        value = if (before != null) draft else SearchDomain.sharedTitle(titles),
+        onValueChange = { text ->
+            if (before == null) before = titles
+            draft = text
+            run(SearchDomain.AddedCommand.Titles(kind, titles.keys.associateWith { text }, editKey))
+        },
+        enabled = titles.isNotEmpty(),
+        singleLine = true,
+        modifier = Modifier
+            .fillMaxWidth()
+            .leaveFocusOnOutsidePress()
+            .onFocusChanged { focus ->
+                if (!focus.isFocused && before != null) {
+                    before = null
+                    session++
+                }
+            }
+            .onPreviewKeyEvent { event ->
+                val previous = before
+                if (event.type != KeyEventType.KeyDown || event.key != Key.Escape || previous == null) {
+                    return@onPreviewKeyEvent false
+                }
+                // Only the elements still in the list get their title back.
+                run(SearchDomain.AddedCommand.Titles(kind, previous.filterKeys { it in titles }, editKey))
+                before = null
+                session++
+                true
+            },
+    )
+}
+
+/**
+ * User rule 2026-10-02: **one text field of a group, over every added element of its kind** — what they all hold,
+ * else empty; typing writes every one of them at each keystroke that [parse]s ([write], with the session's edit
+ * key); Escape gives each back what it held when the typing began ([restore]). The typing session (first keystroke
+ * to Escape or the focus leaving) is one History Unit where the kind's list has them.
+ */
+@Composable
+private fun <T> SharedTextField(
+    items: List<T>,
+    idOf: (T) -> String,
+    /** Names the field for its typing sessions: `Alarm/time`, `Timer/duration`… */
+    field: String,
+    read: (T) -> String,
+    parse: (String) -> ((T) -> T)?,
+    restore: (T, T) -> T,
+    write: (editKey: String, change: (T) -> T) -> Unit,
+    /** What the field lets through as it is typed (a formula's characters, a time's). */
+    sanitize: (String) -> String = { it },
+) {
+    var before by remember(field) { mutableStateOf<Map<String, T>?>(null) }
+    var draft by remember(field) { mutableStateOf("") }
+    var session by remember(field) { mutableStateOf(0) }
+    val editKey = "added/$field@$session"
+    OutlinedTextField(
+        value = if (before != null) draft else SearchDomain.sharedValue(items, read).orEmpty(),
+        onValueChange = { raw ->
+            val text = sanitize(raw)
+            if (before == null) before = items.associateBy(idOf)
+            draft = text
+            parse(text)?.let { write(editKey, it) }
+        },
+        enabled = items.isNotEmpty(),
+        isError = before != null && parse(draft) == null,
+        singleLine = true,
+        modifier = Modifier
+            .width(110.dp)
+            .leaveFocusOnOutsidePress()
+            .onFocusChanged { focus ->
+                if (!focus.isFocused && before != null) {
+                    before = null
+                    session++
+                }
+            }
+            .onPreviewKeyEvent { event ->
+                val previous = before
+                if (event.type != KeyEventType.KeyDown || event.key != Key.Escape || previous == null) {
+                    return@onPreviewKeyEvent false
+                }
+                write(editKey) { item -> previous[idOf(item)]?.let { restore(item, it) } ?: item }
+                before = null
+                session++
+                true
+            },
+    )
 }
 
 /** A raw intent through the actions' one write path: [SearchDomain.AddedCommand.Raw]. */

@@ -1779,6 +1779,11 @@ object SearchDomain {
         TaskAddCategory(Kind.Task, "Add a category"),
         TaskRemoveCategory(Kind.Task, "Remove a category"),
         TaskMinimumTime(Kind.Task, "Minimum time"),
+        // The title of every added one of the kind at once (user rule 2026-10-02): empty unless they all share one.
+        AlarmTitle(Kind.Alarm, "Title"),
+        TimerTitle(Kind.Timer, "Title"),
+        ChronoTitle(Kind.Chrono, "Title"),
+        ReminderTitle(Kind.Reminder, "Title"),
         // A new element of the section's kind, and a copy of each added one (user rule 2026-10-01).
         TaskNew(Kind.Task, "New"),
         TaskDuplicate(Kind.Task, "Duplicate"),
@@ -1811,17 +1816,35 @@ object SearchDomain {
         TaskPaths(Kind.Task, "Paths"),
         CategoryEdit(Kind.Category, "Name and rules"),
         AlarmOnOff(Kind.Alarm, "State"),
-        AlarmEdit(Kind.Alarm, "Edit"),
+        // An alarm's settings, each ONE field over every added alarm (user rule 2026-10-02: no editor per alarm).
+        AlarmTime(Kind.Alarm, "Time"),
+        AlarmDays(Kind.Alarm, "Days"),
+        AlarmRingsFor(Kind.Alarm, "Rings for"),
+        AlarmRepeat(Kind.Alarm, "Repeat"),
+        AlarmAlert(Kind.Alarm, "Alert"),
+        /** The bin: every added one of the kind deleted from the account ([AddedCommand.Delete]). */
+        AlarmDelete(Kind.Alarm, "Delete"),
+        // The same for the other kinds (user rule 2026-10-02: "don't do that just for alarms"): a timer's, a
+        // chrono's and a reminder's settings are ONE field each over every added one, and each kind has its bin.
+        TimerDuration(Kind.Timer, "Duration"),
+        TimerRingsFor(Kind.Timer, "Rings for"),
+        TimerBelowZero(Kind.Timer, "Below zero"),
+        TimerAlert(Kind.Timer, "Alert"),
+        TimerDelete(Kind.Timer, "Delete"),
+        ChronoDelete(Kind.Chrono, "Delete"),
+        ReminderEvery(Kind.Reminder, "Every"),
+        ReminderTime(Kind.Reminder, "Time"),
+        ReminderConstraint(Kind.Reminder, "Constrained in"),
+        ReminderAlert(Kind.Reminder, "Alert"),
+        ReminderDelete(Kind.Reminder, "Delete"),
+        CategoryDelete(Kind.Category, "Delete"),
         // The time of day put on the clock's (user rule 2026-10-02): every added alarm, every added reminder.
         AlarmTimeNow(Kind.Alarm, "Set to the current time"),
         ReminderTimeNow(Kind.Reminder, "Set to the current time"),
         /** The sound setting's slider ([AppSettingEntry.Sound], [SchedulerIntent.SetSoundVolume]). */
         SoundVolume(Kind.AppSetting, "Global volume"),
         TimerRun(Kind.Timer, "Run"),
-        TimerEdit(Kind.Timer, "Edit"),
         ChronoRun(Kind.Chrono, "Run"),
-        ChronoEdit(Kind.Chrono, "Edit"),
-        ReminderEdit(Kind.Reminder, "Edit"),
         // The period edit window's sections (removed 2026-10-01), over every added period.
         PeriodDrawing(Kind.RestrictivePeriod, "Drawing"),
         PeriodCombinations(Kind.RestrictivePeriod, "Combinations"),
@@ -1843,6 +1866,135 @@ object SearchDomain {
                 if (actions.isEmpty()) null else section to actions
             }
 
+    /**
+     * **The groups in the order the top right section lists them** (user rule 2026-10-02): by the number of added
+     * elements a group's actions apply to ([reachOf]), the most first. Stable, so groups reaching as many keep the
+     * order [addedActions] gave them — "every element" first, then the drop-down's.
+     */
+    fun <T> sortedByReach(sections: List<Pair<Kind?, T>>, added: List<Result>): List<Pair<Kind?, T>> =
+        sections.sortedByDescending { reachOf(it.first, added) }
+
+    /** How many of [added] the actions of the group [kind] apply to: all of them for the general group (null). */
+    fun reachOf(kind: Kind?, added: List<Result>): Int = added.count { kind == null || it.kind == kind }
+
+    /** The kinds whose added elements share ONE title field ([AddedAction.AlarmTitle]…), by that action. */
+    val TITLED_KINDS: Map<AddedAction, Kind> by lazy {
+        mapOf(
+            AddedAction.AlarmTitle to Kind.Alarm,
+            AddedAction.TimerTitle to Kind.Timer,
+            AddedAction.ChronoTitle to Kind.Chrono,
+            AddedAction.ReminderTitle to Kind.Reminder,
+        )
+    }
+
+    /**
+     * The stored title of every added element of [kind] the account still holds, by the row's id — what the group's
+     * title field reads ([sharedTitle]) and what Escape puts back ([AddedCommand.Titles]). The STORED one: a nameless
+     * alarm's is blank, not the "Alarm" its row shows.
+     */
+    fun addedTitles(state: SchedulerState, added: List<Result>, kind: Kind): Map<String, String> {
+        val ids = addedIds(added, kind).toSet()
+        val all: List<Pair<String, String>> =
+            when (kind) {
+                Kind.Alarm -> state.alarms.map { it.id to it.label }
+                Kind.Timer -> state.timers.map { it.id to it.label }
+                Kind.Chrono -> state.chronos.map { it.id to it.label }
+                Kind.Reminder -> state.chores.map { it.id.ifEmpty { it.title } to it.title }
+                else -> emptyList()
+            }
+        return all.filter { it.first in ids }.toMap()
+    }
+
+    /** The added alarms the account still holds, in the list's order — what the alarm group's shared fields read. */
+    fun addedAlarms(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.AlarmEntry> {
+        val byId = state.alarms.associateBy { it.id }
+        return addedIds(added, Kind.Alarm).mapNotNull { byId[it] }
+    }
+
+    /** The reminders list set to [next] ([SchedulerIntent.SetChores], anchored on today), or nothing when unchanged. */
+    private fun remindersIntent(
+        state: SchedulerState,
+        next: List<org.example.project.scheduler.model.ChoreEntry>,
+        nowMillis: Long,
+        timeZone: TimeZone,
+    ): List<SchedulerIntent> {
+        if (next == state.chores) return emptyList()
+        val todayStart = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
+            .atStartOfDayIn(timeZone).toEpochMilliseconds()
+        return listOf(SchedulerIntent.SetChores(next, todayStart, nowMillis))
+    }
+
+    /** The added timers the account still holds, in the list's order. */
+    fun addedTimers(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.TimerEntry> {
+        val byId = state.timers.associateBy { it.id }
+        return addedIds(added, Kind.Timer).mapNotNull { byId[it] }
+    }
+
+    /** The added reminders the account still holds, in the list's order (a row's id: the reminder's, else its title). */
+    fun addedReminders(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.ChoreEntry> {
+        val byId = state.chores.associateBy { it.id.ifEmpty { it.title } }
+        return addedIds(added, Kind.Reminder).mapNotNull { byId[it] }
+    }
+
+    /** What a reminder's "Every" field reads: the formula it was typed as, else its cadence in its own unit. */
+    fun reminderEveryText(chore: org.example.project.scheduler.model.ChoreEntry): String =
+        chore.daysFormula.ifBlank {
+            val n = chore.recurrenceUnit.fromDays(chore.spanDays)
+            if (n == n.toLong().toDouble()) n.toLong().toString() else n.toString()
+        }
+
+    /** [chore] recurring every [text] (a number or a formula) of [unit] — the reminder editor's own arithmetic. */
+    fun withReminderEvery(chore: org.example.project.scheduler.model.ChoreEntry, text: String, unit: org.example.project.scheduler.model.ChoreRecurrenceUnit): org.example.project.scheduler.model.ChoreEntry =
+        chore.copy(
+            daysFormula = text,
+            recurrenceUnit = unit,
+            spanDays = unit.toDays(SchedulerDomain.evaluateDayFormula(text) ?: 0.0),
+        )
+
+    /** The value every one of [items] has for [read], or null when they differ (or there is none): a shared field's. */
+    fun <T, V : Any> sharedValue(items: List<T>, read: (T) -> V): V? = items.map(read).distinct().singleOrNull()
+
+    /**
+     * The alert the alarm group's one editor shows for [alerts]: a channel is on only when it is on for EVERY one
+     * (so a press says "all of them"), the tone the shared one, else the first's.
+     */
+    fun sharedAlert(alerts: List<org.example.project.scheduler.model.AlertSettings>): org.example.project.scheduler.model.AlertSettings? {
+        val first = alerts.firstOrNull() ?: return null
+        return first.copy(
+            sound = alerts.all { it.sound },
+            voice = alerts.all { it.voice },
+            notification = alerts.all { it.notification },
+            vibrate = alerts.all { it.vibrate },
+        )
+    }
+
+    /**
+     * [alert] with only what the editor CHANGED between [shown] and [edited] — the channels and the tone nobody
+     * touched stay each alarm's own.
+     */
+    fun withAlertChange(
+        alert: org.example.project.scheduler.model.AlertSettings,
+        shown: org.example.project.scheduler.model.AlertSettings,
+        edited: org.example.project.scheduler.model.AlertSettings,
+    ): org.example.project.scheduler.model.AlertSettings =
+        alert.copy(
+            sound = if (edited.sound != shown.sound) edited.sound else alert.sound,
+            tone = if (edited.tone != shown.tone) edited.tone else alert.tone,
+            voice = if (edited.voice != shown.voice) edited.voice else alert.voice,
+            notification = if (edited.notification != shown.notification) edited.notification else alert.notification,
+            vibrate = if (edited.vibrate != shown.vibrate) edited.vibrate else alert.vibrate,
+        )
+
+    /**
+     * The days chips of the alarm group: a day lit in [shown] (on for every alarm) and no longer in [edited] leaves
+     * every alarm, one newly in [edited] joins every alarm — never leaving an alarm with no day to ring on.
+     */
+    fun withDaysChange(days: Set<kotlinx.datetime.DayOfWeek>, shown: Set<kotlinx.datetime.DayOfWeek>, edited: Set<kotlinx.datetime.DayOfWeek>): Set<kotlinx.datetime.DayOfWeek> =
+        (days + (edited - shown) - (shown - edited)).ifEmpty { days }
+
+    /** What the title field shows: the one title every element of [titles] has, else empty. */
+    fun sharedTitle(titles: Map<String, String>): String = titles.values.distinct().singleOrNull().orEmpty()
+
     /** A timer's or a chrono's run-state step, as its own row's buttons take it. */
     enum class RunStep(val label: String) { Start("start"), Pause("pause"), Reset("reset") }
 
@@ -1853,6 +2005,34 @@ object SearchDomain {
         data class MinimumTime(val minutes: Int) : AddedCommand
 
         data class AlarmsOn(val on: Boolean) : AddedCommand
+
+        /**
+         * The titles of elements of [kind], by id — every added one given what is typed, or each given back the title
+         * it had (Escape). [editKey] names the field's typing session, so its keystrokes are one History Unit.
+         */
+        data class Titles(val kind: Kind, val titles: Map<String, String>, val editKey: String? = null) : AddedCommand
+
+        /**
+         * [change] applied to every added alarm, as ONE list edit ([SchedulerIntent.SetAlarms]) — a shared field's
+         * write: the time, a weekday, the ring's length, the repeat, a channel of the alert. [editKey] names a text
+         * field's typing session (one History Unit); null for a switch or a chip.
+         */
+        class AlarmsEdit(
+            val editKey: String? = null,
+            val change: (org.example.project.scheduler.model.AlarmEntry) -> org.example.project.scheduler.model.AlarmEntry,
+        ) : AddedCommand
+
+        /**
+         * Every added element of [kind] deleted from the account — its window's bin, over all of them: one list edit
+         * for the alarms, timers, chronos and reminders, [SchedulerIntent.DeleteCategory] per category.
+         */
+        data class Delete(val kind: Kind) : AddedCommand
+
+        /** [AlarmsEdit] for the added timers ([SchedulerIntent.SetTimers]). */
+        class TimersEdit(val editKey: String? = null, val change: (org.example.project.scheduler.model.TimerEntry) -> org.example.project.scheduler.model.TimerEntry) : AddedCommand
+
+        /** [AlarmsEdit] for the added reminders ([SchedulerIntent.SetChores]). */
+        class RemindersEdit(val change: (org.example.project.scheduler.model.ChoreEntry) -> org.example.project.scheduler.model.ChoreEntry) : AddedCommand
 
         /** Every added alarm's time of day set to the clock's, to the minute — its days, and an isolated ring's date, kept. */
         data object AlarmsTimeNow : AddedCommand
@@ -2330,6 +2510,69 @@ object SearchDomain {
         fun idsOf(kind: Kind) = added.filterIsInstance<ItemResult>().filter { it.kind == kind }.mapTo(HashSet()) { it.id }
         val taskIds = added.filterIsInstance<TaskResult>().map { it.taskId }.filter { it in state.tasks }
         return when (command) {
+            is AddedCommand.Delete -> {
+                val ids = idsOf(command.kind)
+                when (command.kind) {
+                    Kind.Alarm -> {
+                        val next = state.alarms.filterNot { it.id in ids }
+                        if (next.size == state.alarms.size) emptyList() else listOf(SchedulerIntent.SetAlarms(next))
+                    }
+                    Kind.Timer -> {
+                        val next = state.timers.filterNot { it.id in ids }
+                        if (next.size == state.timers.size) emptyList() else listOf(SchedulerIntent.SetTimers(next))
+                    }
+                    Kind.Chrono -> {
+                        val next = state.chronos.filterNot { it.id in ids }
+                        if (next.size == state.chronos.size) emptyList() else listOf(SchedulerIntent.SetChronos(next))
+                    }
+                    Kind.Reminder -> remindersIntent(state, state.chores.filterNot { it.id.ifEmpty { it.title } in ids }, nowMillis, timeZone)
+                    Kind.Category ->
+                        state.categories.filter { it.id.value in ids }.map { SchedulerIntent.DeleteCategory(it.id) }
+                    else -> emptyList()
+                }
+            }
+            is AddedCommand.TimersEdit -> {
+                val ids = idsOf(Kind.Timer)
+                val next = state.timers.map { if (it.id in ids) command.change(it) else it }
+                if (next == state.timers) emptyList() else listOf(SchedulerIntent.SetTimers(next, command.editKey))
+            }
+            is AddedCommand.RemindersEdit -> {
+                val ids = idsOf(Kind.Reminder)
+                remindersIntent(state, state.chores.map { if (it.id.ifEmpty { it.title } in ids) command.change(it) else it }, nowMillis, timeZone)
+            }
+            is AddedCommand.AlarmsEdit -> {
+                val ids = idsOf(Kind.Alarm)
+                val next = state.alarms.map { if (it.id in ids) command.change(it) else it }
+                if (next == state.alarms) emptyList() else listOf(SchedulerIntent.SetAlarms(next, command.editKey))
+            }
+            is AddedCommand.Titles -> {
+                val titles = command.titles
+                when (command.kind) {
+                    Kind.Alarm -> {
+                        val next = state.alarms.map { a -> titles[a.id]?.let { a.copy(label = it) } ?: a }
+                        if (next == state.alarms) emptyList() else listOf(SchedulerIntent.SetAlarms(next, command.editKey))
+                    }
+                    Kind.Timer -> {
+                        val next = state.timers.map { t -> titles[t.id]?.let { t.copy(label = it) } ?: t }
+                        if (next == state.timers) emptyList() else listOf(SchedulerIntent.SetTimers(next, command.editKey))
+                    }
+                    Kind.Chrono -> {
+                        val next = state.chronos.map { c -> titles[c.id]?.let { c.copy(label = it) } ?: c }
+                        if (next == state.chronos) emptyList() else listOf(SchedulerIntent.SetChronos(next, command.editKey))
+                    }
+                    Kind.Reminder -> {
+                        val next = state.chores.map { c -> titles[c.id.ifEmpty { c.title }]?.let { c.copy(title = it) } ?: c }
+                        if (next == state.chores) {
+                            emptyList()
+                        } else {
+                            val todayStart = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
+                                .atStartOfDayIn(timeZone).toEpochMilliseconds()
+                            listOf(SchedulerIntent.SetChores(next, todayStart, nowMillis))
+                        }
+                    }
+                    else -> emptyList()
+                }
+            }
             AddedCommand.AlarmsTimeNow -> {
                 val ids = idsOf(Kind.Alarm)
                 val local = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone)

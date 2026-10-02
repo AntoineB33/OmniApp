@@ -1323,13 +1323,13 @@ private fun dayInitial(day: DayOfWeek): String =
         else -> "S"
     }
 
-private fun formatAlarmTime(minutes: Int): String {
+internal fun formatAlarmTime(minutes: Int): String {
     val m = ((minutes % AlarmEntry.MINUTES_PER_DAY) + AlarmEntry.MINUTES_PER_DAY) % AlarmEntry.MINUTES_PER_DAY
     return "${(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}"
 }
 
 /** Parses `H:MM` / `HH:MM` (00:00..23:59) to minutes since midnight, or null when it isn't a valid time. */
-private fun parseAlarmTime(text: String): Int? {
+internal fun parseAlarmTime(text: String): Int? {
     val parts = text.split(":")
     if (parts.size != 2) return null
     val h = parts[0].trim().toIntOrNull() ?: return null
@@ -1339,7 +1339,7 @@ private fun parseAlarmTime(text: String): Int? {
 }
 
 /** Parses how long the alarm rings, in seconds (1..[AlarmEntry.MAX_ALARM_SOUND_SECONDS]). */
-private fun parseSoundSeconds(text: String): Int? =
+internal fun parseSoundSeconds(text: String): Int? =
     text.trim().toIntOrNull()?.takeIf { it in 1..AlarmEntry.MAX_ALARM_SOUND_SECONDS }
 
 /**
@@ -1348,7 +1348,7 @@ private fun parseSoundSeconds(text: String): Int? =
  * so a typed `5:70` is an error rather than silently 6:10 — the leading field alone may run over (`90:00` is
  * an hour and a half).
  */
-private fun parseDurationSeconds(text: String): Int? {
+internal fun parseDurationSeconds(text: String): Int? {
     val parts = text.trim().split(":")
     if (parts.size !in 1..3) return null
     val fields = parts.map { it.trim().toIntOrNull() ?: return null }

@@ -632,7 +632,7 @@ private fun CalendarInstantField(millis: Long?, onChange: (Long) -> Unit) {
 
 /** The alarm's "Rings on" filter: no day ticked = any day; else it rings on at least one ticked day. */
 @Composable
-private fun DayChips(days: Set<DayOfWeek>, onChange: (Set<DayOfWeek>) -> Unit) {
+internal fun DayChips(days: Set<DayOfWeek>, emptyLabel: String = "any day", onChange: (Set<DayOfWeek>) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         DayOfWeek.entries.sortedBy { it.isoDayNumber }.forEach { day ->
             val on = day in days
@@ -653,7 +653,7 @@ private fun DayChips(days: Set<DayOfWeek>, onChange: (Set<DayOfWeek>) -> Unit) {
         }
         if (days.isEmpty()) {
             Text(
-                "any day",
+                emptyLabel,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 4.dp),

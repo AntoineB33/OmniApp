@@ -661,7 +661,8 @@ titles" figure: the Search window and the per-object windows its rows open repla
   element added before leaving it (`addSelected(replacing = true)`).
 - **Opening a row — `Enter`, the menu, or right-click on an alarm, a timer or a reminder (`ItemResultRow`'s
   `opensOnRightClick`) — opens the Search window holding that element alone** (`popups.md`, user rule 2026-10-01; it
-  was the element's own window). Its editing is that window's actions, one block per added element: "Edit" draws the
+  was the element's own window). Its editing is that window's actions, one block per added element for a timer, a chrono and a
+  reminder (an alarm's settings are shared fields, below): "Edit" draws the
   Alarms window's rows (`AlarmWindow(embeddedSubjects)`) or the reminder's editor
   (`ChoresManagerWindow(embeddedSubjects)`), never a second editor; each re-seeds from the list whenever it is not the
   one it last pushed (the Alarms window's rule), which lets several stand side by side. No "+ New" inside the editor;
@@ -679,6 +680,34 @@ titles" figure: the Search window and the per-object windows its rows open repla
   `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's
   `timeOfDayMinutes` becomes the clock's, to the minute, as ONE list edit through the list's own intent (`SetAlarms`,
   `SetChores`) — an alarm's days, and an isolated ring's date, are left alone; none to change is no intent.
+- **The groups of actions are listed by REACH, and a group has ONE title field** (user rule 2026-10-02). A group is
+  the set of added elements its actions apply to ("Every element", then one per kind); the top right section and the
+  window of them all list them by how many that is, the most first (`SearchDomain.sortedByReach`, stable — ties keep
+  `addedActions`' order). "Title" (`AddedAction.AlarmTitle` / `TimerTitle` / `ChronoTitle` / `ReminderTitle`,
+  `SharedTitleField`) shows the title every added element of the kind shares, else nothing
+  (`addedTitles` → `sharedTitle`, the STORED title); typing writes it to all of them at each keystroke through the
+  list's own intent (`AddedCommand.Titles`, one `editKey` per typing session, so one History Unit); **Escape gives
+  each back the title it had when the typing began**, and ends the session, as does the field losing the focus.
+- **NO KIND'S GROUP HAS AN EDITOR PER ELEMENT WHERE ONE FIELD CAN SAY IT FOR ALL** (user rule 2026-10-02, *"don't do
+  that just for alarms"*). The timers', chronos' and reminders' "Edit" (the Alarms window's rows / the reminder editor,
+  embedded once per added element) are gone like the alarms': **timers** — Duration, Rings for, Below zero, Alert
+  (`AddedCommand.TimersEdit`, one `SetTimers`), beside Title and Run; **chronos** — Title and Run; **reminders** —
+  Every (the formula field + the unit, `withReminderEvery`: the reminder editor's own arithmetic), Time, Constrained
+  in (ONE picker over all of them: `AddedActionHandlers.onEditReminderConstraint`, the constraint window's subject
+  being their ids joined), Alert (`AddedCommand.RemindersEdit`, one `SetChores`). Text fields are `SharedTextField`
+  (the shared value else empty; every parsing keystroke to all; Escape restores each). **Every such kind has its bin**
+  (`AddedCommand.Delete(kind)`: alarms, timers, chronos, reminders as one list edit, categories by `DeleteCategory`);
+  what it deleted leaves the added list. Still per element, because they are structure and not a value: a task's
+  Paths, a category's Name and rules, a period's Combinations.
+- **The alarm group has NO editor per alarm** (anomaly 2026-10-02: *"one field for all the alarms at once — that's
+  the point of adding several"*). `AddedAction.AlarmEdit` (the Alarms window's rows embedded, one per added alarm) is
+  gone; each setting is an action of its own over every added alarm, written as ONE `SetAlarms`
+  (`AddedCommand.AlarmsEdit`): **Time** and **Rings for** (`SharedAlarmTextField`: the shared value else empty,
+  every parsing keystroke written to all, Escape restores each), **Days** (a day is lit when every alarm rings on
+  it; `withDaysChange` — never leaving an alarm with no day), **Repeat** and **State** (lit when shared), **Alert**
+  (`sharedAlert` shows a channel on only when all have it; `withAlertChange` writes only what was pressed), and
+  **Delete** — the bin (`AddedAction.AlarmDelete`, `AddedCommand.Delete`): every added alarm off the account
+  in one `SetAlarms` (a History Unit), and off the added list; the other kinds follow (above).
 - **An added element's right-click menu is "remove the others"** (user rule 2026-10-02, `SearchDomain.keepingOnly`):
   the list is left holding that element alone — off the list, never off the account. On the ONLY element there is
   nothing to offer, so the right-click opens no menu. The row's ✕ and double-click are unchanged.

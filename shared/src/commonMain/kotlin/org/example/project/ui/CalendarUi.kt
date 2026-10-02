@@ -3357,7 +3357,7 @@ private data class ChoreRow(
 
 /** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */
 @Composable
-private fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreRecurrenceUnit) -> Unit) {
+internal fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreRecurrenceUnit) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         Row(
@@ -3411,7 +3411,7 @@ private fun formatFormulaResult(value: Double): String {
  * (`31/21`). A `,` is normalised to `.`; anything else is dropped. [SchedulerDomain.evaluateDayFormula]
  * does the actual parsing.
  */
-private fun sanitizeFormula(raw: String): String {
+internal fun sanitizeFormula(raw: String): String {
     val sb = StringBuilder()
     for (c in raw) {
         when {
@@ -3429,14 +3429,14 @@ private fun sanitizeFormula(raw: String): String {
  * PRD §14 "time in the day": render minutes-since-midnight as `HH:MM`. A negative value means the time is
  * **not defined** (the reminder is placed at the current time) and shows as a blank field.
  */
-private fun formatTimeOfDay(minutes: Int): String {
+internal fun formatTimeOfDay(minutes: Int): String {
     if (minutes < 0) return ""
     val m = minutes.coerceIn(0, 24 * 60 - 1)
     return (m / 60).toString().padStart(2, '0') + ":" + (m % 60).toString().padStart(2, '0')
 }
 
 /** Keep only digits and a single colon so the "Time" field stays an `HH:MM`-shaped value while typing. */
-private fun sanitizeTimeOfDay(raw: String): String {
+internal fun sanitizeTimeOfDay(raw: String): String {
     val sb = StringBuilder()
     var colonSeen = false
     for (c in raw) {
@@ -3452,7 +3452,7 @@ private fun sanitizeTimeOfDay(raw: String): String {
  * Parse an `HH:MM` (or bare-hour / bare-minutes) field into minutes since midnight, clamped to a day. An
  * empty field is **not defined** (PRD §14: the reminder is then placed at the current time) → returns -1.
  */
-private fun parseTimeOfDay(text: String): Int {
+internal fun parseTimeOfDay(text: String): Int {
     if (text.isEmpty()) return -1
     val parts = text.split(':')
     val hours = parts.getOrNull(0)?.toIntOrNull() ?: 0

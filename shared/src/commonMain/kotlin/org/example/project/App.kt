@@ -3485,15 +3485,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // PRD §14 "constrained in": the picker a Search window's reminder editor opened, on one reminder. It writes
                     // that reminder's constraint into the account's list, the editor's own write.
                     ObjectWindowsHost(reminderConstraintWindows) { w ->
-                        val reminderId = w.subject
+                        // One reminder's id, or several joined by a line break (the Search window's "Constrained in",
+                        // over every added reminder at once): what is saved, all of them get.
+                        val reminderIds = w.subject.split('\n').toSet()
+                        val reminderId = w.subject.substringBefore('\n')
                         val reminder = schedulerState.chores.firstOrNull { it.id == reminderId }
                         if (reminder == null) {
                             w.close()
                         } else {
                             ReminderConstraintEditWindow(
-                                initialReminderId = reminder.constrainedToReminderId,
-                                // A reminder can't be constrained to itself, so hide its own identity from the picker.
-                                excludeReminderId = reminderId,
+                                initialReminderId =
+                                    schedulerState.chores.filter { it.id in reminderIds }
+                                        .map { it.constrainedToReminderId }.distinct().singleOrNull().orEmpty(),
+                                // A reminder can't be constrained to itself, so hide its own identity from the picker
+                                // (with several, the save below skips the one that is the constraint).
+                                excludeReminderId = if (reminderIds.size == 1) reminderId else "",
                                 reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
                                 titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
                                 reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
@@ -3504,7 +3510,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     vm.dispatch(
                                         SchedulerIntent.SetChores(
                                             schedulerState.chores.map {
-                                                if (it.id == reminderId) it.copy(constrainedToReminderId = constraint) else it
+                                                if (it.id in reminderIds && it.id != constraint) it.copy(constrainedToReminderId = constraint) else it
                                             },
                                             todayStartMillis,
                                             nowMillis,
@@ -3861,6 +3867,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onPlaceOnCalendar = { drafts ->
                                 saveCalendarElementIntents(drafts, vm.state.value, tz).forEach(vm::dispatch)
+                            },
+                            // One picker over every added reminder: their ids, joined (the host below splits them).
+                            onEditReminderConstraint = { ids ->
+                                if (ids.isNotEmpty()) reminderConstraintWindows.open(ids.joinToString("\n"))
                             },
                             onDuplicate = { intents, kind ->
                                 val before = vm.state.value

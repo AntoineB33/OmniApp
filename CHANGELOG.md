@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: timers, chronos and reminders get shared fields and a bin too — 2026-10-02
+
+"Don't do that just for alarms." The per-element "Edit" of the timer, chrono and reminder groups is replaced by one
+control per setting over every added element (timers: Duration, Rings for, Below zero, Alert; reminders: Every,
+Time, Constrained in, Alert; chronos already had Title and Run), and each of those groups — and the categories' —
+has a "Delete" bin (`AddedCommand.Delete(kind)`). A task's Paths, a category's Name and rules and a period's
+Combinations stay per element. No state shape change.
+
+### Search window: the alarm group has its bin back — 2026-10-02
+
+Removing the per-alarm editor took the bin with it. "Delete" (`AddedAction.AlarmDelete`) deletes every added alarm
+in one `SetAlarms` — undoable — and takes them off the added list.
+
+### Search window: the alarm group's settings are one field each, not one editor per alarm — 2026-10-02
+
+Anomaly: with several alarms added, the top right section drew the Alarms window's row once per alarm. The "Edit"
+action is replaced by Time, Days, Rings for, Repeat and Alert, each one control over every added alarm
+(`AddedCommand.AlarmsEdit`, one `SetAlarms`), beside Title, State and "Set to the current time". Timers, chronos and
+reminders still embed one editor per element.
+
+### Search window: action groups listed by reach, and one title field per group — 2026-10-02
+
+The groups of the actions on the added elements are listed by how many added elements their actions apply to, the
+most first (`SearchDomain.sortedByReach`). The alarm, timer, chrono and reminder groups get a "Title" field: empty
+unless every added one shares a title, typing gives them all what is typed (`AddedCommand.Titles`), Escape gives each
+back the title it had. No state shape change.
+
 ### Search window: an added element's right-click offers "remove the others" — 2026-10-02
 
 A right-click on a row of the added elements opens a menu of one entry, "remove the others"
