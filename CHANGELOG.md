@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: the configuration section moves to the right side — 2026-10-02
+
+User request: *"Put the calendar configurations at the right side instead of the left side."* In
+`CalendarFloatingWindow`, `CalendarConfigurationSection` now follows the grid in the row (grid, divider, section) — the
+same side as the task tree window's. Layout only; nothing else changed.
+
 ### A sleep window lays no "not on a computer" where the line crossed it in mode 1 — 2026-10-01
 
 Anomaly: *"I see the 'not on computer' period behind the now line. […] I didn't hit the I'm away button, so the now

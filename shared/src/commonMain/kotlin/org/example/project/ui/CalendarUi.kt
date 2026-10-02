@@ -3525,31 +3525,6 @@ fun CalendarFloatingWindow(
         },
     ) {
         Row(Modifier.weight(1f).fillMaxWidth()) {
-            // The configuration section: the day selector, then the view switches. Beside the grid rather
-            // than above it, so it costs the week none of its height.
-            CalendarConfigurationSection(
-                monthAnchor = monthAnchor,
-                onMonthAnchorChange = onMonthAnchorChange,
-                selectedDate = selectedDate,
-                today = today,
-                onSelectDate = onSelectDate,
-                displayMode = displayMode,
-                onDisplayModeChange = onDisplayModeChange,
-                lockNowLine = lockNowLine,
-                onLockNowLineChange = ::setLockNowLine,
-                lockedTaskTitle = lockedTaskTitle,
-                lockOnTask = lockOnTask,
-                lockTaskPending = lockTaskPending,
-                onLockOnTaskChange = { on ->
-                    if (on) lockNowLine = false
-                    onLockOnTaskChange(on)
-                },
-                showReminders = showReminders,
-                onToggleReminders = onToggleReminders,
-                showScreenBreaks = showScreenBreaks,
-                onToggleScreenBreaks = onToggleScreenBreaks,
-            )
-            VerticalDivider()
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 WeekView(
                     selectedDate = selectedDate,
@@ -3579,12 +3554,38 @@ fun CalendarFloatingWindow(
                     displayMode = displayMode,
                 )
             }
+            VerticalDivider()
+            // The configuration section: the day selector, then the view switches. Beside the grid rather
+            // than above it, so it costs the week none of its height — and on its right, like the task tree
+            // window's.
+            CalendarConfigurationSection(
+                monthAnchor = monthAnchor,
+                onMonthAnchorChange = onMonthAnchorChange,
+                selectedDate = selectedDate,
+                today = today,
+                onSelectDate = onSelectDate,
+                displayMode = displayMode,
+                onDisplayModeChange = onDisplayModeChange,
+                lockNowLine = lockNowLine,
+                onLockNowLineChange = ::setLockNowLine,
+                lockedTaskTitle = lockedTaskTitle,
+                lockOnTask = lockOnTask,
+                lockTaskPending = lockTaskPending,
+                onLockOnTaskChange = { on ->
+                    if (on) lockNowLine = false
+                    onLockOnTaskChange(on)
+                },
+                showReminders = showReminders,
+                onToggleReminders = onToggleReminders,
+                showScreenBreaks = showScreenBreaks,
+                onToggleScreenBreaks = onToggleScreenBreaks,
+            )
         }
     }
 }
 
 /**
- * The calendar window's **configuration section**, down its left side: the day selector (it used to sit in the
+ * The calendar window's **configuration section**, down its right side: the day selector (it used to sit in the
  * lateral menu) and the view switches — PRD §8 "Lock to now", PRD §14/§15 "Reminders" / "Screen breaks"
  * (cosmetic; notifications keep firing), which used to hide in a "View ▾" drop-down. Not in the head: the head
  * is the drag handle, and a switch there is a press the drag has to be taught to leave alone. It scrolls on its
