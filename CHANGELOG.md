@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: no text is overlapped by anything — 2026-10-02
+
+User rule: *"In the calendar, text must never be overlapped by anything. If the title of a task panel and the title
+of a period overlap, one of them should actually be placed below. If they are both supposed to appear at the exact
+same position, then the one that must get placed below is the one that is lower in the priority ranking used […] in
+the hovering info bubble. When moving, the text moves to always be placed right."* `calendarLabelSlots` places every
+panel title, period / sleep label and break name of a column in one pass, clear of each other and of the date badge,
+the §14 tags and the §18 rings (the rings are new here); it replaces `panelLabelTopInset` and
+`reminderStackOverlapAt`, which each label asked separately and which knew nothing of the other labels. A wrapping
+panel title is capped at the lines that fit above the next text. During a move/resize preview the placement reads the
+live layout. `CalendarLabelSlotsTest`. `calendar.md` § *No two texts share a point*.
+
+Follow-up the same day (*"When there is not enough available height, it must not be shown […] Inactivity at 06:49:00
+in account3 doesn't do it. Also, if the bottom line of a period is in the way, the title must get placed further
+below."*): an un-pushed label was still written whatever its element's height (the old inset-0 rule, carried over) —
+a label is now written only where its whole line fits inside its element; and the bottom line of every outlined
+period, sleep band and break is an obstacle like a tag or a ring.
+
 ### Calendar: a hover bubble of several sections is as wide as its text — 2026-10-02
 
 Anomaly: *"The info bubble when hovering over the calendar are often too wide even though the text isn't."* The

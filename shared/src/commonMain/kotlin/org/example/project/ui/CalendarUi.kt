@@ -4998,7 +4998,7 @@ private fun DayColumn(
     /**
      * PRD §8: does this column's day boundary carry the in-grid day-date badge ("Mon 12")? True for every
      * row but the top one, whose date is written in the header above the viewport. It is what a panel
-     * opening at midnight has to write its own label clear of ([panelLabelTopInset]).
+     * opening at midnight has to write its own label clear of ([calendarLabelSlots]).
      */
     showsDayDate: Boolean,
     modifier: Modifier = Modifier,
@@ -5244,11 +5244,12 @@ private fun DayColumn(
     val currentSleepBands by rememberUpdatedState(sleepBands)
     val currentPeriodHits by rememberUpdatedState(periodHits)
     val currentAlarmPlacements by rememberUpdatedState(alarmPlacements)
-    val currentReminderPlacements by rememberUpdatedState(
+    // Read by the menu's hit test and by the label placement ([calendarLabelSlots]) — one sweep, not two.
+    val reminderPlacements =
         reminderTagPlacements(reminderTags, hourHeight, nowHour) { tag ->
             tag.checkedAtMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() }
-        },
-    )
+        }
+    val currentReminderPlacements by rememberUpdatedState(reminderPlacements)
 
     // PRD §8: the period box currently held, if any — see [PeriodSegmentGesture]. It is hoisted to the column
     // because the box is drawn in two halves that must move together: the invisible gesture under the panels
@@ -5712,36 +5713,107 @@ private fun DayColumn(
                 tickMinutes = tickMinutes,
             )
         }
+        // PRD §8 Overlap Mode: the panels at their in-progress layout while a move/resize preview shows (the
+        // dragged one substituted to its preview position) — what the preview overlay below draws, and what
+        // the titles are placed for, so a title follows the panel being moved.
+        val liveLayout = if (previewActive) remember(liveRecords) { overlapLayout(liveRecords) } else layout
+        val sideLayout = remember(screenBreakMarkers) { overlapLayout(screenBreakMarkers) }
+        // The band labels — "Sleep", and every period in force over a drawn box ([periodSegmentLabel]).
+        val bandLabels =
+            sleepBands.map { Triple(it.startHour, it.endHour, "Sleep") } +
+                drawnPeriods.map { Triple(it.startHour, it.endHour, periodSegmentLabel(it)) }
+        // PRD §8: **where every text of this column is written** — the one answer, for the panel titles, the
+        // period labels and the break names alike ([calendarLabelSlots]). Recomputed whenever anything it
+        // reads moves (a drag preview, a record the now-line carries, the zoom), so a text is always placed
+        // for where its element is now.
+        val labelSlots =
+            remember(
+                liveRecords, liveLayout, screenBreakMarkers, sideLayout, bandLabels, sleepBands, drawnPeriods,
+                reminderPlacements, alarmPlacements, hourHeight, showsDayDate,
+            ) {
+                fun y(hour: Float) = (hourHeight * hour).value
+                val labels = buildList {
+                    screenBreakMarkers.forEach { marker ->
+                        val key = calendarBlockKey(marker)
+                        (sideLayout[key] ?: listOf(PanelSlice(marker.startHour, marker.endHour, 0f, 1f)))
+                            .forEachIndexed { i, slice ->
+                                add(
+                                    CalendarLabelBox(
+                                        key = Triple("break", key, i),
+                                        top = y(slice.topHour),
+                                        bottom = maxOf(y(slice.bottomHour), y(slice.topHour) + SCREEN_BREAK_MIN_HEIGHT.value),
+                                        xStart = slice.xFraction,
+                                        xEnd = slice.xFraction + slice.widthFraction,
+                                        rank = CalendarBubbleSection.Kind.Break.rank,
+                                        height = SCREEN_BREAK_LABEL_MIN_HEIGHT.value,
+                                    ),
+                                )
+                            }
+                    }
+                    liveRecords.forEach { record ->
+                        val key = calendarBlockKey(record)
+                        // The title is written on the topmost slice only, and clipped to it.
+                        val slice = liveLayout[key]?.firstOrNull() ?: PanelSlice(record.startHour, record.endHour, 0f, 1f)
+                        add(
+                            CalendarLabelBox(
+                                key = "block" to key,
+                                top = y(slice.topHour),
+                                bottom = y(slice.bottomHour),
+                                xStart = slice.xFraction,
+                                xEnd = slice.xFraction + slice.widthFraction,
+                                rank = CalendarBubbleSection.Kind.Task.rank,
+                                height = CALENDAR_LABEL_SLOT.value,
+                            ),
+                        )
+                    }
+                    bandLabels.forEachIndexed { i, (start, end, _) ->
+                        add(
+                            CalendarLabelBox(
+                                key = "band" to i,
+                                top = y(start),
+                                bottom = y(end),
+                                xStart = 0f,
+                                xEnd = 1f,
+                                rank = CalendarBubbleSection.Kind.Sleep.rank,
+                                height = CALENDAR_LABEL_SLOT.value,
+                            ),
+                        )
+                    }
+                }
+                val obstacles = buildList {
+                    if (showsDayDate) add(CalendarLabelObstacle(0f, DAY_DATE_BADGE_HEIGHT.value))
+                    reminderPlacements.forEach { (_, top) ->
+                        add(CalendarLabelObstacle(top.value, (top + REMINDER_TAG_HEIGHT).value))
+                    }
+                    alarmPlacements.forEach { (_, top) ->
+                        add(CalendarLabelObstacle(top.value, (top + ALARM_MARKER_HEIGHT).value))
+                    }
+                    // The bottom line of every outlined period box: it is drawn across the column (and
+                    // redrawn over a task panel, [PanelDecor]), so a text it would cross goes below it.
+                    val line = USER_PLACED_BORDER_DP.value
+                    fun bottomLine(endHour: Float, xStart: Float = 0f, xEnd: Float = 1f) =
+                        add(CalendarLabelObstacle(y(endHour) - line, y(endHour), xStart, xEnd))
+                    sleepBands.forEach { if (outlineColor(it.outline) != null) bottomLine(it.endHour) }
+                    drawnPeriods.forEach {
+                        if (outlineColor(periodSegmentOutline(it)) != null) bottomLine(it.endHour)
+                    }
+                    screenBreakMarkers.forEach { marker ->
+                        if (outlineColor(marker.outline) == null) return@forEach
+                        (sideLayout[calendarBlockKey(marker)] ?: listOf(PanelSlice(marker.startHour, marker.endHour, 0f, 1f)))
+                            .forEach { bottomLine(it.bottomHour, it.xFraction, it.xFraction + it.widthFraction) }
+                    }
+                }
+                calendarLabelSlots(labels, obstacles)
+            }
         effRecords.forEach { record ->
             val key = calendarBlockKey(record)
             // Culled AFTER [overlapLayout] has seen the whole day: a block's width comes from what it
             // overlaps, so a partner scrolled out of view must still narrow the one on screen.
             if (key != gestureKey && !onScreen(record.startHour, record.endHour)) return@forEach
-            val topReminderOccupancy = reminderStackOverlapAt(
-                record.startHour,
-                record.endHour,
-                reminderTags,
-                hourHeight,
-                now?.hourOfDay(),
-                showsDayDate,
-            ) { tag ->
-                tag.checkedAtMillis?.let {
-                    Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
-                }
-            }
             val recordSlices = layout[key] ?: listOf(
                 PanelSlice(record.startHour, record.endHour, xFraction = 0f, widthFraction = 1f),
             )
-            val titleSlice = recordSlices.firstOrNull()
-            val titleInset = titleSlice?.let {
-                panelLabelTopInset(
-                    it.topHour,
-                    hourHeight * (it.bottomHour - it.topHour),
-                    hourHeight,
-                    showsDayDate,
-                    topReminderOccupancy,
-                )
-            }
+            val titleSlot = labelSlots["block" to key]
             CalendarBlock(
                 record = record,
                 slices = recordSlices,
@@ -5761,11 +5833,12 @@ private fun DayColumn(
                 hoverScope = hoverScope,
                 tz = tz,
                 onEditChoice = onEditChoice,
-                // A block opening at midnight writes its title below the day's own date badge. When a
-                // reminder stack sits at the same top edge, it must push the title down too, and when the
-                // block is too short the title is hidden instead of writing over the reminders.
-                titleTopInset = titleInset ?: 0.dp,
-                titleVisible = true,
+                // The title is written clear of every other text and marker of the column — below the day's
+                // date badge, a reminder stack, a period's label that outranks or precedes it — and hidden
+                // where the block has no room for it there ([calendarLabelSlots]).
+                titleTopInset = titleSlot?.inset?.dp ?: 0.dp,
+                titleVisible = titleSlot != null,
+                titleMaxLines = titleSlot?.maxLines ?: 1,
                 followsLine = ::followsLine,
                 lineDriftHours = lineDriftHours,
             )
@@ -5876,7 +5949,6 @@ private fun DayColumn(
         // (the dragged one substituted to its preview position), sliced so overlaps share width side by
         // side as the drag happens. Purely visual; the resting slices underneath hold the gesture.
         if (previewActive) {
-            val liveLayout = remember(liveRecords) { overlapLayout(liveRecords) }
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
                 liveRecords.forEach { rec ->
@@ -5893,30 +5965,13 @@ private fun DayColumn(
                                 .padding(horizontal = 1.dp),
                         ) {
                             val previewColor = rec.taskId?.let { taskColors[it] } ?: CalColors.event
-                            val previewOccupancy = reminderStackOverlapAt(
-                                slice.topHour,
-                                slice.bottomHour,
-                                reminderTags,
-                                hourHeight,
-                                now?.hourOfDay(),
-                                showsDayDate,
-                            ) { tag ->
-                                tag.checkedAtMillis?.let {
-                                    Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
-                                }
-                            }
-                            val previewTitleInset = panelLabelTopInset(
-                                slice.topHour,
-                                hourHeight * (slice.bottomHour - slice.topHour),
-                                hourHeight,
-                                showsDayDate,
-                                previewOccupancy,
-                            )
+                            val previewTitleSlot = labelSlots["block" to recKey]
                             CalendarBlockBody(
                                 previewColor,
                                 rec.title,
-                                showTitle = idx == 0,
-                                titleTopInset = previewTitleInset ?: 0.dp,
+                                showTitle = idx == 0 && previewTitleSlot != null,
+                                titleTopInset = previewTitleSlot?.inset?.dp ?: 0.dp,
+                                titleMaxLines = previewTitleSlot?.maxLines ?: 1,
                                 titleColor = previewColor,
                             )
                         }
@@ -6067,7 +6122,6 @@ private fun DayColumn(
         // nothing is on screen the wrapping subcomposition is skipped outright.
         val visibleScreenBreaks = screenBreakMarkers.filter { onScreen(it.startHour, it.endHour) }
         if (visibleScreenBreaks.isNotEmpty()) {
-            val sideLayout = remember(screenBreakMarkers) { overlapLayout(screenBreakMarkers) }
             // PRD §8: a screen break is drawn on top of every panel and band — only the two ZERO-DURATION
             // markers go above it ([CalendarOverlayLayer]: a §18 ring, then a §14 tag) — so whatever sits
             // under it is otherwise hidden: the grey periods and the layers, plus, rarely (the fill normally
@@ -6082,10 +6136,10 @@ private fun DayColumn(
                     val key = calendarBlockKey(marker)
                     val slices = sideLayout[key]
                         ?: listOf(PanelSlice(marker.startHour, marker.endHour, xFraction = 0f, widthFraction = 1f))
-                    slices.forEach { slice ->
+                    slices.forEachIndexed { i, slice ->
                         ScreenBreakBand(
                             marker, slice, hourHeight, colWidth, tz, hoverScope,
-                            underBreakOverlays, showsDayDate,
+                            underBreakOverlays, labelSlots[Triple("break", key, i)]?.inset?.dp,
                             topFollowsLine = followsLine(slice.topHour),
                             bottomFollowsLine = followsLine(slice.bottomHour),
                             lineDriftHours = lineDriftHours,
@@ -6102,17 +6156,13 @@ private fun DayColumn(
         // boxes and blocks beneath stay clickable. Only the two zero-duration markers go above them
         // ([CalendarOverlayLayer]) — the §14 tag that must stay hittable, and the §18 ring that must stay
         // visible at the instant it names.
-        (
-            sleepBands.map { Triple(it.startHour, it.endHour, "Sleep") } +
-                drawnPeriods.map { Triple(it.startHour, it.endHour, periodSegmentLabel(it)) }
-            )
-            .forEach { (bandStart, bandEnd, label) ->
-            if (!onScreen(bandStart, bandEnd)) return@forEach
-            val height = hourHeight * (bandEnd - bandStart)
-            // A band opening at midnight would write its name straight over the day's own date. It is
-            // pushed below the badge instead — and dropped where the band is too short to hold it there
-            // (the zoom brings it back). See [panelLabelTopInset].
-            val inset = panelLabelTopInset(bandStart, height, hourHeight, showsDayDate) ?: return@forEach
+        bandLabels.forEachIndexed { i, (bandStart, bandEnd, label) ->
+            if (!onScreen(bandStart, bandEnd)) return@forEachIndexed
+            // A band opening at midnight would write its name straight over the day's own date, and one
+            // opening where a task panel does would write it over that panel's title. It is pushed below
+            // instead — and dropped where the band is too short to hold it there (the zoom brings it
+            // back). See [calendarLabelSlots].
+            val inset = labelSlots["band" to i]?.inset?.dp ?: return@forEachIndexed
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -6303,45 +6353,98 @@ private val SCREEN_BREAK_LABEL_MIN_HEIGHT = 16.dp
  * midnight are two texts at the same point, and they were simply drawn over each other — a full-day
  * "Inactivity" band under the date it opens was the reported case. The same top strip is also where the
  * reminder tags sit, so the panel title must move below whichever of those two claims is taller. Two
- * overlapping texts name nothing, so the panel's label is what gives way ([panelLabelTopInset]), exactly as
+ * overlapping texts name nothing, so the panel's label is what gives way ([calendarLabelSlots]), exactly as
  * a screen break's name gives way to the band's true height: written below the reserved strip where the
  * panel has the room for it, and not written at all where it has not — the zoom is what grows the panel
  * until it does.
  */
 private val DAY_DATE_BADGE_HEIGHT = 18.dp
 
-/**
- * PRD §8: the fixed-height strip at the top of the day section used by reminder tags, which also needs to
- * stay clear of the panel title.
- */
-private val DAY_TOP_REMINDER_STRIP = REMINDER_TAG_HEIGHT
+/** PRD §8: the height one line of a panel title or a period label claims — a `labelSmall` line and its padding. */
+private val CALENDAR_LABEL_SLOT = 18.dp
 
 /**
- * PRD §8: where a panel's own top label goes, given the panel's [startHour] in the day and its
- * [renderedHeight] — an inset from the panel's top, or `null` for "there is no room: draw no label".
+ * PRD §8: one text a day column writes at the top of an element — a task panel's title, a period's label, a
+ * break's name. Distances are dp down the column; [xStart]..[xEnd] is the fraction of its width the element
+ * takes.
  *
- * `0.dp` for everything that starts clear of the reserved top strip, which is almost everything: only a
- * panel opening within the day-date/reminder strip of midnight is inset at all, and that is the case the
- * title would otherwise collide with. A panel that must be inset needs room for a whole label line below
- * that strip ([SCREEN_BREAK_LABEL_MIN_HEIGHT]) — a big band therefore names itself lower down, a short one
- * names itself only once the zoom has made it tall enough. Never the other way round: the badge and any
- * reminder are not moved and no panel is stretched to hold its own name.
- *
- * [showsDayDate] is false for the grid's TOP row, whose date is written in the header above the viewport
- * and so overlaps nothing; the reminder strip still applies there because a reminder tag can sit at the top
- * of the column even without the date badge.
+ * [rank] is [CalendarBubbleSection.Kind.rank], the hover bubble's own ordering: it is what says which of two
+ * texts wanting the same point keeps it. [height] is the one line the text needs, and it is written only
+ * where that whole line lies inside `[top, bottom]`.
  */
-private fun panelLabelTopInset(
-    startHour: Float,
-    renderedHeight: Dp,
-    hourHeight: Dp,
-    showsDayDate: Boolean,
-    reminderOccupancyAtTop: Dp = 0.dp,
-): Dp? {
-    val dateInset = if (showsDayDate) DAY_DATE_BADGE_HEIGHT - hourHeight * startHour else 0.dp
-    val inset = maxOf(dateInset, reminderOccupancyAtTop)
-    if (inset <= 0.dp) return 0.dp
-    return if (renderedHeight >= inset + SCREEN_BREAK_LABEL_MIN_HEIGHT) inset else null
+internal data class CalendarLabelBox(
+    val key: Any,
+    val top: Float,
+    val bottom: Float,
+    val xStart: Float,
+    val xEnd: Float,
+    val rank: Int,
+    val height: Float,
+)
+
+/**
+ * PRD §8: something a column draws that no label may be written over — the day's date, a §14 tag, a §18 ring,
+ * the bottom line of a period's box.
+ */
+internal data class CalendarLabelObstacle(val top: Float, val bottom: Float, val xStart: Float = 0f, val xEnd: Float = 1f)
+
+/**
+ * Where [calendarLabelSlots] writes a label: [inset] dp below its element's top, on at most [maxLines] lines
+ * of [lineHeight] — the room there is before the next text or marker below it.
+ */
+internal data class CalendarLabelSlot(val inset: Float, val maxLines: Int)
+
+/**
+ * PRD §8: **where every text of a day column is written — NO TWO TEXTS SHARE A POINT, and no marker is drawn
+ * over one.** The one answer for the panel titles, the period labels and the break names; a label missing
+ * from the result has no room and is not written (the hover bubble still names it, the zoom brings it back).
+ *
+ * Every label wants the top of its own element. They are taken top to bottom, and where two want the very
+ * same point, in the order the hover bubble names them ([CalendarLabelBox.rank]; ties in list order): each
+ * is written at the first place at or below its element's top that is clear of the [obstacles] and of every
+ * label already written, so the one that gives way is always the lower — or, at the same point, the
+ * lower-ranked — and it goes BELOW the other, never away. Nothing is moved to make room and no element is
+ * stretched to hold its name: a label whose whole line does not fit inside its element there — pushed or
+ * not — is dropped.
+ *
+ * A written label holds ONE line against the labels after it; [CalendarLabelSlot.maxLines] is how many more
+ * a wrapping title may take before it would reach the next text below it.
+ *
+ * Pure, and a function of positions alone, so the caller re-asks it whenever anything moves (a drag
+ * preview, a record the now-line carries, the zoom) and the texts are re-placed with it.
+ */
+internal fun calendarLabelSlots(
+    labels: List<CalendarLabelBox>,
+    obstacles: List<CalendarLabelObstacle>,
+    lineHeight: Float = SCREEN_BREAK_LABEL_MIN_HEIGHT.value,
+): Map<Any, CalendarLabelSlot> {
+    class Taken(val top: Float, val bottom: Float, val xStart: Float, val xEnd: Float, val key: Any?)
+    val eps = 1e-3f
+    fun Taken.crosses(xStart: Float, xEnd: Float) = this.xStart < xEnd - eps && this.xEnd > xStart + eps
+    val taken = obstacles.mapTo(mutableListOf()) { Taken(it.top, it.bottom, it.xStart, it.xEnd, null) }
+    val written = mutableListOf<Pair<CalendarLabelBox, Float>>()
+    labels.sortedWith(compareBy<CalendarLabelBox> { it.top }.thenBy { it.rank }).forEach { label ->
+        var y = label.top
+        // Each pass moves [y] strictly down past something taken, so it ends within taken.size passes.
+        while (true) {
+            y = taken
+                .filter { it.crosses(label.xStart, label.xEnd) && it.top < y + label.height - eps && it.bottom > y + eps }
+                .maxOfOrNull { it.bottom } ?: break
+        }
+        // No room for the whole line inside its own element: not written, wherever it would have gone.
+        if (y + label.height > label.bottom + eps) return@forEach
+        taken += Taken(y, y + label.height, label.xStart, label.xEnd, label.key)
+        written += label to y
+    }
+    return written.associate { (label, y) ->
+        val next = taken
+            .filter { it.key != label.key && it.crosses(label.xStart, label.xEnd) && it.top > y + eps }
+            .minOfOrNull { it.top }
+        val maxLines =
+            if (next == null) Int.MAX_VALUE
+            else (((next - y) - (label.height - lineHeight)) / lineHeight + eps).toInt().coerceAtLeast(1)
+        label.key to CalendarLabelSlot(y - label.top, maxLines)
+    }
 }
 
 /**
@@ -6382,41 +6485,6 @@ private fun reminderTagPlacements(
 }
 
 /**
- * PRD §8: the actual vertical space occupied by the reminder stack at the panel's top edge after the
- * tags have been stacked to avoid overlap. If a reminder crosses into the panel at the top, the title is
- * moved below that occupied strip and hidden when the panel is too short to hold the text beneath it.
- */
-private fun reminderStackOverlapAt(
-    startHour: Float,
-    endHour: Float,
-    reminderTags: List<PlacedRecord>,
-    hourHeight: Dp,
-    nowHour: Float?,
-    showsDayDate: Boolean,
-    checkedAtHour: (PlacedRecord) -> Float?,
-): Dp {
-    val panelTop = hourHeight * startHour
-    val panelBottom = hourHeight * endHour
-    val tagBounds =
-        reminderTagPlacements(reminderTags, hourHeight, nowHour, checkedAtHour)
-            .map { (_, y) -> y to (y + REMINDER_TAG_HEIGHT) }
-
-    var titleTop = panelTop +
-        if (showsDayDate) (DAY_DATE_BADGE_HEIGHT - panelTop).coerceAtLeast(0.dp) else 0.dp
-    repeat(tagBounds.size + 1) {
-        val titleBottom = titleTop + SCREEN_BREAK_LABEL_MIN_HEIGHT
-        val collidingBottom = tagBounds
-            .filter { (tagTop, tagBottom) ->
-                tagTop < titleBottom && tagBottom > titleTop && tagBottom > panelTop && tagTop < panelBottom
-            }
-            .maxOfOrNull { it.second }
-        if (collidingBottom == null || collidingBottom <= titleTop) return@repeat
-        titleTop = collidingBottom
-    }
-    return (titleTop - panelTop).coerceAtLeast(0.dp)
-}
-
-/**
  * PRD §15 Screen break, rendered as a real time-positioned band (one [overlapLayout] slice of it) spanning its
  * TRUE duration, down to a hairline ([SCREEN_BREAK_MIN_HEIGHT]) — never stretched to hold anything. A band
  * drawn taller than the break lasts overlaps the task panel it abuts, which is exactly what the user sees as
@@ -6438,8 +6506,8 @@ private fun ScreenBreakBand(
     hoverScope: CalendarTitleHoverScope,
     /** PRD §8: the bubble sections stacked under this band's own — [CalendarOverlayLayer] says which. */
     underOverlays: List<BubbleOverlay>,
-    /** PRD §8: does this column's day boundary carry the day-date badge? See [panelLabelTopInset]. */
-    showsDayDate: Boolean,
+    /** PRD §8: how far below the band's top its name is written; null = no room, no name ([calendarLabelSlots]). */
+    labelInset: Dp?,
     /** ADR 0009: whether this slice's top / bottom follows the now-line — see [timelineSpan]. */
     topFollowsLine: Boolean = false,
     bottomFollowsLine: Boolean = false,
@@ -6459,8 +6527,7 @@ private fun ScreenBreakBand(
     ) {
         // A break falling at midnight has the day's own date written where its name goes, so the name is
         // inset below the badge — and dropped when the band has no room for it there, which is the same
-        // answer, by the same rule, as a band too short to hold the name at all.
-        val labelInset = panelLabelTopInset(slice.topHour, height, hourHeight, showsDayDate)
+        // answer, by the same rule, as a band too short to hold the name at all ([labelInset]).
         ScreenBreakSegment(
             title = marker.title,
             showTitle = labelInset != null && height >= labelInset + SCREEN_BREAK_LABEL_MIN_HEIGHT,
@@ -6521,7 +6588,7 @@ private fun ScreenBreakBand(
 private fun ScreenBreakSegment(
     title: String,
     showTitle: Boolean,
-    /** PRD §8: how far below the band's top the name is written — see [panelLabelTopInset]. */
+    /** PRD §8: how far below the band's top the name is written — see [calendarLabelSlots]. */
     titleTopInset: Dp,
     /** PRD §8: who placed this period — grey for the three dynamic ones. See [outlineColor]. */
     outline: SchedulerDomain.PanelOutline,
@@ -7213,10 +7280,12 @@ private fun CalendarBlock(
     hoverScope: CalendarTitleHoverScope,
     tz: TimeZone,
     onEditChoice: (CalendarEditChoice) -> Unit,
-    /** PRD §8: how far below its top this block writes its title — see [panelLabelTopInset]. */
+    /** PRD §8: how far below its top this block writes its title — see [calendarLabelSlots]. */
     titleTopInset: Dp = 0.dp,
     /** False when the panel is too short to fit its title below the reserved top strip. */
     titleVisible: Boolean = true,
+    /** PRD §8: how many lines the title may wrap onto before the next text below it ([CalendarLabelSlot]). */
+    titleMaxLines: Int = Int.MAX_VALUE,
     /** ADR 0009: whether an hour this block is cut at follows the now-line — see [timelineSpan]. */
     followsLine: (Float) -> Boolean = { false },
     lineDriftHours: () -> Double = { 0.0 },
@@ -7423,6 +7492,7 @@ private fun CalendarBlock(
                         record.title,
                         showTitle = isFirst && titleVisible,
                         titleTopInset = titleTopInset,
+                        titleMaxLines = titleMaxLines,
                         titleColor = if (onTask) TaskPalette.foreground(color) else taskColor ?: CalColors.event,
                         outline = record.outline,
                         provisional = record.provisional,
@@ -7744,10 +7814,12 @@ private fun CalendarBlockBody(
     showTitle: Boolean,
     /**
      * PRD §8: how far below the block's top its title is written — non-zero only for a block that opens at
-     * midnight, whose title would otherwise be drawn over the day's own date badge ([panelLabelTopInset]).
+     * midnight, whose title would otherwise be drawn over the day's own date badge ([calendarLabelSlots]).
      * A block clips its own content, so a block with no room for the inset title simply shows none.
      */
     titleTopInset: Dp = 0.dp,
+    /** PRD §8: how many lines the title may wrap onto before the next text below it ([CalendarLabelSlot]). */
+    titleMaxLines: Int = Int.MAX_VALUE,
     /**
      * PRD §8: the colour of the title written on the block. Its own [color], so the words match the border
      * around them.
@@ -7798,6 +7870,7 @@ private fun CalendarBlockBody(
                 style = MaterialTheme.typography.labelSmall,
                 color = titleColor,
                 overflow = TextOverflow.Ellipsis,
+                maxLines = titleMaxLines,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 3.dp, vertical = 1.dp)
