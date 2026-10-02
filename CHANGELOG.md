@@ -11,6 +11,11 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: the "Auto schedule" switch moved from the lateral menu to the configuration section — 2026-10-02
+
+The same switch on the same intent (`SetAutomaticSchedule`), now drawn by `CalendarConfigurationSection` under the
+Display field; `LateralMenu` no longer has it. No state, SQLite or Supabase change.
+
 ### Calendar: inactivity, sleep, no screen and before bed have no drawing by default — 2026-10-02
 
 `PeriodKinds.defaultStyle` gave them `|`, `—`, `(` and zig-zags; it now gives all four `PeriodDrawing.None`. An

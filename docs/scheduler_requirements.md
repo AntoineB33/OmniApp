@@ -46,6 +46,7 @@ Each task has a defined minimum execution time. Another optimization goal is to 
     * After a $\ge 15$-minute of "no screen", no 20s break in the next **20 minutes**, and no 15min break in the next **2 hours**.
     * Where the five rules above allow a continuous chain of breaks, then the interval of the whole chain only contains one screen break, which is the longest screen break of the chain brought to the start of the interval.
     * In a "no screen" period, if $t_b$ is in a screen break, where $t_b$ is the start of a screen break, and that $now line$ < $t_b$, then this screen break must now start at max($now line$, $t_s$), where $t_s$ is the start of the continuous "no screen" period, even if it contradicts with the five first screen break rules.
+    * A 20s break can only be crossed by the $now line$ in mode 3.
 
 ### Example behaviors
 Here are some example situations resulting from the rules described above.
@@ -54,7 +55,8 @@ Here are some example situations resulting from the rules described above.
 * When the $now line$ is in mode 1 and has dragged a 5min break until the break's end edge touches a 15min break, the 15min break teleports 5 minutes backward, starting right after $now line$, the 5min break is removed, and the 5-minute gap created at the end of the 15min break is filled with task panels given the set of rules output parameterized by $now line$ and $now line$ mode and returned by the scheduler.
 * If $now line$ is in mode 2 and reaches the end of a 15min break, the gap between the end of the 15min break and $now line$ is covered by a period "no screen", filled with tasks that have a non-zero resilience to the kind "no screen", or no task if none have such resilience.
 * When the $now line$ is in mode 1 and reaches a "no screen" period that extends to [t1;t2], I want the "no screen" period to become ]$now line$;t2] when $now line$ is in [t1;t2[. When $now line$ >= t2, then this "no screen" period is removed.
-* If the $now line$ reaches a "no screen" period in mode 1, if it is accompanied by a 20s break then it gets in mode 3, otherwise the "no screen" period now starts at $now line$ not included.
+* If the $now line$ reaches a "no screen" period in mode 1, if it is accompanied by a 20s break then it gets in mode 3, otherwise the "no screen" period now starts at $now line$ not included and gets retracted as time goes by.
+* If the $now line$ reaches a 20s break in mode 2, then the 20s break is dragged by the $now line$. It starts at $now line$ not included.
 
 ### Alternative Schedules:
 The returned set of rules output must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler is refused by the user. When it happens, a program would simply read the rules, set this alternative task starting at [$now line$, $now line$+d], with d defined beforehand (like 10 minutes), and run the scheduler again with this new schedule.

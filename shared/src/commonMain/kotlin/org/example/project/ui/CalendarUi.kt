@@ -1554,16 +1554,13 @@ private fun hourLabel(hour: Int): String {
  * PRD §7 Lateral menu: a persistent left rail. Its first element is the page-navigation button
  * (present on every feature page). **A window's button opens a NEW window at every click** — never closes one,
  * and is never drawn as "open" (the window bar says what is open). The day selector is the calendar window's
- * own, in its configuration section ([CalendarFloatingWindow]).
+ * own, in its configuration section ([CalendarFloatingWindow]) — and so is the "Auto schedule" switch.
  */
 @Composable
 fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
     onToggleCalendar: () -> Unit,
-    /** PRD §7 Automatic Schedule Switch: current state + toggle callback. */
-    automaticSchedule: Boolean = true,
-    onToggleAutomaticSchedule: (Boolean) -> Unit = {},
     /** Sleep schedule window: open one. */
     onToggleSleep: () -> Unit = {},
     /** PRD §5 Categories: open a window on the account's list of categories. */
@@ -1657,22 +1654,6 @@ fun LateralMenu(
             active = false,
             onClick = onToggleCalendar,
         )
-
-        // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Auto schedule",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = automaticSchedule,
-                onCheckedChange = onToggleAutomaticSchedule,
-            )
-        }
 
         // PRD §11/§15: the app's VOICE on/off — every notification it posts is also spoken, so this one
         // switch governs all of them (it used to be the 20 s look-away cue's alone, which is still the name
@@ -3714,6 +3695,9 @@ fun CalendarFloatingWindow(
     showReminders: Boolean = true,
     /** PRD §14: flip the "Reminders" display switch. */
     onToggleReminders: (Boolean) -> Unit = {},
+    /** PRD §7 Automatic Schedule Switch: current state + toggle callback (the configuration section's switch). */
+    automaticSchedule: Boolean = true,
+    onToggleAutomaticSchedule: (Boolean) -> Unit = {},
     /** PRD §8/§9 calendar history: Ctrl+Z / Ctrl+Y while the calendar holds keyboard focus. */
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
@@ -3883,6 +3867,8 @@ fun CalendarFloatingWindow(
                 onSelectDate = onSelectDate,
                 displayMode = displayMode,
                 onDisplayModeChange = onDisplayModeChange,
+                automaticSchedule = automaticSchedule,
+                onToggleAutomaticSchedule = onToggleAutomaticSchedule,
                 lockNowLine = lockNowLine,
                 onLockNowLineChange = ::setLockNowLine,
                 lockedTaskTitle = lockedTaskTitle,
@@ -3903,7 +3889,7 @@ fun CalendarFloatingWindow(
 
 /**
  * The calendar window's **configuration section**, down its right side: the day selector (it used to sit in the
- * lateral menu) and the view switches — PRD §8 "Lock to now", PRD §14/§15 "Reminders" / "Screen breaks"
+ * lateral menu), PRD §7's "Auto schedule" switch (from the lateral menu too, 2026-10-02) and the view switches — PRD §8 "Lock to now", PRD §14/§15 "Reminders" / "Screen breaks"
  * (cosmetic; notifications keep firing), which used to hide in a "View ▾" drop-down. Not in the head: the head
  * is the drag handle, and a switch there is a press the drag has to be taught to leave alone. It scrolls on its
  * own when the window is shorter than it.
@@ -3917,6 +3903,8 @@ private fun CalendarConfigurationSection(
     onSelectDate: (LocalDate) -> Unit,
     displayMode: CalendarDisplayMode,
     onDisplayModeChange: (CalendarDisplayMode) -> Unit,
+    automaticSchedule: Boolean,
+    onToggleAutomaticSchedule: (Boolean) -> Unit,
     lockNowLine: Boolean,
     onLockNowLineChange: (Boolean) -> Unit,
     lockedTaskTitle: String?,
@@ -3945,6 +3933,9 @@ private fun CalendarConfigurationSection(
         )
         HorizontalDivider()
         CalendarDisplayModeField(displayMode, onDisplayModeChange)
+        // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait. Here since 2026-10-02 (it was
+        // in the lateral menu): it is about what this window shows.
+        CalendarConfigurationSwitch("Auto schedule", automaticSchedule, onToggleAutomaticSchedule)
         CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
         // PRD §8 "locked on task": there once a task cell's "go to calendar" named a task. Held on the middle of
         // its panel closest to the now-line — or, while none exists yet, on the definitive-schedule front, which

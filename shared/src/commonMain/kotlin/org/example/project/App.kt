@@ -2753,8 +2753,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     onPageSelected = { page = it },
                     // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
                     onToggleCalendar = { openNewWindow(FloatingWindow.Calendar) },
-                    automaticSchedule = schedulerState.automaticSchedule,
-                    onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                     notificationVoiceEnabled = schedulerState.notificationVoiceEnabled,
                     onToggleNotificationVoice = { vm.dispatch(SchedulerIntent.SetNotificationVoice(it)) },
                     // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the
@@ -3215,6 +3213,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // notifications stay on).
                             showScreenBreaks = schedulerState.showScreenBreaks,
                             onToggleScreenBreaks = { vm.dispatch(SchedulerIntent.SetShowScreenBreaks(it)) },
+                            automaticSchedule = schedulerState.automaticSchedule,
+                            onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                             showReminders = schedulerState.showReminders,
                             onToggleReminders = { vm.dispatch(SchedulerIntent.SetShowReminders(it)) },
                             onUndo = { vm.dispatch(SchedulerIntent.Undo) },
