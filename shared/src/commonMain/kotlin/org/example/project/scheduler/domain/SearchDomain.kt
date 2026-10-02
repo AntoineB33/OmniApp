@@ -1936,7 +1936,7 @@ object SearchDomain {
         val minuteOfDay = local.hour * 60 + local.minute
         val toleranceMinutes = (CALENDAR_MARK_TOLERANCE_MILLIS / 60_000L).toInt()
         for (alarm in state.alarms) {
-            if (!alarm.enabled || (alarm.days.isNotEmpty() && local.dayOfWeek !in alarm.days)) continue
+            if (!alarm.enabled || ((alarm.isolated || alarm.days.isNotEmpty()) && !alarm.ringsOn(local.date))) continue
             val distance = kotlin.math.abs(alarm.timeOfDayMinutes - minuteOfDay).let { minOf(it, 24 * 60 - it) }
             if (distance <= toleranceMinutes) out += Kind.Alarm.name + "/" + alarm.id
         }
@@ -1997,12 +1997,69 @@ object SearchDomain {
         if (!timerCanEndAt(atMillis, nowMillis)) return emptyList()
         val ids = addedIds(added, Kind.Timer).toSet()
         if (ids.isEmpty()) return emptyList()
-        val timers = state.timers.map { timer ->
-            if (timer.id !in ids) timer
-            else TimerDomain.started(TimerDomain.withRemaining(TimerDomain.reset(timer), atMillis - nowMillis, nowMillis), nowMillis)
-        }
+        val timers = state.timers.map { timer -> if (timer.id !in ids) timer else timerEndingAt(timer, atMillis, nowMillis) }
         return if (timers == state.timers) emptyList() else listOf(SchedulerIntent.SetTimers(timers))
     }
+
+    /** [timer] put on the clock to end at [atMillis]: reset, its time left `atMillis − now`, started. */
+    private fun timerEndingAt(timer: org.example.project.scheduler.model.TimerEntry, atMillis: Long, nowMillis: Long) =
+        TimerDomain.started(TimerDomain.withRemaining(TimerDomain.reset(timer), atMillis - nowMillis, nowMillis), nowMillis)
+
+    /**
+     * PRD §8: **a ring DRAGGED on the calendar to [atMillis]** — the one list edit it is, or null where it changes
+     * nothing.
+     *
+     * An alarm is a RULE (orange), and the drag is about ONE of its rings — the one at [fromMillis] — so the rule
+     * is left where it is, less that date ([AlarmEntry.skippedEpochDays]), and the dragged ring becomes an ISOLATED
+     * row of its own on that date at the new time of day ([AlarmEntry.onlyOnEpochDay], to the minute), which is
+     * what the calendar outlines blue: the rule's rings on the other days do not move (user rule 2026-10-02). A
+     * ring that is already isolated is simply given the new time. A timer is put on the clock to end there, as
+     * "Add to the calendar" does ([calendarTimerIntents]); one that cannot end there (the past, or beyond its
+     * longest run) is left alone. See [SchedulerDomain.ringOutline].
+     */
+    fun calendarRingMoveIntent(
+        state: SchedulerState,
+        id: String,
+        timer: Boolean,
+        /** The instant the dragged ring was at — which of the alarm's occurrences this is. */
+        fromMillis: Long,
+        atMillis: Long,
+        nowMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): SchedulerIntent? {
+        if (timer) {
+            if (!timerCanEndAt(atMillis, nowMillis)) return null
+            val timers = state.timers.map {
+                if (it.id != id) it else timerEndingAt(it, atMillis, nowMillis).copy(calendarPlaced = true)
+            }
+            return if (timers == state.timers) null else SchedulerIntent.SetTimers(timers)
+        }
+        val alarm = state.alarms.firstOrNull { it.id == id } ?: return null
+        val local = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(timeZone)
+        val minutes = local.hour * 60 + local.minute
+        if (minutes == alarm.timeOfDayMinutes) return null
+        if (alarm.isolated) {
+            return SchedulerIntent.SetAlarms(state.alarms.map { if (it.id != id) it else it.copy(timeOfDayMinutes = minutes) })
+        }
+        val date = Instant.fromEpochMilliseconds(fromMillis).toLocalDateTime(timeZone).date
+        val day = date.toEpochDays().toLong()
+        val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date.toEpochDays().toLong()
+        val isolated = alarm.copy(
+            id = AlarmDomain.mintAlarmId(state.alarms.map { it.id }),
+            timeOfDayMinutes = minutes,
+            days = setOf(date.dayOfWeek),
+            onlyOnEpochDay = day,
+            skippedEpochDays = emptySet(),
+        )
+        // The dates a year behind are dropped as new ones are added, so the row does not grow for ever.
+        val rule = alarm.copy(
+            skippedEpochDays = alarm.skippedEpochDays.filterTo(mutableSetOf()) { it >= today - SKIPPED_DAYS_KEPT } + day,
+        )
+        return SchedulerIntent.SetAlarms(state.alarms.flatMap { if (it.id != id) listOf(it) else listOf(rule, isolated) })
+    }
+
+    /** How far back an alarm keeps the dates a ring was dragged away from ([AlarmEntry.skippedEpochDays]). */
+    private const val SKIPPED_DAYS_KEPT: Long = 366L
 
     /**
      * The "Add to the calendar" action: the element-window drafts of every added element that can be added at

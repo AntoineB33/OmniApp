@@ -2448,8 +2448,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // PRD §8: ORANGE — an alarm is a RULE (a time of day on a set of weekdays), like a
                         // §17 sleep window, and this marker is one occurrence of it. The calendar's element
                         // window can now state one, which does not change what it is: what that window
-                        // writes is the rule, through `SetAlarms`.
-                        outline = SchedulerDomain.ringOutline(),
+                        // writes is the rule, through `SetAlarms`. BLUE for the one ring the user dragged away
+                        // from its rule (an isolated row).
+                        outline = SchedulerDomain.ringOutline(occurrence.entry.isolated),
                     )
                 } +
                 displayTimerOccurrences.map { occurrence ->
@@ -2467,7 +2468,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         alarm = true,
                         timer = true,
                         // PRD §8: ORANGE for the same reason as the alarm's — the §18 window owns both.
-                        outline = SchedulerDomain.ringOutline(),
+                        outline = SchedulerDomain.ringOutline(occurrence.entry.calendarPlaced),
                     )
                 }
             return CalendarDisplay(
@@ -3070,7 +3071,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // user has just said "this occurrence, here", and a panel the fill may still wipe
                             // cannot say that — without it the next re-plan quietly undid the drag.
                             onCommitBounds = { block, newStart, newEnd, allowOverlap ->
-                                commitBoundsIntent(
+                                // PRD §8/§18: a ring dragged on the calendar restates its alarm's time (or the
+                                // instant its timer ends at) — a ring has no panel for the block path to write.
+                                if (block.alarm) {
+                                    block.entryId?.let { id ->
+                                        SearchDomain.calendarRingMoveIntent(
+                                            schedulerState, id, block.timer, block.fullStartMillis, newStart, nowMillis, tz,
+                                        )
+                                    }?.let(vm::dispatch)
+                                } else commitBoundsIntent(
                                     block,
                                     block.taskId,
                                     block.title,

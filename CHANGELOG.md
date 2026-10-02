@@ -11,6 +11,35 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: an alarm's or a timer's ring can be dragged, and is then outlined in blue — 2026-10-02
+
+Anomaly: *"I double-clicked an alarm box in the calendar and drag it, but it didn't do anything. It should also outline
+it in blue when dragged."* A ring was inert: `AlarmMarker` held no gesture at all (only task panels and period boxes
+did), and `ringOutline` was orange with no blue case. Now a mouse press-and-drag moves it within its day, committed on
+release through `onCommitBounds` → `SearchDomain.calendarRingMoveIntent`: an alarm's `timeOfDayMinutes` is restated (to
+the minute; its days kept, so every ring of that alarm moves), a timer is put on the clock to end there (left alone in
+the past or beyond its longest run). New authoritative field `calendarPlaced` on `AlarmEntry` / `TimerEntry`
+(`PersistedAlarm` / `PersistedTimer`, default false, in the row's JSON — no Supabase or SQLite migration);
+`ringOutline(calendarPlaced)` is blue for it, and the ring is blue while held. Follow-up the same day (*"it should be
+dragged only after a double click then drag while keeping the mouse click pressed"*): the gesture is the second press
+of a double click, held and dragged; a plain press-and-drag no longer moves the ring.
+
+Third follow-up (*"there is a radius around the double-click where the drag doesn't move the block"*): the drag waited
+for the touch slop before following the pointer, and dropped the distance travelled inside it. The double click already
+says the press is a drag, so the ring follows from the first pixel.
+
+Second follow-up (*"outlined in blue means this is an isolated block that got edited by the user, so it should not move
+the other alarms in the other days. Outlined in orange means it is created from an automatic pattern"*): the first
+version restated the alarm's `timeOfDayMinutes`, which moved every day's ring and painted them all blue. Now the rule is
+untouched but for one skipped date (`AlarmEntry.skippedEpochDays`, pruned past a year) and the dragged ring becomes an
+ISOLATED alarm row on that date (`AlarmEntry.onlyOnEpochDay`), blue; `AlarmEntry.calendarPlaced` (never shipped) is
+gone, `TimerEntry.calendarPlaced` stays. `AlarmEntry.ringsOn` takes the DATE and is the one test `AlarmDomain` and the
+Search "is at" filter read. Also fixed on the way: the Alarms window rebuilt each `AlarmEntry` / `TimerEntry` from its
+row and would have erased these fields on any edit — its rows now carry them. The test is now
+`a_ring_dragged_on_the_calendar_leaves_its_rule_and_becomes_an_isolated_blue_ring`.
+`SearchCalendarFilterTest.a_ring_dragged_on_the_calendar_restates_its_time_and_is_outlined_blue_from_then_on` (a
+payload lacking the field included).
+
 ### Search: the "calendar bubble order" sort, on for the calendar's "edit…" — 2026-10-02
 
 User request: *"In the Search configurations window, add the sorting method that sorts with the priority ranking used

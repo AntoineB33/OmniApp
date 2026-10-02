@@ -6216,6 +6216,14 @@ private fun DayColumn(
                 tz = tz,
                 hoverScope = hoverScope,
                 modifier = Modifier.offset(y = y),
+                // PRD §8: a ring is moved like a block — press and drag. It stays in its own day (an alarm's
+                // time is a time of day), and is committed through the blocks' own funnel, which knows a ring.
+                onMoveBy = { deltaMillis ->
+                    val target = (marker.fullStartMillis + deltaMillis)
+                        .coerceIn(midnightMillis, midnightMillis + 24 * 3_600_000L - 60_000L)
+                    onCommitBounds(marker, target, target, false)
+                },
+                onLockScroll = onLockScroll,
             )
         }
 
@@ -7163,11 +7171,90 @@ private fun AlarmMarker(
     tz: TimeZone,
     hoverScope: CalendarTitleHoverScope,
     modifier: Modifier = Modifier,
+    /**
+     * PRD §8: the ring was dragged by this much time — a mouse DOUBLE click whose second press is kept down
+     * and dragged, committed on release (a plain press-and-drag moves nothing). The ring is
+     * drawn BLUE while it is held — it is being placed on the calendar — and stays blue afterwards
+     * ([SchedulerDomain.ringOutline]).
+     */
+    onMoveBy: (deltaMillis: Long) -> Unit = {},
+    onLockScroll: (Boolean) -> Unit = {},
 ) {
-    Box(modifier = modifier.fillMaxWidth().height(ALARM_MARKER_HEIGHT)) {
+    // How far the held ring has been dragged (px); null = not held. Only the DRAWING below follows it: the
+    // node holding the gesture stays put, or the pointer's own position would move with it and the drag stall.
+    var dragPx by remember(marker.entryId, marker.fullStartMillis) { mutableStateOf<Float?>(null) }
+    // Read live: the gesture outlives a zoom ([DayColumn]'s `currentHourHeightPx`).
+    val currentHourHeightPx = rememberUpdatedState(with(LocalDensity.current) { hourHeight.toPx() })
+    val currentOnMoveBy = rememberUpdatedState(onMoveBy)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(ALARM_MARKER_HEIGHT)
+            // On the ANCESTOR of the hover tiles, like a §14 tag's click: it stays on the hit path of
+            // whichever tile is hit, and the tiles never consume.
+            .pointerInput(marker.entryId, marker.fullStartMillis) {
+                val touchSlop = viewConfiguration.touchSlop
+                val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
+                // The previous press that was a plain click (no drag), so the next one can be told as the
+                // second of a double click.
+                var lastTapUptime = 0L
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // A right-click is the column's menu; a touch drag scrolls the grid (PRD §8, phone).
+                    if (down.isConsumed || currentEvent.buttons.isSecondaryPressed || down.type == PointerType.Touch) {
+                        return@awaitEachGesture
+                    }
+                    // User rule 2026-10-02: a ring is dragged only by a DOUBLE click whose second press is
+                    // kept down — a plain press-and-drag moves nothing, so a ring is never moved by accident.
+                    if (down.uptimeMillis - lastTapUptime > doubleTapWindowMs) {
+                        var moved = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            moved += change.positionChangeIgnoreConsumed().getDistance()
+                            if (!change.pressed) break
+                        }
+                        lastTapUptime = if (moved <= touchSlop) down.uptimeMillis else 0L
+                        return@awaitEachGesture
+                    }
+                    lastTapUptime = 0L
+                    down.consume()
+                    var started = false
+                    var movedPx = 0f
+                    onLockScroll(true)
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (!event.changes.any { it.pressed }) {
+                                val scale = currentHourHeightPx.value
+                                if (started && scale > 0f) {
+                                    currentOnMoveBy.value(((movedPx / scale) * 3_600_000f).toLong())
+                                }
+                                break
+                            }
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                            val delta = change.positionChangeIgnoreConsumed()
+                            // No slop here: the double click has already said this press is a drag, so the
+                            // ring follows the pointer from its first pixel (a slop left a radius around the
+                            // press in which the ring did not move).
+                            if (delta.y != 0f) started = true
+                            change.consume()
+                            if (started) {
+                                movedPx += delta.y
+                                dragPx = movedPx
+                            }
+                        }
+                    } finally {
+                        onLockScroll(false)
+                        dragPx = null
+                    }
+                }
+            },
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer { translationY = dragPx ?: 0f }
                 .padding(horizontal = 2.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(CalColors.alarm)
@@ -7175,9 +7262,9 @@ private fun AlarmMarker(
                 // a timer is a rule stated in a window off the LEFT MENU
                 // ([SchedulerDomain.ringOutline]), exactly like a §17 sleep window, and the calendar's own
                 // menu cannot add one at all. Drawn over the ring's own fill, which is what says it is a
-                // ring rather than a block.
+                // ring rather than a block. BLUE while it is held, and from then on (the row remembers).
                 .then(
-                    outlineColor(marker.outline)?.let {
+                    (if (dragPx != null) CalColors.accent else outlineColor(marker.outline))?.let {
                         Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(4.dp))
                     } ?: Modifier,
                 )

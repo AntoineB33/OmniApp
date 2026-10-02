@@ -302,6 +302,10 @@ fun AlarmWindow(
                     days = row.days,
                     repeats = row.repeats,
                     enabled = row.enabled,
+                    // Not edited here, carried through: which one date an isolated ring is on, and the dates
+                    // a rule's ring was dragged away from on the calendar.
+                    onlyOnEpochDay = row.onlyOnEpochDay,
+                    skippedEpochDays = row.skippedEpochDays,
                 )
             }
         // Remember what went out, so the round-trip of this very push is not mistaken for an outside change.
@@ -328,6 +332,7 @@ fun AlarmWindow(
                     runMillis = live?.runMillis,
                     goesNegative = live?.goesNegative ?: row.goesNegative,
                     endedAtMillis = live?.endedAtMillis,
+                    calendarPlaced = live?.calendarPlaced ?: false,
                 )
                 // The one setting that moves the run: "below zero" leaves the row as if it had always been set
                 // so — a row that rang with it off counts on from the instant it reached zero.
@@ -1093,6 +1098,8 @@ private fun alarmRowOf(entry: AlarmEntry): AlarmRow =
         days = entry.days,
         repeats = entry.repeats,
         enabled = entry.enabled,
+        onlyOnEpochDay = entry.onlyOnEpochDay,
+        skippedEpochDays = entry.skippedEpochDays,
     )
 
 /**
@@ -1269,6 +1276,9 @@ private data class AlarmRow(
     val days: Set<DayOfWeek> = AlarmEntry.EVERY_DAY,
     val repeats: Boolean = true,
     val enabled: Boolean = true,
+    /** [AlarmEntry.onlyOnEpochDay] / [AlarmEntry.skippedEpochDays]: held, not edited — the calendar's. */
+    val onlyOnEpochDay: Long? = null,
+    val skippedEpochDays: Set<Long> = emptySet(),
 )
 
 /**

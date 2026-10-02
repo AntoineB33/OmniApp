@@ -4892,9 +4892,16 @@ object SchedulerDomain {
      * added period/panel/reminder/alarm must be outlined in blue", read as *the user added it*. Every daily
      * alarm then drew as something placed on the calendar, which is the one thing an alarm can never be:
      * **the calendar's own menu cannot add an alarm or a timer at all** — it only EDITS one, by opening the
-     * §18 window that owns it. There is no blue case to distinguish, so this takes no argument.
+     * §18 window that owns it.
+     *
+     * The one blue case (user rule 2026-10-02): *"outlined in blue means this is an isolated block that got
+     * edited by the user […] outlined in orange means it is created from an automatic pattern defined by the
+     * user."* So a ring is blue when it is [isolated] — the ONE ring the user dragged on the calendar, which
+     * left its rule for a row of its own (`AlarmEntry.onlyOnEpochDay`), or a timer's ring moved there
+     * (`TimerEntry.calendarPlaced`; a timer rings once by nature).
      */
-    fun ringOutline(): PanelOutline = PanelOutline.Pattern
+    fun ringOutline(isolated: Boolean = false): PanelOutline =
+        if (isolated) PanelOutline.User else PanelOutline.Pattern
 
     /**
      * PRD §8/§14: **the outline a reminder tag wears — BLUE.** A reminder is added from the calendar's own

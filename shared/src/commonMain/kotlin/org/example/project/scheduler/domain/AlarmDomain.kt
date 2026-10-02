@@ -37,11 +37,16 @@ object AlarmDomain {
         if (!entry.schedulable) return null
         var date = Instant.fromEpochMilliseconds(afterMillis).toLocalDateTime(timeZone).date
         repeat(SCAN_DAYS) {
-            if (entry.ringsOn(date.dayOfWeek)) {
+            if (entry.ringsOn(date)) {
                 val instant = occurrenceMillis(entry, date, timeZone)
                 if (instant > afterMillis) return instant
             }
             date = date.plus(DatePeriod(days = 1))
+        }
+        // An isolated ring further out than the scan (the calendar lets one be dragged on any day shown).
+        entry.onlyOnEpochDay?.let { day ->
+            val instant = occurrenceMillis(entry, LocalDate.fromEpochDays(day.toInt()), timeZone)
+            if (instant > afterMillis) return instant
         }
         return null
     }
@@ -106,7 +111,7 @@ object AlarmDomain {
             while (date <= lastDate) {
                 // The days the alarm is triggered on: a weekday the user left out yields no boundary at all,
                 // so it neither rings nor draws.
-                if (entry.ringsOn(date.dayOfWeek)) {
+                if (entry.ringsOn(date)) {
                     val instant = occurrenceMillis(entry, date, timeZone)
                     if (instant > fromMillis && instant <= toMillis) result.add(AlarmOccurrence(entry, instant))
                 }

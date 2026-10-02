@@ -128,6 +128,58 @@ class SearchCalendarFilterTest {
         assertEquals(at + s.newAlarmDefaults.soundSeconds * 1000L, newAlarm.endMillis)
     }
 
+    // ----- A ring dragged on the calendar (2026-10-02) ---------------------------------------------------
+
+    @Test
+    fun a_ring_dragged_on_the_calendar_leaves_its_rule_and_becomes_an_isolated_blue_ring() {
+        val tz = kotlinx.datetime.TimeZone.UTC
+        val domain = org.example.project.scheduler.domain.SchedulerDomain
+        val alarmDomain = org.example.project.scheduler.domain.AlarmDomain
+        val codec = org.example.project.scheduler.persistence.SchedulerStateCodec
+        val day = 24 * hour
+        // A daily alarm at 07:00; its ring of the day holding [at] is dragged two hours later.
+        val s0 = account().let { it.copy(alarms = it.alarms.map { a -> a.copy(days = org.example.project.scheduler.model.AlarmEntry.EVERY_DAY) }) }
+        val dayStart = at - at % day
+        val from = dayStart + 7 * hour
+        val to = dayStart + 9 * hour
+        val s = r(s0, SearchDomain.calendarRingMoveIntent(s0, "alarm-0", timer = false, fromMillis = from, atMillis = to, nowMillis = dayStart, timeZone = tz)!!)
+        val rule = s.alarms.first { it.id == "alarm-0" }
+        val isolated = s.alarms.single { it.id != "alarm-0" }
+        assertEquals(420, rule.timeOfDayMinutes, "the rule keeps its time: the other days do not move")
+        assertEquals(org.example.project.scheduler.domain.SchedulerDomain.PanelOutline.Pattern, domain.ringOutline(rule.isolated), "and stays orange")
+        assertEquals(540, isolated.timeOfDayMinutes)
+        assertEquals(org.example.project.scheduler.domain.SchedulerDomain.PanelOutline.User, domain.ringOutline(isolated.isolated), "the dragged ring is blue")
+        // What rings over the three days around it: the rule the day before and after, the isolated ring that day.
+        val rings = alarmDomain.occurrencesInWindow(s.alarms, dayStart - day, dayStart + 2 * day, tz).map { it.entry.id to it.instant }
+        assertEquals(
+            listOf("alarm-0" to from - day, isolated.id to to, "alarm-0" to from + day),
+            rings,
+        )
+        assertEquals(to, alarmDomain.nextOccurrenceMillis(isolated, dayStart, tz))
+        assertNull(alarmDomain.nextOccurrenceMillis(isolated, to, tz), "it rings once")
+        // Dragged again, the isolated ring is simply given its new time — no third row.
+        val again = r(s, SearchDomain.calendarRingMoveIntent(s, isolated.id, timer = false, fromMillis = to, atMillis = to + hour, nowMillis = dayStart, timeZone = tz)!!)
+        assertEquals(2, again.alarms.size)
+        assertEquals(600, again.alarms.single { it.id == isolated.id }.timeOfDayMinutes)
+        // The timer: put on the clock to end there, blue; left alone where it cannot end (the past).
+        val now = at - 10 * 60_000L
+        val movedTimer = r(s, SearchDomain.calendarRingMoveIntent(s, "timer-0", timer = true, fromMillis = at, atMillis = at, nowMillis = now)!!).timers.single()
+        assertEquals(at, movedTimer.endsAtMillis)
+        assertTrue(movedTimer.calendarPlaced)
+        assertNull(SearchDomain.calendarRingMoveIntent(s, "timer-0", timer = true, fromMillis = at, atMillis = at, nowMillis = at + 1))
+        assertNull(SearchDomain.calendarRingMoveIntent(s, "alarm-9", timer = false, fromMillis = from, atMillis = to, nowMillis = now, timeZone = tz))
+        // Persisted: it survives a save and a load…
+        val saved = s.copy(timers = listOf(movedTimer))
+        val decoded = codec.decode(codec.encode(saved))!!
+        assertEquals(saved.alarms, decoded.alarms)
+        assertTrue(decoded.timers.single().calendarPlaced)
+        // …and a payload written before the fields existed reads as plain rules that skip no date.
+        val older = codec.decode(codec.encode(s0))!!
+        assertEquals(s0.alarms, older.alarms)
+        assertTrue(older.alarms.none { it.isolated || it.skippedEpochDays.isNotEmpty() })
+        assertFalse("onlyOnEpochDay\":1" in codec.encode(s0) || "calendarPlaced\":true" in codec.encode(s0))
+    }
+
     // ----- The calendar's "edit…" (user rule 2026-10-01) -------------------------------------------------
 
     @Test

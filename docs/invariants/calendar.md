@@ -459,7 +459,19 @@ Global rules that always apply: `CLAUDE.md`.
   - **a ring is ORANGE** (`SchedulerDomain.ringOutline`): an alarm is a rule stated in the §18 window off the
     left menu, exactly as a sleep window is one stated in the sleep schedule, and it rings on days the user
     never looked at. **The calendar's menu cannot add an alarm or a timer at all** — it only edits one, by
-    opening the window that owns it — so there is no blue case to distinguish;
+    opening the window that owns it. **The one blue case is a ring the user DRAGGED** (2026-10-02): a ring
+    is moved by a mouse **double click whose second press is kept down and dragged** on `AlarmMarker` (a plain
+    press-and-drag moves nothing, so a ring is never moved by accident), committed on release through the
+    blocks' `onCommitBounds`, which `App` routes to `SearchDomain.calendarRingMoveIntent`. **Blue means an
+    ISOLATED block the user edited; orange means one laid by a pattern the user defined** — so dragging ONE
+    ring of an alarm never moves the alarm's other days: the rule keeps its time and skips that date
+    (`AlarmEntry.skippedEpochDays`), and the dragged ring becomes a row of its own that rings on that one
+    date (`AlarmEntry.onlyOnEpochDay`, `isolated`), drawn blue. Both are read by the ONE occurrence test
+    `AlarmEntry.ringsOn(date)`, so the calendar, the cue sweep and the OS arming agree. A timer rings once by
+    nature: it is put on the clock to end there and marked (`TimerEntry.calendarPlaced`). All three fields
+    are authoritative (persisted + synced), and the Alarms window carries them through its rows untouched —
+    it rebuilds every entry from its row, so a field it does not hold is a field it erases. The gesture sits on the node that does NOT move — only
+    the drawing follows the drag — or the pointer's local position moves with it and the drag stalls;
   - **a tag is BLUE** (`SchedulerDomain.reminderTagOutline`): a reminder is added from the calendar's own
     right-click menu and edited from its "edit…" chooser. The case that makes the outline load-bearing rather
     than decorative is a **checked** tag: its fill goes muted, and the border is then the only thing left

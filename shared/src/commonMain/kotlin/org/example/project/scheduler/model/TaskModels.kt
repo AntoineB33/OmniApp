@@ -333,7 +333,24 @@ data class AlarmEntry(
     val days: Set<DayOfWeek> = EVERY_DAY,
     val repeats: Boolean = true,
     val enabled: Boolean = true,
+    /**
+     * PRD §8: **an ISOLATED ring** — this row rings on that one local date (epoch days) and on no other,
+     * whatever its [days]. It is what dragging ONE ring of a repeating alarm on the calendar makes: the
+     * dragged occurrence leaves its rule ([skippedEpochDays] on the rule's row) and becomes a row of its own,
+     * which the calendar outlines BLUE — a block the user edited by hand — while the rule's other rings stay
+     * where they were, in orange ([org.example.project.scheduler.domain.SchedulerDomain.ringOutline]).
+     * Null for an ordinary alarm. Authoritative, persisted and synced with the row.
+     */
+    val onlyOnEpochDay: Long? = null,
+    /**
+     * PRD §8: the local dates (epoch days) this alarm does NOT ring on although its [days] say it would —
+     * each one an occurrence the user dragged away into an isolated row ([onlyOnEpochDay]).
+     */
+    val skippedEpochDays: Set<Long> = emptySet(),
 ) {
+    /** An isolated ring ([onlyOnEpochDay]) rather than a rule. */
+    val isolated: Boolean get() = onlyOnEpochDay != null
+
     /**
      * Whether this alarm can ever ring: armed, at a real time of day, lasting a positive time, with at least
      * one day to ring on, and with **something switched on to announce it with** ([AlertSettings.announces]).
@@ -345,10 +362,16 @@ data class AlarmEntry(
      */
     val schedulable: Boolean
         get() = enabled && timeOfDayMinutes in 0..<MINUTES_PER_DAY && soundSeconds > 0 &&
-            days.isNotEmpty() && alert.announces
+            (isolated || days.isNotEmpty()) && alert.announces
 
-    /** Whether this alarm rings on [day] — i.e. whether [day] is one of the days the user selected. */
-    fun ringsOn(day: DayOfWeek): Boolean = day in days
+    /**
+     * Whether this alarm rings on the local [date]: an isolated ring on its one date; a rule on the weekdays
+     * the user selected, less the dates an occurrence was dragged away from.
+     */
+    fun ringsOn(date: kotlinx.datetime.LocalDate): Boolean {
+        val epochDay = date.toEpochDays().toLong()
+        return onlyOnEpochDay?.let { it == epochDay } ?: (date.dayOfWeek in days && epochDay !in skippedEpochDays)
+    }
 
     companion object {
         /** How long the alarm sound lasts by default — a timer's too, the field being the same one. */
@@ -430,6 +453,8 @@ data class TimerEntry(
      * Reset. Authoritative (nothing else remembers the instant), so persisted and synced with the row.
      */
     val endedAtMillis: Long? = null,
+    /** PRD §8: the user moved this timer's ring on the calendar — [AlarmEntry.calendarPlaced]'s rule. */
+    val calendarPlaced: Boolean = false,
 ) {
     /** Counting down: it has an instant to fire at. */
     val running: Boolean get() = endsAtMillis != null

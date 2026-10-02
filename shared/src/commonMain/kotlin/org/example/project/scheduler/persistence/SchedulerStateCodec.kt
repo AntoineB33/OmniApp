@@ -1895,6 +1895,9 @@ private fun AlarmEntry.toPersisted(): PersistedAlarm =
         days = days.map { day -> day.isoDayNumber }.sorted(),
         repeats = repeats,
         enabled = enabled,
+        onlyOnEpochDay = onlyOnEpochDay,
+        // Sorted for the same reason as the days.
+        skippedEpochDays = skippedEpochDays.sorted(),
     )
 
 /** The inverse of [AlarmEntry.toPersisted]. A blank id is minted by the caller's `assignAlarmIds`. */
@@ -1911,6 +1914,8 @@ private fun PersistedAlarm.toAlarmEntry(): AlarmEntry =
         days = days?.mapNotNullTo(mutableSetOf(), ::dayOfWeekOrNull) ?: AlarmEntry.EVERY_DAY,
         repeats = repeats,
         enabled = enabled,
+        onlyOnEpochDay = onlyOnEpochDay,
+        skippedEpochDays = skippedEpochDays.toSet(),
     )
 
 /** PRD §18 Timers: the persisted form of one timer row — [AlarmEntry.toPersisted]'s rule for the timers. */
@@ -1926,6 +1931,7 @@ private fun TimerEntry.toPersisted(): PersistedTimer =
         runMillis = runMillis,
         goesNegative = goesNegative,
         endedAtMillis = endedAtMillis,
+        calendarPlaced = calendarPlaced,
     )
 
 /** The inverse of [TimerEntry.toPersisted]. The caller heals the run fields ([TimerDomain.healed]). */
@@ -1942,6 +1948,7 @@ private fun PersistedTimer.toTimerEntry(): TimerEntry =
         runMillis = runMillis,
         goesNegative = goesNegative,
         endedAtMillis = endedAtMillis,
+        calendarPlaced = calendarPlaced,
     )
 
 /** PRD §18 Chronos: the persisted form of one chrono row, run state included. */
@@ -1987,6 +1994,10 @@ private data class PersistedAlarm(
     @JsonNames("repeatDaily")
     val repeats: Boolean = true,
     val enabled: Boolean = true,
+    /** [AlarmEntry.onlyOnEpochDay]. New 2026-10-02: absent from an older payload, which reads as a rule. */
+    val onlyOnEpochDay: Long? = null,
+    /** [AlarmEntry.skippedEpochDays]. New 2026-10-02: absent from an older payload, which skips no date. */
+    val skippedEpochDays: List<Long> = emptyList(),
 )
 
 /**
@@ -2020,6 +2031,8 @@ private data class PersistedTimer(
     val goesNegative: Boolean = false,
     /** [TimerEntry.endedAtMillis]. New 2026-09-26: absent from an older payload, which reads as none. */
     val endedAtMillis: Long? = null,
+    /** [TimerEntry.calendarPlaced]. New 2026-10-02: absent from an older payload, which reads as not moved. */
+    val calendarPlaced: Boolean = false,
 )
 
 /** PRD §18 Chronos: one persisted chrono. Every field defaulted, so a later build's shape decodes cleanly. */
