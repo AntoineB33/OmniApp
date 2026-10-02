@@ -893,6 +893,10 @@ Global rules that always apply: `CLAUDE.md`.
   each break band's own span, its kind's companions (`companionBubbleSections(breakKind)`) and always "No screen"
   — the requirements' *"always accompanied by the 'no screen' period"*, the 20 s look-away included, whose kind
   (`inactivity`) carries nothing by rule.
+- **NO PERIOD DRAWING IN A BLOCK TITLE'S TEXT AREA** (2026-10-02, `CalendarBlockBody`): what a task panel redraws
+  over itself (`panelDecor` — patterns, outlines, layer hatches, hour lines) stops at its title: the title's box, as
+  wide as the words and not the block, is painted the block's own colour. Only where the block is opaque and carries
+  a decor; the title is no longer `fillMaxWidth`.
 - **A SCREEN BREAK LAYS THE LAYERS** (2026-10-02, reversing "a break is the app's, so it brings nothing"): the
   "no screen" every drawn break is accompanied by counts as STATED (`statedKindRegions(breaks = …)`, `App`'s
   `displaySidePanels` while `showScreenBreaks` is on), so the account's "when no screen then …" rule

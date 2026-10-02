@@ -8624,9 +8624,13 @@ private fun CalendarBlockBody(
                 overflow = TextOverflow.Ellipsis,
                 maxLines = titleMaxLines,
                 modifier = Modifier
-                    .fillMaxWidth()
                     .padding(horizontal = 3.dp, vertical = 1.dp)
-                    .padding(top = titleTopInset),
+                    .padding(top = titleTopInset)
+                    // User rule 2026-10-02: **no period drawing in the text's own area.** The markings the block
+                    // redraws over itself ([panelDecor]: the periods' patterns and outlines, the layer hatches, the
+                    // hour lines) run under the words otherwise; the title's box — as wide as the words, not the
+                    // block — is painted the block's own colour over them.
+                    .then(if (decor != null && opaque) Modifier.background(color) else Modifier),
             )
         }
     }

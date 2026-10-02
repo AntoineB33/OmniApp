@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: no period drawing behind a block's title — 2026-10-02
+
+A task panel redraws the periods' patterns, the layer hatches and the hour lines over itself (`panelDecor`), and they
+ran through its title. The title's own box (as wide as the words) is now painted the block's colour over them
+(`CalendarBlockBody`). Drawing only.
+
 ### Search window: timers, chronos and reminders get shared fields and a bin too — 2026-10-02
 
 "Don't do that just for alarms." The per-element "Edit" of the timer, chrono and reminder groups is replaced by one
