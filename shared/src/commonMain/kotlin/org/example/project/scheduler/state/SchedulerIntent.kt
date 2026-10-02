@@ -559,6 +559,14 @@ sealed interface SchedulerIntent {
         val carried: Boolean,
     ) : SchedulerIntent
 
+    /**
+     * The Search window's "Share of its sub-list" (user rule 2026-10-02): every task carrying one of [categoryIds]
+     * given [share] (a fraction) of its own sub-list, by adjusting its row of that sub-list's priority weight table
+     * ([org.example.project.scheduler.domain.CategoryRules.forceSubListShare]). One Undo/Redo unit, like any weight
+     * edit — however many rows it moved; none when nothing moves.
+     */
+    data class SetCategorySubListShare(val categoryIds: List<CategoryId>, val share: Double) : SchedulerIntent
+
     /** Rename a category. It is named by id everywhere, so this reaches every task and every rule at once. */
     data class RenameCategory(val categoryId: CategoryId, val title: String) : SchedulerIntent
 

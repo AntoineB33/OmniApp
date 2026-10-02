@@ -324,6 +324,12 @@ object SchedulerReducer {
                         )
                     },
                 )
+            is SchedulerIntent.SetCategorySubListShare -> {
+                val apply = { working: SchedulerState ->
+                    CategoryRules.forceSubListShare(working, intent.categoryIds.toSet(), intent.share)
+                }
+                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Category share", apply))
+            }
             is SchedulerIntent.ToggleRelativePriorityPin ->
                 reduceToggleRelativePriorityPin(state, intent.taskId, intent.relativeTo, intent.cellId)
             is SchedulerIntent.ClearRelativePriorityPins ->

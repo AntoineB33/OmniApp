@@ -4204,7 +4204,8 @@ const val DEEP_COPY_FRAME_ID: String = "DeepCopy"
  */
 @Composable
 internal fun PeriodCombinationsSection(
-    kind: String,
+    /** The periods whose rules are listed — each rule naming any of them, ONCE; a new rule starts with the first. */
+    kinds: List<String>,
     allKinds: List<String>,
     combinations: List<org.example.project.scheduler.domain.PeriodCombination>,
     onSetCombinations: (List<org.example.project.scheduler.domain.PeriodCombination>) -> Unit,
@@ -4219,7 +4220,7 @@ internal fun PeriodCombinationsSection(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    val shown = combinations.filter { kind in it.named }
+    val shown = combinations.filter { rule -> kinds.any { it in rule.named } }
     for (rule in shown) {
         Column(
             Modifier.fillMaxWidth()
@@ -4244,7 +4245,7 @@ internal fun PeriodCombinationsSection(
             val id = generateSequence(1) { it + 1 }.map { "combination-$it" }.first { it !in taken }
             onSetCombinations(
                 combinations +
-                    org.example.project.scheduler.domain.PeriodCombination(id, PeriodFormula.of(setOf(kind)), PeriodFormula.of(emptySet())),
+                    org.example.project.scheduler.domain.PeriodCombination(id, PeriodFormula.of(setOfNotNull(kinds.firstOrNull())), PeriodFormula.of(emptySet())),
             )
         },
     ) { Text("Add a combination") }

@@ -254,6 +254,14 @@ relative-priority window's number said once and then **kept**.
   "adjust the priorities evenly" means here what it means in the window: one common factor over the cells on
   the chains, the rest of the sub-tree keeping its own proportions. Rules at nested scopes pull on each other,
   so the pass is iterated to a fixed point (deepest scope first) — there is no closed form.
+- **"Share of its sub-list" is a ONE-SHOT edit, not a rule** (user rule 2026-10-02; the Search window's action on
+  the added categories, `SetCategorySubListShare` → `CategoryRules.forceSubListShare`): every populated cell whose
+  task carries the category (`carrierCells`) is given the typed share of its OWN sub-list — the figure its row of that
+  list's weight table comes to — by adjusting that row alone. It is `setChainsShare` asked of the one-cell chain, so
+  the factor-first, added-term-last order above is the whole of it and there is no second solve. Carriers sharing a
+  list are solved in turn until each holds the share; an unreachable one (an only child, shares summing past the
+  list) lands as close as the rows allow. One Undo/Redo unit (`priorityTreeDelta`), none when nothing moves; the
+  standing category rules are then re-established over it by `settle` as after any edit, and may refuse it.
 - **A contradiction is REFUSED, and the refusal cannot wedge the app.** `settle` returns the state from
   *before* the intent with the reason in `categoryRuleError` (local-only view state, not even persisted,
   drawn as the app's one `MessagePopup`). Two guards: it **never refuses what was already broken** (a merge,

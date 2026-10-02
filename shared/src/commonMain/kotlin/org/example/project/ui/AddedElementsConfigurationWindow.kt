@@ -43,10 +43,13 @@ import org.example.project.scheduler.domain.CalendarLockDomain
 import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.ui.DrawingSwatch
 import org.example.project.scheduler.ui.PeriodCombinationsSection
+import org.example.project.scheduler.domain.CategoryRules
+import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.TaskPathsDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.TimerEntry
@@ -307,7 +310,8 @@ private fun AddedActionSections(
 private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
     setOf(
         SearchDomain.AddedAction.TaskScheduleUnit, SearchDomain.AddedAction.TaskText, SearchDomain.AddedAction.TaskAddUnder,
-        SearchDomain.AddedAction.TaskPaths, SearchDomain.AddedAction.CategoryEdit, SearchDomain.AddedAction.AlarmAlert,
+        SearchDomain.AddedAction.TaskPaths, SearchDomain.AddedAction.CategoryRules, SearchDomain.AddedAction.CategoryAddRule,
+        SearchDomain.AddedAction.AlarmAlert,
         SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
         SearchDomain.AddedAction.PeriodCombinations,
     )
@@ -540,14 +544,73 @@ private fun AddedActionEditor(
                 }
             }
         }
-        SearchDomain.AddedAction.CategoryEdit -> {
-            for (id in SearchDomain.addedIds(added, SearchDomain.Kind.Category)) {
-                val categoryId = CategoryId(id)
-                if (state.categoryById(categoryId) == null) continue
-                key(id) { CategoryEditor(state, categoryId, run.asIntentSink()) }
-                HorizontalDivider()
+        // User rule 2026-10-02: every task carrying an added category given ONE share of its own sub-list — its row
+        // of that sub-list's weight table adjusted (a common factor, an added term as the last resort).
+        SearchDomain.AddedAction.CategorySubListShare -> {
+            val categoryIds = SearchDomain.addedIds(added, SearchDomain.Kind.Category).mapTo(LinkedHashSet()) { CategoryId(it) }
+            val carriers = CategoryRules.carrierCells(state, categoryIds)
+            // What they all hold now, when they do — to the precision the field prints.
+            val current = carriers.map { formatShareNumber(RelativePriorityDomain.cellShare(state, it)) }.distinct().singleOrNull()
+            var draft by remember(categoryIds) { mutableStateOf<String?>(null) }
+            val text = draft ?: current.orEmpty()
+            val share = parsePercent(text)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { draft = it },
+                    enabled = carriers.isNotEmpty(),
+                    isError = draft != null && share == null,
+                    singleLine = true,
+                    suffix = { Text("%") },
+                    modifier = Modifier.width(110.dp).leaveFocusOnOutsidePress(),
+                )
+                FrameButton(
+                    if (carriers.size == 1) "Force on 1 task" else "Force on ${carriers.size} tasks",
+                    enabled = carriers.isNotEmpty() && draft != null && share != null,
+                ) {
+                    share?.let { run(SearchDomain.AddedCommand.CategoryShare(it)) }
+                    draft = null
+                }
             }
         }
+        // --- The categories' settings: ONE control each, over every added category (user rule 2026-10-02) --------
+        SearchDomain.AddedAction.CategoryName -> {
+            val categories = SearchDomain.addedIds(added, SearchDomain.Kind.Category).mapNotNull { state.categoryById(CategoryId(it)) }
+            // A name is unique, so several categories cannot be given one: the field is the ONE category's.
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                SharedTextField(
+                    items = categories.takeIf { it.size == 1 }.orEmpty(),
+                    idOf = { it.id.value },
+                    field = "Category/name",
+                    read = { it.title },
+                    parse = { text -> if (text.isBlank()) null else { c: Category -> c.copy(title = text) } },
+                    restore = { category, before -> category.copy(title = before.title) },
+                    write = { _, change ->
+                        categories.forEach { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.RenameCategory(it.id, change(it).title))) }
+                    },
+                    wide = true,
+                )
+                if (categories.size > 1) {
+                    Text(
+                        "A name is unique: keep one category in the list to rename it.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        SearchDomain.AddedAction.CategoryRules ->
+            CategoriesRulesEditor(
+                state,
+                SearchDomain.addedIds(added, SearchDomain.Kind.Category).map(::CategoryId).filter { state.categoryById(it) != null },
+                run.asIntentSink(),
+            )
+        SearchDomain.AddedAction.CategoryAddRule ->
+            CategoriesAddRule(
+                state,
+                SearchDomain.addedIds(added, SearchDomain.Kind.Category).map(::CategoryId).filter { state.categoryById(it) != null },
+                run.asIntentSink(),
+            )
         // --- The alarms' settings: ONE field each, over every added alarm (user rule 2026-10-02) ----------------
         SearchDomain.AddedAction.AlarmTime ->
             SharedTextField(
@@ -735,15 +798,13 @@ private fun AddedActionEditor(
             )
         }
         SearchDomain.AddedAction.PeriodCombinations -> {
+            // ONE list: every rule naming an added period, once (it was a section per period, a rule naming two of
+            // them drawn twice).
             val periods = SearchDomain.addedPeriodKinds(state, added)
-            for (kind in periods) {
-                ElementHeading(kind, periods.size)
-                key(kind) {
-                    PeriodCombinationsSection(kind, state.allPeriodKinds, state.periodCombinations) { rules ->
-                        run.asIntentSink()(SchedulerIntent.SetPeriodCombinations(rules))
-                    }
+            if (periods.isNotEmpty()) {
+                PeriodCombinationsSection(periods, state.allPeriodKinds, state.periodCombinations) { rules ->
+                    run.asIntentSink()(SchedulerIntent.SetPeriodCombinations(rules))
                 }
-                HorizontalDivider()
             }
         }
         // The tasks' resilience to a period is the Search window of its tasks: one per period.
@@ -847,6 +908,8 @@ private fun <T> SharedTextField(
     write: (editKey: String, change: (T) -> T) -> Unit,
     /** What the field lets through as it is typed (a formula's characters, a time's). */
     sanitize: (String) -> String = { it },
+    /** A name rather than a number: the field takes the row's width. */
+    wide: Boolean = false,
 ) {
     var before by remember(field) { mutableStateOf<Map<String, T>?>(null) }
     var draft by remember(field) { mutableStateOf("") }
@@ -863,8 +926,7 @@ private fun <T> SharedTextField(
         enabled = items.isNotEmpty(),
         isError = before != null && parse(draft) == null,
         singleLine = true,
-        modifier = Modifier
-            .width(110.dp)
+        modifier = (if (wide) Modifier.fillMaxWidth() else Modifier.width(110.dp))
             .leaveFocusOnOutsidePress()
             .onFocusChanged { focus ->
                 if (!focus.isFocused && before != null) {

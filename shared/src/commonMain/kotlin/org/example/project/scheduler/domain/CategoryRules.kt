@@ -127,6 +127,54 @@ object CategoryRules {
     fun shareOf(state: SchedulerState, categoryId: CategoryId, scope: CellId?): Double =
         RelativePriorityDomain.chainsProduct(state, chainsFor(state, categoryId, scope))
 
+    // ----- A share of its own sub-list, forced on every carrier (user rule 2026-10-02) ------------------
+
+    /**
+     * Every populated cell whose task carries one of [categoryIds] — each a row of its own sub-list's priority weight
+     * table. In the tree's stable order (shallowest first), so the solve below visits them the same way every time.
+     */
+    fun carrierCells(state: SchedulerState, categoryIds: Set<CategoryId>): List<CellId> {
+        if (categoryIds.isEmpty()) return emptyList()
+        val cells =
+            state.cells.values.filter { cell ->
+                val task = cell.taskId?.let { state.tasks[it] }
+                task != null && task.categoryIds.any { it in categoryIds } && SchedulerDomain.isPopulatedCell(state, cell.id)
+            }.map { it.id }
+        return SchedulerDomain.sortOccurrences(state, cells)
+    }
+
+    /** How close a forced share has to land ([forceSubListShare]), and how many passes sharing a list may take. */
+    private const val FORCED_SHARE_TOLERANCE = 1e-9
+    private const val FORCED_SHARE_PASSES = 60
+
+    /**
+     * **Every task carrying one of [categoryIds] given [share] of its OWN sub-list** (user rule 2026-10-02) — the
+     * figure its row of that sub-list's priority weight table comes to — by adjusting that row alone: all its values
+     * multiplied by ONE common factor, and a term added to them only where no factor lands (a value of 0 in a
+     * column cannot be scaled into it). That is [RelativePriorityDomain.setChainsShare] asked of the one-cell chain,
+     * so it is the app's one solve and not a second one.
+     *
+     * Two carriers in one sub-list share its total, so giving one its share moves the other's: the cells are solved in
+     * turn and the pass repeated until every one holds [share] (it settles whenever the carriers of a list are asked
+     * for less than the whole of it). A share nothing can reach — an only child is 100 % whatever its weight, three
+     * carriers asked for 40 % each — lands as close as the rows allow. A ONE-SHOT edit, not a standing rule: later
+     * edits may move the shares again. The same instance back when nothing moves.
+     */
+    fun forceSubListShare(state: SchedulerState, categoryIds: Set<CategoryId>, share: Double): SchedulerState {
+        if (!share.isFinite()) return state
+        val target = share.coerceIn(0.0, 1.0)
+        val cells = carrierCells(state, categoryIds)
+        if (cells.isEmpty()) return state
+        var result = state
+        repeat(FORCED_SHARE_PASSES) {
+            val before = result
+            for (cellId in cells) result = RelativePriorityDomain.setChainsShare(result, listOf(listOf(cellId)), target)
+            val worst = cells.maxOf { kotlin.math.abs(RelativePriorityDomain.cellShare(result, it) - target) }
+            if (worst <= FORCED_SHARE_TOLERANCE || result === before || result.cells == before.cells) return result
+        }
+        return result
+    }
+
     /** Every task carrying [categoryId], in the account's task order. */
     fun tasksWith(state: SchedulerState, categoryId: CategoryId): List<TaskId> =
         state.tasks.values.filter { it.title.isNotBlank() && categoryId in it.categoryIds }.map { it.id }
@@ -172,6 +220,35 @@ object CategoryRules {
                 achieved =
                     if (status == Status.ScopeGone) null
                     else RelativePriorityDomain.chainsProduct(state, chains),
+            )
+        }
+    }
+
+    /**
+     * One row of the rules of SEVERAL categories read together (user rule 2026-10-02: one field for all the added
+     * ones): a scope at least one of them has a rule about, the [share] they ALL give it — null when one has no rule
+     * there or they differ — and how many of them have one ([holders]).
+     */
+    data class SharedRuleRow(val scopeCellId: CellId?, val scopeLabel: String, val share: Double?, val holders: Int)
+
+    /**
+     * The rules of [categoryIds] as one list, a row per scope ([scopeKey], so two cells of one mirrored task are one
+     * row), in the order the scopes first appear. A share typed on a row is every category's rule there
+     * (`SetCategoryRule` each); its bin takes it off every one that has it.
+     */
+    fun sharedRuleRows(state: SchedulerState, categoryIds: List<CategoryId>): List<SharedRuleRow> {
+        val categories = categoryIds.distinct().mapNotNull(state::categoryById)
+        val byScope = LinkedHashMap<String, MutableList<CategoryRule>>()
+        for (category in categories) {
+            for (rule in category.rules) byScope.getOrPut(scopeKey(state, rule.scopeCellId)) { ArrayList() } += rule
+        }
+        return byScope.values.map { rules ->
+            val shares = rules.map { it.share }.distinct()
+            SharedRuleRow(
+                scopeCellId = rules.first().scopeCellId,
+                scopeLabel = scopeLabel(state, rules.first().scopeCellId),
+                share = shares.singleOrNull()?.takeIf { rules.size == categories.size },
+                holders = rules.size,
             )
         }
     }

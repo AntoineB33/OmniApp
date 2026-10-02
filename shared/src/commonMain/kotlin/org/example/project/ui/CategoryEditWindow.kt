@@ -290,6 +290,127 @@ fun CategoryEditor(
     }
 }
 
+/**
+ * User rule 2026-10-02: **the rules of every added category, as ONE list** — a row per scope
+ * ([CategoryRules.sharedRuleRows]). The share field is empty unless they all give that scope the same share; a share
+ * typed there is every category's rule about it, and the bin takes the rule off every one that has it.
+ */
+@Composable
+internal fun CategoriesRulesEditor(state: SchedulerState, categoryIds: List<CategoryId>, onIntent: (SchedulerIntent) -> Unit) {
+    val rows = CategoryRules.sharedRuleRows(state, categoryIds)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (rows.isEmpty()) {
+            Text(
+                if (categoryIds.size == 1) "No rule yet — this category is only a label." else "No rule yet — these categories are only labels.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        for (row in rows) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("under “${row.scopeLabel}”", style = MaterialTheme.typography.bodySmall)
+                    if (row.holders < categoryIds.size) {
+                        Text(
+                            "a rule of ${row.holders} of the ${categoryIds.size} categories",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                SharedSharePercentField(
+                    value = row.share,
+                    onValueChange = { next -> categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, row.scopeCellId, next)) } },
+                )
+                TextButton(onClick = {
+                    categoryIds.forEach { onIntent(SchedulerIntent.RemoveCategoryRule(it, row.scopeCellId)) }
+                }) { Text("🗑") }
+            }
+        }
+    }
+}
+
+/** [SharePercentField] over several rules: empty while they differ (or one is missing), and only a parsed value writes. */
+@Composable
+private fun SharedSharePercentField(value: Double?, onValueChange: (Double) -> Unit) {
+    var text by remember(value) { mutableStateOf(value?.let(::formatShareNumber).orEmpty()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { raw ->
+            text = raw
+            parsePercent(raw)?.let(onValueChange)
+        },
+        singleLine = true,
+        suffix = { Text("%") },
+        modifier = Modifier.width(96.dp),
+    )
+}
+
+/**
+ * User rule 2026-10-02: **"Add a rule", once for every added category** — the scope named the way the single
+ * category's editor names it (a field with the task cells' paths under it), a share, and one button that gives the
+ * rule to each of them (replacing the one a category already has about that sub-tree).
+ */
+@Composable
+internal fun CategoriesAddRule(state: SchedulerState, categoryIds: List<CategoryId>, onIntent: (SchedulerIntent) -> Unit) {
+    var scopeDraft by remember { mutableStateOf("") }
+    var scopePick by remember { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
+    var newShare by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(
+            value = scopeDraft,
+            onValueChange = {
+                scopeDraft = it
+                scopePick = null
+            },
+            singleLine = true,
+            label = { Text("Under which task cell") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        EditModeMenuBlock(
+            identityLabel = "Task cells",
+            identityRows =
+                CategoryRules.scopeEntries(state, scopeDraft).map { entry ->
+                    EditMenuItem(label = entry.label, selected = entry == scopePick) {
+                        scopePick = entry
+                        scopeDraft = entry.label
+                    }
+                },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            OutlinedTextField(
+                value = newShare,
+                onValueChange = { newShare = it },
+                singleLine = true,
+                suffix = { Text("%") },
+                label = { Text("Share") },
+                modifier = Modifier.width(140.dp),
+            )
+            Spacer(Modifier.weight(1f))
+            val share = parsePercent(newShare)
+            TextButton(
+                enabled = categoryIds.isNotEmpty() && scopePick != null && share != null,
+                onClick = {
+                    val scope = scopePick ?: return@TextButton
+                    val value = share ?: return@TextButton
+                    categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, scope.cellId, value)) }
+                    scopeDraft = ""
+                    scopePick = null
+                    newShare = ""
+                },
+            ) { Text(if (categoryIds.size == 1) "Add rule" else "Add rule to ${categoryIds.size}") }
+        }
+    }
+}
+
 /** What a rule row says under itself: that it is being held, or the reason it is asleep. */
 private fun ruleStatusLine(row: CategoryRules.RuleRow): String = when (row.status) {
     CategoryRules.Status.Held -> "currently ${formatShare(row.achieved ?: 0.0)} of it"
@@ -318,7 +439,7 @@ private fun SharePercentField(value: Double, onValueChange: (Double) -> Unit) {
 }
 
 /** A typed percentage as a fraction in `[0, 1]`, or null while what is typed is not a number. */
-private fun parsePercent(raw: String): Double? =
+internal fun parsePercent(raw: String): Double? =
     raw.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()
         ?.takeIf { it.isFinite() }
         ?.let { (it / 100.0).coerceIn(0.0, 1.0) }
@@ -326,7 +447,7 @@ private fun parsePercent(raw: String): Double? =
 private fun formatShare(value: Double): String = "${formatShareNumber(value)} %"
 
 /** A fraction as a percentage with no trailing zeros — `0`, `33`, `12.5`. */
-private fun formatShareNumber(value: Double): String {
+internal fun formatShareNumber(value: Double): String {
     val rounded = (value * 1000.0).roundToInt() / 10.0
     return if (rounded == rounded.toInt().toDouble()) rounded.toInt().toString() else rounded.toString()
 }

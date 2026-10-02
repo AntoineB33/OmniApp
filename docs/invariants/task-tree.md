@@ -697,8 +697,13 @@ titles" figure: the Search window and the per-object windows its rows open repla
   being their ids joined), Alert (`AddedCommand.RemindersEdit`, one `SetChores`). Text fields are `SharedTextField`
   (the shared value else empty; every parsing keystroke to all; Escape restores each). **Every such kind has its bin**
   (`AddedCommand.Delete(kind)`: alarms, timers, chronos, reminders as one list edit, categories by `DeleteCategory`);
-  what it deleted leaves the added list. Still per element, because they are structure and not a value: a task's
-  Paths, a category's Name and rules, a period's Combinations.
+  what it deleted leaves the added list. **Categories** — Name (a name is unique, so the
+  field is the ONE added category's and is greyed with several), Rules (ONE list, a row per scope:
+  `CategoryRules.sharedRuleRows` — the share they all give it else empty, a typed share written to every one, the bin
+  taking it off every one that has it), Add a rule (one scope + share, given to each), Share of its sub-list, Delete;
+  `CategoryEditor` remains only as the default sub-tree's category window. **Periods** — Combinations is ONE list of
+  every rule naming an added period, each once (`PeriodCombinationsSection(kinds)`). The one thing still listed per
+  element is a task's **Paths**: the places a task stands in are that task's own, with nothing two tasks could share.
 - **The alarm group has NO editor per alarm** (anomaly 2026-10-02: *"one field for all the alarms at once — that's
   the point of adding several"*). `AddedAction.AlarmEdit` (the Alarms window's rows embedded, one per added alarm) is
   gone; each setting is an action of its own over every added alarm, written as ONE `SetAlarms`

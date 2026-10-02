@@ -136,6 +136,85 @@ class CategoryRulesTest {
         assertTrue(abs(expected - actual) < 1e-6, "$what: expected $expected but was $actual")
     }
 
+    /** User rule 2026-10-02: the rules of several categories read as ONE list, a row per scope. */
+    @Test
+    fun the_rules_of_several_categories_are_one_row_per_scope_with_the_share_they_all_give() {
+        val f = fixture()
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "light"))
+        val deep = categoryNamed(s, "deep")
+        val light = categoryNamed(s, "light")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.25))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(light, ROOT, 0.25))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 0.5))
+
+        val rows = CategoryRules.sharedRuleRows(s, listOf(deep, light))
+        assertEquals(listOf(ROOT, f.bookCell), rows.map { it.scopeCellId })
+        assertEquals(0.25, rows[0].share, "both give the whole tree 25 %")
+        assertEquals(2, rows[0].holders)
+        assertEquals(null, rows[1].share, "only one of the two has a rule under Book: the field is empty")
+        assertEquals(1, rows[1].holders)
+        // Read alone, the category's own rule shows.
+        assertEquals(0.5, CategoryRules.sharedRuleRows(s, listOf(deep)).single { it.scopeCellId == f.bookCell }.share)
+        // Two shares on one scope that differ: empty.
+        val differing = s.copy(
+            categories = s.categories.map { c ->
+                if (c.id == light) c.copy(rules = c.rules.map { it.copy(share = 0.1) }) else c
+            },
+        )
+        assertEquals(null, CategoryRules.sharedRuleRows(differing, listOf(deep, light)).first().share)
+    }
+
+    // ----- a share of its own sub-list, forced on every carrier (user rule 2026-10-02) ------------
+
+    private fun shareOfCell(state: SchedulerState, taskId: TaskId): Double =
+        RelativePriorityDomain.cellShare(state, state.cells.values.first { it.taskId == taskId }.id)
+
+    @Test
+    fun forcing_a_share_gives_every_carrier_that_share_of_its_own_sub_list_by_one_factor_on_its_row() {
+        val f = fixture()
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "deep"))
+        val deep = categoryNamed(s, "deep")
+        val otherRow = s.cells.values.first { it.taskId == f.other }.priorityWeights
+        val chapterRow = s.cells.values.first { it.taskId == f.chapter }.priorityWeights
+
+        val forced = SchedulerReducer.reduce(s, SchedulerIntent.SetCategorySubListShare(listOf(deep), 0.2))
+        // Each carrier is 20 % of ITS list — Chapter of Book's, Read of Notes's — whatever the lists are worth.
+        assertShare(0.2, shareOfCell(forced, f.chapter), "Chapter in Book")
+        assertShare(0.2, shareOfCell(forced, f.read), "Read in Notes")
+        assertShare(0.8, shareOfCell(forced, f.other), "Other keeps the rest")
+        // Only the carrier's own row moved, and by ONE factor: every value of it multiplied alike.
+        assertEquals(otherRow, forced.cells.values.first { it.taskId == f.other }.priorityWeights)
+        val after = forced.cells.values.first { it.taskId == f.chapter }.priorityWeights
+        val factors = chapterRow.zip(after).filter { it.first > 0.0 }.map { it.second / it.first }
+        assertTrue(factors.isNotEmpty() && factors.all { abs(it - factors.first()) < 1e-9 }, "one common factor: $factors")
+        // Nothing to change: no unit, the same state.
+        assertTrue(SchedulerReducer.reduce(forced, SchedulerIntent.SetCategorySubListShare(listOf(deep), 0.2)) === forced)
+    }
+
+    @Test
+    fun two_carriers_of_one_sub_list_each_reach_the_forced_share() {
+        val f = fixture()
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCellTitle(f.state.lists[f.state.tasks[f.book]!!.childListId!!]!!.cellIds[2], "Third"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.other, "deep"))
+        val forced = CategoryRules.forceSubListShare(s, setOf(categoryNamed(s, "deep")), 0.3)
+        assertShare(0.3, shareOfCell(forced, f.chapter), "Chapter")
+        assertShare(0.3, shareOfCell(forced, f.other), "Other")
+    }
+
+    /** The last resort: a row with a 0 in the column that is worth 90 % cannot be SCALED past 10 %. */
+    @Test
+    fun a_share_no_factor_reaches_is_reached_by_adding_to_the_row() {
+        val f = twoColumnFixture()
+        val deep = categoryNamed(f.state, "deep")
+        val forced = CategoryRules.forceSubListShare(f.state, setOf(deep), 0.5)
+        assertShare(0.5, shareOfCell(forced, f.notes), "Notes of the root list")
+        // The term reached the column the row had nothing in.
+        assertTrue(forced.cells[f.notesCell]!!.priorityWeights[0] > 0.0)
+    }
+
     // ----- the field: naming a category is pointing at it ----------------------------------------
 
     @Test

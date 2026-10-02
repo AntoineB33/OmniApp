@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: the category group's settings are shared controls; one Combinations list — 2026-10-02
+
+The categories' per-element "Name and rules" editor is replaced by Name (the one added category's — names are
+unique), Rules (one row per scope over every added category, `CategoryRules.sharedRuleRows`) and Add a rule (given
+to each). The periods' Combinations is one list of every rule naming an added period, instead of a section per
+period. A task's Paths stay per task. No state shape change.
+
+### Search window: a category's "Share of its sub-list" action — 2026-10-02
+
+A new action on the added categories: a percentage and "Force on N tasks". Every task carrying the category is given
+that share of its own sub-list by adjusting its row of the sub-list's priority weight table — one common factor over
+the row's values, a term added only where no factor lands (`CategoryRules.forceSubListShare`, the existing
+`setChainsShare` solve; `SchedulerIntent.SetCategorySubListShare`, one Undo/Redo unit). A one-shot edit, not a
+standing rule. No state shape change.
+
 ### Calendar: no period drawing behind a block's title — 2026-10-02
 
 A task panel redraws the periods' patterns, the layer hatches and the hour lines over itself (`panelDecor`), and they
