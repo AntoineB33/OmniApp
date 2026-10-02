@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: a screen break lays the two layers' oblique lines — 2026-10-02
+
+A break is accompanied by "no screen", and by the account's default rule "no screen" brings ("no computer unlocked"
+or "not on a computer") and ("no phone unlocked" or "not on a phone") — but only for a period the user stated, so a
+break had the bubble's "No screen" and no hatch. The drawn breaks' "no screen" now counts as stated for the layers
+(`statedKindRegions(breaks = …)`): both obliques over every break, dotted "not on a …" where the OS saw the device
+unlocked. Display only; no state, SQLite or Supabase change.
+
+### Calendar: a screen break's hover bubble names the "No screen" it is accompanied by — 2026-10-02
+
+Anomaly: the 15-min break ahead of the line read as the break alone. Every break band now stacks its kind's
+companions in the bubble over its own span, "No screen" always among them (`docs/scheduler_requirements.md`
+§ *screen breaks*: "always accompanied by the 'no screen' period"). Display only.
+
 ### Search window: the "app setting" element, "Sound setting" and its global volume — 2026-10-02
 
 A new kind in the element selector, `Kind.AppSetting` ("app setting"), listing `SearchDomain.AppSettingEntry` —

@@ -3149,9 +3149,21 @@ object SchedulerDomain {
         away: Map<String, List<TaskTimeRange>> = emptyMap(),
         knownAbsent: Map<String, List<TaskTimeRange>> = emptyMap(),
         atScreenPast: List<TaskTimeRange> = emptyList(),
+        /**
+         * The screen breaks drawn on the calendar (user rule 2026-10-02): each is *"always accompanied by the 'no
+         * screen' period"*, and that period counts as STATED — so the account's "when no screen then …" rule lays the
+         * layers over it like over a period the user drew, "not on a …" where the OS saw the device unlocked (a
+         * 20 s break crossed in mode 3). Display only: the scheduler never reads a materialized break.
+         */
+        breaks: List<TaskTimeRange> = emptyList(),
     ): Map<String, List<TaskTimeRange>> {
         val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
         val manual = LinkedHashMap<String, MutableList<TaskTimeRange>>()
+        for (span in breaks) {
+            if (span.endEpochMillis <= span.startEpochMillis) continue
+            own.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += span
+            manual.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += span
+        }
         for (panel in retractOverAtScreenPast(panels, atScreenPast, config)) {
             val kind = panel.restrictiveKind
             if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) continue

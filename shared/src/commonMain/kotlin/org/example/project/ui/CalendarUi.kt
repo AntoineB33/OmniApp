@@ -1402,7 +1402,11 @@ internal fun derivedLayerPeriods(
     val dayEndMillis = midnightMillis + 24L * 3_600_000L
     return derived.flatMap { (kind, spans) ->
         val named =
-            stated.filter { kind in config.kindsOf(if (it.sleep) PeriodKinds.SLEEP else it.restrictiveKind) }.map(::fullRange)
+            stated.filter {
+                // A break band names its own "No screen" in the bubble.
+                (it.screenBreak && kind == PeriodKinds.NO_SCREEN) ||
+                    kind in config.kindsOf(if (it.sleep) PeriodKinds.SLEEP else it.restrictiveKind)
+            }.map(::fullRange)
         SchedulerDomain.subtractRegions(spans, named).mapNotNull { span ->
             val startHour = ((span.startEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
             val endHour = ((span.endEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
@@ -5509,8 +5513,8 @@ private fun DayColumn(
         }
     // What the account's rules derive from them ("No screen" under both): named in the hover bubble.
     val derivedLayerPeriods =
-        remember(layerBands, periodHits, sleepBands, periodKindConfig, midnightMillis) {
-            derivedLayerPeriods(layerBands, periodHits + sleepBands, periodKindConfig, midnightMillis)
+        remember(layerBands, periodHits, sleepBands, screenBreakMarkers, periodKindConfig, midnightMillis) {
+            derivedLayerPeriods(layerBands, periodHits + sleepBands + screenBreakMarkers, periodKindConfig, midnightMillis)
         }
     // PRD §8: the drawn period boxes — one per stretch over which the same set of periods is in force.
     // Cached on the record list like [overlapLayout], for the same reason: this column recomposes for every
@@ -5596,6 +5600,21 @@ private fun DayColumn(
                         ),
                     ),
                 )
+            }
+            // `docs/scheduler_requirements.md` § *screen breaks*: every break is *"always accompanied by the 'no
+            // screen' period"* — named over the break's own span, with whatever else its kind carries (anomaly
+            // 2026-10-02: a 15-min break ahead of the line read as the break alone).
+            screenBreakMarkers.forEach { band ->
+                val times = placedTimeRange(band, tz)
+                val companions = companionBubbleSections(band.breakKind, periodKindConfig, times)
+                val sections =
+                    if (companions.any { it.kind == CalendarBubbleSection.Kind.NoScreen }) {
+                        companions
+                    } else {
+                        companions +
+                            CalendarBubbleSection(CalendarBubbleSection.Kind.NoScreen, PeriodKinds.periodTitle(PeriodKinds.NO_SCREEN), times)
+                    }
+                sections.forEach { add(BubbleOverlay(band.startHour, band.endHour, it)) }
             }
             // What the rules derive from the layers — "No screen" where both fall — has no drawing of its own.
             derivedLayerPeriods.forEach { period ->

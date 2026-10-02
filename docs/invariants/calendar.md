@@ -889,6 +889,17 @@ Global rules that always apply: `CLAUDE.md`.
   happened there, it keeps its length, and the derived band gives way instead — at rest exactly as the drag's
   preview draws it (`inactivityBandsAfterMove`). Cutting it was the anomaly "a past panel dragged there is cut on
   release": the preview drew the release the reducer makes, and this display clip then cut what was saved.
+- **A SCREEN BREAK'S BUBBLE NAMES THE "NO SCREEN" IT IS ACCOMPANIED BY** (2026-10-02, `contextOverlays`): over
+  each break band's own span, its kind's companions (`companionBubbleSections(breakKind)`) and always "No screen"
+  — the requirements' *"always accompanied by the 'no screen' period"*, the 20 s look-away included, whose kind
+  (`inactivity`) carries nothing by rule.
+- **A SCREEN BREAK LAYS THE LAYERS** (2026-10-02, reversing "a break is the app's, so it brings nothing"): the
+  "no screen" every drawn break is accompanied by counts as STATED (`statedKindRegions(breaks = …)`, `App`'s
+  `displaySidePanels` while `showScreenBreaks` is on), so the account's "when no screen then …" rule
+  (`NO_SCREEN_LAYERS_RULE`) hatches both layers over it — "not on a …" (dotted) where the OS saw that device
+  unlocked, which is a past 20 s break crossed in mode 3. DISPLAY ONLY: the scheduler's periods and
+  `isUserStated` are unchanged, and a materialized break is still never an input to its own placement. The hatch
+  of a break the line drags is laid at the display's quantized instant.
 - **WHAT THE RULES DERIVE FROM THE LAYERS IS NAMED IN THE BUBBLE, AND THE LAYERS GIVE WAY TO A PLACED PANEL IT
   REFUSES** (2026-10-02). Where "no computer unlocked" and "no phone unlocked" both fall, the account's rules
   say "no screen" (`SchedulerDomain.kindsDerivedFromLayers`, i.e. `PeriodKindConfig.closeRegions` over the

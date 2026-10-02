@@ -2400,6 +2400,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         away = mapOf(PeriodKinds.fakeLayerKind(ownLayer) to declaredAwayRegions),
                         knownAbsent = mapOf(PeriodKinds.layerKind(ownLayer) to ownKnownUnlocked),
                         atScreenPast = atScreenPast,
+                        // The breaks drawn: each carries a "no screen" period, which lays the layers like a drawn one.
+                        breaks =
+                            if (schedulerState.showScreenBreaks) {
+                                displaySidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+                            } else {
+                                emptyList()
+                            },
                     )
                 SchedulerDomain.ActivityLayer.entries.flatMap { layer ->
                     val layerLocked =

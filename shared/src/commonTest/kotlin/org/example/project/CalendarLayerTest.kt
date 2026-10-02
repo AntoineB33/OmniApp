@@ -21,6 +21,31 @@ import org.example.project.scheduler.platform.DeviceKind
  */
 class CalendarLayerTest {
 
+    /**
+     * User rule 2026-10-02: a screen break is accompanied by "no screen", so the account's "when no screen then …"
+     * rule lays both layers over it — "not on a computer" where the OS saw the computer unlocked (a 20 s break
+     * crossed in mode 3), "no computer unlocked" where it knows nothing (a break ahead of the line).
+     */
+    @Test
+    fun a_screen_break_lays_both_layers_and_the_fake_one_where_the_device_was_seen_unlocked() {
+        val config = org.example.project.scheduler.domain.PeriodKindConfig.DEFAULT
+        val kinds = org.example.project.scheduler.domain.PeriodKinds
+        val ahead = org.example.project.scheduler.model.TaskTimeRange(1_000_000L, 1_900_000L)
+        val future = SchedulerDomain.statedKindRegions(emptyList(), config, breaks = listOf(ahead))
+        assertEquals(listOf(ahead), future[kinds.NO_SCREEN])
+        assertEquals(listOf(ahead), future[kinds.NO_COMPUTER_UNLOCKED])
+        assertEquals(listOf(ahead), future[kinds.NO_PHONE_UNLOCKED])
+        val past =
+            SchedulerDomain.statedKindRegions(
+                emptyList(), config, knownAbsent = mapOf(kinds.NO_COMPUTER_UNLOCKED to listOf(ahead)), breaks = listOf(ahead),
+            )
+        assertEquals(listOf(ahead), past[kinds.NOT_ON_A_COMPUTER])
+        assertTrue(past[kinds.NO_COMPUTER_UNLOCKED].isNullOrEmpty())
+        assertEquals(listOf(ahead), past[kinds.NO_PHONE_UNLOCKED])
+        // No break, nothing stated.
+        assertTrue(SchedulerDomain.statedKindRegions(emptyList(), config).isEmpty())
+    }
+
     private val HOUR = 3_600_000L
     private val T0 = 1_000_000_000_000L
     private val T4 = T0 + 4 * HOUR
