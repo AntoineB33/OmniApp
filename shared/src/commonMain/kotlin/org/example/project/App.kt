@@ -3804,6 +3804,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 openElementSearch(kind, subject.id)
                             },
                             onEditReminder = { openElementSearch(SearchDomain.Kind.Reminder, it) },
+                            onOpenAppSetting = { openElementSearch(SearchDomain.Kind.AppSetting, it) },
                             // The windows that own a history unit, a task tree, a task relation or a shortcut —
                             // opened if closed and brought to the front either way, never closed by this.
                             onOpenHistory = {

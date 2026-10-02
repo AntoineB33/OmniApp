@@ -23,6 +23,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import org.example.project.scheduler.platform.AlarmTone
+import org.example.project.scheduler.platform.AppVolume
 import org.example.project.scheduler.platform.AlertSound
 import org.example.project.scheduler.platform.Diagnostics
 
@@ -151,6 +152,8 @@ class AlarmRingService : Service() {
         }
         // Loop points are only settable on a filled MODE_STATIC track; -1 = repeat until stopped.
         audioTrack.setLoopPoints(0, frames, -1)
+        // The app's global volume, under the phone's own alarm slider (full when no engine has set it).
+        runCatching { audioTrack.setVolume(AppVolume.level) }
         audioTrack.play()
         return true
     }

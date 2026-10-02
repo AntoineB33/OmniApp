@@ -122,7 +122,10 @@ private fun speakWithTts(text: String, gen: Long) {
         @Deprecated("the parameterless overload is what older engines call")
         override fun onError(utteranceId: String?) { if (utteranceId == id) done.countDown() }
     })
-    val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id) }
+    val params = Bundle().apply {
+        putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id)
+        putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, AppVolume.level)
+    }
     if (engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, id) != TextToSpeech.SUCCESS) return
     val deadline = System.currentTimeMillis() + TTS_MAX_UTTERANCE_MILLIS
     while (gen == generation.get() && System.currentTimeMillis() < deadline) {
@@ -166,6 +169,8 @@ private fun playWavPcm(bytes: ByteArray, gen: Long): Boolean {
     currentTrack = track
     try {
         track.write(wav.data, 0, wav.data.size)
+        // The app's global volume, under the phone's own media slider.
+        runCatching { track.setVolume(AppVolume.level) }
         track.play()
         val totalFrames = wav.data.size / (2 * maxOf(1, wav.channels)) // 16-bit samples
         // A hard cap so a stuck track can't wedge the worker: the clip's duration plus a little slack.

@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: the "app setting" element, "Sound setting" and its global volume — 2026-10-02
+
+A new kind in the element selector, `Kind.AppSetting` ("app setting"), listing `SearchDomain.AppSettingEntry` —
+"Sound setting" for now. Its action "Global volume" is a slider over the new `SchedulerState.soundVolume` (`0..1`,
+default 1; `SetSoundVolume`, persisted as `soundVolume`, merged like the other scalar settings, absent in an older
+payload = full volume). The engine mirrors it to `AppVolume`; the desktop voice (bundled cues, Piper, SAPI) and
+ring, and the phone's cue track, synthesizer and alarm track, play under it. No SQLite or Supabase schema change
+(one more scalar in the synced settings).
+
 ### Calendar: Space turns "Lock to now" on — 2026-10-02
 
 While the calendar holds the keyboard, a plain Space sets "Lock to now" on (`setLockNowLine(true)`, which releases

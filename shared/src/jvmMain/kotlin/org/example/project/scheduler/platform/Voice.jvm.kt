@@ -6,6 +6,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
@@ -174,12 +175,16 @@ private fun playStream(stream: AudioInputStream, generation: Long) {
     line.open(format)
     line.start()
     currentLine = line
+    // What [AppVolume] can scale in place of a line control (which not every mixer offers): Piper's own output.
+    val scalable =
+        format.encoding == AudioFormat.Encoding.PCM_SIGNED && format.sampleSizeInBits == 16 && !format.isBigEndian
     try {
         val buffer = ByteArray(4096)
         while (generation == speechGeneration.get()) {
             val read = stream.read(buffer)
             if (read < 0) break
-            line.write(buffer, 0, read)
+            // The app's global volume, read per chunk so the slider is heard on the phrase being said.
+            line.write(if (scalable) AppVolume.scaledPcm16Le(buffer, read) else buffer, 0, read)
         }
         if (generation == speechGeneration.get()) line.drain()
     } finally {
@@ -217,6 +222,7 @@ private fun speakWithSapi(text: String) {
             "\$en = \$s.GetInstalledVoices() | Where-Object { \$_.Enabled -and \$_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq 'en' } | Select-Object -First 1; " +
             "if (\$en) { \$s.SelectVoice(\$en.VoiceInfo.Name) } " +
             "}; " +
+            "\$s.Volume = ${(AppVolume.level * 100).toInt()}; " +
             "\$s.Speak('$sanitized')",
     ).start()
     currentProcess = process

@@ -182,6 +182,8 @@ class SearchRowOpeners(
      * "+ New …" does ([SearchDomain.Kind.Creation]).
      */
     val onCreate: (SearchDomain.Kind) -> Unit = {},
+    /** An app setting's row (by [SearchDomain.AppSettingEntry] name): the Search window holding it alone. */
+    val onOpenAppSetting: (String) -> Unit = {},
 ) {
     /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
     fun open(state: SchedulerState, result: SearchDomain.Result) {
@@ -205,6 +207,7 @@ class SearchRowOpeners(
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()
             SearchDomain.Kind.Window -> onOpenWindow(item.id)
+            SearchDomain.Kind.AppSetting -> onOpenAppSetting(item.id)
             SearchDomain.Kind.Creation ->
                 SearchDomain.Kind.entries.firstOrNull { it.name == item.id }?.let(onCreate)
         }

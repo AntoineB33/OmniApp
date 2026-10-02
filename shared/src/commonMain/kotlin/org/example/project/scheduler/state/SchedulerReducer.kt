@@ -581,6 +581,10 @@ object SchedulerReducer {
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
             is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis, intent.rules)
             is SchedulerIntent.ForceTaskStart -> reduceForceTaskStart(state, intent.taskId)
+            is SchedulerIntent.SetSoundVolume -> {
+                val volume = if (intent.volume.isNaN()) state.soundVolume else intent.volume.coerceIn(0.0, 1.0)
+                if (state.soundVolume == volume) state else state.copy(soundVolume = volume)
+            }
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)

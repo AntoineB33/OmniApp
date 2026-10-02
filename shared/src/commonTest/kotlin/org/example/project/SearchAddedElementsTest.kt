@@ -212,6 +212,49 @@ class SearchAddedElementsTest {
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.RemindersTimeNow, now, TimeZone.UTC))
     }
 
+    // ----- App settings (user spec 2026-10-02) ----------------------------------------------------
+
+    @Test
+    fun the_sound_setting_is_an_app_setting_element_whose_action_is_the_global_volume() {
+        var s = account()
+        val rows = SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "")
+        assertEquals(listOf("Sound setting" to "volume 100 %"), rows.map { it.name to it.detail })
+        // Found by name like any row, added and resolved like any element.
+        assertEquals(1, SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound").size)
+        val added = SearchDomain.resolve(s, listOf(SearchDomain.keyOf(rows.single())))
+        assertTrue(SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound))
+        assertEquals(
+            listOf(SearchDomain.AddedAction.SoundVolume),
+            SearchDomain.addedActions("", setOf(SearchDomain.Kind.AppSetting)).single { it.first == SearchDomain.Kind.AppSetting }.second,
+        )
+        // The slider's write: clamped, and a setting — no Undo/Redo unit.
+        val before = units(s)
+        s = r(s, SchedulerIntent.SetSoundVolume(0.4))
+        assertEquals(0.4, s.soundVolume)
+        assertEquals("volume 40 %", SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "").single().detail)
+        assertEquals(1.0, r(s, SchedulerIntent.SetSoundVolume(7.0)).soundVolume)
+        assertEquals(0.0, r(s, SchedulerIntent.SetSoundVolume(-1.0)).soundVolume)
+        assertEquals(before, units(s))
+    }
+
+    @Test
+    fun the_global_volume_survives_a_save_and_a_payload_without_it_is_at_full_volume() {
+        val saved = org.example.project.scheduler.persistence.SchedulerStateCodec.encode(SchedulerState.empty().copy(soundVolume = 0.25))
+        assertEquals(0.25, org.example.project.scheduler.persistence.SchedulerStateCodec.decode(saved)!!.soundVolume)
+        // What the build before 2026-10-02 wrote: no such field.
+        val legacy = org.example.project.scheduler.persistence.SchedulerStateCodec.decode("""{"rootListId":"list/main","lists":[],"cells":[],"tasks":[]}""")!!
+        assertEquals(1.0, legacy.soundVolume)
+    }
+
+    @Test
+    fun the_volume_scales_16_bit_samples_and_never_writes_to_the_shared_array() {
+        val pcm = byteArrayOf(0x00, 0x40, 0x00, 0xC0.toByte()) // 16384, -16384
+        val half = org.example.project.scheduler.platform.AppVolume.scaledPcm16Le(pcm, level = 0.5f)
+        assertEquals(listOf<Byte>(0x00, 0x20, 0x00, 0xE0.toByte()), half.toList())
+        assertEquals(listOf<Byte>(0x00, 0x40, 0x00, 0xC0.toByte()), pcm.toList())
+        assertTrue(org.example.project.scheduler.platform.AppVolume.scaledPcm16Le(pcm, level = 1f) === pcm)
+    }
+
     // ----- Reset of the default periods (user rule 2026-10-01) -------------------------------------
 
     private fun periodKeys(state: SchedulerState, vararg kinds: String): List<String> =

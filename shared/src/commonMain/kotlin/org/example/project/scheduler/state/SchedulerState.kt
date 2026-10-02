@@ -654,6 +654,12 @@ data class SchedulerState(
      */
     val automaticSchedule: Boolean = true,
     /**
+     * The app's **global volume** in `0..1` (user spec 2026-10-02): how loud every sound the app itself makes is —
+     * the voice and an alarm's or a timer's ring — under the device's own volume. The Search window's "Sound
+     * setting" element holds its slider. A setting: persisted and synced (defaults to full), not undoable.
+     */
+    val soundVolume: Double = 1.0,
+    /**
      * PRD §7 the window the user is currently focused on — any window of the app, the task tree included.
      * Every history chord is relative to it (PRD §5/§6), each unit is stamped with it, and it gates which
      * surface catches letter typing (PRD §8). Persisted with the rest of the app state.

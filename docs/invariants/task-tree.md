@@ -679,6 +679,14 @@ titles" figure: the Search window and the per-object windows its rows open repla
   `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's
   `timeOfDayMinutes` becomes the clock's, to the minute, as ONE list edit through the list's own intent (`SetAlarms`,
   `SetChores`) — an alarm's days, and an isolated ring's date, are left alone; none to change is no intent.
+- **"app setting" is a kind too** (`Kind.AppSetting`, user spec 2026-10-02): one row per `SearchDomain.AppSettingEntry`
+  — "Sound setting" is the first — added and opened like any element (its row opens the Search window holding it
+  alone), and its controls are ACTIONS on the added elements: "Global volume" (`AddedAction.SoundVolume`) is a slider
+  over `SchedulerState.soundVolume`, enabled while the sound setting is added, written on release
+  (`SchedulerIntent.SetSoundVolume` — a setting: persisted, synced, not an Undo/Redo unit). The engine mirrors it to
+  `platform/AppVolume`, which the players read: the desktop voice and ring scale their own 16-bit samples
+  (`scaledPcm16Le`, never the shared tone cycle), the phone sets the track's and the synthesizer's volume. A new
+  setting is one more `AppSettingEntry` and its actions — never a window of its own.
 - **The element edit windows' sections are actions** (2026-10-01): a period's drawing (one drop-down over every added
   period), combinations (each period's own section), "Search its tasks" (`resilienceSearchConfig`) and Delete (the
   account's own periods only); a category's "Name and rules" (`CategoryEditor`); a task's "Paths" (each place, ✕ but

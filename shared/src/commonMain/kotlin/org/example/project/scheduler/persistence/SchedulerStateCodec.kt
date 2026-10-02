@@ -542,6 +542,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
+            soundVolume = soundVolume,
             chores = chores.map { it.toPersisted() },
             alarms = alarms.map { it.toPersisted() },
             // PRD §18 Timers: the run state rides along with the settings — `endsAtMillis` is an absolute
@@ -1176,6 +1177,7 @@ object SchedulerStateCodec {
                 },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
+            soundVolume = soundVolume,
             chores = SchedulerDomain.assignReminderIds(
                 chores.map { it.toChoreEntry() },
             ),
@@ -1599,6 +1601,8 @@ private data class PersistedState(
     val nextPanelCounter: Int = 0,
     // PRD §7: default on keeps auto-scheduling running for payloads written before the switch existed.
     val automaticSchedule: Boolean = true,
+    // The app's global volume: full for a payload written before the setting existed (2026-10-02).
+    val soundVolume: Double = 1.0,
     // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
     val chores: List<PersistedChoreEntry> = emptyList(),
     // PRD §18: a missing alarm list decodes to empty (payloads written before the Alarms window existed).

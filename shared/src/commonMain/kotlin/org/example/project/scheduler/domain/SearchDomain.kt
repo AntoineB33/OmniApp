@@ -110,6 +110,12 @@ object SearchDomain {
         Shortcut("keyboard shortcut"),
 
         /**
+         * A setting of the app itself (user spec 2026-10-02): one row per [AppSettingEntry] — "Sound setting" is the
+         * first — whose actions on the added elements are the setting's controls (the global volume slider).
+         */
+        AppSetting("app setting"),
+
+        /**
          * A window of the app, open or not ([WindowEntry]): what the rows name is not in the account's state but
          * in `App`'s windows, which hands the list in ([results]'s `windows`).
          */
@@ -686,6 +692,7 @@ object SearchDomain {
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
         RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
+        AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),
         CreationSort(Kind.Creation, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
@@ -1306,6 +1313,9 @@ object SearchDomain {
                 Kind.Creation -> CREATABLE.map { made ->
                     ItemResult(kind, made.name, "New " + made.label, creationDetail(made))
                 }
+                Kind.AppSetting -> AppSettingEntry.entries.map { setting ->
+                    ItemResult(kind, setting.name, setting.title, appSettingDetail(state, setting))
+                }
             }
         return items
             .mapNotNull { item -> matchRank(item.name, query)?.let { it to item } }
@@ -1550,10 +1560,32 @@ object SearchDomain {
                     tri(filters.shortcutRebound, binding != shortcut.defaultBinding)
                 }
                 Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
-                Kind.Creation -> true
+                Kind.Creation, Kind.AppSetting -> true
             }
         }
     }
+
+    /**
+     * The app's settings the Search window lists ([Kind.AppSetting]) — each one an element whose actions are its
+     * controls. Named by [name] in a row's id, so a new one is one more entry here.
+     */
+    enum class AppSettingEntry(val title: String) {
+        /** How loud the app's own sounds are: [SchedulerState.soundVolume], the "Global volume" action's slider. */
+        Sound("Sound setting"),
+    }
+
+    /** What an [AppSettingEntry]'s row says beside its name: where the setting stands. */
+    private fun appSettingDetail(state: SchedulerState, setting: AppSettingEntry): String =
+        when (setting) {
+            AppSettingEntry.Sound -> "volume " + volumePercent(state.soundVolume) + " %"
+        }
+
+    /** A volume in `0..1` as a whole percentage. */
+    fun volumePercent(volume: Double): Int = kotlin.math.round(volume.coerceIn(0.0, 1.0) * 100).toInt()
+
+    /** Whether the app setting [setting] is among the [added] elements — what enables its actions. */
+    fun appSettingAdded(added: List<Result>, setting: AppSettingEntry): Boolean =
+        added.any { it is ItemResult && it.kind == Kind.AppSetting && it.id == setting.name }
 
     /**
      * The calendar's boxes, gathered once per [results] and only when a calendar filter is on: a task's are
@@ -1783,6 +1815,8 @@ object SearchDomain {
         // The time of day put on the clock's (user rule 2026-10-02): every added alarm, every added reminder.
         AlarmTimeNow(Kind.Alarm, "Set to the current time"),
         ReminderTimeNow(Kind.Reminder, "Set to the current time"),
+        /** The sound setting's slider ([AppSettingEntry.Sound], [SchedulerIntent.SetSoundVolume]). */
+        SoundVolume(Kind.AppSetting, "Global volume"),
         TimerRun(Kind.Timer, "Run"),
         TimerEdit(Kind.Timer, "Edit"),
         ChronoRun(Kind.Chrono, "Run"),

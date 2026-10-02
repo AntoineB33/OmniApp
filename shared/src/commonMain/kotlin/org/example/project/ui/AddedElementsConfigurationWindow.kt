@@ -457,6 +457,21 @@ private fun AddedActionEditor(
             FrameButton("Now", enabled = added.any { it.kind == SearchDomain.Kind.Reminder }) {
                 run(SearchDomain.AddedCommand.RemindersTimeNow)
             }
+        // The sound setting's control: the app's global volume. Written on release, so a drag is one write.
+        SearchDomain.AddedAction.SoundVolume -> {
+            val enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound)
+            var draft by remember(state.soundVolume) { mutableStateOf(state.soundVolume.toFloat()) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.Slider(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    onValueChangeFinished = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetSoundVolume(draft.toDouble()))) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("${SearchDomain.volumePercent(draft.toDouble())} %", style = MaterialTheme.typography.labelMedium)
+            }
+        }
         SearchDomain.AddedAction.TimerRun ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SearchDomain.RunStep.entries.forEach { step ->

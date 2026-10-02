@@ -975,6 +975,11 @@ sealed interface SchedulerIntent {
         val nowMillis: Long,
     ) : SchedulerIntent
 
+    /** The app's global volume ([SchedulerState.soundVolume]), clamped to `0..1`. Persisted; not undoable. */
+    data class SetSoundVolume(
+        val volume: Double,
+    ) : SchedulerIntent
+
     /** PRD §7 Automatic Schedule Switch: enable/disable auto-scheduling. Persisted; not undoable. */
     data class SetAutomaticSchedule(
         val enabled: Boolean,

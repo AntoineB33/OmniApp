@@ -57,6 +57,7 @@ import org.example.project.scheduler.persistence.SleepGapRecord
 import org.example.project.scheduler.persistence.DeclaredAwaySpanRecord
 import org.example.project.scheduler.persistence.DeclaredAwayStore
 import org.example.project.scheduler.persistence.SleepScanCheckpointStore
+import org.example.project.scheduler.platform.AppVolume
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.platform.DeviceSleepGap
 import org.example.project.scheduler.platform.Diagnostics
@@ -930,6 +931,7 @@ class SchedulerEngine(
         // The voice switch's mute holds from the first instant, the catch-up of a stretch the app did not run in
         // included: a phrase queued then is as much the user's to silence.
         launchVoiceSwitchMute()
+        launchSoundVolume()
         val gap = notRunningGap()
         if (gap == null) startRunning()
         else scope.launch {
@@ -3482,6 +3484,14 @@ class SchedulerEngine(
      * platform's ([speak] returns at once and the worker says them in turn), so what was handed to it before the
      * flip is cut here ([stopSpeech]). Event-driven: the switch's own edge, whichever device flipped it (it syncs).
      */
+    /**
+     * The account's global volume, handed to the platform players ([AppVolume]) on every change — event-driven: the
+     * slider's own edge, whichever device moved it (it syncs).
+     */
+    internal fun launchSoundVolume() = scope.launch {
+        vm.state.map { it.soundVolume }.distinctUntilChanged().collect { AppVolume.level = it.toFloat() }
+    }
+
     internal fun launchVoiceSwitchMute() = scope.launch {
         vm.state.map { it.notificationVoiceEnabled }.distinctUntilChanged().collect { on ->
             if (!on) {

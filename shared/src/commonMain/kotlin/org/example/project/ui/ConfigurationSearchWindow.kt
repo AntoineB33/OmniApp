@@ -320,7 +320,8 @@ private fun SettingEditor(
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort,
         SearchDomain.Setting.ReminderSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
-        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WindowSort, SearchDomain.Setting.CreationSort,
+        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.WindowSort,
+        SearchDomain.Setting.CreationSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
     }
 }

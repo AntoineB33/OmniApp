@@ -64,7 +64,8 @@ private fun playAlarmTone(soundSeconds: Int, sound: AlertSound, generation: Long
         var written = 0
         while (written < totalBytes && generation == alarmGeneration.get()) {
             val chunk = min(cycle.size, totalBytes - written)
-            line.write(cycle, 0, chunk)
+            // The app's global volume, read per cycle; the shared cycle itself is never written to.
+            line.write(AppVolume.scaledPcm16Le(cycle, chunk), 0, chunk)
             written += chunk
         }
         if (generation == alarmGeneration.get()) line.drain()
