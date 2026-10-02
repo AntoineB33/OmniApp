@@ -15,7 +15,9 @@ clock) and, in the same call, the account's `data_payload_sent` row back to `fal
 
 The FIRST beat goes out at login — the engine samples its activity beat on the signed-out→signed-in edge of
 the sync-moment stream, rather than waiting up to one 30-s activity beat. Driven from the engine's
-active-session beat via `DeviceHeartbeatPublisher.updatePresence()`.
+active-session beat via `DeviceHeartbeatPublisher.updatePresence()`. (Since 2026-10-02 only the phone has a beat:
+elsewhere `updatePresence` runs on the activity edges and whenever the break machine steps — `presenceDirty`,
+published by `interpretTo` — so the dues are told to the server when they change rather than every 30 s.)
 
 **The presence row is `{ account, device, time of upsert }` and NOTHING else.** Since `20260726000000` the
 device id is the whole request body; the break window and the device `kind` moved to the event-driven

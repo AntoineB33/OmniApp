@@ -147,7 +147,8 @@ Global rules that always apply: `CLAUDE.md`.
   built out of it and the §9 record bank all went quiet over a stretch `t_p` had just been in mode 3 for. The
   server's `away_spans` is not a substitute — it is the ACCOUNT's record, it is best-effort (it had been
   504-ing all session), and nothing on the display path reads it back. One row per episode keyed by its
-  START, extended in place by the 30-s active-session beat and never by a timer of its own, so a kill
+  START, extended in place by the advance tick (`SchedulerEngine.boundOpenSession`; the phone's lease beat on a phone)
+  and never by a timer of its own, so a kill
   mid-away lands the episode closed at its last beat exactly as a live `device_active_session` row does.
   LOCAL-ONLY, pruned to the same 24 h window the no-screen evidence answers over.
 - **A HATCH THE LOCK LOG CONTRADICTS IS "NOT ON A COMPUTER" (OR PHONE) — WHOEVER SAID IT**

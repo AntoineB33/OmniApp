@@ -266,6 +266,31 @@ class TaskTreeTimelineTest {
         )
     }
 
+    @Test
+    fun the_watch_is_armed_for_the_very_instant_the_trigger_next_moves_and_for_nothing_without_a_dated_tree() {
+        // `docs/scheduler_requirements.md` § *Rule Structure*: the watch sleeps until an armed instant instead of
+        // looking again every minute — so the instant it is armed for must never fall AFTER the key has moved.
+        val s0 = twoKeyframes()
+        val now = t0 + day
+        val s = s0.copy(panels = SchedulerDomain.fillSchedule(s0, now, horizonMillis = now + day))
+        val samples = (0..2_000).map { now + it * (12L * 60 * 60 * 1000 / 2_000) }
+        val keys = samples.map { SchedulerDomain.taskTreeBlendDecisionKey(s, it) }
+        val changes = samples.zip(keys).zipWithNext().filter { (x, y) -> x.second != y.second }
+        assertTrue(changes.isNotEmpty(), "the transition must move the trigger")
+        for ((x, y) in changes) {
+            val armed = SchedulerDomain.nextTaskTreeBlendWakeMillis(s, x.first)
+            assertTrue(armed != null && armed > x.first && armed <= y.first, "armed for $armed, the key moved by ${y.first}")
+        }
+        // Before the first keyframe nothing is interpolated: the next thing that can happen is that keyframe.
+        val first = SchedulerDomain.datedTaskTrees(s).first().dateMillis!!
+        assertEquals(first, SchedulerDomain.nextTaskTreeBlendWakeMillis(s, first - day))
+        // Past the last one, and on an account with no dated tree, nothing is armed at all.
+        val last = SchedulerDomain.datedTaskTrees(s).last().dateMillis!!
+        assertEquals(null, SchedulerDomain.nextTaskTreeBlendWakeMillis(s, last + day))
+        val plain = SchedulerReducer.reduce(stateWithTasks("A"), SchedulerIntent.CreateTaskTree("Only"))
+        assertEquals(null, SchedulerDomain.nextTaskTreeBlendWakeMillis(plain, t0))
+    }
+
     // ---- the intents ---------------------------------------------------------------------------
 
     @Test

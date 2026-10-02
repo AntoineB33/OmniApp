@@ -79,6 +79,8 @@ fun ConfigurationSearchWindow(
     /** The Search window's configuration — what this window edits. */
     config: SearchDomain.Config,
     onConfigChange: (SearchDomain.Config) -> Unit,
+    /** The configuration that Search window opened with — what its Reset, listed here, goes back to first. */
+    openedConfig: SearchDomain.Config? = null,
     /** This window's own configuration: which configurations it lists. */
     own: SearchDomain.ConfigurationSearch,
     onOwnChange: (SearchDomain.ConfigurationSearch) -> Unit,
@@ -176,7 +178,7 @@ fun ConfigurationSearchWindow(
                         color = MaterialTheme.colorScheme.primary,
                     )
                     for (setting in settings) {
-                        SettingRow(setting.label) { SettingEditor(state, setting, config, onConfigChange) }
+                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange) }
                     }
                 }
             }
@@ -205,6 +207,7 @@ private fun SettingEditor(
     state: SchedulerState,
     setting: SearchDomain.Setting,
     config: SearchDomain.Config,
+    openedConfig: SearchDomain.Config?,
     onChange: (SearchDomain.Config) -> Unit,
 ) {
     val f = config.filters
@@ -222,10 +225,10 @@ private fun SettingEditor(
             KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) })
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
         // clears this window's search instead.
-        SearchDomain.Setting.ResetSearch ->
-            ResetButton(enabled = config.query.isNotEmpty() || config.kinds.isNotEmpty()) {
-                onChange(config.copy(query = "", kinds = emptySet()))
-            }
+        SearchDomain.Setting.ResetSearch -> {
+            val reset = SearchDomain.resetConfig(config, openedConfig)
+            ResetButton(enabled = reset != config) { onChange(reset) }
+        }
         // The calendar filter: its switch, the instant, and — only for a window the calendar's "add…" opened — the
         // button that puts the instant back on that right-click.
         SearchDomain.Setting.CalendarAdd ->

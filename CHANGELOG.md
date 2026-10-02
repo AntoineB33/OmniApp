@@ -11,6 +11,42 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: Reset goes back to the opening configuration, then to the default one — 2026-10-02
+
+Reset cleared the search text and unticked every type, leaving the filters and the added elements. It now restores
+the WHOLE configuration the window opened with while it has changed since (`SearchDomain.resetConfig`, `App`'s
+`searchOpenedConfigs`) — a window the calendar's "edit…" opened goes back to the elements at the right-click — and
+puts the default configuration (tasks, no filter, nothing added) when it has not. The Configuration Search window's
+"Reset" setting (was "Reset text and types") is the same rule. The opening configuration is Compose-only. No state,
+SQLite or Supabase change.
+
+### Engine: the activity beat is gone off the phone, and the OS lock history is read on screen edges — 2026-10-02
+
+Second step of the same audit. **The beat** (`launchActiveSessionTracking`, every 30 s) re-sampled the lock signal,
+rewrote the open session row, re-published the whole row list (re-keying the calendar's derived-gap memo) and
+recomputed the break dues for the server. Lock/unlock already reach the engine as OS events
+(`onPlatformActivityChanged`), so off the phone the loop is removed: one sample at launch; a session slept through is
+closed by the advance tick's wake detection; the open session's stored end (the bound on an unclean stop, and what a
+sync pushes to peers) is written by the advance tick (`boundOpenSession`, no list re-publish); the dues are published
+when the break machine steps (`presenceDirty`). The phone keeps its one-minute lease beat — foreground has no reliable
+closing event. **The scans**: `launchNoScreenEvidenceScan` and `App`'s layer scan each launched a PowerShell process
+every ten minutes; both are now keyed on the new `SchedulerEngine.screenEdges` (launch, lock, unlock, wake, "I'm
+away"), and the layer scan's floor is quantized to a day. Verified live on a copy of the release DB: one scan of each
+kind at launch, the session end advancing every tick. (That run caught `lastSessionBoundRealMillis = Long.MIN_VALUE`
+overflowing the age test so the row was never written — initialised to 0.) Still on a timer: the 30 s advance tick.
+No state, SQLite or Supabase change.
+
+### Engine: the task-tree blend watch and the horizon watcher sleep until their armed instant — 2026-10-02
+
+Audit against `docs/scheduler_requirements.md` § *Rule Structure* ("No Global Lookups", "advances a forward cursor to
+the next armed trigger point"). Two engine loops woke on a timer whether or not anything was due:
+`launchTaskTreeBlendReschedule` at least every 60 s (`TASK_TREE_BLEND_POLL_MILLIS`, removed), scanning all of
+`state.panels` each time even with no dated tree; `launchHorizonReschedule` every 30 s to ask whether its due instant
+had come. Both now sleep until the instant itself (new `SchedulerEngine.sleepUntil`, exact in the clock's own time
+base and woken by a clock reconfiguration; new `SchedulerDomain.nextTaskTreeBlendWakeMillis`) and are re-armed by
+what can move it. Left as it was, and named as such: the 30 s advance tick (it also detects device sleep, bounds the persisted
+line position and kicks the cue sweep). The activity beat and the OS lock-log scan are the entry above. No state, SQLite or Supabase change.
+
 ### Windows: the window the app was left on has the focus again after a relaunch — 2026-10-02
 
 Anomaly: *"I open the calendar, then click on account3-deploy-windows-offline.bat, but the calendar is not in focus"*.

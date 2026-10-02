@@ -260,8 +260,10 @@ question and stays bounded by the visible window (above): `App.kt`'s display sle
 
 ### The two engine loops that keep it honest
 
-**`launchHorizonReschedule`** re-evaluates `horizonRefillDueMillis(panels, now, displayedEnd)` on every pass and
-sleeps until that instant (never longer than one poll, so a scroll or a clock-speed change is noticed). It is due
+**`launchHorizonReschedule`** evaluates `horizonRefillDueMillis(panels, now, displayedEnd)` when it is armed and
+sleeps until that instant (`sleepUntil`; until 2026-10-02 it woke at least every 30 s to ask again). What can move
+the instant re-arms it instead: a new plan, the week's rollover, the fill in flight finishing, a clock-speed change;
+a scroll that shows more is `launchCalendarHorizonReschedule`'s. It is due
 when the plan covers only one floor ahead of the line, or when the calendar shows further than the plan reaches.
 With the calendar closed it fires once per ten minutes.
 

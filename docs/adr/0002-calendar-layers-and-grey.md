@@ -185,7 +185,8 @@ Do not reintroduce either. If a layer looks wrong, the question is what the OS s
 
 - `displayFloorMillis` (grows as the user scrolls back — "if the user looks further in the past it will
   ask the device"), and
-- a coarse `nowMillis / LOCK_HISTORY_REFRESH_MILLIS` bucket (10 min), so standby entered while the
+- (until 2026-10-02; since then the scan is keyed on `SchedulerEngine.screenEdges` — a lock, an unlock, a wake, an
+  "I'm away" press — and a day-quantized floor, not on a timer) a coarse `nowMillis / LOCK_HISTORY_REFRESH_MILLIS` bucket (10 min), so standby entered while the
   calendar is open is picked up without a query per tick.
 
 **Never on the display cadence** — see ADR 0009 (hot-path rule).

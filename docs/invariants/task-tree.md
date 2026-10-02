@@ -22,7 +22,10 @@ Global rules that always apply: `CLAUDE.md`.
 - **The one sanctioned exception to "time never re-plans"** — and only because it is **boundary-driven**: inside a
   transition the plan holds the exact rule state at the line and is re-made when the line reaches the start of a
   run it placed (`SchedulerDomain.taskTreeBlendDecisionKey`, `SchedulerEngine.launchTaskTreeBlendReschedule`),
-  so a transition costs one fill per run it spans. The former 100-step cursor is gone: its steps did not line up
+  so a transition costs one fill per run it spans. The watch **sleeps until its next armed instant**
+  (`nextTaskTreeBlendWakeMillis`: the next run start or keyframe) and arms nothing with no dated tree; a
+  re-arming (the plan or the trees changed) never compares the key — only reaching the instant does, or the
+  watch would answer its own fill. The former 100-step cursor is gone: its steps did not line up
   across two transitions of the same slope, which broke the requirements' two-scenario example. Do not
   reintroduce a per-tick or a stepped form.
 
@@ -690,11 +693,17 @@ titles" figure: the Search window and the per-object windows its rows open repla
   type itself when it needs no object.
 - **The Configuration Search window lists EVERY configuration of the Search window, drawn the way that window
   draws it** — the type selector is the same field with a drop-down (`KindsDropDown`), and the Search window's
-  Reset is a setting of its own (`Setting.ResetSearch`, "Reset text and types"), distinct from the Configuration
+  Reset is a setting of its own (`Setting.ResetSearch`, "Reset"), distinct from the Configuration
   Search window's own Reset in its top section.
-- **Each window's Reset (`ResetButton`) clears ITS OWN search field and types** — never the filters (they
-  have their own window and a counter), and the Configuration Search window's never touches the Search
-  window's configuration it lists.
+- **The Search window's Reset goes back to the configuration it OPENED with, then to the default one** (user rule
+  2026-10-02, `SearchDomain.resetConfig` — the one rule for the window's button and the `ResetSearch` setting): while
+  the configuration differs from the opening one, a click restores that one WHOLE (text, types, filters, sorts, added
+  elements — the calendar's "edit…" list comes back); when it does not, a click puts the default `Config()`; greyed
+  when that changes nothing. The opening configuration is `App`'s `searchOpenedConfigs` (Compose-only): what the
+  window's row held when it opened (`openNewWindow`, a ⧉ copy), re-taken when the calendar's "add…"/"edit…" moves an
+  existing window to a new right-click, and — for a window still open at a restart — what it held then.
+- **The configuration windows' Reset (`ResetButton`) clears ITS OWN search field and types**, and never touches the
+  Search window's configuration it lists.
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
   `SectionSeparator` + `draggedSplit`, each section kept above a minimum), and **their joint drags both at once**

@@ -1101,6 +1101,24 @@ object SchedulerDomain {
         return 31L * result + decided
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *Rule Structure*: **the next ARMED instant of the task-tree timeline** —
+     * the first moment after [nowMillis] at which [taskTreeBlendDecisionKey] can move, or null when it never
+     * will under this state (no dated tree, or the line is past the last keyframe).
+     *
+     * Outside a transition the key moves only at the next keyframe, which is a date the trees themselves hold.
+     * Inside one it also moves where the line reaches the start of the next run the plan placed
+     * ([nextDecisionMillis]). That is one reading of the plan PER ARMING — when the trees or the plan change, or
+     * when the armed instant is reached — never a poll: before the instant it names, nothing is asked at all.
+     */
+    fun nextTaskTreeBlendWakeMillis(state: SchedulerState, nowMillis: Long): Long? {
+        val blend = taskTreeBlendAt(state, nowMillis) ?: return null
+        val nextKeyframe =
+            datedTaskTrees(state).asSequence().mapNotNull { it.dateMillis }.filter { it > nowMillis }.minOrNull()
+        if (blend.isSingle) return nextKeyframe
+        return listOfNotNull(nextDecisionMillis(state, nowMillis), nextKeyframe).minOrNull()
+    }
+
     /** The next run start the plan placed after [nowMillis] — where [taskTreeBlendDecisionKey] next moves. */
     fun nextDecisionMillis(state: SchedulerState, nowMillis: Long): Long? =
         state.panels.asSequence()

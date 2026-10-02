@@ -252,6 +252,8 @@ fun SearchWindow(
      */
     config: SearchDomain.Config,
     onConfigChange: (SearchDomain.Config) -> Unit,
+    /** The configuration this window opened with — what Reset goes back to first ([SearchDomain.resetConfig]). */
+    openedConfig: SearchDomain.Config? = null,
     /**
      * Open with the type selector deployed (the calendar's "add…", user rule 2026-10-01): a one-shot — the drop-down
      * opens once and [onKindsDeployed] takes the request back.
@@ -623,11 +625,10 @@ fun SearchWindow(
                     deploy = deployKinds,
                     onDeployed = onKindsDeployed,
                 )
-                // Clears the bar and unticks every type. The filters are left alone: they have their own window,
-                // and the button beside it says how many are on.
-                ResetButton(enabled = query.isNotEmpty() || kinds.isNotEmpty()) {
-                    onConfigChange(config.copy(query = "", kinds = emptySet()))
-                }
+                // Back to the configuration the window opened with while it has changed since, else to the default
+                // one (`SearchDomain.resetConfig`).
+                val reset = SearchDomain.resetConfig(config, openedConfig)
+                ResetButton(enabled = reset != config) { onConfigChange(reset) }
             }
             // Every configuration of this window, in a window of its own — the filters per kind among them. The
             // count says how many filters are narrowing the list right now, which nothing else here shows.
@@ -973,8 +974,9 @@ private fun KindSection(kind: SearchDomain.Kind) {
 }
 
 /**
- * The configuration section's **Reset**: clears the search field and unticks every type. One button for the
- * Search window and the Configuration Search window; greyed while there is nothing to clear.
+ * The configuration section's **Reset**. One button for the Search window (back to the configuration it opened
+ * with, else the default one) and the configuration windows (their own search field and types cleared); greyed
+ * while there is nothing to reset.
  */
 @Composable
 internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {

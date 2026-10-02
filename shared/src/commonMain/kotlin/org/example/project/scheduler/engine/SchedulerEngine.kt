@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.runningFold
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,12 +114,6 @@ private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 // that the calendar visibly answers the edit. Sim time, like every other engine delay: an accelerated clock
 // is meant to reach the next fill sooner, not to change how many fills a burst produces.
 private const val RESCHEDULE_DEBOUNCE_MILLIS: Long = 1_000
-
-// The longest the task-tree timeline's decision-boundary watch sleeps (see [launchTaskTreeBlendReschedule]).
-// Not a re-plan cadence: a fill happens only when the line crosses the start of a run inside a transition, and
-// the watch sleeps until that start; this only bounds how late a start the plan has since moved is noticed.
-// Sim time like every other engine delay.
-private const val TASK_TREE_BLEND_POLL_MILLIS: Long = 60_000
 
 // `docs/scheduler_requirements.md` § *Progressive Calculation*: the first stage of a progressive fill
 // ([SchedulerEngine.dispatchProgressivePlan]); every next stage reaches twice as far, up to $t_goal$.
@@ -240,7 +235,11 @@ private const val LOCAL_DEVICE_ID: String = "local"
 // tracks the same `now` the schedule does. The beat NEVER talks to the server — opens, extends and finalizes
 // are all local-only; the rows ride the next reconcile, whichever trigger fires it.
 private const val ACTIVE_SESSION_BEAT_MILLIS_SIM: Long = 1_000
-private const val ACTIVE_SESSION_BEAT_MILLIS_PROD: Long = 30L * 1_000
+
+// How often, in REAL time, the advance tick writes the open session's end to the local store while accelerated
+// ([SchedulerEngine.boundOpenSession]) — the tick itself runs every 50 ms there, and a row write per display frame
+// would buy nothing. At 1x the tick's own cadence is the bound.
+private const val SESSION_BOUND_REAL_MILLIS_ACCEL: Long = 1_000
 
 // The PHONE's activity model: the app being in the FOREGROUND is the only activity signal, expressed as a
 // one-minute LEASE — each beat (every [PHONE_SESSION_LEASE_MILLIS] in production) claims activity from `now`
@@ -312,7 +311,6 @@ private const val PAST_SLEEP_CHECK_REACH_MILLIS: Long = 2L * 24L * 60L * 60L * 1
  * [SchedulerReducer.noScreenEvidence]. Reading it costs a process launch (a PowerShell query on Windows), so it
  * is emphatically NOT on the advance cadence — 10 min, the same bucket the calendar's own layer scan uses.
  */
-private const val NO_SCREEN_EVIDENCE_REFRESH_MILLIS: Long = 10L * 60 * 1000
 
 /**
  * PRD §9/§12: how far back the engine asks about. The evidence only has to cover the span still waiting to be
@@ -774,6 +772,31 @@ class SchedulerEngine(
     // sample, so an engine that starts on a locked device has no phantom edge to answer.
     private val lastScreenSignal = MutableStateFlow<Boolean?>(null)
 
+    /**
+     * `docs/scheduler_requirements.md` § *Rule Structure*: **the instants at which what the OS recorded about this
+     * device's screen can have changed** — a lock or an unlock the platform announced, a wake from device sleep, an
+     * "I'm away" press. A counter, so that each one is an event a reader can wait on.
+     *
+     * It is what the two readers of the OS lock history are armed by — the no-screen evidence
+     * ([launchNoScreenEvidenceScan]) and the calendar's layers (`App.kt`) — in place of the ten-minute timer each
+     * of them ran: the history only grows at these instants, and the read costs a process launch.
+     */
+    private val _screenEdges = MutableStateFlow(0L)
+    val screenEdges: StateFlow<Long> = _screenEdges.asStateFlow()
+
+    private fun noteScreenEdge() {
+        // From the platform's own notification thread as well as the engine's: an atomic bump.
+        _screenEdges.update { it + 1 }
+    }
+
+    // The break dues the server holds may be stale: the break machine stepped, or its inputs were rebuilt. Published
+    // at the interpreter's next pass ([interpretTo]) — the event the beat used to stand in for.
+    private var presenceDirty = false
+
+    // The real instant the open session's end was last written by the advance tick ([boundOpenSession]).
+    // (0, not MIN_VALUE: the age is a subtraction, and `realNow - MIN_VALUE` overflows into "just written".)
+    private var lastSessionBoundRealMillis = 0L
+
     // PRD §7: a §9 calculation event that comes due while "Auto schedule" is off is deferred and coalesced
     // into a single reschedule fired when the switch is turned back on.
     private var pendingReschedule = false
@@ -876,7 +899,7 @@ class SchedulerEngine(
         // a stored anchor. There is no stored anchor: nothing seeds, serves or advances a `lastRest` any
         // more (ADR 0003).
         // PRD §9/§12: what the DEVICES observed about whether anyone was at a screen, feeding §9's "assume
-        // nothing happened" rule. Cached, because reading it is a process launch; refreshed on a coarse bucket
+        // nothing happened" rule. Cached, because reading it is a process launch; refreshed at every screen edge
         // by [launchNoScreenEvidenceScan] below and read here synchronously by every banking reducer path.
         SchedulerReducer.noScreenEvidence = { _noScreenEvidence.value }
         SchedulerReducer.liveRestGap = {
@@ -1278,6 +1301,26 @@ class SchedulerEngine(
         withTimeoutOrNull(millis) { sim.reconfigured.first { it != gen } }
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *Rule Structure*: **sleep until the clock reads [atMillis]** — the wait of a
+     * routine that knows its next armed instant, as opposed to [tickDelay]'s "look again in a while". Exact in the
+     * clock's own time base (an accelerated clock reaches the instant sooner), and woken early when the clock is
+     * reconfigured (a speed change, a leap), since the instant then falls somewhere else in real time; the caller
+     * re-reads the clock and arms again.
+     */
+    private suspend fun sleepUntil(atMillis: Long) {
+        val remaining = (atMillis - clock.nowMillis()).coerceAtLeast(1L)
+        val sim = clock as? SimAppClock ?: return delay(remaining)
+        val gen = sim.reconfigured.value
+        val speed = sim.speed
+        if (speed <= 0.0) {
+            // A stopped clock reaches nothing: only its being set going again can.
+            sim.reconfigured.first { it != gen }
+            return
+        }
+        withTimeoutOrNull((remaining.toDouble() / speed).toLong().coerceAtLeast(1L)) { sim.reconfigured.first { it != gen } }
+    }
+
     // PRD §9: the single "time has advanced to `now`" step — see the original `advanceTo` in App.kt. Moves the
     // display now-line AND advances the schedule (the leap/device-sleep path wants both at once).
     internal fun advanceTo(now: Long) {
@@ -1456,6 +1499,8 @@ class SchedulerEngine(
     private fun noteScreenSignal() {
         val signal = screenActive()
         val previous = lastScreenSignal.getAndUpdate { signal }
+        // A real edge (not the first reading): the OS lock history has a new entry to be read.
+        if (previous != null && previous != signal) noteScreenEdge()
         // A lock is a LEVEL (the fake period cannot stand beside the real one at all); an unlock is an EDGE.
         val clears = !signal || previous == false
         if (clears && _userAway.compareAndSet(expect = true, update = false)) {
@@ -1819,10 +1864,20 @@ class SchedulerEngine(
                 // The ask before the journey: the account may have spent part of the gap on a DECLARED break
                 // (mode 3), and the app's own screen was off for it, so the server is the only witness. Time-
                 // bounded and best-effort inside [awaySpansFor] — a wake never waits on the network.
+                // The session the device slept through ends where it was last bounded (before the sleep) and a
+                // new one opens at the wake — what the beat's own real-time gap test used to do (the phone's
+                // lease loop still does it for itself).
+                if (deviceKind != DeviceKind.Phone) {
+                    noteScreenSignal()
+                    advanceActiveSession(now, effectiveScreenActive(), suspended = true)
+                }
+                // …and what the OS recorded over the sleep is there to be read now.
+                noteScreenEdge()
                 reportTimeGap(lastClockTick, now, awaySpansFor(lastClockTick, now))
                 recordExactSleepGaps(lastClockTick, now)
                 lastScheduleAdvance = now
             } else {
+                if (deviceKind != DeviceKind.Phone) boundOpenSession(now, realNow)
                 // Schedule: bank records / re-derive panels only on the coarser sim-time step — and reach `now`
                 // by SWEEPING, so a clock that has covered ground (a debug leap) is walked rather than jumped.
                 // At 1x that is one commit, exactly as it was: a tick is far inside one minimum execution time.
@@ -1856,9 +1911,26 @@ class SchedulerEngine(
     // accelerated) clock — so a real process suspension ends the session at its pre-sleep end and the post-wake
     // session opens after the gap, exactly like the §12 device-sleep detection; a fast sim tick just extends the
     // session across the leaped clock time.
+    //
+    // **ONLY THE PHONE STILL BEATS** (2026-10-02, `docs/scheduler_requirements.md` § *Rule Structure*). Everywhere
+    // else the loop is gone, because every one of its jobs has an event or a carrier of its own:
+    //  • opening and finalizing a session — the platform's lock/unlock notification ([onPlatformActivityChanged]),
+    //    the "I'm away" press, the debug flip, the sign-in edge, and the one sample below for the launch itself;
+    //  • a session the device SLEPT through — the advance tick's own wake detection;
+    //  • the stored end of the open session, which bounds what an unclean stop loses and is what a sync pushes
+    //    to the peers — written by the advance tick it already shares a cadence with ([boundOpenSession]),
+    //    without re-publishing the row list (so nothing downstream is re-derived for it);
+    //  • the break dues the server holds — published when the break machine steps ([presenceDirty]), not
+    //    recomputed every thirty seconds in case it had.
+    // The phone keeps its loop because its activity IS a lease: "in the foreground" has no reliable closing
+    // event (the process may simply be killed), so the claim has to expire on its own.
     private fun launchActiveSessionTracking() = scope.launch {
+        noteScreenSignal()
+        advanceActiveSession(clock.nowMillis(), effectiveScreenActive(), suspended = false)
+        if (deviceKind != DeviceKind.Phone) return@launch
         var lastRealBeat = SystemAppClock.nowMillis()
         while (true) {
+            tickDelay(if (timeAccelerated()) ACTIVE_SESSION_BEAT_MILLIS_SIM else phoneSessionLeaseMillis())
             val realNow = SystemAppClock.nowMillis()
             val suspended = realNow - lastRealBeat > DEVICE_SLEEP_THRESHOLD_MILLIS
             // Re-read the raw lock signal first: an unlock clears "I'm away" (see [noteScreenSignal]), and the
@@ -1874,11 +1946,44 @@ class SchedulerEngine(
             // Beat faster while accelerated (re-checked each pass — the speed changes at runtime) so the session
             // timeline tracks the racing `now` finely; keys off the clock's actual speed so the phone beats fast
             // too under the desktop time-link, where DebugFlags.TIME_SIMULATION is off. The phone renews its
-            // one-minute foreground lease once per lease length ("adds [now, now+1 min] every minute").
-            val prodBeat =
-                if (deviceKind == DeviceKind.Phone) phoneSessionLeaseMillis() else ACTIVE_SESSION_BEAT_MILLIS_PROD
-            tickDelay(if (timeAccelerated()) ACTIVE_SESSION_BEAT_MILLIS_SIM else prodBeat)
+            // one-minute foreground lease once per lease length ("adds [now, now+1 min] every minute") — the
+            // wait is at the top of the loop, the launch's own sample having been taken above.
         }
+    }
+
+    /**
+     * The advance tick's share of the active session, on every device but the phone: **the open session's stored
+     * end follows the line**, so an unclean stop loses at most one tick of it and a sync pushes a current row.
+     *
+     * It also re-reads the two signals the session is opened and closed by. They reach the engine as events
+     * ([onPlatformActivityChanged], [setUserAway]); this is the safety net for a notification the platform
+     * dropped, and costs two reads. Only a DISAGREEMENT goes through [advanceActiveSession] — the ordinary case
+     * writes one row and publishes nothing, where the beat re-published the whole row list every thirty seconds
+     * and recomputed the break dues with it.
+     */
+    private suspend fun boundOpenSession(now: Long, realNow: Long) {
+        val active = effectiveScreenActive()
+        val open = activeSessionMutex.withLock { currentSession }
+        if (active != (open != null)) {
+            noteScreenSignal()
+            advanceActiveSession(now, active, suspended = false)
+            return
+        }
+        if (open == null) return
+        val floor = if (timeAccelerated()) SESSION_BOUND_REAL_MILLIS_ACCEL else 0L
+        if (realNow - lastSessionBoundRealMillis < floor) return
+        lastSessionBoundRealMillis = realNow
+        activeSessionMutex.withLock {
+            val cur = currentSession ?: return@withLock
+            val claimEnd = sessionClaimEnd(now)
+            if (claimEnd <= cur.endMillis) return@withLock
+            val updated = cur.copy(endMillis = claimEnd, updatedAtMillis = realNow)
+            currentSession = updated
+            // Straight to the store: the row list in memory is re-published at an open, a finalize and a derive.
+            activeSessionStore?.saveActiveSessions(listOf(updated))
+        }
+        // PRD §8/§15: the OPEN "I'm away" episode is bounded the same way, for the same reason.
+        _declaredAwaySince.value?.let { persistAwaySpan(it, now) }
     }
 
     // The instant a session claims activity up to when extended at `now`: the phone claims a one-minute
@@ -2613,6 +2718,14 @@ class SchedulerEngine(
             vm.dispatch(SchedulerIntent.AdvanceSchedule(now))
         }
         if (breakEvents.isNotEmpty() || crossed.elapsed) guardPlanAtLine(now)
+        // The break machine stepped (or its inputs were rebuilt): the dues the server judges a walk-away on are
+        // told to it now. Cleared AFTER the publish, which reads the same inputs and may mark it again. Never inside a
+        // JOURNEY (a wake, the catch-up of a stretch the app did not run in): the machine steps at every stride of
+        // one, and the server is owed where the line LANDS, once, not a publish per stride.
+        if (presenceDirty && sweepMode == null) {
+            updatePresence()
+            presenceDirty = false
+        }
     }
 
     // The task side's compiled rules and the line's place in them ([interpretTo]).
@@ -2670,6 +2783,7 @@ class SchedulerEngine(
                 now + BREAK_INPUTS_REACH_MILLIS / 2,
             )
         breakInputs = inputs
+        presenceDirty = true
         nextBreakTriggerMillis = Long.MIN_VALUE
         if (held == null || held.evidence !== evidence) absorbBreakHistory(inputs.chains)
         return inputs
@@ -2740,6 +2854,7 @@ class SchedulerEngine(
         step: SchedulerDomain.BreakStep,
         now: Long,
     ) {
+        presenceDirty = true
         if (step.events.isNotEmpty()) {
             val floor = now - PENDING_CUE_REACH_MILLIS
             pendingBreakCues.removeAll { it.first.atMillis < floor }
@@ -3038,6 +3153,8 @@ class SchedulerEngine(
      * that clears it), and both call this.
      */
     private fun noteAwayEdge(away: Boolean) {
+        // The declaration is part of the no-screen evidence, so the evidence is read again.
+        noteScreenEdge()
         val now = clock.nowMillis()
         val since = _declaredAwaySince.value
         if (away) {
@@ -3206,14 +3323,16 @@ class SchedulerEngine(
      * same default the calendar layers use. On a phone-less account that makes the intersection exactly this
      * computer's own locked spans, which is the case that surfaced the bug.
      *
-     * ADR 0009: the read costs a process launch, so it runs off the tick entirely — once per
-     * [NO_SCREEN_EVIDENCE_REFRESH_MILLIS], over a bounded [NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS] window, on the
-     * engine's own scope. A scan that fails leaves the previous answer standing rather than reverting to
+     * ADR 0009: the read costs a process launch, so it runs off the tick entirely, over a bounded
+     * [NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS] window, on the engine's own scope — **and only when there can be
+     * something new to read** ([screenEdges]: the launch, a lock, an unlock, a wake, an "I'm away" press). It
+     * ran every ten minutes until 2026-10-02, which between two such edges re-read a history that had not
+     * changed. Edges that arrive during a read are answered by one more read after it (a [StateFlow] conflates). A scan that fails leaves the previous answer standing rather than reverting to
      * "nothing observed", so a transient query failure cannot silently re-enable banking over a sleeping
      * machine.
      */
     private fun launchNoScreenEvidenceScan() = scope.launch {
-        while (true) {
+        _screenEdges.collect {
             val now = clock.nowMillis()
             val since = now - NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS
             val observed = readNoScreenEvidence(since, now)
@@ -3230,7 +3349,6 @@ class SchedulerEngine(
                         "over the last ${NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS / 3_600_000}h",
                 )
             }
-            tickDelay(NO_SCREEN_EVIDENCE_REFRESH_MILLIS)
         }
     }
 
@@ -3243,25 +3361,31 @@ class SchedulerEngine(
      * § *Rule State Evolution* applies the rule state found at the now-line, so a decision must be taken with the
      * rule state at the instant the line reaches it. It is boundary-driven rather than a tick: the key moves only
      * when the line crosses the start of a run the plan placed, so a transition costs one fill per run it spans,
-     * and nothing at all outside one. The wait below sleeps until that next start (bounded by the poll, so a clock
-     * leap or a re-plan that moved the start is noticed).
+     * and nothing at all outside one.
+     *
+     * **It sleeps until its next ARMED instant and does nothing before it** (§ *Rule Structure*;
+     * [SchedulerDomain.nextTaskTreeBlendWakeMillis]). It used to wake at least once a minute and read the whole
+     * panel list each time, whether or not a single tree was dated — a timeline-wide lookup on a timer, the exact
+     * shape the requirements forbid. Now the instant is armed when the trees or the plan change (a re-plan may move
+     * the next start) and when the clock is reconfigured, and with no dated tree nothing is armed at all.
+     *
+     * A re-arming never compares the key: only REACHING the armed instant does. A re-plan rewrites the very panels
+     * the key is read from, so comparing on every change of them would let the watch answer its own fill.
      *
      * The first sample only primes `last`, so starting up mid-transition does not itself force a fill; the
      * rule-change watcher has just run one anyway.
      */
     private fun launchTaskTreeBlendReschedule() = scope.launch {
         var last: Long? = null
-        while (true) {
-            val now = clock.nowMillis()
-            val state = vm.state.value
-            val key = SchedulerDomain.taskTreeBlendDecisionKey(state, now)
-            if (last != null && key != last) requestReschedule()
-            last = key
-            val next = SchedulerDomain.nextDecisionMillis(state, now)
-            val wait =
-                if (key == 0L || next == null) TASK_TREE_BLEND_POLL_MILLIS
-                else (next - now).coerceIn(1L, TASK_TREE_BLEND_POLL_MILLIS)
-            tickDelay(wait)
+        vm.state.map { it.panels to it.taskTrees }.distinctUntilChanged().collectLatest {
+            if (last == null) last = SchedulerDomain.taskTreeBlendDecisionKey(vm.state.value, clock.nowMillis())
+            while (true) {
+                val wake = SchedulerDomain.nextTaskTreeBlendWakeMillis(vm.state.value, clock.nowMillis()) ?: break
+                sleepUntil(wake)
+                val key = SchedulerDomain.taskTreeBlendDecisionKey(vm.state.value, clock.nowMillis())
+                if (key != last) requestReschedule()
+                last = key
+            }
         }
     }
 
@@ -3271,28 +3395,46 @@ class SchedulerEngine(
     // whole floor past the goal, so with no calendar reaching further this fires once per ten minutes. The
     // floor's slack (and the rate floor below) exist because this loop feeds itself: the refill rewrites the
     // very `panels` it watches.
+    //
+    // § *Rule Structure*: **it sleeps until the instant it is armed for.** It used to wake every 30 s to ask
+    // whether the due instant had come — but the due instant is a number the plan already holds, and so is every
+    // other thing that can move it: the week rolling over (a term of the goal), the fill in flight finishing, and
+    // the instant a stood-down extension's goal is outgrown. A scroll that shows MORE is the calendar watcher's
+    // ([launchCalendarHorizonReschedule]); one that shows less only makes this wake early and arm again.
     private fun launchHorizonReschedule() = scope.launch {
         // Last instant a refill was dispatched, kept OUTSIDE `collectLatest` so it survives the restart the
         // refill itself causes — it is what floors the refill rate (below).
         var lastRefillMillis: Long? = null
-        // Poll faster while accelerated (re-checked each pass — the user changes speed at runtime) so the
-        // refill isn't reached late when `now` races ahead; the phone keys off the clock's actual speed too.
+        // The refill rate's floor; finer while accelerated (re-checked each pass — the speed changes at runtime).
         fun pollInterval(): Long = if (timeAccelerated()) ADVANCE_TICK_MILLIS_ACCEL else ADVANCE_TICK_MILLIS_PROD
         vm.state.map { it.panels }.distinctUntilChanged().collectLatest { panels ->
-            // Re-evaluated every pass rather than pinned once: the calendar end moves with the scroll, so a
-            // target computed once would go stale.
-            fun dueMillis(): Long =
-                SchedulerDomain.horizonRefillDueMillis(panels, clock.nowMillis(), _calendarHorizonEndMillis.value, tz)
-            // A progressive fill still in flight is already extending to the goal; its own stages are not a gap.
-            // Sleeps until the due instant, never longer than one poll (a scroll or a speed change moves it).
             while (true) {
                 val now = clock.nowMillis()
-                val due = dueMillis()
+                // Read at every arming rather than pinned once: the calendar end moves with the scroll.
+                val due = SchedulerDomain.horizonRefillDueMillis(panels, now, _calendarHorizonEndMillis.value, tz)
+                // The goal steps forward by itself at the week's rollover, which can bring the due instant nearer.
+                val weekEnd = SchedulerDomain.currentWeekEndMillis(now, tz)
+                if (due > now) {
+                    sleepUntil(minOf(due, weekEnd))
+                    continue
+                }
+                // A progressive fill still in flight is already extending to the goal; its own stages are not a
+                // gap. Wait for IT, not for a poll.
+                val running = progressivePlan
+                if (running?.isActive == true) {
+                    running.join()
+                    continue
+                }
                 // [extensionStoodDown]: a fill that hit its calculation limit stopped for these rules and this
                 // goal. The shortfall it left is permanent until one of them changes, so waiting on it here is
-                // what makes "the scheduler stops" mean anything.
-                if (due <= now && progressivePlan?.isActive != true && !extensionStoodDown(now)) break
-                tickDelay(if (due <= now) pollInterval() else minOf(due - now, pollInterval()))
+                // what makes "the scheduler stops" mean anything. A rule change rewrites the plan (and re-arms
+                // this watcher through `panels`); the goal outgrows the one abandoned at the week's rollover or
+                // once the rolling floor passes it — both instants the stop itself names.
+                if (!extensionStoodDown(now)) break
+                val outgrownAt =
+                    calculationLimitStop?.second
+                        ?.let { goal -> minOf(weekEnd, goal - 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS) }
+                if (outgrownAt != null && outgrownAt > now) sleepUntil(outgrownAt) else tickDelay(pollInterval())
             }
             // Floor the refill RATE as well as its due instant. The due instant alone is not enough: when a
             // refill cannot close the gap it was triggered by (a no-screen span no off-screen task can fill,

@@ -117,8 +117,9 @@ example: a 0→100 % ramp over 10 min and a 0→50 % ramp over 5 min must give t
 100-step cursor could not honour it — its steps land at different instants on the two ramps. So a plan now holds the
 EXACT rule state at the line (`RuleStateTimeline.planTasksAt`, the minimum in millis), and
 `SchedulerEngine.launchTaskTreeBlendReschedule` re-plans when the line reaches the start of a run the plan placed
-(`SchedulerDomain.taskTreeBlendDecisionKey`, sleeping until `nextDecisionMillis`, bounded by
-`TASK_TREE_BLEND_POLL_MILLIS`). Every decision the frozen past records is then taken with the rule state at its own
+(`SchedulerDomain.taskTreeBlendDecisionKey`, sleeping until `nextTaskTreeBlendWakeMillis` — the next run start or
+keyframe; the 60 s `TASK_TREE_BLEND_POLL_MILLIS` bound was removed on 2026-10-02, it read the whole panel list on a
+timer even on an account with no dated tree). Every decision the frozen past records is then taken with the rule state at its own
 instant, and the two scenarios agree (`TaskTreeTimelineTest.the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap`).
 
 A transition costs one fill per run it spans, and nothing at all outside one: the key is 0 when nothing is dated

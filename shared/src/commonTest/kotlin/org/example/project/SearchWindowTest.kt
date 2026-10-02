@@ -637,6 +637,21 @@ class SearchWindowTest {
     }
 
     @Test
+    fun reset_goes_back_to_the_opening_configuration_then_to_the_default_one() {
+        val opened = SearchDomain.elementSearchConfig(SearchDomain.Kind.Alarm, "a1")
+        val changed =
+            opened.copy(query = "x", added = emptyList(), filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
+        // Changed since it opened: the whole opening configuration comes back, added elements and filters included.
+        assertEquals(opened, SearchDomain.resetConfig(changed, opened))
+        // As it opened: the default configuration, to start on something unrelated.
+        assertEquals(SearchDomain.Config(), SearchDomain.resetConfig(opened, opened))
+        // Nothing known of how it opened: the default one.
+        assertEquals(SearchDomain.Config(), SearchDomain.resetConfig(changed, null))
+        // Opened on the default configuration and left there: nothing to reset (the button is greyed).
+        assertEquals(SearchDomain.Config(), SearchDomain.resetConfig(SearchDomain.Config(), SearchDomain.Config()))
+    }
+
+    @Test
     fun the_configuration_search_lists_sections_by_kind_and_finds_by_name() {
         val every = SearchDomain.Kind.entries.toSet()
         val sections = SearchDomain.configurations("", every)

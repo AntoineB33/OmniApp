@@ -969,9 +969,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // this device's placement row, so they outlive the app. Local-only view state.
         // One per Search window — the original and each copy, by frame id — decoded from its row on first read.
         val searchConfigs = remember { mutableStateMapOf<String, SearchDomain.Config>() }
+        // The configuration each Search window OPENED with — what its Reset goes back to before the default one
+        // (`SearchDomain.resetConfig`). Compose-only: a window still open at a restart opened with what it held then.
+        val searchOpenedConfigs = remember { mutableStateMapOf<String, SearchDomain.Config>() }
         fun searchConfigOf(id: String): SearchDomain.Config =
             searchConfigs[id] ?: (SearchDomain.Config.decode(placements[id]?.config) ?: SearchDomain.Config())
-                .also { searchConfigs[id] = it }
+                .also {
+                    searchConfigs[id] = it
+                    searchOpenedConfigs[id] = it
+                }
         fun setSearchConfig(id: String, config: SearchDomain.Config) {
             val before = searchConfigOf(id)
             if (config == before) return
@@ -1153,7 +1159,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 from.copy(x = from.x + COPY_CASCADE_PX, y = from.y + COPY_CASCADE_PX, visible = true, minimized = false)
             }
             // The configurations held in memory follow the row they were decoded from.
-            searchConfigs[fromId]?.let { searchConfigs[id] = it }
+            searchOpenedConfigs.remove(id)
+            searchConfigs[fromId]?.let {
+                searchConfigs[id] = it
+                searchOpenedConfigs[id] = it
+            }
             configSearches[fromId]?.let { configSearches[id] = it }
             windowCopies.add(id)
             windowFrames.focus(id)
@@ -1395,6 +1405,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             // The configuration held in memory is re-read from the row written here.
             searchConfigs.remove(id)
+            searchOpenedConfigs.remove(id)
             configSearches.remove(id)
             if (id == kind.name) {
                 updatePlacementById(id) { it.copy(config = config, minimized = false) }
@@ -1432,8 +1443,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             if (add) searchKindsToDeploy.add(existing)
             val config = searchConfigOf(existing)
-            setSearchConfig(
-                existing,
+            val moved =
                 config.copy(
                     kinds = fresh.kinds,
                     // "edit…" lists what is there in the hover bubble's order (user rule 2026-10-02).
@@ -1445,8 +1455,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         calendarAtMillis = if (add) config.filters.calendarAtMillis else atMillis,
                     ),
                     calendarClickMillis = atMillis,
-                ),
-            )
+                )
+            setSearchConfig(existing, moved)
+            // The window is opened anew on this right-click: what its Reset goes back to.
+            searchOpenedConfigs[existing] = moved
             presentWindow(search, existing)
         }
         openElementSearch = { kind, id ->
@@ -2553,17 +2565,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(bandSignature) {
             Diagnostics.log("calendar no-screen periods: ${Diagnostics.formatRanges(calendarDisplay.noScreenPeriods)}")
         }
-        // Both ends of the asked window are QUANTIZED to the refresh period, or the effect would relaunch on
-        // every display tick: [CalendarDisplay.displayFloorMillis] is `now − 168h` whenever the calendar is not
-        // scrolled past that, so it slides with the now-line and would re-key the scan ~every 30 s (observed: a PowerShell
-        // process per tick). Rounding the floor DOWN and the ceiling UP also means the window only ever grows
-        // between scans, so nothing in view is left unasked.
-        val lockScanSince = (calendarDisplay.displayFloorMillis / LOCK_HISTORY_REFRESH_MILLIS) * LOCK_HISTORY_REFRESH_MILLIS
-        val lockScanUntil =
-            ((nowMillis / LOCK_HISTORY_REFRESH_MILLIS) + 1) * LOCK_HISTORY_REFRESH_MILLIS
-        LaunchedEffect(lockScanSince, lockScanUntil) {
+        // The OS lock history is read again **only when it can hold something new** — the engine's screen edges
+        // (a lock, an unlock, a wake, an "I'm away" press: `SchedulerEngine.screenEdges`) — or when the calendar
+        // shows further back than was asked. It was re-read every ten minutes until 2026-10-02: a PowerShell
+        // process on a timer, between two edges, for a history that had not moved.
+        //
+        // The floor is QUANTIZED (rounded DOWN to a day), or the effect would relaunch on every display tick:
+        // [CalendarDisplay.displayFloorMillis] is `now − 168h` whenever the calendar is not scrolled past that,
+        // so it slides with the now-line. Rounding down also means the window only ever grows between scans.
+        val lockScanSince = (calendarDisplay.displayFloorMillis / LOCK_HISTORY_FLOOR_MILLIS) * LOCK_HISTORY_FLOOR_MILLIS
+        val screenEdges by engine.screenEdges.collectAsState()
+        // Read where the effect runs, never a key of it: the line moving on adds nothing to the history.
+        val lockScanNow by rememberUpdatedState(nowMillis)
+        LaunchedEffect(lockScanSince, screenEdges) {
             val since = lockScanSince
-            val until = lockScanUntil
+            val until = lockScanNow
             val scanned =
                 withContext(Dispatchers.Default) {
                     deviceLockedIntervals(since, until)?.map { TaskTimeRange(it.startMillis, it.endMillis) }
@@ -2572,7 +2588,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             lockHistoryScanned = true
             // scripts/collect-diagnostics.bat: the layers are read from the OS, so an anomaly in them is an
             // anomaly in THIS answer — record it rather than asking the user to describe the hatching. One
-            // line per scan (at most one per LOCK_HISTORY_REFRESH_MILLIS), not per frame.
+            // line per scan (one per screen edge), not per frame.
             Diagnostics.log(
                 if (scanned == null) {
                     "device lock history unavailable — ${ownLayer.name} assumed locked over the whole window"
@@ -3862,6 +3878,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
+                            openedConfig = searchOpenedConfigs[searchId],
                             deployKinds = searchId in searchKindsToDeploy,
                             onKindsDeployed = { searchKindsToDeploy.remove(searchId) },
                             // Opened if closed, brought to the front either way — and pointed at THIS Search
@@ -3930,6 +3947,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             state = schedulerState,
                             config = searchConfigOf(target),
                             onConfigChange = { setSearchConfig(target, it) },
+                            openedConfig = searchOpenedConfigs[target],
                             own = own,
                             onOwnChange = { setConfigSearch(configId, it) },
                             onDismiss = { configSearchWindowOpen = false },
@@ -4606,11 +4624,11 @@ private fun diagnosticsBandSignature(noScreenPeriods: List<TaskTimeRange>): Stri
 
 /** PRD §18: `HH:MM` for an alarm's time of day — the calendar marker's label when the alarm has none. */
 /**
- * PRD §8 calendar layers: how coarsely this device's OS lock/standby history is re-read while the calendar
- * stays on the same days. The query spawns a process, so it must not run on the display cadence; ten minutes
- * is fine for a band whose whole job is to show where the device was not in use.
+ * PRD §8 calendar layers: the grain of the FLOOR of the window this device's OS lock/standby history is asked
+ * over. The query spawns a process, so the floor — which slides with the now-line — must not re-key it; a day
+ * is coarse enough that the sliding costs one read a day. When it is read at all is the engine's screen edges.
  */
-private const val LOCK_HISTORY_REFRESH_MILLIS: Long = 10L * 60 * 1000
+private const val LOCK_HISTORY_FLOOR_MILLIS: Long = 24L * 60 * 60 * 1000
 
 private fun formatAlarmClockTime(minutes: Int): String {
     val m = ((minutes % AlarmEntry.MINUTES_PER_DAY) + AlarmEntry.MINUTES_PER_DAY) % AlarmEntry.MINUTES_PER_DAY

@@ -159,6 +159,15 @@ object SearchDomain {
     fun elementSearchConfig(kind: Kind, id: String): Config =
         Config(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
 
+    /**
+     * What the Search window's **Reset** puts in the place of [current] (user rule 2026-10-02): the configuration the
+     * window [opened] with while it has changed since — so a window opened on something ("edit…" on the calendar)
+     * goes back to it — else the default configuration, to start on something unrelated. The WHOLE configuration:
+     * filters, sorts and added elements included. Equal to [current] when there is nothing to reset.
+     */
+    fun resetConfig(current: Config, opened: Config?): Config =
+        if (opened != null && current != opened) opened else Config()
+
     /** The Search configuration a [Kind.Window] creation row opens: every window TYPE, once. */
     val WINDOW_TYPES_CONFIG: Config
         get() = Config(kinds = setOf(Kind.Window), filters = Filters(windowDuplicates = WindowDuplicates.Hidden))
@@ -656,11 +665,11 @@ object SearchDomain {
         SearchText(null, "Search text"),
         Types(null, "Types"),
         /**
-         * The Search window's own Reset: its search text and types cleared (never the filters, which have their
-         * own window and a counter). Listed here because every configuration of the Search window is — and it is
-         * not the Configuration Search window's own Reset, which clears that window's search.
+         * The Search window's own Reset ([resetConfig]): back to the configuration it opened with, else to the
+         * default one. Listed here because every configuration of the Search window is — and it is not the
+         * Configuration Search window's own Reset, which clears that window's search.
          */
-        ResetSearch(null, "Reset text and types"),
+        ResetSearch(null, "Reset"),
         SortResults(null, "Sort by", sorts = true),
         /** The calendar filter ([Filters.calendarAddOn]): about every row, so in the General section. */
         CalendarAdd(null, "Can be added to the calendar at"),
