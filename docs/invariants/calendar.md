@@ -204,6 +204,11 @@ Global rules that always apply: `CLAUDE.md`.
   site. The **two zero-duration markers lead** it for the same reason they are emitted last: a §14 reminder tag
   and a §18 alarm/timer ring are the top-most things the column draws, so each is what the cursor is on and
   each is what hides everything below it (the tag over the ring, which is the order they are drawn in).
+  **The ranks are ONE declaration, `CalendarBubbleRank` (domain), with three readers**: the bubble
+  (`CalendarBubbleSection.Kind.rank`), the placement of the column's texts (`calendarLabelSlots`) and the
+  Search window's whole-list sort **"calendar bubble order"** (`SearchDomain.SortKey.CalendarBubble`), which
+  the calendar's "edit…" turns on, dominant (`calendarAtConfig`, `withCalendarBubbleSort`). Never restate a
+  rank at a reader.
 - **A period's COMPANIONS are sections of the bubble too**, over the period's own span, read from the same
   `PeriodKindConfig` the box's drawings are (`companionBubbleSections`) — so a sleep window names its
   "No screen", as does the wind-down hour. The layer kinds are left to the layer band. Until 2026-09-19 the

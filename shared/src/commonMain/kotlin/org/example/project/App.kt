@@ -1416,6 +1416,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 existing,
                 config.copy(
                     kinds = fresh.kinds,
+                    // "edit…" lists what is there in the hover bubble's order (user rule 2026-10-02).
+                    sorts = if (add) config.sorts else SearchDomain.withCalendarBubbleSort(config.sorts),
                     filters = config.filters.copy(
                         calendarAddOn = add,
                         calendarAddAtMillis = if (add) atMillis else config.filters.calendarAddAtMillis,

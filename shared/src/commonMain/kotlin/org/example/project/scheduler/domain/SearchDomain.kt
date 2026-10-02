@@ -55,6 +55,41 @@ import org.example.project.scheduler.state.defaultSubtreeIsEmpty
  * **tree's name** (the live tree's when it has one, else the root task's own title): with several trees, a
  * path has to say which one it runs through.
  */
+/**
+ * PRD §8: **the order the calendar's hover bubble names what is under the cursor in**, top to bottom —
+ * `reminder > alarm/timer ring > task = break > a period > a layer`. Equal ranks are deliberate ties.
+ *
+ * ONE declaration, read by the bubble itself (`CalendarBubbleSection.Kind.rank`), by the placement of the
+ * calendar's texts (which of two wanting the same point keeps it) and by the Search window's "calendar bubble
+ * order" sort ([SearchDomain.SortKey.CalendarBubble]) — three readers that must never disagree.
+ */
+object CalendarBubbleRank {
+    const val REMINDER: Int = 0
+    const val RING: Int = 1
+    const val TASK: Int = 2
+    const val BREAK: Int = 2
+    const val PERIOD: Int = 3
+    const val LAYER: Int = 4
+
+    /** The rank of a period of [kind]: a screen break's, a layer's, or any other period's. */
+    fun ofPeriodKind(kind: String): Int =
+        when (kind) {
+            in PeriodKinds.BREAK_KINDS -> BREAK
+            in PeriodKinds.LAYER_KINDS -> LAYER
+            else -> PERIOD
+        }
+
+    /** The rank of a Search row of [kind] ([id]: a period row's kind); null = never in the bubble. */
+    fun of(kind: SearchDomain.Kind, id: String?): Int? =
+        when (kind) {
+            SearchDomain.Kind.Reminder -> REMINDER
+            SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer -> RING
+            SearchDomain.Kind.Task -> TASK
+            SearchDomain.Kind.RestrictivePeriod -> ofPeriodKind(id.orEmpty())
+            else -> null
+        }
+}
+
 object SearchDomain {
 
     /**
@@ -540,6 +575,11 @@ object SearchDomain {
         Name(null, "name"),
         /** The drop-down's order of the kinds — the whole list only. */
         Type(null, "type"),
+        /**
+         * The order the calendar's hover bubble names what is under the cursor in ([CalendarBubbleRank]) — the
+         * whole list only, and what the calendar's "edit…" opens sorted by ([calendarAtConfig]).
+         */
+        CalendarBubble(null, "calendar bubble order"),
         TaskPriority(Kind.Task, "priority"),
         TaskPathLength(Kind.Task, "path length"),
         TaskPathCount(Kind.Task, "number of paths"),
@@ -561,12 +601,12 @@ object SearchDomain {
     }
 
     /**
-     * The keys offered for the whole list ([kind] null: relevance, name, type) or for one kind's rows
-     * (relevance, name, and that kind's own keys).
+     * The keys offered for the whole list ([kind] null: relevance, name, type, the calendar bubble's order) or
+     * for one kind's rows (relevance, name, and that kind's own keys).
      */
     fun sortKeysOf(kind: Kind?): List<SortKey> =
         if (kind == null) {
-            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type)
+            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble)
         } else {
             listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
         }
@@ -1389,6 +1429,7 @@ object SearchDomain {
                 SortKey.Relevance -> matchRank(row.name, query) ?: Int.MAX_VALUE
                 SortKey.Name -> row.name.lowercase()
                 SortKey.Type -> row.kind.ordinal
+                SortKey.CalendarBubble -> CalendarBubbleRank.of(row.kind, (row as? ItemResult)?.id)
                 SortKey.TaskPriority -> (row as? TaskResult)?.let { priorities[it.taskId] }
                 SortKey.TaskPathLength -> (row as? TaskResult)?.takeIf { it.paths.isNotEmpty() }?.shownPath?.size
                 SortKey.TaskPathCount -> (row as? TaskResult)?.paths?.size
@@ -1844,14 +1885,23 @@ object SearchDomain {
 
     /**
      * The Search window the calendar's "edit…" opens at [atMillis] (user rule 2026-10-01): what is on the timeline
-     * there, the filter on that instant, and the right-click remembered for the filter's button.
+     * there, the filter on that instant, and the right-click remembered for the filter's button — listed in the
+     * order the hover bubble names them there ([CALENDAR_BUBBLE_SORT], user rule 2026-10-02).
      */
     fun calendarAtConfig(atMillis: Long): Config =
         Config(
             kinds = CALENDAR_AT_KINDS,
             filters = Filters(calendarAtOn = true, calendarAtMillis = atMillis),
+            sorts = withCalendarBubbleSort(DEFAULT_SORTS),
             calendarClickMillis = atMillis,
         )
+
+    /** The whole list in the calendar hover bubble's order ([SortKey.CalendarBubble]). */
+    val CALENDAR_BUBBLE_SORT: SortMethod = SortMethod(null, SortKey.CalendarBubble)
+
+    /** [sorts] with [CALENDAR_BUBBLE_SORT] on and DOMINANT — what the calendar's "edit…" turns on. */
+    fun withCalendarBubbleSort(sorts: List<SortMethod>): List<SortMethod> =
+        listOf(CALENDAR_BUBBLE_SORT) + sorts.filterNot { it.sameMethod(CALENDAR_BUBBLE_SORT) }
 
     /**
      * **The keys ([keyOf]) of what is on the calendar at [atMillis]**: a task one of whose placed boxes or records

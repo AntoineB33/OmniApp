@@ -160,6 +160,27 @@ class SearchCalendarFilterTest {
         val shown = SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = config.filters, timeZone = tz).map(SearchDomain::keyOf)
         assertTrue("Task/" + read.value in shown && "Task/" + taskWithTitle(s, "Walk").value !in shown)
         assertTrue("Alarm/alarm-0" in shown && "Alarm/alarm-1" !in shown)
+        // User rule 2026-10-02: "edit…" opens sorted the way the calendar's hover bubble names what is there —
+        // reminder, ring (alarm / timer), task, period, layer — and the method is one the window offers.
+        assertEquals(SearchDomain.CALENDAR_BUBBLE_SORT, config.sorts.first())
+        assertTrue(SearchDomain.SortKey.CalendarBubble in SearchDomain.sortKeysOf(null))
+        val sorted = SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = config.filters, sorts = config.sorts, timeZone = tz)
+        assertEquals(
+            listOf(
+                SearchDomain.Kind.Reminder, SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Task,
+                SearchDomain.Kind.RestrictivePeriod,
+            ),
+            sorted.map { it.kind }.distinct(),
+        )
+        val periodRanks = sorted.filter { it.kind == SearchDomain.Kind.RestrictivePeriod }
+            .map { org.example.project.scheduler.domain.CalendarBubbleRank.ofPeriodKind((it as SearchDomain.ItemResult).id) }
+        assertEquals(periodRanks.sorted(), periodRanks, "a layer's kind after every other period's")
+        // An "edit…" on a window that is already open turns it on, dominant, once.
+        val name = SearchDomain.SortMethod(null, SearchDomain.SortKey.Name)
+        assertEquals(
+            listOf(SearchDomain.CALENDAR_BUBBLE_SORT, name),
+            SearchDomain.withCalendarBubbleSort(listOf(name, SearchDomain.CALENDAR_BUBBLE_SORT.copy(descending = true))),
+        )
         // A layer band (read off the lock history, not in the state) is there too, as its kind.
         val withLayer = SearchDomain.calendarElementsAt(s, at, tz) { instant -> if (instant == at) setOf(PeriodKinds.NO_PHONE_UNLOCKED) else emptySet() }
         assertTrue("RestrictivePeriod/" + PeriodKinds.NO_PHONE_UNLOCKED in withLayer)

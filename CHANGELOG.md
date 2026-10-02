@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search: the "calendar bubble order" sort, on for the calendar's "edit…" — 2026-10-02
+
+User request: *"In the Search configurations window, add the sorting method that sorts with the priority ranking used
+to know in which order the elements are shown in the hovering info bubble of the calendar. When the user right-clicks
+in the calendar and clicks edit…, this sorting method is on."* `SearchDomain.SortKey.CalendarBubble`, a whole-list key
+(`sortKeysOf(null)`): reminder, alarm/timer, task = screen-break kinds, any other period, the layer kinds; rows of a
+kind the bubble never names go last. The ranks moved to the domain (`CalendarBubbleRank`) so the bubble and the sort
+read one declaration. `calendarAtConfig` opens with it dominant over relevance; an "edit…" re-using an open Search
+window puts it on top of that window's sorts (`withCalendarBubbleSort`, `App.openCalendarSearch`); "add…" leaves the
+sorts alone. Stored by name like every sort key, so no migration.
+`SearchCalendarFilterTest.the_is_at_filter_keeps_only_what_is_on_the_timeline_there`.
+
 ### Periods: "No drawing" in the drawing selector — 2026-10-02
 
 User request: *"In the actions for periods, in the drawing selector, add the option for no drawing (since the user can

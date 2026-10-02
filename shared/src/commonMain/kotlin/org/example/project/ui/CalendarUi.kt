@@ -6654,15 +6654,17 @@ data class CalendarBubbleSection(
 ) {
     /** What a section is about. Equal [rank]s are deliberate ties (see [orderedBubbleSections]). */
     enum class Kind(val rank: Int) {
-        Reminder(0),
-        Alarm(1),
-        Task(2),
-        Break(2),
-        Inactivity(3),
-        Sleep(3),
-        NoScreen(3),
-        NoComputerUnlocked(4),
-        NoPhoneUnlocked(4),
+        // The ranks are [org.example.project.scheduler.domain.CalendarBubbleRank]'s — the Search window's
+        // "calendar bubble order" sort reads the same declaration.
+        Reminder(org.example.project.scheduler.domain.CalendarBubbleRank.REMINDER),
+        Alarm(org.example.project.scheduler.domain.CalendarBubbleRank.RING),
+        Task(org.example.project.scheduler.domain.CalendarBubbleRank.TASK),
+        Break(org.example.project.scheduler.domain.CalendarBubbleRank.BREAK),
+        Inactivity(org.example.project.scheduler.domain.CalendarBubbleRank.PERIOD),
+        Sleep(org.example.project.scheduler.domain.CalendarBubbleRank.PERIOD),
+        NoScreen(org.example.project.scheduler.domain.CalendarBubbleRank.PERIOD),
+        NoComputerUnlocked(org.example.project.scheduler.domain.CalendarBubbleRank.LAYER),
+        NoPhoneUnlocked(org.example.project.scheduler.domain.CalendarBubbleRank.LAYER),
     }
 }
 
