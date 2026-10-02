@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: the added elements are selected like the results, and their menu has "remove" — 2026-10-03
+
+The added-elements rows take the result list's selection (`ClickSelection`: click, Ctrl+click, Shift+click; a
+right-click keeps a selection it lands in). Their right-click menu acts on it: "remove" (new) and "remove the others".
+The selection is Compose-only; the list is local view state.
+
 ### Search window: the category group's settings are shared controls; one Combinations list — 2026-10-02
 
 The categories' per-element "Name and rules" editor is replaced by Name (the one added category's — names are

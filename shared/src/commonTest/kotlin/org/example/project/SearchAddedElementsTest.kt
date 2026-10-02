@@ -335,8 +335,12 @@ class SearchAddedElementsTest {
     @Test
     fun remove_the_others_leaves_the_element_alone_and_a_stale_key_removes_nothing() {
         val added = listOf("Alarm/a", "Task/t", "Reminder/r")
-        assertEquals(listOf("Task/t"), SearchDomain.keepingOnly(added, "Task/t"))
-        assertEquals(added, SearchDomain.keepingOnly(added, "Task/gone"))
+        assertEquals(listOf("Task/t"), SearchDomain.keepingOnly(added, setOf("Task/t")))
+        assertEquals(added, SearchDomain.keepingOnly(added, setOf("Task/gone")))
+        // Over a selection of several: they stay, in the list's order — and "remove" takes exactly them.
+        assertEquals(listOf("Alarm/a", "Reminder/r"), SearchDomain.keepingOnly(added, setOf("Reminder/r", "Alarm/a")))
+        assertEquals(listOf("Task/t"), SearchDomain.removing(added, setOf("Reminder/r", "Alarm/a")))
+        assertEquals(added, SearchDomain.removing(added, setOf("Task/gone")))
     }
 
     // ----- App settings (user spec 2026-10-02) ----------------------------------------------------

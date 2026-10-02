@@ -844,7 +844,8 @@ fun SearchWindow(
                 rows = addedRows,
                 onOpen = { openers.open(state, it) },
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
-                onKeepOnly = { key -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, key))) },
+                onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
+                onRemoveAll = { keys -> onConfigChange(config.copy(added = SearchDomain.removing(config.added, keys))) },
                 modifier = Modifier.fillMaxWidth().weight(1f - topRightShare).padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
@@ -883,10 +884,25 @@ private fun AddedElementsList(
     rows: List<SearchDomain.Result>,
     onOpen: (SearchDomain.Result) -> Unit,
     onRemove: (String) -> Unit,
-    /** The row menu's "remove the others": the list holds this element alone. */
-    onKeepOnly: (String) -> Unit,
+    /** The row menu's "remove the others": the list holds the selected elements alone. */
+    onKeepOnly: (Set<String>) -> Unit,
+    /** The row menu's "remove": the selected elements leave the list. */
+    onRemoveAll: (Set<String>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // User rule 2026-10-03: the rows are selected the way the result list's are ([ClickSelection]: a click selects one
+    // row, Ctrl+click adds or takes one, Shift+click the range from the anchor), and a right-click selects its row
+    // alone unless it is already selected — the menu acts on the selection. Compose-only, like the result list's
+    // multi-selection: a way of picking some, not a fact about them.
+    var selection by remember { mutableStateOf(emptySet<String>()) }
+    var selectionAnchor by remember { mutableStateOf<String?>(null) }
+    var selectionMain by remember { mutableStateOf<String?>(null) }
+    val pressModifiers = remember { PressModifiers() }
+    val order = rows.map(::resultKey)
+    val currentOrder by rememberUpdatedState(order)
+    // A row that left the list is not selected any more.
+    val selected = selection.filterTo(LinkedHashSet()) { it in order }
+    val currentSelected by rememberUpdatedState(selected)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = "Added elements" + if (rows.isEmpty()) "" else "  ·  ${rows.size}",
@@ -903,24 +919,44 @@ private fun AddedElementsList(
         }
         val listState = rememberLazyListState()
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(end = 12.dp).recordPressModifiers(pressModifiers),
+            ) {
                 itemsIndexed(rows, key = { _, r -> resultKey(r) }) { _, row ->
                     val key = resultKey(row)
-                    // The right-click menu: "remove the others" (user rule 2026-10-02) — nothing to offer, and so
-                    // no menu, on the only element left.
+                    // The right-click menu, on the selection: "remove", and "remove the others" (user rule
+                    // 2026-10-02) where there are others.
                     var menuOpen by remember(key) { mutableStateOf(false) }
-                    val hasOthers by rememberUpdatedState(rows.size > 1)
                     val currentOnOpen by rememberUpdatedState(onOpen)
                     val currentRow by rememberUpdatedState(row)
                     Box {
                     Row(
-                        modifier = resultRowModifier(selected = false)
+                        modifier = resultRowModifier(
+                            selected = key in selected && key == selectionMain,
+                            inSelection = key in selected && key != selectionMain,
+                        )
                             .resultRowGestures(
                                 key = key,
-                                onSelect = {},
-                                onSecondarySelect = {},
+                                onSelect = {
+                                    val next =
+                                        ClickSelection.click(
+                                            currentOrder, currentSelected, selectionAnchor, key,
+                                            shift = pressModifiers.shift, ctrl = pressModifiers.ctrl,
+                                        )
+                                    selection = next.selected
+                                    selectionAnchor = next.anchor
+                                    selectionMain = key
+                                },
+                                onSecondarySelect = {
+                                    if (key !in currentSelected) {
+                                        selection = setOf(key)
+                                        selectionAnchor = key
+                                    }
+                                    selectionMain = key
+                                },
                                 onOpen = { currentOnOpen(currentRow) },
-                                onOpenMenu = { if (hasOthers) menuOpen = true },
+                                onOpenMenu = { menuOpen = true },
                             ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -960,9 +996,17 @@ private fun AddedElementsList(
                         onDismissRequest = { menuOpen = false },
                         properties = PopupProperties(focusable = false),
                     ) {
-                        MenuEntry(REMOVE_OTHERS_LABEL) {
+                        val picked = selected.ifEmpty { setOf(key) }
+                        MenuEntry(if (picked.size == 1) "remove" else "remove ${picked.size}") {
                             menuOpen = false
-                            onKeepOnly(key)
+                            onRemoveAll(picked)
+                        }
+                        // Nothing to offer once the selection is all the list holds.
+                        if (rows.size > picked.size) {
+                            MenuEntry(REMOVE_OTHERS_LABEL) {
+                                menuOpen = false
+                                onKeepOnly(picked)
+                            }
                         }
                     }
                     }

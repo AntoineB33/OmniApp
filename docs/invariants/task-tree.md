@@ -713,9 +713,12 @@ titles" figure: the Search window and the per-object windows its rows open repla
   (`sharedAlert` shows a channel on only when all have it; `withAlertChange` writes only what was pressed), and
   **Delete** — the bin (`AddedAction.AlarmDelete`, `AddedCommand.Delete`): every added alarm off the account
   in one `SetAlarms` (a History Unit), and off the added list; the other kinds follow (above).
-- **An added element's right-click menu is "remove the others"** (user rule 2026-10-02, `SearchDomain.keepingOnly`):
-  the list is left holding that element alone — off the list, never off the account. On the ONLY element there is
-  nothing to offer, so the right-click opens no menu. The row's ✕ and double-click are unchanged.
+- **The added elements are SELECTED like the result rows, and their right-click menu acts on the selection** (user
+  rules 2026-10-02 / 2026-10-03): `ClickSelection` again (a click selects one row, Ctrl+click adds or takes one,
+  Shift+click the range from the anchor; the last one clicked wears the thick outline), Compose-only, and a right-click
+  selects its row alone unless it is already selected. The menu: **"remove"** (`SearchDomain.removing`) and **"remove
+  the others"** (`keepingOnly`) — off the list, never off the account; the second is not offered once the selection is
+  all the list holds. The row's ✕ and double-click are unchanged.
 - **"app setting" is a kind too** (`Kind.AppSetting`, user spec 2026-10-02): one row per `SearchDomain.AppSettingEntry`
   — "Sound setting" is the first — added and opened like any element (its row opens the Search window holding it
   alone), and its controls are ACTIONS on the added elements: "Global volume" (`AddedAction.SoundVolume`) is a slider

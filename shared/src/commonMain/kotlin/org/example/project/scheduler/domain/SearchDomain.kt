@@ -2452,10 +2452,14 @@ object SearchDomain {
     }
 
     /**
-     * The added elements' "remove the others" (user rule 2026-10-02): [added] left holding [key] alone — unchanged
-     * when it does not hold it, so a stale press removes nothing.
+     * The added elements' "remove the others" (user rule 2026-10-02): [added] left holding the selected [keys]
+     * alone, in their order — unchanged when it holds none of them, so a stale press removes nothing.
      */
-    fun keepingOnly(added: List<String>, key: String): List<String> = if (key in added) listOf(key) else added
+    fun keepingOnly(added: List<String>, keys: Collection<String>): List<String> =
+        added.filter { it in keys }.ifEmpty { added }
+
+    /** The added elements' "remove": the selected [keys] off the list, the others kept in their order. */
+    fun removing(added: List<String>, keys: Collection<String>): List<String> = added.filterNot { it in keys }
 
     /** The ids of [kind]'s elements among [added], each once, in the list's order. */
     fun addedIds(added: List<Result>, kind: Kind): List<String> =
