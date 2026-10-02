@@ -644,6 +644,17 @@ class WindowFrameHost {
      */
     var onFocus: (String) -> Unit = {}
 
+    /**
+     * Whether a window that answers keystrokes takes the focus as it OPENS ([WindowFrame]'s registration).
+     *
+     * True for the whole life of the app but its start: the windows a launch RESTORES were not asked for by
+     * anyone, and letting each of them claim the focus as it registered handed it to whichever happened to be
+     * composed last (the Search window, in practice) — and recorded that as a move of the focus, so the window
+     * the user had left the app on never had it again (anomaly 2026-10-02). `App` turns it off while it puts
+     * the windows back, gives the focus to the window the state names, and turns it on.
+     */
+    var claimOnOpen: Boolean = true
+
     /** A press landed inside [id]: it takes the focus AND comes to the top of the stack. */
     fun focus(id: String) {
         val moved = focusedId != id
@@ -1054,7 +1065,8 @@ fun AppWindowFrame(
         // it landed in the tree, so nothing else would hand it over, and PRD §4's "type a letter to rename"
         // would fire behind it. Only on opening: the title is deliberately not a key of this effect, so a
         // window re-titled while it stands there does not snatch the keyboard back.
-        if (claimsKeyboard) host?.focus(state.id)
+        // (Not the windows a launch puts back: [WindowFrameHost.claimOnOpen].)
+        if (claimsKeyboard && host != null && host.claimOnOpen) host.focus(state.id)
         onDispose { host?.unregister(state.id) }
     }
     SideEffect {

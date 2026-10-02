@@ -819,7 +819,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val transientMenus = remember { TransientMenuHost() }
         // …and every framed WINDOW registers here, which is what draws the bar of reduced windows along the
         // bottom of the app and what answers "does the tree still own the keyboard?" (see `WindowFrame.kt`).
-        val windowFrames = remember { WindowFrameHost() }
+        // Until the start-up has put the windows back, none of them claims the focus by opening (below).
+        val windowFrames = remember { WindowFrameHost().also { it.claimOnOpen = false } }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
         remember(placementStore) {
@@ -1211,6 +1212,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
                 }
             }
+        }
+        // **THE WINDOW THE APP WAS LEFT ON HAS THE FOCUS WHEN IT COMES BACK** (anomaly 2026-10-02: a redeploy
+        // with the calendar focused came back with the Search window focused instead). The state remembers the
+        // window ([SchedulerState.focusedWindow]) but the frames start with no focus, and two things then took
+        // it from that window before the user did anything: every restored window that answers keystrokes
+        // claimed it as it registered — the last one composed won, and the claim was RECORDED as a move — and
+        // the calendar claimed it merely for being open. Neither is a request: nothing was opened, the app was
+        // put back. So the claims are off while the windows register ([WindowFrameHost.claimOnOpen]), and this
+        // hands the frame focus to the window the state named at launch. Not a move (the state is already
+        // there, so the dispatch the frame makes is a no-op) and never a restore: a window left reduced stays
+        // reduced, one closed since stays closed.
+        val leftOn = remember { schedulerState.focusedWindow to schedulerState.focusedInstance }
+        LaunchedEffect(Unit) {
+            withFrameNanos { }
+            windowFrames.registrations.firstOrNull { historyWindowOfFrame(it.id) == leftOn }
+                ?.takeIf { !it.state.minimized }
+                ?.let { windowFrames.focus(it.id) }
+            windowFrames.claimOnOpen = true
         }
         fun focusWindow(id: FloatingWindow) {
             bringWindowToFront(id)
@@ -1702,9 +1721,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var calendarLockTask by remember { mutableStateOf<TaskId?>(null) }
         var calendarLockOnTask by remember { mutableStateOf(false) }
         var calendarLockNonce by remember { mutableStateOf(0) }
-        // PRD §8: the calendar's day / week display mode. View state of this session too — held here rather
-        // than in the window so closing and reopening the calendar keeps it.
-        var calendarDisplayMode by remember { mutableStateOf(org.example.project.ui.CalendarDisplayMode.Week) }
+        // PRD §8: the calendar's day / week display mode — a display preference of this device, stored with
+        // the calendar's other two switches ([SchedulerState.calendarDayMode]) so it survives a relaunch.
+        val calendarDisplayMode =
+            if (schedulerState.calendarDayMode) org.example.project.ui.CalendarDisplayMode.Day
+            else org.example.project.ui.CalendarDisplayMode.Week
         // A task cell's "go to calendar": the calendar opened (or brought back) and focused, locked on the task.
         fun goToCalendar(taskId: TaskId) {
             calendarLockTask = taskId
@@ -2653,8 +2674,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Opening only: a CLOSE hands the focus on like every window's ([ViewHistoryRecorder.focusAfterClose], to the
         // window under it). The old "closed ⇒ the tree" named the tree even when it was closed too, and the focus
         // walk's effect then reopened it — closing every window left one open (anomaly 2026-10-01).
+        // And only an OPENING: a calendar the launch found open was not opened by anyone, and claiming the focus
+        // for it took the focus from whichever window the app had been left on (see `leftOn`).
+        val calendarOpenAtLaunch = remember { booleanArrayOf(calendarOpen) }
         LaunchedEffect(calendarOpen) {
-            if (calendarOpen) vm.dispatch(SchedulerIntent.SetCalendarFocus(true))
+            val restored = calendarOpenAtLaunch[0]
+            calendarOpenAtLaunch[0] = false
+            if (calendarOpen && !restored) vm.dispatch(SchedulerIntent.SetCalendarFocus(true))
         }
 
         // PRD §7: switching focus to another window leaves Edit Mode in any window — close the calendar's
@@ -3036,7 +3062,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onLockOnTaskChange = { calendarLockOnTask = it },
                             lockOnTaskNonce = calendarLockNonce,
                             displayMode = calendarDisplayMode,
-                            onDisplayModeChange = { calendarDisplayMode = it },
+                            onDisplayModeChange = {
+                                vm.dispatch(
+                                    SchedulerIntent.SetCalendarDayMode(it == org.example.project.ui.CalendarDisplayMode.Day),
+                                )
+                            },
                             // The day selector, in the window's configuration section (it left the lateral menu).
                             monthAnchor = monthAnchor,
                             onMonthAnchorChange = { monthAnchor = it },

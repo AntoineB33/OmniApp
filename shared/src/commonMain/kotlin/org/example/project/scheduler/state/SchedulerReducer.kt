@@ -590,6 +590,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetShowReminders ->
                 if (state.showReminders == intent.show) state
                 else state.copy(showReminders = intent.show)
+            is SchedulerIntent.SetCalendarDayMode ->
+                if (state.calendarDayMode == intent.dayMode) state
+                else state.copy(calendarDayMode = intent.dayMode)
             is SchedulerIntent.SetNotificationVoice ->
                 settingsUnit(state, if (intent.enabled) "Voice on" else "Voice off") {
                     if (it.notificationVoiceEnabled == intent.enabled) it else it.copy(notificationVoiceEnabled = intent.enabled)

@@ -728,6 +728,13 @@ data class SchedulerState(
      */
     val showReminders: Boolean = true,
     /**
+     * PRD §8: whether the calendar window is in its **Day** display mode (one day flowing across the columns)
+     * rather than the default **Week** one. A display preference of this device like the two switches above —
+     * persisted, never synced, not undoable. Until 2026-10-02 it lived in Compose state only, so every launch
+     * came back in Week mode.
+     */
+    val calendarDayMode: Boolean = false,
+    /**
      * PRD §11/§15: whether the app SPEAKS. Every notification it posts is also said aloud — the task to do
      * now, a screen break's start and end, the wind-down, an alarm, a chord's receipt — because a
      * notification exists to reach a user who is not looking at OmniApp, and one that only appears in a
@@ -1054,7 +1061,7 @@ data class SchedulerState(
      * remote snapshot must not adopt another device's value. It covers:
      *  - [focusedWindow] — PRD §7 window navigation (the tree vs. a floating window),
      *  - [selection] — which tree cell(s) are highlighted (cleared as a side effect of navigating away),
-     *  - [showScreenBreaks] / [showReminders] — the calendar's cosmetic display switches,
+     *  - [showScreenBreaks] / [showReminders] / [calendarDayMode] — the calendar's cosmetic display switches,
      *  - the [HistoryCategory.WindowNav] and [HistoryCategory.Selection] history that records those moves,
      *  - [notificationLog] — the per-device diagnostic notification log (never synced, never adopted),
      *  - [supabaseUsageLog] — the per-device Supabase-usage diagnostic log (never synced, never adopted).
@@ -1073,6 +1080,7 @@ data class SchedulerState(
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
             showReminders = other.showReminders,
+            calendarDayMode = other.calendarDayMode,
             notificationLog = other.notificationLog,
             supabaseUsageLog = other.supabaseUsageLog,
             categoryRuleError = other.categoryRuleError,
@@ -1090,6 +1098,7 @@ data class SchedulerState(
             selection = SchedulerSelection(),
             showScreenBreaks = false,
             showReminders = true,
+            calendarDayMode = false,
             notificationLog = emptyList(),
             supabaseUsageLog = emptyList(),
             categoryRuleError = null,

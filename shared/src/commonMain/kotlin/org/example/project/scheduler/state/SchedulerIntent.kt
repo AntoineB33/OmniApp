@@ -1048,6 +1048,14 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * PRD §8: put the calendar in its Day display mode ([dayMode]) or back in the Week one — a display
+     * preference of this device. Persisted; never synced; not undoable.
+     */
+    data class SetCalendarDayMode(
+        val dayMode: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §11/§15: enable/disable the app's VOICE — the spoken half of every notification it posts (see
      * [org.example.project.scheduler.state.SchedulerState.notificationVoiceEnabled]). Persisted; not
      * undoable; does not touch the schedule, and leaves the notifications themselves posting.

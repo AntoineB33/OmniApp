@@ -567,6 +567,25 @@ class SchedulerCalendarTest {
     }
 
     @Test
+    fun the_calendar_day_mode_survives_a_relaunch_and_never_reaches_the_wire() {
+        // PRD §8: default Week; the anomaly was a Day choice lost at every launch (it was Compose-only state).
+        assertEquals(false, SchedulerState.empty().calendarDayMode)
+        val day = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetCalendarDayMode(true))
+        assertTrue(day.calendarDayMode)
+        assertTrue(SchedulerStateCodec.decode(SchedulerStateCodec.encode(day))!!.calendarDayMode)
+        // A payload written before the field existed decodes to Week.
+        val before = SchedulerStateCodec.encode(SchedulerState.empty()).replace(Regex(""","calendarDayMode":(true|false)"""), "")
+        assertEquals(false, SchedulerStateCodec.decode(before)!!.calendarDayMode)
+        // Local view state: switching it is not an authoritative change, so it triggers no push.
+        assertEquals(
+            SchedulerStateCodec.syncFingerprint(SchedulerState.empty()),
+            SchedulerStateCodec.syncFingerprint(day),
+        )
+        // And a pull keeps this device's choice.
+        assertTrue(SchedulerState.empty().withLocalViewStateFrom(day).calendarDayMode)
+    }
+
+    @Test
     fun codec_round_trips_the_show_reminders_preference() {
         // PRD §14: the calendar's reminder display switch persists across sessions; default is on.
         assertTrue(SchedulerState.empty().showReminders)

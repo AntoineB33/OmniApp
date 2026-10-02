@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Windows: the window the app was left on has the focus again after a relaunch — 2026-10-02
+
+Anomaly: *"I open the calendar, then click on account3-deploy-windows-offline.bat, but the calendar is not in focus"*.
+`SchedulerState.focusedWindow` is persisted, but at launch two things took the focus away from the window it named
+before the user did anything. Every restored window with `claimsKeyboard` called `WindowFrameHost.focus` as it
+registered, so the last one composed won (the Search window on the release account, which has four full-size windows
+open) and `onFocus` recorded that as a WindowNav move; and `LaunchedEffect(calendarOpen)` dispatched `SetCalendarFocus`
+for a calendar that was merely found open. A first fix that focused the named window only "if nothing has the focus
+yet" therefore never fired. Now: new `WindowFrameHost.claimOnOpen`, off while the launch puts the windows back; `App`
+captures the window the state names at launch (`leftOn`), gives it the frame focus one frame in, then turns the claims
+on; and the calendar's claim is skipped for a calendar restored open. No move is recorded, a reduced window stays
+reduced, a closed one stays closed.
+
+### Calendar: the Day / Week display mode is persisted — 2026-10-02
+
+Anomaly: *"The day/week configuration doesn't seem to persist between app closes/launches."* It was Compose state in
+`App` (`remember { mutableStateOf(Week) }`), so every launch came back in Week. Now `SchedulerState.calendarDayMode`
+(`PersistedSchedulerState.calendarDayMode`, default false) set by `SchedulerIntent.SetCalendarDayMode`: local-only view
+state beside `showScreenBreaks` / `showReminders` — persisted, carried across a pull, neutralized in the fingerprint,
+never synced. No SQLite or Supabase migration (a field of the local `app_state` payload).
+
 ### Calendar: a drag is drawn as its release would leave it; double click to move; right-click suspends — 2026-10-02
 
 User request: *"When the user drags a block, the block always keeps its height [...] When right-clicking during a drag,

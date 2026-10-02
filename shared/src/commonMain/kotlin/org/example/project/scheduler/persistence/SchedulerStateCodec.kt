@@ -593,6 +593,7 @@ object SchedulerStateCodec {
                     },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
+            calendarDayMode = calendarDayMode,
             // The persisted key keeps the name it was written under when the voice was the look-away cue's
             // alone; the field it decodes into now governs every notification's spoken half. Renaming the key
             // would make an older build on the same account read the payload as "voice on" and an older
@@ -1223,6 +1224,7 @@ object SchedulerStateCodec {
                 },
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
+            calendarDayMode = calendarDayMode,
             notificationVoiceEnabled = lookAwayVoiceEnabled,
             notificationsEnabled = notificationsEnabled,
             // PRD §4: three generations, all readable. A payload written before the "Default sub-tree"
@@ -1622,6 +1624,9 @@ private data class PersistedState(
     val showScreenBreaks: Boolean = false,
     // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.
     val showReminders: Boolean = true,
+    // PRD §8: the calendar's Day/Week display mode; default Week, which is what every payload written before
+    // the mode was persisted (2026-10-02) decodes to.
+    val calendarDayMode: Boolean = false,
     // PRD §11/§15: whether the app speaks its notifications aloud; default on (payloads written before the
     // toggle existed get the voice). The KEY keeps the name it has always been written under — when the
     // switch governed the look-away cue alone — so payloads move in both directions between builds; the state
