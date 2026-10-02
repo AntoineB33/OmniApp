@@ -362,17 +362,15 @@ object PeriodKinds {
      * [PeriodKindConfig], never beside it. What a kind carries with it is a combination rule
      * ([DEFAULT_COMBINATIONS]).
      *
-     * The drawings are pairwise distinct across the built-ins, so the six can overlap in any combination and
-     * still be told apart. A kind the account defines gets the least-used drawing when it is added
+     * Inactivity, sleep, "no screen" and "before bed" wear NO drawing by default (user rule 2026-10-02): their label
+     * (and outline, when authored) says it, and the account may still choose a pattern for any of them. The layer
+     * kinds' drawings are pairwise distinct, so they can overlap and still be told apart. A kind the account defines gets the least-used drawing when it is added
      * (`SchedulerReducer`'s `reduceAddPeriodKind`); [PeriodDrawing.Crosses] is only the fallback for a payload
      * that never stored one.
      */
     fun defaultStyle(kind: String): PeriodKindStyle =
         when (kind) {
-            INACTIVITY -> PeriodKindStyle(PeriodDrawing.VerticalLines)
-            SLEEP -> PeriodKindStyle(PeriodDrawing.HorizontalLines)
-            NO_SCREEN -> PeriodKindStyle(PeriodDrawing.HalfCirclesLeft)
-            BEFORE_BED -> PeriodKindStyle(PeriodDrawing.Zigzags)
+            INACTIVITY, SLEEP, NO_SCREEN, BEFORE_BED -> PeriodKindStyle(PeriodDrawing.None)
             NO_COMPUTER_UNLOCKED -> PeriodKindStyle(PeriodDrawing.RisingObliques)
             NO_PHONE_UNLOCKED -> PeriodKindStyle(PeriodDrawing.FallingObliques)
             // The real layer's slope, DOTTED: the look an "I'm away" stretch has always had on the calendar (the

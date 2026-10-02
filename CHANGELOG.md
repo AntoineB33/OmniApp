@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: inactivity, sleep, no screen and before bed have no drawing by default — 2026-10-02
+
+`PeriodKinds.defaultStyle` gave them `|`, `—`, `(` and zig-zags; it now gives all four `PeriodDrawing.None`. An
+account that chose a drawing for one keeps it (the override is stored); one that never did follows the new default,
+and can now choose and store any of the four old patterns. A derived Inactivity stretch (no outline) is therefore
+its label alone. No state shape, SQLite or Supabase change.
+
 ### Search window: "Set to the current time" on the added alarms and reminders — 2026-10-02
 
 A new action in the alarm and the reminder sections of the actions on the added elements (button "Now"): every added

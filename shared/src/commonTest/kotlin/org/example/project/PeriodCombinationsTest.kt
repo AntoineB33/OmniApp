@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.example.project.scheduler.domain.PeriodCombination
+import org.example.project.scheduler.domain.PeriodDrawing
 import org.example.project.scheduler.domain.PeriodKindConfig
 import org.example.project.scheduler.domain.PeriodFormula
 import org.example.project.scheduler.domain.PeriodFormulaToken
@@ -351,7 +352,23 @@ class PeriodCombinationsTest {
         val old = withField(payload, "periodKindStyles", """[{"id":"sleep","companions":["no screen"],"drawing":"HorizontalLines"}]""")
         val decoded = assertNotNull(SchedulerStateCodec.decode(old))
         assertEquals(PeriodKinds.DEFAULT_COMBINATIONS, decoded.periodCombinations)
+        // The drawing it shipped with then is not a chosen one: sleep follows today's default (no drawing).
         assertEquals(emptyMap(), decoded.periodKindStyles, "a style left at its default is no override")
+    }
+
+    @Test
+    fun a_drawing_chosen_since_the_defaults_became_none_is_kept() {
+        // Written by this build (folded): the old default pattern, picked on purpose, is an override.
+        val payload = SchedulerStateCodec.encode(SchedulerState.empty())
+        val now = withField(payload, "periodKindStyles", """[{"id":"sleep","drawing":"HorizontalLines","folded":true}]""")
+        val decoded = assertNotNull(SchedulerStateCodec.decode(now))
+        assertEquals(PeriodDrawing.HorizontalLines, decoded.periodKindConfig.drawing(PeriodKinds.SLEEP))
+        // And through the reducer and a save: choosing the old pattern is stored, choosing "no drawing" again is not.
+        var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetPeriodDrawing(PeriodKinds.SLEEP, PeriodDrawing.HorizontalLines))
+        s = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
+        assertEquals(PeriodDrawing.HorizontalLines, s.periodKindConfig.drawing(PeriodKinds.SLEEP))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodDrawing(PeriodKinds.SLEEP, PeriodDrawing.None))
+        assertEquals(emptyMap(), s.periodKindStyles)
     }
 
     @Test

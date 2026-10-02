@@ -2596,14 +2596,26 @@ private data class PersistedPeriodKindStyle(
     val folded: Boolean = false,
 )
 
+/** The drawings four built-in kinds shipped with until 2026-10-02, when their default became [PeriodDrawing.None]. */
+private val LEGACY_DEFAULT_DRAWINGS: Map<String, PeriodDrawing> =
+    mapOf(
+        PeriodKinds.INACTIVITY to PeriodDrawing.VerticalLines,
+        PeriodKinds.SLEEP to PeriodDrawing.HorizontalLines,
+        PeriodKinds.NO_SCREEN to PeriodDrawing.HalfCirclesLeft,
+        PeriodKinds.BEFORE_BED to PeriodDrawing.Zigzags,
+    )
+
 private fun List<PersistedPeriodKindStyle>.toPeriodKindStyles(kinds: List<String>): Map<String, PeriodKindStyle> {
     val known = kinds.toSet()
     val out = LinkedHashMap<String, PeriodKindStyle>()
     for (p in this) {
         val kind = PeriodKinds.migrateStoredKind(p.id)
         if (kind !in known || kind in out) continue
-        val drawing =
-            PeriodDrawing.entries.firstOrNull { it.name == p.drawing } ?: PeriodKinds.defaultStyle(kind).drawing
+        val stored = PeriodDrawing.entries.firstOrNull { it.name == p.drawing }
+        // A row written before 2026-10-01 held the whole style whenever the kind's companion set was edited, its
+        // drawing included even when nobody chose it. The four kinds whose default became "no drawing" (2026-10-02)
+        // would read that as a chosen pattern: such a row at the drawing the kind SHIPPED with is the default.
+        val drawing = stored?.takeUnless { !p.folded && it == LEGACY_DEFAULT_DRAWINGS[kind] } ?: PeriodKinds.defaultStyle(kind).drawing
         out[kind] = PeriodKindStyle(drawing)
     }
     // A style at the kind's default (only its old companion set was stored) is no override any more.

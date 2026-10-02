@@ -350,12 +350,14 @@ Global rules that always apply: `CLAUDE.md`.
     `PersistedPeriodCombinations.folded` mark the new shape).
   - **Drawings** (`PeriodDrawing`, rendered only by `ui/PeriodDrawings.kt`'s `Modifier.periodDrawing`): a
     CLOSED set of line patterns that differ by geometry alone (same colour, stroke and 35 % alpha), so any
-    number overlap legibly. Defaults are pairwise distinct across the built-ins: `|` inactivity, `—` sleep,
-    `/` no computer unlocked, `\` no phone unlocked, `(` no screen, zig-zags before bed. A kind the account
-    adds is given the least-worn drawing (`PeriodDrawing.patterns`) AT CREATION and stores it. **`None` ("No
-    drawing") is the one member that is no pattern**: an account may hold more kinds than there are patterns, so
-    a kind may be left to its outline and label alone — only ever CHOSEN in the drawing selector, never handed
-    out, and the one renderer paints nothing for it. A drawing is stored — never derived from the list position, or
+    number overlap legibly. Defaults (`PeriodKinds.defaultStyle`): **inactivity, sleep, no screen and before
+    bed wear NO drawing** (user rule 2026-10-02) — label, and outline when authored, until the account picks a
+    pattern; `/` no computer unlocked, `\` no phone unlocked (dotted for the two "not on a …"), `|` the breaks. A
+    kind the account adds is given the least-worn drawing (`PeriodDrawing.patterns`) AT CREATION and stores it.
+    **`None` ("No drawing") is the one member that is no pattern**: a kind left to its outline and label alone —
+    those four defaults, or CHOSEN in the drawing selector, never handed out to a new kind — and the one renderer
+    paints nothing for it. An override is stored only where it differs from the default, so an account that never
+    chose a drawing for one of the four follows the default. A drawing is stored — never derived from the list position, or
     deleting a kind would repaint the others. Drawn as a repeated TILE, one rect per box, so the cost does not
     grow with the box's height (a night at the zoom ceiling is ~150 000 px).
   - **Who paints what**: a period box (and the sleep band) paints its kind's drawing and every companion's
@@ -479,7 +481,7 @@ Global rules that always apply: `CLAUDE.md`.
     saying whose it is.
   - **Neither drawing may pick its own colour.** Picking one at the drawing site is exactly how the ring came
     to wear the accent: the colour is `outlineColor(record.outline)` in both, as in every other block.
-- **A DERIVED INACTIVITY PERIOD IS DRAWN LIKE AN AUTHORED ONE, MINUS THE OUTLINE.** Same vertical lines, same
+- **A DERIVED INACTIVITY PERIOD IS DRAWN LIKE AN AUTHORED ONE, MINUS THE OUTLINE.** Same drawing (none by default), same
   label — it is the same statement — and NO outline, because the outline is the one thing that differs: it
   says who put this here, and the answer is "no one yet". The app is REPORTING an empty stretch it derived,
   not asserting one. **Editing it is what materializes it** (the period editor's Save lays a real panel), and

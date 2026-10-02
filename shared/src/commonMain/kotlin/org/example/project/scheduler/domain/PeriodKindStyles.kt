@@ -13,29 +13,30 @@ import org.example.project.scheduler.model.TaskTimeRange
  * resilient to its kind works straight through it and must stay readable (ADR 0002).
  *
  * [None] is the one member that is no pattern: an account may define more kinds than there are drawings to tell
- * apart, so a kind may be left to its outline and its label alone. It is only ever CHOSEN — a new kind is never
- * given it ([PeriodDrawing.patterns]).
+ * apart, so a kind may be left to its outline and its label alone. It is the default of inactivity, sleep, "no
+ * screen" and "before bed" ([PeriodKinds.defaultStyle]); a kind the account adds is never given it
+ * ([PeriodDrawing.patterns]).
  *
  * Stored by [name]; a name this build does not know decodes to the kind's default drawing.
  */
 enum class PeriodDrawing(val label: String) {
     /** Nothing is drawn: the period keeps its outline and its label. */
     None("No drawing"),
-    /** `|` — the inactivity default. */
+    /** `|` — the two break kinds' default. */
     VerticalLines("Vertical lines"),
-    /** `—` — the sleep default. */
+    /** `—`. */
     HorizontalLines("Horizontal lines"),
     /** `/` (bottom-left → top-right) — the "no computer unlocked" default. */
     RisingObliques("Oblique lines /"),
     /** `\` (top-left → bottom-right) — the "no phone unlocked" default. */
     FallingObliques("Oblique lines \\"),
-    /** `(` — vertical half-circles opening to the right; the "no screen" default. */
+    /** `(` — vertical half-circles opening to the right. */
     HalfCirclesLeft("Half-circles ("),
     /** `)` — the same half-circles facing the other way, set beside `(` so the two read as `( )` together. */
     HalfCirclesRight("Half-circles )"),
     /** Small `+` marks on a sparse grid. */
     Crosses("Crosses +"),
-    /** Horizontal zig-zag lines — the "before bed" default. */
+    /** Horizontal zig-zag lines. */
     Zigzags("Zig-zags"),
     /** `/` in dashes — the "not on a computer" default: the real layer's slope, the user's word. */
     DottedRisingObliques("Dotted oblique lines /"),

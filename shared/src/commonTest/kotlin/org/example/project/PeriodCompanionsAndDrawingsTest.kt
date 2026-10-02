@@ -72,20 +72,26 @@ class PeriodCompanionsAndDrawingsTest {
     }
 
     @Test
-    fun the_built_in_kinds_wear_pairwise_distinct_drawings() {
-        val drawings = PeriodKinds.BUILT_IN.map(DEFAULT::drawing)
-        assertEquals(drawings.size, drawings.toSet().size, "every built-in kind can be told apart: $drawings")
-        assertEquals(PeriodDrawing.VerticalLines, DEFAULT.drawing(PeriodKinds.INACTIVITY), "inactivity keeps |")
+    fun inactivity_sleep_no_screen_and_before_bed_wear_no_drawing_and_the_others_are_pairwise_distinct() {
+        // User rule 2026-10-02: the four are left to their label (and outline) until the account picks a pattern.
+        val bare = listOf(PeriodKinds.INACTIVITY, PeriodKinds.SLEEP, PeriodKinds.NO_SCREEN, PeriodKinds.BEFORE_BED)
+        assertEquals(List(bare.size) { PeriodDrawing.None }, bare.map(DEFAULT::drawing))
+        val drawings = (PeriodKinds.BUILT_IN - bare.toSet()).map(DEFAULT::drawing)
+        assertTrue(PeriodDrawing.None !in drawings)
+        assertEquals(drawings.size, drawings.toSet().size, "every other built-in kind can be told apart: $drawings")
         assertEquals(PeriodDrawing.RisingObliques, DEFAULT.drawing(PeriodKinds.NO_COMPUTER_UNLOCKED), "keeps /")
         assertEquals(PeriodDrawing.FallingObliques, DEFAULT.drawing(PeriodKinds.NO_PHONE_UNLOCKED), "keeps \\")
     }
 
     @Test
     fun a_box_draws_its_kind_and_its_companions_but_leaves_the_layers_to_the_hatch() {
-        assertEquals(
-            listOf(DEFAULT.drawing(PeriodKinds.BEFORE_BED), DEFAULT.drawing(PeriodKinds.NO_SCREEN)),
-            DEFAULT.boxDrawings(PeriodKinds.BEFORE_BED),
+        val drawn = PeriodKindConfig(
+            mapOf(
+                PeriodKinds.BEFORE_BED to PeriodKindStyle(PeriodDrawing.Zigzags),
+                PeriodKinds.NO_SCREEN to PeriodKindStyle(PeriodDrawing.HalfCirclesLeft),
+            ),
         )
+        assertEquals(listOf(PeriodDrawing.Zigzags, PeriodDrawing.HalfCirclesLeft), drawn.boxDrawings(PeriodKinds.BEFORE_BED))
         assertEquals(emptyList(), DEFAULT.boxDrawings(PeriodKinds.NO_COMPUTER_UNLOCKED))
         val layered = styled(PeriodKinds.NO_SCREEN to setOf(PeriodKinds.NO_PHONE_UNLOCKED))
         assertEquals(listOf(DEFAULT.drawing(PeriodKinds.NO_SCREEN)), layered.boxDrawings(PeriodKinds.NO_SCREEN))
@@ -220,7 +226,7 @@ class PeriodCompanionsAndDrawingsTest {
         // More kinds than there are patterns: every one still gets a pattern, never "no drawing".
         var s = SchedulerState.empty()
         repeat(PeriodDrawing.entries.size * 2) { s = SchedulerReducer.reduce(s, SchedulerIntent.AddPeriodKind("kind $it")) }
-        assertTrue(s.allPeriodKinds.none { s.periodKindConfig.drawing(it) == PeriodDrawing.None })
+        assertTrue(s.allPeriodKinds.filter(PeriodKinds::isUserDefined).none { s.periodKindConfig.drawing(it) == PeriodDrawing.None })
         // Chosen, it is kept — through a save and a load too.
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodDrawing("kind 0", PeriodDrawing.None))
         assertEquals(PeriodDrawing.None, s.periodKindConfig.drawing("kind 0"))
