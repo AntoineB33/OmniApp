@@ -699,6 +699,11 @@ object BreakMachine {
                 // A line that takes the pose it owes takes it now: the rest of the prediction follows from there.
                 s = s.copy(drag = null, active = Active(d.label, s.atMillis + 1, s.atMillis + 1 + len, d.members, held = true))
                 s = s.copy(stretchStart = s.stretchStart ?: s.atMillis)
+                // Taking it IS its no-screen period's occurrence of each member ([enter]'s own bookkeeping): without
+                // it, a line inside a known period (the hour before bed) had the next one pulled onto this one's end,
+                // and two 15-min breaks were drawn back to back right after the line (anomaly 2026-10-02).
+                val key = periodAt(s, s.atMillis, chains)?.startMillis ?: s.stretchStart ?: s.atMillis
+                s = s.copy(taken = s.taken + d.members.associateWith { key })
             }
         }
         val events = ArrayList<Event>()

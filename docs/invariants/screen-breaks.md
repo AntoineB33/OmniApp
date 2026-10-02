@@ -51,6 +51,11 @@ persisted keys.
     A continuous period includes the line's own stretch and the last one it ended (`State.lastStretchStart/End`), so a
     line that comes back to a screen inside the night it walked into while away owes nothing the night already took
     (start-up of account 3, 2026-09-30).
+  - **The owed pose a prediction takes at the line takes its period's occurrence too** (`BreakMachine.predict`,
+    `Policy.TAKE_POSES`, 2026-10-02): the calendar's look ahead enters the dragged pose by a shortcut, not through
+    `enter`, and it left `State.taken` unset — so inside a known no-screen period (the hour before bed) the next
+    bar of that label was pulled onto the pose's own end, and two 15-min breaks were drawn back to back right after
+    the line. The shortcut now writes the same `taken` key `enter` does.
   - It reads **no task, no pre-placed block and no emptiness**: *"the three screen breaks are placed everywhere in
     the timeline as earliest as possible"*. The walk pushed a break out of any stretch nobody could run in, a rule
     the requirements do not have. The environment it reads is the no-screen periods (`BreakMachine.chainsOf`).

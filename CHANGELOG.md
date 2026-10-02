@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Screen breaks: two 15-min breaks drawn back to back right after the line — 2026-10-02
+
+Anomaly on account 3 at 22:14, the line dragging an owed 15-min break inside the hour before bed. The calendar's
+prediction (`BreakMachine.predict`, `TAKE_POSES`) takes the owed pose at the line without recording that it took the
+no-screen period's occurrence (`State.taken`), so the "break starts at max(now line, t_s)" pull brought the next
+15-min break onto its end. The shortcut now records it, as `enter` does. Prediction only: the machine the line
+drives, the banked record and the cues were not affected. `BreakMachineTest` pins it.
+
 ### Calendar: a screen break lays the two layers' oblique lines — 2026-10-02
 
 A break is accompanied by "no screen", and by the account's default rule "no screen" brings ("no computer unlocked"

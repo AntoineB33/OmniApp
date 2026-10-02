@@ -169,6 +169,22 @@ class BreakMachineTest {
         assertEquals(LABEL_5MIN, s.active?.label)
     }
 
+    /**
+     * Anomaly 2026-10-02: a line at a screen dragging the 15-min break it owes, inside the hour before bed. The
+     * calendar's prediction takes the owed break at the line — and that taking IS the period's occurrence of it, so
+     * no second 15-min break is pulled onto its end (two were drawn back to back right after the line).
+     */
+    @Test
+    fun an_owed_pose_taken_at_the_line_is_its_no_screen_periods_one_occurrence() {
+        val evening = Span(T0 - 10 * MIN, T0 + 9 * HOUR)
+        val owing =
+            BreakMachine.initial(T0 - 3 * HOUR, specs)
+                .copy(atMillis = T0, drag = BreakMachine.Drag(LABEL_15MIN, T0 - MIN, listOf(LABEL_15MIN)))
+        val placed = BreakMachine.predictExpected(owing, T0 + 12 * HOUR, listOf(evening), specs)
+        val inEvening = placed.filter { it.label == LABEL_15MIN && it.startMillis < evening.endMillis }
+        assertEquals(listOf(BreakMachine.Placed(LABEL_15MIN, T0, T0 + 15 * MIN, openStart = true)), inEvening)
+    }
+
     @Test
     fun a_break_due_in_a_no_screen_period_ahead_starts_at_its_start() {
         // A night: every break falling due inside it is pulled to its start, and the chain keeps the longest.
