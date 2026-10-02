@@ -143,17 +143,29 @@ object PeriodKinds {
     /**
      * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 15-minute screen break**, accompanied by "no
      * screen". The requirements say nothing more of it, so it is an ordinary editable kind: `0` for every task until
-     * one is given more. (The 20-second break *"allows no task"* — it is [INACTIVITY], which nobody may be resilient
-     * to.)
+     * one is given more.
      */
     const val BREAK_15MIN: String = "15min screen break"
+
+    /**
+     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 20-second screen break** (user rule
+     * 2026-10-03: *"a 20s screen break is a restrictive period like any other"* — until then it was an [INACTIVITY]
+     * period with no kind of its own, so nothing could name it: the Search window listed "inactivity" for it). A kind
+     * like the two others, listed with them — and, as the requirements say, one that
+     * *"allows no task"*: its resilience is `0` for everybody and is not editable ([isResilienceEditable],
+     * [resilienceFor]), which is exactly what being an [INACTIVITY] period gave it.
+     * Like [INACTIVITY] it carries "no screen" by NO rule: a period carrying it by rule gives way to a line at a screen
+     * (`SchedulerDomain.retractedAtLineSpans`), and the 20 s break is the one the line ENTERS there. The "no screen" it is
+     * accompanied by is said where it is drawn (the bubble, the layers, the Search listing).
+     */
+    const val BREAK_20S: String = "20s screen break"
 
     /**
      * The two kinds of the screen breaks a task may be resilient to ([BREAK_5MIN], [BREAK_15MIN]). Offered by every
      * list of kinds a task can be resilient to (`SchedulerState.allPeriodKinds`), but not [BUILT_IN]: a break is laid by
      * the rules, drawn as the break it is, and has no drawing of its own to keep apart from the others.
      */
-    val BREAK_KINDS: List<String> = listOf(BREAK_5MIN, BREAK_15MIN)
+    val BREAK_KINDS: List<String> = listOf(BREAK_20S, BREAK_5MIN, BREAK_15MIN)
 
     /**
      * The kinds the README itself names (its grey one as two) plus the one PRD §17 lays and the two that
@@ -378,7 +390,7 @@ object PeriodKinds {
             NOT_ON_A_COMPUTER -> PeriodKindStyle(PeriodDrawing.DottedRisingObliques)
             NOT_ON_A_PHONE -> PeriodKindStyle(PeriodDrawing.DottedFallingObliques)
             // Drawn as the grey family the breaks belong to.
-            BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(PeriodDrawing.VerticalLines)
+            BREAK_20S, BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(PeriodDrawing.VerticalLines)
             else -> PeriodKindStyle(PeriodDrawing.Crosses)
         }
 
@@ -423,7 +435,7 @@ object PeriodKinds {
      * included: the requirements say a sleep period *"allows no task (a task has a 0 resilience to it by default)"*,
      * a default and not a rule (until 2026-09-29 it could not be edited).
      */
-    fun isResilienceEditable(kind: String): Boolean = kind != INACTIVITY
+    fun isResilienceEditable(kind: String): Boolean = kind != INACTIVITY && kind != BREAK_20S
 
     /** A resilience is a multiplier in `[0, 1]`; anything outside is healed to the nearest bound. */
     fun clamp(value: Double): Double = if (value.isNaN()) 1.0 else value.coerceIn(0.0, 1.0)
@@ -435,7 +447,7 @@ object PeriodKinds {
      */
     fun resilienceFor(overrides: Map<String, Double>, kind: String): Double =
         // "Allows no task": an override a payload holds for it (the editor never wrote one) is not honoured.
-        if (kind == INACTIVITY) 0.0 else overrides[kind]?.let { clamp(it) } ?: defaultResilience(kind)
+        if (!isResilienceEditable(kind)) 0.0 else overrides[kind]?.let { clamp(it) } ?: defaultResilience(kind)
 
     /**
      * The product of every covering kind's resilience — `side-dev/scheduler.py` `Environment.multiplier`.

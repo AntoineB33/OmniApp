@@ -897,6 +897,12 @@ Global rules that always apply: `CLAUDE.md`.
   over itself (`panelDecor` — patterns, outlines, layer hatches, hour lines) stops at its title: the title's box, as
   wide as the words and not the block, is painted the block's own colour. Only where the block is opaque and carries
   a decor; the title is no longer `fillMaxWidth`.
+- **"edit…" LISTS A SCREEN BREAK** (2026-10-03): the breaks are not `state.panels` (banked locally behind the
+  line, predicted ahead), so the Search window's "is on the calendar at" is handed them with the layer bands
+  (`CalendarLayersHolder.breaks` ← `displaySidePanels`, `SearchDomain.calendarBreaksAt` / `calendarBreakKinds`): the
+  break's own kind ("20s screen break", "5min screen break", "15min screen break"), what it carries, and "no
+  screen". The right-click's instant is rounded to the minute, so a break STARTING within the minute is there too
+  (a 20 s break was never found at the instant itself), and the layers it lays are read where the break is.
 - **A SCREEN BREAK LAYS THE LAYERS** (2026-10-02, reversing "a break is the app's, so it brings nothing"): the
   "no screen" every drawn break is accompanied by counts as STATED (`statedKindRegions(breaks = …)`, `App`'s
   `displaySidePanels` while `showScreenBreaks` is on), so the account's "when no screen then …" rule

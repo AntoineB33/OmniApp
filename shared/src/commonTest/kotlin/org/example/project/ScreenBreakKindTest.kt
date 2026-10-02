@@ -46,14 +46,15 @@ class ScreenBreakKindTest {
         assertTrue(panels.isNotEmpty(), "the case needs breaks to be about")
         val kinds = panels.associate { it.title to it.restrictiveKind }
         val byDuration = SchedulerDomain.DEFAULT_SCREEN_BREAKS.sortedBy { it.durationMillis }
-        assertEquals(PeriodKinds.INACTIVITY, kinds[byDuration[0].title], "the 20 s allows no task")
+        assertEquals(PeriodKinds.BREAK_20S, kinds[byDuration[0].title], "the 20 s is a kind like any other (2026-10-03)")
         assertEquals(PeriodKinds.BREAK_5MIN, kinds[byDuration[1].title])
         assertEquals(PeriodKinds.BREAK_15MIN, kinds[byDuration[2].title])
         // Each is one span of its own length, accompanied by "no screen" through its kind.
         for (side in SchedulerDomain.DEFAULT_SCREEN_BREAKS) {
             assertTrue(panels.filter { it.title == side.title }.all { it.endEpochMillis - it.startEpochMillis == side.durationMillis })
         }
-        for (kind in PeriodKinds.BREAK_KINDS) {
+        // The 20 s carries "no screen" by no rule (a rule would make a line at a screen retract it — the line ENTERS it).
+        for (kind in PeriodKinds.BREAK_KINDS - PeriodKinds.BREAK_20S) {
             assertTrue(PeriodKinds.NO_SCREEN in org.example.project.scheduler.domain.PeriodKindConfig.DEFAULT.kindsOf(kind), "$kind comes with no screen")
         }
     }
@@ -62,9 +63,11 @@ class ScreenBreakKindTest {
     fun the_20s_and_the_5min_first_minute_allow_no_task_whatever_the_resilience() {
         val everything = Task(
             id = TaskId("t"), title = "t",
-            resilience = mapOf(PeriodKinds.INACTIVITY to 1.0, PeriodKinds.BREAK_5MIN to 1.0, PeriodKinds.BREAK_15MIN to 1.0),
+            resilience = mapOf(
+                PeriodKinds.INACTIVITY to 1.0, PeriodKinds.BREAK_20S to 1.0, PeriodKinds.BREAK_5MIN to 1.0, PeriodKinds.BREAK_15MIN to 1.0,
+            ),
         )
-        val lookAway = panel(NOW, NOW + 20_000, "20s", PeriodKinds.INACTIVITY)
+        val lookAway = panel(NOW, NOW + 20_000, "20s", PeriodKinds.BREAK_20S)
         assertEquals(
             listOf(NOW to NOW + 20_000),
             SchedulerDomain.breakRefusedRanges(lookAway, everything).map { it.startEpochMillis to it.endEpochMillis },
@@ -95,11 +98,13 @@ class ScreenBreakKindTest {
         val bands = metBy(state.copy(panels = listOf(rest)), NOW, NOW + 8 * HOUR)
         fun workIn(from: Long, to: Long) =
             panels.filter { it.auto && it.taskId != null && it.startEpochMillis < to && it.endEpochMillis > from }
-        val noTask = bands.flatMap { SchedulerDomain.screenBreakPeriods(it) }.filter { it.kind == PeriodKinds.INACTIVITY }
+        val noTask =
+            bands.flatMap { SchedulerDomain.screenBreakPeriods(it) }
+                .filter { it.kind == PeriodKinds.INACTIVITY || it.kind == PeriodKinds.BREAK_20S }
         assertTrue(noTask.isNotEmpty(), "the case needs a look-away or a 5 min first minute")
         for (r in noTask) assertTrue(workIn(r.startMillis, r.endMillis).isEmpty(), "work inside what allows no task: $r")
         // Inside the rest of the breaks the plan meets, only the task resilient to their kinds works.
-        val open = bands.filter { it.restrictiveKind != PeriodKinds.INACTIVITY }
+        val open = bands.filter { it.restrictiveKind != PeriodKinds.INACTIVITY && it.restrictiveKind != PeriodKinds.BREAK_20S }
         for (band in open) {
             val from = if (band.restrictiveKind == PeriodKinds.BREAK_5MIN) band.startEpochMillis + MIN else band.startEpochMillis
             assertTrue(workIn(from, band.endEpochMillis).all { it.taskId == resilient }, "only the resilient task works in $band")

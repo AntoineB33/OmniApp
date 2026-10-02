@@ -153,7 +153,7 @@ class DynamicPeriodsTest {
     fun each_of_the_three_is_a_period_of_the_kind_of_its_role() {
         val panels = place(toMillis = NOW + 6 * HOUR)
         assertEquals(
-            setOf(PeriodKinds.INACTIVITY, PeriodKinds.BREAK_5MIN, PeriodKinds.BREAK_15MIN),
+            setOf(PeriodKinds.BREAK_20S, PeriodKinds.BREAK_5MIN, PeriodKinds.BREAK_15MIN),
             panels.map { it.restrictiveKind }.toSet(),
         )
     }

@@ -146,7 +146,8 @@ class TaskResilienceTest {
                 // …and their FAKE halves (the "I'm away" button, 2026-09-30).
                 PeriodKinds.NOT_ON_A_COMPUTER,
                 PeriodKinds.NOT_ON_A_PHONE,
-                // The kinds of the two poses, which a task may be resilient to.
+                // The three screen breaks' kinds (the 20 s one since 2026-10-03; nobody is resilient to it).
+                PeriodKinds.BREAK_20S,
                 PeriodKinds.BREAK_5MIN,
                 PeriodKinds.BREAK_15MIN,
                 "deep focus",

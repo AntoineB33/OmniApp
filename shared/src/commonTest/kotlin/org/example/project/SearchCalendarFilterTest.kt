@@ -9,6 +9,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.CalendarElements
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SearchDomain
+import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.TaskId
@@ -23,6 +24,32 @@ import org.example.project.scheduler.state.SchedulerState
  * its "Add to the calendar" action lays the added elements there through the element window's own drafts.
  */
 class SearchCalendarFilterTest {
+
+    /** Anomaly 2026-10-03: "edit…" on a past 20 s break listed no break — it is not a panel of the state. */
+    @Test
+    fun a_screen_break_is_on_the_calendar_at_the_minute_it_falls_in_with_no_screen() {
+        val kinds = org.example.project.scheduler.domain.PeriodKinds
+        val config = org.example.project.scheduler.domain.PeriodKindConfig.DEFAULT
+        val minute = 60_000L
+        // 19:09:48–19:10:08, and a right-click rounded down to 19:09:00.
+        val lookAway = TaskTimeRange(1_000 * minute + 48_000L, 1_000 * minute + 68_000L) to kinds.BREAK_20S
+        val pose = TaskTimeRange(2_000 * minute, 2_015 * minute) to kinds.BREAK_15MIN
+        val breaks = listOf(lookAway, pose)
+        assertEquals(listOf(lookAway), SearchDomain.calendarBreaksAt(breaks, 1_000 * minute))
+        assertEquals(listOf(lookAway), SearchDomain.calendarBreaksAt(breaks, 1_001 * minute), "still inside it")
+        assertEquals(emptyList(), SearchDomain.calendarBreaksAt(breaks, 998 * minute))
+        assertEquals(listOf(pose), SearchDomain.calendarBreaksAt(breaks, 2_007 * minute))
+        // What it lists: the break's own kind and "no screen" — the 20 s break is a kind like any other, and the one
+        // the machine gives a 20 s break; nobody is resilient to it.
+        assertEquals(setOf(kinds.BREAK_20S, kinds.NO_SCREEN), SearchDomain.calendarBreakKinds(kinds.BREAK_20S, config))
+        assertEquals(
+            kinds.BREAK_20S,
+            org.example.project.scheduler.domain.DynamicPeriods.breakKind(org.example.project.scheduler.domain.DynamicPeriods.LABEL_20S),
+        )
+        assertTrue(kinds.BREAK_20S in org.example.project.scheduler.state.SchedulerState.empty().allPeriodKinds)
+        assertEquals(0.0, kinds.resilienceFor(mapOf(kinds.BREAK_20S to 1.0), kinds.BREAK_20S), "allows no task")
+        assertEquals(setOf(kinds.BREAK_15MIN, kinds.NO_SCREEN), SearchDomain.calendarBreakKinds(kinds.BREAK_15MIN, config))
+    }
     private fun r(state: SchedulerState, intent: SchedulerIntent) = SchedulerReducer.reduce(state, intent)
 
     private fun freeRootCell(state: SchedulerState): CellId = state.lists[state.rootListId]!!.cellIds.last()

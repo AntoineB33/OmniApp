@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Screen breaks: the 20 s break is a kind of its own, "20s screen break" — 2026-10-03
+
+"A 20s screen break is a restrictive period like any other." It was an `inactivity` period, so the Search window
+listed "inactivity" for it. `PeriodKinds.BREAK_20S` is now the kind `DynamicPeriods.breakKind` gives it, listed with
+the two others (`BREAK_KINDS`, so in every list of kinds), drawn like them; it still *"allows no task"* (resilience 0,
+not editable). It carries "no screen" by no default rule, as `inactivity` did not: a rule would let a line at a screen
+retract it. A break banked by an older build keeps the label it was banked under and so takes the new kind on load.
+
+### Calendar: "edit…" on a screen break lists the break — 2026-10-03
+
+Anomaly: right-click → "edit…" on a past 20 s break opened a Search window with no break in it. The breaks are not
+panels of the state, and the right-click's instant is rounded to the minute (a 20 s break is shorter). The calendar
+now hands the drawn breaks to the "is on the calendar at" filter (`SearchDomain.calendarBreaksAt`): the break's kind
+("inactivity" for the 20 s one), "no screen", and the layers it lays. Display only.
+
 ### Task tree: Ctrl+click and Shift+click across sub-lists are drawn — 2026-10-03
 
 Anomaly: they "did not work" when the two cells were not in the same sub-list. The selection did hold both cells;

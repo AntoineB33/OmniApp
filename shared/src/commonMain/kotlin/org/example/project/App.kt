@@ -224,12 +224,24 @@ private class CalendarLayersHolder {
     var placed: List<TaskPanel> = emptyList()
     var tasks: Map<TaskId, Task> = emptyMap()
 
+    /** The screen breaks as drawn (banked behind the line, predicted ahead): each span and the kind it is. */
+    var breaks: List<Pair<TaskTimeRange, String>> = emptyList()
+
     /**
      * The layer kinds at [atMillis] with what the rules derive from them ("no screen" under both layers) — or none
      * where a task panel placed by hand lies that a derived kind refuses: the layers give way to it there
      * ([SchedulerDomain.layerRetractionCuts], asked at the one instant).
      */
     fun kindsAt(atMillis: Long): Set<String> {
+        // A screen break there: its kind, what it carries and "no screen" — and the layers it lays, read where the
+        // break is rather than at the minute the right-click was rounded to.
+        val hit = SearchDomain.calendarBreaksAt(breaks, atMillis)
+        val breakKinds = hit.flatMapTo(HashSet()) { SearchDomain.calendarBreakKinds(it.second, config) }
+        val instants = (listOf(atMillis) + hit.map { maxOf(atMillis, it.first.startEpochMillis) }).distinct()
+        return breakKinds + instants.flatMapTo(HashSet()) { layerKindsAt(it) }
+    }
+
+    private fun layerKindsAt(atMillis: Long): Set<String> {
         val layers =
             records
                 .filter { it.range.startEpochMillis <= atMillis && atMillis < it.range.endEpochMillis }
@@ -2502,6 +2514,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             calendarLayers.placed =
                 workPlanPanels.filter { SchedulerDomain.isUserPlaced(it) && !it.isRestrictivePeriod }
             calendarLayers.tasks = schedulerState.tasks
+            calendarLayers.breaks =
+                if (schedulerState.showScreenBreaks) {
+                    displaySidePanels.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) to it.restrictiveKind }
+                } else {
+                    emptyList()
+                }
             val calendarRecords = baseCalendarRecords + pastInactivityRecords + layerRecords +
                 displayAlarmOccurrences.map { occurrence ->
                     // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling

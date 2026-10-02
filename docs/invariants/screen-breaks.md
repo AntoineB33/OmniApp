@@ -12,7 +12,11 @@ look-away, the 5-min pose, the 15-min pose. Terminology: **"screen breaks"** eve
 persisted keys.
 
 - **Each break's kind is the requirements' own** (`DynamicPeriods.breakKind`, 2026-09-29): the 20 s look-away is
-  `no task allowed` end to end; the 5-min pose is one minute of `no task allowed` then four minutes of the kind
+  the kind **"20s screen break"** (`PeriodKinds.BREAK_20S`, user rule 2026-10-03: *"a 20s screen break is a restrictive
+  period like any other"* — it was an `inactivity` period with no kind of its own, so nothing could name it), which
+  *"allows no task"*: its resilience is 0 for everybody and not editable (`isResilienceEditable`, `resilienceFor`).
+  Unlike the two poses it carries "no screen" by NO rule — a rule would make a line at a screen retract it
+  (`retractedAtLineSpans`), where the line ENTERS a 20 s break — so its "no screen" is said where it is drawn; the 5-min pose is one minute of `no task allowed` then four minutes of the kind
   **"5min screen break"** (`PeriodKinds.BREAK_5MIN`); the 15-min pose is the kind **"15min screen break"**
   (`PeriodKinds.BREAK_15MIN`). Both new kinds start at resilience 0 for every task and are edited in the resilience
   editor like any other kind. There is no *doable during a screen break* switch and no per-break accepted set.

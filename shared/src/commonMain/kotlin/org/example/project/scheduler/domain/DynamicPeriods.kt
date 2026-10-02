@@ -195,6 +195,7 @@ object DynamicPeriods {
         when (label) {
             LABEL_5MIN -> PeriodKinds.BREAK_5MIN
             LABEL_15MIN -> PeriodKinds.BREAK_15MIN
+            LABEL_20S -> PeriodKinds.BREAK_20S
             else -> PeriodKinds.INACTIVITY
         }
 

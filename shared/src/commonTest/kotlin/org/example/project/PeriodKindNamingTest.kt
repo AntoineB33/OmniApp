@@ -34,7 +34,7 @@ class PeriodKindNamingTest {
             listOf(
                 "inactivity", "sleep", "no screen", "before bed", "no computer unlocked", "no phone unlocked",
                 "not on a computer", "not on a phone",
-                "5min screen break", "15min screen break",
+                "20s screen break", "5min screen break", "15min screen break",
             ),
             kinds,
         )

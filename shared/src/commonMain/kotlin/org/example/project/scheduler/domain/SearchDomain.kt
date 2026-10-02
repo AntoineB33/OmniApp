@@ -2137,6 +2137,31 @@ object SearchDomain {
             calendarClickMillis = atMillis,
         )
 
+    /**
+     * How far past the right-click a screen break may START and still be "there": the calendar's "edit…" names its
+     * instant to the MINUTE, and a 20 s break is shorter than that — at the instant itself it was never found.
+     */
+    const val CALENDAR_BREAK_WINDOW_MILLIS: Long = 60_000L
+
+    /**
+     * **The screen breaks drawn on the calendar at [atMillis]** among [breaks] (each a span and the kind the break
+     * is, `DynamicPeriods.breakKind`): those covering it, or starting within [CALENDAR_BREAK_WINDOW_MILLIS] after it.
+     * The breaks are not in the state's panels (the line banks them locally, the look ahead predicts them), so
+     * [calendarElementsAt] is handed their kinds by the calendar, with the layer bands' (anomaly 2026-10-03: "edit…"
+     * on a past 20 s break listed no break).
+     */
+    fun calendarBreaksAt(breaks: List<Pair<TaskTimeRange, String>>, atMillis: Long): List<Pair<TaskTimeRange, String>> =
+        breaks.filter { (span, _) ->
+            span.endEpochMillis > atMillis && span.startEpochMillis < atMillis + CALENDAR_BREAK_WINDOW_MILLIS
+        }
+
+    /**
+     * The period kinds a break of [breakKind] is on the calendar: its own, what the account's rules make it carry,
+     * and "no screen" — *"always accompanied by the 'no screen' period"* whatever the rules say.
+     */
+    fun calendarBreakKinds(breakKind: String, config: PeriodKindConfig): Set<String> =
+        config.kindsOf(breakKind.ifBlank { PeriodKinds.INACTIVITY }) + PeriodKinds.NO_SCREEN
+
     /** The whole list in the calendar hover bubble's order ([SortKey.CalendarBubble]). */
     val CALENDAR_BUBBLE_SORT: SortMethod = SortMethod(null, SortKey.CalendarBubble)
 
