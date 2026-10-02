@@ -1665,40 +1665,33 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §8 Manual drag (move): where a block of [duration] dropped near [desiredStart] settles
-     * given the [others] already on the calendar, never overlapping them:
-     *  - in free space it sits exactly at [desiredStart];
-     *  - over a group of consecutive entries it sticks to the group's end, unless the drag's centre is
-     *    nearer the group's start than its end, in which case it jumps before the group;
-     *  - if the gap it lands in is narrower than [duration] it shrinks to fit (the caller keeps the
-     *    original [duration] to restore it in a wider gap, PRD §8 "remembers its original size").
+     * PRD §8: **what is left of [range] once something that cannot coexist with it lies over [over]** — the one
+     * retraction rule, read by the drag's live preview and by the reducer's commit alike, so what the user sees
+     * while dragging is what the release saves (user rule 2026-10-02).
+     *
+     * WHO gives way to whom is not asked here — that is [periodRefuses], a period against a task panel. This
+     * is only the arithmetic: covered at an edge it is trimmed, covered in the middle it is split in two,
+     * wholly covered it is gone. A piece shorter than [minLength] is dropped as a sliver. A [range] that
+     * [over] does not touch is returned as it is.
+     *
+     * Always computed from the bounds **at rest**: the preview never feeds its own output back in, which is
+     * why something the drag retracted grows back as the drag recedes.
      */
-    fun placeDraggedEntry(
-        others: List<TaskTimeRange>,
-        desiredStart: Long,
-        duration: Long,
-    ): TaskTimeRange {
-        val blocks = mergeOccupied(others)
-        val desiredEnd = desiredStart + duration
-        val hit = blocks.firstOrNull { it.startEpochMillis < desiredEnd && desiredStart < it.endEpochMillis }
-            ?: return TaskTimeRange(desiredStart, desiredEnd)
-
-        val mid = (hit.startEpochMillis + hit.endEpochMillis) / 2
-        val dragCentre = desiredStart + duration / 2
-        return if (dragCentre < mid) {
-            // Before the group, shrinking to the gap left of it.
-            val prevEnd = blocks.filter { it.endEpochMillis <= hit.startEpochMillis }
-                .maxOfOrNull { it.endEpochMillis } ?: Long.MIN_VALUE
-            val end = hit.startEpochMillis
-            val start = maxOf(end - duration, prevEnd)
-            TaskTimeRange(start, end)
-        } else {
-            // After the group, shrinking to the gap right of it.
-            val nextStart = blocks.filter { it.startEpochMillis >= hit.endEpochMillis }
-                .minOfOrNull { it.startEpochMillis } ?: Long.MAX_VALUE
-            val start = hit.endEpochMillis
-            val end = minOf(start + duration, nextStart)
-            TaskTimeRange(start, end)
+    fun retractAround(
+        range: TaskTimeRange,
+        over: TaskTimeRange,
+        minLength: Long = MIN_MANUAL_ENTRY_MILLIS,
+    ): List<TaskTimeRange> {
+        if (range.startEpochMillis >= over.endEpochMillis || range.endEpochMillis <= over.startEpochMillis) {
+            return listOf(range)
+        }
+        return buildList {
+            if (over.startEpochMillis - range.startEpochMillis >= minLength) {
+                add(range.copy(endEpochMillis = over.startEpochMillis))
+            }
+            if (range.endEpochMillis - over.endEpochMillis >= minLength) {
+                add(range.copy(startEpochMillis = over.endEpochMillis))
+            }
         }
     }
 
@@ -1736,10 +1729,30 @@ object SchedulerDomain {
      * against others summing to `S` over `k = n - 1` panels, `w / (w + S) = 1/n` solves to `w = S / k`.
      * Returns 1.0 when it overlaps nothing (so a non-overlapping drop stays full width).
      */
-    fun seedOverlapWeight(others: List<TaskPanel>, start: Long, end: Long): Double {
-        val overlapping = others.filter { it.startEpochMillis < end && start < it.endEpochMillis }
-        if (overlapping.isEmpty()) return 1.0
-        return overlapping.sumOf { it.layoutWeight } / overlapping.size
+    fun seedOverlapWeight(others: List<TaskPanel>, start: Long, end: Long): Double =
+        seedOverlapWeight(
+            // Only what shares the width counts: a period is drawn full width under the panels and a §14
+            // reminder is a tag, so neither is one of the `n`.
+            others.filter {
+                !it.isRestrictivePeriod && !it.chore && it.startEpochMillis < end && start < it.endEpochMillis
+            }.map { it.layoutWeight },
+        )
+
+    /** [seedOverlapWeight] from the weights of the panels overlapped — what the drag's live preview holds. */
+    fun seedOverlapWeight(overlappedWeights: List<Double>): Double =
+        if (overlappedWeights.isEmpty()) 1.0 else overlappedWeights.sum() / overlappedWeights.size
+
+    /**
+     * `side-dev/README.md` § *Restrictive Period*: **whether a period of [kind] REFUSES the task [taskId]** —
+     * its resilience to that kind is `0`, so it may not run inside. The one reading, asked by the reducer's
+     * override rule and by the calendar's drag preview alike.
+     *
+     * A panel with **no backing task** is refused by every kind: a calendar-only panel is a brand-new task's
+     * worth of defaults, and there is nobody to have given it a value above zero for anything else.
+     */
+    fun periodRefuses(tasks: Map<TaskId, Task>, taskId: TaskId?, kind: String): Boolean {
+        val task = taskId?.let { tasks[it] } ?: return true
+        return task.resilienceFor(kind) <= 0.0
     }
 
     /** PRD §10: recorded sessions less than this many minutes apart count as one continuous effort. */
@@ -3225,6 +3238,29 @@ object SchedulerDomain {
     ): List<TaskTimeRange> {
         if (untilMillis <= sinceMillis) return emptyList()
         return subtractRegions(listOf(TaskTimeRange(sinceMillis, untilMillis)), mergeOccupied(coveredRegions))
+            .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
+    }
+
+    /**
+     * PRD §8 (user rule 2026-10-02): **the derived Inactivity [bands] as they would stand once a task block has
+     * been moved** from [vacated] to [placed] — what the calendar draws while the block is being dragged, so
+     * that the stretch it left reads as idle and the idle stretch it is carried into gives way, exactly as
+     * [derivedInactivityBands] will answer after the release.
+     *
+     * It is that same rule, asked incrementally: what was uncovered stays uncovered except under [placed], and
+     * what the block uncovers by leaving is idle wherever nothing else still covers it ([stillCovered] — the
+     * other task panels and records, the sleep windows and the user's own non-screen periods). [vacated] is
+     * null where the block lay outside the window the bands are derived over (past the definitive-schedule
+     * front), since no band is ever drawn there. The sub-minute seam rule applies as it does at rest.
+     */
+    fun inactivityBandsAfterMove(
+        bands: List<TaskTimeRange>,
+        vacated: TaskTimeRange?,
+        placed: TaskTimeRange,
+        stillCovered: List<TaskTimeRange>,
+    ): List<TaskTimeRange> {
+        val freed = if (vacated == null) emptyList() else subtractRegions(listOf(vacated), stillCovered)
+        return subtractRegions(mergeOccupied(bands + freed), listOf(placed))
             .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
     }
 

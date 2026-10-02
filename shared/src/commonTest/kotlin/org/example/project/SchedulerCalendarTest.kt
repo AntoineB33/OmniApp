@@ -7,6 +7,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.DynamicPeriods
+import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -23,7 +24,7 @@ import org.example.project.scheduler.state.SchedulerState
 
 /**
  * Tests for the v1.2.0 calendar/panel layer: §8 task panels (add / edit window / drag-move with
- * no-overlap snapping / extend-shorten with neighbour clamping / pin toggle), §5 calendar-focus-aware
+ * a dragged block sharing the width and retracting the periods that refuse it / extend-shorten with neighbour clamping / pin toggle), §5 calendar-focus-aware
  * Undo/Redo routing, §10 New Task overlap-avoidance with a pinned panel, and §12 device sleep.
  */
 class SchedulerCalendarTest {
@@ -223,7 +224,7 @@ class SchedulerCalendarTest {
         assertNotEquals("auto/0", panel.id) // re-id'd out of the ephemeral auto namespace
     }
 
-    // ----- §8 manual drag: no-overlap snapping (placeDraggedEntry / mergeOccupied) -------------
+    // ----- §8 occupied ranges (mergeOccupied) --------------------------------------------------
 
     @Test
     fun merge_occupied_fuses_touching_and_overlapping_blocks() {
@@ -573,16 +574,106 @@ class SchedulerCalendarTest {
         assertEquals(false, SchedulerStateCodec.decode(SchedulerStateCodec.encode(hidden))!!.showReminders)
     }
 
+    // ----- §8 manual drag: the block keeps its length, shares the width, retracts what refuses it
+
     @Test
-    fun drag_sticks_to_the_end_of_a_group_when_past_its_midpoint() {
-        val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 160, duration = 40)
-        assertEquals(range(200, 240), placed)
+    fun a_block_the_drag_does_not_touch_is_left_as_it_is() {
+        val rest = range(0, HOUR)
+        assertEquals(listOf(rest), SchedulerDomain.retractAround(rest, range(HOUR, 2 * HOUR)))
     }
 
     @Test
-    fun drag_jumps_before_a_group_when_nearer_its_start() {
-        val placed = SchedulerDomain.placeDraggedEntry(listOf(range(100, 200)), desiredStart = 90, duration = 40)
-        assertEquals(range(60, 100), placed)
+    fun a_block_covered_at_an_edge_is_trimmed_and_grows_back_as_the_drag_recedes() {
+        val rest = range(0, 2 * HOUR)
+        assertEquals(listOf(range(0, HOUR)), SchedulerDomain.retractAround(rest, range(HOUR, 3 * HOUR)))
+        assertEquals(listOf(range(HOUR, 2 * HOUR)), SchedulerDomain.retractAround(rest, range(-HOUR, HOUR)))
+        // The preview always asks from the bounds at rest, so dragging back away restores the whole block.
+        assertEquals(listOf(rest), SchedulerDomain.retractAround(rest, range(2 * HOUR, 4 * HOUR)))
+    }
+
+    @Test
+    fun a_block_covered_in_the_middle_is_split_and_one_wholly_covered_is_gone() {
+        val rest = range(0, 3 * HOUR)
+        assertEquals(
+            listOf(range(0, HOUR), range(2 * HOUR, 3 * HOUR)),
+            SchedulerDomain.retractAround(rest, range(HOUR, 2 * HOUR)),
+        )
+        assertEquals(emptyList(), SchedulerDomain.retractAround(rest, range(-HOUR, 4 * HOUR)))
+        // What would be left is under the minimum length: a sliver, dropped.
+        assertEquals(emptyList(), SchedulerDomain.retractAround(rest, range(MIN / 2, 3 * HOUR)))
+    }
+
+    @Test
+    fun a_block_dragged_onto_another_task_panel_keeps_its_length_and_shares_the_width() {
+        val a = TaskId("t/a")
+        val b = TaskId("t/b")
+        val s = SchedulerState.empty().copy(
+            panels = listOf(
+                TaskPanel("pA", a, "A", 0, 2 * HOUR, pinned = true, auto = false, layoutWeight = 2.0),
+                userPanel("pB", 3 * HOUR, 5 * HOUR, b, pinned = true),
+            ),
+            nextPanelCounter = 2,
+        )
+        // A move commits raw bounds (the calendar's `blockGestureOverlaps`): nothing under it is cut.
+        val dropped = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("pB", b, "B", HOUR, 3 * HOUR, PanelPins(existence = true), allowOverlap = true),
+        )
+        val pA = dropped.panels.first { it.id == "pA" }
+        val pB = dropped.panels.first { it.id == "pB" }
+        assertEquals(range(0, 2 * HOUR), range(pA.startEpochMillis, pA.endEpochMillis))
+        assertEquals(range(HOUR, 3 * HOUR), range(pB.startEpochMillis, pB.endEpochMillis))
+        // Seeded to half the width beside A: the weight the drag preview shows it with.
+        assertEquals(2.0, pB.layoutWeight, 1e-9)
+        assertEquals(2.0, SchedulerDomain.seedOverlapWeight(listOf(2.0)), 1e-9)
+        assertEquals(1.0, SchedulerDomain.seedOverlapWeight(emptyList()), 1e-9)
+    }
+
+    @Test
+    fun a_period_is_not_one_of_the_panels_a_dropped_block_shares_the_width_with() {
+        val (s0, a, b) = stateWithTwoTasks()
+        val withPeriod =
+            SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, 0, 2 * HOUR))
+        val s = withPeriod.copy(
+            panels = withPeriod.panels +
+                TaskPanel("pA", a, "A", 0, 2 * HOUR, pinned = true, auto = false, layoutWeight = 4.0) +
+                userPanel("pB", 5 * HOUR, 6 * HOUR, b, pinned = true),
+        )
+        val dropped = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("pB", b, "B", HOUR, 2 * HOUR, PanelPins(existence = true), allowOverlap = true),
+        )
+        // Only A counts: averaged with the period's own weight of 1 it would have been 2.5.
+        assertEquals(4.0, dropped.panels.first { it.id == "pB" }.layoutWeight, 1e-9)
+    }
+
+    @Test
+    fun a_block_dragged_onto_a_period_that_refuses_it_retracts_it_and_only_the_release_saves_that() {
+        val (s0, a, _) = stateWithTwoTasks()
+        val withPeriod =
+            SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, HOUR, 4 * HOUR))
+        val s = withPeriod.copy(panels = withPeriod.panels + userPanel("pA", 6 * HOUR, 8 * HOUR, a, pinned = true))
+        fun period(state: SchedulerState) = state.panels.first { it.isRestrictivePeriod }
+        // The question the preview and the commit both ask: an on-screen task has no resilience to it.
+        assertTrue(SchedulerDomain.periodRefuses(s.tasks, a, PeriodKinds.NO_SCREEN))
+        assertTrue(SchedulerDomain.periodRefuses(s.tasks, null, PeriodKinds.NO_SCREEN))
+        // What the preview draws while the block is held over the period's last hour...
+        assertEquals(
+            listOf(range(HOUR, 3 * HOUR)),
+            SchedulerDomain.retractAround(range(HOUR, 4 * HOUR), range(3 * HOUR, 5 * HOUR)),
+        )
+        // ...is what the release saves...
+        val dropped = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.UpdateTaskPanel("pA", a, "A", 3 * HOUR, 5 * HOUR, PanelPins(existence = true), allowOverlap = true),
+        )
+        assertEquals(3 * HOUR, period(dropped).endEpochMillis)
+        // ...and once saved, dragging the block back away does not give the period its hour back.
+        val back = SchedulerReducer.reduce(
+            dropped,
+            SchedulerIntent.UpdateTaskPanel("pA", a, "A", 6 * HOUR, 8 * HOUR, PanelPins(existence = true), allowOverlap = true),
+        )
+        assertEquals(3 * HOUR, period(back).endEpochMillis)
     }
 
     // ----- §8 extend / shorten (clampResize) --------------------------------------------------

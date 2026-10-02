@@ -154,6 +154,7 @@ import org.example.project.ui.EDIT_LABEL_REMINDER
 import org.example.project.ui.EDIT_LABEL_SLEEP_SCHEDULE
 import org.example.project.ui.EDIT_LABEL_TASK
 import org.example.project.ui.EDIT_LABEL_TIMER
+import org.example.project.ui.LocalPeriodRefusal
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.LINE_MOTION_PROBE_MILLIS
 import org.example.project.ui.displayBoundsOf
@@ -2662,7 +2663,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             blockEditWindows.closeAll()
         }
 
+        // PRD §8: which period kinds refuse which task — what the calendar's drag preview retracts by, the
+        // reducer's own question ([SchedulerDomain.periodRefuses]) asked of the same tasks.
+        val periodRefusalTasks = schedulerState.tasks
+        val periodRefusal = remember(periodRefusalTasks) {
+            { taskId: TaskId?, kind: String -> SchedulerDomain.periodRefuses(periodRefusalTasks, taskId, kind) }
+        }
         CompositionLocalProvider(
+            LocalPeriodRefusal provides periodRefusal,
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,
             LocalHeadObstacle provides menuToggleBounds,
@@ -4662,6 +4670,8 @@ private fun mergePanelsForDisplay(
                     entryId = side.id,
                     entryIds = listOf(side.id),
                     screenBreak = true,
+                    // Which of the break kinds it is — what decides whose panel it cuts a hole in.
+                    breakKind = side.restrictiveKind,
                     // PRD §8/§15: a dynamic restrictive period — the grey outline, through the same one
                     // funnel every other block's outline comes from.
                     outline = SchedulerDomain.panelOutline(side),

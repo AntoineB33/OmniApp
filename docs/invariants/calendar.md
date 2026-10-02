@@ -506,6 +506,62 @@ Global rules that always apply: `CLAUDE.md`.
   unpinned**, which is precisely the shape the fill deletes — so the re-plan the edit itself triggers undid
   the drag, silently. The other three pins are untouched: a drag is a statement about existence, not about
   position, span or distance.
+- **WHILE ANYTHING IS DRAGGED, THE COLUMN IS DRAWN THE WAY A RELEASE WOULD LEAVE IT — AND ONLY THE RELEASE
+  SAVES IT** (2026-10-02). A moved block keeps its length whatever it is carried over
+  (`draggedBlockBounds`; the no-overlap snap `placeDraggedEntry` is gone) and the preview answers with the
+  reducer's own rules, not with a picture of its own:
+  - over another **task panel** it **shares the width** — a move always commits `allowOverlap`
+    (`blockGestureOverlaps`), and the preview gives the dragged block the weight the commit will seed
+    (`SchedulerDomain.seedOverlapWeight`, which counts task panels only: a period is never one of the `n`);
+  - over a **period the user drew that refuses its task** the period **retracts** (`periodsForBlockDrag` →
+    `shownPeriods`), and a dragged period box retracts the task panels it refuses (`blocksForPeriodDrag`).
+    The question is `SchedulerDomain.periodRefuses` and the arithmetic `SchedulerDomain.retractAround` — the
+    very two `resolveScreenOverrides` commits with. `LocalPeriodRefusal` carries the first to the column.
+
+  - the **DERIVED Inactivity bands** are redrawn too (`SchedulerDomain.inactivityBandsAfterMove`, inside
+    `periodsForBlockDrag`): they are "whatever nothing covers", computed in `App` from the stored state, so
+    a preview that left them alone showed NO idle stretch where the block had been and an untouched one where
+    it was going — until the release recomputed both. The stretch the block leaves is idle wherever no other
+    block, sleep window or non-screen period of the user's still covers it; the idle stretch it enters gives
+    way. A block past the definitive-schedule front (`provisional`) vacates nothing: no band is derived there.
+
+  Every retraction is computed from the bounds **at rest**, never from the preview's previous answer: that is
+  the whole of "what the drag retracted grows back as the drag recedes", and of "a second drag does not
+  restore what the first release saved". The gesture half of a period box keeps reading `drawnPeriods` —
+  those nodes may hold a press and must not change under it; only the marking, the labels and `PanelDecor`
+  read `shownPeriods`. A **resize** still stops at its neighbours (`clampResize`) unless Overlap Mode is armed.
+  Not previewed: the re-plan the release triggers (scheduler-laid panels under the block are redrawn by it),
+  the same-task merge, and the fusion of two overlapping no-screen periods.
+- **A SCREEN BREAK CUTS A HOLE IN THE DRAWING OF EVERY TASK BLOCK IT REFUSES — AND THE HOLE IS NEVER
+  STORED** (2026-10-02; `layoutWithBreakHoles`, applied to `overlapLayout`'s answer at rest and in the
+  preview). *"When there is a break, there can't be a task"* was only true of the fill's own panels, which it
+  splits around the breaks; a panel placed by hand runs THROUGH them (`resolveScreenOverrides` never trims a
+  dynamic period) and the band was merely drawn over it. Now the block's slices are cut where a break lies
+  over it, by the one question (`periodRefuses`) asked of the break's own kind (`PlacedRecord.breakKind`,
+  kept apart from `restrictiveKind` so a break never becomes a period the chooser can open): nobody is
+  resilient to the 20-second look-away (`inactivity`), and a task given a resilience to a 5- or 15-minute
+  break is drawn straight through it. Because it is cut from where the break is NOW, the hole follows a
+  break the now-line carries and leaves no trace on a block dragged across one. The pieces are still ONE
+  block: every one of them holds the same gesture, so dragging any piece drags the whole panel, and only the
+  first and last carry the resize strips. With `showScreenBreaks` off there are no bands and no holes.
+- **THE PREVIEW WEARS THE FACE THE BLOCK WEARS AT REST** (`CalendarPanelFace`, one composable for
+  `CalendarBlock` and the preview overlay). The overlay had its own copy of the drawing, left behind at the
+  30 % wash when task colours became opaque — so a dragged panel turned pale, lost its outline and read as a
+  ghost of itself. The dragged block is drawn with the blue outline the release gives it.
+- **A BLOCK OR A PERIOD BOX IS MOVED ONLY BY A DOUBLE CLICK WHOSE SECOND PRESS IS HELD AND DRAGGED**
+  (2026-10-02, the rule a ring already followed): a plain press-and-drag moves nothing, so nothing is moved
+  by a click that slipped. A second press released without a drag still opens the block's editor. The slop
+  only decides *whether* it is a drag — the travel is counted from the first pixel, so there is no radius in
+  which the block lags the pointer. A **resize** starts at the first press: the grab strip and its cursor
+  already make it deliberate. (Phone: unchanged — the menu's "move".)
+- **A RIGHT-CLICK DURING A BLOCK DRAG SUSPENDS IT** (`HeldBlockDrag`, hoisted to the column): the block's
+  gesture ends without committing and without clearing `dragPreview`, and the column — which sees the same
+  event next — opens a menu of two rows. "cancel" drops the preview; "resume drag" hands the block back to
+  the pointer, which carries it with **no button held** until a click releases it (that release is the
+  commit), another right-click reopening the menu. The carried drag runs on the column's **Initial** pass and
+  consumes, so nothing under the pointer takes the click that is meant to drop the block; dismissing the menu
+  without choosing resumes, because that loses nothing. The bounds are `draggedBlockBounds` in both the
+  block's gesture and the column's — a second copy of that arithmetic is how the two would drift.
 - **A hand-drawn period carries `pins.existence` but never `pinned`** (`derivePinned`'s period-aware
   overload), or `isSchedulerFixed` would enter it in the walk's **pre-placed blocks** — a list of blocks owned
   by a task — on top of the period it already is.

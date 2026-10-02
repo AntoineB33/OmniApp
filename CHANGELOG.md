@@ -11,6 +11,43 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: a drag is drawn as its release would leave it; double click to move; right-click suspends — 2026-10-02
+
+User request: *"When the user drags a block, the block always keeps its height [...] When right-clicking during a drag,
+it opens a menu with the options "cancel" and "resume drag"."*, then, correcting a first reading that made task panels
+retract: *"The user must not be able to drag a block in the calendar with a simple click"*, *"When dragging, it must be
+displayed at any moment like it would be if the user releases the mouse click (sharing the width if dragged to another
+task panel, retracting a period it has 0 resilience with...)"*, and the anomaly *"When I dragged a past task panel, its
+background color got clearer, and it acted like a ghost."*
+
+- The no-overlap snap (`SchedulerDomain.placeDraggedEntry`) is gone: a move keeps the block's length and always commits
+  `allowOverlap`, so it shares the width with the task panels it lands on. `seedOverlapWeight` now counts task panels
+  only (a period under the drop skewed the seeded width).
+- The preview reads the reducer's rules: `SchedulerDomain.periodRefuses` (moved out of the reducer, carried to the
+  column by `LocalPeriodRefusal`) and `SchedulerDomain.retractAround` (now also what `resolveScreenOverrides` trims
+  with). A block dragged over a period that refuses it retracts the period live; a dragged period box retracts the task
+  panels it refuses.
+- Ghost: the preview overlay drew its own copy of a block (30 % wash, no outline, no decor). One `CalendarPanelFace`
+  for the block at rest and the overlay.
+- A block and a period box are moved only by a double click whose second press is held and dragged; a resize still
+  starts at the first press.
+- A right-click during a block drag sets the column's `HeldBlockDrag` and opens "cancel" / "resume drag"; a resumed
+  drag follows the pointer with no button held and is dropped by a click. Period boxes and rings have no such menu.
+
+Follow-up anomalies the same day (*"when dragging a task panel, the area where it was has no inactivity period, and
+the inactivity period I am dragging the task panel to doesn't retract. It does so only when the mouse click is
+released"*; *"when I drag it to a 20s screen break, this screen break should make a hole on the task panel, but this
+hole is not saved [...] if I drag a task panel cut by a 20s break, the whole task panel is dragged"*):
+
+- The derived Inactivity bands are computed in `App` from stored state, so the preview never moved them. New
+  `SchedulerDomain.inactivityBandsAfterMove`, read by `periodsForBlockDrag`.
+- New `layoutWithBreakHoles`: a break cuts the drawn slices of every task block whose task has no resilience to the
+  break's kind (new display-only `breakKind` on `CalendarRecord` / `PlacedRecord`), at rest and in the preview. The
+  panel itself is untouched, so the hole follows the break and any piece drags the whole panel. The 5- and 15-minute
+  breaks follow the same rule through their own kinds (a task resilient to one is drawn through it).
+
+No state, SQLite or Supabase change.
+
 ### Search: a right-click in the type selector picks that type alone — 2026-10-02
 
 User request: *"right-click on a type element in the type selector in the Search window means only this type is

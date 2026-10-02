@@ -63,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.SideEffect
@@ -325,6 +326,13 @@ data class CalendarRecord(
      */
     val restrictiveKind: String = "",
     /**
+     * PRD §15: for a [screenBreak] band, the period kind the break IS (`inactivity` for the 20-second look-away,
+     * the 5-/15-minute break kinds for the rest poses) — what a task must have no resilience to for the break
+     * to cut a hole in its panel ([layoutWithBreakHoles]). Kept apart from [restrictiveKind], which is the
+     * identity of a period the "edit…" chooser can open; a break is not one. Blank on everything else.
+     */
+    val breakKind: String = "",
+    /**
      * PRD §12: this derived Inactivity/No-screen band is open-ended into the past — nothing precedes it, so
      * the inactivity extends indefinitely back (its rendered start is only the display floor, not a real
      * boundary). The hover bubble / phone menu then shows "∞" as the start instead of a wall-clock time.
@@ -390,6 +398,13 @@ data class PlacedRecord(
     val noScreen: Boolean = false,
     /** `side-dev/README.md`: which KIND of restrictive period this block is, blank if it is not one. */
     val restrictiveKind: String = "",
+    /**
+     * PRD §15: for a [screenBreak] band, the period kind the break IS (`inactivity` for the 20-second look-away,
+     * the 5-/15-minute break kinds for the rest poses) — what a task must have no resilience to for the break
+     * to cut a hole in its panel ([layoutWithBreakHoles]). Kept apart from [restrictiveKind], which is the
+     * identity of a period the "edit…" chooser can open; a break is not one. Blank on everything else.
+     */
+    val breakKind: String = "",
     /** PRD §12: this derived band is open-ended into the past; the hover bubble shows "∞" as its start. */
     val openStart: Boolean = false,
     /**
@@ -518,6 +533,7 @@ fun recordsForDay(
             layerFake = record.layerFake,
             noScreen = record.noScreen,
             restrictiveKind = record.restrictiveKind,
+            breakKind = record.breakKind,
             openStart = record.openStart,
             provisional = record.provisional,
             fullStartMillis = record.range.startEpochMillis,
@@ -573,6 +589,307 @@ fun recordsByDay(
  * (per-day) representations, so a dragged block can exclude itself from the overlap set. Manual
  * entries key on their id; auto blocks (records / scheduled) key on their source + range.
  */
+/**
+ * PRD §8: **which period kinds refuse which task** ([SchedulerDomain.periodRefuses] over the account's tasks)
+ * — what a drag's live preview retracts by, so that the calendar is drawn at every moment of a drag the way
+ * the release would leave it. Provided by `App`; the default refuses nothing a column drawn outside it holds.
+ */
+val LocalPeriodRefusal = compositionLocalOf<(TaskId?, String) -> Boolean> { { _, _ -> false } }
+
+/**
+ * PRD §8 (user rule 2026-10-02): **whether a block gesture keeps raw, overlapping bounds** — a MOVE always
+ * does (the block keeps its length and shares the width with the task panels it is carried onto), a resize
+ * only under Overlap Mode. The `allowOverlap` the release commits with.
+ */
+internal fun blockGestureOverlaps(edge: CalendarEdge?, armed: Boolean): Boolean = armed || edge == null
+
+/**
+ * PRD §8: the bounds a held period box has reached — [record] moved (no [edge]) or resized at [edge] by
+ * [deltaMillis]; null where the resize has collapsed it. Read by the box's own commit and by the preview.
+ */
+internal fun periodDragBounds(record: PlacedRecord, edge: CalendarEdge?, deltaMillis: Long): TaskTimeRange? {
+    val start = if (edge == CalendarEdge.End) record.fullStartMillis else record.fullStartMillis + deltaMillis
+    val end = if (edge == CalendarEdge.Start) record.fullEndMillis else record.fullEndMillis + deltaMillis
+    return if (end > start) TaskTimeRange(start, end) else null
+}
+
+/**
+ * PRD §8 (user rule 2026-10-02): **the blocks as a drag of [draggedKey] to [range] would leave them** — what
+ * the live preview draws. The dragged block sits at [range], wears the blue outline a hand placement gives it
+ * and, where the gesture keeps overlapping bounds ([shareWidth]), the width the commit will seed it with
+ * ([SchedulerDomain.seedOverlapWeight]): it SHARES the column with the task panels it is carried onto, which
+ * stay as they are.
+ */
+internal fun blocksForBlockDrag(
+    blocks: List<PlacedRecord>,
+    draggedKey: String,
+    range: TaskTimeRange,
+    shareWidth: Boolean,
+    midnightMillis: Long,
+): List<PlacedRecord> {
+    val startHour = ((range.startEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+    val endHour = ((range.endEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+    if (endHour <= startHour) return blocks
+    return blocks.map { block ->
+        if (calendarBlockKey(block) != draggedKey) {
+            block
+        } else {
+            block.copy(
+                startHour = startHour,
+                endHour = endHour,
+                outline = SchedulerDomain.PanelOutline.User,
+                layoutWeight =
+                    if (!shareWidth) {
+                        block.layoutWeight
+                    } else {
+                        SchedulerDomain.seedOverlapWeight(
+                            blocks.filter {
+                                calendarBlockKey(it) != draggedKey && it.entryId != null && isTaskPanelRecord(it) &&
+                                    it.fullStartMillis < range.endEpochMillis && range.startEpochMillis < it.fullEndMillis
+                            }.map { it.layoutWeight },
+                        )
+                    },
+            )
+        }
+    }
+}
+
+/** PRD §8: a past or planned stretch nothing covers — the app's own DERIVED Inactivity band, no hand behind it. */
+internal fun isDerivedInactivityRecord(r: PlacedRecord): Boolean =
+    r.entryId == null && r.inactivity && r.restrictiveKind == PeriodKinds.INACTIVITY
+
+/**
+ * PRD §8 (user rule 2026-10-02): **the periods as a drag of the task block [dragged] to [range] would leave
+ * them** — both halves of what the release does, read for the preview:
+ *  - the reducer's override rule: a task panel placed by hand takes the periods the USER drew that refuse its
+ *    task ([refuses]), and nothing else;
+ *  - the DERIVED Inactivity bands, which are whatever nothing covers: the stretch the block has left is idle
+ *    (wherever none of the other [blocks], the [sleepBands] or the user's own periods still cover it), and the
+ *    idle stretch it is carried into gives way ([SchedulerDomain.inactivityBandsAfterMove]).
+ */
+internal fun periodsForBlockDrag(
+    periods: List<PlacedRecord>,
+    blocks: List<PlacedRecord>,
+    sleepBands: List<PlacedRecord>,
+    dragged: PlacedRecord,
+    range: TaskTimeRange,
+    midnightMillis: Long,
+    refuses: (TaskId?, String) -> Boolean,
+): List<PlacedRecord> {
+    if (!isTaskPanelRecord(dragged) || dragged.inactivity) return periods
+    val (derived, stated) = periods.partition(::isDerivedInactivityRecord)
+    val statedLive = stated.flatMap { period ->
+        if (period.outline == SchedulerDomain.PanelOutline.User && refuses(dragged.taskId, period.restrictiveKind)) {
+            retractedForPreview(period, range, midnightMillis)
+        } else {
+            listOf(period)
+        }
+    }
+    fun full(r: PlacedRecord) = TaskTimeRange(r.fullStartMillis, r.fullEndMillis)
+    val draggedKey = calendarBlockKey(dragged)
+    val bands =
+        SchedulerDomain.inactivityBandsAfterMove(
+            bands = derived.map(::full),
+            // A block past the definitive-schedule front lies where no band is derived at all.
+            vacated = full(dragged).takeUnless { dragged.provisional },
+            placed = range,
+            // What `App` counts as covering the timeline, the dragged block aside: every other block, the
+            // sleep windows, and the periods that are not a no-screen statement.
+            stillCovered =
+                blocks.filter { calendarBlockKey(it) != draggedKey }.map(::full) +
+                    sleepBands.map(::full) +
+                    statedLive.filterNot { it.noScreen }.map(::full),
+        )
+    val dayEndMillis = midnightMillis + 24L * 3_600_000L
+    val derivedLive = bands.mapNotNull { band ->
+        // A band the drag has not touched is the record it already was — line-following edges and all.
+        derived.firstOrNull { full(it) == band }?.let { return@mapNotNull it }
+        val startHour = ((band.startEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+        val endHour = ((band.endEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+        if (endHour <= startHour || band.endEpochMillis <= midnightMillis || band.startEpochMillis >= dayEndMillis) {
+            null
+        } else {
+            val head = derived.firstOrNull { it.fullStartMillis == band.startEpochMillis }
+            val tail = derived.firstOrNull { it.fullEndMillis == band.endEpochMillis }
+            PlacedRecord(
+                title = (head ?: tail ?: derived.firstOrNull())?.title ?: "Inactivity",
+                startHour = startHour,
+                endHour = endHour,
+                scheduled = false,
+                inactivity = true,
+                restrictiveKind = PeriodKinds.INACTIVITY,
+                openStart = head?.openStart == true,
+                fullStartMillis = band.startEpochMillis,
+                fullEndMillis = band.endEpochMillis,
+                startFollowsLine = head?.startFollowsLine == true,
+                endFollowsLine = tail?.endFollowsLine == true,
+            )
+        }
+    }
+    return statedLive + derivedLive
+}
+
+/**
+ * PRD §15 (user rule 2026-10-02): **[layout] with a hole cut in every task block wherever a screen break its
+ * task has no resilience to lies over it** — *"when there is a break, there can't be a task"*, drawn.
+ *
+ * It is a DRAWING and nothing else: the block stays one object with its own bounds, so every piece moves,
+ * resizes and opens the same panel, and the hole is never stored — it is cut again from where the break is
+ * now, so it follows a break the now-line carries and leaves no trace behind a block being dragged across
+ * one. Which break cuts whom is the one question ([refuses], [SchedulerDomain.periodRefuses]) asked of the
+ * break's own kind ([PlacedRecord.breakKind]): nobody is resilient to the 20-second look-away, and a task
+ * given a resilience to a 5- or 15-minute break is drawn straight through it.
+ *
+ * A block that a break covers end to end keeps its slices: with nothing left to draw there would be nothing
+ * left to grab.
+ */
+internal fun layoutWithBreakHoles(
+    layout: Map<String, List<PanelSlice>>,
+    blocks: List<PlacedRecord>,
+    breaks: List<PlacedRecord>,
+    refuses: (TaskId?, String) -> Boolean,
+): Map<String, List<PanelSlice>> {
+    if (breaks.isEmpty()) return layout
+    var out: MutableMap<String, List<PanelSlice>>? = null
+    for (block in blocks) {
+        if (!isTaskPanelRecord(block) || block.inactivity) continue
+        val holes =
+            breaks.filter {
+                it.endHour > block.startHour && it.startHour < block.endHour &&
+                    refuses(block.taskId, it.breakKind.ifBlank { PeriodKinds.INACTIVITY })
+            }.sortedBy { it.startHour }
+        if (holes.isEmpty()) continue
+        val key = calendarBlockKey(block)
+        val slices = layout[key] ?: listOf(PanelSlice(block.startHour, block.endHour, xFraction = 0f, widthFraction = 1f))
+        val cut = slices.flatMap { slice ->
+            buildList {
+                var cursor = slice.topHour
+                for (hole in holes) {
+                    if (hole.endHour <= cursor) continue
+                    if (hole.startHour >= slice.bottomHour) break
+                    if (hole.startHour > cursor) add(slice.copy(topHour = cursor, bottomHour = hole.startHour))
+                    cursor = maxOf(cursor, hole.endHour)
+                }
+                if (cursor < slice.bottomHour) add(slice.copy(topHour = cursor))
+            }
+        }
+        if (cut.isNotEmpty() && cut != slices) {
+            (out ?: layout.toMutableMap().also { out = it })[key] = cut
+        }
+    }
+    return out ?: layout
+}
+
+/**
+ * PRD §8 (user rule 2026-10-02): **the blocks as a drag of period boxes to [moved] would leave them** — the
+ * same rule from the other side: a period laid by hand takes the task panels it refuses, and a period the
+ * USER drew also takes the banked work (a block with no panel behind it) of the tasks it refuses.
+ */
+internal fun blocksForPeriodDrag(
+    blocks: List<PlacedRecord>,
+    moved: List<Pair<PlacedRecord, TaskTimeRange>>,
+    midnightMillis: Long,
+    refuses: (TaskId?, String) -> Boolean,
+): List<PlacedRecord> =
+    moved.fold(blocks) { live, (period, range) ->
+        live.flatMap { block ->
+            val gives =
+                isTaskPanelRecord(block) && !block.inactivity && refuses(block.taskId, period.restrictiveKind) &&
+                    (block.entryId != null || period.outline == SchedulerDomain.PanelOutline.User)
+            if (gives) retractedForPreview(block, range, midnightMillis) else listOf(block)
+        }
+    }
+
+/**
+ * PRD §8: **the bounds a block gesture has reached** — [record] moved (no [edge]) or resized at [edge] by
+ * [deltaMillis]. One function for the block's own gesture and for the column carrying on a drag that a
+ * right-click suspended, so the two cannot place the same pointer travel differently.
+ *
+ * A MOVE keeps the block's length whatever it is carried over (user rule 2026-10-02) — it shares the width
+ * with the task panels there and the periods that refuse it retract. A RESIZE still stops at its neighbours
+ * ([others]) unless Overlap Mode is [armed], where it is only kept from collapsing below the minimum length.
+ */
+internal fun draggedBlockBounds(
+    record: PlacedRecord,
+    edge: CalendarEdge?,
+    deltaMillis: Long,
+    armed: Boolean,
+    others: List<TaskTimeRange>,
+): TaskTimeRange {
+    val entry = TaskTimeRange(record.fullStartMillis, record.fullEndMillis)
+    val minLen = SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS
+    return when (edge) {
+        null -> TaskTimeRange(entry.startEpochMillis + deltaMillis, entry.endEpochMillis + deltaMillis)
+        CalendarEdge.Start -> {
+            val target = entry.startEpochMillis + deltaMillis
+            if (armed) entry.copy(startEpochMillis = minOf(target, entry.endEpochMillis - minLen))
+            else SchedulerDomain.clampResize(others, entry, edge, target)
+        }
+        CalendarEdge.End -> {
+            val target = entry.endEpochMillis + deltaMillis
+            if (armed) entry.copy(endEpochMillis = maxOf(target, entry.startEpochMillis + minLen))
+            else SchedulerDomain.clampResize(others, entry, edge, target)
+        }
+    }
+}
+
+/**
+ * PRD §8 (user rule 2026-10-02): **[record] as the drag preview draws it while something it cannot coexist
+ * with lies over [over]** — trimmed, split in two, or gone, by the same [SchedulerDomain.retractAround] the
+ * release commits with. Always derived from the record AT REST, never from a previous preview: that is what
+ * makes it grow back as the drag recedes, and what leaves the retraction unsaved until the release. Who gives
+ * way to whom is the caller's question ([periodsForBlockDrag], [blocksForPeriodDrag]).
+ */
+internal fun retractedForPreview(record: PlacedRecord, over: TaskTimeRange, midnightMillis: Long): List<PlacedRecord> {
+    val full = TaskTimeRange(record.fullStartMillis, record.fullEndMillis)
+    val pieces = SchedulerDomain.retractAround(full, over)
+    if (pieces.size == 1 && pieces[0] == full) return listOf(record)
+    val restKey = calendarBlockKey(record)
+    return pieces.mapIndexedNotNull { i, piece ->
+        val startHour = maxOf(record.startHour, (piece.startEpochMillis - midnightMillis) / 3_600_000f)
+        val endHour = minOf(record.endHour, (piece.endEpochMillis - midnightMillis) / 3_600_000f)
+        if (endHour <= startHour) {
+            null
+        } else {
+            record.copy(
+                // The far side of a split is a second drawing of one block: it needs a key of its own.
+                entryId = if (i == 0) record.entryId else "$restKey/far",
+                startHour = startHour,
+                endHour = endHour,
+                fullStartMillis = piece.startEpochMillis,
+                fullEndMillis = piece.endEpochMillis,
+            )
+        }
+    }
+}
+
+/** PRD §8: the block being moved or resized, where the gesture has it, and whether it keeps overlapping bounds. */
+private data class BlockDragPreview(val key: String, val range: TaskTimeRange, val shareWidth: Boolean)
+
+/**
+ * PRD §8 (user rule 2026-10-02): **a block drag a right-click suspended.** Nothing is saved while it is held —
+ * the preview stays where the drag left it — and the menu it opens either drops it ("cancel") or hands the
+ * block back to the pointer ("resume drag"), which then carries it with no button held until a click releases
+ * it.
+ */
+private data class HeldBlockDrag(
+    val record: PlacedRecord,
+    /** The edge the gesture was resizing, or null for a move. */
+    val edge: CalendarEdge?,
+    /** Pointer travel since the original press, in pixels. */
+    val dragPx: Float,
+    /** Whether Overlap Mode was armed when the drag was suspended. */
+    val armed: Boolean,
+    /** Where the "cancel" / "resume drag" menu is open, in the column; null while it is not. */
+    val menuAt: Offset? = null,
+    /** "resume drag" was chosen: the block follows the pointer again. */
+    val following: Boolean = false,
+    /** The pointer's last y while [following]; null until its first event after the resume. */
+    val lastY: Float? = null,
+    /** A button went down while [following] — its release is what commits. */
+    val pressed: Boolean = false,
+)
+
 private fun calendarBlockKey(
     entryId: String?,
     scheduled: Boolean,
@@ -3362,7 +3679,7 @@ fun CalendarFloatingWindow(
     onAddAt: (Long) -> Unit = {},
     /**
      * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
-     * (the bounds are raw/overlapping when armed, else already no-overlap snapped).
+     * (the bounds are raw/overlapping for a move or when armed, else a resize clamped at its neighbours).
      */
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
     /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
@@ -4456,7 +4773,7 @@ private fun WeekView(
     }
 
     // PRD §8 "there must not be overlaps" (default mode): every block on the calendar (records,
-    // scheduled, manual) as (key, range), so a dragged block snaps around ALL of them live. Reminder tags
+    // scheduled, manual) as (key, range), so a resized block stops at ALL of them live. Reminder tags
     // (zero-duration, §14), alarm rings (zero-duration, §18) and screen-break markers (§15) are not blocks
     // and are excluded.
     val allBlocks =
@@ -5270,25 +5587,48 @@ private fun DayColumn(
     // overlay — the panels narrow and sit side by side live instead of one literally covering another. The
     // resting slices keep their committed positions (so the drag gesture node never changes and is never
     // cancelled); they are hidden while the overlay shows.
-    var dragPreview by remember { mutableStateOf<Pair<String, TaskTimeRange>?>(null) }
-    val previewActive = dragPreview != null
+    var dragPreview by remember { mutableStateOf<BlockDragPreview?>(null) }
+    // A held period box is a preview too: the task panels it refuses retract as it moves.
+    val previewActive = dragPreview != null || periodDrag != null
+    // PRD §8 (user rule 2026-10-02): the block drag a right-click suspended, if any — see [HeldBlockDrag].
+    var heldDrag by remember { mutableStateOf<HeldBlockDrag?>(null) }
+    // Read live by the column's long-lived gesture closures, like everything else they read.
+    val currentOnCommitBounds by rememberUpdatedState(onCommitBounds)
     // A block mid-gesture stays mounted even if the drag carries it out of view: its slices are what hold
     // the gesture (see [CalendarBlock]), so culling them would cancel the drag under the user's finger.
-    val gestureKey = dragPreview?.first ?: movePending?.let { calendarBlockKey(it) }
+    val gestureKey = dragPreview?.key ?: movePending?.let { calendarBlockKey(it) }
     val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
         .toInstant(tz).toEpochMilliseconds()
-    val liveRecords =
-        dragPreview?.let { (dragKey, range) ->
-            val startHour = ((range.startEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
-            val endHour = ((range.endEpochMillis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
-            if (endHour <= startHour) {
-                effRecords
-            } else {
-                effRecords.map {
-                    if (calendarBlockKey(it) == dragKey) it.copy(startHour = startHour, endHour = endHour) else it
-                }
+    // User rule 2026-10-02: **while anything is dragged the column is drawn the way a release would leave
+    // it** — a dragged block shares the width with the task panels it is over and retracts the periods that
+    // refuse it; a dragged period retracts the task panels it refuses. All of it from the bounds AT REST, so
+    // what the drag has left grows back, and none of it saved before the release.
+    val refuses = LocalPeriodRefusal.current
+    // The periods of the held box, where the drag has them.
+    val movedPeriods =
+        periodDrag?.let { drag ->
+            val hourPx = with(density) { hourHeight.toPx() }
+            val deltaMillis = if (hourPx > 0f) ((drag.deltaPx / hourPx) * 3_600_000f).toLong() else 0L
+            drawnPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.mapNotNull { period ->
+                periodDragBounds(period, drag.edge, deltaMillis)?.let { period to it }
             }
-        } ?: effRecords
+        }.orEmpty()
+    val liveRecords =
+        dragPreview?.let { blocksForBlockDrag(effRecords, it.key, it.range, it.shareWidth, midnightMillis) }
+            ?: if (movedPeriods.isEmpty()) effRecords
+            else blocksForPeriodDrag(effRecords, movedPeriods, midnightMillis, refuses)
+    // The period boxes as DRAWN: at rest but while a task block is dragged over one that refuses it. The
+    // gesture half keeps reading [drawnPeriods] — those nodes hold a press and must not change under it.
+    val shownPeriods =
+        dragPreview?.let { preview ->
+            effRecords.firstOrNull { calendarBlockKey(it) == preview.key }?.let { dragged ->
+                periodSegments(
+                    periodsForBlockDrag(
+                        periodRecords, effRecords, sleepBands, dragged, preview.range, midnightMillis, refuses,
+                    ),
+                )
+            }
+        } ?: drawnPeriods
 
     // Epoch millis at a vertical pixel offset within this 24-hour column. [currentHourHeightPx], never
     // `hourHeight`: this is called from the gesture closure, which outlives a zoom (above) — and it is what
@@ -5352,6 +5692,53 @@ private fun DayColumn(
             // touch); on empty space it offers the "add" actions. The whole column owns this so the menu
             // choice is a reliable hit-test (no fragile cross-node pointer-consumption ordering). The
             // same handler runs the menu-armed "move" drag (phone), previewing through [dragPreview].
+            //
+            // User rule 2026-10-02: **a drag the menu's "resume drag" handed back to the pointer** is carried
+            // on here, with no button held: the block follows the pointer, a click releases it (the release
+            // commits, as the original drag's would have) and another right-click opens the menu again. It
+            // runs on the INITIAL pass and consumes, so that while a block is being carried no block, period
+            // or marker under the pointer takes the click that is meant to drop it.
+            .pointerInput(day) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val held = heldDrag?.takeIf { it.following } ?: continue
+                        // The wheel still scrolls the grid under a carried block.
+                        if (event.type == PointerEventType.Scroll) continue
+                        val change = event.changes.firstOrNull() ?: continue
+                        event.changes.forEach { it.consume() }
+                        if (event.buttons.isSecondaryPressed) {
+                            heldDrag = held.copy(following = false, menuAt = change.position)
+                            continue
+                        }
+                        val y = change.position.y
+                        val carried = held.copy(
+                            dragPx = held.dragPx + (held.lastY?.let { y - it } ?: 0f),
+                            lastY = y,
+                            pressed = held.pressed || event.type == PointerEventType.Press,
+                        )
+                        val scale = currentHourHeightPx
+                        val key = calendarBlockKey(carried.record)
+                        val bounds =
+                            draggedBlockBounds(
+                                carried.record,
+                                carried.edge,
+                                if (scale <= 0f) 0L else ((carried.dragPx / scale) * 3_600_000f).toLong(),
+                                carried.armed,
+                                currentAllBlocks.filter { it.first != key }.map { it.second },
+                            )
+                        val overlaps = blockGestureOverlaps(carried.edge, carried.armed)
+                        if (carried.pressed && event.type == PointerEventType.Release) {
+                            heldDrag = null
+                            dragPreview = null
+                            currentOnCommitBounds(carried.record, bounds.startEpochMillis, bounds.endEpochMillis, overlaps)
+                        } else {
+                            heldDrag = carried
+                            dragPreview = BlockDragPreview(key, bounds, shareWidth = overlaps)
+                        }
+                    }
+                }
+            }
             .pointerInput(day) {
                 var tapUpAtMs = 0L
                 var tapPos = Offset.Zero
@@ -5363,6 +5750,18 @@ private fun DayColumn(
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
+                        // User rule 2026-10-02: a right-click DURING a block drag suspends it. The block's
+                        // own gesture (a descendant, so it ran first) has just set [heldDrag]; this is that
+                        // same event, and it is where the pointer is in the column — so the "cancel" /
+                        // "resume drag" menu opens here. While a drag is held nothing else of this handler
+                        // runs: the ordinary menu belongs to a press that is not in the middle of a drag.
+                        val held = heldDrag
+                        if (held != null) {
+                            if (held.menuAt == null && !held.following) {
+                                event.changes.firstOrNull()?.let { heldDrag = held.copy(menuAt = it.position) }
+                            }
+                            continue
+                        }
                         if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                             val change = event.changes.firstOrNull() ?: continue
                             change.consume()
@@ -5386,20 +5785,23 @@ private fun DayColumn(
                                     touch.consume()
                                 }
                                 PointerEventType.Move -> {
-                                    val duration = moving.fullEndMillis - moving.fullStartMillis
-                                    val rawStart = moving.fullStartMillis +
-                                        (((touch.position.y - moveStartY) / hourHeightPx) * 3_600_000f).toLong()
-                                    val others = currentAllBlocks
-                                        .filter { it.first != calendarBlockKey(moving) }
-                                        .map { it.second }
-                                    val placed = SchedulerDomain.placeDraggedEntry(others, rawStart, duration)
+                                    val placed =
+                                        draggedBlockBounds(
+                                            moving,
+                                            edge = null,
+                                            (((touch.position.y - moveStartY) / hourHeightPx) * 3_600_000f).toLong(),
+                                            armed = false,
+                                            others = emptyList(),
+                                        )
                                     movePlaced = placed
-                                    dragPreview = calendarBlockKey(moving) to placed
+                                    dragPreview = BlockDragPreview(calendarBlockKey(moving), placed, shareWidth = true)
                                     touch.consume()
                                 }
                                 PointerEventType.Release -> {
                                     movePlaced?.let {
-                                        onCommitBounds(moving, it.startEpochMillis, it.endEpochMillis, false)
+                                        currentOnCommitBounds(
+                                            moving, it.startEpochMillis, it.endEpochMillis, true,
+                                        )
                                     }
                                     movePlaced = null
                                     dragPreview = null
@@ -5647,6 +6049,28 @@ private fun DayColumn(
                 },
             )
         }
+        // User rule 2026-10-02: the menu a right-click opens DURING a block drag. The drag is suspended, not
+        // ended — the preview stays where it was and nothing is saved — and the two rows are the two things
+        // that can be said about it. Dismissing the menu without choosing takes the drag back up: that loses
+        // nothing, where treating it as "cancel" would throw the drag away on a stray click.
+        fun resumeHeldDrag() {
+            heldDrag = heldDrag?.copy(menuAt = null, following = true, lastY = null, pressed = false)
+        }
+        val heldMenuAt = heldDrag?.menuAt
+        DropdownMenu(
+            expanded = heldMenuAt != null,
+            onDismissRequest = { resumeHeldDrag() },
+            offset = heldMenuAt?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
+        ) {
+            DropdownMenuItem(
+                text = { Text("cancel") },
+                onClick = { heldDrag = null; dragPreview = null },
+            )
+            DropdownMenuItem(
+                text = { Text("resume drag") },
+                onClick = { resumeHeldDrag() },
+            )
+        }
         // PRD §8: **the period boxes' GESTURE, emitted UNDER the panels** — the other half of the drawing
         // further down, which is emitted OVER them.
         //
@@ -5687,18 +6111,22 @@ private fun DayColumn(
         // (a keystroke in the task tree included), and the slicing is a pure function of the blocks — so
         // recomputing it is work bought and thrown away. The key is the block list, which is exactly the
         // input [overlapLayout] reads, so a cached answer can never be a stale one.
-        val layout = remember(effRecords) { overlapLayout(effRecords) }
+        // PRD §15 (user rule 2026-10-02): and a screen break cuts a HOLE in every task block it refuses —
+        // in the drawing only ([layoutWithBreakHoles]), so the pieces are still one block to the hand.
+        val layout = remember(effRecords, screenBreakMarkers, refuses) {
+            layoutWithBreakHoles(overlapLayout(effRecords), effRecords, screenBreakMarkers, refuses)
+        }
         // User rule 2026-10-01: what of this column crosses a task panel, which the panel redraws over itself in the
         // colour of highest contrast with its task's ([PanelDecor]) — the same markings, outlines and lines the
         // column draws under the panels below. Held on what it reads, so a keystroke elsewhere costs nothing.
-        val panelDecor = remember(sleepBands, drawnPeriods, layerBands, periodKindConfig, tickMinutes) {
+        val panelDecor = remember(sleepBands, shownPeriods, layerBands, periodKindConfig, tickMinutes) {
             val sleepDrawingsForPanels = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
             PanelDecor(
                 bands =
                     sleepBands.mapNotNull { band ->
                         outlineColor(band.outline)?.let { PanelDecorBand(band.startHour, band.endHour, sleepDrawingsForPanels, outlined = true) }
                     } +
-                        drawnPeriods.map { segment ->
+                        shownPeriods.map { segment ->
                             PanelDecorBand(
                                 segment.startHour,
                                 segment.endHour,
@@ -5716,19 +6144,27 @@ private fun DayColumn(
         // PRD §8 Overlap Mode: the panels at their in-progress layout while a move/resize preview shows (the
         // dragged one substituted to its preview position) — what the preview overlay below draws, and what
         // the titles are placed for, so a title follows the panel being moved.
-        val liveLayout = if (previewActive) remember(liveRecords) { overlapLayout(liveRecords) } else layout
+        val liveLayout =
+            if (previewActive) {
+                // The holes are cut from where the dragged block is NOW: they stay on the breaks.
+                remember(liveRecords, screenBreakMarkers, refuses) {
+                    layoutWithBreakHoles(overlapLayout(liveRecords), liveRecords, screenBreakMarkers, refuses)
+                }
+            } else {
+                layout
+            }
         val sideLayout = remember(screenBreakMarkers) { overlapLayout(screenBreakMarkers) }
         // The band labels — "Sleep", and every period in force over a drawn box ([periodSegmentLabel]).
         val bandLabels =
             sleepBands.map { Triple(it.startHour, it.endHour, "Sleep") } +
-                drawnPeriods.map { Triple(it.startHour, it.endHour, periodSegmentLabel(it)) }
+                shownPeriods.map { Triple(it.startHour, it.endHour, periodSegmentLabel(it)) }
         // PRD §8: **where every text of this column is written** — the one answer, for the panel titles, the
         // period labels and the break names alike ([calendarLabelSlots]). Recomputed whenever anything it
         // reads moves (a drag preview, a record the now-line carries, the zoom), so a text is always placed
         // for where its element is now.
         val labelSlots =
             remember(
-                liveRecords, liveLayout, screenBreakMarkers, sideLayout, bandLabels, sleepBands, drawnPeriods,
+                liveRecords, liveLayout, screenBreakMarkers, sideLayout, bandLabels, sleepBands, shownPeriods,
                 reminderPlacements, alarmPlacements, hourHeight, showsDayDate,
             ) {
                 fun y(hour: Float) = (hourHeight * hour).value
@@ -5794,7 +6230,7 @@ private fun DayColumn(
                     fun bottomLine(endHour: Float, xStart: Float = 0f, xEnd: Float = 1f) =
                         add(CalendarLabelObstacle(y(endHour) - line, y(endHour), xStart, xEnd))
                     sleepBands.forEach { if (outlineColor(it.outline) != null) bottomLine(it.endHour) }
-                    drawnPeriods.forEach {
+                    shownPeriods.forEach {
                         if (outlineColor(periodSegmentOutline(it)) != null) bottomLine(it.endHour)
                     }
                     screenBreakMarkers.forEach { marker ->
@@ -5819,14 +6255,17 @@ private fun DayColumn(
                 slices = recordSlices,
                 hourHeight = hourHeight,
                 decor = panelDecor,
-                // Every other block — everything but itself — so a non-overlap drag/resize snaps around them.
+                // Every other block — everything but itself — so a non-overlap resize stops at them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
                 taskColor = record.taskId?.let { taskColors[it] },
                 contextOverlays = contextOverlays,
                 overlapArmed = overlapArmed,
                 // Hide the resting (gesture-holding) slices while any move/resize preview overlay shows.
                 previewActive = previewActive,
-                onPreviewChange = { range -> dragPreview = range?.let { key to it } },
+                onPreviewChange = { range, shareWidth ->
+                    dragPreview = range?.let { BlockDragPreview(key, it, shareWidth) }
+                },
+                onHoldDrag = { edge, dragPx, armed -> heldDrag = HeldBlockDrag(record, edge, dragPx, armed) },
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
                 onResizingEdge = onResizingEdge,
@@ -5948,6 +6387,10 @@ private fun DayColumn(
         // PRD §8 Overlap Mode: live move/resize preview overlay — the panels at their in-progress layout
         // (the dragged one substituted to its preview position), sliced so overlaps share width side by
         // side as the drag happens. Purely visual; the resting slices underneath hold the gesture.
+        //
+        // **Drawn by the face a block at rest wears** ([CalendarPanelFace]) — its own second copy of the
+        // drawing is what made a dragged panel turn pale: it kept the 30 % wash a panel had before task
+        // colours were opaque, so the block read as a ghost of itself for as long as it was held.
         if (previewActive) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val colWidth = maxWidth
@@ -5964,15 +6407,17 @@ private fun DayColumn(
                                 .height(hourHeight * (slice.bottomHour - slice.topHour))
                                 .padding(horizontal = 1.dp),
                         ) {
-                            val previewColor = rec.taskId?.let { taskColors[it] } ?: CalColors.event
                             val previewTitleSlot = labelSlots["block" to recKey]
-                            CalendarBlockBody(
-                                previewColor,
-                                rec.title,
+                            CalendarPanelFace(
+                                record = rec,
+                                taskColor = rec.taskId?.let { taskColors[it] },
+                                slice = slice,
+                                colWidth = colWidth,
+                                hourHeight = hourHeight,
+                                decor = panelDecor,
                                 showTitle = idx == 0 && previewTitleSlot != null,
                                 titleTopInset = previewTitleSlot?.inset?.dp ?: 0.dp,
                                 titleMaxLines = previewTitleSlot?.maxLines ?: 1,
-                                titleColor = previewColor,
                             )
                         }
                     }
@@ -6029,7 +6474,7 @@ private fun DayColumn(
         // The box is also the GESTURE: dragging or resizing it moves every period in force over it at once
         // (see [PeriodSegmentBox]) — the boundary it was cut at belongs to no single period, so there is no
         // one period a press there could mean.
-        drawnPeriods.forEach { segment ->
+        shownPeriods.forEach { segment ->
             if (!onScreen(segment.startHour, segment.endHour)) return@forEach
             PeriodSegmentMarking(
                 segment = segment,
@@ -7327,19 +7772,75 @@ internal fun alarmBubbleSection(marker: PlacedRecord, tz: TimeZone): CalendarBub
 /**
  * PRD §8 calendar block — one interactive component for EVERY period (task record, scheduled "to do
  * now", or manual entry), drawn identically (same colour) with the same behaviour:
- *  - Click and drag while holding → move; committed once, on release, via [onCommitBounds].
+ *  - DOUBLE click, the second press held and dragged → move; committed once, on release, via
+ *    [onCommitBounds]. A plain press-and-drag moves nothing (user rule 2026-10-02), so a block is never moved
+ *    by a click that slipped.
  *  - Grab the top/bottom edge and drag → resize that edge, also committed via [onCommitBounds].
  *  - Double-click (no drag) → open its editor via [onEditChoice], the same funnel the menu's chooser uses:
  *    the block is run through [calendarEditChoices] so the double-click and the chooser row can never open
  *    two different windows for one thing.
  * Right-click (the "edit…" chooser) is handled by the enclosing day column, so a secondary press is
- * left unconsumed here for it to pick up. The live preview applies the SAME no-overlap snapping/
- * clamping the reducer commits with, so a block never visually overlaps another. Auto blocks
+ * left unconsumed here for it to pick up — unless it comes DURING a drag, which it suspends
+ * ([HeldBlockDrag]). A moved block keeps its length: it shares the width with the task panels it is carried
+ * onto and the periods that refuse it retract, drawn live exactly as the release will leave them; a resize
+ * stops at its neighbours. Auto blocks
  * (records/scheduled) become the USER's the moment one is dragged, resized or edited — the gesture IS the
  * existence pin ([SchedulerDomain.pinsAfterHandPlacement]) — so from then on they are drawn like every other
  * block the user placed: the accent-blue outline, and a block the §9 fill is bound by. The title is written
  * on the block and also shows on hover (PRD §8).
  */
+/**
+ * PRD §8: **what one slice of a task block looks like** — the one drawing, worn by the block at rest
+ * ([CalendarBlock]) and by the drag preview's overlay alike, so a block being dragged is drawn exactly as it
+ * will be once released.
+ *
+ * No-screen / inactivity blocks are decorative-patterned, muted blocks — they are not a task, so they take no
+ * task's colour. A real task block is drawn in ITS OWN colour (its place in the one colour space the tree
+ * partitions, see [org.example.project.scheduler.domain.TaskColorSpace]) as an opaque background, and what is
+ * drawn on it takes the colour of highest contrast with it (user rule 2026-10-01); the uniform event blue
+ * survives, as the old 30 % wash the markings under it show through, for a block whose task the tree gives
+ * no colour — a manual panel on a task no cell points at any more, and every block drawn before the tree has
+ * been read.
+ */
+@Composable
+private fun CalendarPanelFace(
+    record: PlacedRecord,
+    taskColor: Color?,
+    slice: PanelSlice,
+    colWidth: Dp,
+    hourHeight: Dp,
+    /** What of the column crosses this block, redrawn over it for contrast ([PanelDecor]); null = nothing. */
+    decor: PanelDecor?,
+    showTitle: Boolean,
+    titleTopInset: Dp,
+    titleMaxLines: Int,
+) {
+    val density = LocalDensity.current
+    val muted = record.noScreen || record.inactivity
+    val color = if (muted) CalColors.muted else taskColor ?: CalColors.event
+    val onTask = taskColor != null && !muted
+    CalendarBlockBody(
+        color,
+        record.title,
+        showTitle = showTitle,
+        titleTopInset = titleTopInset,
+        titleMaxLines = titleMaxLines,
+        titleColor = if (onTask) TaskPalette.foreground(color) else taskColor ?: CalColors.event,
+        outline = record.outline,
+        provisional = record.provisional,
+        opaque = onTask,
+        decor = decor?.takeIf { onTask }?.let {
+            PanelDecorPlacement(
+                decor = it,
+                originXPx = with(density) { (colWidth * slice.xFraction).toPx() + 1.dp.toPx() },
+                topHour = slice.topHour,
+                hourHeightPx = with(density) { hourHeight.toPx() },
+                columnWidthPx = with(density) { colWidth.toPx() },
+            )
+        },
+    )
+}
+
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun CalendarBlock(
@@ -7358,7 +7859,13 @@ private fun CalendarBlock(
     /** True while a move/resize preview overlay is showing — hide these (gesture-only) resting slices. */
     previewActive: Boolean,
     /** Reports the in-progress drag bounds (null when not dragging) so the column can draw the live overlay. */
-    onPreviewChange: (TaskTimeRange?) -> Unit,
+    onPreviewChange: (TaskTimeRange?, shareWidth: Boolean) -> Unit,
+    /**
+     * PRD §8 (user rule 2026-10-02): a right-click suspended this block's drag at this edge (null: a move),
+     * pointer travel and Overlap Mode state. The column takes it from here ([HeldBlockDrag]) — the preview is
+     * left as it is and nothing is committed.
+     */
+    onHoldDrag: (edge: CalendarEdge?, dragPx: Float, armed: Boolean) -> Unit,
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     /**
@@ -7387,8 +7894,6 @@ private fun CalendarBlock(
     val density = LocalDensity.current
     val hourHeightPx = with(density) { hourHeight.toPx() }
     val minPx = with(density) { 2.dp.toPx() }
-    val entry = TaskTimeRange(record.fullStartMillis, record.fullEndMillis)
-    val duration = record.fullEndMillis - record.fullStartMillis
 
     // Accumulated drag distance (px) for the active gesture; reset after each commit. The live position
     // is reported via [onPreviewChange] and drawn by the column's overlay, not from local preview state.
@@ -7404,38 +7909,11 @@ private fun CalendarBlock(
     fun millisDelta(px: Float): Long =
         currentHourHeightPx.value.let { if (it <= 0f) 0L else ((px / it) * 3_600_000f).toLong() }
 
-    // The bounds for the current gesture (also what gets committed on release). In the default mode they
-    // are snapped/clamped to never overlap; while Overlap Mode is armed they are the raw dragged bounds
-    // (only kept from collapsing below the minimum length), so the panel can overlap others (PRD §8).
-    val minLen = SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS
-    fun movedBounds(): TaskTimeRange {
-        val rawStart = record.fullStartMillis + millisDelta(dragPx)
-        return if (armed.value) {
-            TaskTimeRange(rawStart, rawStart + duration)
-        } else {
-            SchedulerDomain.placeDraggedEntry(currentOthers.value, rawStart, duration)
-        }
-    }
-    fun resizedBounds(edge: CalendarEdge): TaskTimeRange {
-        val base = if (edge == CalendarEdge.Start) record.fullStartMillis else record.fullEndMillis
-        val target = base + millisDelta(dragPx)
-        if (!armed.value) return SchedulerDomain.clampResize(currentOthers.value, entry, edge, target)
-        return when (edge) {
-            CalendarEdge.Start -> entry.copy(startEpochMillis = minOf(target, entry.endEpochMillis - minLen))
-            CalendarEdge.End -> entry.copy(endEpochMillis = maxOf(target, entry.startEpochMillis + minLen))
-        }
-    }
-
-    // PRD §8: no-screen / inactivity periods are decorative-patterned, muted blocks — they are not a task,
-    // so they take no task's colour. A real task period is drawn in ITS OWN colour (its place in the one
-    // colour space the tree partitions, see [org.example.project.scheduler.domain.TaskColorSpace]); the uniform
-    // event blue survives as the colour of a period whose task the tree gives no colour — a manual panel on
-    // a task no cell points at any more, and every block drawn before the tree has been read.
-    val color =
-        when {
-            record.noScreen || record.inactivity -> CalColors.muted
-            else -> taskColor ?: CalColors.event
-        }
+    // The bounds for the current gesture (also what gets committed on release) — [draggedBlockBounds]: a
+    // move keeps the block's length and what it is carried over retracts; a resize stops at its neighbours
+    // unless Overlap Mode is armed (PRD §8).
+    fun gestureBounds(edge: CalendarEdge?): TaskTimeRange =
+        draggedBlockBounds(record, edge, millisDelta(dragPx), armed.value, currentOthers.value)
 
     // PRD §8 Overlap Mode: a transparent full-column layer (no pointer handler of its own, so it never
     // steals clicks) that positions this block's horizontal slices absolutely. A non-overlapping block
@@ -7517,18 +7995,38 @@ private fun CalendarBlock(
                             onResizingEdge(edge?.let(::panelResizeEdgeOf))
                             down.consume()
 
+                            // User rule 2026-10-02: a block is MOVED only by a double click whose second press
+                            // is kept down and dragged — a plain press-and-drag moves nothing. A resize has its
+                            // own grab strip and its own cursor, so the first press on it is already deliberate.
+                            val secondPress = downUptime - lastTapUptime <= doubleTapWindowMs
+                            val mayDrag = edge != null || secondPress
                             var started = false
                             var traveled = 0f
+                            // A right-click suspended the drag: the column holds it now ([onHoldDrag]).
+                            var held = false
                             // Lock the grid scroll for the whole press so a held drag can't scroll it.
                             onLockScroll(true)
                             try {
                                 while (true) {
                                     val event = awaitPointerEvent()
+                                    // User rule 2026-10-02: a right-click during the drag opens the column's
+                                    // "cancel" / "resume drag" menu. The gesture ends here WITHOUT committing
+                                    // and without clearing the preview — the buttons' releases that follow
+                                    // are not the drop.
+                                    if (started && event.buttons.isSecondaryPressed) {
+                                        held = true
+                                        onHoldDrag(edge, dragPx, armed.value)
+                                        event.changes.forEach { it.consume() }
+                                        break
+                                    }
                                     if (!event.changes.any { it.pressed }) {
                                         if (started) {
-                                            val b = if (edge != null) resizedBounds(edge) else movedBounds()
-                                            onCommitBounds(record, b.startEpochMillis, b.endEpochMillis, armed.value)
-                                        } else if (downUptime - lastTapUptime <= doubleTapWindowMs) {
+                                            val b = gestureBounds(edge)
+                                            onCommitBounds(
+                                                record, b.startEpochMillis, b.endEpochMillis,
+                                                blockGestureOverlaps(edge, armed.value),
+                                            )
+                                        } else if (secondPress) {
                                             // Second quick tap with no drag → open this block's own
                                             // editor, then reset so a third tap starts a fresh pair. It goes
                                             // through the chooser's own table rather than naming an editor
@@ -7537,28 +8035,31 @@ private fun CalendarBlock(
                                             calendarBlockEditChoice(record)?.let(onEditChoice)
                                             lastTapUptime = 0L
                                         } else {
-                                            lastTapUptime = downUptime
+                                            // Only a press that stayed put is the first half of a double click.
+                                            lastTapUptime = if (traveled <= touchSlop) downUptime else 0L
                                         }
                                         break
                                     }
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
                                     val delta = change.positionChangeIgnoreConsumed()
                                     traveled += delta.getDistance()
-                                    if (!started && traveled > touchSlop) {
+                                    if (!started && mayDrag && traveled > touchSlop) {
                                         started = true
                                     }
                                     change.consume()
+                                    // Counted from the first pixel, so the slop that tells a drag from a double
+                                    // click leaves no radius in which the block lags the pointer.
+                                    if (mayDrag) dragPx += delta.y
                                     if (started) {
-                                        dragPx += delta.y
                                         // Report the live bounds so the column draws the shared preview overlay.
-                                        onPreviewChange(if (edge != null) resizedBounds(edge) else movedBounds())
+                                        onPreviewChange(gestureBounds(edge), blockGestureOverlaps(edge, armed.value))
                                     }
                                 }
                             } finally {
                                 onLockScroll(false)
                                 onResizingEdge(null)
                                 dragPx = 0f
-                                onPreviewChange(null)
+                                if (!held) onPreviewChange(null, false)
                             }
                         }
                     },
@@ -7572,29 +8073,16 @@ private fun CalendarBlock(
                 // hover handlers, because a parent hover Move would overwrite a child's report.
                 Box(Modifier.fillMaxSize()) {
                     // The title is written only on the topmost slice so a stepped block reads as one.
-                    // A task's own colour is the panel's opaque background, and what is drawn on it takes the colour
-                    // of highest contrast with it (user rule 2026-10-01); a block with no task colour keeps the
-                    // old 30 % wash, which the markings under it show through.
-                    val onTask = taskColor != null && !record.noScreen && !record.inactivity
-                    CalendarBlockBody(
-                        color,
-                        record.title,
+                    CalendarPanelFace(
+                        record = record,
+                        taskColor = taskColor,
+                        slice = slice,
+                        colWidth = colWidth,
+                        hourHeight = hourHeight,
+                        decor = decor,
                         showTitle = isFirst && titleVisible,
                         titleTopInset = titleTopInset,
                         titleMaxLines = titleMaxLines,
-                        titleColor = if (onTask) TaskPalette.foreground(color) else taskColor ?: CalColors.event,
-                        outline = record.outline,
-                        provisional = record.provisional,
-                        opaque = onTask,
-                        decor = decor?.takeIf { onTask }?.let {
-                            PanelDecorPlacement(
-                                decor = it,
-                                originXPx = with(density) { (colWidth * slice.xFraction).toPx() + 1.dp.toPx() },
-                                topHour = slice.topHour,
-                                hourHeightPx = hourHeightPx,
-                                columnWidthPx = with(density) { colWidth.toPx() },
-                            )
-                        },
                     )
                     // The block's own section, one overlay per device-set segment, then re-tiled together
                     // with the grey periods and layers covering it so each tile reports one whole stack —
@@ -7803,6 +8291,10 @@ private fun PeriodSegmentGesture(
                 },
             )
             .pointerInput(key) {
+                val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
+                // The previous press that was a plain click, so the next one can be told as the second of a
+                // double click — the same rule a task block's move follows ([CalendarBlock]).
+                var lastTapUptime = 0L
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (down.isConsumed) return@awaitEachGesture
@@ -7819,7 +8311,12 @@ private fun PeriodSegmentGesture(
                     }
                     onResizingEdge(edge?.let(::panelResizeEdgeOf))
                     down.consume()
+                    // User rule 2026-10-02: a box is MOVED only by a double click whose second press is held
+                    // and dragged; a resize on its grab strip starts at the first press.
+                    val secondPress = down.uptimeMillis - lastTapUptime <= doubleTapWindowMs
+                    val mayDrag = edge != null || secondPress
                     var travelled = 0f
+                    var distance = 0f
                     var started = false
                     onLockScroll(true)
                     try {
@@ -7828,11 +8325,15 @@ private fun PeriodSegmentGesture(
                             if (!event.changes.any { it.pressed }) break
                             val change = event.changes.firstOrNull() ?: continue
                             travelled += change.positionChange().y
+                            distance += change.positionChange().getDistance()
+                            if (!mayDrag) continue
                             if (!started && kotlin.math.abs(travelled) < viewConfiguration.touchSlop) continue
                             started = true
                             onDragChange(PeriodDragState(key, travelled, edge))
                             change.consume()
                         }
+                        lastTapUptime =
+                            if (!started && !secondPress && distance <= viewConfiguration.touchSlop) down.uptimeMillis else 0L
                         if (started) {
                             val deltaMillis =
                                 if (currentHourPx.value > 0f) {
@@ -7843,13 +8344,9 @@ private fun PeriodSegmentGesture(
                             // Every period in force moves together; a period is free to overlap anything, so
                             // the non-overlap snap the task panels use is deliberately bypassed.
                             currentRecords.value.forEach { record ->
-                                val start =
-                                    if (edge == CalendarEdge.End) record.fullStartMillis
-                                    else record.fullStartMillis + deltaMillis
-                                val end =
-                                    if (edge == CalendarEdge.Start) record.fullEndMillis
-                                    else record.fullEndMillis + deltaMillis
-                                if (end > start) onCommitBounds(record, start, end, true)
+                                periodDragBounds(record, edge, deltaMillis)?.let {
+                                    onCommitBounds(record, it.startEpochMillis, it.endEpochMillis, true)
+                                }
                             }
                         }
                     } finally {

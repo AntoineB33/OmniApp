@@ -2495,10 +2495,8 @@ object SchedulerReducer {
      * worth of defaults ([Task.DEFAULT_RESILIENCE] — on screen), and there is nobody to have given it a
      * value above zero for anything else.
      */
-    private fun periodRefuses(state: SchedulerState, panel: TaskPanel, kind: String): Boolean {
-        val task = panel.taskId?.let { state.tasks[it] } ?: return true
-        return task.resilienceFor(kind) <= 0.0
-    }
+    private fun periodRefuses(state: SchedulerState, panel: TaskPanel, kind: String): Boolean =
+        SchedulerDomain.periodRefuses(state.tasks, panel.taskId, kind)
 
     /**
      * PRD §8: true for a real (auto or user-authored) TASK panel of either screen kind — what an inactivity
@@ -2556,29 +2554,29 @@ object SchedulerReducer {
                         periodRefuses(state, changed, p.restrictiveKind)
                 }
             }
+        val over = TaskTimeRange(changed.startEpochMillis, changed.endEpochMillis)
         var working = state
         val out = ArrayList<TaskPanel>(panels.size)
         for (p in panels) {
-            val overlaps =
-                p.id != changedId && trimTarget(p) &&
-                    p.startEpochMillis < changed.endEpochMillis && p.endEpochMillis > changed.startEpochMillis
-            if (!overlaps) {
+            if (p.id == changedId || !trimTarget(p)) {
                 out += p
                 continue
             }
-            val leftLen = changed.startEpochMillis - p.startEpochMillis
-            val rightLen = p.endEpochMillis - changed.endEpochMillis
-            if (leftLen >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) {
-                out += p.copy(endEpochMillis = changed.startEpochMillis)
-                if (rightLen >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) {
-                    val (newId, allocated) = working.allocatePanelId()
-                    working = allocated
-                    out += p.copy(id = newId, startEpochMillis = changed.endEpochMillis)
+            // The one retraction rule ([SchedulerDomain.retractAround]), which the drag's preview reads too.
+            // No piece left: the panel was fully covered (or only sub-minimum slivers remained) and is deleted.
+            SchedulerDomain.retractAround(TaskTimeRange(p.startEpochMillis, p.endEpochMillis), over)
+                .forEachIndexed { i, piece ->
+                    // The first piece is the panel itself; the far side of a split gets a fresh id.
+                    val id =
+                        if (i == 0) {
+                            p.id
+                        } else {
+                            val (newId, allocated) = working.allocatePanelId()
+                            working = allocated
+                            newId
+                        }
+                    out += p.copy(id = id, startEpochMillis = piece.startEpochMillis, endEpochMillis = piece.endEpochMillis)
                 }
-            } else if (rightLen >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) {
-                out += p.copy(startEpochMillis = changed.endEpochMillis)
-            }
-            // Fully covered (or only sub-minimum slivers remain): the panel is deleted.
         }
         return working to out
     }
@@ -2616,7 +2614,7 @@ object SchedulerReducer {
         val (panelId, allocated) =
             if (existing.auto) state.allocatePanelId() else intent.id to state
         // PRD §8 Overlap Mode: an armed drag keeps the raw overlapping bounds and re-seeds this panel's
-        // width to 1/n; otherwise its existing width (and the no-overlap snapped bounds) carry over.
+        // width to 1/n; otherwise its existing width (and the clamped bounds of a resize) carry over.
         val weight =
             if (intent.allowOverlap) {
                 SchedulerDomain.seedOverlapWeight(panels.filter { it.id != intent.id }, intent.startEpochMillis, end)
@@ -2726,9 +2724,7 @@ object SchedulerReducer {
 
     /**
      * PRD §8 edit/drag/resize commit on a merged block: drop [intent.removeIds] and add one
-     * user-authored panel over the committed bounds. The bounds arrive already overlap-snapped from the
-     * calendar block's live preview (against the other, non-merged blocks), so they are used as-is — as
-     * with [reduceAddTaskPanel]. [commitPanels] then re-merges if the result abuts a same-task panel.
+     * user-authored panel over the committed bounds, used as-is — as with [reduceAddTaskPanel]. [commitPanels] then re-merges if the result abuts a same-task panel.
      */
     private fun reduceReplaceTaskPanels(
         state: SchedulerState,
