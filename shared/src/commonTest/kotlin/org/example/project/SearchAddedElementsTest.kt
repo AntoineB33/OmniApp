@@ -212,6 +212,13 @@ class SearchAddedElementsTest {
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.RemindersTimeNow, now, TimeZone.UTC))
     }
 
+    @Test
+    fun remove_the_others_leaves_the_element_alone_and_a_stale_key_removes_nothing() {
+        val added = listOf("Alarm/a", "Task/t", "Reminder/r")
+        assertEquals(listOf("Task/t"), SearchDomain.keepingOnly(added, "Task/t"))
+        assertEquals(added, SearchDomain.keepingOnly(added, "Task/gone"))
+    }
+
     // ----- App settings (user spec 2026-10-02) ----------------------------------------------------
 
     @Test

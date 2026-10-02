@@ -679,6 +679,9 @@ titles" figure: the Search window and the per-object windows its rows open repla
   `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's
   `timeOfDayMinutes` becomes the clock's, to the minute, as ONE list edit through the list's own intent (`SetAlarms`,
   `SetChores`) — an alarm's days, and an isolated ring's date, are left alone; none to change is no intent.
+- **An added element's right-click menu is "remove the others"** (user rule 2026-10-02, `SearchDomain.keepingOnly`):
+  the list is left holding that element alone — off the list, never off the account. On the ONLY element there is
+  nothing to offer, so the right-click opens no menu. The row's ✕ and double-click are unchanged.
 - **"app setting" is a kind too** (`Kind.AppSetting`, user spec 2026-10-02): one row per `SearchDomain.AppSettingEntry`
   — "Sound setting" is the first — added and opened like any element (its row opens the Search window holding it
   alone), and its controls are ACTIONS on the added elements: "Global volume" (`AddedAction.SoundVolume`) is a slider

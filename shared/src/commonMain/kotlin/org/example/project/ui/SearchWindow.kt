@@ -844,6 +844,7 @@ fun SearchWindow(
                 rows = addedRows,
                 onOpen = { openers.open(state, it) },
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
+                onKeepOnly = { key -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, key))) },
                 modifier = Modifier.fillMaxWidth().weight(1f - topRightShare).padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
@@ -869,6 +870,9 @@ fun SearchWindow(
     }
 }
 
+/** The added elements' row menu: every other element off the list (never off the account). */
+private const val REMOVE_OTHERS_LABEL: String = "remove the others"
+
 /**
  * The added elements, in the order they were added: each row its kind, its name and its detail (a task's
  * shortest path), a double-click opens it as the result list does ([SearchRowOpeners]), and its ✕ takes it off
@@ -879,6 +883,8 @@ private fun AddedElementsList(
     rows: List<SearchDomain.Result>,
     onOpen: (SearchDomain.Result) -> Unit,
     onRemove: (String) -> Unit,
+    /** The row menu's "remove the others": the list holds this element alone. */
+    onKeepOnly: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -900,9 +906,22 @@ private fun AddedElementsList(
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
                 itemsIndexed(rows, key = { _, r -> resultKey(r) }) { _, row ->
                     val key = resultKey(row)
+                    // The right-click menu: "remove the others" (user rule 2026-10-02) — nothing to offer, and so
+                    // no menu, on the only element left.
+                    var menuOpen by remember(key) { mutableStateOf(false) }
+                    val hasOthers by rememberUpdatedState(rows.size > 1)
+                    val currentOnOpen by rememberUpdatedState(onOpen)
+                    val currentRow by rememberUpdatedState(row)
+                    Box {
                     Row(
                         modifier = resultRowModifier(selected = false)
-                            .pointerInput(key) { detectTapGestures(onDoubleTap = { onOpen(row) }) },
+                            .resultRowGestures(
+                                key = key,
+                                onSelect = {},
+                                onSecondarySelect = {},
+                                onOpen = { currentOnOpen(currentRow) },
+                                onOpenMenu = { if (hasOthers) menuOpen = true },
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -934,6 +953,18 @@ private fun AddedElementsList(
                                 .clickable { onRemove(key) }
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                         )
+                    }
+                    transientMenuDismissal(menuOpen) { menuOpen = false }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                        properties = PopupProperties(focusable = false),
+                    ) {
+                        MenuEntry(REMOVE_OTHERS_LABEL) {
+                            menuOpen = false
+                            onKeepOnly(key)
+                        }
+                    }
                     }
                 }
             }

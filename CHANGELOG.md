@@ -11,6 +11,11 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: an added element's right-click offers "remove the others" — 2026-10-02
+
+A right-click on a row of the added elements opens a menu of one entry, "remove the others"
+(`SearchDomain.keepingOnly`); none on the only element left. No state change (the list is local view state).
+
 ### Screen breaks: two 15-min breaks drawn back to back right after the line — 2026-10-02
 
 Anomaly on account 3 at 22:14, the line dragging an owed 15-min break inside the hour before bed. The calendar's

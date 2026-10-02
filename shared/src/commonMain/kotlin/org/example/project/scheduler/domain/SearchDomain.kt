@@ -2262,6 +2262,12 @@ object SearchDomain {
         }
     }
 
+    /**
+     * The added elements' "remove the others" (user rule 2026-10-02): [added] left holding [key] alone — unchanged
+     * when it does not hold it, so a stale press removes nothing.
+     */
+    fun keepingOnly(added: List<String>, key: String): List<String> = if (key in added) listOf(key) else added
+
     /** The ids of [kind]'s elements among [added], each once, in the list's order. */
     fun addedIds(added: List<Result>, kind: Kind): List<String> =
         added.filterIsInstance<ItemResult>().filter { it.kind == kind }.map { it.id }.distinct()
