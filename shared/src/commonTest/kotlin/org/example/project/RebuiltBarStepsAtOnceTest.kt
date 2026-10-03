@@ -93,7 +93,7 @@ class RebuiltBarStepsAtOnceTest {
                 scope = backgroundScope,
                 screenActive = { true },
                 speak = {},
-                postNotification = { title, _ -> posted += clock.nowMillis() to title },
+                postNotification = { title, _, _ -> posted += clock.nowMillis() to title },
                 clearNotifications = {},
                 lockedIntervalsQuery = { _, _ -> emptyList() },
                 frozenBreakStore = MemoryStore(FrozenScreenBreaks(listOf(lastLookAway, lastPose), T0, T0, machine = machine)),

@@ -103,7 +103,7 @@ class StartupOnRealDbTest {
                     planDispatcher = Dispatchers.Default,
                     planSearch = true,
                     speak = {},
-                    postNotification = { _, _ -> },
+                    postNotification = { _, _, _ -> },
                     clearNotifications = {},
                     // The clock is faked twelve hours ahead, where the OS has recorded nothing: the night is the device
                     // asleep, as it is on a real morning start.

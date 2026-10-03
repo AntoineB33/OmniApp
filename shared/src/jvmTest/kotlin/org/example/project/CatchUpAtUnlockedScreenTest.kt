@@ -86,7 +86,7 @@ class CatchUpAtUnlockedScreenTest {
                     scope = scope,
                     screenActive = { true },
                     speak = {},
-                    postNotification = { _, _ -> },
+                    postNotification = { _, _, _ -> },
                     clearNotifications = {},
                     lockedIntervalsQuery = { _, _ -> locked },
                     frozenBreakStore = MemoryStore(FrozenScreenBreaks(listOf(lastLookAway), closed, closed, machine = machine)),

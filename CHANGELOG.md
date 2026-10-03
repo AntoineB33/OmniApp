@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Notifications: a click brings the app up, and the schedule's open the calendar — 2026-10-03
+
+User request: clicking a notification did nothing (desktop: a bare tray balloon; Android: no content intent). Now every
+click brings the app to the front, and the task to do now and the screen-break notifications also open the calendar or
+bring it back and focus it (`openNewWindow(Calendar)`). `sendSystemNotification` takes a `NotificationTarget`, set at the
+`notifyUser` call; clicks reach `App` through `NotificationClicks`. Desktop: the tray icon's action listener +
+`DesktopAppWindow.bringToFront` (set by `main.kt`); Android: a content intent to the launch activity, read in
+`MainActivity.onCreate`/`onNewIntent`; iOS: the target is carried in `userInfo` but not yet handed over (needs the Swift
+delegate). `NotificationClickTargetTest`.
+
 ### Search window: history units filtered by the elements they changed — 2026-10-03
 
 User request: two filters for the history-unit kind, in the Configuration Search window beside Category / Made in /

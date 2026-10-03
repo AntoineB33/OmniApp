@@ -1,6 +1,8 @@
 package org.example.project
 
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.window.Window
+import org.example.project.scheduler.platform.DesktopAppWindow
 import androidx.compose.ui.window.application
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -59,6 +61,22 @@ fun main() {
             state = appWindow.state,
         ) {
             KeepAppWindowPlacement(appWindow)
+            // PRD §11: a click on a notification brings this window to the front, out of the taskbar if it was
+            // minimized. Windows refuses a plain `toFront` to a process that is not in the foreground, so the window
+            // is put on top for an instant first — the usual way an app answers its own notification there.
+            val awtWindow = window
+            DisposableEffect(awtWindow) {
+                DesktopAppWindow.bringToFront = {
+                    java.awt.EventQueue.invokeLater {
+                        appWindow.state.isMinimized = false
+                        awtWindow.isAlwaysOnTop = true
+                        awtWindow.toFront()
+                        awtWindow.isAlwaysOnTop = false
+                        awtWindow.requestFocus()
+                    }
+                }
+                onDispose { DesktopAppWindow.bringToFront = {} }
+            }
             App(store = store)
         }
     }

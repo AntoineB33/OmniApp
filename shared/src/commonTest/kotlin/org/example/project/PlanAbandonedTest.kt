@@ -152,7 +152,7 @@ class PlanAbandonedTest {
                 deviceKind = DeviceKind.Desktop,
                 screenActive = { true },
                 speak = {},
-                postNotification = { _, _ -> },
+                postNotification = { _, _, _ -> },
                 clearNotifications = {},
             ).start()
             val before = await("the engine answers for one generation") { currentGeneration() > 0 }

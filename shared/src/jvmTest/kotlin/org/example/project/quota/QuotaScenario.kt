@@ -85,7 +85,7 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
                 deviceKind = kind,
                 screenActive = { active },
                 speak = {},
-                postNotification = { _, _ -> },
+                postNotification = { _, _, _ -> },
                 clearNotifications = {},
                 sleepGapQuery = { emptyList() },
                 activeSessionStore = store,

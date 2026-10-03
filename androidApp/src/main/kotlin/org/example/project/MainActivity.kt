@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
 import org.example.project.scheduler.persistence.AndroidSchedulerStoreHolder
+import org.example.project.scheduler.platform.NotificationClicks
+import org.example.project.scheduler.platform.notificationTargetOf
 import org.example.project.scheduler.sync.AndroidStartupLogin
 import org.example.project.scheduler.sync.StartupLogin
 
@@ -40,10 +42,20 @@ class MainActivity : ComponentActivity() {
         val host = SchedulerHolder.ensure(applicationContext)
         SchedulerService.start(applicationContext)
 
+        // PRD §11: launched by a tap on one of the app's notifications — answered once App composes.
+        notificationTargetOf(intent)?.let(NotificationClicks::clicked)
+
         setContent {
             // store = null: the host already carries the live store-backed VM, so App must not open a second DB.
             App(store = null, host = host)
         }
+    }
+
+    /** PRD §11: a notification tapped while the activity is already running brings it back with the tap's target. */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationTargetOf(intent)?.let(NotificationClicks::clicked)
     }
 
     /**

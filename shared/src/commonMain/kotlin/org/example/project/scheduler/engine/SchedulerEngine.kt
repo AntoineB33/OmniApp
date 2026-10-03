@@ -66,6 +66,7 @@ import org.example.project.scheduler.platform.GlobalShortcutBindings
 import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.isScreenActive
+import org.example.project.scheduler.platform.NotificationTarget
 import org.example.project.scheduler.platform.cancelSystemNotifications
 import org.example.project.scheduler.platform.sendSystemNotification
 import org.example.project.scheduler.platform.recentSleepGaps as platformRecentSleepGaps
@@ -481,7 +482,7 @@ class SchedulerEngine(
     // PRD §11: the notification sink and the "withdraw what is already showing" seam (default to the platform
     // notifier); injectable for the same reason [speak] is — what the app POSTED is otherwise unassertable,
     // and the mute below is precisely a rule about that call and not about the log beside it.
-    private val postNotification: (String, String) -> Unit = ::sendSystemNotification,
+    private val postNotification: (String, String, NotificationTarget) -> Unit = ::sendSystemNotification,
     private val clearNotifications: () -> Unit = ::cancelSystemNotifications,
     // PRD §15 device-sleep gaps: LOCAL-ONLY store for the exact pause intervals read from the OS sleep log;
     // null disables gap recording. These feed this device's own rest-pose seeding / Inactivity bands only —
@@ -1587,6 +1588,11 @@ class SchedulerEngine(
          * says nothing. A [cue] still wins: its recording is the phrase.
          */
         spoken: String? = null,
+        /**
+         * Where a click on it takes the user (PRD §11, user rule 2026-10-03): always the app, and the calendar for what
+         * is read there — the task to do now and the screen breaks.
+         */
+        target: NotificationTarget = NotificationTarget.App,
     ) {
         val now = clock.nowMillis()
         val st = vm.state.value
@@ -1611,7 +1617,7 @@ class SchedulerEngine(
         // whether or not the OS is told: the switch silences the interruption, never the record, so the
         // column still answers "what did the app decide to say while I had it muted".
         vm.dispatch(SchedulerIntent.RecordNotification(title, message, now, cue, spoken))
-        if (posted) postNotification(title, message)
+        if (posted) postNotification(title, message, target)
         if (speaks && utterance != null) speak(utterance)
     }
 
@@ -1633,7 +1639,7 @@ class SchedulerEngine(
      * log), which is why the History column once showed every break starting and none of them finishing.
      */
     internal fun announceResumeWork() {
-        notifyUser(RESUME_WORK_TITLE, RESUME_WORK_MESSAGE, VoiceCue.ResumeWork)
+        notifyUser(RESUME_WORK_TITLE, RESUME_WORK_MESSAGE, VoiceCue.ResumeWork, target = NotificationTarget.Calendar)
     }
 
     /**
@@ -3669,6 +3675,7 @@ class SchedulerEngine(
                                         spoken = SpokenMessages.currentTask(
                                             st.tasks[currentTaskId]?.title.orEmpty(),
                                         ),
+                                        target = NotificationTarget.Calendar,
                                     )
                                 } else {
                                     Diagnostics.log(
@@ -3738,6 +3745,7 @@ class SchedulerEngine(
                                                     endMillis = end,
                                                 ),
                                                 VoiceCue.LookAway,
+                                                target = NotificationTarget.Calendar,
                                             )
                                             // Resume fires at `end`: same tick if the whole break was leaped
                                             // (queued below, sorted after this start); else armed for later.
@@ -3792,6 +3800,7 @@ class SchedulerEngine(
                                                 title,
                                                 SchedulerDomain.screenBreakFollowOn(st.panels, due, poseEnd),
                                             ),
+                                            target = NotificationTarget.Calendar,
                                         )
                                     }
                                 }
@@ -3947,6 +3956,7 @@ class SchedulerEngine(
                     endMillis = startedAt + lookAway.durationMillis,
                 ),
                 VoiceCue.LookAway,
+                target = NotificationTarget.Calendar,
             )
             val resumeAt = clock.nowMillis() + lookAway.durationMillis
             while (clock.nowMillis() < resumeAt) {

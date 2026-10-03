@@ -7,16 +7,22 @@ import platform.UserNotifications.UNNotificationRequest
 import platform.UserNotifications.UNNotificationSound
 import platform.UserNotifications.UNUserNotificationCenter
 
+/** The `userInfo` key a notification's [NotificationTarget] is carried under. */
+const val NOTIFICATION_TARGET_KEY: String = "omniapp_target"
+
 /**
  * PRD §11 iOS notification. Delivered immediately (nil trigger). Requires the user to have granted
  * notification authorization (requested from the Swift AppDelegate — see docs/PAUSE_CUE_DELIVERY.md); when
  * not granted the system silently drops it, matching the best-effort contract.
  */
-actual fun sendSystemNotification(title: String, message: String) {
+actual fun sendSystemNotification(title: String, message: String, target: NotificationTarget) {
     val content = UNMutableNotificationContent().apply {
         setTitle(title)
         setBody(message)
         setSound(UNNotificationSound.defaultSound)
+        // A tap opens the app (the OS's own answer). The target rides along for the Swift
+        // UNUserNotificationCenterDelegate to hand to [NotificationClicks] — not wired yet (2026-10-03).
+        setUserInfo(mapOf<Any?, Any?>(NOTIFICATION_TARGET_KEY to target.name))
     }
     // A unique-enough id per post so repeated notifications don't replace each other.
     val id = "omniapp-notif-" + NSDate().timeIntervalSince1970.toString()

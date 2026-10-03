@@ -78,7 +78,7 @@ class ReplanHealsDeducedBarTest {
                     scope = scope,
                     screenActive = { true },
                     speak = {},
-                    postNotification = { _, _ -> },
+                    postNotification = { _, _, _ -> },
                     clearNotifications = {},
                     lockedIntervalsQuery = { _, _ -> emptyList() },
                     frozenBreakStore = MemoryStore(FrozenScreenBreaks(listOf(lastPose, lastLookAway), line, line, machine = machine)),

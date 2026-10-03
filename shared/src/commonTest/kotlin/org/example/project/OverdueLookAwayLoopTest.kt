@@ -83,7 +83,7 @@ class OverdueLookAwayLoopTest {
                 scope = CoroutineScope(Dispatchers.Unconfined),
                 screenActive = { true },
                 speak = {},
-                postNotification = { _, _ -> },
+                postNotification = { _, _, _ -> },
                 frozenBreakStore = MemoryStore(FrozenScreenBreaks(listOf(lastLookAway), T0, T0)),
             )
         engine.start()

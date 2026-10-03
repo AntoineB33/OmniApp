@@ -54,7 +54,7 @@ class NotificationVoiceTest {
             scope = CoroutineScope(Dispatchers.Unconfined),
             screenActive = { true },
             speak = { sink.spoken.add(it) },
-            postNotification = { title, message -> sink.posted.add(title to message) },
+            postNotification = { title, message, _ -> sink.posted.add(title to message) },
             clearNotifications = {},
         )
 

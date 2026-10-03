@@ -246,6 +246,22 @@ Staleness is judged only by the crossing's REAL age (`BoundarySweep`, 2-s budget
 position. The machine's transitions and the cursor's crossings are queued until the sweep announces them (bounded by
 `PENDING_CUE_REACH_MILLIS`), so no crossing is clipped by a clock jump.
 
+### A click on a notification
+
+User rule 2026-10-03 (`NotificationClickTargetTest`):
+
+- **Every click brings the app to the front; one about the schedule also opens the calendar** — or brings it back and
+  focuses it, through the lateral menu's own `openNewWindow(Calendar)`. "About the schedule" is the task to do now and
+  the screen breaks (a look-away's start and end, a pose, a "Look away now"): `NotificationTarget.Calendar`, passed at
+  the `notifyUser` call. Everything else is `App`.
+- **The target is decided where the notification is posted; the platforms only carry it** to `NotificationClicks`,
+  the one channel `App` answers from — a pending click (a `StateFlow`), so a tap that launches Android's activity cold
+  is still answered once `App` has composed. Desktop: the tray icon's action (a balloon click; a double-click on the icon
+  too, so the last balloon's target is taken once and only within two minutes) raises the window through
+  `DesktopAppWindow`, which `desktopApp`'s `main` fills in. Android: each notification's content intent brings the
+  launch activity up with the target as an extra (`onCreate` / `onNewIntent`). iOS: a tap opens the app; the target
+  rides in `userInfo`, not yet handed over (it needs the Swift notification-centre delegate).
+
 ### The Notifications switch silences the OUTPUT, never the record
 
 The lateral menu's **Notifications** switch and `Ctrl+Shift+Alt+N` are one lever

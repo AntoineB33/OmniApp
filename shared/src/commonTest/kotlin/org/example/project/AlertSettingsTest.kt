@@ -151,7 +151,7 @@ class AlertSettingsTest {
             speak = { sink.spoken.add(it) },
             stopSpeech = { sink.cuts++ },
 
-            postNotification = { title, message -> sink.posted.add(title to message) },
+            postNotification = { title, message, _ -> sink.posted.add(title to message) },
             clearNotifications = {},
             ringAlarm = { sink.rung.add(it) },
         )

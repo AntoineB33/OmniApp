@@ -1784,6 +1784,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             focusWindow(FloatingWindow.Calendar)
             windowFrames.present(FloatingWindow.Calendar.name)
         }
+        // PRD §11 (user rule 2026-10-03): a click on a notification. The platform has already brought the app to the
+        // front (the desktop window, Android's activity); a notification about the schedule — the task to do now, a
+        // screen break — also opens the calendar, or brings it back and focuses it, exactly as its lateral-menu button
+        // does. Answered once, and on a cold Android launch as soon as the app has composed (a pending click waits).
+        val notificationClick by org.example.project.scheduler.platform.NotificationClicks.pending.collectAsState()
+        LaunchedEffect(notificationClick) {
+            val click = notificationClick ?: return@LaunchedEffect
+            if (click.target == org.example.project.scheduler.platform.NotificationTarget.Calendar) {
+                openNewWindow(FloatingWindow.Calendar)
+            }
+            org.example.project.scheduler.platform.NotificationClicks.consume(click)
+        }
         // The provisional panels the calendar last drew (the far-week plan), for the menu's question below.
         val latestProvisionalPanels = remember { mutableStateOf<List<TaskPanel>>(emptyList()) }
         val calendarGoTo = remember {
