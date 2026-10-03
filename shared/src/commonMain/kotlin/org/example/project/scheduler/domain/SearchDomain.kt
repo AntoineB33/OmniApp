@@ -1951,6 +1951,11 @@ object SearchDomain {
         PeriodTaskSearch(Kind.RestrictivePeriod, "Search its tasks"),
         PeriodDelete(Kind.RestrictivePeriod, "Delete"),
         PeriodReset(Kind.RestrictivePeriod, "Reset the default periods"),
+        /**
+         * Everything known of each added history unit, each fact with its copy button (user rule 2026-10-03): what the
+         * History window's row and its information window showed, which a history unit's row opened until then.
+         */
+        HistoryInformation(Kind.HistoryUnit, "Information"),
     }
 
     /**

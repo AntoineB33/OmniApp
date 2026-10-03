@@ -3848,12 +3848,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onEditReminder = { openElementSearch(SearchDomain.Kind.Reminder, it) },
                             onOpenAppSetting = { openElementSearch(SearchDomain.Kind.AppSetting, it) },
-                            // The windows that own a history unit, a task tree, a task relation or a shortcut —
-                            // opened if closed and brought to the front either way, never closed by this.
-                            onOpenHistory = {
-                                historyManagerOpen = true
-                                focusWindow(FloatingWindow.History)
-                            },
+                            // A history unit's own window is the Search window holding it alone, whose "Information"
+                            // action shows all of it (user rule 2026-10-03) — not the History window any more.
+                            onOpenHistoryUnit = { openElementSearch(SearchDomain.Kind.HistoryUnit, it) },
+                            // The windows that own a task tree, a task relation or a shortcut — opened if closed and
+                            // brought to the front either way, never closed by this.
                             onOpenTaskTrees = {
                                 taskTreesWindowOpen = true
                                 focusWindow(FloatingWindow.TaskTrees)

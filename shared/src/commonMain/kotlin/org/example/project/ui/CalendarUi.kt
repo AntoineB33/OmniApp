@@ -2355,6 +2355,37 @@ data class HistoryFilterConfig(
  * [timeMillis]/[chronoId] are the ordering key — `chronoId` is a History Unit's tie-break inside one
  * millisecond, and a notification has none, so it sorts as 0.
  */
+/**
+ * PRD §6: the unit at [index] of [category]'s [history] as the History window lists it — with what the LIST knows of it
+ * (its position, whether its device has undone it, whether it is at the pointer). The one builder of a unit's entry: the
+ * History window's rows and the Search window's history-unit information ([historyUnitEntryOfSearchId]) both read it.
+ */
+internal fun historyUnitEntry(
+    category: HistoryCategory,
+    history: org.example.project.scheduler.state.SchedulerHistory,
+    index: Int,
+): FilteredHistoryEntry.Unit {
+    val unit = history.units[index]
+    return FilteredHistoryEntry.Unit(
+        category = category,
+        unit = unit,
+        position = index + 1,
+        applied = !unit.undone,
+        isCurrent = index == history.pointer,
+    )
+}
+
+/** The unit a Search window row names (`Category#index`, [SearchDomain.historyUnitOf]'s id), as [historyUnitEntry] lists it. */
+internal fun historyUnitEntryOfSearchId(
+    state: org.example.project.scheduler.state.SchedulerState,
+    id: String,
+): FilteredHistoryEntry.Unit? {
+    val category = HistoryCategory.entries.firstOrNull { it.name == id.substringBefore('#') } ?: return null
+    val index = id.substringAfter('#').toIntOrNull() ?: return null
+    val history = state.histories.forCategory(category)
+    return if (index in history.units.indices) historyUnitEntry(category, history, index) else null
+}
+
 sealed interface FilteredHistoryEntry {
     val timeMillis: Long
     val chronoId: Long
@@ -2433,15 +2464,7 @@ fun filteredHistoryUnits(
         } else {
             histories.all()
                 .flatMap { (category, history) ->
-                    history.units.mapIndexed { index, unit ->
-                        FilteredHistoryEntry.Unit(
-                            category = category,
-                            unit = unit,
-                            position = index + 1,
-                            applied = !unit.undone,
-                            isCurrent = index == history.pointer,
-                        )
-                    }
+                    history.units.indices.map { index -> historyUnitEntry(category, history, index) }
                 }
                 .filter { filter.window == null || it.unit.window == filter.window }
                 // The chord field narrows the same half: a unit is in when one of the chords walking it is.
@@ -3128,26 +3151,30 @@ private fun HistoryUnitRow(
  * holds; the window below only draws them. That is what keeps "everything this row stores" from drifting
  * into "everything somebody remembered to add to the window".
  */
-private data class HistoryInfo(val label: String, val value: String)
+internal data class HistoryInfo(val label: String, val value: String)
 
 /**
  * PRD §6: everything the row at [entry] stores, in the order the window lists it.
  *
- * A **History Unit** contributes its own data only — its window, its instant, its chrono id, whether it was
- * committed under the debug clock, its label and every one of its [Delta.details] lines. It deliberately
- * contributes nothing list- or pointer-derived (position, category, applied/current): a unit does not know
- * those, the list does, and the row is where they are shown.
+ * A **History Unit** contributes everything known of it: what the list knows (its category, its position, whether it is
+ * current or undone — what its row shows) and its own data — its label, its window, its instant, its chrono id, whether
+ * it was committed under the debug clock and every one of its [Delta.details] lines. The Search window's history-unit
+ * "Information" action reads the same list (user rule 2026-10-03: it replaced opening the History window on a unit), so
+ * the row's facts are here too rather than only in a row the Search window does not draw.
  *
  * The three [HistorySource] rows contribute every field they carry, which for a scheduler run is the whole
  * **set of rules** it read — the one thing here that cannot be read off the row, and the reason the copy
  * buttons exist.
  */
-private fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
+internal fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
     when (entry) {
         is FilteredHistoryEntry.Unit -> {
             val unit = entry.unit
             buildList {
                 add(HistoryInfo("Label", unit.delta.label))
+                add(HistoryInfo("Category", entry.category.name))
+                add(HistoryInfo("Position", "#${entry.position}"))
+                add(HistoryInfo("State", if (entry.isCurrent) "current" else if (entry.applied) "applied" else "undone"))
                 add(HistoryInfo("Window", unit.window?.label ?: "(not recorded)"))
                 add(HistoryInfo("Time", formatHistoryTime(unit.timeMillis)))
                 add(HistoryInfo("Chrono id", unit.chronoId.toString()))
@@ -3291,7 +3318,7 @@ private fun HistoryEntryInfoWindow(
  * otherwise have to paste somewhere to find out whether the click landed.
  */
 @Composable
-private fun HistoryCopyButton(label: String, value: String) {
+internal fun HistoryCopyButton(label: String, value: String) {
     var copied by remember(value) { mutableStateOf(false) }
     LaunchedEffect(copied) {
         if (copied) {
@@ -3317,7 +3344,7 @@ private fun formatHistoryTime(millis: Long): String {
 
 /** PRD §6: one stored info of a history row — its label, its value, and its own copy button. */
 @Composable
-private fun HistoryInfoLine(info: HistoryInfo) {
+internal fun HistoryInfoLine(info: HistoryInfo) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,

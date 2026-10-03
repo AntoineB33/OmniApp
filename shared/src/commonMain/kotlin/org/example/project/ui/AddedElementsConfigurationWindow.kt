@@ -319,7 +319,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.TaskPaths, SearchDomain.AddedAction.CategoryRules, SearchDomain.AddedAction.CategoryAddRule,
         SearchDomain.AddedAction.AlarmAlert,
         SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
-        SearchDomain.AddedAction.PeriodCombinations,
+        SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
     )
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
@@ -532,6 +532,22 @@ private fun AddedActionEditor(
             }
         }
         // --- The removed edit windows' contents, one block per added element ----------------------------
+        // Every fact of each added history unit — the History window's own list of them ([historyEntryInfos]), each
+        // with its copy button, and "Copy all" per unit. What opening the History window on the unit used to show.
+        SearchDomain.AddedAction.HistoryInformation -> {
+            val units = added.filterIsInstance<SearchDomain.ItemResult>()
+                .filter { it.kind == SearchDomain.Kind.HistoryUnit }
+                .mapNotNull { historyUnitEntryOfSearchId(state, it.id) }
+            if (units.isEmpty()) {
+                Text("No history unit is added.", style = MaterialTheme.typography.bodySmall)
+            }
+            for (entry in units) {
+                val infos = historyEntryInfos(entry)
+                ElementHeading(entry.unit.delta.label, units.size)
+                infos.forEach { HistoryInfoLine(it) }
+                HistoryCopyButton(label = "Copy all", value = infos.joinToString("\n") { "${it.label}: ${it.value}" })
+            }
+        }
         SearchDomain.AddedAction.TaskPaths -> {
             for (taskId in taskIds) {
                 val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }

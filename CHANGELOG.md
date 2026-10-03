@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: every result row adds; a history unit's information moved into the actions — 2026-10-03
+
+Anomaly: a history unit's right-click menu in the results had no "add" / "add and remove others", only "open in History"
+(an obsolete window for it). The same was true of task trees, task relations, keyboard shortcuts and windows. Every row's
+menu now has the two; those four keep their "open in …" / "show window" under them (their lateral windows are still the
+app's); a history unit's is gone, and opening one ("Open each", Enter) opens its own Search window. Its new
+**Information** action (`AddedAction.HistoryInformation`) shows everything the History window did — the row's category,
+position, current/applied/undone, window and time, and the info window's label, chrono id, debug clock and detail lines —
+each with "copy" and a "Copy all", through the History window's own `historyEntryInfos` (now holding the row's facts too)
+and `historyUnitEntry`. `HistoryUnitInformationTest`. Still to decide: task trees, task relations, shortcuts and windows
+have no action of their own in the action section.
+
 ### Notifications: a click brings the app up, and the schedule's open the calendar — 2026-10-03
 
 User request: clicking a notification did nothing (desktop: a bare tray balloon; Android: no content intent). Now every

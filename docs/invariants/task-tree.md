@@ -673,10 +673,16 @@ titles" figure: the Search window and the per-object windows its rows open repla
 - **A result row's right-click "add" replaces "edit"** (user rule 2026-10-01): a task row's menu — the cell's own,
   with `TaskCellMenuActions.onAdd` in the place of `onEdit` — and the menu of a category, a period, an alarm, a timer, a
   chrono and a reminder (which no longer open on the right-click) put the element into the added elements, once
-  (`SearchDomain.withAdded`), since this window is the one that edits it. The rows whose opening goes to another window
-  (history unit, task tree, task relation, shortcut, window) keep their "open in …"; a "creation" row still makes its
-  element on the right-click. A tree cell's "edit task" opens the Search window holding that task
-  (`openElementSearch`).
+  (`SearchDomain.withAdded`), since this window is the one that edits it. **EVERY row's menu has "add" and "add and
+  remove others"** (user rule 2026-10-03 — the history unit's, task tree's, task relation's, shortcut's and window's had
+  only an "open in …" in their place). The rows a lateral window of the app still owns (task tree, task relation,
+  shortcut, window) keep "open in …" / "show window" UNDER the two; a history unit has none: its own window is the
+  Search window holding it (`openElementSearch`, also what "Open each" does), whose **"Information" action**
+  (`AddedAction.HistoryInformation`) shows every fact the History window showed of it — the row's (category,
+  position, current / applied / undone, window, time) and its information window's (label, chrono id, debug clock,
+  every detail line), each with "copy", and "Copy all" — read through the History window's own `historyEntryInfos` /
+  `historyUnitEntry`, never a second list. A "creation" row still makes its element on the right-click. A tree cell's
+  "edit task" opens the Search window holding that task (`openElementSearch`).
 - **A task row is a tree cell to the user.** Its right-click menu is the cell's own — `TaskCellMenuItems`, the
   one drawing of those entries for both surfaces — built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): "go to task tree" reveals THAT occurrence

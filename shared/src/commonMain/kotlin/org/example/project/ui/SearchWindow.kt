@@ -155,8 +155,8 @@ private const val NOT_IN_TREE_HINT: String =
 /**
  * How a row of the Search window is OPENED, whatever its kind — the one mapping from a row to the handler the
  * rest of the app already has for it (a task's "edit task" window, a category's or a period kind's own window,
- * the one element's window of an alarm, a timer, a chrono or a reminder, the lateral-menu window that owns a
- * history unit, a task tree, a task relation or a shortcut, a window brought back, a creation made). The result
+ * the one element's window of an alarm, a timer, a chrono, a reminder or a history unit, the lateral-menu window that
+ * owns a task tree, a task relation or a shortcut, a window brought back, a creation made). The result
  * list and the added elements' "Open each" (both windows that list it) go through [open]: never a second copy.
  */
 class SearchRowOpeners(
@@ -170,8 +170,9 @@ class SearchRowOpeners(
     val onEditAlarmOrTimer: (AlarmWindowSubject) -> Unit,
     /** The per-object window of ONE reminder (by id), with every setting it has — opened like an alarm's. */
     val onEditReminder: (String) -> Unit,
-    /** The lateral-menu windows that own a history unit, a task tree, a task relation and a keyboard shortcut. */
-    val onOpenHistory: () -> Unit = {},
+    /** A history unit's own window (by its row id): the Search window holding it alone, its "Information" action. */
+    val onOpenHistoryUnit: (String) -> Unit = {},
+    /** The lateral-menu windows that own a task tree, a task relation and a keyboard shortcut. */
     val onOpenTaskTrees: () -> Unit = {},
     val onOpenTaskRelations: () -> Unit = {},
     val onOpenShortcuts: () -> Unit = {},
@@ -202,7 +203,7 @@ class SearchRowOpeners(
             SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Timer))
             SearchDomain.Kind.Chrono -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Chrono))
             SearchDomain.Kind.Reminder -> onEditReminder(item.id)
-            SearchDomain.Kind.HistoryUnit -> onOpenHistory()
+            SearchDomain.Kind.HistoryUnit -> onOpenHistoryUnit(item.id)
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()
@@ -1725,11 +1726,20 @@ private fun ItemResultRow(
             onDismissRequest = { menuOpen = false },
             properties = PopupProperties(focusable = false),
         ) {
-            // The rows whose opening goes to ANOTHER window keep it; an element whose edit window this Search
-            // window is (user rule 2026-10-01) is added to its added elements instead.
+            // EVERY row adds (user rule 2026-10-03): this Search window is every element's own window (2026-10-01),
+            // so "add" and "add and remove others" are never replaced. A history unit's opening went to the History
+            // window, which its "Information" action replaced, so it has nothing else. The rows a lateral window of the
+            // app still owns keep a way there, UNDER the two.
+            MenuEntry("add") {
+                menuOpen = false
+                onAdd()
+            }
+            MenuEntry(ADD_REPLACING_LABEL) {
+                menuOpen = false
+                onAddReplacing()
+            }
             val elsewhere =
                 when (item.kind) {
-                    SearchDomain.Kind.HistoryUnit -> "open in History"
                     SearchDomain.Kind.TaskTree -> "open in All task trees"
                     SearchDomain.Kind.TaskRelation -> "open in Task relations"
                     SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
@@ -1740,15 +1750,6 @@ private fun ItemResultRow(
                 MenuEntry(elsewhere) {
                     menuOpen = false
                     onOpen()
-                }
-            } else {
-                MenuEntry("add") {
-                    menuOpen = false
-                    onAdd()
-                }
-                MenuEntry(ADD_REPLACING_LABEL) {
-                    menuOpen = false
-                    onAddReplacing()
                 }
             }
         }
