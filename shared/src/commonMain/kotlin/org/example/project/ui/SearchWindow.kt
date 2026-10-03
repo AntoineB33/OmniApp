@@ -579,6 +579,12 @@ fun SearchWindow(
       val separatorPx = with(density) { SECTION_SEPARATOR_THICKNESS.toPx() }
       var leftShare by remember { mutableStateOf(0.5f) }
       var topRightShare by remember { mutableStateOf(0.5f) }
+      // User rule 2026-10-04: each of the three sections is retracted to its head and expanded again by the little
+      // arrow in it ([SectionArrow]). Compose-only, like the splits: a way of looking at the window. A retracted
+      // section gives its room to its neighbour, and the separator between the two is gone with it.
+      var searchCollapsed by remember { mutableStateOf(false) }
+      var actionsCollapsed by remember { mutableStateOf(false) }
+      var addedCollapsed by remember { mutableStateOf(false) }
       var rowWidthPx by remember { mutableStateOf(0f) }
       var rightHeightPx by remember { mutableStateOf(0f) }
       val dragLeftShare = { delta: Float ->
@@ -593,6 +599,12 @@ fun SearchWindow(
       }
       Box(Modifier.fillMaxWidth().weight(1f)) {
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
+        if (searchCollapsed) {
+            // Retracted: a strip as wide as its arrow, the whole height.
+            Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
+                SectionArrow(collapsed = true, onToggle = { searchCollapsed = false })
+            }
+        } else
         Column(
             modifier = Modifier
                 .weight(leftShare)
@@ -600,6 +612,10 @@ fun SearchWindow(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionArrow(collapsed = false, onToggle = { searchCollapsed = true })
+                Text("Search", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            }
             // --- The configuration ------------------------------------------------------------------
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -822,9 +838,13 @@ fun SearchWindow(
             }
         }
 
-        SectionSeparator(vertical = true, onDrag = dragLeftShare)
+        if (!searchCollapsed) SectionSeparator(vertical = true, onDrag = dragLeftShare)
 
-        Column(Modifier.weight(1f - leftShare).fillMaxHeight().onSizeChanged { rightHeightPx = it.height.toFloat() }) {
+        Column(
+            Modifier.weight(if (searchCollapsed) 1f else 1f - leftShare).fillMaxHeight().onSizeChanged { rightHeightPx = it.height.toFloat() },
+        ) {
+            // A retracted section is as tall as its head; the other takes the room, or — both retracted — neither.
+            val bothOpen = !actionsCollapsed && !addedCollapsed
             // --- The actions on every added element (top right) ------------------------------------
             AddedActionsSection(
                 state = state,
@@ -836,10 +856,14 @@ fun SearchWindow(
                 nowMillis = nowMillis,
                 onOpenEach = { addedRows.forEach { openers.open(state, it) } },
                 onClear = { onConfigChange(config.copy(added = emptyList())) },
-                onOpenConfigurations = onOpenAddedConfigurations,
-                modifier = Modifier.fillMaxWidth().weight(topRightShare).padding(horizontal = 14.dp, vertical = 10.dp),
+                collapsed = actionsCollapsed,
+                onToggleCollapsed = { actionsCollapsed = !actionsCollapsed },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (actionsCollapsed) Modifier else Modifier.weight(if (bothOpen) topRightShare else 1f))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
             )
-            SectionSeparator(vertical = false, onDrag = dragTopRightShare)
+            if (bothOpen) SectionSeparator(vertical = false, onDrag = dragTopRightShare) else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
             AddedElementsList(
                 rows = addedRows,
@@ -847,13 +871,18 @@ fun SearchWindow(
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
                 onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
                 onRemoveAll = { keys -> onConfigChange(config.copy(added = SearchDomain.removing(config.added, keys))) },
-                modifier = Modifier.fillMaxWidth().weight(1f - topRightShare).padding(horizontal = 14.dp, vertical = 10.dp),
+                collapsed = addedCollapsed,
+                onToggleCollapsed = { addedCollapsed = !addedCollapsed },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (addedCollapsed) Modifier else Modifier.weight(if (bothOpen) 1f - topRightShare else 1f))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
       }
       // Where the two lines cross: drawn over both strips, it drags the three sections at once. Placed only once
       // the row has been measured, since the crossing is read off the two splits and the room they share.
-      if (rowWidthPx > 0f && rightHeightPx > 0f) {
+      if (rowWidthPx > 0f && rightHeightPx > 0f && !searchCollapsed && !actionsCollapsed && !addedCollapsed) {
           val jointHalfPx = with(density) { SECTION_JOINT_SIZE.toPx() } / 2f
           SectionJoint(
               onDrag = { delta ->
@@ -870,6 +899,16 @@ fun SearchWindow(
       }
       }
     }
+}
+
+/**
+ * User rule 2026-10-04: **the little arrow that retracts a section of the Search window to its head and expands it
+ * again** — the tree's own expansion arrow ([TaskSheetExpandArrow]: ▾ open, ▸ retracted), so it reads as the one the
+ * user already knows.
+ */
+@Composable
+internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
+    TaskSheetExpandArrow(hasChildren = true, expanded = !collapsed, onToggle = onToggle, color = MaterialTheme.colorScheme.primary)
 }
 
 /** The added elements' row menu: every other element off the list (never off the account). */
@@ -889,6 +928,9 @@ private fun AddedElementsList(
     onKeepOnly: (Set<String>) -> Unit,
     /** The row menu's "remove": the selected elements leave the list. */
     onRemoveAll: (Set<String>) -> Unit,
+    /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
+    collapsed: Boolean = false,
+    onToggleCollapsed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // User rule 2026-10-03: the rows are selected the way the result list's are ([ClickSelection]: a click selects one
@@ -905,11 +947,15 @@ private fun AddedElementsList(
     val selected = selection.filterTo(LinkedHashSet()) { it in order }
     val currentSelected by rememberUpdatedState(selected)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Added elements" + if (rows.isEmpty()) "" else "  ·  ${rows.size}",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionArrow(collapsed, onToggleCollapsed)
+            Text(
+                text = "Added elements" + if (rows.isEmpty()) "" else "  ·  ${rows.size}",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (collapsed) return@Column
         if (rows.isEmpty()) {
             Text(
                 text = "Check rows of the results and press Add, or right-click selected rows and choose add.",

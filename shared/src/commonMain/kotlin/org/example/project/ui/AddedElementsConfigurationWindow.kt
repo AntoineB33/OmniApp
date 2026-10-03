@@ -211,19 +211,23 @@ internal fun AddedActionsSection(
     nowMillis: () -> Long,
     onOpenEach: () -> Unit,
     onClear: () -> Unit,
-    onOpenConfigurations: () -> Unit,
+    /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
+    collapsed: Boolean = false,
+    onToggleCollapsed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // No "All configurations" button (removed 2026-10-04): every action is listed right here.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            SectionArrow(collapsed, onToggleCollapsed)
             Text(
                 text = "Actions on the added elements",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f),
             )
-            FrameButton("⚙ All configurations", onClick = onOpenConfigurations)
         }
+        if (collapsed) return@Column
         // The filter is set in the configurations window; said here, with its way off, so a quarter showing one
         // action is never a mystery.
         if (config.actionQuery.isNotBlank()) {

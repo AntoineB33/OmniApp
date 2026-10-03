@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: sections retract; no "All configurations" button in the actions — 2026-10-04
+
+User request: the actions section's "⚙ All configurations" button is removed (every action is already listed there),
+and each of the three sections has a little arrow that retracts it to its head and expands it again (`SectionArrow`,
+Compose-only). The search section's own "⚙ All configurations" (its filters) is unchanged.
+
 ### Search window: "New" opens the new element in a Search window of its own — 2026-10-04
 
 User request: the "New quota" button must open a new Search window with the new quota as its only added element — and

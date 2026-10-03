@@ -856,7 +856,11 @@ suggestions before it was ever entered.
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
   `SectionSeparator` + `draggedSplit`, each section kept above a minimum), and **their joint drags both at once**
   (`SectionJoint`, under the four-way arrow); the splits are Compose-only view state,
-  starting at half, never persisted. Every result row has a check box (Compose-only, like the selection),
+  starting at half, never persisted. **Each section is retracted to its head and expanded again by a little arrow in
+  it** (`SectionArrow`, the tree's own expansion arrow; user rule 2026-10-04; Compose-only like the splits): the search
+  retracts to a strip as wide as its arrow, the two right sections to their title line; a retracted section gives its
+  room to its neighbour, and the separator between them (and the joint) goes with it. The actions section has no "All
+  configurations" button any more — every action is listed in it. Every result row has a check box (Compose-only, like the selection),
   and so does every task cell of an expanded row's sub-tree (`TaskTreeView`'s `rowLeading`): one box per TASK
   key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **TWO ways to add, never one
   falling back on the other** (user rule 2026-10-01): the **Add** button adds the CHECKED rows listed now — the result
