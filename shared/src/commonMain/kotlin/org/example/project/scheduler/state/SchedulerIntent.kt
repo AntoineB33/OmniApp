@@ -871,6 +871,15 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * User rule 2026-10-03: replace the whole quota list with [entries] — a quota added, deleted or configured. One
+     * History Unit ([QuotasDelta]); [editKey] names a typing session, so a field's keystrokes are one unit.
+     */
+    data class SetQuotas(
+        val entries: List<org.example.project.scheduler.model.QuotaEntry>,
+        val editKey: String? = null,
+    ) : SchedulerIntent
+
+    /**
      * PRD §18 Chronos: start one chrono from zero, or resume it. Like the timers' run-state writes, the three
      * chrono transitions are **not** History Units: their currency is an absolute instant, and a delta replayed
      * later would not mean what it meant when it was recorded.
@@ -1345,6 +1354,9 @@ sealed interface SchedulerIntent {
     data class SetNewAlarmDefaults(val defaults: org.example.project.scheduler.model.AlarmEntry) : SchedulerIntent
 
     data class SetNewTimerDefaults(val defaults: org.example.project.scheduler.model.TimerEntry) : SchedulerIntent
+
+    /** User rule 2026-10-03: what a new quota starts with ([SchedulerState.newQuotaDefaults]) — the timers' rule. */
+    data class SetNewQuotaDefaults(val defaults: org.example.project.scheduler.model.QuotaEntry) : SchedulerIntent
 
     data class SetNewReminderDefaults(val defaults: org.example.project.scheduler.model.ChoreEntry) : SchedulerIntent
 

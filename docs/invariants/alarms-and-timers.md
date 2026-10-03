@@ -272,3 +272,40 @@ an alarm, and the two differences are load-bearing:
   hand-placed tag, and it is the one the user was most deliberate about.
 
 ---
+
+### Quotas
+
+→ `scheduler/domain/QuotaDomain.kt`, `ui/QuotaEditors.kt`, user rule 2026-10-03. A **quota** (`QuotaEntry`,
+`SchedulerState.quotas`) is an amount, with a unit, to reach over a loop of time, and the pace it should be reached
+at. It lives in the Search window only: a kind of element (`SearchDomain.Kind.Quota`), made from its creation row, its
+actions being its editor.
+
+- **The loops.** Loop 0 runs from `startMillis` to `endMillis`; while the quota `repeats`, loop `k` is that one moved
+  by `k` lengths. A `QuotaLoop` says what is particular to ONE loop: its own start and end (both, or the regular
+  ones), its `amountFactor` (2 — two times more quota) and its `renewals` (`QuotaDomain.loop`, `loopAt`: a loop whose
+  own bounds hold the instant first, else the regular one by index).
+- **The target progression is DERIVED and never stored** — a quota writes nothing as time passes. It is the share of
+  the loop's time elapsed, each stretch weighted by the quota's **resilience** to the restrictive periods covering it,
+  through the task's own reading (`PeriodKinds.multiplier`): 0 and it stands still, 1 and the period changes nothing.
+  It is a pace line: nothing is recorded as done. A stretch no period covers — a future the calendar has not planned
+  included — moves at full pace.
+- **Renewal**: with `r` renewals the progression moves `r` times faster and comes back to 0 % each time it reaches
+  100 %; the end of the loop is 100 % of its last renewal.
+- **The loop's pace profile is built when the quota or the periods change, never per tick** (`QuotaDomain.profile`,
+  keyed on `state.panels` in `QuotaProgressEditor`); an instant is then read off it. The action re-reads the clock each
+  time the percentage shown can have changed (a thousandth of a renewal, between 1 s and 60 s) — a display resample,
+  never a request.
+- **A list like the chronos'**: `SetQuotas` writes the whole list as one History Unit (`QuotasDelta`), ids are minted
+  `quota-{n}`, `QuotaDomain.healed` is applied on decode, on merge and in the reducer, the sync splits it one row per
+  quota (`EntityRows`) and merges a quota whole.
+- **Its resilience action shares the window's period** (`SearchDomain.Config.resiliencePeriod`) with the tasks', so a
+  period edit window's Search names the period for both.
+- **A new quota starts from the account's default configuration** (`SchedulerState.newQuotaDefaults`,
+  `NewElementDefaults.newQuota`) — and that default is edited through the QUOTA ACTIONS themselves: an added
+  **"New quota" creation row** is acted on as a quota (`SearchDomain.actionKindOf`), `addedQuotas` leads with the
+  default (wearing `DEFAULT_CONFIGURATION_ID`), and `QuotaEditors`' one `write` sends its changes to
+  `SetNewQuotaDefaults` (a setting, not a History Unit — the alarms' rule). With ONLY the creation row added, the section shows the actions that edit
+  the default and nothing else (`SearchDomain.actionsFor`, `DEFAULT_CONFIGURATION_ACTIONS`: Title, Amount, Loop,
+  Resilience — and "New", which creates one from that default) — Duplicate, Delete, the progression and the particular loops are about a quota that exists. Its loop is unset until the user sets it: a new quota then runs over the week it is made in; once
+  set, over the default's loop that now falls in (a default that does not repeat keeps its own dates).
+

@@ -4729,6 +4729,14 @@ object SchedulerDomain {
             .toSet()
 
     /**
+     * The restrictive periods on the calendar, as [restrictiveKindsAt] reads them (a dragged screen break is not one a
+     * question about the timeline is struck in) — what a quota's pace is weighted by
+     * ([QuotaDomain.profile]). A scan of the panels: asked when they change, never per tick.
+     */
+    fun restrictivePeriods(state: SchedulerState): List<TaskPanel> =
+        state.panels.filter { it.isRestrictivePeriod && !isDraggedScreenBreak(it) }
+
+    /**
      * A task's **resilience multiplier** inside [kinds] — `1` where nothing restricts it, `0` where it is
      * forbidden, and a fraction where its share is merely scaled. [PeriodKinds.multiplier] is the whole of
      * it; this overload exists only so a caller asking it of many tasks reads the kinds once.

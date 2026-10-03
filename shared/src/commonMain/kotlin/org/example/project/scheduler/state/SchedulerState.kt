@@ -725,6 +725,11 @@ data class SchedulerState(
      */
     val chronos: List<org.example.project.scheduler.model.ChronoEntry> = emptyList(),
     /**
+     * User rule 2026-10-03: the account's **quotas** ([org.example.project.scheduler.model.QuotaEntry]). Authoritative,
+     * persisted and synced like [chronos]; a quota's progression is derived and never stored.
+     */
+    val quotas: List<org.example.project.scheduler.model.QuotaEntry> = emptyList(),
+    /**
      * PRD §15 Screen breaks: the periodic screen breaks to weave into the auto schedule. A hardcoded set in
      * production (seeded by [org.example.project.scheduler.ui.TaskSchedulerViewModel] from
      * [org.example.project.scheduler.domain.SchedulerDomain.DEFAULT_SCREEN_BREAKS]); empty by default so the
@@ -891,6 +896,12 @@ data class SchedulerState(
         org.example.project.scheduler.domain.NewElementDefaults.TIMER,
     val newReminderDefaults: org.example.project.scheduler.model.ChoreEntry =
         org.example.project.scheduler.domain.NewElementDefaults.REMINDER,
+    /**
+     * User rule 2026-10-03: what a new quota starts with — edited through the quota actions of an added "New quota"
+     * creation row in the Search window. The alarms' rule: settings only, persisted + synced, not an Undo/Redo unit.
+     */
+    val newQuotaDefaults: org.example.project.scheduler.model.QuotaEntry =
+        org.example.project.scheduler.domain.NewElementDefaults.QUOTA,
     /**
      * PRD §13 deep copy: **what** a copy carries, beside how deep it goes — the three switches in the
      * deep-copy window (see [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]). Like

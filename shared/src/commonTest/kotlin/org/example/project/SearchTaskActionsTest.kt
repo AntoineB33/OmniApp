@@ -54,10 +54,16 @@ class SearchTaskActionsTest {
         val config = SearchDomain.resilienceSearchConfig(PeriodKinds.SLEEP)
         assertEquals(setOf(SearchDomain.Kind.Task), config.kinds)
         assertEquals(SearchDomain.Tri.Yes, config.filters.taskSchedulable, "only the tasks a resilience is read for")
+        // The filter finds the resilience actions and nothing else — a task's, and (2026-10-03) a quota's, which
+        // reads the same period. The window lists tasks, so its top right quarter shows the tasks' alone.
+        assertEquals(
+            listOf(SearchDomain.AddedAction.TaskResilience, SearchDomain.AddedAction.QuotaResilience),
+            SearchDomain.addedActions(config.actionQuery, SearchDomain.Kind.entries.toSet()).flatMap { it.second },
+        )
         assertEquals(
             listOf(SearchDomain.AddedAction.TaskResilience),
-            SearchDomain.addedActions(config.actionQuery, SearchDomain.Kind.entries.toSet()).flatMap { it.second },
-            "the filter finds the one action, in the configurations window and the top right quarter alike",
+            SearchDomain.addedActions(config.actionQuery, SearchDomain.Kind.entries.toSet(), onlyKinds = config.kinds).flatMap { it.second },
+            "the one action, in the top right quarter",
         )
         assertEquals(PeriodKinds.SLEEP, SearchDomain.resiliencePeriodOf(tree(), config))
         // A period the field cannot offer falls back to the first it can.
@@ -181,9 +187,10 @@ class SearchTaskActionsTest {
         // A task's key is the one its row and its cells carry.
         val apple = taskWithTitle(s, "Apple")
         assertEquals(listOf(SearchDomain.taskKey(apple)), SearchDomain.elementSearchConfig(SearchDomain.Kind.Task, apple.value).added)
-        // The resilience filter still finds the one action, never the period's "Search its tasks".
+        // The resilience filter still finds the resilience actions (a task's, a quota's), never the period's "Search
+        // its tasks".
         assertEquals(
-            listOf(SearchDomain.AddedAction.TaskResilience),
+            listOf(SearchDomain.AddedAction.TaskResilience, SearchDomain.AddedAction.QuotaResilience),
             SearchDomain.addedActions(SearchDomain.RESILIENCE_ACTION_QUERY, SearchDomain.Kind.entries.toSet()).flatMap { it.second },
         )
     }

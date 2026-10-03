@@ -26,6 +26,10 @@ import org.example.project.scheduler.platform.AlertSound
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.domain.ChronoDomain
+import org.example.project.scheduler.domain.QuotaDomain
+import org.example.project.scheduler.model.QuotaEntry
+import org.example.project.scheduler.model.QuotaLoop
+import org.example.project.scheduler.state.QuotasDelta
 import org.example.project.scheduler.state.ChronosDelta
 import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.EntryChanges
@@ -558,6 +562,8 @@ object SchedulerStateCodec {
             timers = timers.map { it.toPersisted() },
             // PRD §18 Chronos: the run state rides along, the timers' rule — the start instant is authoritative.
             chronos = chronos.map { it.toPersisted() },
+            // Quotas (2026-10-03): the list whole; a quota's progression is derived and never written.
+            quotas = quotas.map { it.toPersisted() },
             // PRD §5: the relative-priority window's pinned cells, sorted so the encoded payload (and the
             // sync fingerprint with it) does not depend on the map's iteration order.
             relativePriorityPins =
@@ -635,6 +641,8 @@ object SchedulerStateCodec {
             // PRD §14/§18: what a new alarm / timer / reminder starts with.
             newAlarmDefaults = newAlarmDefaults.toPersisted(),
             newTimerDefaults = newTimerDefaults.toPersisted(),
+            // Written only once the account changed it: an untouched default is no field at all.
+            newQuotaDefaults = newQuotaDefaults.takeIf { it != NewElementDefaults.QUOTA }?.toPersisted(),
             newReminderDefaults = newReminderDefaults.toPersisted(),
             // PRD §7 Keyboard shortcuts: the account's system-wide chord OVERRIDES, sorted by shortcut so
             // one binding table has exactly one encoding (the fingerprint is this payload, byte for byte).
@@ -894,6 +902,8 @@ object SchedulerStateCodec {
                 PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ChronosDelta ->
                 PersistedDelta.Chronos(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
+            is QuotasDelta ->
+                PersistedDelta.Quotas(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ExternalDelta -> PersistedDelta.External(key, before, after, label)
             is SettingsDelta ->
                 PersistedDelta.Settings(
@@ -1204,6 +1214,8 @@ object SchedulerStateCodec {
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
             // PRD §18 Chronos: a payload written before chronos existed decodes to an empty list; every row healed.
             chronos = ChronoDomain.assignChronoIds(chronos.map { it.toChronoEntry() }).map(ChronoDomain::healed),
+            // Quotas: a payload written before quotas existed decodes to an empty list; every row healed.
+            quotas = QuotaDomain.assignQuotaIds(quotas.map { it.toQuotaEntry() }).map(QuotaDomain::healed),
             // PRD §5: a payload written before the relative-priority window existed decodes to no pins.
             relativePriorityPins =
                 relativePriorityPins
@@ -1265,6 +1277,8 @@ object SchedulerStateCodec {
                 newAlarmDefaults?.toAlarmEntry()?.let(NewElementDefaults::alarmDefaults) ?: NewElementDefaults.ALARM,
             newTimerDefaults =
                 newTimerDefaults?.toTimerEntry()?.let(NewElementDefaults::timerDefaults) ?: NewElementDefaults.TIMER,
+            newQuotaDefaults =
+                newQuotaDefaults?.toQuotaEntry()?.let(NewElementDefaults::quotaDefaults) ?: NewElementDefaults.QUOTA,
             newReminderDefaults =
                 newReminderDefaults?.toChoreEntry()?.let(NewElementDefaults::reminderDefaults)
                     ?: NewElementDefaults.REMINDER,
@@ -1448,6 +1462,11 @@ object SchedulerStateCodec {
                     ChronoDomain.assignChronoIds(before.map { it.toChronoEntry() }).map(ChronoDomain::healed),
                     ChronoDomain.assignChronoIds(after.map { it.toChronoEntry() }).map(ChronoDomain::healed),
                 )
+            is PersistedDelta.Quotas ->
+                QuotasDelta(
+                    QuotaDomain.assignQuotaIds(before.map { it.toQuotaEntry() }).map(QuotaDomain::healed),
+                    QuotaDomain.assignQuotaIds(after.map { it.toQuotaEntry() }).map(QuotaDomain::healed),
+                )
             is PersistedDelta.ShortcutBindings ->
                 ShortcutBindingDelta(before.toShortcutBindings(), after.toShortcutBindings())
             is PersistedDelta.External -> ExternalDelta(key, before, after, label)
@@ -1627,6 +1646,8 @@ private data class PersistedState(
     val timers: List<PersistedTimer> = emptyList(),
     // PRD §18: a missing chrono list decodes to empty (payloads written before the Chronos section existed).
     val chronos: List<PersistedChrono> = emptyList(),
+    // User rule 2026-10-03: a missing quota list decodes to empty (payloads written before quotas existed).
+    val quotas: List<PersistedQuota> = emptyList(),
     // PRD §5: the relative-priority window's pinned cells; a missing list decodes to no pins (payloads
     // written before the window existed).
     val relativePriorityPins: List<PersistedRelativePriorityPins> = emptyList(),
@@ -1690,6 +1711,8 @@ private data class PersistedState(
     // defaults existed, which decodes to the built-in defaults every new element had then.
     val newAlarmDefaults: PersistedAlarm? = null,
     val newTimerDefaults: PersistedTimer? = null,
+    /** New 2026-10-03; missing = the built-in default a new quota had before. */
+    val newQuotaDefaults: PersistedQuota? = null,
     val newReminderDefaults: PersistedChoreEntry? = null,
     // PRD §7 Keyboard shortcuts: the account's system-wide chord overrides. A missing value decodes to none,
     // i.e. every chord is the one it ships with — which is what every payload written before the window could
@@ -2070,6 +2093,47 @@ private data class PersistedTimer(
     val calendarPlaced: Boolean = false,
 )
 
+/** A quota as stored. Every field defaulted, so a later build's shape decodes cleanly; healed on the way in. */
+@Serializable
+private data class PersistedQuota(
+    val id: String = "",
+    val title: String = "",
+    val amount: Double = 1.0,
+    val unit: String = "",
+    val startMillis: Long = 0L,
+    val endMillis: Long = 0L,
+    val repeats: Boolean = true,
+    val resilience: Map<String, Double> = emptyMap(),
+    val loops: List<PersistedQuotaLoop> = emptyList(),
+)
+
+/** What is particular to one loop of a quota, as stored. */
+@Serializable
+private data class PersistedQuotaLoop(
+    val index: Int = 0,
+    val startMillis: Long? = null,
+    val endMillis: Long? = null,
+    val amountFactor: Double = 1.0,
+    val renewals: Int = 1,
+)
+
+private fun QuotaEntry.toPersisted(): PersistedQuota =
+    PersistedQuota(
+        id = id, title = title, amount = amount, unit = unit, startMillis = startMillis, endMillis = endMillis,
+        repeats = repeats,
+        // Sorted, so the payload — and the sync fingerprint with it — does not depend on the order edits were made in.
+        resilience = resilience.entries.sortedBy { it.key }.associate { it.key to it.value },
+        loops = loops.sortedBy { it.index }.map { PersistedQuotaLoop(it.index, it.startMillis, it.endMillis, it.amountFactor, it.renewals) },
+    )
+
+/** The inverse of [QuotaEntry.toPersisted]. The caller heals it ([QuotaDomain.healed]). */
+private fun PersistedQuota.toQuotaEntry(): QuotaEntry =
+    QuotaEntry(
+        id = id, title = title, amount = amount, unit = unit, startMillis = startMillis, endMillis = endMillis,
+        repeats = repeats, resilience = resilience,
+        loops = loops.map { QuotaLoop(it.index, it.startMillis, it.endMillis, it.amountFactor, it.renewals) },
+    )
+
 /** PRD §18 Chronos: one persisted chrono. Every field defaulted, so a later build's shape decodes cleanly. */
 @Serializable
 private data class PersistedChrono(
@@ -2298,6 +2362,14 @@ private sealed interface PersistedDelta {
     data class Timers(
         val before: List<PersistedTimer>,
         val after: List<PersistedTimer>,
+    ) : PersistedDelta
+
+    /** The quota list ([QuotasDelta]). New 2026-10-03, additive like [Chronos]. */
+    @Serializable
+    @SerialName("quotas")
+    data class Quotas(
+        val before: List<PersistedQuota>,
+        val after: List<PersistedQuota>,
     ) : PersistedDelta
 
     /** PRD §18 Chronos: [Timers]' rule for the chrono list. New 2026-09-26, and additive in the same way. */

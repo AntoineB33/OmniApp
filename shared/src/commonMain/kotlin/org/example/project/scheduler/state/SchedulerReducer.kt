@@ -579,6 +579,12 @@ object SchedulerReducer {
                 TimerDomain.rang(it, intent.nowMillis)
             }
             is SchedulerIntent.SetChronos -> reduceSetChronos(state, intent.entries, intent.editKey)
+            is SchedulerIntent.SetQuotas -> {
+                val withIds =
+                    org.example.project.scheduler.domain.QuotaDomain.assignQuotaIds(intent.entries)
+                        .map(org.example.project.scheduler.domain.QuotaDomain::healed)
+                if (state.quotas == withIds) state else commitDelta(state, QuotasDelta(state.quotas, withIds, intent.editKey))
+            }
             is SchedulerIntent.StartChrono -> reduceChronoTransition(state, intent.id) {
                 ChronoDomain.started(it, intent.nowMillis)
             }
@@ -703,6 +709,10 @@ object SchedulerReducer {
             is SchedulerIntent.SetNewTimerDefaults ->
                 NewElementDefaults.timerDefaults(intent.defaults).let {
                     if (it == state.newTimerDefaults) state else state.copy(newTimerDefaults = it)
+                }
+            is SchedulerIntent.SetNewQuotaDefaults ->
+                NewElementDefaults.quotaDefaults(intent.defaults).let {
+                    if (it == state.newQuotaDefaults) state else state.copy(newQuotaDefaults = it)
                 }
             is SchedulerIntent.SetNewReminderDefaults ->
                 NewElementDefaults.reminderDefaults(intent.defaults).let {
@@ -6616,6 +6626,49 @@ internal data class TimersDelta(
 
     override fun commit(state: SchedulerState): SchedulerState =
         state.copy(timers = changes.applyToList(state.timers, forward = true, exact = true) { it.id })
+}
+
+/**
+ * User rule 2026-10-03: a change to the account's **quota list** — a quota added, deleted or configured. The rows whole,
+ * by id, undone and redone three-way like every list delta ([ChronosDelta]'s shape).
+ */
+internal data class QuotasDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.model.QuotaEntry>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.model.QuotaEntry>,
+        after: List<org.example.project.scheduler.model.QuotaEntry>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
+    override val label: String
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "quota")
+
+    override val details: List<String>
+        get() {
+            fun name(q: org.example.project.scheduler.model.QuotaEntry): String = q.title.ifBlank { "quota" }
+            return listDetails(changes.before, changes.after, ::name) { b, a ->
+                buildList {
+                    if (b.title != a.title) add("title " + quoted(b.title) + " -> " + quoted(a.title))
+                    if (b.amount != a.amount || b.unit != a.unit) add("amount ${b.amount} ${b.unit} -> ${a.amount} ${a.unit}".trim())
+                    if (b.startMillis != a.startMillis || b.endMillis != a.endMillis || b.repeats != a.repeats) add("loop")
+                    if (b.resilience != a.resilience) add("resilience")
+                    if (b.loops != a.loops) add("particular loops")
+                }
+            }
+        }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is QuotasDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState = state.copy(quotas = changes.applyToList(state.quotas, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState = state.copy(quotas = changes.applyToList(state.quotas, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(quotas = changes.applyToList(state.quotas, forward = true, exact = true) { it.id })
 }
 
 /**

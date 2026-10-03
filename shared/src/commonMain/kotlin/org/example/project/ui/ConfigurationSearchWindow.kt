@@ -103,7 +103,7 @@ fun ConfigurationSearchWindow(
         } else {
             remember(
                 config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
-                state.alarms, state.timers, state.chronos, state.chores, windows,
+                state.alarms, state.timers, state.chronos, state.quotas, state.chores, windows,
             ) { SearchDomain.kindsInResults(state, config, windows) }
         }
     val sections = SearchDomain.configurations(own.query, own.kinds, resultKinds, config.filters.takeIf { own.showFiltersOn })
@@ -264,6 +264,8 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
+        SearchDomain.Setting.QuotaRepeatsSetting ->
+            Choices(SearchDomain.Tri.entries, f.quotaRepeats, { it.label }) { filters(f.copy(quotaRepeats = it)) }
         SearchDomain.Setting.TaskSchedulable ->
             Choices(SearchDomain.Tri.entries, f.taskSchedulable, { it.label }) { filters(f.copy(taskSchedulable = it)) }
         SearchDomain.Setting.TaskCategory ->
@@ -334,7 +336,7 @@ private fun SettingEditor(
             EnumPicker(SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
         SearchDomain.Setting.SortResults,
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
-        SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort,
+        SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort, SearchDomain.Setting.QuotaSort,
         SearchDomain.Setting.ReminderSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.TaskTreeSort, SearchDomain.Setting.RelationSort,
         SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.WindowSort,

@@ -736,7 +736,9 @@ suggestions before it was ever entered.
   (`AddedAction.HistoryInformation`) shows every fact the History window showed of it — the row's (category,
   position, current / applied / undone, window, time) and its information window's (label, chrono id, debug clock,
   every detail line), each with "copy", and "Copy all" — read through the History window's own `historyEntryInfos` /
-  `historyUnitEntry`, never a second list. A "creation" row still makes its element on the right-click. A tree cell's
+  `historyUnitEntry`, never a second list. A "creation" row's right-click opens that same menu too (anomaly
+  2026-10-03: it made its element straight away, so the row could not be added — which is how a default configuration
+  is edited); its third entry, "create", is what the right-click used to do. A tree cell's
   "edit task" opens the Search window holding that task (`openElementSearch`).
 - **A task row is a tree cell to the user.** Its right-click menu is the cell's own — `TaskCellMenuItems`, the
   one drawing of those entries for both surfaces — built for the path the right-click landed on (the row, its
@@ -753,8 +755,7 @@ suggestions before it was ever entered.
 - **The row menu's "add and remove the others"** (`ADD_REPLACING_LABEL`, beside "add" in both menus — the task cell's
   `TaskCellMenuActions.onAddReplacing` and `ItemResultRow`'s): the selected rows become the WHOLE added list, every
   element added before leaving it (`addSelected(replacing = true)`).
-- **Opening a row — `Enter`, the menu, or right-click on an alarm, a timer or a reminder (`ItemResultRow`'s
-  `opensOnRightClick`) — opens the Search window holding that element alone** (`popups.md`, user rule 2026-10-01; it
+- **Opening a row — `Enter`, or its menu's entry — opens the Search window holding that element alone** (`popups.md`, user rule 2026-10-01; it
   was the element's own window). Its editing is that window's actions, one block per added element for a timer, a chrono and a
   reminder (an alarm's settings are shared fields, below): "Edit" draws the
   Alarms window's rows (`AlarmWindow(embeddedSubjects)`) or the reminder's editor
@@ -762,13 +763,14 @@ suggestions before it was ever entered.
   one it last pushed (the Alarms window's rule), which lets several stand side by side. No "+ New" inside the editor;
   the section's own "New" action makes one (below); the default configurations stay one link away.
 - **"New" and "Duplicate" are actions of every kind a user makes** (user rule 2026-10-01; task, category, period,
-  alarm, timer, chrono, reminder): "New" makes one through `App.createElement` (the "creation" row's path, without
-  opening a window) and "Duplicate" copies every added one of the kind, its title + `" copy"`
+  alarm, timer, chrono, quota, reminder): "New" makes one through `App.createElement` (the "creation" row's path)
+  and **opens it in a NEW Search window as its only added element** — every kind, never joining the asking window's
+  list (user rule 2026-10-04; it joined it until then, a task excepted) — and "Duplicate" copies every added one of the kind, its title + `" copy"`
   (`SearchDomain.duplicateIntents`: `DuplicateTasks` — one unit, the copy in the original's list with its settings, not
   its sub-tree —, `DuplicateCategory` / `DuplicatePeriodKind` — `" copy 2"`, … where the name is taken, since those
   names are unique; a period's copy keeps every task's resilience as it stood to the original —, and one more row of
-  the alarms / timers / chronos / reminders, a timer or chrono copy idle). What they made joins the window's added
-  elements (`newElementKeys`). The full Alarms window is still the
+  the alarms / timers / chronos / reminders, a timer or chrono copy idle). What "Duplicate" made joins the window's
+  added elements (`newElementKeys`). The full Alarms window is still the
   calendar's alarm/timer edit entry.
 - **"Set to the current time" is an action of the alarms and of the reminders** (user rule 2026-10-02;
   `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's

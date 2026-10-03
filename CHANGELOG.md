@@ -11,6 +11,42 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: "New" opens the new element in a Search window of its own — 2026-10-04
+
+User request: the "New quota" button must open a new Search window with the new quota as its only added element — and
+the same for the other kinds. Only "New task" did; a new category, period, alarm, timer, chrono, quota and reminder
+joined the asking window's added elements. `App.createElement` always opens (`open` parameter gone), and
+`AddedActionHandlers.onCreate` returns nothing. "Duplicate" still adds its copies to the window they were made from.
+
+### Search window: a creation row's right-click opens its menu — 2026-10-03
+
+Anomaly (account3): right-clicking a "creation" row made its element and opened a Search window instead of the
+drop-down menu, so the row could not be added from it. `ItemResultRow`'s `opensOnRightClick` is gone: every row's
+right-click opens the menu ("add", "add and remove others"), and a creation row's has "create" under them.
+
+### The quota element — 2026-10-03
+
+User request: a quota to reach over a loop (every week from a day and time, for example), whose **target progression**
+shows in the Search window's actions as a percentage; a resilience to the restrictive periods like a task's; a loop with
+two times more quota; a loop renewed (the progression twice as fast, back to 0 % at 100 %); a loop starting and ending
+elsewhere; a quota that does not repeat. Decided with the user: a time-based pace line (nothing recorded as done), an
+amount + unit, loops by a start and an end repeating by their length, in the Search window only. New `QuotaEntry` /
+`QuotaLoop`, `SchedulerState.quotas`, `SetQuotas`, `QuotasDelta`, `QuotaDomain`, `SearchDomain.Kind.Quota` (results,
+creation, title/new/duplicate/delete, "Repeats" filter, sort) and its actions (`ui/QuotaEditors.kt`: Target
+progression, Amount, Loop, Resilience, Particular loops). Persisted `PersistedQuota` (list defaulted empty: an older
+payload loads with none), synced one row per quota, merged whole. No SQLite or Supabase migration.
+`docs/invariants/alarms-and-timers.md` § *Quotas*. `QuotaTest`.
+Follow-up (user rule, the same day): adding the **"New quota" creation row** to the added elements shows the quota
+actions, which then edit the **default configuration** a new quota starts with (`SchedulerState.newQuotaDefaults`,
+`SetNewQuotaDefaults`, `NewElementDefaults.newQuota`, `SearchDomain.actionKindOf`; persisted `newQuotaDefaults`, absent
+= the built-in one).
+Anomaly 2026-10-04: an added "New quota" row alone showed Delete, Duplicate, the progression and the particular loops —
+it now shows only what edits the default, and "New", which creates one from it (`SearchDomain.actionsFor`).
+Anomaly 2026-10-04: with six quotas added the "Delete" action was not found — it was the section's last, under one
+"Target progression" block and one "Particular loops" form per quota; it now stands beside "New" and "Duplicate".
+Anomaly after it: the Title action was disabled with only that row added — `addedTitles` and the `Titles` command now
+carry the default's title too (`DEFAULT_CONFIGURATION_ID`).
+
 ### Task cells: the colour under the expansion arrow is outlined in the opposite colour — 2026-10-03
 
 User request: as the calendar's task panels are. `Modifier.taskSwatch` (`ui/TaskSheetChrome.kt`): the task's colour with

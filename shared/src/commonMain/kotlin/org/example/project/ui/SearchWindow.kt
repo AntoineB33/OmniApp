@@ -172,6 +172,8 @@ class SearchRowOpeners(
     val onEditReminder: (String) -> Unit,
     /** A history unit's own window (by its row id): the Search window holding it alone, its "Information" action. */
     val onOpenHistoryUnit: (String) -> Unit = {},
+    /** Opens the Search window holding that quota alone — its actions are its editor (user rule 2026-10-03). */
+    val onOpenQuota: (String) -> Unit = {},
     /** The lateral-menu windows that own a task tree, a task relation and a keyboard shortcut. */
     val onOpenTaskTrees: () -> Unit = {},
     val onOpenTaskRelations: () -> Unit = {},
@@ -203,6 +205,7 @@ class SearchRowOpeners(
             SearchDomain.Kind.Timer -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Timer))
             SearchDomain.Kind.Chrono -> onEditAlarmOrTimer(AlarmWindowSubject(item.id, AlarmWindowSubject.Kind.Chrono))
             SearchDomain.Kind.Reminder -> onEditReminder(item.id)
+            SearchDomain.Kind.Quota -> onOpenQuota(item.id)
             SearchDomain.Kind.HistoryUnit -> onOpenHistoryUnit(item.id)
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
@@ -310,7 +313,7 @@ fun SearchWindow(
     val results =
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
-            state.panels, state.alarms, state.timers, state.chronos, state.chores, state.histories, state.taskRelations,
+            state.panels, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
             SearchDomain.results(
@@ -551,7 +554,7 @@ fun SearchWindow(
     val addedRows =
         remember(
             config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
-            state.timers, state.chronos, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
+            state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
             state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
             // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
@@ -810,9 +813,6 @@ fun SearchWindow(
                                         },
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
-                                        // A "creation" row makes its element on the right-click straight away, as
-                                        // opening the row does: there is nothing else to ask of it.
-                                        opensOnRightClick = result.kind == SearchDomain.Kind.Creation,
                                     )
                             }
                         }
@@ -1807,8 +1807,6 @@ private fun ItemResultRow(
     onAdd: () -> Unit,
     /** The menu's "add and remove the others": [onAdd], the added elements emptied first. */
     onAddReplacing: () -> Unit,
-    /** The right-click opens the row ([onOpen]) instead of the contextual menu: a "creation" row. */
-    opensOnRightClick: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // The gestures are keyed by the row and started once: they call the handlers of the LATEST composition.
@@ -1822,7 +1820,9 @@ private fun ItemResultRow(
                 onSelect = { currentOnSelect() },
                 onSecondarySelect = { currentOnSecondarySelect() },
                 onOpen = { currentOnDoubleClick() },
-                onOpenMenu = { if (opensOnRightClick) onOpen() else menuOpen = true },
+                // Every row's right-click opens its menu — a "creation" row's too (anomaly 2026-10-03: it made its
+                // element straight away, so the row could not be ADDED, which is how a default configuration is edited).
+                onOpenMenu = { menuOpen = true },
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -1872,6 +1872,8 @@ private fun ItemResultRow(
                     SearchDomain.Kind.TaskRelation -> "open in Task relations"
                     SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
                     SearchDomain.Kind.Window -> "show window"
+                    // What the right-click did on its own until 2026-10-03: making a new element of the row's kind.
+                    SearchDomain.Kind.Creation -> "create"
                     else -> null
                 }
             if (elsewhere != null) {

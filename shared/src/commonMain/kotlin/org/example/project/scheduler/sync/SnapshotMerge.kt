@@ -96,6 +96,9 @@ object SnapshotMerge {
         // two sides would be a run neither device made.
         val chronos =
             mergeKeyedList(base.chronos, local.chronos, remote.chronos, { it.id }) { b, l, r -> pick(b, l, r) }
+        // Quotas (2026-10-03): whole objects — a loop's bounds, its factor and its renewals are one statement.
+        val quotas =
+            mergeKeyedList(base.quotas, local.quotas, remote.quotas, { it.id }) { b, l, r -> pick(b, l, r) }
         // Task trees resolve as WHOLE objects: an entry's title and its stored tree are not independent
         // fields to interleave — a tree captured on one device is one consistent thing. Adding a tree on each
         // device keeps both (they carry different ids); the live tree of whichever entry is active is merged
@@ -145,6 +148,7 @@ object SnapshotMerge {
                 alarms = alarms,
                 timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),
                 chronos = chronos.map(org.example.project.scheduler.domain.ChronoDomain::healed),
+                quotas = quotas.map(org.example.project.scheduler.domain.QuotaDomain::healed),
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),
                 soundVolume = pick(base.soundVolume, local.soundVolume, remote.soundVolume),
                 // PRD §4 Default sub-tree: the template resolves as ONE value, like a task tree — and it IS
@@ -171,6 +175,7 @@ object SnapshotMerge {
                 // window, not fields for two devices to interleave.
                 newAlarmDefaults = pick(base.newAlarmDefaults, local.newAlarmDefaults, remote.newAlarmDefaults),
                 newTimerDefaults = pick(base.newTimerDefaults, local.newTimerDefaults, remote.newTimerDefaults),
+                newQuotaDefaults = pick(base.newQuotaDefaults, local.newQuotaDefaults, remote.newQuotaDefaults),
                 newReminderDefaults =
                     pick(base.newReminderDefaults, local.newReminderDefaults, remote.newReminderDefaults),
                 // PRD §7 Keyboard shortcuts: the chord overrides merge PER SHORTCUT — rebinding "I'm away" on

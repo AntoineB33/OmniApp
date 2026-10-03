@@ -98,7 +98,7 @@ fun AddedElementsConfigurationWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState(ADDED_CONFIGURATION_FRAME_ID, initialOffset, initialSize)
-    val addedKinds = added.mapTo(HashSet()) { it.kind }
+    val addedKinds = added.mapTo(HashSet()) { SearchDomain.actionKindOf(it) }
     val sections = SearchDomain.addedActions(config.actionQuery, own.kinds, addedKinds.takeIf { own.onlyResultKinds })
 
     AppWindowFrame(
@@ -183,10 +183,10 @@ class AddedActionHandlers(
     val alarmEditor: @Composable (Set<AlarmWindowSubject>) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
     /**
-     * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`, without opening a
-     * window for it); the keys of what it made, which join the window's added elements.
+     * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`) — and opened in a
+     * NEW Search window as its only added element (user rule 2026-10-04, every kind). It does not join this window's.
      */
-    val onCreate: (SearchDomain.Kind) -> List<String>,
+    val onCreate: (SearchDomain.Kind) -> Unit,
     /** "Duplicate": these intents ([SearchDomain.duplicateIntents]) dispatched; the keys of the kind's elements they made. */
     val onDuplicate: (List<SchedulerIntent>, SearchDomain.Kind) -> List<String>,
     /** "Add to the calendar": these drafts saved as the calendar's element window saves its own. */
@@ -245,7 +245,12 @@ internal fun AddedActionsSection(
             return@Column
         }
         val sections =
-            SearchDomain.addedActions(config.actionQuery, SearchDomain.Kind.entries.toSet(), added.mapTo(HashSet()) { it.kind })
+            SearchDomain.actionsFor(
+                SearchDomain.addedActions(
+                    config.actionQuery, SearchDomain.Kind.entries.toSet(), added.mapTo(HashSet()) { SearchDomain.actionKindOf(it) },
+                ),
+                added,
+            )
         // A vertical scrollbar on its right (user rule 2026-10-03), the same the lists of the window have.
         val scroll = rememberScrollState()
         Box(Modifier.fillMaxWidth().weight(1f)) {
@@ -318,6 +323,8 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
         SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
         SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
+        SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
+        SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
     )
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
@@ -483,7 +490,7 @@ private fun AddedActionEditor(
                 run(SearchDomain.AddedCommand.RemindersTimeNow)
             }
         SearchDomain.AddedAction.AlarmTitle, SearchDomain.AddedAction.TimerTitle,
-        SearchDomain.AddedAction.ChronoTitle, SearchDomain.AddedAction.ReminderTitle ->
+        SearchDomain.AddedAction.ChronoTitle, SearchDomain.AddedAction.ReminderTitle, SearchDomain.AddedAction.QuotaTitle ->
             SharedTitleField(state, added, SearchDomain.TITLED_KINDS.getValue(action), run)
         // The sound setting's control: the app's global volume. Written on release, so a drag is one write.
         SearchDomain.AddedAction.SoundVolume -> {
@@ -512,20 +519,17 @@ private fun AddedActionEditor(
                     FrameButton(step.label) { run(SearchDomain.AddedCommand.ChronosRun(step)) }
                 }
             }
-        // --- A new element of the kind, and a copy of each added one — both join the added elements -------------
+        // --- A new element of the kind (in a Search window of its own), and a copy of each added one (joining these) ---
         SearchDomain.AddedAction.TaskNew, SearchDomain.AddedAction.CategoryNew, SearchDomain.AddedAction.PeriodNew,
         SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
-        SearchDomain.AddedAction.ReminderNew -> {
+        SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew -> {
             val kind = action.section ?: return
-            FrameButton("New " + kind.label) {
-                val made = handlers.onCreate(kind)
-                if (made.isNotEmpty()) onConfigChange(config.copy(added = SearchDomain.withAdded(config.added, made)))
-            }
+            FrameButton("New " + kind.label) { handlers.onCreate(kind) }
         }
         SearchDomain.AddedAction.TaskDuplicate, SearchDomain.AddedAction.CategoryDuplicate,
         SearchDomain.AddedAction.PeriodDuplicate, SearchDomain.AddedAction.AlarmDuplicate,
         SearchDomain.AddedAction.TimerDuplicate, SearchDomain.AddedAction.ChronoDuplicate,
-        SearchDomain.AddedAction.ReminderDuplicate -> {
+        SearchDomain.AddedAction.ReminderDuplicate, SearchDomain.AddedAction.QuotaDuplicate -> {
             val kind = action.section ?: return
             val count = added.count { it.kind == kind }
             FrameButton(if (count == 1) "Duplicate" else "Duplicate $count", enabled = count > 0) {
@@ -552,6 +556,12 @@ private fun AddedActionEditor(
         }
         SearchDomain.AddedAction.TaskFulfilment -> FulfilmentEditor(state, added, run, handlers.onEdit)
         SearchDomain.AddedAction.TaskFulfilledBy -> FulfilledByEditor(state, taskIds, run, handlers.onEdit)
+        // --- The quotas (user rule 2026-10-03): where each stands, and its settings ([QuotaEditors]) -------------
+        SearchDomain.AddedAction.QuotaProgress -> QuotaProgressEditor(state, addedQuotas(state, added), nowMillis)
+        SearchDomain.AddedAction.QuotaAmount -> QuotaAmountEditor(state, addedQuotas(state, added), run.asIntentSink())
+        SearchDomain.AddedAction.QuotaLoop -> QuotaLoopEditor(state, addedQuotas(state, added), run.asIntentSink())
+        SearchDomain.AddedAction.QuotaResilience -> QuotaResilienceEditor(state, addedQuotas(state, added), config, onConfigChange, run.asIntentSink())
+        SearchDomain.AddedAction.QuotaLoops -> QuotaLoopsEditor(state, addedQuotas(state, added), run.asIntentSink(), nowMillis)
         SearchDomain.AddedAction.TaskCellCategories -> TaskCellCategoriesEditor(state, taskIds, run)
         SearchDomain.AddedAction.TaskPaths -> {
             for (taskId in taskIds) {
@@ -672,6 +682,7 @@ private fun AddedActionEditor(
         }
         // The bin, over every added element of the kind; what it deleted leaves the added list too.
         SearchDomain.AddedAction.AlarmDelete, SearchDomain.AddedAction.TimerDelete, SearchDomain.AddedAction.ChronoDelete,
+        SearchDomain.AddedAction.QuotaDelete,
         SearchDomain.AddedAction.ReminderDelete, SearchDomain.AddedAction.CategoryDelete -> {
             val kind = action.section ?: return
             val keys = added.filter { it.kind == kind }.map(SearchDomain::keyOf)

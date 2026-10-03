@@ -509,6 +509,42 @@ data class TimerEntry(
     }
 }
 /**
+ * User rule 2026-10-03: **a quota** — an [amount] (of [unit]) to reach over a loop of time, and the pace it should be
+ * reached at ([org.example.project.scheduler.domain.QuotaDomain]). Loop 0 runs from [startMillis] to [endMillis]; while
+ * it [repeats], every next loop is that one moved by its length. [resilience] is the quota's to each kind of
+ * restrictive period, exactly a task's ([Task.resilience]): the multiplier its progression moves at inside one.
+ * [loops] says what is particular to ONE loop.
+ *
+ * Authoritative, persisted and synced, like an alarm or a chrono. Its progression is **derived** — from this, the
+ * periods on the calendar and the instant — and never stored: a quota writes nothing as time passes.
+ */
+data class QuotaEntry(
+    /** Stable identity (`quota-{n}`). */
+    val id: String,
+    val title: String = "",
+    val amount: Double = 1.0,
+    val unit: String = "",
+    val startMillis: Long = 0L,
+    val endMillis: Long = 0L,
+    val repeats: Boolean = true,
+    val resilience: Map<String, Double> = emptyMap(),
+    val loops: List<QuotaLoop> = emptyList(),
+)
+
+/**
+ * What is particular to loop [index] of a quota: its own [startMillis] and [endMillis] (both, or the regular ones),
+ * its [amountFactor] (`2` — two times more quota in that loop) and its [renewals] (`2` — the progression moves twice
+ * as fast and comes back to 0 % on reaching 100 % in the loop's middle).
+ */
+data class QuotaLoop(
+    val index: Int,
+    val startMillis: Long? = null,
+    val endMillis: Long? = null,
+    val amountFactor: Double = 1.0,
+    val renewals: Int = 1,
+)
+
+/**
  * PRD §18 Chronos: a chronometer — a count UP from zero, started, paused and reset from the Alarms window's
  * third section. It has nothing to ring and so nothing to arm: it is a stopwatch, not an alarm.
  *

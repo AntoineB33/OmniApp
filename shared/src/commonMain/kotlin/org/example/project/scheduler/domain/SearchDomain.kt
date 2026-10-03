@@ -105,6 +105,9 @@ object SearchDomain {
         Alarm("alarm"),
         Timer("timer"),
         Chrono("chrono"),
+
+        /** User rule 2026-10-03: a quota ([org.example.project.scheduler.model.QuotaEntry]). */
+        Quota("quota"),
         Reminder("reminder"),
         HistoryUnit("history unit"),
         TaskTree("task tree"),
@@ -137,7 +140,7 @@ object SearchDomain {
      */
     val CREATABLE: List<Kind> =
         listOf(
-            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder,
+            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
             Kind.TaskTree, Kind.Window,
         )
 
@@ -276,6 +279,7 @@ object SearchDomain {
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     timerState = filters.timerState.name,
                     chronoState = filters.chronoState.name,
+                    quotaRepeats = filters.quotaRepeats.name,
                     reminderRepeats = filters.reminderRepeats.name,
                     historyCategory = filters.historyCategory?.name,
                     historyWindow = filters.historyWindow?.name,
@@ -334,6 +338,7 @@ object SearchDomain {
                             .toSet(),
                         timerState = enumNamed(stored.timerState, TimerState.Any),
                         chronoState = enumNamed(stored.chronoState, TimerState.Any),
+                        quotaRepeats = enumNamed(stored.quotaRepeats, Tri.Any),
                         reminderRepeats = enumNamed(stored.reminderRepeats, ReminderRepeats.Any),
                         historyCategory = HistoryCategory.entries.firstOrNull { it.name == stored.historyCategory },
                         historyWindow = HistoryWindow.entries.firstOrNull { it.name == stored.historyWindow },
@@ -487,6 +492,8 @@ object SearchDomain {
         val timerState: TimerState = TimerState.Any,
         /** A chrono is idle, running or paused like a timer — the same filter, over its own rows. */
         val chronoState: TimerState = TimerState.Any,
+        /** User rule 2026-10-03: the quotas that repeat, or the ones that do not. */
+        val quotaRepeats: Tri = Tri.Any,
         val reminderRepeats: ReminderRepeats = ReminderRepeats.Any,
         /** Null = any category (PRD §5's stacks: edit, selection, calendar, main, window navigation). */
         val historyCategory: HistoryCategory? = null,
@@ -578,6 +585,7 @@ object SearchDomain {
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
                 Setting.ChronoStateSetting -> chronoState != TimerState.Any
+                Setting.QuotaRepeatsSetting -> quotaRepeats != Tri.Any
                 Setting.ReminderRepeatsSetting -> reminderRepeats != ReminderRepeats.Any
                 Setting.HistoryCategorySetting -> historyCategory != null
                 Setting.HistoryWindowSetting -> historyWindow != null
@@ -707,6 +715,7 @@ object SearchDomain {
         AlarmSort(Kind.Alarm, "Sort by", sorts = true),
         TimerSort(Kind.Timer, "Sort by", sorts = true),
         ChronoSort(Kind.Chrono, "Sort by", sorts = true),
+        QuotaSort(Kind.Quota, "Sort by", sorts = true),
         ReminderSort(Kind.Reminder, "Sort by", sorts = true),
         HistorySort(Kind.HistoryUnit, "Sort by", sorts = true),
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
@@ -730,6 +739,7 @@ object SearchDomain {
         AlarmDays(Kind.Alarm, "Rings on"),
         TimerStateSetting(Kind.Timer, "State"),
         ChronoStateSetting(Kind.Chrono, "State"),
+        QuotaRepeatsSetting(Kind.Quota, "Repeats"),
         ReminderRepeatsSetting(Kind.Reminder, "Repeats"),
         HistoryCategorySetting(Kind.HistoryUnit, "Category"),
         HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
@@ -791,6 +801,8 @@ object SearchDomain {
         val timerState: String? = null,
         /** New 2026-09-26: absent from what an older build stored, which reads as any. */
         val chronoState: String? = null,
+        /** New 2026-10-03: absent from an older build's = any. */
+        val quotaRepeats: String? = null,
         val reminderRepeats: String? = null,
         val historyCategory: String? = null,
         val historyWindow: String? = null,
@@ -1300,6 +1312,13 @@ object SearchDomain {
                 Kind.Reminder -> state.chores.map { chore ->
                     ItemResult(kind, chore.id.ifEmpty { chore.title }, chore.title, reminderDetail(chore))
                 }
+                // The detail is what the quota IS (its amount and its loop), never where it stands: a result row is
+                // not redrawn as time passes.
+                Kind.Quota -> state.quotas.map { quota ->
+                    val amount = (formatQuotaNumber(quota.amount) + " " + quota.unit).trim()
+                    val loop = dateTime(quota.startMillis, timeZone) + " → " + dateTime(quota.endMillis, timeZone)
+                    ItemResult(kind, quota.id, quota.title.ifBlank { "Quota" }, amount + " · " + loop + if (quota.repeats) " · repeats" else "")
+                }
                 // Every stack's units, as the History window lists them. The id is the unit's IDENTITY
                 // ([historyUnitId]), which is what [historyUnitOf] reads back for the filters.
                 Kind.HistoryUnit -> HistoryCategory.entries.flatMap { category ->
@@ -1559,6 +1578,7 @@ object SearchDomain {
                         TimerState.Paused -> chrono.paused
                     }
                 }
+                Kind.Quota -> tri(filters.quotaRepeats, state.quotas.firstOrNull { it.id == result.id }?.repeats == true)
                 Kind.Reminder -> {
                     val chore = state.chores.firstOrNull { it.id.ifEmpty { it.title } == result.id } ?: return true
                     when (filters.reminderRepeats) {
@@ -1676,6 +1696,12 @@ object SearchDomain {
     /** A [Kind.Window] row's status, read back off its detail — the one thing the detail says. */
     private fun windowStatusOf(row: ItemResult): WindowStatus? = WindowStatus.entries.firstOrNull { it.label == row.detail }
 
+    /** A quota's amount (or a factor) with no trailing zeros — `40`, `2.5`. */
+    fun formatQuotaNumber(value: Double): String {
+        val rounded = kotlin.math.round(value * 1000.0) / 1000.0
+        return if (rounded == kotlin.math.floor(rounded) && kotlin.math.abs(rounded) < 1e15) rounded.toLong().toString() else rounded.toString()
+    }
+
     /** The id of a task relation's row: its two task ids. */
     fun relationId(key: TaskRelationKey): String = key.taskId.value + "|" + key.relativeTo.value
 
@@ -1744,7 +1770,7 @@ object SearchDomain {
      */
     val HISTORY_CHANGED_KINDS: List<Kind> =
         listOf(
-            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder,
+            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
             Kind.TaskTree, Kind.Shortcut, Kind.Window,
         )
 
@@ -1910,6 +1936,7 @@ object SearchDomain {
         AlarmTitle(Kind.Alarm, "Title"),
         TimerTitle(Kind.Timer, "Title"),
         ChronoTitle(Kind.Chrono, "Title"),
+        QuotaTitle(Kind.Quota, "Title"),
         ReminderTitle(Kind.Reminder, "Title"),
         // A new element of the section's kind, and a copy of each added one (user rule 2026-10-01).
         TaskNew(Kind.Task, "New"),
@@ -1924,6 +1951,13 @@ object SearchDomain {
         TimerDuplicate(Kind.Timer, "Duplicate"),
         ChronoNew(Kind.Chrono, "New"),
         ChronoDuplicate(Kind.Chrono, "Duplicate"),
+        QuotaNew(Kind.Quota, "New"),
+        QuotaDuplicate(Kind.Quota, "Duplicate"),
+        /**
+         * The bin, beside "New" and "Duplicate" — ABOVE the quota's editors, which are one block per added quota: at the
+         * end of the section it sat under six of each with six quotas added, and was not found (anomaly 2026-10-04).
+         */
+        QuotaDelete(Kind.Quota, "Delete"),
         ReminderNew(Kind.Reminder, "New"),
         ReminderDuplicate(Kind.Reminder, "Duplicate"),
         // A task cell's right-click menu (`TaskCellMenuItems`), over every added task.
@@ -1981,6 +2015,16 @@ object SearchDomain {
         TimerAlert(Kind.Timer, "Alert"),
         TimerDelete(Kind.Timer, "Delete"),
         ChronoDelete(Kind.Chrono, "Delete"),
+        // User rule 2026-10-03: a quota's settings, one control over every added quota, and where each one stands.
+        /** Each added quota's target progression now: the percentage, the amount due, the loop and its renewal. */
+        QuotaProgress(Kind.Quota, "Target progression"),
+        QuotaAmount(Kind.Quota, "Amount"),
+        /** The first loop's start and end, and whether it repeats. */
+        QuotaLoop(Kind.Quota, "Loop"),
+        /** The quota's resilience to each kind of restrictive period, a task's own. */
+        QuotaResilience(Kind.Quota, "Resilience"),
+        /** What is particular to one loop: its own start and end, its amount factor, its renewals. */
+        QuotaLoops(Kind.Quota, "Particular loops"),
         ReminderEvery(Kind.Reminder, "Every"),
         ReminderTime(Kind.Reminder, "Time"),
         ReminderConstraint(Kind.Reminder, "Constrained in"),
@@ -2029,7 +2073,50 @@ object SearchDomain {
         sections.sortedByDescending { reachOf(it.first, added) }
 
     /** How many of [added] the actions of the group [kind] apply to: all of them for the general group (null). */
-    fun reachOf(kind: Kind?, added: List<Result>): Int = added.count { kind == null || it.kind == kind }
+    fun reachOf(kind: Kind?, added: List<Result>): Int = added.count { kind == null || actionKindOf(it) == kind }
+
+    /**
+     * The kind whose actions apply to an added element (user rule 2026-10-03): its own — except an added **creation
+     * row of a kind that has a default configuration** edited through that kind's actions ("New quota"), which is
+     * acted on as that kind: the actions then edit what a new one starts with ([defaultConfigurationAdded]).
+     */
+    fun actionKindOf(result: Result): Kind =
+        if (result.kind == Kind.Creation && result is ItemResult && result.id == Kind.Quota.name) Kind.Quota else result.kind
+
+    /** Whether the "New [kind]" creation row is among [added] — its default configuration is then being edited. */
+    fun defaultConfigurationAdded(added: List<Result>, kind: Kind): Boolean =
+        added.any { it.kind == Kind.Creation && it is ItemResult && it.id == kind.name }
+
+    /**
+     * The actions of an added CREATION row: the ones that edit the kind's default configuration — the settings a new
+     * element starts with — and **"New"**, which is what the row is for: it creates one from that default (taken out
+     * with the others for an evening, 2026-10-04, and missed at once). Everything else of the kind's section
+     * (Duplicate, Delete, where an element stands, what is particular to one of its loops) is about an element that
+     * exists, and a creation row is not one.
+     */
+    val DEFAULT_CONFIGURATION_ACTIONS: Set<AddedAction> =
+        setOf(
+            AddedAction.QuotaNew, AddedAction.QuotaTitle, AddedAction.QuotaAmount, AddedAction.QuotaLoop,
+            AddedAction.QuotaResilience,
+        )
+
+    /**
+     * [sections] as the top right section lists them for [added] (anomaly 2026-10-04: a "New quota" creation row
+     * showed Delete and Duplicate): a kind reached ONLY through its creation row — no element of the kind is added —
+     * keeps the actions that edit the default configuration ([DEFAULT_CONFIGURATION_ACTIONS]) and nothing else. With
+     * an element of the kind added too, the whole section stands: its other actions are that element's.
+     */
+    fun actionsFor(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<Pair<Kind?, List<AddedAction>>> =
+        sections.mapNotNull { (kind, actions) ->
+            if (kind == null || added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
+                kind to actions
+            } else {
+                actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
+            }
+        }
+
+    /** The id a default configuration wears among the added elements of its kind: no element's own. */
+    const val DEFAULT_CONFIGURATION_ID: String = "(default configuration)"
 
     /** The kinds whose added elements share ONE title field ([AddedAction.AlarmTitle]…), by that action. */
     val TITLED_KINDS: Map<AddedAction, Kind> by lazy {
@@ -2037,6 +2124,7 @@ object SearchDomain {
             AddedAction.AlarmTitle to Kind.Alarm,
             AddedAction.TimerTitle to Kind.Timer,
             AddedAction.ChronoTitle to Kind.Chrono,
+            AddedAction.QuotaTitle to Kind.Quota,
             AddedAction.ReminderTitle to Kind.Reminder,
         )
     }
@@ -2053,10 +2141,18 @@ object SearchDomain {
                 Kind.Alarm -> state.alarms.map { it.id to it.label }
                 Kind.Timer -> state.timers.map { it.id to it.label }
                 Kind.Chrono -> state.chronos.map { it.id to it.label }
+                Kind.Quota -> state.quotas.map { it.id to it.title }
                 Kind.Reminder -> state.chores.map { it.id.ifEmpty { it.title } to it.title }
                 else -> emptyList()
             }
-        return all.filter { it.first in ids }.toMap()
+        val own = all.filter { it.first in ids }.toMap()
+        // An added "New quota" creation row: the DEFAULT configuration's title is one of the titles the field edits
+        // (anomaly 2026-10-03: with only that row added the title field had nothing to edit, and was disabled).
+        return if (kind == Kind.Quota && defaultConfigurationAdded(added, Kind.Quota)) {
+            mapOf(DEFAULT_CONFIGURATION_ID to state.newQuotaDefaults.title) + own
+        } else {
+            own
+        }
     }
 
     /** The added alarms the account still holds, in the list's order — what the alarm group's shared fields read. */
@@ -2549,6 +2645,7 @@ object SearchDomain {
             Kind.Alarm -> state.alarms.mapTo(HashSet()) { it.id }
             Kind.Timer -> state.timers.mapTo(HashSet()) { it.id }
             Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
+            Kind.Quota -> state.quotas.mapTo(HashSet()) { it.id }
             Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
             else -> emptySet()
         }
@@ -2605,6 +2702,13 @@ object SearchDomain {
                     ChronoEntry(id = ChronoDomain.mintChronoId(ids).also { ids += it }, label = named(chrono.id))
                 }
                 if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetChronos(state.chronos + copies))
+            }
+            Kind.Quota -> {
+                val ids = state.quotas.mapTo(HashSet()) { it.id }
+                val copies = state.quotas.filter { q -> rows.any { it.id == q.id } }.map { quota ->
+                    quota.copy(id = QuotaDomain.mintQuotaId(ids).also { ids += it }, title = named(quota.id))
+                }
+                if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetQuotas(state.quotas + copies))
             }
             Kind.Reminder -> {
                 // A blank id is minted by the reducer, as for a new reminder.
@@ -2708,6 +2812,10 @@ object SearchDomain {
                         val next = state.chronos.filterNot { it.id in ids }
                         if (next.size == state.chronos.size) emptyList() else listOf(SchedulerIntent.SetChronos(next))
                     }
+                    Kind.Quota -> {
+                        val next = state.quotas.filterNot { it.id in ids }
+                        if (next.size == state.quotas.size) emptyList() else listOf(SchedulerIntent.SetQuotas(next))
+                    }
                     Kind.Reminder -> remindersIntent(state, state.chores.filterNot { it.id.ifEmpty { it.title } in ids }, nowMillis, timeZone)
                     Kind.Category ->
                         state.categories.filter { it.id.value in ids }.map { SchedulerIntent.DeleteCategory(it.id) }
@@ -2742,6 +2850,15 @@ object SearchDomain {
                     Kind.Chrono -> {
                         val next = state.chronos.map { c -> titles[c.id]?.let { c.copy(label = it) } ?: c }
                         if (next == state.chronos) emptyList() else listOf(SchedulerIntent.SetChronos(next, command.editKey))
+                    }
+                    Kind.Quota -> {
+                        val next = state.quotas.map { q -> titles[q.id]?.let { q.copy(title = it) } ?: q }
+                        // The default configuration's title is its own setting, not a row of the list.
+                        val default = titles[DEFAULT_CONFIGURATION_ID]?.takeIf { it != state.newQuotaDefaults.title }
+                        listOfNotNull(
+                            default?.let { SchedulerIntent.SetNewQuotaDefaults(state.newQuotaDefaults.copy(title = it)) },
+                            SchedulerIntent.SetQuotas(next, command.editKey).takeIf { next != state.quotas },
+                        )
                     }
                     Kind.Reminder -> {
                         val next = state.chores.map { c -> titles[c.id.ifEmpty { c.title }]?.let { c.copy(title = it) } ?: c }

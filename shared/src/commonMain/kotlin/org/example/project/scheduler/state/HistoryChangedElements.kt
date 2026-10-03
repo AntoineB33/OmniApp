@@ -58,6 +58,7 @@ val Delta.changedElements: Set<ChangedElement>
             is AlarmsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Alarm, it)) }
             is TimersDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Timer, it)) }
             is ChronosDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Chrono, it)) }
+            is QuotasDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Quota, it)) }
             is ShortcutBindingDelta ->
                 GlobalShortcut.entries
                     .filter { GlobalShortcutBindings.chordOf(delta.before, it) != GlobalShortcutBindings.chordOf(delta.after, it) }

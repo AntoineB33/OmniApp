@@ -1608,8 +1608,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7 Search, a "creation" row (user spec 2026-09-26): a new element of [kind], made the way that kind's
         // own "+ New …" makes it — through the same intents and the account's default configuration — and opened in
         // its window. A new WINDOW is a Search window listing the window types.
-        // [open] false: made only — the Search window's "New" adds it to its own added elements instead.
-        fun createElement(kind: SearchDomain.Kind, open: Boolean = true) {
+        // Whoever asks — a creation row, or the actions' "New" button of any kind (user rule 2026-10-04) — the new
+        // element opens in a NEW Search window as its only added element; it never joins the asking window's list.
+        fun createElement(kind: SearchDomain.Kind) {
             val st = vm.state.value
             val now = clock.nowMillis()
             val minutes = Instant.fromEpochMilliseconds(now).toLocalDateTime(tz).let { it.hour * 60 + it.minute }
@@ -1629,35 +1630,45 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val title = unique("New category", st.categories.map { it.title })
                     vm.dispatch(SchedulerIntent.CreateCategory(title))
                     vm.state.value.categories.firstOrNull { it.title == title }?.let {
-                        if (open) openElementSearch(SearchDomain.Kind.Category, it.id.value)
+                        openElementSearch(SearchDomain.Kind.Category, it.id.value)
                     }
                 }
                 SearchDomain.Kind.RestrictivePeriod -> {
                     val name = unique("New period", st.allPeriodKinds)
                     vm.dispatch(SchedulerIntent.AddPeriodKind(name))
-                    if (name in vm.state.value.allPeriodKinds) if (open) openElementSearch(SearchDomain.Kind.RestrictivePeriod, name)
+                    if (name in vm.state.value.allPeriodKinds) openElementSearch(SearchDomain.Kind.RestrictivePeriod, name)
                 }
                 SearchDomain.Kind.Alarm -> {
                     val id = AlarmDomain.mintAlarmId(st.alarms.map { it.id })
                     vm.dispatch(SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, id, minutes)))
-                    if (open) openElementSearch(SearchDomain.Kind.Alarm, id)
+                    openElementSearch(SearchDomain.Kind.Alarm, id)
                 }
                 SearchDomain.Kind.Timer -> {
                     val id = TimerDomain.mintTimerId(st.timers.map { it.id })
                     vm.dispatch(SchedulerIntent.SetTimers(st.timers + NewElementDefaults.newTimer(st.newTimerDefaults, id)))
-                    if (open) openElementSearch(SearchDomain.Kind.Timer, id)
+                    openElementSearch(SearchDomain.Kind.Timer, id)
                 }
                 SearchDomain.Kind.Chrono -> {
                     val id = ChronoDomain.mintChronoId(st.chronos.map { it.id })
                     vm.dispatch(SchedulerIntent.SetChronos(st.chronos + ChronoEntry(id = id)))
-                    if (open) openElementSearch(SearchDomain.Kind.Chrono, id)
+                    openElementSearch(SearchDomain.Kind.Chrono, id)
+                }
+                // User rule 2026-10-03: a new quota is a week's, from this week's Monday 00:00 (the app is Monday-first).
+                SearchDomain.Kind.Quota -> {
+                    val id = org.example.project.scheduler.domain.QuotaDomain.mintQuotaId(st.quotas.map { it.id })
+                    val monday = today.plus(-today.dayOfWeek.ordinal, DateTimeUnit.DAY)
+                    val start = monday.atStartOfDayIn(tz).toEpochMilliseconds()
+                    val end = monday.plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
+                    // From the account's default configuration (the quota actions of an added "New quota" row).
+                    vm.dispatch(SchedulerIntent.SetQuotas(st.quotas + NewElementDefaults.newQuota(st.newQuotaDefaults, id, now, start, end)))
+                    openElementSearch(SearchDomain.Kind.Quota, id)
                 }
                 SearchDomain.Kind.Reminder -> {
                     val todayStart = today.atStartOfDayIn(tz).toEpochMilliseconds()
                     val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", minutes)
                     vm.dispatch(SchedulerIntent.SetChores(st.chores + created, todayStart, now))
                     vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let {
-                        if (open) openElementSearch(SearchDomain.Kind.Reminder, it)
+                        openElementSearch(SearchDomain.Kind.Reminder, it)
                     }
                 }
                 SearchDomain.Kind.TaskTree -> {
@@ -3868,6 +3879,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // A history unit's own window is the Search window holding it alone, whose "Information"
                             // action shows all of it (user rule 2026-10-03) — not the History window any more.
                             onOpenHistoryUnit = { openElementSearch(SearchDomain.Kind.HistoryUnit, it) },
+                            onOpenQuota = { openElementSearch(SearchDomain.Kind.Quota, it) },
                             // The windows that own a task tree, a task relation or a shortcut — opened if closed and
                             // brought to the front either way, never closed by this.
                             onOpenTaskTrees = {
@@ -3906,13 +3918,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     embeddedSubjects = subjects,
                                 )
                             },
-                            onCreate = { kind ->
-                                val before = vm.state.value
-                                createElement(kind, open = false)
-                                // A new task opens in a Search window of its own (createElement), not in this one's list.
-                                if (kind == SearchDomain.Kind.Task) emptyList()
-                                else SearchDomain.newElementKeys(before, vm.state.value, kind)
-                            },
+                            onCreate = ::createElement,
                             onPlaceOnCalendar = { drafts ->
                                 saveCalendarElementIntents(drafts, vm.state.value, tz).forEach(vm::dispatch)
                             },
@@ -4073,7 +4079,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             remember(
                                 targetConfig.added, schedulerState.tasks, schedulerState.taskTrees,
                                 schedulerState.categories, schedulerState.periodKinds, schedulerState.panels,
-                                schedulerState.alarms, schedulerState.timers, schedulerState.chronos,
+                                schedulerState.alarms, schedulerState.timers, schedulerState.chronos, schedulerState.quotas, schedulerState.quotas,
                                 schedulerState.chores, schedulerState.histories, schedulerState.taskRelations,
                                 schedulerState.shortcutBindings, schedulerState.activeTaskTreeId,
                                 schedulerState.cells, schedulerState.lists, windows,
