@@ -6,9 +6,8 @@ import org.example.project.scheduler.model.TaskRelationKey
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
-import org.example.project.scheduler.state.HistorySubject
-import org.example.project.scheduler.state.subject
-import org.example.project.scheduler.state.touchesTask
+import org.example.project.scheduler.state.ChangedElement
+import org.example.project.scheduler.state.changedElements
 import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.TimeZone
@@ -281,8 +280,8 @@ object SearchDomain {
                     historyCategory = filters.historyCategory?.name,
                     historyWindow = filters.historyWindow?.name,
                     historyUndone = filters.historyUndone.name,
-                    historySubject = filters.historySubject?.name,
-                    historyTask = filters.historyTask?.value,
+                    historyChangedKinds = Kind.entries.filter { it in filters.historyChangedKinds }.map { it.name },
+                    historyChangedElement = filters.historyChangedElement,
                     taskTreeOpen = filters.taskTreeOpen.name,
                     taskTreeDated = filters.taskTreeDated.name,
                     relationSection = filters.relationSection?.name,
@@ -339,8 +338,8 @@ object SearchDomain {
                         historyCategory = HistoryCategory.entries.firstOrNull { it.name == stored.historyCategory },
                         historyWindow = HistoryWindow.entries.firstOrNull { it.name == stored.historyWindow },
                         historyUndone = enumNamed(stored.historyUndone, Tri.Any),
-                        historySubject = HistorySubject.entries.firstOrNull { it.name == stored.historySubject },
-                        historyTask = stored.historyTask?.takeIf { it.isNotBlank() }?.let(::TaskId),
+                        historyChangedKinds = kindsNamed(stored.historyChangedKinds).filterTo(HashSet()) { it in HISTORY_CHANGED_KINDS },
+                        historyChangedElement = stored.historyChangedElement?.takeIf { it.isNotBlank() },
                         taskTreeOpen = enumNamed(stored.taskTreeOpen, Tri.Any),
                         taskTreeDated = enumNamed(stored.taskTreeDated, Tri.Any),
                         relationSection =
@@ -493,13 +492,16 @@ object SearchDomain {
         val historyWindow: HistoryWindow? = null,
         /** Yes = undone on its device (still redoable there). */
         val historyUndone: Tri = Tri.Any,
-        /** Null = any: else what the unit changed ([HistorySubject], e.g. a Search window's configuration). */
-        val historySubject: HistorySubject? = null,
         /**
-         * Null = any: else the unit changed this task ([org.example.project.scheduler.state.touchesTask]). An id, so a
-         * task deleted since is still one to look for.
+         * Empty = any: else the unit changed an element of one of these kinds ([HISTORY_CHANGED_KINDS],
+         * [org.example.project.scheduler.state.changedElements]) — several can be checked.
          */
-        val historyTask: TaskId? = null,
+        val historyChangedKinds: Set<Kind> = emptySet(),
+        /**
+         * Null = any: else the unit changed this element, by its Search key ([keyOf], `Alarm/alarm-3`). A key, so an
+         * element deleted since is still one to look for.
+         */
+        val historyChangedElement: String? = null,
         /** Yes = the task tree that is open (the live one). */
         val taskTreeOpen: Tri = Tri.Any,
         /** Yes = put on the timeline at a date. */
@@ -578,8 +580,8 @@ object SearchDomain {
                 Setting.HistoryCategorySetting -> historyCategory != null
                 Setting.HistoryWindowSetting -> historyWindow != null
                 Setting.HistoryUndoneSetting -> historyUndone != Tri.Any
-                Setting.HistorySubjectSetting -> historySubject != null
-                Setting.HistoryTaskSetting -> historyTask != null
+                Setting.HistoryChangedKindsSetting -> historyChangedKinds.isNotEmpty()
+                Setting.HistoryChangedElementSetting -> historyChangedElement != null
                 Setting.TaskTreeOpenSetting -> taskTreeOpen != Tri.Any
                 Setting.TaskTreeDatedSetting -> taskTreeDated != Tri.Any
                 Setting.RelationSectionSetting -> relationSection != null
@@ -730,8 +732,8 @@ object SearchDomain {
         HistoryCategorySetting(Kind.HistoryUnit, "Category"),
         HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
         HistoryUndoneSetting(Kind.HistoryUnit, "Undone"),
-        HistorySubjectSetting(Kind.HistoryUnit, "Changes"),
-        HistoryTaskSetting(Kind.HistoryUnit, "Changed task"),
+        HistoryChangedKindsSetting(Kind.HistoryUnit, "Changed element types"),
+        HistoryChangedElementSetting(Kind.HistoryUnit, "Changed element"),
         TaskTreeOpenSetting(Kind.TaskTree, "Open"),
         TaskTreeDatedSetting(Kind.TaskTree, "On the timeline"),
         RelationSectionSetting(Kind.TaskRelation, "Section"),
@@ -792,9 +794,9 @@ object SearchDomain {
         val historyWindow: String? = null,
         val historyUndone: String? = null,
         /** New 2026-10-03: absent from what an older build stored, which reads as any. */
-        val historySubject: String? = null,
-        /** New 2026-10-03: absent = any task. */
-        val historyTask: String? = null,
+        val historyChangedKinds: List<String> = emptyList(),
+        /** New 2026-10-03: absent = any element. */
+        val historyChangedElement: String? = null,
         val taskTreeOpen: String? = null,
         val taskTreeDated: String? = null,
         val relationSection: String? = null,
@@ -1568,8 +1570,7 @@ object SearchDomain {
                     (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&
                         (filters.historyWindow == null || unit.window == filters.historyWindow) &&
                         tri(filters.historyUndone, unit.undone) &&
-                        (filters.historySubject == null || unit.delta.subject == filters.historySubject) &&
-                        (filters.historyTask == null || unit.delta.touchesTask(filters.historyTask))
+                        historyChangeMatches(unit.delta.changedElements, filters)
                 }
                 Kind.TaskTree -> {
                     val entry = state.taskTrees.firstOrNull { it.id.value == result.id } ?: return true
@@ -1705,23 +1706,73 @@ object SearchDomain {
     }
 
     /**
-     * The "Changed task" filter's suggestions for what is typed ([Filters.historyTask]): the tasks of [state] whose title
-     * answers [query] by [matchRank] — the same matching as the search itself — best first, then those whose id contains
-     * it, at most [limit]. Nothing for a blank query.
+     * The kinds of element a History Unit can change ([org.example.project.scheduler.state.changedElements]) — what the
+     * "Changed element types" check boxes offer, in the drop-down's order.
      */
-    fun taskSuggestions(state: SchedulerState, query: String, limit: Int = 8): List<Task> {
-        val q = query.trim()
-        if (q.isEmpty()) return emptyList()
-        return state.tasks.values
-            .filter { it.title.isNotBlank() }
-            .mapNotNull { task ->
-                val rank = matchRank(task.title, q) ?: if (task.id.value.contains(q, ignoreCase = true)) 3 else null
-                rank?.let { it to task }
+    val HISTORY_CHANGED_KINDS: List<Kind> =
+        listOf(
+            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder,
+            Kind.TaskTree, Kind.Shortcut, Kind.Window,
+        )
+
+    /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
+    internal fun historyChangeMatches(changed: Set<ChangedElement>, filters: Filters): Boolean =
+        (filters.historyChangedKinds.isEmpty() || changed.any { it.kind in filters.historyChangedKinds }) &&
+            (filters.historyChangedElement == null || changed.any { it.key == filters.historyChangedElement })
+
+    /** One identity row of the "Changed element" field: the element's Search key, and what the row reads. */
+    data class ElementMenuRow(val key: String, val label: String)
+
+    /** The "Changed element" field's two menus: the elements whose title (or id) IS what is typed, and the title suggestions. */
+    data class ElementMenus(val identity: List<ElementMenuRow>, val titles: List<String>)
+
+    /**
+     * The "Changed element" field's menus for [text] — the ones a task cell shows, for every kind [kinds] checks (all of
+     * [HISTORY_CHANGED_KINDS] when none is). Each kind answers with the readings its own fields use: a task with the
+     * cell's id menu and title suggestions ([SchedulerDomain.taskIdentityMenuEntries], [SchedulerDomain.titleSuggestions]),
+     * a reminder with the reminder editors' ([SchedulerDomain.reminderMenuEntries],
+     * [SchedulerDomain.reminderTitleSuggestions]), and every other kind with the Search window's own rows of it
+     * ([itemResults]): the rows whose name or id IS the text, and the names that contain it. The identity rows carry the
+     * element's kind and id, since one menu lists several kinds. Titles are ordered as the cell orders them.
+     */
+    fun changedElementMenus(
+        state: SchedulerState,
+        kinds: Set<Kind>,
+        text: String,
+        windows: List<WindowEntry> = emptyList(),
+    ): ElementMenus {
+        val q = text.trim()
+        val identity = ArrayList<ElementMenuRow>()
+        val titles = ArrayList<String>()
+        for (kind in HISTORY_CHANGED_KINDS.filter { kinds.isEmpty() || it in kinds }) {
+            when (kind) {
+                Kind.Task -> {
+                    SchedulerDomain.taskIdentityMenuEntries(state, q).forEach { entry ->
+                        entry.taskId?.let { identity += ElementMenuRow(taskKey(it), kind.label + ": " + entry.label + "  ·  " + it.value) }
+                    }
+                    titles += SchedulerDomain.titleSuggestions(state, text)
+                }
+                Kind.Reminder -> {
+                    SchedulerDomain.reminderMenuEntries(state, q).forEach { entry ->
+                        identity += ElementMenuRow(kind.name + "/" + entry.id, kind.label + ": " + entry.title + "  ·  " + entry.id)
+                    }
+                    titles += SchedulerDomain.reminderTitleSuggestions(state, text)
+                }
+                else -> {
+                    val rows = itemResults(state, kind, "", windows = windows)
+                    rows.filter { q.isNotEmpty() && (it.name.equals(q, ignoreCase = true) || it.id.equals(q, ignoreCase = true)) }
+                        .forEach { identity += ElementMenuRow(keyOf(it), kind.label + ": " + it.name + "  ·  " + it.id) }
+                    titles += rows.map { it.name }.filter { it.isNotBlank() && it != text && (q.isEmpty() || it.contains(q, ignoreCase = true)) }
+                }
             }
-            .sortedWith(compareBy({ it.first }, { it.second.title.lowercase() }, { it.second.id.value }))
-            .take(limit)
-            .map { it.second }
+        }
+        val ordered = titles.distinct().sortedWith(compareByDescending<String> { SchedulerDomain.titleSimilarity(it, q) }.thenBy { it })
+        return ElementMenus(identity, ordered)
     }
+
+    /** What the "Changed element" field shows for the element [key] names: its name now, else the key itself. */
+    fun changedElementTitle(state: SchedulerState, key: String, windows: List<WindowEntry> = emptyList()): String =
+        resolve(state, listOf(key), windows = windows).firstOrNull()?.name ?: key
 
     /**
      * How well [name] answers [query]: 0 = the same name, 1 = starts with it, 2 = contains it, null = not a

@@ -621,13 +621,28 @@ titles" figure: the Search window and the per-object windows its rows open repla
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and
   chord. Opening one opens the window that owns it.
-- **A history unit is filtered by what it CHANGED, not only by where it was made** (user rule 2026-10-03): "Changes"
-  (`HistorySubject`, read off the delta by `Delta.subject` — a Search window's configuration is one subject whether it
-  was changed in that window, its Configuration Search window or its Added elements configurations window) and
-  "Changed task" (`Delta.touchesTask`: its fields, a cell re-pointed at it, a block or record of it, a setting that
-  reached it; a selection or expansion of its cell is not a change to it). Both are computed, nothing is stored on the
-  unit; the task is kept as an id, so a deleted task is still one to look for. The external keys (`search/`,
-  `window/`, `menu`) are `ExternalKeys`', which `App` records with — never a second spelling.
+- **A history unit is filtered by the ELEMENTS it changed, not only by where it was made** (user rule 2026-10-03).
+  What a unit changed is read off its delta (`Delta.changedElements`), each element named as the Search window names its
+  own rows (`ChangedElement.key` = `keyOf`'s `Kind/id`): a task's fields, cells and blocks and records; an alarm, timer,
+  chrono, category, task tree, shortcut; a period kind (its drawing, the kind, a period of it, `sleep` for the sleep
+  schedule); a reminder tag; a window's layout and — for a Search window — its configuration, whichever window it was
+  changed from. A selection, an expansion, a focus move names none. Computed, never stored; the element is kept by key,
+  so one deleted since is still one to look for.
+  - **"Changed element types"** is the app's one check-box drop-down (`CheckBoxDropDown`) over
+    `HISTORY_CHANGED_KINDS`: several types at once.
+  - **"Changed element"** is **a task cell, configured** — the tree's own `TaskRow`, as the priority-weight table's
+    rows are, except that ONE press enters Edit Mode (user rule 2026-10-03: a filter field has nothing to select);
+    Enter / Tab / Escape or a press outside it leave it,
+    and its menus exist **only while it is in Edit Mode** (the first version drew a bare field with the menus always
+    showing — 2026-10-03). No expand arrow, minimum time, percentage, Mode selector or "New task" row; emptying it
+    clears the filter. Its menus are the one `EditModeMenuBlock`: an identity menu (the elements whose title or id IS
+    the text — picking one sets the filter) and title suggestions (picking one fills the field), for the checked types
+    only, every changeable type when none is
+    (`SearchDomain.changedElementMenus`). Each type answers with its own fields' readings: a task with the cell's id
+    menu (`SchedulerDomain.taskIdentityMenuEntries`, the cell's matcher and label without a cell) and
+    `titleSuggestions`, a reminder with the reminder editors', every other type with the Search window's own rows.
+  - The external keys (`search/`, `window/`, `menu`) are `ExternalKeys`', which `App` records with — never a second
+    spelling.
 - **A window is a kind too** (`Kind.Window`), and the one kind whose rows are not the account's: `App` hands
   them in (`SearchDomain.WindowEntry`, built by `searchWindowEntries` off `WindowFrameHost.registrations` — the
   same list the window bar draws — plus every lateral-menu window that is not open). Every open instance is its

@@ -6941,6 +6941,19 @@ object SchedulerDomain {
     fun isPlaceableTask(state: SchedulerState, taskId: TaskId): Boolean =
         isLeafTask(state, taskId) && taskHasCells(state, taskId)
 
+    /**
+     * The cell's id menu ([changeTaskMenuEntries]) for a field that names a task without being a cell: every task whose
+     * title IS [draftText] — the same exact match, the same order, the same label (a task the tree does not hold reads
+     * `[dead]`) — with no "New task" row and no "placeable" restriction, since it designates a task rather than putting
+     * one somewhere. The Search window's "Changed element" filter asks it (a history unit can be about any task).
+     */
+    fun taskIdentityMenuEntries(state: SchedulerState, draftText: String): List<ChangeTaskMenuEntry> {
+        if (draftText.isBlank()) return emptyList()
+        val paths = shortestTaskTreePaths(state)
+        return matchingUserTaskIds(state, draftText.trim(), paths)
+            .map { ChangeTaskMenuEntry(taskId = it, label = changeTaskMenuLabel(state, it, paths)) }
+    }
+
     fun calendarTaskMenuEntries(
         state: SchedulerState,
         draftText: String,

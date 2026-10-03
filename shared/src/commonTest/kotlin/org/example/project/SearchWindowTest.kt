@@ -524,43 +524,48 @@ class SearchWindowTest {
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
     }
 
-    /** User rule 2026-10-03: history units can be filtered by the task they changed. */
+    /** [tree] with an alarm named like a task, so the two kinds' menus can be told apart. */
+    private fun treeWithAlarm(): SchedulerState =
+        r(tree(), SchedulerIntent.SetAlarms(listOf(AlarmEntry(id = "alarm-1", label = "Pie", timeOfDayMinutes = 7 * 60))))
+
+    private fun historyLabels(s: SchedulerState, filters: SearchDomain.Filters): List<String> =
+        SearchDomain.results(s, setOf(SearchDomain.Kind.HistoryUnit), "", filters = filters).map { it.name }
+
+    /** User rule 2026-10-03: history units can be filtered by the ELEMENT they changed — a task, an alarm, a window. */
     @Test
-    fun history_units_are_filtered_by_the_task_they_changed() {
-        var s = tree()
+    fun history_units_are_filtered_by_the_element_they_changed() {
+        var s = treeWithAlarm()
         val pie = taskWithTitle(s, "Pie")
         val crumble = taskWithTitle(s, "Crumble")
         s = r(s, SchedulerIntent.RenameTask(pie, "Tart"))
         s = r(s, SchedulerIntent.RenameTask(crumble, "Cobbler"))
-        val units = setOf(SearchDomain.Kind.HistoryUnit)
-        fun unitsAbout(task: TaskId) =
-            SearchDomain.results(s, units, "", filters = SearchDomain.Filters(historyTask = task))
+        fun unitsAbout(key: String) =
+            SearchDomain.results(s, setOf(SearchDomain.Kind.HistoryUnit), "", filters = SearchDomain.Filters(historyChangedElement = key))
                 .map { SearchDomain.historyUnitOf(s, (it as SearchDomain.ItemResult).id)!! }
-        val aboutPie = unitsAbout(pie)
-        assertTrue(aboutPie.isNotEmpty(), "Pie's creation and rename are units about it")
-        assertTrue(aboutPie.all { it.delta.details.none { line -> "Cobbler" in line } }, "Crumble's rename is not about Pie")
-        assertTrue(aboutPie.any { unit -> unit.delta.details.any { "Tart" in it } }, "Pie's rename is")
-        assertTrue(unitsAbout(crumble).any { unit -> unit.delta.details.any { "Cobbler" in it } })
-        // A task no tree holds any more is still an id to look for.
-        assertTrue(unitsAbout(TaskId("task/user/999")).isEmpty())
+        val aboutPie = unitsAbout(SearchDomain.taskKey(pie))
+        assertTrue(aboutPie.any { unit -> unit.delta.details.any { "Tart" in it } }, "Pie's rename is about it")
+        assertTrue(aboutPie.none { unit -> unit.delta.details.any { "Cobbler" in it } }, "Crumble's is not")
+        assertEquals(listOf("Add alarm"), unitsAbout("Alarm/alarm-1").map { it.delta.label })
+        // An element gone since is still a key to look for.
+        assertTrue(unitsAbout("Task/task/user/999").isEmpty())
     }
 
     /**
-     * User rule 2026-10-03: history units can be filtered by what they changed — a Search window's configuration
-     * whichever window the change was made in.
+     * User rule 2026-10-03: the element TYPES are check boxes — several at once — and a Search window's configuration
+     * is a change to that window, whichever window it was made from.
      */
     @Test
-    fun history_units_are_filtered_by_what_they_changed() {
-        var s = tree()
+    fun history_units_are_filtered_by_the_types_of_element_they_changed() {
+        var s = treeWithAlarm()
         s = r(s, SchedulerIntent.RecordExternal(org.example.project.scheduler.state.ExternalKeys.SEARCH + "Search", "{}", "{\"query\":\"x\"}", "Search text"))
-        s = r(s, SchedulerIntent.RecordExternal(org.example.project.scheduler.state.ExternalKeys.WINDOW + "Calendar", "a", "b", "Move window"))
-        val units = setOf(SearchDomain.Kind.HistoryUnit)
-        fun labelsOf(subject: org.example.project.scheduler.state.HistorySubject) =
-            SearchDomain.results(s, units, "", filters = SearchDomain.Filters(historySubject = subject)).map { it.name }
-        assertEquals(listOf("Search text"), labelsOf(org.example.project.scheduler.state.HistorySubject.SearchConfiguration))
-        assertEquals(listOf("Move window"), labelsOf(org.example.project.scheduler.state.HistorySubject.WindowLayout))
-        assertTrue(labelsOf(org.example.project.scheduler.state.HistorySubject.Tree).isNotEmpty(), "the tree's own edits")
-        assertTrue("Search text" !in labelsOf(org.example.project.scheduler.state.HistorySubject.Tree))
+        fun labels(vararg kinds: SearchDomain.Kind) = historyLabels(s, SearchDomain.Filters(historyChangedKinds = kinds.toSet()))
+        assertEquals(listOf("Add alarm"), labels(SearchDomain.Kind.Alarm))
+        assertEquals(listOf("Search text"), labels(SearchDomain.Kind.Window))
+        assertEquals(setOf("Add alarm", "Search text"), labels(SearchDomain.Kind.Alarm, SearchDomain.Kind.Window).toSet())
+        assertTrue(labels(SearchDomain.Kind.Task).isNotEmpty() && "Add alarm" !in labels(SearchDomain.Kind.Task))
+        // Both filters at once: the Search window's own element, among the window changes.
+        val search = SearchDomain.Filters(historyChangedKinds = setOf(SearchDomain.Kind.Window), historyChangedElement = "Window/Search")
+        assertEquals(listOf("Search text"), historyLabels(s, search))
     }
 
     @Test
@@ -569,25 +574,37 @@ class SearchWindowTest {
             SearchDomain.Config(
                 kinds = setOf(SearchDomain.Kind.HistoryUnit),
                 filters = SearchDomain.Filters(
-                    historySubject = org.example.project.scheduler.state.HistorySubject.SearchConfiguration,
-                    historyTask = TaskId("task/user/3"),
+                    historyChangedKinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm),
+                    historyChangedElement = "Alarm/alarm-1",
                 ),
             )
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
         assertEquals(2, config.filters.activeCount)
         // What a build before these filters wrote: neither field.
         val older = SearchDomain.Config.decode("{\"query\":\"\",\"kinds\":[\"HistoryUnit\"],\"historyUndone\":\"Yes\"}")!!
-        assertNull(older.filters.historySubject)
-        assertNull(older.filters.historyTask)
+        assertTrue(older.filters.historyChangedKinds.isEmpty())
+        assertNull(older.filters.historyChangedElement)
     }
 
+    /**
+     * The "Changed element" field's menus are a task cell's: an identity menu of the elements whose title IS the text,
+     * and title suggestions — over every checked type, and only those.
+     */
     @Test
-    fun the_changed_task_field_suggests_by_title_then_by_id() {
-        val s = tree()
-        assertEquals(listOf("Pie"), SearchDomain.taskSuggestions(s, "pi").map { it.title })
-        val crumble = taskWithTitle(s, "Crumble")
-        assertEquals(listOf(crumble), SearchDomain.taskSuggestions(s, crumble.value).map { it.id })
-        assertTrue(SearchDomain.taskSuggestions(s, "  ").isEmpty())
+    fun the_changed_element_menus_list_the_checked_types_only() {
+        val s = treeWithAlarm()
+        val pie = taskWithTitle(s, "Pie")
+        val both = SearchDomain.changedElementMenus(s, setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm), "Pie")
+        assertEquals(setOf(SearchDomain.taskKey(pie), "Alarm/alarm-1"), both.identity.map { it.key }.toSet())
+        assertTrue(both.identity.all { pie.value in it.label || "alarm-1" in it.label }, "each row names its id")
+        val tasksOnly = SearchDomain.changedElementMenus(s, setOf(SearchDomain.Kind.Task), "Pie")
+        assertEquals(listOf(SearchDomain.taskKey(pie)), tasksOnly.identity.map { it.key })
+        // Title suggestions: the cell's own for tasks ("Pi" → Pie), and the alarm's label where alarms are checked.
+        assertEquals(listOf("Pie"), SearchDomain.changedElementMenus(s, setOf(SearchDomain.Kind.Task), "Pi").titles)
+        assertEquals(listOf("Pie"), SearchDomain.changedElementMenus(s, setOf(SearchDomain.Kind.Alarm), "Pi").titles)
+        assertTrue(SearchDomain.changedElementMenus(s, setOf(SearchDomain.Kind.Timer), "Pi").titles.isEmpty())
+        // An id typed in full names its element too.
+        assertEquals(listOf("Alarm/alarm-1"), SearchDomain.changedElementMenus(s, setOf(SearchDomain.Kind.Alarm), "alarm-1").identity.map { it.key })
     }
 
     @Test

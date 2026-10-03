@@ -53,8 +53,8 @@ import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
-import org.example.project.scheduler.state.HistorySubject
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.ui.TaskRow
 
 /**
  * PRD §7 *Search*: the **Configuration Search** window, opened from the Search window's configuration. It lists
@@ -179,7 +179,7 @@ fun ConfigurationSearchWindow(
                         color = MaterialTheme.colorScheme.primary,
                     )
                     for (setting in settings) {
-                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange) }
+                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows) }
                     }
                 }
             }
@@ -210,6 +210,8 @@ private fun SettingEditor(
     config: SearchDomain.Config,
     openedConfig: SearchDomain.Config?,
     onChange: (SearchDomain.Config) -> Unit,
+    /** The app's windows: the "Changed element" field names a window by them. */
+    windows: List<SearchDomain.WindowEntry> = emptyList(),
 ) {
     val f = config.filters
     fun filters(next: SearchDomain.Filters) = onChange(config.copy(filters = next))
@@ -299,11 +301,19 @@ private fun SettingEditor(
             EnumPicker(HistoryWindow.entries, f.historyWindow, { it.label }) { filters(f.copy(historyWindow = it)) }
         SearchDomain.Setting.HistoryUndoneSetting ->
             Choices(SearchDomain.Tri.entries, f.historyUndone, { it.label }) { filters(f.copy(historyUndone = it)) }
-        // What the unit changed — a Search window's configuration whichever window it was changed from.
-        SearchDomain.Setting.HistorySubjectSetting ->
-            EnumPicker(HistorySubject.entries, f.historySubject, { it.label }) { filters(f.copy(historySubject = it)) }
-        SearchDomain.Setting.HistoryTaskSetting ->
-            TaskFilterField(state, f.historyTask) { filters(f.copy(historyTask = it)) }
+        // The kinds of element the unit changed: the app's one check-box drop-down, so several can be ticked.
+        SearchDomain.Setting.HistoryChangedKindsSetting ->
+            CheckBoxDropDown(
+                options = SearchDomain.HISTORY_CHANGED_KINDS,
+                checked = f.historyChangedKinds,
+                face = changedKindsFace(f.historyChangedKinds),
+                label = { it.label },
+                onChange = { filters(f.copy(historyChangedKinds = it)) },
+            )
+        SearchDomain.Setting.HistoryChangedElementSetting ->
+            ChangedElementField(state, f.historyChangedKinds, f.historyChangedElement, windows) {
+                filters(f.copy(historyChangedElement = it))
+            }
         SearchDomain.Setting.TaskTreeOpenSetting ->
             Choices(SearchDomain.Tri.entries, f.taskTreeOpen, { it.label }) { filters(f.copy(taskTreeOpen = it)) }
         SearchDomain.Setting.TaskTreeDatedSetting ->
@@ -570,66 +580,139 @@ private fun CategoryPicker(
     }
 }
 
+/** The "Changed element types" drop-down's face: "any type" when none is ticked, else the ticked ones. */
+private fun changedKindsFace(kinds: Set<SearchDomain.Kind>): String =
+    if (kinds.isEmpty()) "any type"
+    else SearchDomain.HISTORY_CHANGED_KINDS.filter { it in kinds }.joinToString(", ") { it.label }
+
 /**
- * The "Changed task" filter: type part of a task's title — or its id — and pick it among the matches listed under the
- * field ([SearchDomain.taskSuggestions]); empty is "any". A typed id that names no task any more (`task/…`) is taken
- * as it is, so the units about a deleted task can still be found. The field shows the chosen task's title and id.
+ * The "Changed element" filter: **a task cell, configured** — the tree's own [TaskRow], the way the priority-weight
+ * table's rows are one (`OptionalTaskEditMenus`). ONE press enters Edit Mode (user rule 2026-10-03), Enter / Tab /
+ * Escape leave it, and so does a press anywhere else (the §4 Forced Exit — here the outside press, since it has no
+ * sibling cells to be pressed). ONLY while it is in Edit Mode does it draw the one edit-mode menu block of the app
+ * ([EditModeMenuBlock]): the elements whose title or id IS the draft (picking one is the commit) and the title
+ * suggestions (picking one only fills the field), for the kinds ticked in "Changed element types" — every kind a unit
+ * can change when none is ([SearchDomain.changedElementMenus]).
+ *
+ * The configured differences from a tree cell follow from what the field is: no expand arrow, no minimum time, no
+ * percentage, no Mode selector (naming an element IS pointing at it, as in the category field), no "New task" row (it
+ * names an element that exists, or existed). Emptying the title clears the filter — the cell's own "emptying deletes";
+ * a draft that names nothing is dropped as the editor closes, like a weight-table row's. A task is drawn in its own
+ * colour, like every named task. The chosen element's key is drawn beside it.
  */
 @Composable
-private fun TaskFilterField(
+private fun ChangedElementField(
     state: SchedulerState,
-    taskId: org.example.project.scheduler.model.TaskId?,
-    onChange: (org.example.project.scheduler.model.TaskId?) -> Unit,
+    kinds: Set<SearchDomain.Kind>,
+    elementKey: String?,
+    windows: List<SearchDomain.WindowEntry>,
+    onChange: (String?) -> Unit,
 ) {
-    fun shown(id: org.example.project.scheduler.model.TaskId?): String =
-        id?.let { state.tasks[it]?.title?.takeIf(String::isNotBlank) ?: it.value }.orEmpty()
-    var draft by remember(taskId) { mutableStateOf(shown(taskId)) }
-    val chosen = taskId != null && draft == shown(taskId)
-    val suggestions = if (chosen) emptyList() else SearchDomain.taskSuggestions(state, draft)
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { typed ->
-                    draft = typed
-                    val id = typed.trim()
-                    when {
-                        id.isEmpty() -> onChange(null)
-                        // An id typed in full is the task itself, whether or not it still exists.
-                        id.startsWith("task/") -> onChange(org.example.project.scheduler.model.TaskId(id))
+    val shown = elementKey?.let { SearchDomain.changedElementTitle(state, it, windows) }.orEmpty()
+    var selected by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    fun closeEditor() {
+        if (!editing) return
+        editing = false
+        if (draft.isBlank()) onChange(null)
+    }
+    val editor = rememberOutsidePressEditor(active = editing) { closeEditor() }
+    val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
+    val taskId =
+        elementKey?.takeIf { it.startsWith(SearchDomain.Kind.Task.name + "/") }
+            ?.let { org.example.project.scheduler.model.TaskId(it.substringAfter('/')) }
+    Box(Modifier.width(320.dp).outsidePressPart(editor)) {
+        TaskRow(
+            depth = 0,
+            cellId = CHANGED_ELEMENT_CELL,
+            renderVia = null,
+            displayTitle = if (editing) draft else shown,
+            isMainSelection = selected,
+            isInSelectionRange = false,
+            selectable = true,
+            isEditing = editing,
+            hasChildren = false,
+            expanded = false,
+            moveDropBefore = false,
+            moveDropAfter = false,
+            canMoveFromCell = false,
+            isBeingMoved = false,
+            priorityLabel = null,
+            priorityColumnWidth = 200.dp,
+            taskColor = if (editing) null else taskId?.let { taskColors[it] },
+            searchRanges = emptyList(),
+            currentSearchRange = null,
+            textOverflow = false,
+            minMinutes = 0,
+            minTimeEditing = false,
+            cellMenu = null,
+            onTogglePriorityWeights = {},
+            onOpenRelativePriority = {},
+            onSetMinTime = {},
+            onActivateMinTime = {},
+            // One press enters Edit Mode here (user rule 2026-10-03): a filter field has nothing to select, so the
+            // tree's "press selects, double-click edits" would only cost a press. The double-click still lands in it.
+            onClick = { _, _, _, _ ->
+                selected = true
+                if (!editing) {
+                    draft = shown
+                    editing = true
+                }
+            },
+            onDragSelect = { _, _ -> },
+            moveDragActive = false,
+            resolveRowAt = { null },
+            onRowBounds = { _, _, _ -> },
+            onMoveDragStart = {},
+            onMoveDropHover = { _, _, _ -> },
+            onMoveDragEnd = {},
+            onDoubleClick = {
+                if (!editing) {
+                    draft = shown
+                    editing = true
+                }
+            },
+            onTextChange = { if (editing) draft = it },
+            onExitEdit = { closeEditor() },
+            onToggleExpand = {},
+            editMenus =
+                if (editing) {
+                    { _ ->
+                        val menus = SearchDomain.changedElementMenus(state, kinds, draft, windows)
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            EditModeMenuBlock(
+                                identityLabel = "Elements",
+                                identityRows = menus.identity.map { row ->
+                                    EditMenuItem(label = row.label, selected = row.key == elementKey) {
+                                        // Picking an element IS the commit, as picking a task is in a cell.
+                                        editing = false
+                                        onChange(row.key)
+                                    }
+                                },
+                                // A suggestion only fills the field, as it does in a cell.
+                                suggestions = menus.titles.map { title -> EditMenuItem(title) { draft = title } },
+                            )
+                        }
                     }
+                } else {
+                    null
                 },
-                singleLine = true,
-                placeholder = { Text("any — a task's title or id") },
-                supportingText = taskId?.let { id -> { Text(id.value, style = MaterialTheme.typography.labelSmall) } },
-                modifier = Modifier.width(240.dp),
-            )
-            if (taskId != null) {
-                Text(
-                    text = "✕",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { onChange(null) }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
-        }
-        suggestions.forEach { task ->
-            Text(
-                text = task.title + "  ·  " + task.id.value,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .width(240.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable { onChange(task.id) }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        }
+            showExpandArrow = false,
+            showMinTime = false,
+            rowContent =
+                elementKey?.takeIf { !editing }?.let { key ->
+                    { Text(key, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                },
+        )
     }
 }
+
+/** The "Changed element" field's cell id: a cell of no tree, so it can never be confused with one. */
+private val CHANGED_ELEMENT_CELL = org.example.project.scheduler.model.CellId("search/history-changed-element")
 
 /**
  * A calendar filter's day, typed as `YYYY-MM-DD`: empty is "any". The filter changes only when what is typed is a

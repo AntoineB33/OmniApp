@@ -11,15 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
-### Search window: history units filtered by what they changed and by task — 2026-10-03
+### Search window: history units filtered by the elements they changed — 2026-10-03
 
 User request: two filters for the history-unit kind, in the Configuration Search window beside Category / Made in /
-Undone. **Changes** (`HistorySubject`: tasks of the tree, expansion, selection, focus, calendar, work records, sleep,
-alarms, timers, chronos, task trees, default sub-tree, shortcuts, account settings, search configuration, window
-layout, lateral menu buttons) and **Changed task** (a field that suggests tasks by title or id, or takes a typed
-`task/…` id as is). Both read the unit's delta (`Delta.subject`, `Delta.touchesTask`); nothing new is stored on a unit.
-The external-change keys moved to `ExternalKeys` so `App` and the filter share one spelling. Stored with the Search
-configuration (local-only); an older configuration reads both as "any".
+Undone. **Changed element types** — check boxes (the app's `CheckBoxDropDown`) over task, category, restrictive period,
+alarm, timer, chrono, reminder, task tree, keyboard shortcut and window — and **Changed element**, a field named the way
+a task cell names a task: the one `EditModeMenuBlock`, with an identity menu (elements whose title or id is the text)
+and title suggestions, for the checked types only. Both read the unit's delta (`Delta.changedElements`, each element
+keyed like a Search row); nothing new is stored on a unit. A Search window's configuration change is a change to that
+window, whichever window it was made from. The external-change keys moved to `ExternalKeys` so `App` and the filter
+share one spelling. Stored with the Search configuration (local-only); an older configuration reads both as "any".
+(An earlier version the same day had a single-choice "Changes" subject list and a task-only "Changed task" field;
+replaced before release.) Anomaly the same day: the "Changed element" field drew its title suggestions while not in
+Edit Mode — it was a plain text field with the menu block always under it, not a cell. It is now the tree's own
+`TaskRow`, configured like the priority-weight table's rows: Edit Mode on ONE press (user rule, the same day — a
+filter field has nothing to select), leave on Enter / Tab / Escape or a press outside, menus only in Edit Mode.
 
 ### Screen breaks: a "Look away now" break is a 20 s screen break — 2026-10-03
 
