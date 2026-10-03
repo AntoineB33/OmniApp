@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a history unit's row is keyed by its identity, not its index — 2026-10-03
+
+Anomaly (account3): double-clicking the only row of a history-unit Search window again and again grew the added
+elements. A row's id was `Category#index`; account3's stacks are full (`MAX_HISTORY_UNITS`), so every new unit — adding
+an element records one — evicted the front and shifted every index: the same row came back under a new key (so "each
+key once" never matched) and the old key named another unit. The id is now `Category#deviceId#deviceSeq`
+(`SearchDomain.historyUnitId`), resolved by `historyUnitPlace` (one map per histories value) for the filters, the sort
+and the Information action. A stored configuration drops the old index-shaped keys on decode (they no longer name what
+was added). `HistoryUnitSearchIdTest`.
+
 ### Every field naming an element is the "Changed element" field — 2026-10-03
 
 User request: the Search window's "Changed element" filter is right; find the selection fields that must behave the

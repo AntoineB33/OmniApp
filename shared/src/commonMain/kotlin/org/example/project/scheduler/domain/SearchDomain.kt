@@ -359,7 +359,9 @@ object SearchDomain {
                         calendarAtMillis = stored.calendarAtMillis,
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
-                    added = stored.added.distinct(),
+                    // Heals the index-shaped history-unit keys of builds before 2026-10-03 ([historyUnitId]): an
+                    // index named whichever unit had shifted into it, so the key no longer means what was added.
+                    added = stored.added.distinct().filterNot(::isLegacyHistoryUnitKey),
                     actionQuery = stored.actionQuery,
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
@@ -1298,13 +1300,13 @@ object SearchDomain {
                 Kind.Reminder -> state.chores.map { chore ->
                     ItemResult(kind, chore.id.ifEmpty { chore.title }, chore.title, reminderDetail(chore))
                 }
-                // Every stack's units, as the History window lists them. The id is the unit's place in its stack,
-                // which is what [historyUnitOf] reads back for the filters.
+                // Every stack's units, as the History window lists them. The id is the unit's IDENTITY
+                // ([historyUnitId]), which is what [historyUnitOf] reads back for the filters.
                 Kind.HistoryUnit -> HistoryCategory.entries.flatMap { category ->
-                    state.histories.forCategory(category).units.mapIndexed { index, unit ->
+                    state.histories.forCategory(category).units.map { unit ->
                         val where = unit.window?.label ?: category.name
                         val undone = if (unit.undone) " · undone" else ""
-                        ItemResult(kind, category.name + "#" + index, unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
+                        ItemResult(kind, historyUnitId(category, unit), unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
                     }
                 }
                 Kind.TaskTree -> state.taskTrees.map { entry ->
@@ -1677,12 +1679,43 @@ object SearchDomain {
     /** The id of a task relation's row: its two task ids. */
     fun relationId(key: TaskRelationKey): String = key.taskId.value + "|" + key.relativeTo.value
 
-    /** The history unit a [Kind.HistoryUnit] row's id names (its stack, and its place in it), or null. */
-    fun historyUnitOf(state: SchedulerState, id: String): HistoryUnit? {
+    /**
+     * A [Kind.HistoryUnit] row's id: its stack, its device and its number among that device's units of the stack
+     * (`Main#<device>#<seq>`) — the unit's identity across devices, which never moves. It was the unit's INDEX in its
+     * stack until 2026-10-03, and a full stack evicts from the front: every new unit (adding an element to a Search
+     * window is one) shifted every index by one, so double-clicking the same row added it again under a new key, and
+     * the old key named another unit.
+     */
+    fun historyUnitId(category: HistoryCategory, unit: HistoryUnit): String =
+        category.name + "#" + unit.deviceId + "#" + unit.deviceSeq
+
+    /** The history unit a [Kind.HistoryUnit] row's id names, or null — an index-shaped id of an older build names none. */
+    fun historyUnitOf(state: SchedulerState, id: String): HistoryUnit? =
+        historyUnitPlace(state, id)?.let { (category, index) -> state.histories.forCategory(category).units[index] }
+
+    /** Where the unit [id] names sits now: its stack, and its index in it. */
+    fun historyUnitPlace(state: SchedulerState, id: String): Pair<HistoryCategory, Int>? {
         val category = HistoryCategory.entries.firstOrNull { it.name == id.substringBefore('#') } ?: return null
-        val index = id.substringAfter('#').toIntOrNull() ?: return null
-        return state.histories.forCategory(category).units.getOrNull(index)
+        val rest = id.substringAfter('#')
+        if ('#' !in rest) return null // an index-shaped id of an older build: it names no unit any more
+        // One map per histories value, not a scan per row: the filters and the sort ask this for every row.
+        val cached = unitPlaces
+        val places =
+            if (cached != null && cached.first === state.histories) cached.second
+            else buildMap {
+                for (c in HistoryCategory.entries) {
+                    state.histories.forCategory(c).units.forEachIndexed { index, unit -> put(historyUnitId(c, unit), c to index) }
+                }
+            }.also { unitPlaces = state.histories to it }
+        return places[id]?.takeIf { it.first == category }
     }
+
+    /** A history unit's added-element key in the index shape of builds before 2026-10-03 (`HistoryUnit/Main#12`). */
+    internal fun isLegacyHistoryUnitKey(key: String): Boolean =
+        key.startsWith(Kind.HistoryUnit.name + "/") && key.count { it == '#' } == 1
+
+    /** [historyUnitPlace]'s map, for the one histories value it was built from (replaced whole, never mutated). */
+    private var unitPlaces: Pair<org.example.project.scheduler.state.SchedulerHistories, Map<String, Pair<HistoryCategory, Int>>>? = null
 
     fun relationSectionLabel(section: TaskRelationsDomain.Section): String =
         when (section) {

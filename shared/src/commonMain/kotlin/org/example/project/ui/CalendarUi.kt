@@ -2376,15 +2376,13 @@ internal fun historyUnitEntry(
     )
 }
 
-/** The unit a Search window row names (`Category#index`, [SearchDomain.historyUnitOf]'s id), as [historyUnitEntry] lists it. */
+/** The unit a Search window row names ([SearchDomain.historyUnitId]), as [historyUnitEntry] lists it. */
 internal fun historyUnitEntryOfSearchId(
     state: org.example.project.scheduler.state.SchedulerState,
     id: String,
 ): FilteredHistoryEntry.Unit? {
-    val category = HistoryCategory.entries.firstOrNull { it.name == id.substringBefore('#') } ?: return null
-    val index = id.substringAfter('#').toIntOrNull() ?: return null
-    val history = state.histories.forCategory(category)
-    return if (index in history.units.indices) historyUnitEntry(category, history, index) else null
+    val (category, index) = org.example.project.scheduler.domain.SearchDomain.historyUnitPlace(state, id) ?: return null
+    return historyUnitEntry(category, state.histories.forCategory(category), index)
 }
 
 sealed interface FilteredHistoryEntry {
