@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Id suggestion lists: a task row is the Search window's task row — 2026-10-03
+
+User request: the id rows of an edit-mode menu (a task cell's, for example) must be the Search window's result
+elements, with only the expansion arrow, the title and the path; expandable, but one click picks the task id. New
+`TaskIdentityRow` (the result row's `TaskRow` + `TaskPathBox` without its path list or menu + a read-only
+`SearchSubtree`), drawn for every `EditMenuItem` carrying a `taskId` through `LocalTaskIdentityRow` (provided in
+`App`). Marked at the tree cell's and the weight table's menus, the calendar's "Edit task" and elements windows, the
+task picker, and the "Changed element" / "Set of tasks" naming fields. `docs/invariants/task-tree.md`.
+Follow-up anomaly (account3, the same evening): typing in a tree cell and picking a title raised *"Can't represent a
+width of 2147483563 and height of 0 in Constraints"* — a tree cell's edit menus are sized by their content's INTRINSIC
+width, and `TitleThenSection` read the unbounded maximum as a width, making the path box "infinity − the title" wide.
+It now lays out title + the section's own width when no maximum is offered. `TaskIdentityRowRenderTest` (headless
+render under an intrinsic-width, a sideways-scrolling and a narrow parent).
+
 ### Categories: a rule relative to a chosen task cell or a parent distance; task cell categories — 2026-10-03
 
 User requests (three, the same day): the Search window's "add a rule" let a rule be written relative to a task cell no

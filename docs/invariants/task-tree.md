@@ -551,6 +551,19 @@ titles" figure: the Search window and the per-object windows its rows open repla
   release account, all inside 4 detached parents). `firstTaskOccurrences` is one walk for every task (ADR 0009),
   and the *same* walk as `firstTaskOccurrence`.
 
+### An id row that names a task is the Search window's task row
+
+→ `ui/SearchWindow.kt` `TaskIdentityRow`, user rule 2026-10-03. Every identity (id) row of an edit-mode menu that
+names a task — a tree cell's Change Task menu, the weight table's, the calendar's "Edit task" and elements windows, the
+task picker, the Search window's naming fields — is drawn as the Search window's task result row: the tree's `TaskRow`
+with the same `TaskPathBox` and `SearchSubtree`, configured down to the **expansion arrow**, the **title** and the
+**path**. The arrow opens the task's sub-tree under it, read-only; one click anywhere else is the pick (on the press,
+once). No Edit Mode, no list of the other paths, no percentage, minimum time, categories, check box or kind; the
+right-click keeps "go to task". `EditMenuItem.taskId` marks such a row; `LocalTaskIdentityRow`, provided once by the
+app over the live state with the trees' paths measured when the trees change, draws it — without a provider (tests,
+previews) the row is the plain text row. A row naming no task (New task, a title suggestion, a category, a reminder)
+stays the text row.
+
 ### A field that names an element is a configured task cell
 
 → `ui/NamingCell.kt`. User rule 2026-10-03, after the Search window's "Changed element" filter showed its title

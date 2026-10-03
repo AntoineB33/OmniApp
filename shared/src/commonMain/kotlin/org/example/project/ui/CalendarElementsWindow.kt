@@ -647,7 +647,7 @@ private fun SelectionMenus(
                 identityLabel = "Tasks",
                 identityRows = taskMenuEntries(search, null).mapNotNull { entry ->
                     entry.taskId?.let { id ->
-                        EditMenuItem(label = entry.label, selected = false) {
+                        EditMenuItem(label = entry.label, selected = false, taskId = id) {
                             onSearchChange(titleForTaskId(id) ?: entry.label)
                         }
                     }

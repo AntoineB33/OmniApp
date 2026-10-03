@@ -8979,7 +8979,7 @@ fun ManualEntryEditWindow(
                             val selectedIndex =
                                 SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, effectiveTaskId)
                             taskEntries.mapIndexed { index, entry ->
-                                EditMenuItem(label = entry.label, selected = index == selectedIndex) {
+                                EditMenuItem(label = entry.label, selected = index == selectedIndex, taskId = entry.taskId) {
                                     if (entry.taskId == null) {
                                         selectedTaskId = null // "New task" → calendar-only
                                         newTaskChosen = true
@@ -9837,8 +9837,19 @@ data class EditMenuItem(
      * competes with [color] above: one says which task, the other what is true of it here.
      */
     val taskColor: Color? = null,
+    /**
+     * User rule 2026-10-03: the task an identity row NAMES — such a row is drawn as the Search window's task result
+     * row, configured ([TaskIdentityRow], through [LocalTaskIdentityRow]). Null for every other row.
+     */
+    val taskId: org.example.project.scheduler.model.TaskId? = null,
     val onClick: () -> Unit,
 )
+
+/**
+ * How an id row naming a task is drawn ([TaskIdentityRow] over the live state), provided once by the app; null where
+ * nothing provides it (a test, a preview), and the row is then the plain text row.
+ */
+val LocalTaskIdentityRow = androidx.compose.runtime.compositionLocalOf<(@Composable (EditMenuItem) -> Unit)?> { null }
 
 /** How many title suggestions any edit-mode menu lists (PRD §4); the same cap everywhere. */
 private const val EDIT_MENU_SUGGESTION_LIMIT = 8
@@ -9941,6 +9952,11 @@ private fun EditMenuSection(
 /** One [EditMenuItem] of an [EditMenuSection], drawn the one way every edit-mode menu row is. */
 @Composable
 private fun EditMenuSectionRow(row: EditMenuItem, focusPreserving: Boolean) {
+    val taskRow = LocalTaskIdentityRow.current
+    if (row.taskId != null && taskRow != null) {
+        taskRow(row)
+        return
+    }
     EditMenuRow(
         label = row.label,
         selected = row.selected,

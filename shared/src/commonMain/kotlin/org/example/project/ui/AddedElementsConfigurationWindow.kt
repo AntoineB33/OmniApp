@@ -1139,7 +1139,7 @@ private fun FulfilmentEditor(
                 identity = { draft ->
                     SchedulerDomain.taskIdentityMenuEntries(state, draft)
                         .mapNotNull { entry -> entry.taskId?.takeIf { it != leaf && it !in task.fulfilment }?.let { it to entry.label } }
-                        .map { (id, label) -> NamingRow(SearchDomain.taskKey(id), label, taskColors[id]) }
+                        .map { (id, label) -> NamingRow(SearchDomain.taskKey(id), label, taskColors[id], taskId = id) }
                 },
                 suggestions = { draft -> SchedulerDomain.titleSuggestions(state, draft) },
                 onPick = { key ->

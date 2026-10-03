@@ -613,7 +613,12 @@ private fun ChangedElementField(
         shown = elementKey?.let { SearchDomain.changedElementTitle(state, it, windows) }.orEmpty(),
         identityLabel = "Elements",
         identity = { draft ->
-            SearchDomain.changedElementMenus(state, kinds, draft, windows).identity.map { NamingRow(it.key, it.label) }
+            SearchDomain.changedElementMenus(state, kinds, draft, windows).identity.map { row ->
+                // A task among the elements is drawn as the Search window's task row (user rule 2026-10-03).
+                val task = row.key.takeIf { it.startsWith(SearchDomain.Kind.Task.name + "/") }
+                    ?.let { org.example.project.scheduler.model.TaskId(it.substringAfter('/')) }
+                NamingRow(row.key, row.label, taskColor = task?.let { taskColors[it] }, taskId = task)
+            }
         },
         suggestions = { draft -> SearchDomain.changedElementMenus(state, kinds, draft, windows).titles },
         onPick = { onChange(it) },

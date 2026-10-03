@@ -21,7 +21,13 @@ import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.ui.TaskRow
 
 /** One identity row of a [NamingCell]: the key picking it commits, and what the row reads. */
-internal data class NamingRow(val key: String, val label: String, val taskColor: Color? = null)
+internal data class NamingRow(
+    val key: String,
+    val label: String,
+    val taskColor: Color? = null,
+    /** The task the row names, when it names one — drawn as the Search window's task row ([TaskIdentityRow]). */
+    val taskId: org.example.project.scheduler.model.TaskId? = null,
+)
 
 /**
  * **A field that names something, as a task cell does** — the tree's own [TaskRow], configured, the way the
@@ -126,7 +132,7 @@ internal fun NamingCell(
                             EditModeMenuBlock(
                                 identityLabel = identityLabel,
                                 identityRows = identity(draft).map { row ->
-                                    EditMenuItem(label = row.label, selected = row.key == selectedKey, taskColor = row.taskColor) {
+                                    EditMenuItem(label = row.label, selected = row.key == selectedKey, taskColor = row.taskColor, taskId = row.taskId) {
                                         // Picking IS the commit, as picking a task is in a cell.
                                         editing = false
                                         onPick(row.key)

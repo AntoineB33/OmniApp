@@ -221,6 +221,7 @@ fun TaskPickerMenu(
                                 label = row.label,
                                 color = restrictionColorOf(taskId),
                                 taskColor = taskColors[taskId],
+                                taskId = taskId,
                             ) { onPick(taskId) }
                         },
                     // A suggestion only fills the field, as in every other naming field of the app: it names

@@ -1117,6 +1117,7 @@ internal fun EditModeMenus(
                     label = entry.label,
                     selected = index == selectedIndex,
                     taskColor = entry.taskId?.let { menuTaskColors[it] },
+                    taskId = entry.taskId,
                     actions = EditMenuRowActions(
                         onGoToTask = occurrence?.let { found ->
                             { onIntent(SchedulerIntent.RevealCell(found.cellId, found.ancestors)) }
@@ -1185,6 +1186,7 @@ private fun OptionalTaskEditMenus(
     val taskRows = eligibleTaskIds.map { taskId ->
         EditMenuItem(
             label = state.tasks[taskId]?.title.orEmpty(),
+            taskId = taskId,
             onClick = { onPickTask(taskId) },
         )
     }
@@ -3402,6 +3404,22 @@ private fun RowScope.TitleThenSection(
     sectionMinWidth: Dp,
 ) {
     Layout(contents = listOf(title, section), modifier = Modifier.weight(1f)) { (titleM, sectionM), constraints ->
+        // No maximum width — a parent sized by its content's INTRINSIC width (a drop-down, a tree cell's edit menus)
+        // asks how wide the row would be, and a sideways-scrolling one offers no bound at all. There is no free width
+        // to share then: the title takes what it needs and the section what IT needs (never less than its minimum),
+        // and the row is exactly that wide. Reading the unbounded maximum as a width made the section
+        // "infinity − the title" wide: "Can't represent a width of 2147483563 … in Constraints" (anomaly 2026-10-03,
+        // an id suggestion list's task row).
+        if (!constraints.hasBoundedWidth) {
+            val titleP = titleM.first().measure(Constraints(maxHeight = constraints.maxHeight))
+            val wanted = maxOf(sectionMinWidth.roundToPx(), sectionM.first().maxIntrinsicWidth(titleP.height))
+            val sectionP = sectionM.first().measure(Constraints.fixedWidth(wanted).copy(maxHeight = constraints.maxHeight))
+            val height = maxOf(titleP.height, sectionP.height)
+            return@Layout layout(titleP.width + sectionP.width, height) {
+                titleP.place(0, (height - titleP.height) / 2)
+                sectionP.place(titleP.width, (height - sectionP.height) / 2)
+            }
+        }
         val width = constraints.maxWidth
         val minSection = sectionMinWidth.roundToPx().coerceAtMost(width)
         val titleP =

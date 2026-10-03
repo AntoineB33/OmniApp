@@ -42,6 +42,9 @@ import org.example.project.scheduler.domain.ChronoDomain
 import org.example.project.scheduler.domain.CalendarLockDomain
 import org.example.project.scheduler.ui.CalendarGoTo
 import org.example.project.scheduler.ui.LocalCalendarGoTo
+import org.example.project.ui.EditMenuItem
+import org.example.project.ui.LocalTaskIdentityRow
+import org.example.project.ui.TaskIdentityRow
 import org.example.project.scheduler.domain.TaskPathsDomain
 import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.domain.CalendarElements
@@ -2780,7 +2783,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val periodRefusal = remember(periodRefusalTasks) {
             { taskId: TaskId?, kind: String -> SchedulerDomain.periodRefuses(periodRefusalTasks, taskId, kind) }
         }
+        // User rule 2026-10-03: every id suggestion list's task row is the Search window's task result row, configured
+        // ([TaskIdentityRow]). Its paths are one walk of every tree, measured when the trees change — never per row.
+        val identityPaths =
+            remember(schedulerState.cells, schedulerState.lists, schedulerState.tasks, schedulerState.taskTrees) {
+                SearchDomain.allPathsInAnyTree(schedulerState)
+            }
+        val taskIdentityRow: @Composable (EditMenuItem) -> Unit = { item ->
+            TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) })
+        }
         CompositionLocalProvider(
+            LocalTaskIdentityRow provides taskIdentityRow,
             LocalPeriodRefusal provides periodRefusal,
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,

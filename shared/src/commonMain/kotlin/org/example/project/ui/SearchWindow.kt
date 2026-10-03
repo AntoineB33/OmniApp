@@ -1553,7 +1553,10 @@ private val SUBTREE_MAX_HEIGHT: Dp = 320.dp
 private fun TaskPathBox(
     result: SearchDomain.TaskResult,
     onSelect: () -> Unit,
-    actions: (path: List<String>?) -> TaskCellMenuActions,
+    /** The cell menu of a right-clicked path; null for a box with no menu (an id suggestion list's row). */
+    actions: ((path: List<String>?) -> TaskCellMenuActions)?,
+    /** Whether a task with several paths offers the arrow that lists them all; an id row shows its first only. */
+    listsPaths: Boolean = true,
 ) {
     var listOpen by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<TaskCellMenuActions?>(null) }
@@ -1562,8 +1565,8 @@ private fun TaskPathBox(
     val selectNow = { latestOnSelect() }
     var menuOpen by remember { mutableStateOf(false) }
     val onOpenMenu: (List<String>?) -> Unit = { path ->
-        menu = actions(path)
-        menuOpen = true
+        menu = actions?.invoke(path)
+        menuOpen = menu != null
     }
     menu?.let { shown ->
         transientMenuDismissal(menuOpen) { menuOpen = false }
@@ -1577,7 +1580,7 @@ private fun TaskPathBox(
             .clip(RoundedCornerShape(4.dp))
             .border(1.dp, onTaskCell(MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(4.dp))
             .then(
-                contextMenuModifier(enabled = true, key = result.taskId to "path", onSelect = selectNow) {
+                contextMenuModifier(enabled = actions != null, key = result.taskId to "path", onSelect = selectNow) {
                     onOpenMenu(result.shownPath.takeIf { it.isNotEmpty() })
                 },
             )
@@ -1593,7 +1596,7 @@ private fun TaskPathBox(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (result.hasSeveralPaths) {
+        if (result.hasSeveralPaths && listsPaths) {
             Box {
                 Text(
                     text = if (listOpen) "▴" else "▾",
@@ -1636,6 +1639,128 @@ private fun TaskPathBox(
             }
         } else {
             Box(Modifier.width(6.dp))
+        }
+    }
+}
+
+/**
+ * User rule 2026-10-03: **a task row of an id suggestion list** (the identity menu of every edit-mode menu that names
+ * a task — a tree cell's, the weight table's, the calendar's, the task picker's, the Search window's naming fields) is
+ * the Search window's own task result row — the tree's [TaskRow] with the same [TaskPathBox] and the same
+ * [SearchSubtree] — configured down to three sections: the **expansion arrow**, the **title** and the **path**. The
+ * arrow opens the task's sub-tree under the row, read-only; a click anywhere else is the PICK ([EditMenuItem.onClick]):
+ * no Edit Mode, no list of the other paths, no percentage, minimum time, categories, check box or kind. A right-click
+ * keeps the id row's own "go to task" ([EditMenuItem.actions]).
+ *
+ * [allPaths] is [SearchDomain.allPathsInAnyTree], measured once per change of the trees by the caller
+ * ([LocalTaskIdentityRow]'s provider), never per row.
+ */
+@Composable
+internal fun TaskIdentityRow(
+    state: SchedulerState,
+    allPaths: Map<TaskId, List<List<String>>>,
+    item: EditMenuItem,
+    onIntent: (SchedulerIntent) -> Unit,
+) {
+    val taskId = item.taskId ?: return
+    val task = state.tasks[taskId]
+    val title = task?.title?.takeIf { it.isNotBlank() } ?: item.label
+    val paths = allPaths[taskId].orEmpty()
+    val result = SearchDomain.TaskResult(taskId, title, paths.take(1), inTaskTree = paths.isNotEmpty())
+    val childListId = task?.childListId
+    val hasChildren = childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+    var expanded by remember(taskId) { mutableStateOf(false) }
+    var menuOpen by remember(taskId) { mutableStateOf(false) }
+    val pick by rememberUpdatedState(item.onClick)
+    // BOUNDED in width, whatever the parent offers. A tree cell's edit menus sit in a tree that scrolls sideways, so
+    // they are measured with NO maximum width; the row shares its free width between the title and the path box, and
+    // an unbounded one is the "Can't represent a width of 2147483563 … in Constraints" crash (anomaly 2026-10-03,
+    // typing in a cell and picking from its menus). A narrower parent (a drop-down) still wins.
+    Column(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().then(contextMenuModifier(item.actions != null, key = taskId to "identity") { menuOpen = true })) {
+            TaskRow(
+                depth = 0,
+                cellId = CellId("identity-row/" + taskId.value),
+                renderVia = null,
+                displayTitle = title,
+                isMainSelection = item.selected,
+                isInSelectionRange = false,
+                selectable = true,
+                isEditing = false,
+                hasChildren = hasChildren,
+                expanded = expanded,
+                moveDropBefore = false,
+                moveDropAfter = false,
+                canMoveFromCell = false,
+                isBeingMoved = false,
+                priorityLabel = null,
+                priorityColumnWidth = PRIORITY_COLUMN_MIN,
+                taskColor = item.taskColor,
+                searchRanges = emptyList(),
+                currentSearchRange = null,
+                textOverflow = false,
+                minMinutes = 0,
+                minTimeEditing = false,
+                cellMenu = null,
+                onTogglePriorityWeights = {},
+                onOpenRelativePriority = {},
+                onSetMinTime = {},
+                onActivateMinTime = {},
+                // One click anywhere but the arrow selects the task id: the pick — on the PRESS only. The row reports a
+                // plain click twice (the press, then its resolution with `forceClear`), and a pick must happen once.
+                onClick = { _, _, _, forceClear -> if (!forceClear) pick() },
+                onDragSelect = { _, _ -> },
+                moveDragActive = false,
+                resolveRowAt = { null },
+                onRowBounds = { _, _, _ -> },
+                onMoveDragStart = {},
+                onMoveDropHover = { _, _, _ -> },
+                onMoveDragEnd = {},
+                onDoubleClick = {},
+                onTextChange = {},
+                onExitEdit = {},
+                onToggleExpand = { if (hasChildren) expanded = !expanded },
+                editMenus = null,
+                showMinTime = false,
+                afterTitle = {
+                    Box(Modifier.fillMaxWidth().height(24.dp).padding(start = 8.dp)) {
+                        TaskPathBox(result, onSelect = {}, actions = null, listsPaths = false)
+                    }
+                },
+                afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
+            )
+            item.actions?.let { actions ->
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("go to task") },
+                        enabled = actions.onGoToTask != null,
+                        onClick = {
+                            menuOpen = false
+                            actions.onGoToTask?.invoke()
+                        },
+                    )
+                }
+            }
+        }
+        if (expanded && hasChildren && childListId != null) {
+            SearchSubtree(
+                state = state,
+                listId = childListId,
+                // Looked through, never modified: the row only names the task.
+                readOnly = true,
+                priorities = emptyMap(),
+                checkedKeys = emptySet(),
+                onToggleChecked = {},
+                focused = false,
+                onFocus = {},
+                onIntent = onIntent,
+                onSetWeightWindow = {},
+                onSetRelativeWindow = {},
+                onOpenTaskEdit = {},
+                onOpenCategory = {},
+                onDeepCopyCell = {},
+                onGoToTaskTree = {},
+            )
         }
     }
 }
