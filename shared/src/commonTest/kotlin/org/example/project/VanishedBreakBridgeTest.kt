@@ -99,9 +99,15 @@ class VanishedBreakBridgeTest {
         assertTrue(banked.tasks.getValue(write).record.any { it.endEpochMillis == hole.startEpochMillis }, "the side before is a record")
         val after = press(banked, NOW + 30 * SEC)
         val record = after.tasks.getValue(write).record
-        assertTrue(record.any { it.endEpochMillis == NOW + 30 * SEC && it.startEpochMillis < hole.startEpochMillis }, "one record up to the line: $record")
+        // The conducted look-away itself, [+10 s, +30 s), is a 20 s screen break: it allows no task, so no work is
+        // recorded inside it (2026-10-03 — this used to expect one record straight through it, which is the task panel
+        // drawn inside a conducted break that account 3 reported). The task replaces the VANISHED look-away up to it.
+        val conducted = TaskTimeRange(NOW + 10 * SEC, NOW + 30 * SEC)
+        assertTrue(record.any { it.endEpochMillis == conducted.startEpochMillis && it.startEpochMillis < NOW }, "one record up to the conducted break: $record")
+        assertTrue(record.none { it.startEpochMillis < conducted.endEpochMillis && conducted.startEpochMillis < it.endEpochMillis }, "no work inside the conducted break: $record")
         assertTrue(after.panels.any { it.taskId == write && it.auto && it.startEpochMillis == NOW + 30 * SEC }, "the plan resumes at the line")
-        assertTrue(covers(boxes(after, write), NOW - MIN, NOW + MIN))
+        assertTrue(covers(boxes(after, write), NOW - MIN, conducted.startEpochMillis))
+        assertTrue(covers(boxes(after, write), conducted.endEpochMillis, NOW + MIN))
     }
 
     @Test

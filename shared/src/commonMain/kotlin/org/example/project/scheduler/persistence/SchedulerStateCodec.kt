@@ -207,6 +207,10 @@ object SchedulerStateCodec {
             val panels = SchedulerDomain.unifyNoScreenPeriods(state.panels)
             if (panels === state.panels) state else state.copy(panels = panels)
         }.let { state ->
+            // A look-away the app conducted allows no task; an older build recorded the work it interrupted straight
+            // through it (2026-10-03). The records the advance banks are derived and local, so they are healed here.
+            SchedulerDomain.withWorkOutOfBreaks(state, state.panels.filter { it.conductedBreak })
+        }.let { state ->
             val template = SchedulerDomain.withRootTask(state.defaultSubtree.tree)
             val trees = state.taskTrees.map { entry -> entry.copy(tree = SchedulerDomain.withRootTask(entry.tree)) }
             if (template === state.defaultSubtree.tree && trees == state.taskTrees) {

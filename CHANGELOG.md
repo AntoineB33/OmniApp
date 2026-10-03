@@ -11,6 +11,30 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Screen breaks: a "Look away now" break is a 20 s screen break — 2026-10-03
+
+Anomaly (account 3, 11:27:36): the look-away the app conducted on `Ctrl+Shift+Alt+E` was drawn with a task panel inside
+it and no "no screen", "no computer unlocked" or "not on a computer" over it. `RecordConductedBreak` still recorded it
+as an `inactivity` period (which carries nothing) after the automatic look-away became the "20s screen break" kind that
+morning, and recorded work was only cut out of the BANKED breaks, which a conducted one is not. Now: the conducted
+panel's kind is `BREAK_20S` (an older one is healed by `TaskPanel.restrictiveKind`); `statedKindRegions` lays its "no
+screen" like a drawn break's, so the layers follow; every banking cuts work out of it (`appendRecordOutsideNoScreen`,
+via `breakRefusedRanges`), work banked across it before it ended is cut when it is recorded
+(`SchedulerDomain.withWorkOutOfBreaks`, after the vanished look-away is bridged), and decode heals the records an older
+build wrote through one. `VanishedBreakBridgeTest` had pinned one record running straight through the conducted break;
+it now expects the record to stop at it. `ConductedBreakIsABreakTest`.
+
+### Screen breaks: a break a re-plan makes due starts at once — 2026-10-03
+
+Anomaly (account 3, 11:07): after start-up the now-line sat in a 20 s gap of the plan; the look-away block and its voice
+only came 20 s later. The start-up re-plan's rebuild (`rebuildBreaksFromHistory`) dropped the 20 s bar into the past —
+the look-away was due at the line, and the plan left its gap — but the rebuild only cleared the machine's armed
+trigger and woke nothing, so the break was entered when the next panel edge woke the cue sweep. And when something did
+wake it, the step entered the break where the machine last stood (it does not move while nothing is armed), i.e. in
+the past, with its cue swallowed as stale. The rebuild now moves the machine to the clock under the old bars first,
+then wakes the cue sweep (`breakMachineRearmed`), which enters the break at the rebuild instant and announces it.
+`RebuiltBarStepsAtOnceTest` (virtual time; `ReplanHealsDeducedBarTest` stepped the line by hand, which hid it).
+
 ### Notifications: the Notifications switch no longer announces itself — 2026-10-03
 
 User rule: turning the lateral menu's Notifications switch back on posted (and spoke) "Notifications on". The user

@@ -3224,6 +3224,13 @@ object SchedulerDomain {
             val span = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
             own.getOrPut(kind) { ArrayList() } += span
             if (isUserStated(panel)) manual.getOrPut(kind) { ArrayList() } += span
+            // A look-away the app CONDUCTED is a screen break that happened, drawn as one: it is accompanied by its
+            // "no screen" exactly as the [breaks] are (2026-10-03 — it laid no layer at all, being read as a period
+            // of its kind alone, which carries nothing).
+            if (panel.conductedBreak) {
+                own.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += span
+                manual.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += span
+            }
         }
         for ((kind, spans) in away) own.getOrPut(kind) { ArrayList() } += spans
         if (own.isEmpty()) return emptyMap()
@@ -4543,6 +4550,31 @@ object SchedulerDomain {
             .filter { task == null || task.resilienceFor(it.kind) <= 0.0 }
             .map { TaskTimeRange(it.startMillis, it.endMillis) }
             .let(::mergeOccupied)
+
+    /**
+     * [state] with every task's recorded work taken out of what [breaks] refuse it ([breakRefusedRanges]) — the same
+     * instance when nothing overlaps. The one cut for a break that became a fact after work was banked across it: the
+     * look-away the app CONDUCTED, recorded when it ends (`RecordConductedBreak`), and one an older build recorded with
+     * the work still through it (healed on decode, 2026-10-03).
+     */
+    fun withWorkOutOfBreaks(state: SchedulerState, breaks: List<TaskPanel>): SchedulerState {
+        if (breaks.isEmpty()) return state
+        var changed = false
+        val tasks =
+            state.tasks.mapValues { (_, task) ->
+                if (task.record.isEmpty()) return@mapValues task
+                val refused =
+                    mergeOccupied(
+                        breaks
+                            .filter { b -> task.record.any { it.startEpochMillis < b.endEpochMillis && b.startEpochMillis < it.endEpochMillis } }
+                            .flatMap { breakRefusedRanges(it, task) },
+                    )
+                if (refused.isEmpty()) return@mapValues task
+                val cut = subtractRegions(task.record, refused)
+                if (cut == task.record) task else task.copy(record = cut).also { changed = true }
+            }
+        return if (changed) state.copy(tasks = tasks) else state
+    }
 
     /** [breakRefusedRanges] for a banked break, read off its role ([BankedBreak.label]). */
     fun breakRefusedRanges(banked: BankedBreak, task: Task?): List<TaskTimeRange> =

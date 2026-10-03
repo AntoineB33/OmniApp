@@ -748,10 +748,10 @@ data class TaskPanel(
     val inactivity: Boolean = false,
     /**
      * PRD §15: true for a dynamic period the app **CONDUCTED** — the 20-second look-away it ran and the user
-     * sat through (`SchedulerIntent.RecordConductedBreak`). It is an ordinary recorded
-     * [org.example.project.scheduler.domain.PeriodKinds.INACTIVITY] period in every other respect, and that is
-     * exactly why the flag is needed: nothing else on the panel tells it apart from a 20-second
-     * [inactivity] span the user drew by hand.
+     * sat through (`SchedulerIntent.RecordConductedBreak`). Its kind is
+     * [org.example.project.scheduler.domain.PeriodKinds.BREAK_20S], the automatic look-away's (an older build wrote
+     * [org.example.project.scheduler.domain.PeriodKinds.INACTIVITY], healed by [restrictiveKind]); the flag is what
+     * still tells it apart from a placed break ([screenBreak]) and from a 20-second span the user drew by hand.
      *
      * The README's first recurrence bar is *"after any **dynamic restrictive period**, no 20 s period in the
      * next 20 minutes"*, and only this says which recorded periods those are. It is not [screenBreak]: that
@@ -829,6 +829,10 @@ data class TaskPanel(
     val restrictiveKind: String
         get() =
             when {
+                // A look-away the app CONDUCTED is a 20 s screen break like the ones it places (user rule 2026-10-03:
+                // "a 20s screen break is a restrictive period like any other"). One an older build recorded as an
+                // `inactivity` period is healed here, the single reading, so it refuses work and lays "no screen" too.
+                conductedBreak && (periodKind.isBlank() || periodKind == PeriodKinds.INACTIVITY) -> PeriodKinds.BREAK_20S
                 // Healed on the way out, because this getter is the single reading of a panel's kind: a
                 // payload written before the 2026-09-12 rename holds `no on-screen task`, or `no task
                 // allowed` for what are now two kinds — and which of the two it meant is exactly what the

@@ -4373,6 +4373,9 @@ private fun applySetPriorityWeight(
  * account where nobody ever drew a panel — the case that let 43 h of "work" bank straight through a sleeping
  * machine before this union existed.
  */
+/** The look-aways the app conducted and recorded ([TaskPanel.conductedBreak]) — breaks every record banking cuts out. */
+private fun conductedBreaksOf(state: SchedulerState): List<TaskPanel> = state.panels.filter { it.conductedBreak }
+
 private fun noScreenRangesFor(
     state: SchedulerState,
     noScreenEvidence: List<TaskTimeRange>,
@@ -4392,6 +4395,7 @@ private fun advanceSchedule(
     // the app must not assume the on-screen work happened, so the period reads as past inactivity (the
     // no-screen panel stays on the calendar; the task is still owed that work).
     val noScreenRanges = noScreenRangesFor(state, noScreenEvidence)
+    val conducted = conductedBreaksOf(state)
     // PRD §7 "Switch task": the standing refusal is SPENT as soon as some other task's work is actually
     // banked past the instant it was made — that is what "the plan started something else" means, and it is
     // exactly the predicate [SchedulerDomain.liveForcedSwitchTask] reads off the past, applied incrementally
@@ -4410,7 +4414,7 @@ private fun advanceSchedule(
         if (start != null && taskId != null && taskId != start.taskId && endMillis > start.atMillis) {
             startSpent = true
         }
-        tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, startMillis, endMillis)
+        tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, startMillis, endMillis, conducted)
     }
     val remaining = ArrayList<TaskPanel>(state.panels.size)
     var changed = false
@@ -4479,16 +4483,22 @@ private fun appendRecordOutsideNoScreen(
     taskId: TaskId?,
     startMillis: Long,
     endMillis: Long,
+    // The look-aways the app CONDUCTED ([conductedBreaksOf]): breaks too, recorded as periods rather than banked.
+    conductedBreaks: List<TaskPanel> = emptyList(),
 ): Map<TaskId, Task> {
     if (taskId == null || endMillis <= startMillis) return tasks
     val task = tasks[taskId]
     val onScreen = task?.onScreen ?: true
-    // What of each banked break refuses THIS task (`SchedulerDomain.breakRefusedRanges`): the whole 20 s; the 5 min's
-    // first minute always, the rest of it and the 15 min unless the task was given a resilience to their kinds.
+    // What of each break refuses THIS task (`SchedulerDomain.breakRefusedRanges`): the whole 20 s; the 5 min's first
+    // minute always, the rest of it and the 15 min unless the task was given a resilience to their kinds. The banked
+    // breaks and the conducted ones alike — a conducted look-away left out let work be recorded through it (2026-10-03).
     val breaks =
         SchedulerReducer.frozenScreenBreaks()?.breaks.orEmpty()
             .filter { it.endMillis > startMillis && it.startMillis < endMillis }
-            .flatMap { SchedulerDomain.breakRefusedRanges(it, task) }
+            .flatMap { SchedulerDomain.breakRefusedRanges(it, task) } +
+            conductedBreaks
+                .filter { it.endEpochMillis > startMillis && it.startEpochMillis < endMillis }
+                .flatMap { SchedulerDomain.breakRefusedRanges(it, task) }
     val excluded = (if (onScreen) noScreenRanges else emptyList()) + breaks
     if (excluded.isEmpty()) return appendRecordMap(tasks, taskId, startMillis, endMillis)
     var out = tasks
@@ -4606,7 +4616,9 @@ private fun reduceReportDeviceSleep(
         } ?: return base
     val noScreenRanges = noScreenRangesFor(base, noScreenEvidence)
     val tasks =
-        appendRecordOutsideNoScreen(base.tasks, noScreenRanges, current.taskId, current.startEpochMillis, sleepStart)
+        appendRecordOutsideNoScreen(
+            base.tasks, noScreenRanges, current.taskId, current.startEpochMillis, sleepStart, conductedBreaksOf(base),
+        )
     val remaining = base.panels.filter { it.pinned || !it.auto }
     return base.copy(tasks = tasks, panels = remaining)
 }
@@ -4670,22 +4682,30 @@ private fun reduceRecordConductedBreak(
         }
     if (already) return state
     val (panelId, allocated) = state.allocatePanelId()
-    val recorded = allocated.copy(
-        panels = allocated.panels + TaskPanel(
+    val period: TaskPanel =
+        TaskPanel(
             id = panelId,
             taskId = null,
             title = intent.title,
             startEpochMillis = intent.startEpochMillis,
             endEpochMillis = intent.endEpochMillis,
             inactivity = true,
-            periodKind = PeriodKinds.INACTIVITY,
+            // The automatic look-away's own kind (user rule 2026-10-03): it allows no task, and the calendar lays
+            // its "no screen" where it is drawn. It was `inactivity`, which carries nothing — a task's work was
+            // recorded straight through it and no layer was drawn over it.
+            periodKind = PeriodKinds.BREAK_20S,
             // What makes it one of the THREE and not a 20-second inactivity span the user drew: the README's
             // first bar is "after any dynamic restrictive period, no 20 s period in the next 20 minutes", and
             // this is the only thing on the panel that says this period was one of them.
             conductedBreak = true,
-        ),
-    )
-    return withVanishedBreaksBridged(state, recorded, intent)
+        )
+    val recorded = allocated.copy(panels = allocated.panels + period)
+    // The look-away it made vanish is bridged by the task on both its sides FIRST — a task "touches" that hole through
+    // the records as they were banked — and only then is the break's own span taken out of the work.
+    val bridged = withVanishedBreaksBridged(state, recorded, intent)
+    // Work the line banked while the break ran (a plan panel that ended inside it, a re-plan's advance) was banked
+    // before the break was a fact: it is cut out now, by the same reading every later banking makes.
+    return SchedulerDomain.withWorkOutOfBreaks(bridged, listOf(period))
 }
 
 /**
@@ -4741,7 +4761,9 @@ private fun withVanishedBreaksBridged(
         var tasks = working.tasks
         val elapsedEnd = minOf(hole.endEpochMillis, now)
         if (elapsedEnd > hole.startEpochMillis) {
-            tasks = appendRecordOutsideNoScreen(tasks, noScreenRanges, taskId, hole.startEpochMillis, elapsedEnd)
+            tasks = appendRecordOutsideNoScreen(
+                tasks, noScreenRanges, taskId, hole.startEpochMillis, elapsedEnd, conductedBreaksOf(working),
+            )
             tasks = withRecordsJoinedAt(tasks, taskId, hole)
         }
         val rightPanel = planPanel(hole.endEpochMillis, atEnd = false).takeIf { hole.endEpochMillis > now }

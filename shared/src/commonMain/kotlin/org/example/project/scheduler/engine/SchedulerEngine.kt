@@ -762,6 +762,13 @@ class SchedulerEngine(
     // before it, a move of the line changes nothing and costs one comparison.
     private var nextBreakTriggerMillis: Long = Long.MIN_VALUE
 
+    /**
+     * Bumped when the break machine is re-armed from OUTSIDE the cue sweep ([rebuildBreaksFromHistory]): the sweep
+     * collects it, so the step the re-arming asks for is taken at once rather than at the next instant something else
+     * wakes the sweep. Inside the sweep's own step, clearing [nextBreakTriggerMillis] is enough — it steps right there.
+     */
+    private val breakMachineRearmed = MutableStateFlow(0L)
+
     // The machine's transitions the cue sweep has not announced yet, each with the mode the line was in — the
     // requirements' mode 2 announces no break ([DynamicPeriods.breaksAreNotifiedAt]).
     private val pendingBreakCues = ArrayList<Pair<org.example.project.scheduler.domain.BreakMachine.Event, Int>>()
@@ -2608,6 +2615,12 @@ class SchedulerEngine(
     private fun rebuildBreaksFromHistory() {
         // The restrictive periods the rules are re-applied under: the drag is re-derived over them.
         val now = clock.nowMillis()
+        // The line is brought to the clock under the bars it was armed with FIRST (2026-10-03). The machine does not
+        // move while nothing is armed, so it may stand well behind the line; a bar the rebuild drops into the past
+        // would then be entered where it stood — a break started in the past, its cue swallowed as stale — instead
+        // of here, where the new set of rules made it due.
+        nextBreakTriggerMillis = Long.MIN_VALUE
+        advanceBreaks(now, machineMode(now))
         val chains = breakInputsAt(now, machineMode(now)).chains
         val record = _frozenBreaks.value ?: return
         val before = record.machine ?: return
@@ -2621,6 +2634,10 @@ class SchedulerEngine(
         if (rebuilt === record) return
         _frozenBreaks.value = rebuilt
         nextBreakTriggerMillis = Long.MIN_VALUE
+        // …and the step it arms is taken NOW, by the cue sweep, which announces what it enters. Clearing the trigger
+        // woke nothing: a look-away the rebuild made due waited for whatever woke the engine next — a panel edge 20 s
+        // on, on account 3 (2026-10-03), the plan's gap for it already on the calendar.
+        breakMachineRearmed.update { it + 1 }
         val after = rebuilt.machine
         if (after?.bars != before.bars) {
             // scripts/collect-diagnostics.bat: a bar history does not vouch for is the anomaly this exists to heal.
@@ -3545,7 +3562,7 @@ class SchedulerEngine(
     // Real-age staleness ([BoundarySweep.realLatenessMillis]), the screen-active gate, resume-cue arming and
     // the once-only de-dupe stay here (this owns the clock and the fired-boundary memory).
     private fun launchCueSweep() = scope.launch {
-        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged()) { _, panels -> panels }
+        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged(), breakMachineRearmed) { _, panels, _ -> panels }
             .collectLatest {
                 while (true) {
                     val st = vm.state.value

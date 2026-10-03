@@ -97,9 +97,13 @@ persisted keys.
   re-derived under the restrictive periods at the line (`BreakMachine.stillOwed`: `dueOf` with the pull, then the drag's
   reach), never read off a bar alone. A pose the pull brought in has its bar AHEAD of the line; reading "bar ≤ line"
   dropped it at every re-run and the next step pulled it back in, re-announced at every progressive stage (account 3,
-  2026-09-30). The rebuild arms the next
-  step, which moves the line on to the clock. The plan itself was already found from the line the run started at and
-  published by compare-and-set; the calendar keeps the previous rules until then.
+  2026-09-30). **The rebuild moves the line to the clock under the OLD bars first, then takes the step it arms AT
+  ONCE** (`breakMachineRearmed` wakes the cue sweep, which steps and announces; `RebuiltBarStepsAtOnceTest`). The
+  machine does not move while nothing is armed, so it may stand well behind the line: a bar the rebuild dropped into the
+  past was entered where the machine stood — a break started in the past and its cue swallowed as stale — and, with
+  nothing woken, only when some other trigger came (account 3, 2026-10-03: the plan's 20 s gap sat on the calendar for
+  20 s before the look-away was entered and spoken). The plan itself was already found from the line the run started at
+  and published by compare-and-set; the calendar keeps the previous rules until then.
   - Drop the line's own stretches from the history and `ServerQuotaTest` goes over budget (≈ +3 MB of egress a
     month): in its scenario, as on a peer, a lock the OS log does not show is a stretch only the line saw, and dropping
     its bar re-publishes the pose windows.
@@ -196,6 +200,13 @@ persisted keys.
   chain rule) and it bars the next one for twenty minutes. It is never banked; it is **recorded as a period**
   (`RecordConductedBreak`) once it completes, marked `TaskPanel.conductedBreak` — load-bearing, since the first bar keys
   on a dynamic PERIOD. A superseded one leaves no trace.
+- **A conducted look-away IS a 20 s screen break** (2026-10-03): its kind is "20s screen break" (`PeriodKinds.BREAK_20S`;
+  one an older build recorded as `inactivity` is healed by `TaskPanel.restrictiveKind`), it lays its "no screen" — and
+  through it the layers — like a drawn break (`SchedulerDomain.statedKindRegions`), and **no work is recorded inside it**:
+  every banking cuts it out by `breakRefusedRanges`, exactly as it cuts the banked breaks (`appendRecordOutsideNoScreen`),
+  and what was banked across it before it ended is cut when it is recorded, AFTER the vanished look-away it replaced is
+  bridged (`SchedulerDomain.withWorkOutOfBreaks`, also the decode heal). Account 3 at 11:27:36 showed a task panel
+  inside one, with no "no screen" and no layer (`ConductedBreakIsABreakTest`).
 - **A look-away the conducted break makes vanish is replaced by the task on both its sides** (user spec 2026-09-27): what
   vanished is a break the plan was cut around that STARTS between the press and its end, that the line did not bank and
   that the machine no longer places (`SchedulerDomain.vanishedPastBreaks`). When ONE task's boxes touch both edges, the
