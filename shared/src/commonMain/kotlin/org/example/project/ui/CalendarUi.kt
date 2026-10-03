@@ -163,6 +163,7 @@ import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlertSettings
+import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.ChoreRecurrenceUnit
 import org.example.project.scheduler.model.PanelPins
@@ -9079,17 +9080,19 @@ fun ManualEntryEditWindow(
 
 /**
  * **Which kind of restrictive period** — the task cell's categories field ([TaskCategoryCell]) read for a
- * single value instead of a set.
+ * single value instead of a set, and like it a [NamingCell] (user rule 2026-10-03: every field naming an element is
+ * one, its menus drawn only once it is entered).
  *
- * Deliberately the same control, because it answers the same shape of question: the account owns a list of
- * named things, the row merely POINTS at one of them, and the name the user types either matches one that
- * exists (pick it — never mint a second under the same spelling) or is a new one to define. So it is the same
- * drop-down holding the same two parts — the rows, then a naming field with a "Create" button under it — with
- * the one difference the question forces: a task carries any number of categories and a period is of exactly
- * one kind, so picking closes the menu and REPLACES rather than adding, and there is no bin.
+ * The same control because it answers the same shape of question: the account owns a list of named things, the
+ * row merely POINTS at one of them, and the name the user types either matches one that exists (pick it — never
+ * mint a second under the same spelling) or is a new one to define (its "Create" row). The one difference the
+ * question forces: a task carries any number of categories and a period is of exactly one kind, so a pick
+ * REPLACES rather than adds, and emptying the field keeps the kind it had.
  *
- * The **✎** each row carries in the task cell is absent for the same reason: that window is *this kind, every
- * task*, which is a thing to open from a period that exists, not from the field that is choosing one.
+ * Its identity rows are narrowed on EITHER of a kind's names, so the word the user is looking for finds the kind
+ * whichever of its spellings they know; the "Create" row is offered only where the typed name is nobody's — ANY
+ * of a kind's names counts as its own ([periodKindNamed]), or "inactivity" would offer to create a second grey
+ * kind beside the one the menus call by that very word.
  */
 @Composable
 internal fun PeriodKindField(
@@ -9098,89 +9101,45 @@ internal fun PeriodKindField(
     onPick: (String) -> Unit,
     onCreate: (String) -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    var draft by remember { mutableStateOf("") }
-
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         EditMenuSectionLabel("Kind of period")
-        Box {
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(4.dp))
-                    .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
-                    .clickable {
-                        draft = ""
-                        open = true
+        NamingCell(
+            cellId = PERIOD_KIND_CELL,
+            // The kind in the USER'S words — the STORED name since the 2026-09-12 rename, so this row, the rows
+            // and the editor's own heading cannot drift apart.
+            shown = kind,
+            identityLabel = "Kinds of period",
+            identity = { draft ->
+                val typed = draft.trim()
+                val rows =
+                    periodKinds
+                        .filter { row ->
+                            typed.isBlank() ||
+                                row.contains(typed, ignoreCase = true) ||
+                                PeriodKinds.periodTitle(row).contains(typed, ignoreCase = true)
+                        }
+                        .map { NamingRow(it, it) }
+                val normalized = PeriodKinds.normalize(draft)
+                val create =
+                    if (PeriodKinds.isUserDefined(normalized) && periodKindNamed(normalized, periodKinds).isBlank()) {
+                        namingCreateRow(normalized, "Create and use “$normalized”")
+                    } else {
+                        null
                     }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                // The kind in the USER'S words — which is the STORED name since the 2026-09-12 rename, so
-                // this row, the chooser's rows and the editor's own heading cannot drift apart. Picking
-                // "no task allowed" and having the window that opens be headed "Inactivity" was one object
-                // under two names; [periodKindNamed] is the way back for the spellings still out there.
-                text = kind.ifBlank { "+ kind" },
-                style = MaterialTheme.typography.bodySmall,
-                color =
-                    if (kind.isBlank()) MaterialTheme.colorScheme.outline
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                Column(
-                    modifier = Modifier
-                        .widthIn(min = 240.dp, max = 320.dp)
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        singleLine = true,
-                        label = { Text("Kind of period") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    // Emitted straight into this Column with NO scroll container of its own — a
-                    // `DropdownMenu`'s content already scrolls, so a second scrolling parent under an
-                    // unbounded height is the "measured with an infinity maximum height" crash
-                    // ([TaskCategoryCell] carries the same note, for the same reason).
-                    EditModeMenuBlock(
-                        identityLabel = "Kinds of period",
-                        identityRows =
-                            periodKinds
-                                .filter { row ->
-                                    val typed = draft.trim()
-                                    // Narrowed on EITHER name, so the word the user is looking for finds the
-                                    // kind whichever of its spellings they know.
-                                    typed.isBlank() ||
-                                        row.contains(typed, ignoreCase = true) ||
-                                        // The other spelling a stored kind may still be looked for under.
-                                        PeriodKinds.periodTitle(row).contains(typed, ignoreCase = true)
-                                }
-                                .map { row ->
-                                    EditMenuItem(label = row, selected = row == kind) {
-                                        open = false
-                                        onPick(row)
-                                    }
-                                },
-                    )
-                    val normalized = PeriodKinds.normalize(draft)
-                    // Only where the typed name is nobody's — ANY of a kind's names counts as its own
-                    // ([periodKindNamed]), or "inactivity" would offer to create a second grey kind beside
-                    // the one the menus call by that very word.
-                    if (PeriodKinds.isUserDefined(normalized) &&
-                        periodKindNamed(normalized, periodKinds).isBlank()
-                    ) {
-                        TextButton(onClick = {
-                            open = false
-                            onCreate(normalized)
-                        }) { Text("Create and use") }
-                    }
-                }
-            }
-        }
+                rows + listOfNotNull(create)
+            },
+            suggestions = { emptyList() },
+            onPick = { key ->
+                val created = namingCreatedName(key)
+                if (created != null) onCreate(created) else onPick(key)
+            },
+            selectedKey = kind,
+        )
     }
 }
+
+/** The kind-of-period field's cell id: a cell of no tree. */
+private val PERIOD_KIND_CELL = CellId("calendar/period-kind")
 
 /**
  * One line saying what a period of [kind] will DO, written out of the model rather than out of a list of

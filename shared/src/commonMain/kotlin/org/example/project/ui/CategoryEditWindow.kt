@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 
@@ -114,7 +115,6 @@ fun CategoryEditor(
     // zoom — a half-typed rule is not a fact about the account until it is added. The pick is the whole
     // ROW and not its cell id, because `null` is a real answer there (the whole tree) and "nothing picked
     // yet" has to stay a different one.
-    var scopeDraft by remember(categoryId) { mutableStateOf("") }
     var scopePick by remember(categoryId) { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
     var newShare by remember(categoryId) { mutableStateOf("") }
 
@@ -219,31 +219,7 @@ fun CategoryEditor(
                 HorizontalDivider()
 
                 Text("Add a rule", style = MaterialTheme.typography.labelMedium)
-                // The scope is named the way everything else in the app is named: a field with an identity
-                // menu under it. There are no title suggestions here — an identity row IS the answer, since
-                // a scope is one cell of the tree and not a string several cells may share. Each row is a
-                // PATH for exactly that reason: a task can appear several times, and its bare title would
-                // name every occurrence at once.
-                OutlinedTextField(
-                    value = scopeDraft,
-                    onValueChange = {
-                        scopeDraft = it
-                        scopePick = null
-                    },
-                    singleLine = true,
-                    label = { Text("Under which task cell") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                EditModeMenuBlock(
-                    identityLabel = "Task cells",
-                    identityRows =
-                        CategoryRules.scopeEntries(state, scopeDraft).map { entry ->
-                            EditMenuItem(label = entry.label, selected = entry == scopePick) {
-                                scopePick = entry
-                                scopeDraft = entry.label
-                            }
-                        },
-                )
+                ScopeField(state, CellId("category/${categoryId.value}/rule-scope"), scopePick) { scopePick = it }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -270,7 +246,6 @@ fun CategoryEditor(
                                     share ?: return@TextButton,
                                 ),
                             )
-                            scopeDraft = ""
                             scopePick = null
                             newShare = ""
                         },
@@ -357,30 +332,10 @@ private fun SharedSharePercentField(value: Double?, onValueChange: (Double) -> U
  */
 @Composable
 internal fun CategoriesAddRule(state: SchedulerState, categoryIds: List<CategoryId>, onIntent: (SchedulerIntent) -> Unit) {
-    var scopeDraft by remember { mutableStateOf("") }
     var scopePick by remember { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
     var newShare by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedTextField(
-            value = scopeDraft,
-            onValueChange = {
-                scopeDraft = it
-                scopePick = null
-            },
-            singleLine = true,
-            label = { Text("Under which task cell") },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        EditModeMenuBlock(
-            identityLabel = "Task cells",
-            identityRows =
-                CategoryRules.scopeEntries(state, scopeDraft).map { entry ->
-                    EditMenuItem(label = entry.label, selected = entry == scopePick) {
-                        scopePick = entry
-                        scopeDraft = entry.label
-                    }
-                },
-        )
+        ScopeField(state, CellId("search/categories-add-rule-scope"), scopePick) { scopePick = it }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -402,7 +357,6 @@ internal fun CategoriesAddRule(state: SchedulerState, categoryIds: List<Category
                     val scope = scopePick ?: return@TextButton
                     val value = share ?: return@TextButton
                     categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, scope.cellId, value)) }
-                    scopeDraft = ""
                     scopePick = null
                     newShare = ""
                 },
@@ -410,6 +364,34 @@ internal fun CategoriesAddRule(state: SchedulerState, categoryIds: List<Category
         }
     }
 }
+
+/**
+ * A rule's **"Under which task cell"**: a [NamingCell] (user rule 2026-10-03 — every field naming an element is one),
+ * whose identity rows are the tree's cells, each named by its PATH: a task can appear several times, and its bare
+ * title would name every occurrence at once. No title suggestions — an identity row IS the answer, a scope being one
+ * cell of the tree and not a string several cells may share. Emptying it forgets the pick.
+ */
+@Composable
+private fun ScopeField(state: SchedulerState, cellId: CellId, pick: CategoryRules.ScopeEntry?, onPick: (CategoryRules.ScopeEntry?) -> Unit) {
+    Text("Under which task cell", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    NamingCell(
+        cellId = cellId,
+        shown = pick?.label.orEmpty(),
+        identityLabel = "Task cells",
+        identity = { draft -> CategoryRules.scopeEntries(state, draft).map { NamingRow(scopeKey(it), it.label) } },
+        suggestions = { emptyList() },
+        onPick = { key -> onPick(CategoryRules.scopeEntries(state, "").firstOrNull { scopeKey(it) == key }) },
+        selectedKey = pick?.let(::scopeKey),
+        onCleared = { onPick(null) },
+        width = 360.dp,
+    )
+}
+
+/** A scope's [NamingRow] key: its cell's id, or a key no cell id can be for the whole tree. */
+private fun scopeKey(entry: CategoryRules.ScopeEntry): String = entry.cellId?.value ?: ROOT_SCOPE_KEY
+
+/** The whole tree's scope key: an id no cell is ever minted with. */
+private const val ROOT_SCOPE_KEY = "(root)"
 
 /** What a rule row says under itself: that it is being held, or the reason it is asleep. */
 private fun ruleStatusLine(row: CategoryRules.RuleRow): String = when (row.status) {

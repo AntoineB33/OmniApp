@@ -17,12 +17,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
 
@@ -92,15 +90,11 @@ fun CategoriesWindow(
     val frame = rememberWindowFrameState("Categories", initialOffset, initialSize)
     // What is being typed in the naming field. Compose-only state, like a cell's own draft title: a
     // half-typed name is not a category until the button below commits it.
-    var draft by remember { mutableStateOf("") }
-
     // Keyed on what the rows actually read rather than on the whole state, which the engine tick replaces
     // every second (records live on the tasks) — ADR 0009. Each rule is a walk of the tree, so this must
     // not run per tick.
     val rows =
         remember(state.cells, state.lists, state.tasks, state.categories) { CategoryRules.overview(state) }
-    val typed = draft.trim()
-    val existing = state.categories.firstOrNull { it.title.equals(typed, ignoreCase = true) }
 
     AppWindowFrame(
         title = "Categories",
@@ -142,53 +136,27 @@ fun CategoriesWindow(
             // category instead of attaching it — there is nothing here to attach one to — which is also
             // what keeps a name the account already holds from being minted a second time.
             Text("Add a category", style = MaterialTheme.typography.labelMedium)
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                singleLine = true,
-                label = { Text("Name") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            EditModeMenuBlock(
+            NamingCell(
+                cellId = CellId("categories-window/add"),
+                shown = "",
                 identityLabel = "Categories",
-                identityRows =
-                    CategoryRules.menuEntries(state, draft, emptyList()).map { category ->
-                        EditMenuItem(
-                            label = category.title,
-                            selected = category.title.equals(typed, ignoreCase = true),
-                        ) { onOpenCategoryEdit(category.id) }
-                    },
-                // A suggestion only FILLS the field, as it does in a cell — the button below is what
-                // commits, and the identity row above is what points at one that already exists.
-                suggestions =
-                    CategoryRules.titleSuggestions(state, draft).map { suggestion ->
-                        EditMenuItem(suggestion) { draft = suggestion }
-                    },
-            )
-            if (typed.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (existing != null) {
-                        Text(
-                            text = "“${existing.title}” already exists — open it above.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
+                identity = { draft ->
+                    val typed = draft.trim()
+                    CategoryRules.menuEntries(state, draft, emptyList()).map { NamingRow(it.id.value, it.title) } +
+                        listOfNotNull(
+                            namingCreateRow(typed).takeIf {
+                                typed.isNotEmpty() && state.categories.none { it.title.equals(typed, ignoreCase = true) }
+                            },
                         )
-                    } else {
-                        Spacer(Modifier.weight(1f))
-                    }
-                    TextButton(
-                        enabled = existing == null,
-                        onClick = {
-                            onIntent(SchedulerIntent.CreateCategory(typed))
-                            draft = ""
-                        },
-                    ) { Text("Create") }
-                }
-            }
+                },
+                suggestions = { draft -> CategoryRules.titleSuggestions(state, draft) },
+                onPick = { key ->
+                    val created = namingCreatedName(key)
+                    if (created != null) onIntent(SchedulerIntent.CreateCategory(created))
+                    else onOpenCategoryEdit(CategoryId(key))
+                },
+                width = 420.dp,
+            )
         }
     }
 }

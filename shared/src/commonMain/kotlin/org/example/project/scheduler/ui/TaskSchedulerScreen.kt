@@ -3673,8 +3673,6 @@ private fun TaskPathsSection(
     onAddPath: (TaskId?) -> Unit,
     onRemovePath: (CellId) -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
-    var adding by remember { mutableStateOf(false) }
     Text("Paths", style = MaterialTheme.typography.labelMedium)
     if (paths.isEmpty()) {
         Text("In no place of the open task tree.", style = MaterialTheme.typography.bodySmall)
@@ -3685,32 +3683,7 @@ private fun TaskPathsSection(
             if (paths.size > 1) TextButton(onClick = { onRemovePath(place.cellId) }) { Text("✕") }
         }
     }
-    OutlinedTextField(
-        value = query,
-        onValueChange = {
-            query = it
-            adding = true
-        },
-        singleLine = true,
-        label = { Text("Add under…") },
-        modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) adding = true },
-    )
-    if (adding) {
-        for (candidate in candidates(query)) {
-            Text(
-                text = candidate.label,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onAddPath(candidate.parentTaskId)
-                        query = ""
-                        adding = false
-                    }
-                    .padding(vertical = 4.dp, horizontal = 8.dp),
-            )
-        }
-    }
+    org.example.project.ui.AddUnderField(CellId("task-edit/add-under"), candidates, onAddPath)
     HorizontalDivider()
 }
 

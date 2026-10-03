@@ -13,8 +13,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -37,7 +35,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.key
 import org.example.project.scheduler.domain.CalendarLockDomain
@@ -373,6 +370,7 @@ private fun AddedActionEditor(
         }
         SearchDomain.AddedAction.TaskAddCategory ->
             CategoryChooser(
+                cellId = "search/task-add-category",
                 options = state.categories.sortedBy { it.title.lowercase() }.map { it.id to it.title },
                 enabled = tasks.isNotEmpty(),
             ) { run(SearchDomain.AddedCommand.Category(it, carried = true)) }
@@ -380,6 +378,7 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.TaskRemoveCategory -> {
             val carried = tasks.flatMapTo(HashSet()) { it.categoryIds }
             CategoryChooser(
+                cellId = "search/task-remove-category",
                 options = state.categories.filter { it.id in carried }.sortedBy { it.title.lowercase() }.map { it.id to it.title },
                 enabled = carried.isNotEmpty(),
             ) { run(SearchDomain.AddedCommand.Category(it, carried = false)) }
@@ -1195,72 +1194,39 @@ private fun ScheduleUnitActionEditor(state: SchedulerState, added: List<SearchDo
 }
 
 /**
- * The task edit window's "Add under…" over every added task: the places at least one of them may go
- * ([TaskPathsDomain.candidatesForAll]), each a button that puts every one that may go there at once.
+ * The task edit window's "Add under…" over every added task ([AddUnderField], its one drawing): the places at least one
+ * of them may go ([TaskPathsDomain.candidatesForAll]), picking one puts every one that may go there at once.
  */
 @Composable
 private fun AddUnderEditor(state: SchedulerState, taskIds: List<TaskId>, run: (SearchDomain.AddedCommand) -> Unit) {
-    var query by remember { mutableStateOf("") }
-    OutlinedTextField(
-        value = query,
-        onValueChange = { query = it },
-        singleLine = true,
-        enabled = taskIds.isNotEmpty(),
-        label = { Text("Add under…") },
-        modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+    if (taskIds.isEmpty()) return
+    AddUnderField(
+        cellId = org.example.project.scheduler.model.CellId("search/add-under"),
+        candidates = { query -> TaskPathsDomain.candidatesForAll(state, taskIds, query) },
+        onAdd = { run(SearchDomain.AddedCommand.AddUnder(it)) },
     )
-    if (query.isNotBlank() && taskIds.isNotEmpty()) {
-        val candidates = remember(query, state.cells, state.lists, state.tasks, taskIds) {
-            TaskPathsDomain.candidatesForAll(state, taskIds, query)
-        }
-        if (candidates.isEmpty()) {
-            Text("No place matches.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        for (candidate in candidates) {
-            Text(
-                text = candidate.label,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable {
-                        run(SearchDomain.AddedCommand.AddUnder(candidate.parentTaskId))
-                        query = ""
-                    }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-        }
-    }
 }
 
-/** A drop-down of categories that acts on the one picked — it holds no value of its own ("choose…"). */
+/**
+ * A [NamingCell] over [options] (user rule 2026-10-03: every field naming an element is one) that acts on the category
+ * picked — it holds no value of its own, so it is empty again after a pick. The identity rows are the options whose
+ * title holds the draft, the title suggestions their titles.
+ */
 @Composable
-private fun CategoryChooser(options: List<Pair<CategoryId, String>>, enabled: Boolean, onPick: (CategoryId) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    val usable = enabled && options.isNotEmpty()
-    val color = if (usable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-    Box {
-        Text(
-            text = (if (options.isEmpty()) "no category" else "choose…") + "  ▾",
-            style = MaterialTheme.typography.bodyMedium,
-            color = color,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .then(if (usable) Modifier.menuToggleClickable(open) { open = it } else Modifier)
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-        )
-        transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            options.forEach { (id, title) ->
-                DropdownMenuItem(text = { Text(title) }, onClick = { open = false; onPick(id) })
-            }
-        }
+private fun CategoryChooser(cellId: String, options: List<Pair<CategoryId, String>>, enabled: Boolean, onPick: (CategoryId) -> Unit) {
+    if (!enabled || options.isEmpty()) {
+        Text(if (options.isEmpty()) "No category." else "—", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
     }
+    fun matching(draft: String) = options.filter { (_, title) -> draft.isBlank() || title.contains(draft.trim(), ignoreCase = true) }
+    NamingCell(
+        cellId = org.example.project.scheduler.model.CellId(cellId),
+        shown = "",
+        identityLabel = "Categories",
+        identity = { draft -> matching(draft).map { (id, title) -> NamingRow(id.value, title) } },
+        suggestions = { draft -> matching(draft).map { it.second }.filter { !it.equals(draft.trim(), ignoreCase = true) } },
+        onPick = { key -> options.firstOrNull { it.first.value == key }?.let { onPick(it.first) } },
+    )
 }
 
 /**

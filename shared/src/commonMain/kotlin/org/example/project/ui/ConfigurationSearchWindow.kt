@@ -49,6 +49,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.state.HistoryWindow
@@ -266,7 +267,7 @@ private fun SettingEditor(
         SearchDomain.Setting.TaskSchedulable ->
             Choices(SearchDomain.Tri.entries, f.taskSchedulable, { it.label }) { filters(f.copy(taskSchedulable = it)) }
         SearchDomain.Setting.TaskCategory ->
-            CategoryPicker(state, f.taskCategory?.let { id -> state.categoryById(id)?.title ?: "(deleted)" }) {
+            CategoryPicker(state, f.taskCategory) {
                 filters(f.copy(taskCategory = it))
             }
         SearchDomain.Setting.TaskOnCalendar ->
@@ -550,35 +551,30 @@ private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String,
     }
 }
 
-/** "any", or one of the account's categories. */
+/**
+ * The task filter's category: a [NamingCell] (user rule 2026-10-03 — every field naming an element is one, the
+ * "Changed element" filter's twin). Empty is "any"; emptying it clears the filter.
+ */
 @Composable
 private fun CategoryPicker(
     state: SchedulerState,
-    selectedTitle: String?,
+    selected: org.example.project.scheduler.model.CategoryId?,
     onSelect: (org.example.project.scheduler.model.CategoryId?) -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        Text(
-            text = (selectedTitle ?: "any") + "  ▾",
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .menuToggleClickable(open) { open = it }
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-        )
-        transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            DropdownMenuItem(text = { Text("any") }, onClick = { open = false; onSelect(null) })
-            state.categories.sortedBy { it.title.lowercase() }.forEach { category ->
-                DropdownMenuItem(text = { Text(category.title) }, onClick = { open = false; onSelect(category.id) })
-            }
-        }
-    }
+    NamingCell(
+        cellId = CATEGORY_FILTER_CELL,
+        shown = selected?.let { state.categoryById(it)?.title ?: "(deleted)" }.orEmpty(),
+        identityLabel = "Categories",
+        identity = { draft -> CategoryRules.menuEntries(state, draft, emptyList()).map { NamingRow(it.id.value, it.title) } },
+        suggestions = { draft -> CategoryRules.titleSuggestions(state, draft) },
+        onPick = { key -> onSelect(org.example.project.scheduler.model.CategoryId(key)) },
+        selectedKey = selected?.value,
+        onCleared = { onSelect(null) },
+    )
 }
+
+/** The category filter's cell id: a cell of no tree. */
+private val CATEGORY_FILTER_CELL = org.example.project.scheduler.model.CellId("search/task-category-filter")
 
 /** The "Changed element types" drop-down's face: "any type" when none is ticked, else the ticked ones. */
 private fun changedKindsFace(kinds: Set<SearchDomain.Kind>): String =

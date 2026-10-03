@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every field naming an element is the "Changed element" field — 2026-10-03
+
+User request: the Search window's "Changed element" filter is right; find the selection fields that must behave the
+same (e.g. the category actions' "Add a rule"). Most drew their identity/suggestion menus under a plain text field, so
+the menus showed before the field was entered (or were drop-downs). Now `NamingCell` (one press enters Edit Mode,
+menus only while editing, outside press leaves): "Under which task cell" (Search action + category edit window),
+"Add under…" (Search action + task edit window, one `AddUnderField`), the Search window's Add/Remove category actions
+and its category filter, the task cell's categories field, the Categories window's "Add a category", and "Kind of
+period". Creating a category or a kind is a "Create …" identity row (`namingCreateRow`), replacing the buttons.
+`docs/invariants/task-tree.md` § *A field that names an element is a configured task cell*.
+
 ### A task's set of tasks; tasks with no path — 2026-10-03
 
 User request: a task can fulfil other tasks while it is on the calendar, each at a percentage ("watch videos explaining

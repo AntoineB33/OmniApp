@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
@@ -49,10 +49,11 @@ private const val EMPTY_LABEL = "+ category"
  *    task and every rule*, which is where a rule is written and where the category is deleted. The pair is
  *    deliberately the resilience row's pair (`✎` onto the period's own window, the row itself being about
  *    one task): a category and a kind of period are both objects the tree merely *refers* to;
- *  - **the "add" option, which is a task cell entering Edit Mode.** Not a picker: the same naming field, the
- *    same [EditModeMenuBlock] under it, with the **identity** rows (the account's categories, so a name
- *    already taken attaches THAT one rather than minting a second under the same spelling) and the **title
- *    suggestions**. What it has not got is the **Mode selector** — a cell chooses between renaming its task
+ *  - **the "add" option, which is a task cell entering Edit Mode** — the [NamingCell] every field naming an
+ *    element is, its menus drawn only once it is entered, with the **identity** rows (the account's
+ *    categories, so a name already taken attaches THAT one rather than minting a second under the same
+ *    spelling, then a "Create" row for a name nobody holds) and the **title suggestions**. What it has not
+ *    got is the **Mode selector** — a cell chooses between renaming its task
  *    and pointing at another, and neither question exists here: naming a category IS pointing at it.
  *
  * The drop-down closes on the gesture that changes something, because every one of them is a whole answer:
@@ -67,7 +68,6 @@ fun TaskCategoryCell(
     onOpenCategoryEdit: (CategoryId) -> Unit,
 ) {
     var open by remember(taskId) { mutableStateOf(false) }
-    var draft by remember(taskId) { mutableStateOf("") }
     val carried = state.tasks[taskId]?.categoryIds.orEmpty().mapNotNull { state.categoryById(it) }
 
     Box(modifier = Modifier.width(CATEGORY_COLUMN_WIDTH)) {
@@ -75,10 +75,7 @@ fun TaskCategoryCell(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
-                .clickable {
-                    draft = ""
-                    open = true
-                }
+                .clickable { open = true }
                 .padding(horizontal = 6.dp, vertical = 2.dp),
             text = carried.joinToString(", ") { it.title }.ifEmpty { EMPTY_LABEL },
             style = MaterialTheme.typography.bodySmall,
@@ -132,51 +129,33 @@ fun TaskCategoryCell(
 
                 HorizontalDivider()
 
-                // The "add" option: a task cell in Edit Mode, minus the Mode selector.
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    singleLine = true,
-                    label = { Text("Add a category") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                // Emitted straight into this Column, with NO scroll container of its own: a
-                // `DropdownMenu`'s content is already inside a `verticalScroll`, so it hands its children an
-                // unbounded maximum height and a second scrolling parent here is the "measured with an
-                // infinity maximum height" crash. The identity section's own scroll is legal because it is
-                // bounded first (`heightIn(max = …)` inside [EditModeMenuBlock]) — a scroll under an
-                // infinite parent is only ever safe when something above it fixes a height.
-                EditModeMenuBlock(
+                // The "add" option: a task cell in Edit Mode, minus the Mode selector — the [NamingCell] every field
+                // naming an element is (user rule 2026-10-03), so its menus show only once it is entered. Its
+                // identity rows are the account's categories (a name already taken attaches THAT one rather than
+                // minting a second under the same spelling), then a "Create" row for a name nobody holds.
+                Text("Add a category", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NamingCell(
+                    cellId = CellId("task-categories/${taskId.value}"),
+                    shown = "",
                     identityLabel = "Categories",
-                    identityRows =
-                        CategoryRules.menuEntries(state, draft, carried.map { it.id }).map { category ->
-                            EditMenuItem(
-                                label = category.title,
-                                selected = category.title.equals(draft.trim(), ignoreCase = true),
-                            ) {
-                                open = false
-                                onIntent(SchedulerIntent.AttachTaskCategory(taskId, category.id))
-                            }
-                        },
-                    // Picking a suggestion only FILLS the field, as it does in a cell — the button
-                    // below (or the identity row above) is what commits.
-                    suggestions =
-                        CategoryRules.titleSuggestions(state, draft).map { suggestion ->
-                            EditMenuItem(suggestion) { draft = suggestion }
-                        },
-                )
-                if (draft.isNotBlank()) {
-                    TextButton(onClick = {
+                    identity = { draft ->
+                        val typed = draft.trim()
+                        CategoryRules.menuEntries(state, draft, carried.map { it.id }).map { NamingRow(it.id.value, it.title) } +
+                            listOfNotNull(
+                                namingCreateRow(typed).takeIf {
+                                    typed.isNotEmpty() && state.categories.none { it.title.equals(typed, ignoreCase = true) }
+                                },
+                            )
+                    },
+                    suggestions = { draft -> CategoryRules.titleSuggestions(state, draft) },
+                    onPick = { key ->
                         open = false
-                        onIntent(SchedulerIntent.AddTaskCategory(taskId, draft))
-                    }) {
-                        // A name the account already holds attaches that category rather than making a
-                        // second one, and the button says which of the two is about to happen.
-                        val exists =
-                            state.categories.any { it.title.equals(draft.trim(), ignoreCase = true) }
-                        Text(if (exists) "Add" else "Create and add")
-                    }
-                }
+                        val created = namingCreatedName(key)
+                        if (created != null) onIntent(SchedulerIntent.AddTaskCategory(taskId, created))
+                        else onIntent(SchedulerIntent.AttachTaskCategory(taskId, CategoryId(key)))
+                    },
+                    width = 296.dp,
+                )
             }
         }
     }

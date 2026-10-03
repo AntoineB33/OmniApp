@@ -551,6 +551,25 @@ titles" figure: the Search window and the per-object windows its rows open repla
   release account, all inside 4 detached parents). `firstTaskOccurrences` is one walk for every task (ADR 0009),
   and the *same* walk as `firstTaskOccurrence`.
 
+### A field that names an element is a configured task cell
+
+→ `ui/NamingCell.kt`. User rule 2026-10-03, after the Search window's "Changed element" filter showed its title
+suggestions before it was ever entered.
+
+- **Every field outside the tree that names an element is `NamingCell`** — the tree's own `TaskRow`, configured: ONE
+  press enters Edit Mode, Enter / Tab / Escape and a press anywhere else leave it, and ONLY in Edit Mode does it draw
+  the `EditModeMenuBlock` (identity rows: picking one commits; title suggestions: picking one only fills it). Today:
+  the "Changed element" and category filters of the Search window, the "Set of tasks" action's "add a task", the
+  category actions' "Add category" / "Remove category" and "Add a rule"'s "Under which task cell" (and the category
+  edit window's), "Add under…" (Search action and task edit window, `AddUnderField`), the task cell's categories
+  field, the Categories window's "Add a category", and a period's "Kind of period".
+- **A field that may name something new** gives a `namingCreateRow` for the draft — the tree cell's "New task" row in
+  its own words — rather than a button under the field.
+- **Never draw an `EditModeMenuBlock` under a plain text field** for a new naming field: that is the shape whose
+  menus show before the field is entered. Still drawn that way, by design, are the pop-ups whose only content is the
+  pick (the calendar's "Pick a task", the calendar elements window's search bar, the reminder windows) and the
+  calendar "Edit task" window's Task field, whose typed title is itself a value (a new calendar-only task).
+
 ### A task's set of tasks, and the tasks with no path
 
 → `docs/scheduler_score.md` § *Sets of tasks* (what a set does to the score). `Task.fulfilment`, authoritative.
