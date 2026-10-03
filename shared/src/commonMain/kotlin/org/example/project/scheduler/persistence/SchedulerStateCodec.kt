@@ -32,6 +32,7 @@ import org.example.project.scheduler.state.EntryChanges
 import org.example.project.scheduler.state.SettingsDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CategoryKind
 import org.example.project.scheduler.model.CategoryRule
 import org.example.project.scheduler.model.Cell
 import org.example.project.scheduler.model.CellId
@@ -484,7 +485,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value))
                 },
             tasks =
                 tasks.values.map {
@@ -674,15 +675,17 @@ object SchedulerStateCodec {
                         title = category.title,
                         rules =
                             category.rules
-                                .sortedBy { it.scopeCellId?.value ?: "" }
+                                .sortedWith(compareBy({ it.relativeToCellId?.value ?: "" }, { it.distance ?: 0 }))
                                 .map { rule ->
                                     PersistedCategoryRule(
                                         scopeTaskId =
-                                            rule.scopeCellId?.let { cells[it]?.taskId?.value }.orEmpty(),
-                                        scopeCellId = rule.scopeCellId?.value,
+                                            rule.relativeToCellId?.let { cells[it]?.taskId?.value }.orEmpty(),
+                                        scopeCellId = rule.relativeToCellId?.value,
                                         share = rule.share,
+                                        distance = rule.distance,
                                     )
                                 },
+                        kind = category.kind.takeIf { it != CategoryKind.TaskId }?.name,
                     )
                 },
             nextCategoryCounter = nextCategoryCounter,
@@ -1032,7 +1035,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value))
                 },
             tasks =
                 tasks.values.map {
@@ -1107,6 +1110,7 @@ object SchedulerStateCodec {
                         parentListId = CellListId(p.parentListId),
                         taskId = p.taskId?.let(::TaskId),
                         priorityWeights = p.priorityWeights,
+                        categoryIds = p.categoryIds.distinct().map(::CategoryId),
                     )
             }
         val lists =
@@ -1548,6 +1552,7 @@ object SchedulerStateCodec {
                         parentListId = CellListId(p.parentListId),
                         taskId = p.taskId?.let(::TaskId),
                         priorityWeights = p.priorityWeights,
+                        categoryIds = p.categoryIds.distinct().map(::CategoryId),
                     )
             }
         val lists =
@@ -2374,14 +2379,16 @@ private fun Category.toPersistedCategory(): PersistedCategory =
     PersistedCategory(
         id = id.value,
         title = title,
-        rules = rules.map { PersistedCategoryRule(scopeCellId = it.scopeCellId?.value, share = it.share) },
+        rules = rules.map { PersistedCategoryRule(scopeCellId = it.relativeToCellId?.value, share = it.share, distance = it.distance) },
+        kind = kind.takeIf { it != CategoryKind.TaskId }?.name,
     )
 
 private fun PersistedCategory.toCategoryAsWritten(): Category =
     Category(
         id = CategoryId(id),
         title = title,
-        rules = rules.map { CategoryRule(it.scopeCellId?.let(::CellId), it.share) },
+        rules = rules.map { r -> CategoryRule(r.scopeCellId?.let(::CellId), r.distance, r.share) },
+        kind = categoryKindNamed(kind),
     )
 
 @Serializable
@@ -2532,6 +2539,8 @@ private data class PersistedCell(
     val parentListId: String,
     val taskId: String?,
     val priorityWeights: List<Double> = listOf(1.0),
+    /** User rule 2026-10-03: the task cell categories this occurrence carries; absent before they existed. */
+    val categoryIds: List<String> = emptyList(),
 )
 
 /**
@@ -2593,22 +2602,27 @@ private fun List<PersistedCategory>.toCategories(scopeSource: SchedulerState): L
     for (p in this) {
         if (p.title.isBlank()) continue
         if (!seen.add(p.id)) continue
-        val scopes = HashSet<String>()
+        val keys = HashSet<String>()
         val rules = mutableListOf<CategoryRule>()
         for (r in p.rules) {
+            val distance = r.distance
+            if (distance != null && distance < 1) continue
             val legacy = r.scopeTaskId
+            // A parent distance rule names no cell; a task cell rule names its cell, or — written before the scope
+            // was a cell — its task's first occurrence, a blank (or the pre-rename root task) being the whole tree.
             val scope: CellId? =
                 when {
+                    distance != null -> null
                     r.scopeCellId != null -> CellId(r.scopeCellId)
                     legacy.isBlank() || legacy == WellKnownIds.ROOT_TASK.value -> null
                     else ->
                         SchedulerDomain.firstTaskOccurrence(scopeSource, TaskId(legacy))?.cellId
                             ?: continue
                 }
-            if (!scopes.add(CategoryRules.scopeKey(scopeSource, scope))) continue
-            rules += CategoryRule(scope, r.share.coerceIn(0.0, 1.0))
+            if (!keys.add(CategoryRules.ruleKey(scopeSource, scope, distance))) continue
+            rules += CategoryRule(scope, distance, r.share.coerceIn(0.0, 1.0))
         }
-        out += Category(id = CategoryId(p.id), title = p.title, rules = rules)
+        out += Category(id = CategoryId(p.id), title = p.title, rules = rules, kind = categoryKindNamed(p.kind))
     }
     return out
 }
@@ -2802,7 +2816,13 @@ private data class PersistedCategory(
     val id: String,
     val title: String,
     val rules: List<PersistedCategoryRule> = emptyList(),
+    /** User rule 2026-10-03: `TaskCell` for a task cell category; absent (a task id category) before the switch. */
+    val kind: String? = null,
 )
+
+/** A stored category kind, a task id category for an absent or unknown one. */
+private fun categoryKindNamed(name: String?): CategoryKind =
+    CategoryKind.entries.firstOrNull { it.name == name } ?: CategoryKind.TaskId
 
 @Serializable
 private data class PersistedCategoryRule(
@@ -2816,9 +2836,17 @@ private data class PersistedCategoryRule(
      * pre-rename build handed the new one would fail to resolve it and drop the rule.
      */
     val scopeTaskId: String = "",
-    /** The scope CELL, absent only in a payload written before the scope was one (and for the whole tree). */
+    /**
+     * The scope CELL — since 2026-10-03 the cell the rule is RELATIVE TO (null: every carrier's ancestor at
+     * [distance]). Absent in a payload written before the scope was one.
+     */
     val scopeCellId: String? = null,
     val share: Double,
+    /**
+     * User rule 2026-10-03: a PARENT DISTANCE rule's distance — how many levels above each carrier its ancestor is.
+     * Absent for a task cell rule, which is every rule written before the switch.
+     */
+    val distance: Int? = null,
 )
 
 @Serializable

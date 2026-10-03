@@ -10,6 +10,7 @@ import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CategoryRule
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
@@ -132,6 +133,13 @@ class CategoryRulesTest {
     private fun categoryNamed(state: SchedulerState, title: String): CategoryId =
         state.categories.first { it.title == title }.id
 
+    /** What [categoryId] holds of the ancestor sub-list [relative] names at [distance] — its ONE governed group. */
+    private fun shareOf(state: SchedulerState, categoryId: CategoryId, relative: CellId?, distance: Int?): Double =
+        RelativePriorityDomain.chainsProduct(state, chainsOf(state, categoryId, relative, distance))
+
+    private fun chainsOf(state: SchedulerState, categoryId: CategoryId, relative: CellId?, distance: Int?): List<List<CellId>> =
+        CategoryRules.ruleGroups(state, state.categoryById(categoryId)!!, CategoryRule(relative, distance, 0.0)).single().chains
+
     private fun assertShare(expected: Double, actual: Double, what: String) {
         assertTrue(abs(expected - actual) < 1e-6, "$what: expected $expected but was $actual")
     }
@@ -144,18 +152,18 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "light"))
         val deep = categoryNamed(s, "deep")
         val light = categoryNamed(s, "light")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.25))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(light, ROOT, 0.25))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.25))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(light, ROOT, null, 0.25))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.5))
 
         val rows = CategoryRules.sharedRuleRows(s, listOf(deep, light))
-        assertEquals(listOf(ROOT, f.bookCell), rows.map { it.scopeCellId })
+        assertEquals(listOf(ROOT, f.bookCell), rows.map { it.relativeToCellId })
         assertEquals(0.25, rows[0].share, "both give the whole tree 25 %")
         assertEquals(2, rows[0].holders)
         assertEquals(null, rows[1].share, "only one of the two has a rule under Book: the field is empty")
         assertEquals(1, rows[1].holders)
         // Read alone, the category's own rule shows.
-        assertEquals(0.5, CategoryRules.sharedRuleRows(s, listOf(deep)).single { it.scopeCellId == f.bookCell }.share)
+        assertEquals(0.5, CategoryRules.sharedRuleRows(s, listOf(deep)).single { it.relativeToCellId == f.bookCell }.share)
         // Two shares on one scope that differ: empty.
         val differing = s.copy(
             categories = s.categories.map { c ->
@@ -165,43 +173,40 @@ class CategoryRulesTest {
         assertEquals(null, CategoryRules.sharedRuleRows(differing, listOf(deep, light)).first().share)
     }
 
-    // ----- a share of its own sub-list, forced on every carrier (user rule 2026-10-02) ------------
+    // ----- distance 1 relative to no cell: each carrier's own sub-list (replaced "Share of its sub-list") --------
 
     private fun shareOfCell(state: SchedulerState, taskId: TaskId): Double =
         RelativePriorityDomain.cellShare(state, state.cells.values.first { it.taskId == taskId }.id)
 
     @Test
-    fun forcing_a_share_gives_every_carrier_that_share_of_its_own_sub_list_by_one_factor_on_its_row() {
+    fun a_rule_at_distance_one_relative_to_no_cell_holds_every_carrier_at_that_share_of_its_own_sub_list() {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "deep"))
         val deep = categoryNamed(s, "deep")
-        val otherRow = s.cells.values.first { it.taskId == f.other }.priorityWeights
-        val chapterRow = s.cells.values.first { it.taskId == f.chapter }.priorityWeights
 
-        val forced = SchedulerReducer.reduce(s, SchedulerIntent.SetCategorySubListShare(listOf(deep), 0.2))
-        // Each carrier is 20 % of ITS list — Chapter of Book's, Read of Notes's — whatever the lists are worth.
-        assertShare(0.2, shareOfCell(forced, f.chapter), "Chapter in Book")
-        assertShare(0.2, shareOfCell(forced, f.read), "Read in Notes")
-        assertShare(0.8, shareOfCell(forced, f.other), "Other keeps the rest")
-        // Only the carrier's own row moved, and by ONE factor: every value of it multiplied alike.
-        assertEquals(otherRow, forced.cells.values.first { it.taskId == f.other }.priorityWeights)
-        val after = forced.cells.values.first { it.taskId == f.chapter }.priorityWeights
-        val factors = chapterRow.zip(after).filter { it.first > 0.0 }.map { it.second / it.first }
-        assertTrue(factors.isNotEmpty() && factors.all { abs(it - factors.first()) < 1e-9 }, "one common factor: $factors")
-        // Nothing to change: no unit, the same state.
-        assertTrue(SchedulerReducer.reduce(forced, SchedulerIntent.SetCategorySubListShare(listOf(deep), 0.2)) === forced)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 1, 0.2))
+        assertNull(s.categoryRuleError)
+        // Each carrier is 20 % of ITS list — Chapter of Book's, Read of Notes's — one group per sub-list.
+        assertShare(0.2, shareOfCell(s, f.chapter), "Chapter in Book")
+        assertShare(0.2, shareOfCell(s, f.read), "Read in Notes")
+        assertShare(0.8, shareOfCell(s, f.other), "Other keeps the rest")
+        assertEquals(2, CategoryRules.ruleRows(s, deep).single().achieved.size, "two sub-lists governed")
+
+        // …and HELD: an unrelated edit in Book's list does not move it off 20 %.
+        val otherCell = s.cells.values.first { it.taskId == f.other }.id
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(otherCell, 0, 9.0))
+        assertShare(0.2, shareOfCell(s, f.chapter), "Chapter in Book after Other's weight moved")
     }
 
     @Test
-    fun two_carriers_of_one_sub_list_each_reach_the_forced_share() {
+    fun two_carriers_of_one_sub_list_are_counted_together() {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCellTitle(f.state.lists[f.state.tasks[f.book]!!.childListId!!]!!.cellIds[2], "Third"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.other, "deep"))
-        val forced = CategoryRules.forceSubListShare(s, setOf(categoryNamed(s, "deep")), 0.3)
-        assertShare(0.3, shareOfCell(forced, f.chapter), "Chapter")
-        assertShare(0.3, shareOfCell(forced, f.other), "Other")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(categoryNamed(s, "deep"), ROOT, 1, 0.6))
+        assertShare(0.6, shareOfCell(s, f.chapter) + shareOfCell(s, f.other), "Chapter and Other together")
     }
 
     /** The last resort: a row with a 0 in the column that is worth 90 % cannot be SCALED past 10 %. */
@@ -209,10 +214,10 @@ class CategoryRulesTest {
     fun a_share_no_factor_reaches_is_reached_by_adding_to_the_row() {
         val f = twoColumnFixture()
         val deep = categoryNamed(f.state, "deep")
-        val forced = CategoryRules.forceSubListShare(f.state, setOf(deep), 0.5)
-        assertShare(0.5, shareOfCell(forced, f.notes), "Notes of the root list")
+        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 1, 0.5))
+        assertShare(0.5, shareOfCell(s, f.notes), "Notes of the root list")
         // The term reached the column the row had nothing in.
-        assertTrue(forced.cells[f.notesCell]!!.priorityWeights[0] > 0.0)
+        assertTrue(s.cells[f.notesCell]!!.priorityWeights[0] > 0.0)
     }
 
     // ----- the field: naming a category is pointing at it ----------------------------------------
@@ -275,11 +280,11 @@ class CategoryRulesTest {
         val deep = categoryNamed(s, "deep")
 
         // Chapter is 1 of 2 under Book, which is 1 of 2 under root: 25 % of the tree to begin with.
-        assertShare(0.25, CategoryRules.shareOf(s, deep, ROOT), "before the rule")
+        assertShare(0.25, shareOf(s, deep, ROOT, null), "before the rule")
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.33))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.33))
         assertNull(s.categoryRuleError, "a rule this tree can hold must not be refused")
-        assertShare(0.33, CategoryRules.shareOf(s, deep, ROOT), "the user's own example")
+        assertShare(0.33, shareOf(s, deep, ROOT, null), "the user's own example")
         // The rule is a statement about the tree, so the tree itself now says it.
         assertShare(0.33, SchedulerDomain.absoluteTaskPriorities(s)[f.chapter]!!, "the percentage on the row")
     }
@@ -289,7 +294,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.5))
 
         val priorities = SchedulerDomain.absoluteTaskPriorities(s)
         assertShare(0.5, priorities[f.chapter]!!, "the carrier")
@@ -304,7 +309,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.4))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.4))
 
         // Raise a completely unrelated leaf's weight. Without the settle this would dilute the category.
         val notesList = s.tasks[f.notes]!!.childListId!!
@@ -312,7 +317,7 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(readCell, 0, 7.0))
 
         assertNull(s.categoryRuleError)
-        assertShare(0.4, CategoryRules.shareOf(s, deep, ROOT), "after an unrelated edit")
+        assertShare(0.4, shareOf(s, deep, ROOT, null), "after an unrelated edit")
     }
 
     @Test
@@ -321,7 +326,7 @@ class CategoryRulesTest {
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.6))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.6))
 
         val priorities = SchedulerDomain.absoluteTaskPriorities(s)
         assertShare(0.6, priorities[f.chapter]!! + priorities[f.read]!!, "the two carriers together")
@@ -332,25 +337,29 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 0.75))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.75))
 
         assertNull(s.categoryRuleError)
-        assertShare(0.75, CategoryRules.shareOf(s, deep, f.bookCell), "inside Book")
+        assertShare(0.75, shareOf(s, deep, f.bookCell, null), "inside Book")
         // Book itself still holds half the tree: a rule about a sub-tree says nothing about the tree above it.
         assertShare(0.5, RelativePriorityDomain.relativePriority(s, f.book, WellKnownIds.ROOT_TASK), "Book")
     }
 
     @Test
-    fun a_carrier_takes_its_whole_sub_tree_and_a_nested_carrier_is_not_counted_twice() {
+    fun a_task_cell_rule_counts_the_top_most_carrier_and_a_distance_rule_each_against_its_own_parent() {
         val f = fixture()
         // Book itself carries the category, and so does Chapter inside it.
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.book, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-
-        val chains = CategoryRules.chainsFor(s, deep, ROOT)
-        assertEquals(1, chains.size, "the walk stops at the top-most carrier")
-        assertShare(0.5, CategoryRules.shareOf(s, deep, ROOT), "Book's whole sub-tree, once")
+        // Relative to the whole tree: the walk stops at Book, whose whole sub-tree is counted once.
+        assertEquals(1, chainsOf(s, deep, ROOT, null).size, "the walk stops at the top-most carrier")
+        assertShare(0.5, shareOf(s, deep, ROOT, null), "Book's whole sub-tree, once")
+        // At parent distance 1 each is a share of its OWN parent's sub-list: Book of the root list, Chapter of Book's.
+        val groups = CategoryRules.ruleGroups(s, s.categoryById(deep)!!, CategoryRule(null, 1, 0.0))
+        assertEquals(listOf(null, f.bookCell), groups.map { it.ancestor })
+        // At distance 2 only Chapter is that deep, and its chain runs through Book.
+        assertEquals(listOf(f.bookCell, s.cells.values.first { it.taskId == f.chapter }.id), chainsOf(s, deep, ROOT, 2).single())
     }
 
     // ----- a contradiction is refused ------------------------------------------------------------
@@ -362,16 +371,16 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "shallow"))
         val deep = categoryNamed(s, "deep")
         val shallow = categoryNamed(s, "shallow")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.7))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.7))
 
         val before = s
-        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(shallow, ROOT, 0.6))
+        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(shallow, ROOT, null, 0.6))
 
         assertNotNull(after.categoryRuleError, "the user must be told")
         assertEquals(before.cells, after.cells, "no priority may move")
         assertEquals(before.categories, after.categories, "the refused rule must not be written")
         // ...and the first rule is still being held.
-        assertShare(0.7, CategoryRules.shareOf(after, deep, ROOT), "the surviving rule")
+        assertShare(0.7, shareOf(after, deep, ROOT, null), "the surviving rule")
     }
 
     @Test
@@ -381,9 +390,9 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "shallow"))
         val deep = categoryNamed(s, "deep")
         val shallow = categoryNamed(s, "shallow")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.3))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.3))
 
-        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(shallow, ROOT, 0.3))
+        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(shallow, ROOT, null, 0.3))
         assertNotNull(after.categoryRuleError, "overlapping claims cannot both be honoured")
         assertEquals(s.categories, after.categories)
     }
@@ -393,7 +402,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 1.0))
+        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 1.0))
 
         assertNotNull(after.categoryRuleError, "Other would be left with nothing")
         assertEquals(s.categories, after.categories)
@@ -405,7 +414,7 @@ class CategoryRulesTest {
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.other, "deep"))
         val deep = categoryNamed(s, "deep")
-        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 0.5))
+        val after = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.5))
 
         assertNotNull(after.categoryRuleError, "there is nothing under Book to hold the other half")
         assertEquals(s.categories, after.categories)
@@ -428,10 +437,10 @@ class CategoryRulesTest {
             "the fixture must start under the 10 % the second column is worth",
         )
 
-        val after = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.5))
+        val after = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 1, 0.5))
 
         assertNull(after.categoryRuleError, "adding can reach it, so nothing may be refused")
-        assertShare(0.5, CategoryRules.shareOf(after, deep, ROOT), "the rule")
+        assertShare(0.5, shareOf(after, deep, ROOT, 1), "the rule")
         assertTrue(
             after.cells[f.notesCell]!!.priorityWeights[0] > 0.0,
             "the term must have reached the column the cell was absent from",
@@ -443,17 +452,17 @@ class CategoryRulesTest {
     fun once_added_to_the_cell_is_in_every_column_and_re_establishing_is_an_ordinary_factor() {
         val f = twoColumnFixture()
         val deep = categoryNamed(f.state, "deep")
-        val added = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.5))
+        val added = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 1, 0.5))
         val row = added.cells[f.notesCell]!!.priorityWeights
 
         assertTrue(row.all { it > 0.0 }, "every column must carry a value now: $row")
         // …so a plain factor can now move it anywhere, which is what a re-establishment uses.
         val moved = RelativePriorityDomain.setChainsShare(
             added,
-            CategoryRules.chainsFor(added, deep, ROOT),
+            chainsOf(added, deep, ROOT, 1),
             0.7,
         )
-        assertShare(0.7, CategoryRules.shareOf(moved, deep, ROOT), "the factor alone")
+        assertShare(0.7, shareOf(moved, deep, ROOT, 1), "the factor alone")
         val ratios = moved.cells[f.notesCell]!!.priorityWeights.indices.map { i ->
             moved.cells[f.notesCell]!!.priorityWeights[i] / row[i]
         }
@@ -473,10 +482,10 @@ class CategoryRulesTest {
         val deep = categoryNamed(f.state, "deep")
         val before = f.state.cells[f.notesCell]!!.priorityWeights
 
-        val after = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.08))
+        val after = SchedulerReducer.reduce(f.state, SchedulerIntent.SetCategoryRule(deep, ROOT, 1, 0.08))
 
         assertNull(after.categoryRuleError, "8 % is inside the 10 % the second column is worth")
-        assertShare(0.08, CategoryRules.shareOf(after, deep, ROOT), "the rule")
+        assertShare(0.08, shareOf(after, deep, ROOT, 1), "the rule")
         assertEquals(
             0.0,
             after.cells[f.notesCell]!!.priorityWeights[0],
@@ -495,17 +504,17 @@ class CategoryRulesTest {
         // Chapter sits under Book, which is itself at 0 in the second column: the chain needs an addition.
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "wide"))
         val wide = categoryNamed(s, "wide")
-        val chapterCell = CategoryRules.chainsFor(s, wide, ROOT).single().last()
+        val chapterCell = chainsOf(s, wide, ROOT, null).single().last()
         val heldBefore = RelativePriorityDomain.cellShare(s, chapterCell)
 
         s = RelativePriorityDomain.setChainsShare(
             s,
-            CategoryRules.chainsFor(s, wide, ROOT),
+            chainsOf(s, wide, ROOT, null),
             0.5,
             pinned = setOf(chapterCell),
         )
 
-        assertShare(0.5, CategoryRules.shareOf(s, wide, ROOT), "the ask")
+        assertShare(0.5, shareOf(s, wide, ROOT, null), "the ask")
         assertShare(heldBefore, RelativePriorityDomain.cellShare(s, chapterCell), "the pinned link")
     }
 
@@ -514,7 +523,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 1.0))
         assertNotNull(s.categoryRuleError)
 
         // It must never reach a peer: the fingerprint is taken over the neutralized state.
@@ -532,7 +541,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.4))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.4))
 
         // PRD §4: the blank title is what deletes.
         val chapterCell: CellId =
@@ -551,7 +560,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.notesCell, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.notesCell, null, 0.5))
 
         // Notes never held a carrier, so the rule was asleep to begin with...
         assertEquals(CategoryRules.Status.NoCarrier, CategoryRules.ruleRows(s, deep).single().status)
@@ -563,25 +572,28 @@ class CategoryRulesTest {
 
     // ----- the scope is a CELL, because a task can appear several times ---------------------------
 
+    /**
+     * The task cell picker offers the whole tree ("root", the anomaly of 2026-10-03: it was missing) and every cell a
+     * carrier sits under — ONLY those, so a rule cannot be written about a cell no carrier sits under — one task id
+     * once per path it is reached by.
+     */
     @Test
-    fun the_picker_offers_cells_by_their_path_so_two_occurrences_of_one_task_are_told_apart() {
+    fun the_task_cell_picker_offers_root_and_every_cell_a_carrier_sits_under_once_per_path() {
         val f = fixture()
-        // Mirror Book under Notes: one more CELL, the same task and the same sub-list.
+        // Mirror Book under Notes: one more CELL of Book, so Chapter sits under Book along two paths.
         val mirrorCell = f.state.lists[f.state.tasks[f.notes]!!.childListId!!]!!.cellIds.last()
-        val s = SchedulerReducer.reduce(f.state, SchedulerIntent.AssignTaskId(mirrorCell, f.book))
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AssignTaskId(mirrorCell, f.book))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        val deep = categoryNamed(s, "deep")
 
-        val labels = CategoryRules.scopeEntries(s, "").map { it.label }
-        assertTrue(labels.contains("Book"), "the occurrence under root:\n$labels")
-        assertTrue(labels.contains("Notes / Book"), "the occurrence under Notes:\n$labels")
-        // Each LIST is entered once, and only from the cell that owns it: the mirror is a row of its own,
-        // but the sub-tree under it is not offered a second time.
-        assertEquals(
-            listOf("Book / Chapter"),
-            labels.filter { it.endsWith("Chapter") },
-            "the mirrored sub-tree is walked once:\n$labels",
-        )
-        // ...and the root is always the first offer.
-        assertNull(CategoryRules.scopeEntries(s, "").first().cellId)
+        val labels = CategoryRules.taskCellEntries(s, listOf(deep), "").map { it.label }
+        assertEquals(SchedulerDomain.ROOT_LABEL, labels.first(), "the whole tree first")
+        assertEquals(setOf(SchedulerDomain.ROOT_LABEL, "Book", "Notes", "Notes / Book"), labels.toSet())
+        assertTrue(labels.none { it.endsWith("Chapter") || it.endsWith("Read") }, "nothing no carrier sits under:\n$labels")
+        assertEquals(listOf(null), CategoryRules.taskCellEntries(s, listOf(deep), "root").map { it.cellId }, "typing root finds it")
+
+        assertTrue(CategoryRules.distanceReached(s, listOf(deep), 2))
+        assertTrue(!CategoryRules.distanceReached(s, listOf(deep), 4), "nothing is that deep")
     }
 
     @Test
@@ -592,16 +604,16 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
 
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 0.6))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, mirrorCell, 0.4))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.6))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, mirrorCell, null, 0.4))
 
         // A sub-list belongs to the task id, so both cells show ONE sub-tree: two rules about it would be
         // two statements about one thing, which is exactly what "at most one rule per scope" forbids.
         val rule = s.categoryById(deep)!!.rules.single()
-        assertEquals(mirrorCell, rule.scopeCellId)
+        assertEquals(mirrorCell, rule.relativeToCellId)
         assertShare(0.4, rule.share, "the later rule is the one that stands")
-        assertShare(0.4, CategoryRules.shareOf(s, deep, f.bookCell), "read through either cell")
-        assertShare(0.4, CategoryRules.shareOf(s, deep, mirrorCell), "read through either cell")
+        assertShare(0.4, shareOf(s, deep, f.bookCell, null), "read through either cell")
+        assertShare(0.4, shareOf(s, deep, mirrorCell, null), "read through either cell")
     }
 
     @Test
@@ -611,7 +623,7 @@ class CategoryRulesTest {
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AssignTaskId(mirrorCell, f.book))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, mirrorCell, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, mirrorCell, null, 0.5))
         assertEquals(CategoryRules.Status.Held, CategoryRules.ruleRows(s, deep).single().status)
 
         // PRD §4: the blank title is what deletes — and it deletes the OCCURRENCE the user pointed at.
@@ -626,14 +638,13 @@ class CategoryRulesTest {
     }
 
     @Test
-    fun a_rule_row_names_its_scope_by_the_cell_s_own_path() {
+    fun a_rule_row_names_what_it_is_relative_to_by_the_cell_s_own_path() {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        val chapterCell = s.cells.values.first { it.taskId == f.chapter }.id
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, chapterCell, 0.0))
-
-        assertEquals("Book / Chapter", CategoryRules.ruleRows(s, deep).single().scopeLabel)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 2, 0.25))
+        assertEquals(listOf("of “Book”", "of the parent 2 levels up"), CategoryRules.ruleRows(s, deep).map { it.label })
     }
 
     // ----- persistence ----------------------------------------------------------------------------
@@ -644,14 +655,14 @@ class CategoryRulesTest {
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.6))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, null, 0.6))
 
         val decoded = SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(s))
         assertNotNull(decoded)
         assertEquals(s.categories, decoded.categories)
         assertEquals(s.nextCategoryCounter, decoded.nextCategoryCounter)
         assertEquals(listOf(deep), decoded.tasks[f.chapter]!!.categoryIds)
-        assertShare(0.6, CategoryRules.shareOf(decoded, deep, ROOT), "the rule after a reload")
+        assertShare(0.6, shareOf(decoded, deep, ROOT, null), "the rule after a reload")
     }
 
     @Test
@@ -666,43 +677,50 @@ class CategoryRulesTest {
         assertEquals(emptyList(), decoded.tasks[f.chapter]!!.categoryIds)
     }
 
+    /** A rule written before the switch (no distance) IS a task cell rule, and loads as one. */
+    @Test
+    fun a_rule_written_before_the_switch_loads_as_a_task_cell_rule() {
+        val f = fixture()
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
+        val deep = categoryNamed(s, "deep")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.6))
+        val previous = SchedulerStateCodec.encode(s)
+        assertTrue(!previous.contains("\"distance\""), "a task cell rule writes no distance — the older shape:\n$previous")
+        val decoded = assertNotNull(SchedulerStateCodec.decode(previous))
+        assertEquals(CategoryRule(f.bookCell, null, 0.6), decoded.categoryById(deep)!!.rules.single())
+        // …and a parent distance rule round-trips with its distance.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, null, 1, 0.4))
+        val again = assertNotNull(SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(s)))
+        assertEquals(s.categoryById(deep)!!.rules.toSet(), again.categoryById(deep)!!.rules.toSet())
+    }
+
     @Test
     fun a_payload_written_when_a_rule_s_scope_was_a_task_loads_with_that_task_s_first_cell() {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, 0.6))
-
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.bookCell, null, 0.6))
         // The PREVIOUS shape, byte for byte: a rule named a task and knew nothing of cells.
-        val previous = SchedulerStateCodec.encode(s).replace(
-            Regex("\"scopeCellId\":\\s*\"[^\"]*\",\\s*"),
-            "",
-        )
+        val previous = SchedulerStateCodec.encode(s).replace(Regex("\"scopeCellId\":\\s*\"[^\"]*\",\\s*"), "")
         assertTrue(previous.contains("\"scopeTaskId\""), "the older shape is what is being loaded:\n$previous")
-        assertTrue(!previous.contains("scopeCellId"), "...and it holds no cell at all:\n$previous")
-
-        val decoded = SchedulerStateCodec.decode(previous)
-        assertNotNull(decoded)
-        // "Under Book" becomes "under Book's first occurrence" — the same cell "go to task" lands on.
-        assertEquals(f.bookCell, decoded.categories.single().rules.single().scopeCellId)
-        assertShare(0.6, CategoryRules.shareOf(decoded, deep, f.bookCell), "the rule after the migration")
+        val decoded = assertNotNull(SchedulerStateCodec.decode(previous))
+        assertEquals(f.bookCell, decoded.categories.single().rules.single().relativeToCellId)
+        assertShare(0.6, shareOf(decoded, deep, f.bookCell, null), "the rule after the migration")
     }
 
+    /** A category written before kinds existed is a task id one; a task cell category and its cells round-trip. */
     @Test
-    fun a_payload_whose_rule_named_the_root_task_loads_as_the_whole_tree() {
+    fun the_kind_and_the_cells_carrying_a_task_cell_category_survive_a_round_trip() {
         val f = fixture()
-        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
-        val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, ROOT, 0.33))
+        val chapterCell = f.state.cells.values.first { it.taskId == f.chapter }.id
+        var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddCellCategory(chapterCell, "spot"))
+        val spot = categoryNamed(s, "spot")
+        val decoded = assertNotNull(SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(s)))
+        assertEquals(org.example.project.scheduler.model.CategoryKind.TaskCell, decoded.categoryById(spot)!!.kind)
+        assertEquals(listOf(spot), decoded.cells[chapterCell]!!.categoryIds)
 
-        val previous = SchedulerStateCodec.encode(s).replace(
-            Regex("\"scopeCellId\":\\s*\"[^\"]*\",\\s*"),
-            "",
-        )
-        val decoded = SchedulerStateCodec.decode(previous)
-        assertNotNull(decoded)
-        assertNull(decoded.categories.single().rules.single().scopeCellId, "task/main is the whole tree")
-        assertShare(0.33, CategoryRules.shareOf(decoded, deep, ROOT), "the user's own example, reloaded")
+        val older = SchedulerStateCodec.encode(s).replace(Regex(",\\s*\"kind\":\\s*\"TaskCell\""), "")
+        assertEquals(org.example.project.scheduler.model.CategoryKind.TaskId, SchedulerStateCodec.decode(older)!!.categoryById(spot)!!.kind)
     }
 
     // ----- the clipboard --------------------------------------------------------------------------
@@ -786,7 +804,7 @@ class CategoryRulesTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskCategory(f.read, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, null, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, null, null, 0.5))
 
         val rows = CategoryRules.overview(s)
         // Title order, not minting order — the list is where a category is found by the name it is known by.
@@ -804,7 +822,7 @@ class CategoryRulesTest {
         val f = fixture()
         var s = SchedulerReducer.reduce(f.state, SchedulerIntent.AddTaskCategory(f.chapter, "deep"))
         val deep = categoryNamed(s, "deep")
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.notesCell, 0.5))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCategoryRule(deep, f.notesCell, null, 0.5))
 
         // The rule is about Notes' sub-tree, which nothing under it carries — dormant, not contradictory.
         val row = CategoryRules.overview(s).single { it.category.id == deep }

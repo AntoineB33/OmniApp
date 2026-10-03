@@ -298,6 +298,8 @@ object SnapshotMerge {
             parentListId = pick(base?.parentListId, local.parentListId, remote.parentListId),
             taskId = pickNullable(base?.taskId, local.taskId, remote.taskId),
             priorityWeights = pick(base?.priorityWeights, local.priorityWeights, remote.priorityWeights),
+            // A membership list, merged like a task's `categoryIds`: both sides' additions survive.
+            categoryIds = mergeOrdered(base?.categoryIds, local.categoryIds, remote.categoryIds),
         )
 
     /**

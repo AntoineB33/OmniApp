@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Categories: a rule relative to a chosen task cell or a parent distance; task cell categories — 2026-10-03
+
+User requests (three, the same day): the Search window's "add a rule" let a rule be written relative to a task cell no
+carrier sits under; then "root" was missing from its picker; then a switch between the two ways of knowing the cell.
+A rule is `CategoryRule(relativeToCellId, distance, share)`: a **task cell rule** (`distance` null — every rule written
+before, which loads unchanged) counts every top-most carrier under its cell, whose picker offers "root" and ONLY the
+cells a carrier sits under, by path, once per path (`CategoryRules.taskCellEntries`); a **parent distance rule** holds
+each carrier at the share of the cell `distance` levels above it (1 = its parent), along every path. One form
+(`RuleAdder`) with a switch showing one field. **"Share of its sub-list" is removed** — a parent distance rule at 1
+says it and holds it (`SetCategorySubListShare` / `forceSubListShare` gone). New **"Task cell category"** switch
+(`Category.kind`, `SetCategoryKind`, which moves the carriers between `Task.categoryIds` and the new `Cell.categoryIds`)
+and **"Task cell categories"** action on added tasks (`SetCellCategory`, `AddCellCategory`). A rule holding a cell pinned
+in a priority weights table shows a warning in the task tree window's configuration section
+(`CategoryRules.pinnedRuleCells`). Persisted: `PersistedCategoryRule.distance`, `PersistedCategory.kind`,
+`PersistedCell.categoryIds` (all defaulted); the merge takes a cell's `categoryIds` as a membership list. No migration.
+`CategoryRulesTest`, `TaskCellCategoryTest`, `RootTaskMigrationTest`. Follow-up: the task cell field, and both
+"Add under…" fields, had no title suggestions; they now list every task title the draft appears in
+(`SchedulerDomain.titleSuggestions`, the tree cell's own), a pick filling the field.
+
 ### Scheduler: the first 10 s of a re-plan from scratch — 2026-10-03
 
 Requirement added to `docs/scheduler_requirements.md` § *Progressive Calculation* (**first 10s**): a change that makes

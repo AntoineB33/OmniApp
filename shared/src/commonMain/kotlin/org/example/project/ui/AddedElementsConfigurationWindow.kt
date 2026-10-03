@@ -317,7 +317,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.AlarmAlert,
         SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
         SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
-        SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy,
+        SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
     )
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
@@ -371,7 +371,9 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.TaskAddCategory ->
             CategoryChooser(
                 cellId = "search/task-add-category",
-                options = state.categories.sortedBy { it.title.lowercase() }.map { it.id to it.title },
+                // A task cell category is given to one occurrence ("Task cell categories"), never to a task.
+                options = state.categories.filter { it.kind == org.example.project.scheduler.model.CategoryKind.TaskId }
+                    .sortedBy { it.title.lowercase() }.map { it.id to it.title },
                 enabled = tasks.isNotEmpty(),
             ) { run(SearchDomain.AddedCommand.Category(it, carried = true)) }
         // Only the categories an added task carries: the others have nothing to take off.
@@ -550,6 +552,7 @@ private fun AddedActionEditor(
         }
         SearchDomain.AddedAction.TaskFulfilment -> FulfilmentEditor(state, added, run, handlers.onEdit)
         SearchDomain.AddedAction.TaskFulfilledBy -> FulfilledByEditor(state, taskIds, run, handlers.onEdit)
+        SearchDomain.AddedAction.TaskCellCategories -> TaskCellCategoriesEditor(state, taskIds, run)
         SearchDomain.AddedAction.TaskPaths -> {
             for (taskId in taskIds) {
                 val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }
@@ -568,33 +571,31 @@ private fun AddedActionEditor(
                 }
             }
         }
-        // User rule 2026-10-02: every task carrying an added category given ONE share of its own sub-list — its row
-        // of that sub-list's weight table adjusted (a common factor, an added term as the last resort).
-        SearchDomain.AddedAction.CategorySubListShare -> {
-            val categoryIds = SearchDomain.addedIds(added, SearchDomain.Kind.Category).mapTo(LinkedHashSet()) { CategoryId(it) }
-            val carriers = CategoryRules.carrierCells(state, categoryIds)
-            // What they all hold now, when they do — to the precision the field prints.
-            val current = carriers.map { formatShareNumber(RelativePriorityDomain.cellShare(state, it)) }.distinct().singleOrNull()
-            var draft by remember(categoryIds) { mutableStateOf<String?>(null) }
-            val text = draft ?: current.orEmpty()
-            val share = parsePercent(text)
+        // User rule 2026-10-03: the task cell category switch, over every added category — lit when every one of them
+        // is carried by task cells, with "mixed" beside it when they differ.
+        SearchDomain.AddedAction.CategoryKind -> {
+            val categories = SearchDomain.addedIds(added, SearchDomain.Kind.Category).mapNotNull { state.categoryById(CategoryId(it)) }
+            val kinds = categories.map { it.kind }.distinct()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { draft = it },
-                    enabled = carriers.isNotEmpty(),
-                    isError = draft != null && share == null,
-                    singleLine = true,
-                    suffix = { Text("%") },
-                    modifier = Modifier.width(110.dp).leaveFocusOnOutsidePress(),
+                androidx.compose.material3.Switch(
+                    checked = kinds.singleOrNull() == org.example.project.scheduler.model.CategoryKind.TaskCell,
+                    enabled = categories.isNotEmpty(),
+                    onCheckedChange = { on ->
+                        val kind =
+                            if (on) org.example.project.scheduler.model.CategoryKind.TaskCell
+                            else org.example.project.scheduler.model.CategoryKind.TaskId
+                        categories.forEach { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetCategoryKind(it.id, kind))) }
+                    },
                 )
-                FrameButton(
-                    if (carriers.size == 1) "Force on 1 task" else "Force on ${carriers.size} tasks",
-                    enabled = carriers.isNotEmpty() && draft != null && share != null,
-                ) {
-                    share?.let { run(SearchDomain.AddedCommand.CategoryShare(it)) }
-                    draft = null
-                }
+                Text(
+                    when {
+                        kinds.size > 1 -> "mixed"
+                        kinds.singleOrNull() == org.example.project.scheduler.model.CategoryKind.TaskCell -> "carried by task cells"
+                        else -> "carried by task ids"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         // --- The categories' settings: ONE control each, over every added category (user rule 2026-10-02) --------
@@ -1040,6 +1041,63 @@ private fun ResilienceEditor(
 }
 
 /**
+ * User rule 2026-10-03: **the task cell categories of each added task, one occurrence at a time** — every place the task
+ * sits ([TaskPathsDomain.occurrences], by its path), the task cell categories that occurrence carries (✕ takes one
+ * off), and a [NamingCell] giving it another: the account's task cell categories as identity rows, a "Create" row for
+ * a name nobody holds. A task id category is not offered here — it is carried by the task, from the tree's field.
+ */
+@Composable
+private fun TaskCellCategoriesEditor(state: SchedulerState, taskIds: List<TaskId>, run: (SearchDomain.AddedCommand) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (taskId in taskIds) {
+            val task = state.tasks[taskId] ?: continue
+            ElementHeading(task.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }, taskIds.size)
+            val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }
+            if (places.isEmpty()) {
+                Text("In no place of the open task tree.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            for (place in places) {
+                val carried = state.cells[place.cellId]?.categoryIds.orEmpty().mapNotNull { state.categoryById(it) }
+                Text(place.label, style = MaterialTheme.typography.bodyMedium)
+                for (category in carried) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(category.title, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 12.dp).weight(1f))
+                        FrameButton("✕") {
+                            run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetCellCategory(place.cellId, category.id, carried = false)))
+                        }
+                    }
+                }
+                NamingCell(
+                    cellId = CellId("search/cell-categories/" + place.cellId.value),
+                    shown = "",
+                    identityLabel = "Task cell categories",
+                    identity = { draft ->
+                        val typed = draft.trim()
+                        CategoryRules.menuEntries(state, draft, carried.map { it.id }, org.example.project.scheduler.model.CategoryKind.TaskCell)
+                            .map { NamingRow(it.id.value, it.title) } +
+                            listOfNotNull(
+                                namingCreateRow(typed).takeIf {
+                                    typed.isNotEmpty() && state.categories.none { it.title.equals(typed, ignoreCase = true) }
+                                },
+                            )
+                    },
+                    suggestions = { draft -> CategoryRules.titleSuggestions(state, draft, org.example.project.scheduler.model.CategoryKind.TaskCell) },
+                    onPick = { key ->
+                        val created = namingCreatedName(key)
+                        run(
+                            SearchDomain.AddedCommand.Raw(
+                                if (created != null) SchedulerIntent.AddCellCategory(place.cellId, created)
+                                else SchedulerIntent.SetCellCategory(place.cellId, CategoryId(key), carried = true),
+                            ),
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
  * PRD §9 (user rule 2026-10-03): **the set of tasks of each added schedulable task** — what it fulfils while it is on the
  * calendar. One line per task of the set: its title (a press opens the Search window holding it), its percentage with
  * the Resilience action's draft-and-Apply (one history unit per Apply, never one per keystroke) and its ✕. Under them, a
@@ -1203,6 +1261,7 @@ private fun AddUnderEditor(state: SchedulerState, taskIds: List<TaskId>, run: (S
     AddUnderField(
         cellId = org.example.project.scheduler.model.CellId("search/add-under"),
         candidates = { query -> TaskPathsDomain.candidatesForAll(state, taskIds, query) },
+        titleSuggestions = { draft -> SchedulerDomain.titleSuggestions(state, draft) },
         onAdd = { run(SearchDomain.AddedCommand.AddUnder(it)) },
     )
 }

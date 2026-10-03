@@ -139,7 +139,7 @@ class RootTaskMigrationTest {
     fun the_account_wide_category_rule_survives_the_rename() {
         val s = assertNotNull(SchedulerStateCodec.decode(legacyPayload()))
         val rule = s.categories.single().rules.single()
-        assertNull(rule.scopeCellId)
+        assertNull(rule.relativeToCellId)
         assertEquals(0.5, rule.share)
     }
 
@@ -162,7 +162,7 @@ class RootTaskMigrationTest {
 
         // ...and it still round-trips as the account-wide scope here.
         val again = assertNotNull(SchedulerStateCodec.decode(encoded))
-        assertNull(again.categories.single().rules.single().scopeCellId)
+        assertNull(again.categories.single().rules.single().relativeToCellId)
     }
 
     /**

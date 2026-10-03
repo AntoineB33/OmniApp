@@ -38,8 +38,8 @@ internal data class NamingRow(val key: String, val label: String, val taskColor:
  * the editor closes. [trailing] is drawn after the title while not editing.
  *
  * **Every field outside the tree that names an element is this** (user rule 2026-10-03, after the Search window's
- * "Changed element" filter): that filter, the "Set of tasks" action's "add a task", a category rule's "Under which
- * task cell", "Add under…", the categories fields (a task's, the Categories window's, the Search window's category
+ * "Changed element" filter): that filter, the "Set of tasks" action's "add a task", a category rule's task cell,
+ * "Add under…", the categories fields (a task's, an occurrence's, the Categories window's, the Search window's category
  * actions and filter) and a period's kind — so they cannot come to behave differently. A field whose menus were drawn
  * under a plain text field showed them before it was ever entered; that is the anomaly this funnel exists to prevent.
  */
@@ -171,6 +171,8 @@ internal fun NamingKey(key: String) {
 internal fun AddUnderField(
     cellId: CellId,
     candidates: (draft: String) -> List<org.example.project.scheduler.domain.TaskPathsDomain.Candidate>,
+    /** Every task title the draft appears in, as in a tree cell (PRD §4 Menu 2) — picking one fills the field. */
+    titleSuggestions: (draft: String) -> List<String>,
     onAdd: (org.example.project.scheduler.model.TaskId?) -> Unit,
 ) {
     Text("Add under…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -179,7 +181,7 @@ internal fun AddUnderField(
         shown = "",
         identityLabel = "Places",
         identity = { draft -> candidates(draft).map { NamingRow(it.parentTaskId?.value ?: TOP_LEVEL_KEY, it.label) } },
-        suggestions = { emptyList() },
+        suggestions = titleSuggestions,
         onPick = { key -> onAdd(if (key == TOP_LEVEL_KEY) null else org.example.project.scheduler.model.TaskId(key)) },
     )
 }

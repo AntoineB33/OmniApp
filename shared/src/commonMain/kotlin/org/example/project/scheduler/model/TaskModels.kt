@@ -940,6 +940,11 @@ data class Cell(
      * Values may be any number ≥ 0 (0 is allowed); default 1.
      */
     val priorityWeights: List<Double> = listOf(1.0),
+    /**
+     * User rule 2026-10-03: the [CategoryKind.TaskCell] categories THIS occurrence carries — a task cell category is
+     * given to one occurrence of a task id in one sub-list, never to the task.
+     */
+    val categoryIds: List<CategoryId> = emptyList(),
 )
 
 /**
@@ -1015,40 +1020,44 @@ data class Category(
     val id: CategoryId,
     val title: String,
     /**
-     * The standing rules this category imposes, at most one per SUB-TREE — a second rule about the same
-     * sub-tree would be the plainest contradiction there is, so setting one REPLACES the rule at that scope
-     * rather than adding beside it. "The same sub-tree" is the list the scope cell's task names, not the
-     * cell itself: two cells of one mirrored task show the same sub-list, so they are one scope
-     * ([org.example.project.scheduler.domain.CategoryRules.scopeKey]).
+     * The standing rules this category imposes, at most one per relative-to sub-list (a task cell rule) and one per
+     * distance (a parent distance rule) — a second rule saying the same thing about the same tasks would be the
+     * plainest contradiction there is, so setting one REPLACES it rather than adding beside it.
      */
     val rules: List<CategoryRule> = emptyList(),
+    /**
+     * User rule 2026-10-03: **what carries this category** — a task id ([CategoryKind.TaskId], every occurrence of a
+     * task carrying it: [Task.categoryIds]) or one occurrence ([CategoryKind.TaskCell], that cell alone:
+     * [Cell.categoryIds]). Every category written before the switch existed is a task id one.
+     */
+    val kind: CategoryKind = CategoryKind.TaskId,
 ) {
-    /** This category's rule about [scopeCellId]'s sub-tree, or null while it makes no claim about it. */
-    fun ruleAt(scopeCellId: CellId?): CategoryRule? = rules.firstOrNull { it.scopeCellId == scopeCellId }
+    /** This category's rule of that shape — relative to [relativeToCellId] when [distance] is null — or null. */
+    fun ruleAt(relativeToCellId: CellId?, distance: Int?): CategoryRule? =
+        rules.firstOrNull { it.relativeToCellId == relativeToCellId && it.distance == distance }
 }
 
+/** User rule 2026-10-03: whether a category is carried by a task id (all its occurrences) or by one task cell. */
+enum class CategoryKind { TaskId, TaskCell }
+
 /**
- * PRD §5 **a category rule**: *the tasks carrying this category, inside [scopeCellId]'s sub-tree, are worth
- * [share] of it* — the user's own example, "all tasks with this category under that cell always represent
- * 33 % of priority".
+ * PRD §5 **a category rule**: the carriers of this category are worth [share] of the task cell the rule is relative
+ * to — and the app **holds** that ([org.example.project.scheduler.domain.CategoryRules]: every edit is followed by a
+ * pass that scales the tree back onto it, and an edit that could not be is refused). Two shapes, chosen by the switch
+ * of the "add a rule" form (user rule 2026-10-03):
  *
- * [share] is a fraction in `[0, 1]` of the scope's sub-tree, which is the same quantity the relative-priority
- * window edits ([org.example.project.scheduler.domain.RelativePriorityDomain.relativePriority]) — a rule is
- * that window's number, said once and then held.
+ *  - **a task cell rule** ([distance] null): relative to ONE task cell, [relativeToCellId] (`null` = the whole tree),
+ *    every carrier anywhere under it counted together — the user's own first example, "all tasks with this category
+ *    under that cell always represent 33 % of priority". The cell is picked among the ancestors of a carrier only.
+ *  - **a parent distance rule** ([distance] ≥ 1, [relativeToCellId] null): relative to the task cell [distance] levels
+ *    above EACH carrier — `1` its direct parent — the carriers sharing that ancestor's sub-list counted together.
  *
- * **[scopeCellId] is a CELL, not a task** (`null` for the whole tree — the root list). A task can appear
- * several times in the tree, so "under that task" is not a place the user can point at: the window asks
- * *under which task cell*, and a row names the occurrence by its own path. What the cell then names is the
- * sub-list its task owns — which is why two cells of one mirrored task are ONE scope, and why a rule sleeps
- * ([org.example.project.scheduler.domain.CategoryRules.Status.ScopeGone]) once the cell it was written about
- * is gone.
- *
- * The app **holds** the rule rather than merely checking it: every edit is followed by a pass that scales the
- * tree back onto it, and an edit that could not be scaled back is refused with a message
- * ([org.example.project.scheduler.domain.CategoryRules]).
+ * [share] is a fraction in `[0, 1]` of the ancestor's sub-tree, the quantity the relative-priority window edits
+ * ([org.example.project.scheduler.domain.RelativePriorityDomain.relativePriority]).
  */
 data class CategoryRule(
-    val scopeCellId: CellId?,
+    val relativeToCellId: CellId?,
+    val distance: Int?,
     val share: Double,
 )
 

@@ -560,7 +560,7 @@ suggestions before it was ever entered.
   press enters Edit Mode, Enter / Tab / Escape and a press anywhere else leave it, and ONLY in Edit Mode does it draw
   the `EditModeMenuBlock` (identity rows: picking one commits; title suggestions: picking one only fills it). Today:
   the "Changed element" and category filters of the Search window, the "Set of tasks" action's "add a task", the
-  category actions' "Add category" / "Remove category" and "Add a rule"'s "Under which task cell" (and the category
+  category actions' "Add category" / "Remove category" and "Add a rule"'s "Relative to" (and the category
   edit window's), "Add under…" (Search action and task edit window, `AddUnderField`), the task cell's categories
   field, the Categories window's "Add a category", and a period's "Kind of period".
 - **A field that may name something new** gives a `namingCreateRow` for the draft — the tree cell's "New task" row in

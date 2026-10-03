@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CategoryKind
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerIntent
@@ -140,14 +141,17 @@ fun TaskCategoryCell(
                     identityLabel = "Categories",
                     identity = { draft ->
                         val typed = draft.trim()
-                        CategoryRules.menuEntries(state, draft, carried.map { it.id }).map { NamingRow(it.id.value, it.title) } +
+                        // Task id categories only: a task cell category is given to one occurrence, from the Search
+                        // window's "Task cell categories" action (user rule 2026-10-03).
+                        CategoryRules.menuEntries(state, draft, carried.map { it.id }, CategoryKind.TaskId)
+                            .map { NamingRow(it.id.value, it.title) } +
                             listOfNotNull(
                                 namingCreateRow(typed).takeIf {
                                     typed.isNotEmpty() && state.categories.none { it.title.equals(typed, ignoreCase = true) }
                                 },
                             )
                     },
-                    suggestions = { draft -> CategoryRules.titleSuggestions(state, draft) },
+                    suggestions = { draft -> CategoryRules.titleSuggestions(state, draft, CategoryKind.TaskId) },
                     onPick = { key ->
                         open = false
                         val created = namingCreatedName(key)

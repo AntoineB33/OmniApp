@@ -1948,13 +1948,22 @@ object SearchDomain {
         TaskFulfilment(Kind.Task, "Set of tasks"),
         /** …and the other way round: the tasks whose set holds each added task, their percentage for it editable here. */
         TaskFulfilledBy(Kind.Task, "Fulfilled by"),
+        /**
+         * User rule 2026-10-03: each added task's occurrences, by path, each with the task cell categories it carries —
+         * given and taken one occurrence at a time ([SchedulerIntent.SetCellCategory], [SchedulerIntent.AddCellCategory]).
+         */
+        TaskCellCategories(Kind.Task, "Task cell categories"),
         // A category's settings, each ONE control over every added category (user rule 2026-10-02) — no editor per
         // category. A name is unique, so the field is the one category's when one is added.
         CategoryName(Kind.Category, "Name"),
         CategoryRules(Kind.Category, "Rules"),
         CategoryAddRule(Kind.Category, "Add a rule"),
-        /** Every task carrying an added category given one share of its own sub-list ([AddedCommand.CategoryShare]). */
-        CategorySubListShare(Kind.Category, "Share of its sub-list"),
+        /**
+         * User rule 2026-10-03: whether the added categories are carried by task cells (one occurrence each) or by task
+         * ids (every occurrence) — [SchedulerIntent.SetCategoryKind]. It replaced "Share of its sub-list", which a rule
+         * at distance 1 now says and holds.
+         */
+        CategoryKind(Kind.Category, "Task cell category"),
         AlarmOnOff(Kind.Alarm, "State"),
         // An alarm's settings, each ONE field over every added alarm (user rule 2026-10-02: no editor per alarm).
         AlarmTime(Kind.Alarm, "Time"),
@@ -2148,9 +2157,6 @@ object SearchDomain {
         data class Category(val categoryId: CategoryId, val carried: Boolean) : AddedCommand
 
         data class MinimumTime(val minutes: Int) : AddedCommand
-
-        /** Every task carrying an added category given [share] of its own sub-list ([SchedulerIntent.SetCategorySubListShare]). */
-        data class CategoryShare(val share: Double) : AddedCommand
 
         data class AlarmsOn(val on: Boolean) : AddedCommand
 
@@ -2772,11 +2778,6 @@ object SearchDomain {
             is AddedCommand.Category ->
                 if (taskIds.isEmpty()) emptyList()
                 else listOf(SchedulerIntent.SetTasksCategory(taskIds, command.categoryId, command.carried))
-            is AddedCommand.CategoryShare -> {
-                val ids = addedIds(added, Kind.Category).map(::CategoryId).filter { state.categoryById(it) != null }
-                if (CategoryRules.carrierCells(state, ids.toSet()).isEmpty()) emptyList()
-                else listOf(SchedulerIntent.SetCategorySubListShare(ids, command.share))
-            }
             is AddedCommand.MinimumTime ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksMinimumTime(taskIds, command.minutes))
             is AddedCommand.AlarmsOn -> {

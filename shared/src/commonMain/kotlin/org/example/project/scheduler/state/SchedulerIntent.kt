@@ -576,12 +576,30 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * The Search window's "Share of its sub-list" (user rule 2026-10-02): every task carrying one of [categoryIds]
-     * given [share] (a fraction) of its own sub-list, by adjusting its row of that sub-list's priority weight table
-     * ([org.example.project.scheduler.domain.CategoryRules.forceSubListShare]). One Undo/Redo unit, like any weight
-     * edit — however many rows it moved; none when nothing moves.
+     * User rule 2026-10-03: **the task cell category switch** — [categoryId] carried by a task id
+     * ([org.example.project.scheduler.model.CategoryKind.TaskId], every occurrence) or by single task cells
+     * ([org.example.project.scheduler.model.CategoryKind.TaskCell]). Switching keeps what carried it: a task id
+     * category's tasks hand it to every one of their populated cells, a task cell category's cells hand it to their
+     * task. An account setting with the tree it moved: one unit (`SettingsDelta`).
      */
-    data class SetCategorySubListShare(val categoryIds: List<CategoryId>, val share: Double) : SchedulerIntent
+    data class SetCategoryKind(
+        val categoryId: CategoryId,
+        val kind: org.example.project.scheduler.model.CategoryKind,
+    ) : SchedulerIntent
+
+    /**
+     * User rule 2026-10-03, the Search window's "Task cell categories" action: give ([carried] true) or take
+     * ([carried] false) the task cell category [categoryId] to the one occurrence [cellId]. A task id category, a
+     * category the account no longer holds, or a call that changes nothing, does nothing. A tree edit: one unit.
+     */
+    data class SetCellCategory(val cellId: CellId, val categoryId: CategoryId, val carried: Boolean) : SchedulerIntent
+
+    /**
+     * The same action's naming field, create-or-attach like [AddTaskCategory]: a title a task cell category already
+     * carries gives THAT one to [cellId]; a title nobody holds mints a task cell category and gives it. A title a task
+     * id category holds does nothing — one name is one category, and that one is not carried by cells.
+     */
+    data class AddCellCategory(val cellId: CellId, val title: String) : SchedulerIntent
 
     /** Rename a category. It is named by id everywhere, so this reaches every task and every rule at once. */
     data class RenameCategory(val categoryId: CategoryId, val title: String) : SchedulerIntent
@@ -594,28 +612,28 @@ sealed interface SchedulerIntent {
     data class DeleteCategory(val categoryId: CategoryId) : SchedulerIntent
 
     /**
-     * The category edit window’s rule editor: *the tasks carrying [categoryId] under the cell
-     * [scopeCellId] are worth [share] of it* (`null` = the whole tree). At most one rule per scope, so this
-     * REPLACES the rule already there rather than adding beside it — two rules about one sub-tree would be
-     * the plainest contradiction there is, and "one sub-tree" is the LIST the scope cell's task owns, so
-     * two cells of one mirrored task are one scope
-     * ([org.example.project.scheduler.domain.CategoryRules.scopeKey]).
-     *
-     * A cell and not a task, because a task can appear several times in the tree: "under Book" names no
-     * place when there are two of them, so the window asks which task CELL.
+     * The category rule editor: [categoryId]'s carriers are worth [share] of the task cell the rule is relative to —
+     * [relativeToCellId] (`null` = the whole tree), every carrier under it, when [distance] is null; the task cell
+     * [distance] levels above each carrier otherwise ([org.example.project.scheduler.model.CategoryRule]). At most one
+     * rule per relative-to sub-list and one per distance, so this REPLACES the rule already there.
      *
      * The reducer applies it and then re-establishes every rule
-     * ([org.example.project.scheduler.domain.CategoryRules.settle]); a rule that cannot be held is refused
-     * with a message and nothing is written.
+     * ([org.example.project.scheduler.domain.CategoryRules.settle]); a rule that cannot be held is refused with a
+     * message and nothing is written. A distance below 1 does nothing.
      */
     data class SetCategoryRule(
         val categoryId: CategoryId,
-        val scopeCellId: CellId?,
+        val relativeToCellId: CellId?,
+        val distance: Int?,
         val share: Double,
     ) : SchedulerIntent
 
-    /** The bin on a rule row: [categoryId] stops making any claim about [scopeCellId]’s sub-tree. */
-    data class RemoveCategoryRule(val categoryId: CategoryId, val scopeCellId: CellId?) : SchedulerIntent
+    /** The bin on a rule row: [categoryId] stops making that claim. */
+    data class RemoveCategoryRule(
+        val categoryId: CategoryId,
+        val relativeToCellId: CellId?,
+        val distance: Int?,
+    ) : SchedulerIntent
 
     /**
      * Clear [SchedulerState.categoryRuleError] — the OK of the notice the app raised when it refused an edit

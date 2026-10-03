@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.example.project.scheduler.domain.CategoryRules
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.state.SchedulerIntent
@@ -111,15 +112,9 @@ fun CategoryEditor(
 ) {
     val category = state.categoryById(categoryId) ?: return
     var title by remember(categoryId) { mutableStateOf(category.title) }
-    // The rule being added: which sub-tree, and how much of it. Compose-only state, like the calendar's
-    // zoom — a half-typed rule is not a fact about the account until it is added. The pick is the whole
-    // ROW and not its cell id, because `null` is a real answer there (the whole tree) and "nothing picked
-    // yet" has to stay a different one.
-    var scopePick by remember(categoryId) { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
-    var newShare by remember(categoryId) { mutableStateOf("") }
-
     val rows = CategoryRules.ruleRows(state, categoryId)
-    val carriers = CategoryRules.tasksWith(state, categoryId)
+    val carriers = CategoryRules.carrierCount(state, categoryId)
+    val carrierNoun = if (category.kind == org.example.project.scheduler.model.CategoryKind.TaskCell) "task cell" else "task"
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -148,8 +143,8 @@ fun CategoryEditor(
 
                 Text(
                     text =
-                        if (carriers.isEmpty()) "No task carries this category yet."
-                        else "Carried by ${carriers.size} task${if (carriers.size == 1) "" else "s"}.",
+                        if (carriers == 0) "No $carrierNoun carries this category yet."
+                        else "Carried by $carriers $carrierNoun${if (carriers == 1) "" else "s"}.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -158,9 +153,10 @@ fun CategoryEditor(
 
                 Text("Rules", style = MaterialTheme.typography.labelMedium)
                 Text(
-                    "The tasks carrying this category, inside the sub-tree of the task cell you name, " +
-                        "always come to the share you give here. The other priorities under it are " +
-                        "adjusted evenly to make room, and an edit that would contradict a rule is refused.",
+                    "The carriers of this category always come to the share you give here of a task cell: one " +
+                        "you choose (every carrier under it counted together), or each carrier's parent that " +
+                        "many levels up (1: its direct parent). The other priorities there are adjusted evenly " +
+                        "to make room, and an edit that would contradict a rule is refused.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -181,26 +177,18 @@ fun CategoryEditor(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = "under “${row.scopeLabel}”",
+                                text = row.label,
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1f),
                             )
                             SharePercentField(
                                 value = row.rule.share,
                                 onValueChange = { next ->
-                                    onIntent(
-                                        SchedulerIntent.SetCategoryRule(
-                                            categoryId,
-                                            row.rule.scopeCellId,
-                                            next,
-                                        ),
-                                    )
+                                    onIntent(SchedulerIntent.SetCategoryRule(categoryId, row.rule.relativeToCellId, row.rule.distance, next))
                                 },
                             )
                             TextButton(onClick = {
-                                onIntent(
-                                    SchedulerIntent.RemoveCategoryRule(categoryId, row.rule.scopeCellId),
-                                )
+                                onIntent(SchedulerIntent.RemoveCategoryRule(categoryId, row.rule.relativeToCellId, row.rule.distance))
                             }) { Text("🗑") }
                         }
                         Text(
@@ -219,49 +207,7 @@ fun CategoryEditor(
                 HorizontalDivider()
 
                 Text("Add a rule", style = MaterialTheme.typography.labelMedium)
-                ScopeField(state, CellId("category/${categoryId.value}/rule-scope"), scopePick) { scopePick = it }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    OutlinedTextField(
-                        value = newShare,
-                        onValueChange = { newShare = it },
-                        singleLine = true,
-                        suffix = { Text("%") },
-                        label = { Text("Share") },
-                        modifier = Modifier.width(140.dp),
-                    )
-                    Spacer(Modifier.weight(1f))
-                    val share = parsePercent(newShare)
-                    TextButton(
-                        enabled = scopePick != null && share != null,
-                        onClick = {
-                            val scope = scopePick ?: return@TextButton
-                            onIntent(
-                                SchedulerIntent.SetCategoryRule(
-                                    categoryId,
-                                    scope.cellId,
-                                    share ?: return@TextButton,
-                                ),
-                            )
-                            scopePick = null
-                            newShare = ""
-                        },
-                    ) {
-                        // Saying "Replace" is the window's way of holding the one-rule-per-scope rule in
-                        // front of the user, instead of silently overwriting what is already there. It asks
-                        // through the scope KEY, so pointing at another occurrence of a mirrored task says
-                        // "replace" — which is what the reducer will do, the sub-tree being the same one.
-                        val exists =
-                            scopePick?.let { pick ->
-                                val key = CategoryRules.scopeKey(state, pick.cellId)
-                                category.rules.any { CategoryRules.scopeKey(state, it.scopeCellId) == key }
-                            } == true
-                        Text(if (exists) "Replace rule" else "Add rule")
-                    }
-                }
+                RuleAdder(state, listOf(categoryId), "category/${categoryId.value}", onIntent)
     }
 }
 
@@ -288,7 +234,7 @@ internal fun CategoriesRulesEditor(state: SchedulerState, categoryIds: List<Cate
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("under “${row.scopeLabel}”", style = MaterialTheme.typography.bodySmall)
+                    Text(row.label, style = MaterialTheme.typography.bodySmall)
                     if (row.holders < categoryIds.size) {
                         Text(
                             "a rule of ${row.holders} of the ${categoryIds.size} categories",
@@ -299,10 +245,12 @@ internal fun CategoriesRulesEditor(state: SchedulerState, categoryIds: List<Cate
                 }
                 SharedSharePercentField(
                     value = row.share,
-                    onValueChange = { next -> categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, row.scopeCellId, next)) } },
+                    onValueChange = { next ->
+                        categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, row.relativeToCellId, row.distance, next)) }
+                    },
                 )
                 TextButton(onClick = {
-                    categoryIds.forEach { onIntent(SchedulerIntent.RemoveCategoryRule(it, row.scopeCellId)) }
+                    categoryIds.forEach { onIntent(SchedulerIntent.RemoveCategoryRule(it, row.relativeToCellId, row.distance)) }
                 }) { Text("🗑") }
             }
         }
@@ -326,16 +274,73 @@ private fun SharedSharePercentField(value: Double?, onValueChange: (Double) -> U
 }
 
 /**
- * User rule 2026-10-02: **"Add a rule", once for every added category** — the scope named the way the single
- * category's editor names it (a field with the task cells' paths under it), a share, and one button that gives the
- * rule to each of them (replacing the one a category already has about that sub-tree).
+ * User rule 2026-10-02: **"Add a rule", once for every added category** — [RuleAdder] over all of them, one button
+ * giving the rule to each (replacing the one a category already has relative to that cell at that distance).
  */
 @Composable
 internal fun CategoriesAddRule(state: SchedulerState, categoryIds: List<CategoryId>, onIntent: (SchedulerIntent) -> Unit) {
-    var scopePick by remember { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
-    var newShare by remember { mutableStateOf("") }
+    RuleAdder(state, categoryIds, "search/categories-add-rule", onIntent)
+}
+
+/**
+ * **The one "add a rule" form** (user rule 2026-10-03), the category edit window's and the Search window's action's.
+ * A **switch** says how the rule knows the task cell it is relative to, and only that side's field is shown:
+ *
+ *  - **task cell** — a [NamingCell] whose identity rows are the whole tree ("root") and every task cell a carrier of
+ *    [categoryIds] sits under, each by its PATH, one task id once per path ([CategoryRules.taskCellEntries]) — so a
+ *    rule can never be written about a cell no carrier sits under; every carrier under it is counted together;
+ *  - **parent distance** — how many levels above EACH carrier its task cell is, `1` its direct parent, the carriers
+ *    of one such cell counted together; a distance no carrier is that deep under is said so.
+ *
+ * Then the share and the button, which REPLACES a rule of the same key ([CategoryRules.ruleKey]).
+ */
+@Composable
+private fun RuleAdder(state: SchedulerState, categoryIds: List<CategoryId>, idPrefix: String, onIntent: (SchedulerIntent) -> Unit) {
+    // Compose-only, like the calendar's zoom — a half-typed rule is not a fact about the account until it is added.
+    // The pick is the whole ROW: `null` is a real answer there (the whole tree), "nothing picked" another.
+    var byDistance by remember(categoryIds) { mutableStateOf(false) }
+    var cellPick by remember(categoryIds) { mutableStateOf<CategoryRules.ScopeEntry?>(null) }
+    var distanceText by remember(categoryIds) { mutableStateOf("1") }
+    var newShare by remember(categoryIds) { mutableStateOf("") }
+    val distance = distanceText.trim().toIntOrNull()?.takeIf { it >= 1 }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        ScopeField(state, CellId("search/categories-add-rule-scope"), scopePick) { scopePick = it }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Task cell", style = MaterialTheme.typography.bodySmall)
+            androidx.compose.material3.Switch(checked = byDistance, onCheckedChange = { byDistance = it })
+            Text("Parent distance", style = MaterialTheme.typography.bodySmall)
+        }
+        if (byDistance) {
+            OutlinedTextField(
+                value = distanceText,
+                onValueChange = { distanceText = it },
+                singleLine = true,
+                isError = distance == null,
+                label = { Text("Levels up (1: the direct parent)") },
+                modifier = Modifier.width(220.dp),
+            )
+            if (distance != null && !CategoryRules.distanceReached(state, categoryIds, distance)) {
+                Text(
+                    "No carrier sits $distance level${if (distance == 1) "" else "s"} under a task cell.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        } else {
+            Text("Relative to", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            NamingCell(
+                cellId = CellId("$idPrefix/relative-to"),
+                shown = cellPick?.label.orEmpty(),
+                identityLabel = "Task cells",
+                identity = { draft -> CategoryRules.taskCellEntries(state, categoryIds, draft).map { NamingRow(relativeKey(it), it.label) } },
+                // Every task title the draft appears in, as in a tree cell (PRD §4 Menu 2): picking one fills the
+                // field, which narrows the task cells to the paths holding it.
+                suggestions = { draft -> SchedulerDomain.titleSuggestions(state, draft) },
+                onPick = { key -> cellPick = CategoryRules.taskCellEntries(state, categoryIds, "").firstOrNull { relativeKey(it) == key } },
+                selectedKey = cellPick?.let(::relativeKey),
+                onCleared = { cellPick = null },
+                width = 360.dp,
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -351,53 +356,54 @@ internal fun CategoriesAddRule(state: SchedulerState, categoryIds: List<Category
             )
             Spacer(Modifier.weight(1f))
             val share = parsePercent(newShare)
+            val ready = if (byDistance) distance != null else cellPick != null
             TextButton(
-                enabled = categoryIds.isNotEmpty() && scopePick != null && share != null,
+                enabled = categoryIds.isNotEmpty() && ready && share != null,
                 onClick = {
-                    val scope = scopePick ?: return@TextButton
                     val value = share ?: return@TextButton
-                    categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, scope.cellId, value)) }
-                    scopePick = null
+                    val (cell, d) = if (byDistance) null to (distance ?: return@TextButton) else (cellPick ?: return@TextButton).cellId to null
+                    categoryIds.forEach { onIntent(SchedulerIntent.SetCategoryRule(it, cell, d, value)) }
+                    cellPick = null
                     newShare = ""
                 },
-            ) { Text(if (categoryIds.size == 1) "Add rule" else "Add rule to ${categoryIds.size}") }
+            ) {
+                // "Replace" holds the one-rule-per-key rule in front of the user instead of silently overwriting.
+                val key =
+                    when {
+                        byDistance -> distance?.let { CategoryRules.ruleKey(state, null, it) }
+                        else -> cellPick?.let { CategoryRules.ruleKey(state, it.cellId, null) }
+                    }
+                val exists =
+                    key != null &&
+                        categoryIds.mapNotNull(state::categoryById).any { c ->
+                            c.rules.any { CategoryRules.ruleKey(state, it.relativeToCellId, it.distance) == key }
+                        }
+                Text(
+                    when {
+                        exists -> "Replace rule"
+                        categoryIds.size == 1 -> "Add rule"
+                        else -> "Add rule to ${categoryIds.size}"
+                    },
+                )
+            }
         }
     }
 }
 
-/**
- * A rule's **"Under which task cell"**: a [NamingCell] (user rule 2026-10-03 — every field naming an element is one),
- * whose identity rows are the tree's cells, each named by its PATH: a task can appear several times, and its bare
- * title would name every occurrence at once. No title suggestions — an identity row IS the answer, a scope being one
- * cell of the tree and not a string several cells may share. Emptying it forgets the pick.
- */
-@Composable
-private fun ScopeField(state: SchedulerState, cellId: CellId, pick: CategoryRules.ScopeEntry?, onPick: (CategoryRules.ScopeEntry?) -> Unit) {
-    Text("Under which task cell", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    NamingCell(
-        cellId = cellId,
-        shown = pick?.label.orEmpty(),
-        identityLabel = "Task cells",
-        identity = { draft -> CategoryRules.scopeEntries(state, draft).map { NamingRow(scopeKey(it), it.label) } },
-        suggestions = { emptyList() },
-        onPick = { key -> onPick(CategoryRules.scopeEntries(state, "").firstOrNull { scopeKey(it) == key }) },
-        selectedKey = pick?.let(::scopeKey),
-        onCleared = { onPick(null) },
-        width = 360.dp,
-    )
-}
+/** A task cell row's [NamingRow] key: its cell's id, or a key no cell id can be for the whole tree. */
+private fun relativeKey(entry: CategoryRules.ScopeEntry): String = entry.cellId?.value ?: ROOT_RELATIVE_KEY
 
-/** A scope's [NamingRow] key: its cell's id, or a key no cell id can be for the whole tree. */
-private fun scopeKey(entry: CategoryRules.ScopeEntry): String = entry.cellId?.value ?: ROOT_SCOPE_KEY
+/** The whole tree's key: an id no cell is ever minted with. */
+private const val ROOT_RELATIVE_KEY = "(root)"
 
-/** The whole tree's scope key: an id no cell is ever minted with. */
-private const val ROOT_SCOPE_KEY = "(root)"
-
-/** What a rule row says under itself: that it is being held, or the reason it is asleep. */
+/** What a rule row says under itself: what each sub-list it governs holds, or the reason it is asleep. */
 private fun ruleStatusLine(row: CategoryRules.RuleRow): String = when (row.status) {
-    CategoryRules.Status.Held -> "currently ${formatShare(row.achieved ?: 0.0)} of it"
+    CategoryRules.Status.Held -> {
+        val shown = row.achieved.take(3).joinToString(", ") { (label, share) -> "${formatShare(share)} of “$label”" }
+        "currently $shown" + if (row.achieved.size > 3) " and ${row.achieved.size - 3} more" else ""
+    }
     CategoryRules.Status.ScopeGone -> "that task cell is no longer in the tree — the rule is asleep"
-    CategoryRules.Status.NoCarrier -> "no task under it carries this category — the rule is asleep"
+    CategoryRules.Status.NoCarrier -> "no carrier is reached — the rule is asleep"
 }
 
 /**

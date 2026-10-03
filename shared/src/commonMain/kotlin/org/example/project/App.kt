@@ -3038,6 +3038,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     TaskPathsDomain.occurrences(popupState, taskId)
                                 },
                                 pathCandidates = { query -> TaskPathsDomain.candidates(vm.state.value, taskId, query) },
+                                pathTitleSuggestions = { draft -> SchedulerDomain.titleSuggestions(vm.state.value, draft) },
                                 onAddPath = { parent -> vm.dispatch(SchedulerIntent.AddTaskPath(taskId, parent)) },
                                 onRemovePath = { cellId -> vm.dispatch(SchedulerIntent.RemoveTaskPath(cellId)) },
                             )

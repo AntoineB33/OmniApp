@@ -442,6 +442,29 @@ fun TaskSchedulerScreen(
                 },
                 onIntent = { intent -> vm.dispatch(intent) },
             )
+
+            // User rule 2026-10-03: a category rule holding a cell whose weight a priority weights table PINS — the
+            // two say different things about one share, and the rule, re-established after every edit, wins. Keyed on
+            // what it reads, never on the whole state the tick replaces (ADR 0009): it walks the rules' carriers.
+            val pinnedRuleCells =
+                remember(state.cells, state.lists, state.tasks, state.categories, state.priorityWeightPins) {
+                    org.example.project.scheduler.domain.CategoryRules.pinnedRuleCells(state)
+                }
+            if (pinnedRuleCells.isNotEmpty()) {
+                Text(
+                    "⚠ Category rules move pinned weights",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                for (warning in pinnedRuleCells) {
+                    Text(
+                        "“${warning.categoryTitle}” holds “${warning.cellLabel}” (of “${warning.ancestorLabel}”), " +
+                            "whose weight is pinned in its priority weights table.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
     }
 }
@@ -3670,6 +3693,7 @@ private fun formatPercent(value: Double): String {
 private fun TaskPathsSection(
     paths: List<TaskPathsDomain.Occurrence>,
     candidates: (String) -> List<TaskPathsDomain.Candidate>,
+    titleSuggestions: (String) -> List<String>,
     onAddPath: (TaskId?) -> Unit,
     onRemovePath: (CellId) -> Unit,
 ) {
@@ -3683,7 +3707,7 @@ private fun TaskPathsSection(
             if (paths.size > 1) TextButton(onClick = { onRemovePath(place.cellId) }) { Text("✕") }
         }
     }
-    org.example.project.ui.AddUnderField(CellId("task-edit/add-under"), candidates, onAddPath)
+    org.example.project.ui.AddUnderField(CellId("task-edit/add-under"), candidates, titleSuggestions, onAddPath)
     HorizontalDivider()
 }
 
@@ -3722,6 +3746,8 @@ internal fun TaskEditWindow(
      */
     paths: List<TaskPathsDomain.Occurrence>? = null,
     pathCandidates: (query: String) -> List<TaskPathsDomain.Candidate> = { emptyList() },
+    /** The task title suggestions of "Add under…" — every title the draft appears in, as in a tree cell. */
+    pathTitleSuggestions: (draft: String) -> List<String> = { emptyList() },
     /** Put the task under this parent as well (null = the top level). Applied at once, one History Unit. */
     onAddPath: (parentTaskId: TaskId?) -> Unit = {},
     /** Take the task out of the list this cell is in. Applied at once, one History Unit. */
@@ -3755,7 +3781,7 @@ internal fun TaskEditWindow(
             ) {
                 // Section 0: where the task sits, and where else it may go. Structural, so applied at once — each
                 // add and each removal its own History Unit — rather than held for Save.
-                if (paths != null) TaskPathsSection(paths, pathCandidates, onAddPath, onRemovePath)
+                if (paths != null) TaskPathsSection(paths, pathCandidates, pathTitleSuggestions, onAddPath, onRemovePath)
 
                 // Section 1 (leaf only): `side-dev/README.md` § *Restrictive Period* — this task's
                 // RESILIENCE to each kind of restrictive period, and the place new kinds are defined.

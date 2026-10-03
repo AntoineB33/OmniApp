@@ -209,9 +209,37 @@ open window — so `SchedulerState.taskRelations` is keyed by the deliberately s
 field and `ui/CategoryEditWindow.kt` the category's editor (`CategoryEditor`) — drawn by the Search window's "Name and
 rules" action on an added category (user rule 2026-10-01: the window remains for the default sub-tree's only).
 
-A **category** is a label a task carries. A **category rule** is a standing statement about a share of a
-sub-tree — *the tasks carrying this category under that task cell always come to 33 % of it* — which is the
-relative-priority window's number said once and then **kept**.
+A **category** is a label a task — or one occurrence of it — carries. A **category rule** is a standing statement
+about a share — *each carrier of this category always comes to 33 % of the task cell N levels above it* — which is
+the relative-priority window's number said once and then **kept**.
+
+- **A category is a task id category or a task cell category** (user rule 2026-10-03, `Category.kind`, the Search
+  window's "Task cell category" switch). A task id category is carried by the TASK (`Task.categoryIds`: every
+  occurrence carries it) and attached from the tree's categories field; a task cell category by ONE occurrence
+  (`Cell.categoryIds`), given and taken in the Search window's "Task cell categories" action on an added task, one
+  path at a time. `CategoryRules.carries` is the one reading of "carries". Neither attaching field offers the other
+  kind, and `applyAttachTaskCategory` refuses a task cell category. **The switch keeps what carried it**: a task id
+  category's tasks hand it to every populated cell of theirs, a task cell category's cells to their task — one unit
+  (`SettingsDelta`, which carries the tree). A category written before kinds is a task id one.
+- **A rule is relative to a task cell, and a SWITCH says how that cell is known** (user rule 2026-10-03,
+  `CategoryRule(relativeToCellId, distance, share)`; the one "add a rule" form `RuleAdder` shows only the field of the
+  side the switch is on):
+  - **task cell** (`distance == null`): relative to ONE cell (`null` = the whole tree), every **top-most** carrier
+    under it counted together (`CategoryRules.chainsUnder`: a carrier's whole sub-tree is its own, so one nested inside
+    another is not counted twice; the walk enters a list only from the cell that owns it). Its picker
+    (`taskCellEntries`) offers the whole tree — "root", first — and every cell a carrier sits under, along every path,
+    by path, ONLY those: the scope picker it replaced offered any cell, so a rule could govern nothing, and its first
+    replacement offered only the ancestors at a distance, so "root" was missing (both 2026-10-03).
+  - **parent distance** (`distance` ≥ 1, no cell): relative to the cell that many levels above EACH carrier (`1` = the
+    direct parent), along every path (a cell in a mirrored task's sub-list sits under each occurrence of that task);
+    the carriers of one ancestor sub-list are one claim. `(null, 1, p)` is "each carrier's own sub-list", which is what
+    replaced the one-shot "Share of its sub-list" action. The form says when no carrier is that deep
+    (`distanceReached`).
+  `ruleGroups` is the one reading of both; `ruleKey` is what makes two rules the same (a task cell rule by its cell's
+  sub-list, a parent distance rule by its distance) — at most one per key, `SetCategoryRule` replacing.
+- **A rule holding a pinned weight is warned about, not refused** (`CategoryRules.pinnedRuleCells`, the task tree
+  window's configuration section): the rule is re-established after every edit and moves the pinned value anyway, so
+  the user is told which category holds which pinned cell.
 
 - **A category is an OBJECT with an id, never a string on a task.** That is what makes the field a task cell:
   typing or picking a name the account already holds attaches **that** category rather than minting a second
@@ -239,12 +267,6 @@ relative-priority window's number said once and then **kept**.
   Mode selector because neither of its questions exists here: naming a category IS pointing at it. The row's
   **bin** is about the TASK; the **✎** opens the category's own window, which is the one place a category is
   deleted — exactly the pair the resilience row makes with the period edit window, for the same reason.
-- **The measure is the TOP-MOST carriers** (`chainsFor`): a carrier's whole sub-tree is its own, so a
-  categorized task nested inside another is not counted twice — otherwise the figure is a sum that can exceed
-  the sub-tree it is a share of. The downward walk descends into a task's sub-list **only from the cell that
-  list names as its parent**, which makes it the exact inverse of `occurrenceChains`' upward climb; a mirrored
-  list is entered once (re-walking it per occurrence is the exponential walk, arriving as a wrong number
-  first), and a mirror cell that carries the category is still a chain of its own.
 - **The rule is RE-ESTABLISHED after every intent, never recorded.** `reduce` is `reduceIntent` followed by
   `CategoryRules.settle`; the weights ARE the storage, so the rule and the tree cannot say two different
   things and there is no second mechanism to keep in step. Do not "fix" this by enforcing at the sites that
@@ -254,14 +276,6 @@ relative-priority window's number said once and then **kept**.
   "adjust the priorities evenly" means here what it means in the window: one common factor over the cells on
   the chains, the rest of the sub-tree keeping its own proportions. Rules at nested scopes pull on each other,
   so the pass is iterated to a fixed point (deepest scope first) — there is no closed form.
-- **"Share of its sub-list" is a ONE-SHOT edit, not a rule** (user rule 2026-10-02; the Search window's action on
-  the added categories, `SetCategorySubListShare` → `CategoryRules.forceSubListShare`): every populated cell whose
-  task carries the category (`carrierCells`) is given the typed share of its OWN sub-list — the figure its row of that
-  list's weight table comes to — by adjusting that row alone. It is `setChainsShare` asked of the one-cell chain, so
-  the factor-first, added-term-last order above is the whole of it and there is no second solve. Carriers sharing a
-  list are solved in turn until each holds the share; an unreachable one (an only child, shares summing past the
-  list) lands as close as the rows allow. One Undo/Redo unit (`priorityTreeDelta`), none when nothing moves; the
-  standing category rules are then re-established over it by `settle` as after any edit, and may refuse it.
 - **A contradiction is REFUSED, and the refusal cannot wedge the app.** `settle` returns the state from
   *before* the intent with the reason in `categoryRuleError` (local-only view state, not even persisted,
   drawn as the app's one `MessagePopup`). Two guards: it **never refuses what was already broken** (a merge,
@@ -271,23 +285,12 @@ relative-priority window's number said once and then **kept**.
   all four are about rules sharing ONE scope, because that is where the arithmetic is closed. A share the
   weight COLUMNS put out of reach is deliberately **not** one of them: it bounds the factor, not the tree,
   and the added term above answers it — briefly a fifth check, removed the moment the case became possible.
-- **The scope is a task CELL, and what it names is a LIST** (`CategoryRule.scopeCellId`, `null` = the whole
-  tree). A task can appear several times in the tree, so "under Book" names no place when there are two of
-  them: the window asks *under which task cell* and `CategoryRules.scopeEntries` offers every cell by its own
-  **path** — the same walk `chainsFor` does, so a mirrored sub-tree is offered once while every mirror
-  occurrence is still a row. What the cell then names is the sub-list its task owns (a sub-list belongs to the
-  task id), and `CategoryRules.scopeKey` is that reading — the ONE place two scopes are compared. A rule
-  sleeps once the cell it was written about is gone, even where the task still appears elsewhere: the user
-  pointed at a place. A payload written when the scope was a *task* is migrated on decode through
-  `firstTaskOccurrence`, and `scopeTaskId` is still written beside the cell so an older build can still read
-  the rule. **The whole-tree scope is written BLANK** — a blank has always decoded as "the whole tree", in
-  every build there has ever been, where the root's own id (`task/main` before the root rename, `task/root`
-  after it) is a moving target a pre-rename build cannot resolve and would drop the rule over. A payload that
-  still spells it `task/main` is rewritten by the root-id migration (`task-tree.md`) before it is read.
-- **At most one rule per scope, and the scope is the LIST** (`scopeKey`, not the cell): `SetCategoryRule`
-  replaces, so a rule written about one occurrence of a mirrored task replaces the rule written about
-  another. Two statements about one sub-tree are the plainest contradiction there is — and two cells of one
-  task show one sub-tree — so the window never lets one be made.
+- **What a task cell names is a LIST** (`CategoryRules.scopeKey`): the sub-list its task owns, so two cells of one
+  mirrored task are one rule key. A task cell rule whose cell is gone sleeps (`Status.ScopeGone`), even where the task
+  still appears elsewhere (the user pointed at a place); any rule no carrier reaches sleeps (`Status.NoCarrier`). A rule
+  written before the switch has no distance: it IS a task cell rule and loads as one; one written when the scope was a
+  *task* is read through `firstTaskOccurrence`, and the whole tree is written BLANK (`task/main` and `task/root` are
+  moving targets an older build cannot resolve).
 - **Which half is an Undo/Redo unit is the restrictive periods' split, not a new one**: defining, renaming,
   deleting a category and setting a rule are account settings and record **no** unit (as `AddPeriodKind` does
   not); a task **carrying** a category is a tree edit and records one (as its resilience does). The weights a

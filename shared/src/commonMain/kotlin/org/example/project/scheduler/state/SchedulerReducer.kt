@@ -324,12 +324,6 @@ object SchedulerReducer {
                         )
                     },
                 )
-            is SchedulerIntent.SetCategorySubListShare -> {
-                val apply = { working: SchedulerState ->
-                    CategoryRules.forceSubListShare(working, intent.categoryIds.toSet(), intent.share)
-                }
-                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Category share", apply))
-            }
             is SchedulerIntent.ToggleRelativePriorityPin ->
                 reduceToggleRelativePriorityPin(state, intent.taskId, intent.relativeTo, intent.cellId)
             is SchedulerIntent.ClearRelativePriorityPins ->
@@ -507,9 +501,20 @@ object SchedulerReducer {
                 }
             is SchedulerIntent.DeleteCategory -> settingsUnit(state, "Delete category") { reduceDeleteCategory(it, intent.categoryId) }
             is SchedulerIntent.SetCategoryRule ->
-                settingsUnit(state, "Category rule") { reduceSetCategoryRule(it, intent.categoryId, intent.scopeCellId, intent.share) }
+                settingsUnit(state, "Category rule") {
+                    reduceSetCategoryRule(it, intent.categoryId, intent.relativeToCellId, intent.distance, intent.share)
+                }
             is SchedulerIntent.RemoveCategoryRule ->
-                settingsUnit(state, "Remove category rule") { reduceRemoveCategoryRule(it, intent.categoryId, intent.scopeCellId) }
+                settingsUnit(state, "Remove category rule") {
+                    reduceRemoveCategoryRule(it, intent.categoryId, intent.relativeToCellId, intent.distance)
+                }
+            is SchedulerIntent.SetCategoryKind ->
+                settingsUnit(state, "Category kind") { reduceSetCategoryKind(it, intent.categoryId, intent.kind) }
+            is SchedulerIntent.SetCellCategory -> {
+                val apply = { working: SchedulerState -> applySetCellCategory(working, intent.cellId, intent.categoryId, intent.carried) }
+                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Task cell category", apply))
+            }
+            is SchedulerIntent.AddCellCategory -> reduceAddCellCategory(state, intent.cellId, intent.title)
             SchedulerIntent.DismissCategoryRuleError ->
                 if (state.categoryRuleError == null) state else state.copy(categoryRuleError = null)
             // A break that vanishes with it gives its hole back to the task on both sides: a record change,
@@ -1722,6 +1727,27 @@ object SchedulerReducer {
         return commitDelta(state, priorityTreeDelta(state, "Task category") {
             applyAttachTaskCategory(it, taskId, categoryId)
         })
+    }
+
+    /**
+     * User rule 2026-10-03, [SchedulerIntent.AddCellCategory]: a task cell category's title gives THAT one to the cell;
+     * a title nobody holds mints a task cell category and gives it; a task id category's title does nothing.
+     */
+    private fun reduceAddCellCategory(state: SchedulerState, cellId: CellId, titleRaw: String): SchedulerState {
+        val title = titleRaw.trim()
+        if (title.isEmpty() || state.cells[cellId]?.taskId == null) return state
+        val existing = state.categories.firstOrNull { it.title.equals(title, ignoreCase = true) }
+        if (existing != null) {
+            if (existing.kind != org.example.project.scheduler.model.CategoryKind.TaskCell) return state
+            return reduce(state, SchedulerIntent.SetCellCategory(cellId, existing.id, carried = true))
+        }
+        val (id, allocated) = state.allocateCategoryId()
+        val minted =
+            allocated.copy(
+                categories = allocated.categories +
+                    Category(id = id, title = title, kind = org.example.project.scheduler.model.CategoryKind.TaskCell),
+            )
+        return commitDelta(minted, priorityTreeDelta(minted, "Task cell category") { applySetCellCategory(it, cellId, id, carried = true) })
     }
 
     private fun editTextDelta(state: SchedulerState, text: String): Delta {
@@ -4900,6 +4926,8 @@ private fun applyAttachTaskCategory(
 ): SchedulerState {
     val task = state.tasks[taskId] ?: return state
     if (categoryId in task.categoryIds) return state
+    // A task cell category is given to one occurrence, never to a task (user rule 2026-10-03).
+    if (state.categoryById(categoryId)?.kind == org.example.project.scheduler.model.CategoryKind.TaskCell) return state
     return state.copy(tasks = state.tasks + (taskId to task.copy(categoryIds = task.categoryIds + categoryId)))
 }
 
@@ -4963,59 +4991,120 @@ private fun reduceDeleteCategory(state: SchedulerState, categoryId: CategoryId):
         tasks = state.tasks.mapValues { (_, t) ->
             if (categoryId in t.categoryIds) t.copy(categoryIds = t.categoryIds - categoryId) else t
         },
+        cells =
+            if (state.cells.values.none { categoryId in it.categoryIds }) state.cells
+            else state.cells.mapValues { (_, c) -> if (categoryId in c.categoryIds) c.copy(categoryIds = c.categoryIds - categoryId) else c },
     )
 }
 
 /**
- * PRD §5: set the category's rule about one scope — *the tasks carrying it under the cell [scopeCellId] are
- * worth [shareRaw] of it* (`null` = the whole tree). At most one rule per scope, so an existing rule about
- * that scope is REPLACED — and "that scope" is the SUB-LIST the cell's task owns
- * ([CategoryRules.scopeKey]), not the cell, so writing a rule about one occurrence of a mirrored task
- * replaces the rule written about another. Two statements about one sub-tree is exactly what the invariant
- * exists to prevent, and mirrored cells show one sub-tree.
+ * PRD §5: set a category rule — relative to [relativeToCellId] (every carrier under it) when [distance] is null, to
+ * the task cell [distance] levels above each carrier otherwise ([CategoryRule]). At most one task cell rule per
+ * relative-to SUB-LIST (two cells of one mirrored task show one, [CategoryRules.scopeKey]) and one parent distance rule
+ * per distance, so the existing one is REPLACED.
  *
  * Nothing is enforced here: [SchedulerReducer.reduce] settles every rule after every intent
- * ([CategoryRules.settle]), so a rule that cannot be held refuses this write along with everything else it
- * would have dragged with it — the invariant lives in one place, not two.
+ * ([CategoryRules.settle]), so a rule that cannot be held refuses this write along with everything else it would have
+ * dragged with it — the invariant lives in one place, not two.
  */
 private fun reduceSetCategoryRule(
     state: SchedulerState,
     categoryId: CategoryId,
-    scopeCellId: CellId?,
+    relativeToCellIdRaw: CellId?,
+    distance: Int?,
     shareRaw: Double,
 ): SchedulerState {
     val category = state.categoryById(categoryId) ?: return state
-    if (!shareRaw.isFinite()) return state
+    if (!shareRaw.isFinite() || (distance != null && distance < 1)) return state
+    // A parent distance rule names no cell: the distance alone says what it is relative to.
+    val relativeToCellId = if (distance == null) relativeToCellIdRaw else null
     val share = shareRaw.coerceIn(0.0, 1.0)
-    if (category.ruleAt(scopeCellId)?.share == share) return state
-    val key = CategoryRules.scopeKey(state, scopeCellId)
+    if (category.ruleAt(relativeToCellId, distance)?.share == share) return state
+    val key = CategoryRules.ruleKey(state, relativeToCellId, distance)
     return state.copy(
         categories = state.categories.map { c ->
             if (c.id != categoryId) {
                 c
             } else {
                 c.copy(
-                    rules = c.rules.filterNot { CategoryRules.scopeKey(state, it.scopeCellId) == key } +
-                        CategoryRule(scopeCellId = scopeCellId, share = share),
+                    rules = c.rules.filterNot { CategoryRules.ruleKey(state, it.relativeToCellId, it.distance) == key } +
+                        CategoryRule(relativeToCellId = relativeToCellId, distance = distance, share = share),
                 )
             }
         },
     )
 }
 
-/** The bin on a rule row: the category stops claiming anything about that sub-tree. */
+/** The bin on a rule row: the category stops making that claim. */
 private fun reduceRemoveCategoryRule(
     state: SchedulerState,
     categoryId: CategoryId,
-    scopeCellId: CellId?,
+    relativeToCellId: CellId?,
+    distance: Int?,
 ): SchedulerState {
     val category = state.categoryById(categoryId) ?: return state
-    if (category.ruleAt(scopeCellId) == null) return state
+    if (category.ruleAt(relativeToCellId, distance) == null) return state
     return state.copy(
         categories = state.categories.map { c ->
-            if (c.id != categoryId) c else c.copy(rules = c.rules.filterNot { it.scopeCellId == scopeCellId })
+            if (c.id != categoryId) c
+            else c.copy(rules = c.rules.filterNot { it.relativeToCellId == relativeToCellId && it.distance == distance })
         },
     )
+}
+
+/**
+ * User rule 2026-10-03, [SchedulerIntent.SetCategoryKind]: switch what carries [categoryId], keeping what carried it —
+ * a task id category's tasks hand it to each of their populated cells, a task cell category's cells to their task.
+ */
+private fun reduceSetCategoryKind(
+    state: SchedulerState,
+    categoryId: CategoryId,
+    kind: org.example.project.scheduler.model.CategoryKind,
+): SchedulerState {
+    val category = state.categoryById(categoryId) ?: return state
+    if (category.kind == kind) return state
+    val switched = state.copy(categories = state.categories.map { if (it.id == categoryId) it.copy(kind = kind) else it })
+    return when (kind) {
+        org.example.project.scheduler.model.CategoryKind.TaskCell -> {
+            val carriers = state.tasks.values.filter { categoryId in it.categoryIds }.mapTo(HashSet()) { it.id }
+            if (carriers.isEmpty()) return switched
+            switched.copy(
+                tasks = state.tasks.mapValues { (_, t) -> if (t.id in carriers) t.copy(categoryIds = t.categoryIds - categoryId) else t },
+                cells = state.cells.mapValues { (id, c) ->
+                    if (c.taskId in carriers && SchedulerDomain.isPopulatedCell(state, id) && categoryId !in c.categoryIds) {
+                        c.copy(categoryIds = c.categoryIds + categoryId)
+                    } else {
+                        c
+                    }
+                },
+            )
+        }
+        org.example.project.scheduler.model.CategoryKind.TaskId -> {
+            val carriers = state.cells.values.filter { categoryId in it.categoryIds }
+            if (carriers.isEmpty()) return switched
+            val tasks = carriers.mapNotNullTo(HashSet()) { it.taskId }
+            switched.copy(
+                cells = state.cells.mapValues { (_, c) -> if (categoryId in c.categoryIds) c.copy(categoryIds = c.categoryIds - categoryId) else c },
+                tasks = state.tasks.mapValues { (_, t) ->
+                    if (t.id in tasks && categoryId !in t.categoryIds) t.copy(categoryIds = t.categoryIds + categoryId) else t
+                },
+            )
+        }
+    }
+}
+
+/**
+ * [SchedulerIntent.SetCellCategory] applied: [cellId] carries [categoryId] or not. Only a task cell category, only a
+ * populated cell; the same instance back when nothing changes.
+ */
+internal fun applySetCellCategory(state: SchedulerState, cellId: CellId, categoryId: CategoryId, carried: Boolean): SchedulerState {
+    val category = state.categoryById(categoryId) ?: return state
+    if (category.kind != org.example.project.scheduler.model.CategoryKind.TaskCell) return state
+    val cell = state.cells[cellId] ?: return state
+    if (carried && !SchedulerDomain.isPopulatedCell(state, cellId)) return state
+    if ((categoryId in cell.categoryIds) == carried) return state
+    val ids = if (carried) cell.categoryIds + categoryId else cell.categoryIds - categoryId
+    return state.copy(cells = state.cells + (cellId to cell.copy(categoryIds = ids)))
 }
 
 /**
@@ -5127,7 +5216,7 @@ private fun reduceDuplicateCategory(state: SchedulerState, categoryId: CategoryI
     val original = state.categoryById(categoryId) ?: return state
     val title = copyName(original.title, state.categories.map { it.title })
     val (id, allocated) = state.allocateCategoryId()
-    return allocated.copy(categories = allocated.categories + Category(id = id, title = title, rules = original.rules))
+    return allocated.copy(categories = allocated.categories + Category(id = id, title = title, rules = original.rules, kind = original.kind))
 }
 
 /** [SchedulerIntent.DuplicatePeriodKind]. */

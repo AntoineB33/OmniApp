@@ -2,6 +2,7 @@ package org.example.project.scheduler.domain
 
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
+import org.example.project.scheduler.model.CategoryKind
 import org.example.project.scheduler.model.CategoryRule
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.CellListId
@@ -22,11 +23,11 @@ import kotlin.math.roundToInt
  *
  * Three sentences are the whole of it, and everything below is one of them:
  *
- *  1. **The measure is the top-most carriers.** A category's share of a scope is the sum, over the cells
- *     under that scope that carry it and are not themselves under another such cell, of the product of the
- *     shares along the chain that reaches them ([chainsFor]). A carrier's WHOLE sub-tree is its own — a
- *     categorized task nested inside another categorized task is not counted twice, which is what makes the
- *     figure a share of the scope rather than an arbitrary sum that can exceed it.
+ *  1. **A rule is relative to a task cell, chosen or at a distance** (user rule 2026-10-03): a carrier — a cell
+ *     whose task carries a task id category, or a cell carrying a task cell category itself — is measured
+ *     against that cell by the product of the shares along the chain between them. A task cell rule counts every
+ *     top-most carrier under its cell together; a parent distance rule measures each carrier against the cell
+ *     that many levels above it, along every path, the carriers of one ancestor sub-list together ([ruleGroups]).
  *  2. **The rule is re-established, never recorded.** [settle] runs after every intent
  *     ([org.example.project.scheduler.state.SchedulerReducer.reduce]) and scales the tree back onto the
  *     rules. Nothing about the adjustment is stored: the weights ARE the storage, so a rule and the tree can
@@ -37,8 +38,8 @@ import kotlin.math.roundToInt
  *     be named precisely) and empirical (the pass ran and did not land), because rules at nested scopes
  *     interact in ways no closed form answers.
  *
- * The one deliberate softness: a rule whose scope task is gone, or that no task under the scope carries any
- * more, is **dormant** rather than contradictory ([Status.ScopeGone] / [Status.NoCarrier]). Deleting the last
+ * The one deliberate softness: a rule whose relative-to cell is gone, or that no carrier reaches any more, is
+ * **dormant** rather than contradictory ([Status.ScopeGone] / [Status.NoCarrier]). Deleting the last
  * carrier of a category is an ordinary edit, not an attempt to break a promise, and refusing it would leave
  * the user unable to undo their way out. The window says so; the tree is left alone.
  */
@@ -85,18 +86,116 @@ object CategoryRules {
         scopeListId(state, scope)?.value ?: scope?.value ?: ROOT_KEY
 
     /**
-     * The chains that carry [categoryId] under [scope]: one per **top-most** carrying cell, running from the
-     * cell sitting directly in the scope's own list down to that carrier — the very shape
-     * [RelativePriorityDomain.occurrenceChains] produces, so the same solve reads them.
-     *
-     * The walk stops at a carrier (its whole sub-tree is already counted by its own chain) and descends into
-     * a task's sub-list only from the cell that list names as its parent. That second rule is what keeps the
-     * downward walk the exact inverse of the upward climb the priority machinery does: a mirrored sub-list
-     * belongs to the task, is reached once, and a mirror cell that carries the category is still a chain of
-     * its own. Without it a mirrored branch would be measured once per occurrence — the exponential walk
-     * CLAUDE.md forbids, arriving as a wrong number first.
+     * Whether [cellId] carries [category] — through its TASK for a [CategoryKind.TaskId] category, through ITSELF
+     * for a [CategoryKind.TaskCell] one (user rule 2026-10-03). The one reading of "carries".
      */
-    fun chainsFor(state: SchedulerState, categoryId: CategoryId, scope: CellId?): List<List<CellId>> {
+    fun carries(state: SchedulerState, cellId: CellId, category: Category): Boolean {
+        val cell = state.cells[cellId] ?: return false
+        return when (category.kind) {
+            CategoryKind.TaskId -> cell.taskId?.let { state.tasks[it] }?.categoryIds?.contains(category.id) == true
+            CategoryKind.TaskCell -> category.id in cell.categoryIds
+        }
+    }
+
+    /** Every populated cell carrying [category], in the tree's stable order (shallowest first). */
+    fun carrierCells(state: SchedulerState, category: Category): List<CellId> {
+        val cells =
+            state.cells.keys.filter { SchedulerDomain.isPopulatedCell(state, it) && carries(state, it, category) }
+        return SchedulerDomain.sortOccurrences(state, cells)
+    }
+
+    /** The most upward paths one carrier is followed along — a guard against a tree mirrored into itself many times. */
+    private const val MAX_PATHS = 64
+
+    /**
+     * Every PATH from the root list down to [cellId]'s parent — the ancestor cells, outermost first. A sub-list belongs
+     * to the task id, so a cell in a mirrored task's sub-list sits under EVERY occurrence of that task: one path per
+     * occurrence, which is what lets a rule be relative to either ("the same task id once per path", user rule
+     * 2026-10-03). [occurrences] is the populated cells of each task, measured once by the caller.
+     */
+    private fun ancestorPaths(
+        state: SchedulerState,
+        cellId: CellId,
+        occurrences: Map<TaskId, List<CellId>>,
+        seen: Set<CellId> = emptySet(),
+    ): List<List<CellId>> {
+        val listId = state.cells[cellId]?.parentListId ?: return emptyList()
+        if (listId == state.rootListId) return listOf(emptyList())
+        val owner = state.lists[listId]?.parentCellId ?: return emptyList()
+        val parents = state.cells[owner]?.taskId?.let { occurrences[it] } ?: listOf(owner)
+        val out = mutableListOf<List<CellId>>()
+        for (parent in parents) {
+            if (parent in seen || parent == cellId) continue
+            for (path in ancestorPaths(state, parent, occurrences, seen + cellId)) {
+                out += path + parent
+                if (out.size >= MAX_PATHS) return out
+            }
+        }
+        return out
+    }
+
+    /** The populated cells of every task — [ancestorPaths]' index, built once per question. */
+    private fun occurrencesByTask(state: SchedulerState): Map<TaskId, List<CellId>> =
+        state.cells.values
+            .filter { it.taskId != null && SchedulerDomain.isPopulatedCell(state, it.id) }
+            .groupBy({ it.taskId!! }, { it.id })
+
+    /**
+     * Where [cellId] reaches at [distance], once per path it is reached by: the ancestor cell that many levels above
+     * it (`null` = the whole tree, when the distance is exactly that path's depth) and the chain of cells from the one
+     * sitting in that ancestor's sub-list down to [cellId] — the shape [RelativePriorityDomain.chainsProduct] measures.
+     * Empty where no path is that deep.
+     */
+    fun reach(
+        state: SchedulerState,
+        cellId: CellId,
+        distance: Int,
+        occurrences: Map<TaskId, List<CellId>> = occurrencesByTask(state),
+    ): List<Pair<CellId?, List<CellId>>> {
+        if (distance < 1) return emptyList()
+        return ancestorPaths(state, cellId, occurrences).mapNotNull { ancestors ->
+            val path = ancestors + cellId
+            if (distance > path.size) null
+            else (if (distance == path.size) null else path[path.size - distance - 1]) to path.takeLast(distance)
+        }
+    }
+
+    /** One sub-list a rule governs: the ancestor whose sub-list it is, and the carriers' chains inside it. */
+    data class RuleGroup(val ancestor: CellId?, val chains: List<List<CellId>>)
+
+    /**
+     * What [rule] of [category] governs right now. A **task cell rule** ([CategoryRule.distance] null) governs one
+     * group: its cell's sub-list, with a chain per top-most carrier under it ([chainsUnder]). A **parent distance
+     * rule** governs one group per ancestor SUB-LIST at its distance (two cells of one mirrored task name one sub-list,
+     * [scopeKey]); every chain of it has the rule's length, so two in one group never nest — a carrier inside another
+     * carrier is measured against its OWN ancestor at that distance, in its own group.
+     */
+    fun ruleGroups(state: SchedulerState, category: Category, rule: CategoryRule): List<RuleGroup> {
+        val distance = rule.distance
+        if (distance == null) {
+            val chains = chainsUnder(state, category, rule.relativeToCellId)
+            return if (chains.isEmpty()) emptyList() else listOf(RuleGroup(rule.relativeToCellId, chains))
+        }
+        val carriers = carrierCells(state, category)
+        if (carriers.isEmpty()) return emptyList()
+        val occurrences = occurrencesByTask(state)
+        val groups = LinkedHashMap<String, Pair<CellId?, MutableList<List<CellId>>>>()
+        for (cellId in carriers) {
+            for ((ancestor, chain) in reach(state, cellId, distance, occurrences)) {
+                groups.getOrPut(scopeKey(state, ancestor)) { ancestor to ArrayList() }.second += chain
+            }
+        }
+        return groups.values.map { (ancestor, chains) -> RuleGroup(ancestor, chains.distinct()) }
+    }
+
+    /**
+     * A task cell rule's chains: one per **top-most** carrier under [scope] (`null` = the whole tree), from the cell
+     * sitting directly in the scope's own list down to the carrier — the shape
+     * [RelativePriorityDomain.occurrenceChains] produces. The walk stops at a carrier (its whole sub-tree is already
+     * counted by its own chain) and descends into a task's sub-list only from the cell that list names as its parent,
+     * so a mirrored sub-list is walked once and a mirror cell that carries the category is still a chain of its own.
+     */
+    fun chainsUnder(state: SchedulerState, category: Category, scope: CellId?): List<List<CellId>> {
         if (!scopeExists(state, scope)) return emptyList()
         val rootList = scopeListId(state, scope) ?: return emptyList()
         val out = mutableListOf<List<CellId>>()
@@ -109,7 +208,7 @@ object CategoryRules {
                 if (!SchedulerDomain.isPopulatedCell(state, cellId)) continue
                 val task = state.cells[cellId]?.taskId?.let { state.tasks[it] } ?: continue
                 val chain = prefix + cellId
-                if (categoryId in task.categoryIds) {
+                if (carries(state, cellId, category)) {
                     out += chain
                     continue
                 }
@@ -123,130 +222,134 @@ object CategoryRules {
         return out
     }
 
-    /** What [categoryId] is worth inside [scope]'s sub-tree right now, as a fraction in `[0, 1]`. */
-    fun shareOf(state: SchedulerState, categoryId: CategoryId, scope: CellId?): Double =
-        RelativePriorityDomain.chainsProduct(state, chainsFor(state, categoryId, scope))
-
-    // ----- A share of its own sub-list, forced on every carrier (user rule 2026-10-02) ------------------
-
     /**
-     * Every populated cell whose task carries one of [categoryIds] — each a row of its own sub-list's priority weight
-     * table. In the tree's stable order (shallowest first), so the solve below visits them the same way every time.
+     * What makes two rules **the same rule** — at most one per key, which `SetCategoryRule` keeps by replacing: a task
+     * cell rule by the SUB-LIST its cell names ([scopeKey]), a parent distance rule by its distance.
      */
-    fun carrierCells(state: SchedulerState, categoryIds: Set<CategoryId>): List<CellId> {
-        if (categoryIds.isEmpty()) return emptyList()
-        val cells =
-            state.cells.values.filter { cell ->
-                val task = cell.taskId?.let { state.tasks[it] }
-                task != null && task.categoryIds.any { it in categoryIds } && SchedulerDomain.isPopulatedCell(state, cell.id)
-            }.map { it.id }
-        return SchedulerDomain.sortOccurrences(state, cells)
-    }
+    fun ruleKey(state: SchedulerState, relativeToCellId: CellId?, distance: Int?): String =
+        if (distance == null) "cell:" + scopeKey(state, relativeToCellId) else "distance:$distance"
 
-    /** How close a forced share has to land ([forceSubListShare]), and how many passes sharing a list may take. */
-    private const val FORCED_SHARE_TOLERANCE = 1e-9
-    private const val FORCED_SHARE_PASSES = 60
-
-    /**
-     * **Every task carrying one of [categoryIds] given [share] of its OWN sub-list** (user rule 2026-10-02) — the
-     * figure its row of that sub-list's priority weight table comes to — by adjusting that row alone: all its values
-     * multiplied by ONE common factor, and a term added to them only where no factor lands (a value of 0 in a
-     * column cannot be scaled into it). That is [RelativePriorityDomain.setChainsShare] asked of the one-cell chain,
-     * so it is the app's one solve and not a second one.
-     *
-     * Two carriers in one sub-list share its total, so giving one its share moves the other's: the cells are solved in
-     * turn and the pass repeated until every one holds [share] (it settles whenever the carriers of a list are asked
-     * for less than the whole of it). A share nothing can reach — an only child is 100 % whatever its weight, three
-     * carriers asked for 40 % each — lands as close as the rows allow. A ONE-SHOT edit, not a standing rule: later
-     * edits may move the shares again. The same instance back when nothing moves.
-     */
-    fun forceSubListShare(state: SchedulerState, categoryIds: Set<CategoryId>, share: Double): SchedulerState {
-        if (!share.isFinite()) return state
-        val target = share.coerceIn(0.0, 1.0)
-        val cells = carrierCells(state, categoryIds)
-        if (cells.isEmpty()) return state
-        var result = state
-        repeat(FORCED_SHARE_PASSES) {
-            val before = result
-            for (cellId in cells) result = RelativePriorityDomain.setChainsShare(result, listOf(listOf(cellId)), target)
-            val worst = cells.maxOf { kotlin.math.abs(RelativePriorityDomain.cellShare(result, it) - target) }
-            if (worst <= FORCED_SHARE_TOLERANCE || result === before || result.cells == before.cells) return result
+    /** How many tasks (a task id category) or task cells (a task cell category) carry [categoryId]. */
+    fun carrierCount(state: SchedulerState, categoryId: CategoryId): Int {
+        val category = state.categoryById(categoryId) ?: return 0
+        return when (category.kind) {
+            CategoryKind.TaskId -> tasksWith(state, categoryId).size
+            CategoryKind.TaskCell -> carrierCells(state, category).size
         }
-        return result
     }
 
-    /** Every task carrying [categoryId], in the account's task order. */
+    /** Every task carrying [categoryId] by its id, in the account's task order. */
     fun tasksWith(state: SchedulerState, categoryId: CategoryId): List<TaskId> =
         state.tasks.values.filter { it.title.isNotBlank() && categoryId in it.categoryIds }.map { it.id }
+
+    /**
+     * The **task cell picker** of the "add a rule" form (its task cell side): the whole tree first, then every task
+     * cell some carrier of [categoryIds] sits under — along every path it is reached by, so one task id appears once
+     * per path — each by its own PATH, and nothing else: a rule relative to a cell no carrier sits under would govern
+     * nothing (the anomaly of 2026-10-03). Narrowed on the path by [input]; the whole tree answers to "root".
+     */
+    fun taskCellEntries(state: SchedulerState, categoryIds: Collection<CategoryId>, input: String): List<ScopeEntry> {
+        val typed = input.trim()
+        val seen = LinkedHashMap<CellId?, ScopeEntry>()
+        val occurrences = occurrencesByTask(state)
+        for (category in categoryIds.mapNotNull(state::categoryById)) {
+            for (cellId in carrierCells(state, category)) {
+                for (path in ancestorPaths(state, cellId, occurrences)) {
+                    if (null !in seen) seen[null] = ScopeEntry(null, scopeLabel(state, null))
+                    for (ancestor in path) if (ancestor !in seen) seen[ancestor] = ScopeEntry(ancestor, scopeLabel(state, ancestor))
+                }
+            }
+        }
+        val rows = seen.values.sortedWith(compareBy({ it.cellId != null }, { it.label.lowercase() }))
+        return rows.filter { typed.isEmpty() || it.label.contains(typed, ignoreCase = true) }
+    }
+
+    /** Whether some carrier of [categoryIds] sits [distance] levels under a task cell — a parent distance rule's check. */
+    fun distanceReached(state: SchedulerState, categoryIds: Collection<CategoryId>, distance: Int): Boolean {
+        val occurrences = occurrencesByTask(state)
+        return categoryIds.mapNotNull(state::categoryById).any { category ->
+            carrierCells(state, category).any { reach(state, it, distance, occurrences).isNotEmpty() }
+        }
+    }
 
     // ----- What a rule is doing (the edit window's readout) --------------------------------------
 
     /** Why a rule is or is not currently governing anything. */
     enum class Status {
-        /** It is being held: the carriers under the scope are worth exactly what it says. */
+        /** It is being held: the carriers are worth exactly what it says of their ancestor at its distance. */
         Held,
 
-        /** The scope CELL is gone (deleted, or never in this tree), so there is no sub-tree to divide. */
+        /** The relative-to CELL is gone (deleted, or never in this tree), so there is no sub-tree to divide. */
         ScopeGone,
 
-        /** The scope is there, but no task under it carries the category — nothing to give the share to. */
+        /** No carrier reaches an ancestor at its distance (under the relative-to cell) — nothing to give it to. */
         NoCarrier,
     }
 
-    /** One rule as the category edit window shows it: what it asks, whether it is live, and what it gets. */
+    /** One rule as the editors show it: what it asks, whether it is live, and what each sub-list it governs gets. */
     data class RuleRow(
         val rule: CategoryRule,
-        /** The scope cell's own path, or `root` for the whole tree — which occurrence the rule is about. */
-        val scopeLabel: String,
+        /** What the rule is relative to, as [ruleLabel] says it. */
+        val label: String,
         val status: Status,
-        /** The share the category actually holds of the scope now; `null` when the scope is gone. */
-        val achieved: Double?,
+        /** Each governed sub-list's ancestor path and the share the category holds of it now. */
+        val achieved: List<Pair<String, Double>>,
     )
+
+    /** How a rule reads: the task cell it is relative to by its path, or the parent distance. */
+    fun ruleLabel(state: SchedulerState, relativeToCellId: CellId?, distance: Int?): String =
+        if (distance == null) "of “${scopeLabel(state, relativeToCellId)}”"
+        else "of the parent $distance level${if (distance == 1) "" else "s"} up"
 
     /** The rules of [categoryId] as rows, in the order they were added. */
     fun ruleRows(state: SchedulerState, categoryId: CategoryId): List<RuleRow> {
         val category = state.categoryById(categoryId) ?: return emptyList()
         return category.rules.map { rule ->
-            val chains = chainsFor(state, categoryId, rule.scopeCellId)
+            val groups = ruleGroups(state, category, rule)
             val status = when {
-                !scopeExists(state, rule.scopeCellId) -> Status.ScopeGone
-                chains.isEmpty() -> Status.NoCarrier
+                rule.distance == null && !scopeExists(state, rule.relativeToCellId) -> Status.ScopeGone
+                groups.isEmpty() -> Status.NoCarrier
                 else -> Status.Held
             }
             RuleRow(
                 rule = rule,
-                scopeLabel = scopeLabel(state, rule.scopeCellId),
+                label = ruleLabel(state, rule.relativeToCellId, rule.distance),
                 status = status,
-                achieved =
-                    if (status == Status.ScopeGone) null
-                    else RelativePriorityDomain.chainsProduct(state, chains),
+                achieved = groups.map { scopeLabel(state, it.ancestor) to RelativePriorityDomain.chainsProduct(state, it.chains) },
             )
         }
     }
 
     /**
      * One row of the rules of SEVERAL categories read together (user rule 2026-10-02: one field for all the added
-     * ones): a scope at least one of them has a rule about, the [share] they ALL give it — null when one has no rule
-     * there or they differ — and how many of them have one ([holders]).
+     * ones): a (relative-to, distance) at least one of them has a rule about, the [share] they ALL give it — null when
+     * one has no rule there or they differ — and how many of them have one ([holders]).
      */
-    data class SharedRuleRow(val scopeCellId: CellId?, val scopeLabel: String, val share: Double?, val holders: Int)
+    data class SharedRuleRow(
+        val relativeToCellId: CellId?,
+        val distance: Int?,
+        val label: String,
+        val share: Double?,
+        val holders: Int,
+    )
 
     /**
-     * The rules of [categoryIds] as one list, a row per scope ([scopeKey], so two cells of one mirrored task are one
-     * row), in the order the scopes first appear. A share typed on a row is every category's rule there
-     * (`SetCategoryRule` each); its bin takes it off every one that has it.
+     * The rules of [categoryIds] as one list, a row per rule key ([ruleKey]), in the order they first appear. A share
+     * typed on a row is every category's rule there (`SetCategoryRule` each); its bin takes it off every one that has it.
      */
     fun sharedRuleRows(state: SchedulerState, categoryIds: List<CategoryId>): List<SharedRuleRow> {
         val categories = categoryIds.distinct().mapNotNull(state::categoryById)
-        val byScope = LinkedHashMap<String, MutableList<CategoryRule>>()
+        val byKey = LinkedHashMap<String, MutableList<CategoryRule>>()
         for (category in categories) {
-            for (rule in category.rules) byScope.getOrPut(scopeKey(state, rule.scopeCellId)) { ArrayList() } += rule
+            for (rule in category.rules) byKey.getOrPut(ruleKey(state, rule.relativeToCellId, rule.distance)) { ArrayList() } += rule
         }
-        return byScope.values.map { rules ->
+        return byKey.values.map { rules ->
+            val first = rules.first()
             val shares = rules.map { it.share }.distinct()
             SharedRuleRow(
-                scopeCellId = rules.first().scopeCellId,
-                scopeLabel = scopeLabel(state, rules.first().scopeCellId),
+                relativeToCellId = first.relativeToCellId,
+                distance = first.distance,
+                label = ruleLabel(state, first.relativeToCellId, first.distance),
                 share = shares.singleOrNull()?.takeIf { rules.size == categories.size },
                 holders = rules.size,
             )
@@ -258,34 +361,27 @@ object CategoryRules {
     /** One row of the categories window: a category, what carries it, and what its rules are doing. */
     data class OverviewRow(
         val category: Category,
-        /** How many tasks carry it — [tasksWith]'s count, so the window and the tree agree by construction. */
+        /** How many tasks (or task cells, for a task cell category) carry it — [carrierCount]. */
         val carriers: Int,
         /** Its rules as [ruleRows] draws them, so the list and the category's own window cannot disagree. */
         val rules: List<RuleRow>,
     ) {
-        /** How many of those rules are asleep — the scope is gone, or nothing under it carries the category. */
+        /** How many of those rules are asleep — the task cell is gone, or no carrier is reached. */
         val dormant: Int get() = rules.count { it.status != Status.Held }
     }
 
     /**
-     * PRD §5/§7 **the categories window**: every category the account holds, each with the two figures that
-     * say whether it is doing anything — how many tasks carry it, and what its rules are up to.
-     *
-     * In **title order**, and that is the window's own answer rather than a fact about the account: the
-     * categories are stored in the order they were minted, which is an order the user cannot predict and
-     * that changes under them as they type; this list is a place to *find* a category by the name they know
-     * it by. Nothing else reads this order — the task cell's field ranks by how well a row matches what is
-     * typed ([menuEntries]), which is a different question.
-     *
-     * A walk of the tree per rule ([ruleRows]), so this is asked once per change to the tree and never on a
-     * tick (ADR 0009) — the window keys its `remember` on the cells/lists/tasks/categories alone.
+     * PRD §5/§7 **the categories window**: every category the account holds, each with the two figures that say
+     * whether it is doing anything — how many carry it, and what its rules are up to. In **title order**: the
+     * categories are stored in the order they were minted, which the user cannot predict. A walk of the tree per
+     * rule ([ruleRows]), so this is asked once per change to the tree and never on a tick (ADR 0009).
      */
     fun overview(state: SchedulerState): List<OverviewRow> =
         state.categories
             .map { category ->
                 OverviewRow(
                     category = category,
-                    carriers = tasksWith(state, category.id).size,
+                    carriers = carrierCount(state, category.id),
                     rules = ruleRows(state, category.id),
                 )
             }
@@ -398,26 +494,46 @@ object CategoryRules {
         }
     }
 
-    /** The rules that currently govern something: their scope resolves and somebody under it carries them. */
+    /** The rules that currently govern something: one claim per sub-list a rule's carriers reach ([ruleGroups]). */
     private fun claimsOf(state: SchedulerState): List<Claim> {
         val out = mutableListOf<Claim>()
         for (category in state.categories) {
             for (rule in category.rules) {
-                if (!scopeExists(state, rule.scopeCellId)) continue
-                if (scopeListId(state, rule.scopeCellId) == null) continue
-                val chains = chainsFor(state, category.id, rule.scopeCellId)
-                if (chains.isEmpty()) continue
-                out += Claim(
-                    categoryId = category.id,
-                    title = category.title,
-                    scope = rule.scopeCellId,
-                    scopeLabel = scopeLabel(state, rule.scopeCellId),
-                    target = rule.share.coerceIn(0.0, 1.0),
-                    chains = chains,
-                )
+                for (group in ruleGroups(state, category, rule)) {
+                    if (scopeListId(state, group.ancestor) == null) continue
+                    out += Claim(
+                        categoryId = category.id,
+                        title = category.title,
+                        scope = group.ancestor,
+                        scopeLabel = scopeLabel(state, group.ancestor),
+                        target = rule.share.coerceIn(0.0, 1.0),
+                        chains = group.chains,
+                    )
+                }
             }
         }
         return out
+    }
+
+    /**
+     * User rule 2026-10-03: a cell a standing rule holds whose weight a **priority weights table pins** — the two say
+     * different things about one share, and the rule, re-established after every edit, moves the pinned value anyway.
+     * What the task tree window's configuration section warns about, one line per (category, cell).
+     */
+    data class PinnedRuleCell(val categoryTitle: String, val cellLabel: String, val ancestorLabel: String)
+
+    /** Every [PinnedRuleCell] of the account's rules — empty at once where nothing is pinned or no rule exists. */
+    fun pinnedRuleCells(state: SchedulerState): List<PinnedRuleCell> {
+        if (state.priorityWeightPins.isEmpty() || state.categories.none { it.rules.isNotEmpty() }) return emptyList()
+        val out = LinkedHashSet<PinnedRuleCell>()
+        for (claim in claimsOf(state)) {
+            for (cellId in claim.chains.flatten().distinct()) {
+                val listId = state.cells[cellId]?.parentListId ?: continue
+                if (state.priorityWeightPins[listId].orEmpty().none { it.cellId == cellId }) continue
+                out += PinnedRuleCell(claim.title, scopeLabel(state, cellId), claim.scopeLabel)
+            }
+        }
+        return out.toList()
     }
 
     /** How deep a scope sits, so the deepest rule is applied first. The whole tree is 0. */
@@ -505,13 +621,19 @@ object CategoryRules {
      * The **identity rows** of the "add a category" field — the account's categories whose title matches what
      * is typed, best match first, so a name already taken attaches THAT category instead of minting a second
      * one under the same spelling. The task's own categories are left out: they are already on it, and the
-     * rows above the field are how they are removed.
+     * rows above the field are how they are removed. [kind] narrows them to the categories a field can attach
+     * (a task's field the task id ones, an occurrence's the task cell ones); null is every category.
      */
-    fun menuEntries(state: SchedulerState, input: String, exclude: Collection<CategoryId>): List<Category> {
+    fun menuEntries(
+        state: SchedulerState,
+        input: String,
+        exclude: Collection<CategoryId>,
+        kind: CategoryKind? = null,
+    ): List<Category> {
         val taken = exclude.toSet()
         val typed = input.trim()
         return state.categories
-            .filter { it.id !in taken }
+            .filter { it.id !in taken && (kind == null || it.kind == kind) }
             .filter { typed.isEmpty() || it.title.contains(typed, ignoreCase = true) }
             .sortedWith(
                 compareByDescending<Category> { SchedulerDomain.titleSimilarity(it.title, typed) }
@@ -521,44 +643,12 @@ object CategoryRules {
     }
 
     /** The **title suggestions** of that same field: the category titles the typed text appears in. */
-    fun titleSuggestions(state: SchedulerState, input: String): List<String> =
-        menuEntries(state, input, emptyList())
+    fun titleSuggestions(state: SchedulerState, input: String, kind: CategoryKind? = null): List<String> =
+        menuEntries(state, input, emptyList(), kind)
             .map { it.title }
             .filter { it.isNotBlank() && !it.equals(input.trim(), ignoreCase = true) }
             .distinct()
 
-    /** One row of the scope picker: the cell the rule would be about (`null` = the whole tree), by its path. */
+    /** One row of the "relative to" picker: the ancestor cell (`null` = the whole tree), by its path. */
     data class ScopeEntry(val cellId: CellId?, val label: String)
-
-    /**
-     * The **scope** picker of the category edit window: the root, then every CELL the tree holds, in the
-     * tree's own order and each named by its own path.
-     *
-     * Cells and not tasks, because that is the question the window asks — a task can appear several
-     * times, and "under Book" names no place when there are two of them. The walk is [chainsFor]'s: each
-     * LIST is entered once and only from the cell that list names as its parent, so a mirrored sub-tree is
-     * offered once (under the cell that owns it) while every mirror OCCURRENCE is still a row of its own.
-     */
-    fun scopeEntries(state: SchedulerState, input: String): List<ScopeEntry> {
-        val typed = input.trim()
-        val rows = mutableListOf(ScopeEntry(null, SchedulerDomain.ROOT_LABEL))
-        val guard = HashSet<CellListId>()
-
-        fun walk(listId: CellListId, prefix: String) {
-            if (!guard.add(listId)) return
-            val list = state.lists[listId] ?: return
-            for (cellId in list.cellIds) {
-                if (!SchedulerDomain.isPopulatedCell(state, cellId)) continue
-                val task = state.cells[cellId]?.taskId?.let { state.tasks[it] } ?: continue
-                val label = if (prefix.isEmpty()) task.title else "$prefix / ${task.title}"
-                rows += ScopeEntry(cellId, label)
-                val childList = task.childListId ?: continue
-                if (state.lists[childList]?.parentCellId != cellId) continue
-                walk(childList, label)
-            }
-        }
-
-        walk(state.rootListId, "")
-        return rows.filter { typed.isEmpty() || it.label.contains(typed, ignoreCase = true) }
-    }
 }
