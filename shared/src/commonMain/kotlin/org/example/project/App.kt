@@ -1614,10 +1614,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base $it" }
                     .first { name -> taken.none { it.equals(name, ignoreCase = true) } }
             when (kind) {
+                // PRD §9 (user rule 2026-10-03): a new task has NO path — it is made to be given a set of tasks — and opens
+                // in a new Search window as its only element, whoever asked (the actions' "New", a creation row).
                 SearchDomain.Kind.Task -> {
-                    val placeholder = TaskPathsDomain.placeholderOf(st, st.rootListId) ?: return
-                    vm.dispatch(SchedulerIntent.CreateTask("New task"))
-                    vm.state.value.cells[placeholder]?.taskId?.let { if (open) openElementSearch(SearchDomain.Kind.Task, it.value) }
+                    vm.dispatch(SchedulerIntent.CreatePathlessTask(unique("New task", st.tasks.values.map { it.title })))
+                    SearchDomain.newElementKeys(st, vm.state.value, SearchDomain.Kind.Task).firstOrNull()?.let { key ->
+                        openElementSearch(SearchDomain.Kind.Task, key.removePrefix(SearchDomain.Kind.Task.name + "/"))
+                    }
                 }
                 SearchDomain.Kind.Category -> {
                     val title = unique("New category", st.categories.map { it.title })
@@ -3892,7 +3895,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onCreate = { kind ->
                                 val before = vm.state.value
                                 createElement(kind, open = false)
-                                SearchDomain.newElementKeys(before, vm.state.value, kind)
+                                // A new task opens in a Search window of its own (createElement), not in this one's list.
+                                if (kind == SearchDomain.Kind.Task) emptyList()
+                                else SearchDomain.newElementKeys(before, vm.state.value, kind)
                             },
                             onPlaceOnCalendar = { drafts ->
                                 saveCalendarElementIntents(drafts, vm.state.value, tz).forEach(vm::dispatch)

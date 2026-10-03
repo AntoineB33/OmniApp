@@ -608,107 +608,24 @@ private fun ChangedElementField(
     windows: List<SearchDomain.WindowEntry>,
     onChange: (String?) -> Unit,
 ) {
-    val shown = elementKey?.let { SearchDomain.changedElementTitle(state, it, windows) }.orEmpty()
-    var selected by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf(false) }
-    var draft by remember { mutableStateOf("") }
-    fun closeEditor() {
-        if (!editing) return
-        editing = false
-        if (draft.isBlank()) onChange(null)
-    }
-    val editor = rememberOutsidePressEditor(active = editing) { closeEditor() }
     val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
     val taskId =
         elementKey?.takeIf { it.startsWith(SearchDomain.Kind.Task.name + "/") }
             ?.let { org.example.project.scheduler.model.TaskId(it.substringAfter('/')) }
-    Box(Modifier.width(320.dp).outsidePressPart(editor)) {
-        TaskRow(
-            depth = 0,
-            cellId = CHANGED_ELEMENT_CELL,
-            renderVia = null,
-            displayTitle = if (editing) draft else shown,
-            isMainSelection = selected,
-            isInSelectionRange = false,
-            selectable = true,
-            isEditing = editing,
-            hasChildren = false,
-            expanded = false,
-            moveDropBefore = false,
-            moveDropAfter = false,
-            canMoveFromCell = false,
-            isBeingMoved = false,
-            priorityLabel = null,
-            priorityColumnWidth = 200.dp,
-            taskColor = if (editing) null else taskId?.let { taskColors[it] },
-            searchRanges = emptyList(),
-            currentSearchRange = null,
-            textOverflow = false,
-            minMinutes = 0,
-            minTimeEditing = false,
-            cellMenu = null,
-            onTogglePriorityWeights = {},
-            onOpenRelativePriority = {},
-            onSetMinTime = {},
-            onActivateMinTime = {},
-            // One press enters Edit Mode here (user rule 2026-10-03): a filter field has nothing to select, so the
-            // tree's "press selects, double-click edits" would only cost a press. The double-click still lands in it.
-            onClick = { _, _, _, _ ->
-                selected = true
-                if (!editing) {
-                    draft = shown
-                    editing = true
-                }
-            },
-            onDragSelect = { _, _ -> },
-            moveDragActive = false,
-            resolveRowAt = { null },
-            onRowBounds = { _, _, _ -> },
-            onMoveDragStart = {},
-            onMoveDropHover = { _, _, _ -> },
-            onMoveDragEnd = {},
-            onDoubleClick = {
-                if (!editing) {
-                    draft = shown
-                    editing = true
-                }
-            },
-            onTextChange = { if (editing) draft = it },
-            onExitEdit = { closeEditor() },
-            onToggleExpand = {},
-            editMenus =
-                if (editing) {
-                    { _ ->
-                        val menus = SearchDomain.changedElementMenus(state, kinds, draft, windows)
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            EditModeMenuBlock(
-                                identityLabel = "Elements",
-                                identityRows = menus.identity.map { row ->
-                                    EditMenuItem(label = row.label, selected = row.key == elementKey) {
-                                        // Picking an element IS the commit, as picking a task is in a cell.
-                                        editing = false
-                                        onChange(row.key)
-                                    }
-                                },
-                                // A suggestion only fills the field, as it does in a cell.
-                                suggestions = menus.titles.map { title -> EditMenuItem(title) { draft = title } },
-                            )
-                        }
-                    }
-                } else {
-                    null
-                },
-            showExpandArrow = false,
-            showMinTime = false,
-            rowContent =
-                elementKey?.takeIf { !editing }?.let { key ->
-                    { Text(key, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                },
-        )
-    }
+    NamingCell(
+        cellId = CHANGED_ELEMENT_CELL,
+        shown = elementKey?.let { SearchDomain.changedElementTitle(state, it, windows) }.orEmpty(),
+        identityLabel = "Elements",
+        identity = { draft ->
+            SearchDomain.changedElementMenus(state, kinds, draft, windows).identity.map { NamingRow(it.key, it.label) }
+        },
+        suggestions = { draft -> SearchDomain.changedElementMenus(state, kinds, draft, windows).titles },
+        onPick = { onChange(it) },
+        selectedKey = elementKey,
+        onCleared = { onChange(null) },
+        taskColor = taskId?.let { taskColors[it] },
+        trailing = elementKey?.let { key -> { NamingKey(key) } },
+    )
 }
 
 /** The "Changed element" field's cell id: a cell of no tree, so it can never be confused with one. */

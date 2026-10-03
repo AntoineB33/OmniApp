@@ -551,6 +551,25 @@ titles" figure: the Search window and the per-object windows its rows open repla
   release account, all inside 4 detached parents). `firstTaskOccurrences` is one walk for every task (ADR 0009),
   and the *same* walk as `firstTaskOccurrence`.
 
+### A task's set of tasks, and the tasks with no path
+
+→ `docs/scheduler_score.md` § *Sets of tasks* (what a set does to the score). `Task.fulfilment`, authoritative.
+
+- **A task is kept while something keeps it** — a cell, a last path, a task tree, … — **or while its set holds a
+  task that is kept** (`SchedulerDomain.keptWithTheirSets`, a fixpoint inside `purgeOrphanTasks`). That is how a
+  task with no path lives: "watch videos explaining chemistry in Spanish" is in no tree, but it fulfils "listen to
+  Spanish", which is. A task with no path and no set is purged at the next purge, like any orphan.
+- **A task in no tree that holds a set is schedulable** (`SchedulerDomain.isInTreeOrFulfils` — the one predicate for
+  `schedulableLeaves`, `isPlaceableTask`, the calendar's manual add and the reducer's `advanceSchedule`).
+- **A task that gets children hands its set to them**: a child linked under a parent with a set takes it when it has
+  none of its own (`linkChildUnderParent`).
+- **The Search window's actions**: on a task, *Set of tasks* edits the set (`SetTaskFulfilment`; a target is added
+  at 100% with a `NamingCell` and its percentage edited on its line) and *Fulfilled by* lists the tasks whose set
+  holds it, each opening its own Search window. **Creating a task** from the Search window makes a task with no path
+  (`CreatePathlessTask`) and opens a new Search window with it as the only added element.
+- **The decode heals** a set: blank ids, the task itself, and percentages ≤ 0 or NaN are dropped, the rest clamped to
+  100%.
+
 ### The Search window, and a task's last path
 
 → PRD §7 *Search*. `scheduler/domain/SearchDomain.kt` decides what is found and keeps the last path;

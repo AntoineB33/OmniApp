@@ -98,6 +98,19 @@ data class Task(
      */
     val pendingDefaultSubtree: List<CellListId> = emptyList(),
     /**
+     * PRD §9 (user rule 2026-10-03) **the set of tasks this task fulfils**: while it is on the calendar, each task here is
+     * being done too, at its fraction in `(0, 1]` — "watch videos explaining chemistry in Spanish" fulfils "watch videos
+     * explaining chemistry" at 0.8 and "listen to Spanish" at 0.8. As if the task were run in a period it has that
+     * resilience to: the time counts for it at that rate, and only up to its share (`docs/scheduler_score.md` § *Sets
+     * of tasks*). Transitive: a task this one fulfils passes it on through its own set.
+     *
+     * It keeps the task alive with no path ([org.example.project.scheduler.domain.SchedulerDomain.purgeOrphanTasks]:
+     * a task whose set holds a task that is kept), and makes a pathless leaf schedulable. A task given children hands
+     * it to each child that has none of its own. Authoritative, persisted and synced with the rest of the task, and on
+     * the Undo/Redo history with the tree.
+     */
+    val fulfilment: Map<TaskId, Double> = emptyMap(),
+    /**
      * PRD §7 *Search*: **where this task last sat, for a task that is in no task tree any more** — the titles
      * from the tree's root (named after the tree) down to the task's parent, exactly as the search window's
      * path section reads a live path. Empty for every task a task tree still holds.

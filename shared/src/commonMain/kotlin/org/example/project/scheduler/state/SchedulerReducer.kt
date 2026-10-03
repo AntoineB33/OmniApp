@@ -418,6 +418,28 @@ object SchedulerReducer {
             }
             is SchedulerIntent.SetTaskMinimumTime ->
                 commitDelta(state, priorityTreeDelta(state, "Minimum time") { applySetTaskMinimumTime(it, intent.taskId, intent.minutes) })
+            is SchedulerIntent.CreatePathlessTask ->
+                if (intent.title.isBlank()) state
+                else commitDelta(state, priorityTreeDelta(state, "New task") { applyCreatePathlessTask(it, intent.title.trim()) })
+            is SchedulerIntent.SetTaskFulfilment -> {
+                val task = state.tasks[intent.taskId]
+                val fraction = intent.fraction?.takeIf { it > 0.0 && !it.isNaN() }?.coerceAtMost(1.0)
+                val next =
+                    when {
+                        task == null || intent.target == intent.taskId -> null
+                        fraction == null -> task.fulfilment - intent.target
+                        intent.target !in state.tasks -> null
+                        else -> task.fulfilment + (intent.target to fraction)
+                    }
+                if (task == null || next == null || next == task.fulfilment) state
+                else commitDelta(
+                    state,
+                    priorityTreeDelta(state, "Set of tasks") {
+                        // What its set no longer reaches may leave nothing keeping a pathless task.
+                        SchedulerDomain.purgeOrphanTasks(it.copy(tasks = it.tasks + (task.id to task.copy(fulfilment = next))))
+                    },
+                )
+            }
             is SchedulerIntent.SetTasksMinimumTime -> {
                 val apply = { working: SchedulerState ->
                     intent.taskIds.fold(working) { acc, id -> applySetTaskMinimumTime(acc, id, intent.minutes) }
@@ -4310,6 +4332,13 @@ private fun removeTaskPathDelta(state: SchedulerState, cellId: CellId): Delta? {
 }
 
 /** Wraps a priority-table mutation as an undoable [TreeMutationDelta] (PRD §6). */
+/** [SchedulerIntent.CreatePathlessTask]: a task under a fresh id, in no list — no cell, no path, no parent. */
+private fun applyCreatePathlessTask(state: SchedulerState, title: String): SchedulerState {
+    val (id, allocated) = state.allocateTaskId()
+    val tasks = allocated.tasks + (id to Task(id = id, title = title))
+    return allocated.copy(tasks = tasks, titleToTaskIds = SchedulerDomain.addTitleMapping(allocated.titleToTaskIds, title, id))
+}
+
 private fun priorityTreeDelta(
     state: SchedulerState,
     label: String = "Tree change",
@@ -4423,11 +4452,12 @@ private fun advanceSchedule(
             remaining += panel
             continue
         }
-        // A panel's task is schedulable only while it is still a leaf task present in the tree; a task
-        // deleted from the tree (or one that gained a child) is no longer scheduled.
+        // A panel's task is schedulable only while it is still a leaf task present in the tree — or one its set of
+        // tasks keeps worth time with no path (2026-10-03); a task deleted from the tree (or one that gained a
+        // child) is no longer scheduled.
         val schedulable =
             panel.taskId != null &&
-                SchedulerDomain.taskHasCells(state, panel.taskId) &&
+                SchedulerDomain.isInTreeOrFulfils(state, panel.taskId) &&
                 SchedulerDomain.isLeafTask(state, panel.taskId)
         when {
             // Elapsed auto panel → record [start, end] as completed work, drop the panel.

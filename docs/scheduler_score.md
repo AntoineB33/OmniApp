@@ -108,6 +108,29 @@ past, so the past has to be replayed far enough back that what is left out no lo
   gives A30 B15 C15 B15 C15, because splitting A into two 15min panels would gain less on criterion 1 than its
   shortfall costs on criterion 2.
 
+## Sets of tasks
+
+A task $X$ may hold a **set of tasks** $\{(j, p_j)\}$ (`Task.fulfilment`, user rule 2026-10-03): the tasks it fulfils
+while it is on the calendar, each at a percentage $p_j \in (0, 1]$. "Watch videos explaining chemistry in Spanish"
+fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80%.
+
+* **A run of $X$ serves each $j$ of its set as if $j$ were on a period it has resilience $p_j$ with**: while
+  $L_j < 0$, $j$ is served at rate $p_j$; on reaching $L_j = 0$ it is held there (served at $f_j$) when
+  $p_j \ge f_j$, and keeps being served at $p_j$ otherwise; above $0$ it is served nothing. **A credit only ever
+  fills a deficit — it never serves $j$ past its share**, so it never costs $j$ anything. The lag ODE of
+  § *Criterion 1* is integrated piecewise over those three regimes in closed form (`ScoreModel.integrateCredit`).
+* **$X$'s own lag.** $X$ is scored like any task when it has a priority of its own. A task with no priority and a
+  set (the usual pathless one, made from the Search window) is **unscored**: its runs are worth exactly what they
+  serve through its set.
+* **Transitive.** A set holding a task that holds a set serves that one's set too, at the product of the
+  percentages; where two paths reach the same task, the larger product counts, and a cycle is cut
+  (`SchedulerDomain.fulfilmentCredits`).
+* **Consequence (the user's rule).** A task whose set holds every schedulable task at 100% serves every task at
+  rate 1 up to its share, so every lag stays at its best: a continuation filled by that task alone reaches $J = 0$,
+  the best possible score.
+* **What the search must re-score.** A move of a run of $X$ changes the lag of every task in $X$'s set, not only
+  $X$'s: the whole-continuation improvement re-scores those terms too (`ScheduleImprover.affectedBy`).
+
 ## The score
 
 * **The score of a continuation is $J = J_1 + J_2$, lower is better.** Hard constraints are not in the score:

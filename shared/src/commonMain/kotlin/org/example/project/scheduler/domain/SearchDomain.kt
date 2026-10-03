@@ -1908,6 +1908,13 @@ object SearchDomain {
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
         TaskText(Kind.Task, "Text"),
         TaskPaths(Kind.Task, "Paths"),
+        /**
+         * PRD §9 (user rule 2026-10-03): each added schedulable task's **set of tasks** — what it fulfils while it is on
+         * the calendar, each at a percentage ([org.example.project.scheduler.model.Task.fulfilment]).
+         */
+        TaskFulfilment(Kind.Task, "Set of tasks"),
+        /** …and the other way round: the tasks whose set holds each added task, their percentage for it editable here. */
+        TaskFulfilledBy(Kind.Task, "Fulfilled by"),
         // A category's settings, each ONE control over every added category (user rule 2026-10-02) — no editor per
         // category. A name is unique, so the field is the one category's when one is added.
         CategoryName(Kind.Category, "Name"),

@@ -52,6 +52,34 @@ class ScoreModel(
     /** `M_i`, millis. */
     val minimum: DoubleArray = DoubleArray(n) { tasks[it].minimumMillis.coerceAtLeast(0L).toDouble() }
 
+    /**
+     * `docs/scheduler_score.md` § *Sets of tasks*: for each task, the tasks its time also counts for ([PlanTask.credits])
+     * and the rate it counts at, by index.
+     */
+    private val creditTargets: Array<IntArray> =
+        Array(n) { i -> tasks[i].credits.keys.mapNotNull { indexOf[it] }.filter { it != i }.toIntArray() }
+    private val creditRates: Array<DoubleArray> =
+        Array(n) { i -> creditTargets[i].map { j -> tasks[i].credits.getValue(tasks[j].id).coerceIn(0.0, 1.0) }.toDoubleArray() }
+
+    /**
+     * Whether task `i`'s own lag is in criterion 1. Not for a task with no priority of its own that holds a set of
+     * tasks: it has no target, and is worth time only through what it fulfils (§ *Sets of tasks*).
+     */
+    private val scored: BooleanArray = BooleanArray(n) { i -> priority[i] > 0.0 || creditTargets[i].isEmpty() }
+
+    /** The tasks a run of [i] also serves (§ *Sets of tasks*) — empty for [IDLE] and for a task with no set. */
+    fun creditTargetsOf(i: Int): IntArray = if (i >= 0) creditTargets[i] else IntArray(0)
+
+    /** The rate a run of [source] serves [target] at (§ *Sets of tasks*), or 0 when it does not. */
+    fun creditRate(source: Int, target: Int): Double {
+        if (source < 0) return 0.0
+        val k = creditTargets[source].indexOf(target)
+        return if (k < 0) 0.0 else creditRates[source][k]
+    }
+
+    /** Whether any task holds a set: where none does, every task's lag is a function of its own service alone. */
+    val hasCredits: Boolean = creditTargets.any { it.isNotEmpty() }
+
     /** `τ_i = max(M_i, 1 min) / π_i` — task `i`'s smallest window; `Θ` for a task with no share. */
     val tau: DoubleArray
 
@@ -538,6 +566,12 @@ class ScoreModel(
         if (task >= 0) {
             advance(cursor, task, cursor.u, served = false)
             advance(cursor, task, untilU, served = true)
+            // § *Sets of tasks*: the tasks this one fulfils are served too, at their rate and only up to their share.
+            val targets = creditTargets[task]
+            for (k in targets.indices) {
+                advance(cursor, targets[k], cursor.u, served = false)
+                advance(cursor, targets[k], untilU, served = false, credit = creditRates[task][k])
+            }
         }
         cursor.runLen += untilU - cursor.u
         cursor.u = untilU
@@ -565,11 +599,21 @@ class ScoreModel(
         return shareIntegral[p][i] + pieceShare[p][i] * (u - pieceUStart[p])
     }
 
-    /** Advance task [i]'s lag from where it stands to [toU], served or not throughout. */
-    fun advance(cursor: ScoreCursor, i: Int, toU: Double, served: Boolean) {
+    /**
+     * Advance task [i]'s lag from where it stands to [toU], served or not throughout — or, with [credit] given, served
+     * through another task's set of tasks at that rate, only up to its share ([integrateCredit]).
+     */
+    fun advance(cursor: ScoreCursor, i: Int, toU: Double, served: Boolean, credit: Double = NO_CREDIT) {
         var u = cursor.lagU[i]
         if (toU <= u + EPS) return
+        if (!scored[i]) {
+            // No target of its own: its lag stays at zero and costs nothing (§ *Sets of tasks*).
+            cursor.lagU[i] = toU
+            return
+        }
         val x = if (served) 1.0 else 0.0
+        fun step(f: Double, from: Double, h: Double) =
+            if (credit == NO_CREDIT) integrateOne(cursor, i, x, f, from, h) else integrateCredit(cursor, i, credit, f, from, h)
         var p = pieceAt(u)
         while (u < toU - EPS && p >= 0 && p < pieceCount) {
             val pStart = pieceUStart[p]
@@ -579,7 +623,7 @@ class ScoreModel(
                 continue
             }
             if (!pieceHasComp[p]) {
-                integrateOne(cursor, i, x, pieceShare[p][i], u, stop - u)
+                step(pieceShare[p][i], u, stop - u)
                 u = stop
             } else {
                 val h = cellLen[p]
@@ -595,7 +639,7 @@ class ScoreModel(
                     }
                     val s = minOf(stop, cellEnd)
                     val mid = minOf(pieceULen[p], (k + 0.5) * h)
-                    integrateOne(cursor, i, x, targetOf(i, p, k, mid), u, s - u)
+                    step(targetOf(i, p, k, mid), u, s - u)
                     u = s
                     k++
                 }
@@ -605,7 +649,7 @@ class ScoreModel(
         if (u < toU - EPS) {
             // past the model's last piece nothing is schedulable to reason about; hold the target of the last one
             val last = pieceCount - 1
-            if (last >= 0) integrateOne(cursor, i, x, pieceShare[last][i], u, toU - u)
+            if (last >= 0) step(pieceShare[last][i], u, toU - u)
         }
         cursor.lagU[i] = toU
     }
@@ -620,6 +664,49 @@ class ScoreModel(
             d * d * integral(kd + 2.0 / t, h)
         cursor.cost += exp(-(u - cursor.originU) / theta) * acc
         cursor.lag[i] = lInf + d * exp(-h / t)
+    }
+
+    /**
+     * § *Sets of tasks*: task [i] served for [h] through another task's set at rate [rate], against its target [f] —
+     * the credit **fills its shortfall and never over-serves it**. Below its share (`L < 0`) it is served at [rate];
+     * at its share it is held there when [rate] could keep it ([rate] ≥ [f]), else it falls back at [rate]; above it,
+     * the credit gives nothing. The lag's path is the same closed form as [integrateOne], cut where it reaches zero.
+     */
+    private fun integrateCredit(cursor: ScoreCursor, i: Int, rate: Double, f: Double, u: Double, h: Double) {
+        if (h <= 0.0) return
+        val t = tau[i]
+        var from = u
+        var left = h
+        var guard = 0
+        while (left > EPS && guard++ < 4) {
+            val l0 = cursor.lag[i]
+            when {
+                l0 < -EPS -> {
+                    val lInf = (rate - f) * t
+                    val toZero = if (lInf > 0.0) t * ln((lInf - l0) / lInf) else Double.POSITIVE_INFINITY
+                    val seg = minOf(left, toZero)
+                    integrateOne(cursor, i, rate, f, from, seg)
+                    if (seg == toZero) cursor.lag[i] = 0.0
+                    from += seg
+                    left -= seg
+                }
+                l0 > EPS -> {
+                    val lInf = -f * t
+                    val toZero = if (lInf < 0.0) t * ln((l0 - lInf) / -lInf) else Double.POSITIVE_INFINITY
+                    val seg = minOf(left, toZero)
+                    integrateOne(cursor, i, 0.0, f, from, seg)
+                    if (seg == toZero) cursor.lag[i] = 0.0
+                    from += seg
+                    left -= seg
+                }
+                else -> {
+                    cursor.lag[i] = 0.0
+                    // Held at its share for the rest, or falling back below it (where the credit then serves it).
+                    integrateOne(cursor, i, if (rate >= f) f else rate, f, from, left)
+                    left = 0.0
+                }
+            }
+        }
     }
 
     /** `∫₀ʰ e^(−k·w) dw`. */
@@ -678,6 +765,9 @@ class ScoreModel(
         /** Schedulable time the scheduler leaves to no task — a run's `task` when it runs nobody. */
         const val IDLE: Int = -1
         const val NOBODY: Int = -2
+
+        /** [advance]'s "not a credit": served or not, not through another task's set of tasks. */
+        const val NO_CREDIT: Double = -1.0
         const val MIN_WINDOW_MILLIS: Double = 60_000.0
 
         /**

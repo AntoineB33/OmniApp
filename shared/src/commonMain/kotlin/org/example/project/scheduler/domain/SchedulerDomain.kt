@@ -1310,9 +1310,16 @@ object SchedulerDomain {
      */
     fun schedulableLeaves(state: SchedulerState): List<TaskId> =
         state.tasks.keys.filter {
-            !isRootTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
+            !isRootTask(it) && isInTreeOrFulfils(state, it) && isLeafTask(state, it) &&
                 state.tasks[it]?.title?.isNotBlank() == true
         }
+
+    /**
+     * Whether [taskId] is a task the scheduler can hand time to by where it lives: a cell of the tree holds it, or — with
+     * no path at all — its set of tasks ([Task.fulfilment], user rule 2026-10-03) makes it worth time.
+     */
+    fun isInTreeOrFulfils(state: SchedulerState, taskId: TaskId): Boolean =
+        taskHasCells(state, taskId) || state.tasks[taskId]?.fulfilment?.isNotEmpty() == true
 
     // The §9 pick is the best-score continuation ([fillSchedule] / [ScheduleFill]); the §8 manual-add
     // pick is [manualAddTaskId]. The EDF-era helpers `edfPeriodMillis` / `nextTask` were deleted with that
@@ -1389,7 +1396,7 @@ object SchedulerDomain {
         val absolute = absoluteTaskPriorities(state)
         val candidates =
             state.tasks.keys.filter {
-                !isRootTask(it) && taskHasCells(state, it) && isLeafTask(state, it) &&
+                !isRootTask(it) && isInTreeOrFulfils(state, it) && isLeafTask(state, it) &&
                     state.tasks[it]?.title?.isNotBlank() == true
             }
         if (candidates.isEmpty()) return null
@@ -5647,6 +5654,7 @@ object SchedulerDomain {
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { working.tasks[it]?.title.orEmpty() }
         val ordered = leaves.sortedWith(tieBreak)
         val minimumMillisOf = ordered.associateWith { (working.tasks[it]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE }
+        val orderedIds = ordered.toHashSet()
         val planTasks =
             ordered.map {
                 PlanTask(
@@ -5655,6 +5663,8 @@ object SchedulerDomain {
                     minimumMillis = minimumMillisOf[it] ?: 0L,
                     // `side-dev/README.md`: the ONE thing that says where a task may run and at what share.
                     resilience = working.tasks[it]?.resilience.orEmpty(),
+                    // § *Sets of tasks*: what an hour of it counts as for the others.
+                    credits = fulfilmentCredits(working.tasks, it, orderedIds),
                 )
             }
 
@@ -5974,6 +5984,9 @@ object SchedulerDomain {
             val ids = if (blend.isSingle) leavesOf(blend.from) else (leavesOf(blend.from) + leavesOf(blend.to)).distinct()
             val ta = blend.from.tree.tasks
             val tb = blend.to.tree.tasks
+            // § *Sets of tasks*: a set is read where the task is — either keyframe, else the live tree (a pathless task).
+            val setsOf = state.tasks + tb + ta
+            val idSet = ids.toHashSet()
             val tasks = ids.map { id ->
                 // A task only one keyframe holds keeps that side's minimum and resilience; only its percentage fades.
                 val a = ta[id] ?: tb[id] ?: state.tasks[id]
@@ -5991,6 +6004,7 @@ object SchedulerDomain {
                         val x1 = PeriodKinds.resilienceFor(rb, kind)
                         PeriodKinds.clamp(x0 + (x1 - x0) * f)
                     },
+                    credits = fulfilmentCredits(setsOf, id, idSet),
                 )
             }
             return tasks.sortedWith(compareByDescending<PlanTask> { it.priority }.thenBy { titleOf(it.id) })
@@ -6139,6 +6153,11 @@ object SchedulerDomain {
             for ((kind, value) in task.resilience.entries.sortedBy { it.key }) {
                 result = 31 * result + kind.hashCode()
                 result = 31 * result + value.hashCode()
+            }
+            // PRD §9 (2026-10-03): a set of tasks is a rule — what an hour of this task counts as for the others.
+            for ((target, fraction) in task.fulfilment.entries.sortedBy { it.key.value }) {
+                result = 31 * result + target.value.hashCode()
+                result = 31 * result + fraction.hashCode()
             }
         }
         // `docs/scheduler_score.md` § *Ties*: the tasks IN TITLE ORDER, which is the whole of what the fill
@@ -6939,7 +6958,7 @@ object SchedulerDomain {
      * it would then refuse.
      */
     fun isPlaceableTask(state: SchedulerState, taskId: TaskId): Boolean =
-        isLeafTask(state, taskId) && taskHasCells(state, taskId)
+        isLeafTask(state, taskId) && isInTreeOrFulfils(state, taskId)
 
     /**
      * The cell's id menu ([changeTaskMenuEntries]) for a field that names a task without being a cell: every task whose
@@ -7346,7 +7365,13 @@ object SchedulerDomain {
     ): Map<TaskId, Task> {
         val parent = tasks[parentId] ?: return tasks
         if (childId in parent.childTaskIds) return tasks
-        return tasks + (parentId to parent.copy(childTaskIds = parent.childTaskIds + childId))
+        val linked = tasks + (parentId to parent.copy(childTaskIds = parent.childTaskIds + childId))
+        // PRD §9 (user rule 2026-10-03): a task with a set of tasks that gets children hands it to them — the set is a
+        // child's by default, unless it has one of its own. The parent stops being schedulable, so the set it held is
+        // only ever worth time through them.
+        val child = linked[childId] ?: return linked
+        if (parent.fulfilment.isEmpty() || child.fulfilment.isNotEmpty()) return linked
+        return linked + (childId to child.copy(fulfilment = parent.fulfilment - childId))
     }
 
     fun addTitleMapping(
@@ -7367,6 +7392,48 @@ object SchedulerDomain {
         return if (remaining.isEmpty()) titleToTaskIds - title else titleToTaskIds + (title to remaining)
     }
 
+    /**
+     * PRD §9 (user rule 2026-10-03): [kept] grown by **the tasks a set of tasks keeps** ([Task.fulfilment]) — a task whose
+     * set holds a kept task is referenced by it ("listen to Spanish" in the tree keeps the pathless "watch videos
+     * explaining chemistry in Spanish" that fulfils it), and so on down a chain, to a fixed point.
+     */
+    fun keptWithTheirSets(tasks: Map<TaskId, Task>, kept: Set<TaskId>): Set<TaskId> {
+        val withSets = tasks.values.filter { it.fulfilment.isNotEmpty() }
+        if (withSets.isEmpty()) return kept
+        val result = kept.toHashSet()
+        var grew = true
+        while (grew) {
+            grew = false
+            for (task in withSets) {
+                if (task.id !in result && task.fulfilment.keys.any { it in result }) {
+                    result += task.id
+                    grew = true
+                }
+            }
+        }
+        return result
+    }
+
+    /**
+     * PRD §9 / `docs/scheduler_score.md` § *Sets of tasks*: **what an hour of [source] counts as for every other task**,
+     * through its set of tasks ([Task.fulfilment]) and theirs — transitive, a chain multiplying its fractions, the best
+     * chain where several reach the same task, a cycle cut. Only the tasks in [among] (the plan's tasks) are named.
+     */
+    fun fulfilmentCredits(tasks: Map<TaskId, Task>, source: TaskId, among: Set<TaskId>): Map<TaskId, Double> {
+        val best = HashMap<TaskId, Double>()
+        fun walk(id: TaskId, rate: Double, path: Set<TaskId>) {
+            for ((target, fraction) in tasks[id]?.fulfilment.orEmpty()) {
+                if (target == source || target in path) continue
+                val r = rate * fraction.coerceIn(0.0, 1.0)
+                if (r <= 0.0 || r <= (best[target] ?: 0.0)) continue
+                best[target] = r
+                walk(target, r, path + target)
+            }
+        }
+        walk(source, 1.0, setOf(source))
+        return best.filterKeys { it in among }
+    }
+
     fun purgeOrphanTasks(state: SchedulerState): SchedulerState {
         // PRD §4: a childless task that loses all its cell pointers is purged *unless* it has a task
         // record (§8) — such tasks linger only to keep showing their recorded periods in the calendar.
@@ -7376,11 +7443,13 @@ object SchedulerDomain {
         // belongs to the task id, so re-assigning that id restores it.
         val withCells = taskIdsWithCells(state)
         val referenced =
-            withCells +
-                setOf(WellKnownIds.ROOT_TASK) +
-                state.tasks.filterValues { it.record.isNotEmpty() }.keys +
-                state.panels.mapNotNull { it.taskId } +
-                state.tasks.keys.filter { isDetachedParentTask(state, it, withCells) }
+            (
+                withCells +
+                    setOf(WellKnownIds.ROOT_TASK) +
+                    state.tasks.filterValues { it.record.isNotEmpty() }.keys +
+                    state.panels.mapNotNull { it.taskId } +
+                    state.tasks.keys.filter { isDetachedParentTask(state, it, withCells) }
+                ).let { keptWithTheirSets(state.tasks, it) }
         val tasks =
             state.tasks
                 .filterKeys { it in referenced }

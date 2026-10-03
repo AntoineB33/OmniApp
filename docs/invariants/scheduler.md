@@ -144,6 +144,12 @@ kept head on an extension) and **restrictive periods**. Nothing else, by any oth
   side: unpinning is what
   makes the fill stop seeing a panel, and `pinned` being in `schedulingSignature` is what re-plans.
 
+- **A task's set of tasks reaches the scheduler as the credits of its `PlanTask`** (`PlanTask.credits`, from
+  `SchedulerDomain.fulfilmentCredits` — transitive, best product, cycles cut). It is in `treeSignature`, so editing a
+  set re-plans. Every scoring path must count a run's credits: the lag of a task depends on the runs of every task
+  whose set holds it, so an incremental re-score that recomputes only the moved runs' own tasks is wrong
+  (`ScheduleImprover.affectedBy`; `docs/scheduler_score.md` § *Sets of tasks*).
+
 ### The frozen past includes the block the line is STANDING IN
 
 → `side-dev/README.md` § *frozen past*: *"the schedule at `t < now line` never changes as `now line`

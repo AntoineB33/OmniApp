@@ -506,6 +506,7 @@ object SchedulerStateCodec {
                         categoryIds = it.categoryIds.map(CategoryId::value),
                         pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
                         lastTreePath = it.lastTreePath,
+                        fulfilment = it.fulfilment.entries.sortedBy { e -> e.key.value }.associate { e -> e.key.value to e.value },
                     )
                 },
             expanded = expanded.map(CellId::value),
@@ -1053,6 +1054,7 @@ object SchedulerStateCodec {
                         categoryIds = it.categoryIds.map(CategoryId::value),
                         pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
                         lastTreePath = it.lastTreePath,
+                        fulfilment = it.fulfilment.entries.sortedBy { e -> e.key.value }.associate { e -> e.key.value to e.value },
                     )
                 },
             nextTaskCounter = nextTaskCounter,
@@ -1094,6 +1096,7 @@ object SchedulerStateCodec {
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                         pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
                         lastTreePath = p.lastTreePath,
+                        fulfilment = decodeFulfilment(p),
                     )
             }
         val cells =
@@ -1534,6 +1537,7 @@ object SchedulerStateCodec {
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                         pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
                         lastTreePath = p.lastTreePath,
+                        fulfilment = decodeFulfilment(p),
                     )
             }
         val cells =
@@ -2544,6 +2548,15 @@ private data class PersistedCell(
  * default is dropped, so a hand-edited or older payload cannot leave a task carrying a resilience the current
  * invariants forbid.
  */
+    /**
+     * A task's set of tasks, healed (CLAUDE.md: decode heals what current invariants forbid): a fraction above 1 is 1,
+     * one at or below 0 (or not a number) fulfils nothing and is dropped, and a task never fulfils itself.
+     */
+    private fun decodeFulfilment(p: PersistedTask): Map<TaskId, Double> =
+        p.fulfilment
+            .filter { (id, fraction) -> id.isNotBlank() && id != p.id && fraction > 0.0 && !fraction.isNaN() }
+            .entries.associate { (id, fraction) -> TaskId(id) to fraction.coerceAtMost(1.0) }
+
 private fun decodeResilience(p: PersistedTask): Map<String, Double> {
     val raw = p.resilience ?: return if (p.onScreen) mapOf(PeriodKinds.NO_SCREEN to 0.0) else emptyMap()
     val out = HashMap<String, Double>(raw.size)
@@ -2838,6 +2851,9 @@ private data class PersistedTask(
     // (every payload written before the promise existed, and every task that owes nothing) ⇒ none, which is
     // exactly what a build that grafted the template eagerly left behind.
     val pendingDefaultSubtree: List<String> = emptyList(),
+    // PRD §9 the set of tasks this task fulfils, by task id, each at its fraction in (0, 1]. Absent (every payload
+    // written before 2026-10-03, and every task with no set) ⇒ none.
+    val fulfilment: Map<String, Double> = emptyMap(),
     // PRD §7 Search: where a task in no task tree last sat. Absent (every payload written before the field
     // existed, and every task a tree still holds) ⇒ none — a task cut from the tree by an older build has no
     // path to recover, and the search window draws its path box empty.

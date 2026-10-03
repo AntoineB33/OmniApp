@@ -26,6 +26,12 @@ data class PlanTask(
      * is given a value above zero, and "on screen" is exactly a `0` against [PeriodKinds.NO_SCREEN].
      */
     val resilience: Map<String, Double> = emptyMap(),
+    /**
+     * `docs/scheduler_score.md` § *Sets of tasks*: what an hour of this task counts as for each OTHER task of the plan —
+     * its set of tasks, closed transitively ([SchedulerDomain.fulfilmentCredits]). Each at a rate in `(0, 1]`, and
+     * only ever up to that task's share.
+     */
+    val credits: Map<TaskId, Double> = emptyMap(),
 ) {
     /** This task's multiplier inside a period of [kind]; see [PeriodKinds.resilienceFor]. */
     fun resilienceFor(kind: String): Double = PeriodKinds.resilienceFor(resilience, kind)

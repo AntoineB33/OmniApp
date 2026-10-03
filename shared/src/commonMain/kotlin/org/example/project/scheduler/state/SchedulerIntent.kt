@@ -82,6 +82,22 @@ sealed interface SchedulerIntent {
     data class CreateTask(val title: String) : SchedulerIntent
 
     /**
+     * PRD §9 / §7 *Search* (user rule 2026-10-03): a new task titled [title] with **no path** — in no task tree, made
+     * from the Search window's "New" to be given a set of tasks ([SetTaskFulfilment]). One tree History Unit. Nothing
+     * keeps it until its set holds a task that is kept (`SchedulerDomain.purgeOrphanTasks`), so the next purge drops a
+     * task left without one. A no-op for a blank title.
+     */
+    data class CreatePathlessTask(val title: String) : SchedulerIntent
+
+    /**
+     * PRD §9 (user rule 2026-10-03): set [target]'s fraction in [taskId]'s set of tasks ([Task.fulfilment]) to
+     * [fraction], in `(0, 1]` — or take [target] out of it with `null` (or 0). One tree History Unit; a task never
+     * fulfils itself, and nothing changed is nothing recorded. A pathless task whose set no longer reaches a kept task
+     * is purged with it.
+     */
+    data class SetTaskFulfilment(val taskId: TaskId, val target: TaskId, val fraction: Double?) : SchedulerIntent
+
+    /**
      * PRD §13 the task edit window's **Paths**: put [taskId] at the bottom of [parentTaskId]'s list as well (null =
      * the top level) — a mirror, under the tree's own assignment rule
      * ([org.example.project.scheduler.domain.TaskPathsDomain.canAddUnder]). One tree History Unit; a no-op when the

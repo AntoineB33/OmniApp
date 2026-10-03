@@ -21,9 +21,12 @@ import kotlin.math.exp
  * and the passes repeat until one of them changes nothing or [budget] moves have been scored.
  *
  * ### Why a move is cheap to score
- * A task's lag depends on its own service and its own target alone, so the score splits into one term per task plus
- * the shortfalls. A move changes the service of at most two tasks, so only their two terms (and the shortfalls, a
- * sum over the runs) are recomputed; every other task's term is reused.
+ * A task's lag depends on its own service and its own target alone — and on the runs of every task whose set of tasks
+ * serves it (`docs/scheduler_score.md` § *Sets of tasks*) — so the score splits into one term per task plus the
+ * shortfalls. A move changes the service of the two tasks whose runs it moves AND of every task those two serve
+ * through their sets ([affectedBy]), so exactly those terms (and the shortfalls, a sum over the runs) are recomputed;
+ * every other task's term is reused. Re-scoring only the two moved tasks once let a move that took a task fulfilling
+ * every other one off the calendar look like a gain (2026-10-03).
  *
  * Deterministic, and the budget is counted in scored moves, so every device reaches the same plan.
  */
@@ -89,8 +92,9 @@ internal class ScheduleImprover(
                     continue
                 }
                 val firstLocked = pinFirstTask && k == 0
-                val moved = shiftMoves(segs, k, firstLocked).any { tryMove(it, intArrayOf(a.task, b.task)) } ||
-                    (!firstLocked && swap(segs, k)?.let { tryMove(it, intArrayOf(a.task, b.task)) } == true)
+                val affected = affectedBy(a.task, b.task)
+                val moved = shiftMoves(segs, k, firstLocked).any { tryMove(it, affected) } ||
+                    (!firstLocked && swap(segs, k)?.let { tryMove(it, affected) } == true)
                 if (moved) changed = true else k++
             }
             for (k2 in segs.indices) {
@@ -100,7 +104,7 @@ internal class ScheduleImprover(
                 for (j in (0 until model.n) + ScoreModel.IDLE) {
                     if (j == s.task || model.runLimit(j, s.from) < s.to - ScoreModel.EPS || !model.permitted(j, s.from)) continue
                     val candidate = segs.toMutableList().also { it[k2] = s.copy(task = j) }
-                    if (tryMove(candidate, intArrayOf(s.task, j))) {
+                    if (tryMove(candidate, affectedBy(s.task, j))) {
                         changed = true
                         break
                     }
@@ -164,13 +168,25 @@ internal class ScheduleImprover(
         return out
     }
 
-    /** Task [i]'s criterion-1 term over the continuation, from the start's lag. */
+    /** The tasks whose term a move of [a]'s and [b]'s runs changes: the two, and every task either serves through its set. */
+    private fun affectedBy(a: Int, b: Int): IntArray =
+        if (!model.hasCredits) intArrayOf(a, b)
+        else (listOf(a, b) + model.creditTargetsOf(a).toList() + model.creditTargetsOf(b).toList()).distinct().toIntArray()
+
+    /** Task [i]'s criterion-1 term over the continuation, from the start's lag — its own runs and the runs that serve it. */
     private fun taskCost(segs: List<Seg>, i: Int): Double {
         val c = ScoreCursor(start.lag.copyOf(), start.lagU.copyOf(), start.u, start.run, start.runLen, 0.0, start.originU)
         for (s in segs) {
-            if (s.task != i) continue
-            model.advance(c, i, s.from, served = false)
-            model.advance(c, i, s.to, served = true)
+            if (s.task == i) {
+                model.advance(c, i, s.from, served = false)
+                model.advance(c, i, s.to, served = true)
+            } else {
+                // § *Sets of tasks*: a run of a task whose set holds [i] serves it too, at its rate.
+                val rate = model.creditRate(s.task, i)
+                if (rate <= 0.0) continue
+                model.advance(c, i, s.from, served = false)
+                model.advance(c, i, s.to, served = false, credit = rate)
+            }
         }
         model.advance(c, i, untilU, served = false)
         return c.cost

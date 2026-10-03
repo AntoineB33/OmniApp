@@ -320,6 +320,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.AlarmAlert,
         SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
         SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
+        SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy,
     )
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
@@ -548,6 +549,8 @@ private fun AddedActionEditor(
                 HistoryCopyButton(label = "Copy all", value = infos.joinToString("\n") { "${it.label}: ${it.value}" })
             }
         }
+        SearchDomain.AddedAction.TaskFulfilment -> FulfilmentEditor(state, added, run, handlers.onEdit)
+        SearchDomain.AddedAction.TaskFulfilledBy -> FulfilledByEditor(state, taskIds, run, handlers.onEdit)
         SearchDomain.AddedAction.TaskPaths -> {
             for (taskId in taskIds) {
                 val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }
@@ -1034,6 +1037,127 @@ private fun ResilienceEditor(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/**
+ * PRD §9 (user rule 2026-10-03): **the set of tasks of each added schedulable task** — what it fulfils while it is on the
+ * calendar. One line per task of the set: its title (a press opens the Search window holding it), its percentage with
+ * the Resilience action's draft-and-Apply (one history unit per Apply, never one per keystroke) and its ✕. Under them, a
+ * task cell to add one ([NamingCell]: the cell's id menu and title suggestions), which comes in at 100%.
+ */
+@Composable
+private fun FulfilmentEditor(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    run: (SearchDomain.AddedCommand) -> Unit,
+    onOpenTask: (TaskId) -> Unit,
+) {
+    val leaves = SearchDomain.addedLeafIds(state, added)
+    val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
+    if (leaves.isEmpty()) {
+        Text("Only a schedulable task has a set of tasks.", style = MaterialTheme.typography.bodySmall)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (leaf in leaves) {
+            val task = state.tasks[leaf] ?: continue
+            ElementHeading(task.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }, leaves.size)
+            val entries = task.fulfilment.entries.sortedBy { state.tasks[it.key]?.title.orEmpty().lowercase() }
+            if (entries.isEmpty()) {
+                Text("It fulfils no other task.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            for ((target, fraction) in entries) {
+                FulfilmentLine(
+                    title = SchedulerDomain.taskTitleLabel(state, target),
+                    fraction = fraction,
+                    onOpen = { onOpenTask(target) },
+                    onApply = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetTaskFulfilment(leaf, target, it))) },
+                    onRemove = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetTaskFulfilment(leaf, target, null))) },
+                )
+            }
+            NamingCell(
+                cellId = CellId("search/fulfilment-add/" + leaf.value),
+                shown = "",
+                identityLabel = "Tasks",
+                identity = { draft ->
+                    SchedulerDomain.taskIdentityMenuEntries(state, draft)
+                        .mapNotNull { entry -> entry.taskId?.takeIf { it != leaf && it !in task.fulfilment }?.let { it to entry.label } }
+                        .map { (id, label) -> NamingRow(SearchDomain.taskKey(id), label, taskColors[id]) }
+                },
+                suggestions = { draft -> SchedulerDomain.titleSuggestions(state, draft) },
+                onPick = { key ->
+                    val target = TaskId(key.removePrefix(SearchDomain.Kind.Task.name + "/"))
+                    run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetTaskFulfilment(leaf, target, 1.0)))
+                },
+                trailing = { NamingKey("add a task (100%)") },
+            )
+        }
+    }
+}
+
+/**
+ * PRD §9 (user rule 2026-10-03): **the tasks whose set holds each added task** — the reverse of [FulfilmentEditor], so a
+ * task that fulfils this one is found from it even with no path ("listen to Spanish" shows "watch videos explaining
+ * chemistry in Spanish"). Each line: the holder (a press opens the Search window holding it), its percentage for this
+ * task (Apply), and ✕ to take this task out of its set.
+ */
+@Composable
+private fun FulfilledByEditor(
+    state: SchedulerState,
+    taskIds: List<TaskId>,
+    run: (SearchDomain.AddedCommand) -> Unit,
+    onOpenTask: (TaskId) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (id in taskIds) {
+            ElementHeading(SchedulerDomain.taskTitleLabel(state, id), taskIds.size)
+            val holders = state.tasks.values.filter { id in it.fulfilment }.sortedBy { it.title.lowercase() }
+            if (holders.isEmpty()) {
+                Text("No task's set holds it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            for (holder in holders) {
+                FulfilmentLine(
+                    title = SchedulerDomain.taskTitleLabel(holder.title),
+                    fraction = holder.fulfilment.getValue(id),
+                    onOpen = { onOpenTask(holder.id) },
+                    onApply = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetTaskFulfilment(holder.id, id, it))) },
+                    onRemove = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetTaskFulfilment(holder.id, id, null))) },
+                )
+            }
+        }
+    }
+}
+
+/** One task of a set of tasks: its title (pressed: its Search window), its percentage (draft, then Apply) and ✕. */
+@Composable
+private fun FulfilmentLine(
+    title: String,
+    fraction: Double,
+    onOpen: () -> Unit,
+    onApply: (Double) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var draft by remember(fraction) { mutableStateOf(percentText(fraction)) }
+    val value = draft.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()
+        ?.takeIf { it > 0.0 }?.let { (it / 100.0).coerceAtMost(1.0) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).clickable(onClick = onOpen),
+        )
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            singleLine = true,
+            isError = value == null,
+            suffix = { Text("%") },
+            modifier = Modifier.width(96.dp),
+        )
+        FrameButton("Apply", enabled = value != null && value != fraction) { value?.let(onApply) }
+        FrameButton("✕", onClick = onRemove)
     }
 }
 

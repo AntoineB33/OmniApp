@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A task's set of tasks; tasks with no path — 2026-10-03
+
+User request: a task can fulfil other tasks while it is on the calendar, each at a percentage ("watch videos explaining
+chemistry in Spanish" → "watch videos explaining chemistry" 80%, "listen to Spanish" 80%). New authoritative field
+`Task.fulfilment` (persisted `PersistedTask.fulfilment`, default empty; decode heals blank/self/≤0/NaN entries and
+clamps to 100%) — no SQLite or Supabase migration, it rides the task row. Score: a run serves each task of its set as
+if on a period of that resilience, filling a deficit only, never past the share; transitive; a task with no priority
+and a set is unscored (`docs/scheduler_score.md` § *Sets of tasks*). `ScheduleImprover` now re-scores the credited
+tasks of a move (it re-scored only the two moved tasks and accepted plans that took the 100%-set task off). Search
+window: *Set of tasks* and *Fulfilled by* actions; creating a task makes one with no path and opens it alone in a new
+Search window. Such a task is kept while its set holds a kept task; a task's children inherit its set.
+`SetOfTasksTest`, `SetOfTasksScoreTest`.
+
 ### Search window: every result row adds; a history unit's information moved into the actions — 2026-10-03
 
 Anomaly: a history unit's right-click menu in the results had no "add" / "add and remove others", only "open in History"
