@@ -22,10 +22,14 @@ handler.
 - The hook must handle what `RegisterHotKey` handled for us: **auto-repeat** (latch the down transition; swallow
   the up only for a down we swallowed) and **AltGr** (right-Alt arrives as synthetic left-Ctrl + right-Alt, so
   `Shift+AltGr+E` must pass through or the hook eats typed text).
-- **Every press posts a RECEIPT** (`SchedulerEngine.announceShortcutReceived`): a "Shortcut received"
+- **Every press posts a RECEIPT — except where its action is already seen landing** (user rule 2026-10-03,
+  `GlobalShortcutReceiptTest`): the task picker's (the picker opening at the pointer is its own receipt) and
+  "Look away now" whenever a look-away break exists (the break's own "Screen break" notification follows at once;
+  with none configured the press does nothing else, so its receipt stays). The receipt (`SchedulerEngine.announceShortcutReceived`) is a "Shortcut received"
   notification naming the chord, raised at the `installGlobalHotkeys` seam **before** the action and whatever
   the action then does. It is a notification like any other, so the Notifications switch silences it too —
-  which is why turning notifications back **on** announces itself from the far side of the flip (below). The chord is struck with another window in front, and each one can legitimately do
+  which is why the chord turning notifications back **on** announces itself from the far side of the flip (the
+  lateral menu's switch does not: `screen-breaks.md`). The chord is struck with another window in front, and each one can legitimately do
   nothing visible — so "the app never got it" and "the app got it and had nothing to do" are otherwise the
   same experience. It belongs to the hot-key seam, never to the engine seams behind it: the lateral-menu
   buttons drive those same seams and a click needs no confirming.

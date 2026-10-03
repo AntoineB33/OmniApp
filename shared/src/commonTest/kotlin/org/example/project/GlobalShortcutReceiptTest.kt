@@ -7,12 +7,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
  * PRD §7/§15, the system-wide chords' **receipt** ([SchedulerEngine.announceShortcutReceived]): every
- * `Ctrl+Shift+Alt+<letter>` press posts a notification saying the app got it.
+ * `Ctrl+Shift+Alt+<letter>` press posts a notification saying the app got it — except the task picker's, whose
+ * menu opening at the pointer is its own receipt.
  *
  * The chords are struck while OmniApp is not the focused window, and each of them can do nothing for a
  * perfectly good reason — "Look away now" with no look-away break configured, "I'm away" already away, a
@@ -33,8 +35,11 @@ class GlobalShortcutReceiptTest {
 
     @Test
     fun every_global_chord_posts_a_receipt_naming_it() {
-        GlobalShortcut.entries.forEach { shortcut ->
+        GlobalShortcut.entries.filter { it != GlobalShortcut.PickTask }.forEach { shortcut ->
+            // With no look-away break, so the look-away chord is the press that does nothing — the case its
+            // receipt is kept for (see the two tests below).
             val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+            vm.dispatch(SchedulerIntent.SetScreenBreaks(emptyList()))
             engine(vm).announceShortcutReceived(shortcut)
 
             val entry = vm.state.value.notificationLog.single()
@@ -52,6 +57,41 @@ class GlobalShortcutReceiptTest {
                 "receipt for ${shortcut.name} does not say what it does: ${entry.message}",
             )
         }
+    }
+
+    /**
+     * User rule 2026-10-03: the task-picker chord is the one with no receipt — the picker opening at the pointer,
+     * in front of whatever window the user is in, already shows the press landed.
+     */
+    @Test
+    fun the_task_picker_chord_posts_no_receipt() {
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        engine(vm).announceShortcutReceived(GlobalShortcut.PickTask)
+
+        assertTrue(vm.state.value.notificationLog.isEmpty(), "the picker chord posted: ${vm.state.value.notificationLog}")
+    }
+
+    /**
+     * User rule 2026-10-03: the look-away chord posts no receipt when there is a look-away break to run — the
+     * break's own "Screen break" notification follows at once, and a receipt was a second pop-up for one press.
+     */
+    @Test
+    fun the_look_away_chord_posts_no_receipt_when_the_break_it_starts_announces_itself() {
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        assertTrue(vm.state.value.screenBreaks.any { !it.restBreak }, "a launched app has the look-away break")
+        engine(vm).announceShortcutReceived(GlobalShortcut.LookAwayNow)
+
+        assertTrue(vm.state.value.notificationLog.isEmpty(), "the look-away chord posted: ${vm.state.value.notificationLog}")
+    }
+
+    /** …but with no look-away break the press does nothing else, so the receipt is its only sign of landing. */
+    @Test
+    fun the_look_away_chord_keeps_its_receipt_when_there_is_no_break_to_start() {
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        vm.dispatch(SchedulerIntent.SetScreenBreaks(emptyList()))
+        engine(vm).announceShortcutReceived(GlobalShortcut.LookAwayNow)
+
+        assertEquals("Shortcut received", vm.state.value.notificationLog.single().title)
     }
 
     /**

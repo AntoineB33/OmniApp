@@ -287,10 +287,12 @@ voice switch).
   sits in Android's shade / iOS's Notification Centre until dismissed, so "cancel every notification" has to
   answer the pile already on screen too. The desktop actual is a deliberate no-op — a tray balloon cannot be
   recalled.
-- **Switching back on posts one notification saying so, and that is load-bearing.** The chord's receipt is
-  raised before the action, so on the un-mute press it is still muted and swallowed; this is that press's
-  receipt, posted from the far side of the flip. Turning them *off* announces nothing extra — the receipt for
-  that press goes out normally, just before the mute takes hold.
+- **The CHORD switching back on posts one notification saying so, and that is load-bearing.** The chord's
+  receipt is raised before the action, so on the un-mute press it is still muted and swallowed; this is that
+  press's receipt, posted from the far side of the flip (`setNotificationsEnabled(fromChord = true)`). Turning
+  them *off* announces nothing extra — the receipt for that press goes out normally, just before the mute takes
+  hold. **The lateral menu's switch announces nothing either way** (user rule 2026-10-03): the user is looking at
+  it, and its position and title already say it worked.
 - **The LOCK gate is not a second mute, and that is why it is not here.** The switch answers *may the app
   speak at all*, which is one question with one funnel; `deviceUnlocked()` answers *is there anybody at this
   device to say it to*, which is asked per cue, before the funnel, and decides whether the cue happens — the

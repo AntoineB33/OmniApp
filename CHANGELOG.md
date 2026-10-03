@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Notifications: the Notifications switch no longer announces itself — 2026-10-03
+
+User rule: turning the lateral menu's Notifications switch back on posted (and spoke) "Notifications on". The user
+is looking at the switch, whose position and title already say it worked. `setNotificationsEnabled` now announces
+only for the `Ctrl+Shift+Alt+N` chord (`fromChord = true`), whose own receipt the mute swallows on the un-mute press.
+
+Same day, same reasoning: the task-picker chord (`Ctrl+Shift+Alt+T`) no longer posts its "Shortcut received" receipt —
+the picker opening at the pointer already shows the press landed. Nor does "Look away now" (`Ctrl+Shift+Alt+E`)
+while a look-away break exists: the break's own "Screen break" notification follows at once, so the receipt was a
+second pop-up for one press (with no look-away break the press does nothing else, and its receipt stays). Every other
+chord keeps its receipt.
+
 ### Calendar: Space only turns "Lock to now" on — 2026-10-03
 
 Anomaly: Space flipped the last switch clicked in the configuration section instead. A press gave that switch the

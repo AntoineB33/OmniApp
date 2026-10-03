@@ -68,8 +68,8 @@ class NotificationVoiceTest {
         // chord's own receipt, and the un-mute announcement posted from the far side of the flip.
         engine.announceResumeWork()
         engine.announceShortcutReceived(GlobalShortcut.SwitchTask)
-        engine.setNotificationsEnabled(false)
-        engine.setNotificationsEnabled(true)
+        engine.setNotificationsEnabled(false, fromChord = true)
+        engine.setNotificationsEnabled(true, fromChord = true)
 
         assertEquals(
             listOf("Screen break over", "Shortcut received", "Notifications on"),
@@ -110,7 +110,9 @@ class NotificationVoiceTest {
         engine.announceShortcutReceived(GlobalShortcut.ToggleAway)
         assertEquals("I'm back", sink.spoken.single().text)
 
-        // "Look away now" says nothing of its own: the look-away it starts speaks its cue at once.
+        // "Look away now" never speaks a receipt. With a look-away break it posts none either (the break it starts
+        // announces itself — GlobalShortcutReceiptTest); with none, its written receipt is the press's only sign.
+        vm.dispatch(SchedulerIntent.SetScreenBreaks(emptyList()))
         sink.spoken.clear()
         engine.announceShortcutReceived(GlobalShortcut.LookAwayNow)
         assertEquals(emptyList(), sink.spoken)

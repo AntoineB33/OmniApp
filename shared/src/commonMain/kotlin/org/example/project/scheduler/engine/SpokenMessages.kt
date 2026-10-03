@@ -39,7 +39,8 @@ internal object SpokenMessages {
             // The look-away that follows speaks its own cue at once; a receipt before it would say it twice.
             GlobalShortcut.LookAwayNow -> SILENT
             GlobalShortcut.SwitchTask -> "Switching task"
-            GlobalShortcut.PickTask -> "Choose a task"
+            // Never posted: the picker opening at the pointer is the press's receipt (announceShortcutReceived).
+            GlobalShortcut.PickTask -> SILENT
             // Switching ON: the receipt is muted anyway, and the "Notifications on" notice says it from the far
             // side of the flip.
             GlobalShortcut.ToggleNotifications -> if (notificationsOnBefore) "Notifications off" else SILENT

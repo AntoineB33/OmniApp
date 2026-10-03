@@ -68,11 +68,11 @@ class NotificationMuteTest {
 
         engine.announceResumeWork()
         // A chord's receipt is a notification like any other — the mute is not a list of exempt callers.
-        engine.announceShortcutReceived(GlobalShortcut.LookAwayNow)
+        engine.announceShortcutReceived(GlobalShortcut.SwitchTask)
 
         assertEquals(emptyList(), sink.posted, "a muted notification must never reach the OS")
         assertEquals(
-            listOf("Resume your work", GlobalShortcut.LookAwayNow.action),
+            listOf("Resume your work", GlobalShortcut.SwitchTask.action),
             vm.state.value.notificationLog.map { it.message.substringAfter("— ") },
             "the History column keeps the record of what was silenced",
         )
@@ -104,15 +104,32 @@ class NotificationMuteTest {
      * would be the only one the user cannot see landing.
      */
     @Test
-    fun switching_back_on_announces_itself() {
+    fun the_chord_switching_back_on_announces_itself() {
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val sink = Sink()
+        val engine = engineWith(vm, sink)
+        engine.setNotificationsEnabled(false, fromChord = true)
+        engine.setNotificationsEnabled(true, fromChord = true)
+
+        assertEquals(listOf("Notifications on" to "OmniApp will notify you again"), sink.posted)
+        assertEquals(1, sink.cleared, "only the switch-off cleared; turning them back on clears nothing")
+    }
+
+    /**
+     * User rule 2026-10-03: the lateral menu's switch announces nothing either way — the user is looking at it, and
+     * its position and title already say it worked.
+     */
+    @Test
+    fun the_switch_announces_nothing() {
         val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
         val sink = Sink()
         val engine = engineWith(vm, sink)
         engine.setNotificationsEnabled(false)
         engine.setNotificationsEnabled(true)
 
-        assertEquals(listOf("Notifications on" to "OmniApp will notify you again"), sink.posted)
-        assertEquals(1, sink.cleared, "only the switch-off cleared; turning them back on clears nothing")
+        assertEquals(emptyList(), sink.posted)
+        assertTrue(vm.state.value.notificationLog.isEmpty(), "nothing was decided to be said, so nothing is recorded")
+        assertEquals(1, sink.cleared, "switching off still withdraws what the OS is showing")
     }
 
     @Test

@@ -761,7 +761,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // PRD §11: the same lever as the lateral menu's Notifications switch. Struck from
                     // whatever window the notification just interrupted, which is why it is system-wide.
                     GlobalShortcut.ToggleNotifications ->
-                        engine.setNotificationsEnabled(!vm.state.value.notificationsEnabled)
+                        engine.setNotificationsEnabled(!vm.state.value.notificationsEnabled, fromChord = true)
                 }
             }
         }

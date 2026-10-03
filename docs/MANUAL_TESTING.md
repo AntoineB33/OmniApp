@@ -390,6 +390,8 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         (tick the filter's check box and pick it) lists both, and `diagnostics.log` marks each `[suppressed: notifications off]`.
   - [ ] With another application focused, strike `Ctrl+Shift+Alt+N` → a **"Notifications on"** notification
         appears (that is the un-mute press's own receipt) and notifications resume.
+  - [ ] Flip the **switch** off and on with the mouse → **no** notification appears either way (the switch itself
+        says it worked).
   - [ ] The switch and the chord are one lever: flipping either moves the other, and the setting survives a
         relaunch and reaches a second device signed in to the same account.
 - [ ] **"I'm away" is turned off by an unlock (PRD §15).** Press **I'm away** (the button reads *I'm back*),

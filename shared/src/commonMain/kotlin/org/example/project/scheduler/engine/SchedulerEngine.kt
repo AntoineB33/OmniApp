@@ -205,7 +205,8 @@ private const val RESUME_WORK_MESSAGE: String = "Resume your work"
 // message, which is what tells the user WHICH press landed.
 private const val SHORTCUT_RECEIVED_TITLE: String = "Shortcut received"
 
-// PRD §11: what turning notifications back ON announces (see [SchedulerEngine.setNotificationsEnabled]). The
+// PRD §11: what the CHORD turning notifications back ON announces (see [SchedulerEngine.setNotificationsEnabled];
+// the switch announces nothing). The
 // only notification the mute cannot hide, because it is posted from the far side of the flip — which is what
 // makes the un-mute chord's own (still-muted, hence swallowed) receipt visible after all.
 private const val NOTIFICATIONS_ON_TITLE: String = "Notifications on"
@@ -1462,19 +1463,22 @@ class SchedulerEngine(
      * and that actual is a documented no-op). The History window's Notifications column is untouched either
      * way, and so are the voice cues — they have their own switch.
      *
-     * Switching back **on** posts one notification saying so, and that is deliberate rather than chatty. The
-     * chord is struck with another window in front, and its ordinary receipt ([announceShortcutReceived]) is
-     * raised *before* this runs — so on the un-mute press that receipt is still muted and swallowed, which
-     * would leave the one press whose whole subject is notifications as the only one the user cannot see
-     * landing. This is that press's receipt, posted from the far side of the flip where the app may speak
-     * again; it doubles as proof the OS channel still works. A same-value call is a no-op, so nothing is
-     * announced and nothing is cleared.
+     * The SWITCH announces nothing either way (user rule 2026-10-03): the user is looking at it, and its position
+     * and title already say it worked — the same reason a lateral-menu click gets no receipt
+     * ([announceShortcutReceived]).
+     *
+     * The CHORD switching back **on** ([fromChord]) posts one notification saying so. It is struck with another
+     * window in front, and its ordinary receipt is raised *before* this runs — so on the un-mute press that
+     * receipt is still muted and swallowed, which would leave the one press whose whole subject is notifications
+     * as the only chord the user cannot see landing. This is that press's receipt, posted from the far side of the
+     * flip where the app may speak again. A same-value call is a no-op, so nothing is announced and nothing is
+     * cleared.
      */
-    fun setNotificationsEnabled(enabled: Boolean) {
+    fun setNotificationsEnabled(enabled: Boolean, fromChord: Boolean = false) {
         if (vm.state.value.notificationsEnabled == enabled) return
         vm.dispatch(SchedulerIntent.SetNotificationsEnabled(enabled))
-        if (enabled) notifyUser(NOTIFICATIONS_ON_TITLE, NOTIFICATIONS_ON_MESSAGE, spoken = SpokenMessages.NOTIFICATIONS_ON)
-        else runCatching { clearNotifications() }
+        if (!enabled) runCatching { clearNotifications() }
+        else if (fromChord) notifyUser(NOTIFICATIONS_ON_TITLE, NOTIFICATIONS_ON_MESSAGE, spoken = SpokenMessages.NOTIFICATIONS_ON)
     }
 
     /**
@@ -3906,7 +3910,7 @@ class SchedulerEngine(
      */
     fun restartLookAway() {
         val st = vm.state.value
-        val lookAway = st.screenBreaks.firstOrNull { !it.restBreak } ?: return
+        val lookAway = lookAwayBreak(st) ?: return
         stopSpeech()
         pendingEnds = emptySet()
         manualLookAwayJob?.cancel()
@@ -3991,8 +3995,17 @@ class SchedulerEngine(
      *
      * It belongs to the hot-key seam, NOT to the actions: the lateral-menu buttons drive exactly the same
      * engine entry points, and a click needs no receipt — the window is already in front of the user.
+     *
+     * Two chords post no receipt where their action is already seen landing (user rule 2026-10-03) — the very
+     * thing the receipt exists to give the others:
+     *  - [GlobalShortcut.PickTask]: the task picker opens at the pointer, in front of whatever window the user is in;
+     *  - [GlobalShortcut.LookAwayNow], whenever a look-away break exists: [restartLookAway] posts the break's own
+     *    "Screen break" notification at once, so a receipt would be a second pop-up for one press. With none
+     *    configured that press does nothing at all, and the receipt is the only sign it arrived — so it stays.
      */
     fun announceShortcutReceived(shortcut: GlobalShortcut) {
+        if (shortcut == GlobalShortcut.PickTask) return
+        if (shortcut == GlobalShortcut.LookAwayNow && lookAwayBreak(vm.state.value) != null) return
         // The chord the ACCOUNT is bound to, not the one the enum ships with (PRD §7: the
         // keyboard-shortcuts window can rebind these three). A receipt naming a chord the user does not
         // have would be worse than none — it is the one line they check when a press seems to go nowhere.
@@ -4005,6 +4018,12 @@ class SchedulerEngine(
             spoken = SpokenMessages.shortcutReceipt(shortcut, _userAway.value, vm.state.value.notificationsEnabled),
         )
     }
+
+    /** PRD §15: the look-away break a manual "Look away now" runs — the one lookup both the press and its receipt read. */
+    private fun lookAwayBreak(
+        st: org.example.project.scheduler.state.SchedulerState,
+    ): org.example.project.scheduler.model.ScreenBreak? =
+        st.screenBreaks.firstOrNull { !it.restBreak }
 
     // PRD §15 device-sleep gaps: after a sleep is detected, query the OS sleep/wake log off-thread for the
     // EXACT interval(s) of the pause that was just missed and record them into the LOCAL gaps store. No
