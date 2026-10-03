@@ -267,9 +267,9 @@ private class CalendarLayersHolder {
 private val VIEW_ROWS: Set<String> =
     setOf(CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, "AppWindow")
 
-private const val MENU_KEY: String = "menu"
-private const val SEARCH_KEY: String = "search/"
-private const val WINDOW_KEY: String = "window/"
+private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
+private const val SEARCH_KEY: String = org.example.project.scheduler.state.ExternalKeys.SEARCH
+private const val WINDOW_KEY: String = org.example.project.scheduler.state.ExternalKeys.WINDOW
 
 /** A window's layout as its unit holds it — its row without the configuration, which has a unit of its own. */
 private fun layoutText(p: WindowPlacement): String =

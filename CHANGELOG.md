@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: history units filtered by what they changed and by task — 2026-10-03
+
+User request: two filters for the history-unit kind, in the Configuration Search window beside Category / Made in /
+Undone. **Changes** (`HistorySubject`: tasks of the tree, expansion, selection, focus, calendar, work records, sleep,
+alarms, timers, chronos, task trees, default sub-tree, shortcuts, account settings, search configuration, window
+layout, lateral menu buttons) and **Changed task** (a field that suggests tasks by title or id, or takes a typed
+`task/…` id as is). Both read the unit's delta (`Delta.subject`, `Delta.touchesTask`); nothing new is stored on a unit.
+The external-change keys moved to `ExternalKeys` so `App` and the filter share one spelling. Stored with the Search
+configuration (local-only); an older configuration reads both as "any".
+
 ### Screen breaks: a "Look away now" break is a 20 s screen break — 2026-10-03
 
 Anomaly (account 3, 11:27:36): the look-away the app conducted on `Ctrl+Shift+Alt+E` was drawn with a task panel inside

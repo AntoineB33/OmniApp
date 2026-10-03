@@ -524,6 +524,72 @@ class SearchWindowTest {
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
     }
 
+    /** User rule 2026-10-03: history units can be filtered by the task they changed. */
+    @Test
+    fun history_units_are_filtered_by_the_task_they_changed() {
+        var s = tree()
+        val pie = taskWithTitle(s, "Pie")
+        val crumble = taskWithTitle(s, "Crumble")
+        s = r(s, SchedulerIntent.RenameTask(pie, "Tart"))
+        s = r(s, SchedulerIntent.RenameTask(crumble, "Cobbler"))
+        val units = setOf(SearchDomain.Kind.HistoryUnit)
+        fun unitsAbout(task: TaskId) =
+            SearchDomain.results(s, units, "", filters = SearchDomain.Filters(historyTask = task))
+                .map { SearchDomain.historyUnitOf(s, (it as SearchDomain.ItemResult).id)!! }
+        val aboutPie = unitsAbout(pie)
+        assertTrue(aboutPie.isNotEmpty(), "Pie's creation and rename are units about it")
+        assertTrue(aboutPie.all { it.delta.details.none { line -> "Cobbler" in line } }, "Crumble's rename is not about Pie")
+        assertTrue(aboutPie.any { unit -> unit.delta.details.any { "Tart" in it } }, "Pie's rename is")
+        assertTrue(unitsAbout(crumble).any { unit -> unit.delta.details.any { "Cobbler" in it } })
+        // A task no tree holds any more is still an id to look for.
+        assertTrue(unitsAbout(TaskId("task/user/999")).isEmpty())
+    }
+
+    /**
+     * User rule 2026-10-03: history units can be filtered by what they changed — a Search window's configuration
+     * whichever window the change was made in.
+     */
+    @Test
+    fun history_units_are_filtered_by_what_they_changed() {
+        var s = tree()
+        s = r(s, SchedulerIntent.RecordExternal(org.example.project.scheduler.state.ExternalKeys.SEARCH + "Search", "{}", "{\"query\":\"x\"}", "Search text"))
+        s = r(s, SchedulerIntent.RecordExternal(org.example.project.scheduler.state.ExternalKeys.WINDOW + "Calendar", "a", "b", "Move window"))
+        val units = setOf(SearchDomain.Kind.HistoryUnit)
+        fun labelsOf(subject: org.example.project.scheduler.state.HistorySubject) =
+            SearchDomain.results(s, units, "", filters = SearchDomain.Filters(historySubject = subject)).map { it.name }
+        assertEquals(listOf("Search text"), labelsOf(org.example.project.scheduler.state.HistorySubject.SearchConfiguration))
+        assertEquals(listOf("Move window"), labelsOf(org.example.project.scheduler.state.HistorySubject.WindowLayout))
+        assertTrue(labelsOf(org.example.project.scheduler.state.HistorySubject.Tree).isNotEmpty(), "the tree's own edits")
+        assertTrue("Search text" !in labelsOf(org.example.project.scheduler.state.HistorySubject.Tree))
+    }
+
+    @Test
+    fun the_history_unit_filters_survive_their_local_encoding_and_an_older_one_reads_as_any() {
+        val config =
+            SearchDomain.Config(
+                kinds = setOf(SearchDomain.Kind.HistoryUnit),
+                filters = SearchDomain.Filters(
+                    historySubject = org.example.project.scheduler.state.HistorySubject.SearchConfiguration,
+                    historyTask = TaskId("task/user/3"),
+                ),
+            )
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        assertEquals(2, config.filters.activeCount)
+        // What a build before these filters wrote: neither field.
+        val older = SearchDomain.Config.decode("{\"query\":\"\",\"kinds\":[\"HistoryUnit\"],\"historyUndone\":\"Yes\"}")!!
+        assertNull(older.filters.historySubject)
+        assertNull(older.filters.historyTask)
+    }
+
+    @Test
+    fun the_changed_task_field_suggests_by_title_then_by_id() {
+        val s = tree()
+        assertEquals(listOf("Pie"), SearchDomain.taskSuggestions(s, "pi").map { it.title })
+        val crumble = taskWithTitle(s, "Crumble")
+        assertEquals(listOf(crumble), SearchDomain.taskSuggestions(s, crumble.value).map { it.id })
+        assertTrue(SearchDomain.taskSuggestions(s, "  ").isEmpty())
+    }
+
     @Test
     fun a_configuration_stored_before_the_window_kind_reads_its_window_filter_as_any() {
         // What the build before the "window" kind wrote: no `windowStatus` field at all.

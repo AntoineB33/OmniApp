@@ -621,6 +621,13 @@ titles" figure: the Search window and the per-object windows its rows open repla
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and
   chord. Opening one opens the window that owns it.
+- **A history unit is filtered by what it CHANGED, not only by where it was made** (user rule 2026-10-03): "Changes"
+  (`HistorySubject`, read off the delta by `Delta.subject` — a Search window's configuration is one subject whether it
+  was changed in that window, its Configuration Search window or its Added elements configurations window) and
+  "Changed task" (`Delta.touchesTask`: its fields, a cell re-pointed at it, a block or record of it, a setting that
+  reached it; a selection or expansion of its cell is not a change to it). Both are computed, nothing is stored on the
+  unit; the task is kept as an id, so a deleted task is still one to look for. The external keys (`search/`,
+  `window/`, `menu`) are `ExternalKeys`', which `App` records with — never a second spelling.
 - **A window is a kind too** (`Kind.Window`), and the one kind whose rows are not the account's: `App` hands
   them in (`SearchDomain.WindowEntry`, built by `searchWindowEntries` off `WindowFrameHost.registrations` — the
   same list the window bar draws — plus every lateral-menu window that is not open). Every open instance is its

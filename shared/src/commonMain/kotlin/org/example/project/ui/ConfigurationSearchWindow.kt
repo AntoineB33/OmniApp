@@ -53,6 +53,7 @@ import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.HistorySubject
 import org.example.project.scheduler.state.SchedulerState
 
 /**
@@ -298,6 +299,11 @@ private fun SettingEditor(
             EnumPicker(HistoryWindow.entries, f.historyWindow, { it.label }) { filters(f.copy(historyWindow = it)) }
         SearchDomain.Setting.HistoryUndoneSetting ->
             Choices(SearchDomain.Tri.entries, f.historyUndone, { it.label }) { filters(f.copy(historyUndone = it)) }
+        // What the unit changed — a Search window's configuration whichever window it was changed from.
+        SearchDomain.Setting.HistorySubjectSetting ->
+            EnumPicker(HistorySubject.entries, f.historySubject, { it.label }) { filters(f.copy(historySubject = it)) }
+        SearchDomain.Setting.HistoryTaskSetting ->
+            TaskFilterField(state, f.historyTask) { filters(f.copy(historyTask = it)) }
         SearchDomain.Setting.TaskTreeOpenSetting ->
             Choices(SearchDomain.Tri.entries, f.taskTreeOpen, { it.label }) { filters(f.copy(taskTreeOpen = it)) }
         SearchDomain.Setting.TaskTreeDatedSetting ->
@@ -560,6 +566,67 @@ private fun CategoryPicker(
             state.categories.sortedBy { it.title.lowercase() }.forEach { category ->
                 DropdownMenuItem(text = { Text(category.title) }, onClick = { open = false; onSelect(category.id) })
             }
+        }
+    }
+}
+
+/**
+ * The "Changed task" filter: type part of a task's title — or its id — and pick it among the matches listed under the
+ * field ([SearchDomain.taskSuggestions]); empty is "any". A typed id that names no task any more (`task/…`) is taken
+ * as it is, so the units about a deleted task can still be found. The field shows the chosen task's title and id.
+ */
+@Composable
+private fun TaskFilterField(
+    state: SchedulerState,
+    taskId: org.example.project.scheduler.model.TaskId?,
+    onChange: (org.example.project.scheduler.model.TaskId?) -> Unit,
+) {
+    fun shown(id: org.example.project.scheduler.model.TaskId?): String =
+        id?.let { state.tasks[it]?.title?.takeIf(String::isNotBlank) ?: it.value }.orEmpty()
+    var draft by remember(taskId) { mutableStateOf(shown(taskId)) }
+    val chosen = taskId != null && draft == shown(taskId)
+    val suggestions = if (chosen) emptyList() else SearchDomain.taskSuggestions(state, draft)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { typed ->
+                    draft = typed
+                    val id = typed.trim()
+                    when {
+                        id.isEmpty() -> onChange(null)
+                        // An id typed in full is the task itself, whether or not it still exists.
+                        id.startsWith("task/") -> onChange(org.example.project.scheduler.model.TaskId(id))
+                    }
+                },
+                singleLine = true,
+                placeholder = { Text("any — a task's title or id") },
+                supportingText = taskId?.let { id -> { Text(id.value, style = MaterialTheme.typography.labelSmall) } },
+                modifier = Modifier.width(240.dp),
+            )
+            if (taskId != null) {
+                Text(
+                    text = "✕",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onChange(null) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+        suggestions.forEach { task ->
+            Text(
+                text = task.title + "  ·  " + task.id.value,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .width(240.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { onChange(task.id) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
     }
 }

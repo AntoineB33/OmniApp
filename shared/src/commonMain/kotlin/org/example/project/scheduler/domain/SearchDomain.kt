@@ -6,6 +6,9 @@ import org.example.project.scheduler.model.TaskRelationKey
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.HistorySubject
+import org.example.project.scheduler.state.subject
+import org.example.project.scheduler.state.touchesTask
 import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.TimeZone
@@ -278,6 +281,8 @@ object SearchDomain {
                     historyCategory = filters.historyCategory?.name,
                     historyWindow = filters.historyWindow?.name,
                     historyUndone = filters.historyUndone.name,
+                    historySubject = filters.historySubject?.name,
+                    historyTask = filters.historyTask?.value,
                     taskTreeOpen = filters.taskTreeOpen.name,
                     taskTreeDated = filters.taskTreeDated.name,
                     relationSection = filters.relationSection?.name,
@@ -334,6 +339,8 @@ object SearchDomain {
                         historyCategory = HistoryCategory.entries.firstOrNull { it.name == stored.historyCategory },
                         historyWindow = HistoryWindow.entries.firstOrNull { it.name == stored.historyWindow },
                         historyUndone = enumNamed(stored.historyUndone, Tri.Any),
+                        historySubject = HistorySubject.entries.firstOrNull { it.name == stored.historySubject },
+                        historyTask = stored.historyTask?.takeIf { it.isNotBlank() }?.let(::TaskId),
                         taskTreeOpen = enumNamed(stored.taskTreeOpen, Tri.Any),
                         taskTreeDated = enumNamed(stored.taskTreeDated, Tri.Any),
                         relationSection =
@@ -486,6 +493,13 @@ object SearchDomain {
         val historyWindow: HistoryWindow? = null,
         /** Yes = undone on its device (still redoable there). */
         val historyUndone: Tri = Tri.Any,
+        /** Null = any: else what the unit changed ([HistorySubject], e.g. a Search window's configuration). */
+        val historySubject: HistorySubject? = null,
+        /**
+         * Null = any: else the unit changed this task ([org.example.project.scheduler.state.touchesTask]). An id, so a
+         * task deleted since is still one to look for.
+         */
+        val historyTask: TaskId? = null,
         /** Yes = the task tree that is open (the live one). */
         val taskTreeOpen: Tri = Tri.Any,
         /** Yes = put on the timeline at a date. */
@@ -564,6 +578,8 @@ object SearchDomain {
                 Setting.HistoryCategorySetting -> historyCategory != null
                 Setting.HistoryWindowSetting -> historyWindow != null
                 Setting.HistoryUndoneSetting -> historyUndone != Tri.Any
+                Setting.HistorySubjectSetting -> historySubject != null
+                Setting.HistoryTaskSetting -> historyTask != null
                 Setting.TaskTreeOpenSetting -> taskTreeOpen != Tri.Any
                 Setting.TaskTreeDatedSetting -> taskTreeDated != Tri.Any
                 Setting.RelationSectionSetting -> relationSection != null
@@ -714,6 +730,8 @@ object SearchDomain {
         HistoryCategorySetting(Kind.HistoryUnit, "Category"),
         HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
         HistoryUndoneSetting(Kind.HistoryUnit, "Undone"),
+        HistorySubjectSetting(Kind.HistoryUnit, "Changes"),
+        HistoryTaskSetting(Kind.HistoryUnit, "Changed task"),
         TaskTreeOpenSetting(Kind.TaskTree, "Open"),
         TaskTreeDatedSetting(Kind.TaskTree, "On the timeline"),
         RelationSectionSetting(Kind.TaskRelation, "Section"),
@@ -773,6 +791,10 @@ object SearchDomain {
         val historyCategory: String? = null,
         val historyWindow: String? = null,
         val historyUndone: String? = null,
+        /** New 2026-10-03: absent from what an older build stored, which reads as any. */
+        val historySubject: String? = null,
+        /** New 2026-10-03: absent = any task. */
+        val historyTask: String? = null,
         val taskTreeOpen: String? = null,
         val taskTreeDated: String? = null,
         val relationSection: String? = null,
@@ -1545,7 +1567,9 @@ object SearchDomain {
                     val unit = historyUnitOf(state, result.id) ?: return true
                     (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&
                         (filters.historyWindow == null || unit.window == filters.historyWindow) &&
-                        tri(filters.historyUndone, unit.undone)
+                        tri(filters.historyUndone, unit.undone) &&
+                        (filters.historySubject == null || unit.delta.subject == filters.historySubject) &&
+                        (filters.historyTask == null || unit.delta.touchesTask(filters.historyTask))
                 }
                 Kind.TaskTree -> {
                     val entry = state.taskTrees.firstOrNull { it.id.value == result.id } ?: return true
@@ -1678,6 +1702,25 @@ object SearchDomain {
         val t = Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone)
         fun two(n: Int) = n.toString().padStart(2, '0')
         return "${t.year}-${two(t.month.number)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}"
+    }
+
+    /**
+     * The "Changed task" filter's suggestions for what is typed ([Filters.historyTask]): the tasks of [state] whose title
+     * answers [query] by [matchRank] — the same matching as the search itself — best first, then those whose id contains
+     * it, at most [limit]. Nothing for a blank query.
+     */
+    fun taskSuggestions(state: SchedulerState, query: String, limit: Int = 8): List<Task> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return state.tasks.values
+            .filter { it.title.isNotBlank() }
+            .mapNotNull { task ->
+                val rank = matchRank(task.title, q) ?: if (task.id.value.contains(q, ignoreCase = true)) 3 else null
+                rank?.let { it to task }
+            }
+            .sortedWith(compareBy({ it.first }, { it.second.title.lowercase() }, { it.second.id.value }))
+            .take(limit)
+            .map { it.second }
     }
 
     /**
