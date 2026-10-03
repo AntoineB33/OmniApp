@@ -88,6 +88,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -3642,6 +3643,7 @@ private fun MonthArrow(glyph: String, onClick: () -> Unit) {
         modifier = Modifier
             .size(24.dp)
             .clip(CircleShape)
+            .leavesKeyboardToCalendar()
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -3673,6 +3675,7 @@ private fun MiniMonthDay(
             .height(30.dp)
             .clip(CircleShape)
             .background(background)
+            .leavesKeyboardToCalendar()
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -4103,6 +4106,7 @@ private fun CalendarDisplayModeField(mode: CalendarDisplayMode, onModeChange: (C
                     color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier
                         .background(if (selected) CalColors.accent else Color.Transparent)
+                        .leavesKeyboardToCalendar()
                         .clickable { onModeChange(option) }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                 )
@@ -4110,6 +4114,15 @@ private fun CalendarDisplayModeField(mode: CalendarDisplayMode, onModeChange: (C
         }
     }
 }
+
+/**
+ * A control of the calendar's configuration section that a press may NOT give the keyboard to. User rule
+ * 2026-10-02: Space in the calendar turns "Lock to now" on — but a clicked switch (or month arrow, day, display
+ * mode) took focus, and a focused `clickable`/`Switch` consumes Space as a press of ITSELF, so Space flipped
+ * whatever was clicked last and never reached the calendar's handler (anomaly 2026-10-03). Placed BEFORE the
+ * `clickable`/`toggleable` in the chain, which is the focus target it governs. The mouse still presses it.
+ */
+private fun Modifier.leavesKeyboardToCalendar(): Modifier = focusProperties { canFocus = false }
 
 /** How wide the calendar window's configuration section is — room for the month grid's seven columns. */
 private val CALENDAR_CONFIGURATION_WIDTH = 220.dp
@@ -4121,12 +4134,13 @@ private fun CalendarConfigurationSwitch(label: String, checked: Boolean, onCheck
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
+            .leavesKeyboardToCalendar()
             .clickable { onCheckedChange(!checked) }
             .padding(start = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = onCheckedChange, modifier = Modifier.leavesKeyboardToCalendar())
     }
 }
 

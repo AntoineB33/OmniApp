@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: Space only turns "Lock to now" on — 2026-10-03
+
+Anomaly: Space flipped the last switch clicked in the configuration section instead. A press gave that switch the
+keyboard, and a focused `clickable`/`Switch` consumes Space as a press of itself, so it never reached the calendar's
+`onKeyEvent`. Every control of the section (the switches, the Day/Week field, the mini-month's arrows and days) is now
+non-focusable (`leavesKeyboardToCalendar`); the mouse presses them as before.
+
 ### Scheduler: a restart no longer re-plans unchanged rules — 2026-10-03
 
 Every launch re-planned: the rule-change watcher (`launchRuleChangeReschedule`) took the first value of its

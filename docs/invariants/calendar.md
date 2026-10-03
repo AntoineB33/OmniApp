@@ -974,6 +974,11 @@ User spec 2026-09-26. `scheduler/domain/CalendarLockDomain.kt`; the task cell me
   view (`WeekView(lockTaskMillis)`): the same centring, released the same ways (a scroll, a date pick). The two
   are one or the other — "go to calendar" and the switch turn "Lock to now" off, and "Lock to now" turns the task
   lock off. Never a second centring mechanism.
+- **Space turns "Lock to now" on, and does nothing else** (user rule 2026-10-02). It is read on the way back UP
+  (`onKeyEvent` on the calendar frame), so a field being edited takes its own space first. So **no control of the
+  configuration section may take the keyboard** (`leavesKeyboardToCalendar`): a focused `clickable`/`Switch`
+  consumes Space as a press of itself, which made Space flip whichever switch was clicked last (2026-10-03). A new
+  control in that section opts out the same way.
 - **The instant is the middle of the task's panel CLOSEST to the now-line** (a scheduled or pinned panel, a
   PROVISIONAL one — the far-week plan the calendar draws past the definitive-schedule front by the rules in force,
   not settled yet, but a panel on the calendar all the same — or a recorded period; the one the line is inside
