@@ -540,6 +540,15 @@ model exists to prevent.
   $t_{goal}$, each capped through the intents' `horizonCapMillis`. An extension keeps everything materialized, so
   every published stage is **definitive** until a rule change
   (`SchedulerFillTest.progressive_stages_never_rewrite_what_an_earlier_stage_made_definitive`).
+- **First 10 s** (requirements § *Progressive Calculation*, 2026-10-03). Before the first stage of a re-plan from
+  scratch, `dispatchProgressivePlan` asks `SchedulerDomain.firstSecondsGapFillable`: do the next
+  `FIRST_DEFINITIVE_MILLIS` (10 s) of the schedule on screen hold a stretch no task panel covers — a panel the old
+  rules derived for a task no longer schedulable covering none — where some schedulable task's resilience is not 0?
+  If so it publishes a `RefreshSchedule` capped at now + 10 s with no search, at once; every stage after it is an
+  `ExtendSchedule`, so those 10 s are definitive, and the seeds compete in the first of those instead. Where the
+  next 10 s are covered (the usual priority edit), nothing extra runs. The 1 s rule-change debounce still comes
+  first. Extensions (`replan = false`) and the reducer's in-line re-plans (already synchronous) do not take it.
+  `FirstTenSecondsTest` (the stages are read through `SchedulerEngine.stageSink`).
 - **Doubling, CAPPED BY THE PACE** (`progressiveStageCapMillis`, `ProgressivePaceTest`). The pace binds every
   stage, not the average: with the front at `t1` when a stage is published, the next must be published within 10 s
   and reach `t1 + 10 min`. A stage costs in proportion to its length, so pure doubling broke it at the long stages

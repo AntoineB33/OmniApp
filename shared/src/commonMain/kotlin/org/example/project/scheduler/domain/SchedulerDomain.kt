@@ -1945,6 +1945,52 @@ object SchedulerDomain {
     const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = 60L * 60 * 1_000
 
     /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: how far the quick stage a
+     * from-scratch re-plan publishes first reaches, when [firstSecondsGapFillable] says it is needed.
+     */
+    const val FIRST_DEFINITIVE_MILLIS: Long = 10_000
+
+    /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: *"When there is a change that will
+     * make the scheduler engine run from scratch, it must firstly check if in the next 10 seconds there are gaps with
+     * no task and if there are tasks that can be scheduled in those gaps."*
+     *
+     * A gap is a stretch of `[now, now + FIRST_DEFINITIVE_MILLIS)` no task panel of the schedule on screen covers (the
+     * previous set of rules, which the calendar keeps until a new one is found) — a panel those rules derived for a
+     * task that is no longer schedulable counts as none. A task can be scheduled in it when it
+     * is schedulable and its resilience to the restrictive periods there is not 0 — the multiplier the score reads
+     * ([taskResilienceIn]), asked at the gap's start and at every period edge inside it. Called once per re-plan, so
+     * the scan of the panels is not a per-tick one.
+     */
+    fun firstSecondsGapFillable(state: SchedulerState, nowMillis: Long): Boolean {
+        val end = nowMillis + FIRST_DEFINITIVE_MILLIS
+        val leaves = schedulableLeaves(state)
+        if (leaves.isEmpty()) return false
+        val near = state.panels.filter { it.startEpochMillis < end && it.endEpochMillis > nowMillis }
+        // A panel the previous rules DERIVED for a task that is no longer schedulable (the edit deleted the task the
+        // line was on) covers nothing: any new set of rules drops it.
+        val schedulable = leaves.toSet()
+        val work = near.filter { isWorkPanel(it) && !(it.auto && it.taskId !in schedulable) }.sortedBy { it.startEpochMillis }
+        val edges = near.filter { it.isRestrictivePeriod }.flatMap { listOf(it.startEpochMillis, it.endEpochMillis) }
+
+        fun fillable(from: Long, to: Long): Boolean {
+            val probes = listOf(from) + edges.filter { it > from && it < to }
+            return probes.any { at ->
+                val kinds = restrictiveKindsAt(state, at)
+                leaves.any { taskResilienceIn(state, it, kinds) > 0.0 }
+            }
+        }
+
+        var cursor = nowMillis
+        for (panel in work) {
+            if (panel.startEpochMillis > cursor && fillable(cursor, panel.startEpochMillis)) return true
+            cursor = maxOf(cursor, panel.endEpochMillis)
+            if (cursor >= end) return false
+        }
+        return cursor < end && fillable(cursor, end)
+    }
+
+    /**
      * The search time a re-plan made inside a reducer to answer a press may spend reaching the best score. Short: the
      * press waits for it on the thread that dispatched it.
      */

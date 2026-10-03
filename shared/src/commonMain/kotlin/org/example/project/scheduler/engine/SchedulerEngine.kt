@@ -2319,6 +2319,9 @@ class SchedulerEngine(
         if (coordinator == null) dispatchProgressivePlan(replan = true) else coordinator.requestPlan()
     }
 
+    /** Told the horizon of every stage [dispatchProgressivePlan] publishes, in order — a test's view of the stages. */
+    internal var stageSink: (horizonEndMillis: Long) -> Unit = {}
+
     /** The progressive fill in flight ([dispatchProgressivePlan]), so a newer one replaces it. */
     private var progressivePlan: Job? = null
 
@@ -2381,6 +2384,22 @@ class SchedulerEngine(
             // A stage whose search ran out of time without certifying the best (and without the solver finding
             // anything) tells the bigger stages after it that they cannot either: they stop paying for it.
             var searchUseful = planSearch
+            // The seeds compete in the first stage that searches a continuation, which the ten seconds are not.
+            var seedsPending = true
+            // § *Progressive Calculation*, **first 10s**: a re-plan from scratch first asks whether the next ten
+            // seconds of the schedule on screen hold a gap a task could fill — the edit removed the task the line
+            // was on, or gave an idle line something to do — and if so publishes a ten-second set of rules at once,
+            // no search, before the first stage. Its ten seconds are definitive: every stage after it extends it.
+            if (first && replan && SchedulerDomain.firstSecondsGapFillable(vm.state.value, reached)) {
+                val now = clock.nowMillis()
+                val cap = now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS
+                runPlan(SchedulerIntent.RefreshSchedule(now, cap, 0L, seeds, generation))
+                stageSink(cap)
+                if (lead != null) coordinator?.publish(rulesMessage(lead.election, index))
+                reached = cap
+                first = false
+                index++
+            }
             while (true) {
                 val now = clock.nowMillis()
                 val goal = scheduleHorizonEndMillis(now)
@@ -2392,15 +2411,17 @@ class SchedulerEngine(
                 val searchMillis = if (searchUseful) stageSearchMillis(span, remaining) else 0L
                 val intent =
                     if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds, generation)
-                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation, if (first) seeds else emptyList())
+                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation, if (seedsPending) seeds else emptyList())
                 lastPlanSearch = null
                 val mark = TimeSource.Monotonic.markNow()
                 runPlan(intent)
+                stageSink(capOrNull ?: goal)
                 val search = lastPlanSearch
                 if (search != null && search.exhausted && !search.solverImproved) searchUseful = false
                 // The device's speed is what its OWN passes cost: the search spends whatever it was granted.
                 notePlanRate(span, mark.elapsedNow().inWholeMilliseconds - (search?.searchMillis ?: 0L))
                 reached = capOrNull ?: goal
+                seedsPending = false
                 // `docs/invariants/scheduler.md` § *One device plans*: every stage the elected device publishes is a
                 // set of rules the others take in — each one containing the last.
                 if (lead != null) coordinator?.publish(rulesMessage(lead.election, index))

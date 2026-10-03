@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Scheduler: the first 10 s of a re-plan from scratch — 2026-10-03
+
+Requirement added to `docs/scheduler_requirements.md` § *Progressive Calculation* (**first 10s**): a change that makes
+the engine re-plan from scratch first checks whether the next 10 s hold a gap with no task that a task could fill, and
+if so returns a set of rules at once whose first 10 s are definitive. `SchedulerDomain.firstSecondsGapFillable` +
+`FIRST_DEFINITIVE_MILLIS`; `SchedulerEngine.dispatchProgressivePlan` publishes a search-free `RefreshSchedule` capped at
+now + 10 s before the doubling stages, which extend it. A derived panel of a task the edit made unschedulable (deleted)
+counts as a gap. `FirstTenSecondsTest`.
+
 ### Search window: a history unit's row is keyed by its identity, not its index — 2026-10-03
 
 Anomaly (account3): double-clicking the only row of a history-unit Search window again and again grew the added
