@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task cells: the colour under the expansion arrow is outlined in the opposite colour — 2026-10-03
+
+User request: as the calendar's task panels are. `Modifier.taskSwatch` (`ui/TaskSheetChrome.kt`): the task's colour with
+a 1 dp border in the colour of highest contrast with it (`TaskPalette.foreground`), for the arrow's box
+(`TaskSheetExpandArrow`) and the bare swatch a row without an arrow shows. `TaskSwatchRenderTest` (the rendered pixels).
+
 ### Fields that select an id or a task cell: one cell, one row — 2026-10-03
 
 User request: wherever an id or a task cell is selected, the same code, configured per field. The category rule's task

@@ -1,6 +1,7 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -198,7 +199,7 @@ internal fun TaskSheetExpandArrow(
     Box(
         modifier = Modifier
             .size(20.dp)
-            .then(if (background != null) Modifier.background(background, RoundedCornerShape(3.dp)) else Modifier)
+            .then(if (background != null) Modifier.taskSwatch(background) else Modifier)
             .then(
                 if (hasChildren) {
                     Modifier.clickable(
@@ -220,6 +221,16 @@ internal fun TaskSheetExpandArrow(
             )
         }
     }
+}
+
+/**
+ * A task's colour as a swatch — the box under a row's expansion arrow, or the bare one a row with no arrow shows —
+ * **outlined in the colour of highest contrast with it** ([TaskPalette.foreground]), exactly as a task panel is on the
+ * calendar (user rule 2026-10-03): the outline is what keeps a pale or a dark colour's edge visible on the sheet.
+ */
+internal fun Modifier.taskSwatch(color: Color): Modifier {
+    val shape = RoundedCornerShape(3.dp)
+    return background(color, shape).border(1.dp, TaskPalette.foreground(color), shape)
 }
 
 internal fun Key.isModifierKey(): Boolean =

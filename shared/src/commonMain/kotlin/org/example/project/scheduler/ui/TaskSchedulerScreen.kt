@@ -178,6 +178,7 @@ import org.example.project.ui.transientMenuDismissal
 import org.example.project.ui.AppWindowFrame
 import org.example.project.ui.rememberWindowFrameState
 import org.example.project.ui.TaskSheetExpandArrow
+import org.example.project.ui.taskSwatch
 import org.example.project.ui.TaskSheetTitleBounds
 import org.example.project.ui.taskSheetTitleBounds
 import org.example.project.ui.taskSheetGuideLines
@@ -3032,7 +3033,7 @@ internal fun TaskRow(
                 Spacer(Modifier.width(4.dp))
             } else if (taskColor != null) {
                 // No arrow to sit under (a relative-priority chain link): the task's colour as a bare swatch.
-                Box(Modifier.size(width = 8.dp, height = 20.dp).background(taskColor, RoundedCornerShape(3.dp)))
+                Box(Modifier.size(width = 8.dp, height = 20.dp).taskSwatch(taskColor))
                 Spacer(Modifier.width(4.dp))
             }
             if (compact) {
