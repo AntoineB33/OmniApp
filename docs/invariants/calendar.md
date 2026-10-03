@@ -979,6 +979,11 @@ User spec 2026-09-26. `scheduler/domain/CalendarLockDomain.kt`; the task cell me
   configuration section may take the keyboard** (`leavesKeyboardToCalendar`): a focused `clickable`/`Switch`
   consumes Space as a press of itself, which made Space flip whichever switch was clicked last (2026-10-03). A new
   control in that section opts out the same way.
+- **The focused calendar HOLDS the keyboard, however it was focused** (`AppWindowFrame(keyboardFocus = …)`): the frame
+  hands the calendar's key node the focus every time the frame host makes it the focused window — its window-bar tab,
+  a lateral-menu button, `Shift+Alt` navigation, the launch — not only on a press inside it. Its tab showed purple
+  while Space went nowhere until a click inside (2026-10-03). Any window with key handlers of its own passes its node
+  the same way.
 - **The instant is the middle of the task's panel CLOSEST to the now-line** (a scheduled or pinned panel, a
   PROVISIONAL one — the far-week plan the calendar draws past the definitive-schedule front by the rules in force,
   not settled yet, but a panel on the calendar all the same — or a recorded period; the one the line is inside

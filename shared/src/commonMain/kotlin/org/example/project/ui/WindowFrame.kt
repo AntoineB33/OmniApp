@@ -43,6 +43,8 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -1037,6 +1039,14 @@ fun AppWindowFrame(
     onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
     /** True for a window that answers keystrokes itself: it takes the keyboard off the tree while focused. */
     claimsKeyboard: Boolean = false,
+    /**
+     * The node holding the window's own key handlers, given the keyboard EVERY time the window becomes the focused one
+     * ([WindowFrameHost.focusedId]) — by a press inside it, its window-bar tab, a lateral-menu button, `Shift+Alt`
+     * navigation or the launch alike. A press inside used to be the only route that reached it, so a window focused any
+     * other way showed as focused while its keys went nowhere (the calendar's Space, 2026-10-03). Null: the window has
+     * no handlers of its own above its content.
+     */
+    keyboardFocus: FocusRequester? = null,
     /** A notice has nothing to come back to, so it is not reducible. */
     canMinimize: Boolean = true,
     /** Extra head controls, drawn between the title and the five buttons. */
@@ -1072,6 +1082,15 @@ fun AppWindowFrame(
     SideEffect {
         host?.retitle(state.id, title)
         host?.rekey(state.id, menuKey)
+    }
+    // The focused window holds the keyboard, however it came to be focused ([keyboardFocus]). Keyed on the reduce too: a
+    // window brought back from the bar is placed again, and only a placed node can take the focus — hence the frame wait.
+    val holdsFocus = host != null && host.focusedId == state.id && !state.minimized
+    LaunchedEffect(holdsFocus, keyboardFocus) {
+        if (holdsFocus && keyboardFocus != null) {
+            withFrameNanos { }
+            runCatching { keyboardFocus.requestFocus() }
+        }
     }
     // Asked for again while open (a per-object window re-opened on its object): it comes back to the user.
     val presentRequests = instance?.presentRequests ?: 0

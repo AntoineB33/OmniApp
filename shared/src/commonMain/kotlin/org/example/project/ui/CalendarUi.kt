@@ -3867,7 +3867,8 @@ fun CalendarFloatingWindow(
     }
     // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
     // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
-    // tree normally holds focus. Focus is (re)claimed when the window opens and on every press inside it.
+    // tree normally holds focus. Focus is (re)claimed when the window opens, on every press inside it, and whenever
+    // the frame host makes it the focused window ([AppWindowFrame]'s `keyboardFocus`).
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     AppWindowFrame(
@@ -3937,6 +3938,9 @@ fun CalendarFloatingWindow(
             runCatching { focusRequester.requestFocus() }
         },
         onGeometryChange = onGeometryChange,
+        // …and so does being focused any other way — its window-bar tab, the lateral menu, `Shift+Alt` navigation, the
+        // launch: the purple tab used to say "focused" while Space went nowhere until a click inside (2026-10-03).
+        keyboardFocus = focusRequester,
         headTrailing = {
             // PRD §9/§17: a distant future week fills its plan off the UI thread — show it's working.
             if (calculating) {

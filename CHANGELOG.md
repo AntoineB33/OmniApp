@@ -47,6 +47,13 @@ while a look-away break exists: the break's own "Screen break" notification foll
 second pop-up for one press (with no look-away break the press does nothing else, and its receipt stays). Every other
 chord keeps its receipt.
 
+### Calendar: a calendar focused from its tab answers Space — 2026-10-03
+
+Anomaly: the calendar's tab was purple (focused), Space did nothing, and a click inside made it work. The calendar took
+the keyboard only when it opened and on a press inside it (`onRaise`); focused any other way (its window-bar tab, the
+lateral menu, `Shift+Alt` navigation, the launch) the app said "focused" while the keys went elsewhere. `AppWindowFrame`
+now takes a `keyboardFocus` requester and gives it the focus every time the frame host makes the window the focused one.
+
 ### Calendar: Space only turns "Lock to now" on — 2026-10-03
 
 Anomaly: Space flipped the last switch clicked in the configuration section instead. A press gave that switch the
