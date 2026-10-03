@@ -74,6 +74,7 @@ import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.NoOpDelta
 import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SupabaseUsageEntry
+import org.example.project.scheduler.state.PlanBasis
 import org.example.project.scheduler.state.PanelDelta
 import org.example.project.scheduler.state.RecordDelta
 import org.example.project.scheduler.state.SchedulerEditSession
@@ -595,6 +596,7 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             calendarDayMode = calendarDayMode,
+            planBasis = planBasis?.let { PersistedPlanBasis(it.signature, it.madeAtMillis) },
             // The persisted key keeps the name it was written under when the voice was the look-away cue's
             // alone; the field it decodes into now governs every notification's spoken half. Renaming the key
             // would make an older build on the same account read the payload as "voice on" and an older
@@ -1227,6 +1229,7 @@ object SchedulerStateCodec {
             showScreenBreaks = showScreenBreaks,
             showReminders = showReminders,
             calendarDayMode = calendarDayMode,
+            planBasis = planBasis?.let { PlanBasis(it.signature, it.madeAtMillis) },
             notificationVoiceEnabled = lookAwayVoiceEnabled,
             notificationsEnabled = notificationsEnabled,
             // PRD §4: three generations, all readable. A payload written before the "Default sub-tree"
@@ -1631,6 +1634,10 @@ private data class PersistedState(
     // PRD §8: the calendar's Day/Week display mode; default Week, which is what every payload written before
     // the mode was persisted (2026-10-02) decodes to.
     val calendarDayMode: Boolean = false,
+    // The rules the persisted plan was made for (SchedulerState.planBasis). Absent on every payload written before
+    // it existed (2026-10-03), which decodes to "unknown" — so the first launch of this build re-plans once, as every
+    // launch used to.
+    val planBasis: PersistedPlanBasis? = null,
     // PRD §11/§15: whether the app speaks its notifications aloud; default on (payloads written before the
     // toggle existed get the voice). The KEY keeps the name it has always been written under — when the
     // switch governed the look-away cue alone — so payloads move in both directions between builds; the state
@@ -1754,6 +1761,12 @@ private data class PersistedNotificationEntry(
     // Its own spoken sentence ([NotificationLogEntry.spoken]); absent on entries written before 2026-09-26, which
     // replay their text read out, as they were spoken.
     val spoken: String? = null,
+)
+
+@Serializable
+private data class PersistedPlanBasis(
+    val signature: Int,
+    val madeAtMillis: Long,
 )
 
 @Serializable

@@ -6013,6 +6013,11 @@ object SchedulerDomain {
      * editing the live tree does. Undated trees are not: nothing reads them until they are selected, at
      * which point they *are* the live tree. Note this still leaves the plan a function of `now` through the
      * blend, which the signature cannot express — see [taskTreeBlendDecisionKey].
+     *
+     * **It is PERSISTED** ([SchedulerState.planBasis]) and compared across launches ([planHoldsAtLaunch]), so it
+     * must hash only values whose hash is the same in every process: strings, numbers, booleans and collections
+     * or data classes of them. An enum's hash is its identity and differs per run — hashing one here would make
+     * every launch read as a rule change, which is the re-plan of unchanged rules this exists to prevent.
      */
     fun schedulingSignature(state: SchedulerState): Int {
         var result = if (state.automaticSchedule) 1 else 0
@@ -6047,6 +6052,20 @@ object SchedulerDomain {
             }
         }
         return result
+    }
+
+    /**
+     * `docs/invariants/scheduler.md` § *When the plan is recomputed*: **a restart is not a rule change.** True when
+     * the plan [state] was loaded with was made for the rules [state] holds now ([SchedulerState.planBasis]), so the
+     * launch keeps it and only extends it; false when no plan was made, when the rules moved after the last re-plan
+     * (an edit the app closed inside the debounce of, a rule an older build or a pull changed), or when the line
+     * crossed a task-tree decision boundary while the app was closed — the one sanctioned re-plan
+     * ([taskTreeBlendDecisionKey]) the running engine would have made on the way.
+     */
+    fun planHoldsAtLaunch(state: SchedulerState, nowMillis: Long): Boolean {
+        val basis = state.planBasis ?: return false
+        if (basis.signature != schedulingSignature(state)) return false
+        return taskTreeBlendDecisionKey(state, basis.madeAtMillis) == taskTreeBlendDecisionKey(state, nowMillis)
     }
 
     /**

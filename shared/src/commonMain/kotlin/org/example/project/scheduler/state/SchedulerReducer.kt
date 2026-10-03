@@ -2818,9 +2818,7 @@ object SchedulerReducer {
                     score = cost
                 },
             )
-        val planned =
-            if (filled == advanced.panels && cycle == advanced.scheduleCycle && idle == advanced.plannedIdle) advanced
-            else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
+        val planned = withPlan(advanced, filled, cycle, idle, nowMillis)
         val result = withOtherModePlan(planned, nowMillis, mode, horizon, horizon) { abandoned(generation) }
         recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules, search, score)
         return result
@@ -2875,12 +2873,35 @@ object SchedulerReducer {
                 adoptedPlacements = intent.placements,
                 adoptedCycle = intent.cycle,
             )
-        val adopted =
-            if (filled == advanced.panels && cycle == advanced.scheduleCycle && idle == advanced.plannedIdle) advanced
-            else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
+        val adopted = withPlan(advanced, filled, cycle, idle, nowMillis)
         val result = withOtherModePlan(adopted, nowMillis, mode, horizon, horizon)
         recordRun(SchedulerRunEntry.Kind.Adopted, nowMillis, mode, horizon, result, rules)
         return result
+    }
+
+    /**
+     * A RE-PLAN's result laid on [state]: the fill's panels, cycle and idle stretches, and the
+     * [SchedulerState.planBasis] they were made for — what the engine reads at launch to keep this plan rather than
+     * re-make it. The same instance when nothing moved, so a re-plan that changes nothing publishes and saves nothing.
+     */
+    private fun withPlan(
+        state: SchedulerState,
+        filled: List<TaskPanel>,
+        cycle: ScheduleCycle?,
+        idle: List<TaskTimeRange>,
+        nowMillis: Long,
+    ): SchedulerState {
+        val signature = SchedulerDomain.schedulingSignature(state)
+        val unchanged =
+            filled == state.panels && cycle == state.scheduleCycle && idle == state.plannedIdle &&
+                state.planBasis?.signature == signature
+        return if (unchanged) state
+        else state.copy(
+            panels = filled,
+            scheduleCycle = cycle,
+            plannedIdle = idle,
+            planBasis = PlanBasis(signature, nowMillis),
+        )
     }
 
     /**

@@ -57,7 +57,8 @@ class ScheduleStalenessRuleTest {
         val scheduler = testScheduler
         val h = harness({ scheduler.currentTime }, backgroundScope)
         h.engine.start()
-        // Launch itself re-plans (the rule-change watcher's first emission).
+        // A fresh account holds no plan yet, so its launch plans (`RestartKeepsPlanTest`: a restart of one that does
+        // hold one for these rules does not).
         advanceTimeBy(DEBOUNCE_MILLIS + 1)
         runCurrent()
         val launchFill = h.engine.lastRescheduleMillis

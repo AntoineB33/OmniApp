@@ -2237,9 +2237,20 @@ class SchedulerEngine(
      * Debounced by [RESCHEDULE_DEBOUNCE_MILLIS] via `collectLatest`, so a burst — typing a task title
      * character by character, dragging a panel, a sync pull landing on top of a local edit — costs one fill,
      * not one per keystroke.
+     *
+     * **A launch is not a change.** The flow's first value is the rules the app came up with, not an edit, so it
+     * re-plans only when [SchedulerDomain.planHoldsAtLaunch] says the persisted plan was not made for them. Every
+     * launch used to re-plan here, rewriting a schedule `docs/scheduler_requirements.md` § *Progressive
+     * Calculation* had already made definitive, for rules nobody had touched.
      */
     private fun launchRuleChangeReschedule() = scope.launch {
+        var launching = true
         vm.state.map { SchedulerDomain.schedulingSignature(it) }.distinctUntilChanged().collectLatest {
+            if (launching) {
+                launching = false
+                // The plan already on screen is kept; the horizon watcher extends it if it falls short.
+                if (SchedulerDomain.planHoldsAtLaunch(vm.state.value, clock.nowMillis())) return@collectLatest
+            }
             // THE RULES MOVED, so whatever is being planned is about data nobody holds any more: stop it
             // where it stands, at once, and let the debounce decide when to ask again (the user's rule:
             // "if the scheduler was already running, then it stops abruptly and runs again with the new
@@ -3374,8 +3385,9 @@ class SchedulerEngine(
      * A re-arming never compares the key: only REACHING the armed instant does. A re-plan rewrites the very panels
      * the key is read from, so comparing on every change of them would let the watch answer its own fill.
      *
-     * The first sample only primes `last`, so starting up mid-transition does not itself force a fill; the
-     * rule-change watcher has just run one anyway.
+     * The first sample only primes `last`, so starting up mid-transition does not itself force a fill: a boundary
+     * the line crossed while the app was closed is the rule-change watcher's to answer at launch
+     * ([SchedulerDomain.planHoldsAtLaunch] compares the key at the plan's own instant with the key now).
      */
     private fun launchTaskTreeBlendReschedule() = scope.launch {
         var last: Long? = null

@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Scheduler: a restart no longer re-plans unchanged rules — 2026-10-03
+
+Every launch re-planned: the rule-change watcher (`launchRuleChangeReschedule`) took the first value of its
+`distinctUntilChanged` flow — the rules loaded from the DB — for an edit, and ~1 s after start a full
+`RefreshSchedule` rewrote a schedule `docs/scheduler_requirements.md` § *Progressive Calculation* had made definitive.
+Every re-plan reduction (`RefreshSchedule`, the in-reducer re-plans, `AdoptScheduleRules`) now records
+`SchedulerState.planBasis` (the `schedulingSignature` and instant the plan was made for; persisted locally, never on
+the wire, not carried across a pull), and the launch re-plans only when `SchedulerDomain.planHoldsAtLaunch` is false:
+no basis, rules changed since (an edit closed inside the debounce, a pull, a debug rollback), or a task-tree decision
+boundary crossed while closed. A payload written before decodes with no basis, so the first launch of this build
+re-plans once. `RestartKeepsPlanTest`.
+
 ### Search window: a vertical scrollbar on the actions section — 2026-10-03
 
 The top right section (the actions on the added elements) has the window's scrollbar on its right: `ColumnScrollbar`,

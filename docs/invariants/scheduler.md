@@ -600,6 +600,13 @@ placed (`screenBreak`). Pre-placed blocks, user-drawn periods and sleep windows 
   dispatch progressive `ExtendSchedule` stages (keep the head, append the tail). A re-plan of rules that did not
   change can only rewrite a schedule § *Progressive Calculation* has made definitive — which is why the hourly
   "staleness bound" that did exactly that was removed (2026-09-17, `ScheduleStalenessRuleTest` now pins its absence).
+- **A restart is not a rule change** (2026-10-03, `RestartKeepsPlanTest`). Every re-plan reduction records the
+  rules its plan was made for (`SchedulerState.planBasis`: the signature and the line's instant), the store keeps it,
+  and the rule-change watcher's FIRST value — the rules the app came up with — re-plans only when
+  `SchedulerDomain.planHoldsAtLaunch` says the persisted plan was not made for them (no basis, the signature moved,
+  or a task-tree decision boundary was crossed while closed). Otherwise the plan is kept and the horizon watcher only
+  extends it. Every launch used to re-plan. This makes `schedulingSignature` a PERSISTED value: it may hash only
+  process-stable values — never an enum, whose hash is its identity.
 - Exactly one sanctioned exception, bounded: inside a task-tree transition only, a re-plan at every **run start the
   line reaches** (`taskTreeBlendDecisionKey`, ADR 0008) — one fill per run the transition spans, nothing outside one.
   That is the rules being parameterized by the line, not the plan going stale.

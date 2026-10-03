@@ -324,6 +324,17 @@ data class SupabaseUsageEntry(
 )
 
 /**
+ * `docs/invariants/scheduler.md` § *When the plan is recomputed*: the rules the plan in [SchedulerState.panels] was
+ * made for — the [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature] of the state it was
+ * planned from, and the now-line it was planned at ([madeAtMillis], which the task-tree blend reads). See
+ * [SchedulerState.planBasis].
+ */
+data class PlanBasis(
+    val signature: Int,
+    val madeAtMillis: Long,
+)
+
+/**
  * PRD §6/§9: one run of the **scheduler engine** — the [HistorySource.SchedulerEngine] rows of the History
  * window. A re-plan is not a History Unit (PRD §9: a schedule is derived from the current state, so nothing
  * undoes it), but it IS the app deciding something, and the one thing about it the user cannot otherwise see
@@ -741,6 +752,21 @@ data class SchedulerState(
      */
     val calendarDayMode: Boolean = false,
     /**
+     * `docs/invariants/scheduler.md` § *When the plan is recomputed*: the rules the plan in [panels] was made for,
+     * written by every reduction that RE-PLANS ([SchedulerIntent.RefreshSchedule], the in-reducer re-plans, an
+     * adoption of the elected device's rules) and by nothing else — an extension keeps the plan, and so its basis.
+     * Null until one has run, and after a pull (which replaces the derived panels it describes).
+     *
+     * Read once, at launch: a restart is not a rule change, so when the rules loaded are the ones the persisted plan
+     * was made for, the engine keeps that plan and only extends it (`docs/scheduler_requirements.md` § *Progressive
+     * Calculation*: a definitive schedule stays definitive). Before this existed every launch re-planned.
+     *
+     * Derived bookkeeping about a derived plan: persisted locally, never on the wire (neutralized by
+     * [withLocalViewStateNeutralized]), and NOT carried across a pull — the pulled state has no plan for it to
+     * describe.
+     */
+    val planBasis: PlanBasis? = null,
+    /**
      * PRD §11/§15: whether the app SPEAKS. Every notification it posts is also said aloud — the task to do
      * now, a screen break's start and end, the wind-down, an alarm, a chord's receipt — because a
      * notification exists to reach a user who is not looking at OmniApp, and one that only appears in a
@@ -1105,6 +1131,8 @@ data class SchedulerState(
             showScreenBreaks = false,
             showReminders = true,
             calendarDayMode = false,
+            // Not view state, but as local: the derived plan it describes is stripped from the wire too.
+            planBasis = null,
             notificationLog = emptyList(),
             supabaseUsageLog = emptyList(),
             categoryRuleError = null,
