@@ -1,5 +1,6 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -49,6 +50,49 @@ internal fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) 
     }
     val m = metrics ?: return
     val scope = rememberCoroutineScope()
+    ScrollbarTrack(
+        m,
+        modifier,
+        key = state,
+        page = { delta -> scope.launch { state.animateScrollBy(delta) } },
+        drag = { delta -> state.dispatchRawDelta(delta) },
+    )
+}
+
+/**
+ * [ListScrollbar] for a plain scrolling column ([ScrollState]) — the same thumb and track, read off the exact
+ * content height the column measured (`maxValue` past the viewport). Hidden while everything fits.
+ */
+@Composable
+internal fun ColumnScrollbar(state: ScrollState, modifier: Modifier = Modifier) {
+    val metrics by remember(state) {
+        derivedStateOf {
+            val viewport = state.viewportSize.toFloat()
+            if (viewport <= 0f || state.maxValue <= 0) return@derivedStateOf null
+            val content = viewport + state.maxValue
+            ScrollMetrics(viewport = viewport, content = content, scrolled = state.value.toFloat())
+        }
+    }
+    val m = metrics ?: return
+    val scope = rememberCoroutineScope()
+    ScrollbarTrack(
+        m,
+        modifier,
+        key = state,
+        page = { delta -> scope.launch { state.animateScrollBy(delta) } },
+        drag = { delta -> state.dispatchRawDelta(delta) },
+    )
+}
+
+/** The track and the thumb both scrollbars draw: a press pages towards it ([page]), the thumb drags ([drag]). */
+@Composable
+private fun ScrollbarTrack(
+    m: ScrollMetrics,
+    modifier: Modifier,
+    key: Any,
+    page: (Float) -> Unit,
+    drag: (Float) -> Unit,
+) {
     val density = LocalDensity.current
     BoxWithConstraints(modifier.fillMaxHeight().width(10.dp)) {
         val trackPx = constraints.maxHeight.toFloat()
@@ -63,12 +107,10 @@ internal fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) 
             Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .pointerInput(state, thumbTopPx, thumbPx) {
+                .pointerInput(key, thumbTopPx, thumbPx) {
                     detectTapGestures { press ->
-                        val page = m.viewport * if (press.y < thumbTopPx) -1f else 1f
-                        if (press.y < thumbTopPx || press.y > thumbTopPx + thumbPx) {
-                            scope.launch { state.animateScrollBy(page) }
-                        }
+                        val delta = m.viewport * if (press.y < thumbTopPx) -1f else 1f
+                        if (press.y < thumbTopPx || press.y > thumbTopPx + thumbPx) page(delta)
                     }
                 },
         )
@@ -81,10 +123,10 @@ internal fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) 
                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     RoundedCornerShape(5.dp),
                 )
-                .pointerInput(state, contentPerThumbPx) {
+                .pointerInput(key, contentPerThumbPx) {
                     detectVerticalDragGestures { change, dragAmount ->
                         change.consume()
-                        state.dispatchRawDelta(dragAmount * contentPerThumbPx)
+                        drag(dragAmount * contentPerThumbPx)
                     }
                 },
         )

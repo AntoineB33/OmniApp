@@ -11,6 +11,11 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a vertical scrollbar on the actions section — 2026-10-03
+
+The top right section (the actions on the added elements) has the window's scrollbar on its right: `ColumnScrollbar`,
+the `ListScrollbar` thumb and track for a plain scrolling column (`ScrollState`), sharing its drawing.
+
 ### Screen breaks: the 20 s break is a kind of its own, "20s screen break" — 2026-10-03
 
 "A 20s screen break is a restrictive period like any other." It was an `inactivity` period, so the Search window

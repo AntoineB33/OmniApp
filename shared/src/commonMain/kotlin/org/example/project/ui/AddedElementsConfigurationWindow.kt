@@ -4,6 +4,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -248,8 +249,11 @@ internal fun AddedActionsSection(
         }
         val sections =
             SearchDomain.addedActions(config.actionQuery, SearchDomain.Kind.entries.toSet(), added.mapTo(HashSet()) { it.kind })
+        // A vertical scrollbar on its right (user rule 2026-10-03), the same the lists of the window have.
+        val scroll = rememberScrollState()
+        Box(Modifier.fillMaxWidth().weight(1f)) {
         Column(
-            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxSize().padding(end = 12.dp).verticalScroll(scroll),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (sections.isEmpty()) {
@@ -260,6 +264,8 @@ internal fun AddedActionsSection(
                 )
             }
             AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear)
+        }
+        ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
         }
     }
 }
