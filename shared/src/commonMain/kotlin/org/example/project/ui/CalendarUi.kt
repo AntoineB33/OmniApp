@@ -8945,22 +8945,12 @@ fun ManualEntryEditWindow(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
 
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = {
-                        title = it
-                        // Typing reverts to the default (first task of the menu), not "New task".
-                        selectedTaskId = null
-                        newTaskChosen = false
-                    },
-                    label = { Text("Task") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                // --- Tasks menu: New task + existing leaf matches. Pass no exclusion so the matching
-                // task shows (and highlights) even when it was picked from the suggestions below. PRD §8:
-                // the first real task is selected by default; "New task" only when explicitly chosen. ---
+                // --- The task: a task cell, configured ([NamingCell], user rule 2026-10-03 — every field that selects
+                // an id is the tree's own cell). Its menus list the existing leaf matches as task elements, led by
+                // "New task"; PRD §8: the first real task is the default, "New task" only when explicitly chosen —
+                // so a title typed WITHOUT a pick still names that default ([NamingCell]'s `onDraftChange`), exactly
+                // as typing in the text field this replaced did. No Mode selector: this window is always in
+                // "Change Task" mode (PRD §8).
                 val taskEntries = taskMenuEntries(title, null)
                 // The effective task this window will save: the explicit pick, else (unless the user
                 // chose "New task") the first real task of the menu.
@@ -8970,37 +8960,40 @@ fun ManualEntryEditWindow(
                         selectedTaskId != null && taskEntries.any { it.taskId == selectedTaskId } -> selectedTaskId
                         else -> SchedulerDomain.calendarDefaultMenuTaskId(taskEntries)
                     }
-                // No Mode selector: this window is always in "Change Task" mode (PRD §8) — the identity
-                // and title menus are the shared block every other naming field uses.
-                EditModeMenuBlock(
+                EditMenuSectionLabel("Task")
+                NamingCell(
+                    cellId = CALENDAR_ENTRY_TASK_CELL,
+                    shown = title,
                     identityLabel = "Tasks",
-                    identityRows =
-                        if (taskEntries.size > 1) {
-                            val selectedIndex =
-                                SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, effectiveTaskId)
-                            taskEntries.mapIndexed { index, entry ->
-                                EditMenuItem(label = entry.label, selected = index == selectedIndex, taskId = entry.taskId) {
-                                    if (entry.taskId == null) {
-                                        selectedTaskId = null // "New task" → calendar-only
-                                        newTaskChosen = true
-                                    } else {
-                                        selectedTaskId = entry.taskId
-                                        newTaskChosen = false
-                                        titleForTaskId(entry.taskId)?.let { title = it }
-                                    }
-                                }
-                            }
+                    identity = { draft ->
+                        val entries = taskMenuEntries(draft, null)
+                        if (entries.size > 1) {
+                            entries.map { entry -> NamingRow(entry.taskId?.value ?: NEW_TASK_ROW_KEY, entry.label, taskId = entry.taskId) }
                         } else {
                             emptyList()
-                        },
-                    suggestions =
-                        titleSuggestions(title).map { suggestion ->
-                            EditMenuItem(suggestion) {
-                                title = suggestion
-                                selectedTaskId = taskIdForTitle(suggestion)
-                                newTaskChosen = false
-                            }
-                        },
+                        }
+                    },
+                    suggestions = { draft -> titleSuggestions(draft) },
+                    onPick = { key ->
+                        if (key == NEW_TASK_ROW_KEY) {
+                            selectedTaskId = null // "New task" → calendar-only
+                            newTaskChosen = true
+                        } else {
+                            val picked = TaskId(key)
+                            selectedTaskId = picked
+                            newTaskChosen = false
+                            titleForTaskId(picked)?.let { title = it }
+                        }
+                    },
+                    selectedKey = if (newTaskChosen) NEW_TASK_ROW_KEY else effectiveTaskId?.value,
+                    // Typing reverts to the default (first task of the menu), not "New task" — as it is typed, so the
+                    // window's Save reads the title on screen.
+                    onDraftChange = { draft ->
+                        title = draft
+                        selectedTaskId = null
+                        newTaskChosen = false
+                    },
+                    width = 280.dp,
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -9135,6 +9128,12 @@ internal fun PeriodKindField(
         )
     }
 }
+
+/** The calendar "Edit task" window's task field: a cell of no tree. */
+private val CALENDAR_ENTRY_TASK_CELL = CellId("calendar/entry-task")
+
+/** The "New task" row's key in that field's menu: an id no task is ever minted with. */
+private const val NEW_TASK_ROW_KEY = "(new task)"
 
 /** The kind-of-period field's cell id: a cell of no tree. */
 private val PERIOD_KIND_CELL = CellId("calendar/period-kind")
@@ -9842,6 +9841,11 @@ data class EditMenuItem(
      * row, configured ([TaskIdentityRow], through [LocalTaskIdentityRow]). Null for every other row.
      */
     val taskId: org.example.project.scheduler.model.TaskId? = null,
+    /**
+     * The ONE path the row shows for [taskId], when the row stands for one place of the task rather than for the task —
+     * a field that picks a task CELL lists the same task id once per path. Null: the task's first path.
+     */
+    val taskPath: List<String>? = null,
     val onClick: () -> Unit,
 )
 

@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Fields that select an id or a task cell: one cell, one row — 2026-10-03
+
+User request: wherever an id or a task cell is selected, the same code, configured per field. The category rule's task
+cell field lists task elements (`TaskIdentityRow`) each with ITS path — one task id once per path
+(`EditMenuItem.taskPath`, `ScopeEntry.parentPath`); "Add under…" rows are task elements; the calendar's "Edit task"
+Task field and the calendar elements window's element field are `NamingCell`s now (they were text boxes with the menus
+always under them), their typed text mirrored live (`NamingCell.onDraftChange`). Not converted, said in
+`docs/invariants/task-tree.md`: "Pick a task", the three reminder editors and the task-tree name field.
+
 ### Id suggestion lists: a task row is the Search window's task row — 2026-10-03
 
 User request: the id rows of an edit-mode menu (a task cell's, for example) must be the Search window's result

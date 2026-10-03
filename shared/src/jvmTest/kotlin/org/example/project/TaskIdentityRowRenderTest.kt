@@ -77,6 +77,20 @@ class TaskIdentityRowRenderTest {
         }
     }
 
+    /** A task cell picker lists ONE task id once per path: each row carries its own path, and both lay out. */
+    @Test
+    fun the_same_task_listed_once_per_path_lays_out() {
+        val s = stateWithTasks()
+        val task = s.tasks.values.first { it.title == "Child" }
+        render {
+            Column(Modifier.width(IntrinsicSize.Max)) {
+                for (path in listOf(listOf("root", "A"), listOf("root", "B", "A"))) {
+                    TaskIdentityRow(s, emptyMap(), EditMenuItem(label = task.title, taskId = task.id, taskPath = path) {}, onIntent = {})
+                }
+            }
+        }
+    }
+
     @Test
     fun the_row_lays_out_in_a_narrow_parent_too() {
         val s = stateWithTasks()

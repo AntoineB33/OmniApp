@@ -141,28 +141,24 @@ fun CalendarElementsWindow(
             ) {
                 // --- 1. What to put here -------------------------------------------------------------
                 EditMenuSectionLabel(mode.selectionLabel)
-                OutlinedTextField(
-                    value = search,
-                    onValueChange = { search = it },
-                    label = { Text(kind.label) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                // The identity and title menus are the SAME block every naming field in the app uses — a
-                // task cell's, the reminder editor's — read for whichever family the kind names. The rows
-                // differ; the control does not.
-                SelectionMenus(
-                    kind = kind,
-                    search = search,
-                    mode = mode,
-                    candidates = candidates,
-                    taskMenuEntries = taskMenuEntries,
-                    taskTitleSuggestions = taskTitleSuggestions,
-                    titleForTaskId = titleForTaskId,
-                    reminderMenuEntries = reminderMenuEntries,
-                    reminderTitleSuggestions = reminderTitleSuggestions,
-                    alarms = alarms,
-                    onSearchChange = { search = it },
+                // The element is named in a task cell, configured ([NamingCell], user rule 2026-10-03: every field
+                // that selects an id is the tree's own cell) — its menus read for whichever family the kind names.
+                // What is typed is itself the answer here (a new reminder's title, a search), so it is read as it is
+                // typed, never dropped.
+                Text(kind.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NamingCell(
+                    cellId = CALENDAR_ELEMENT_CELL,
+                    shown = search,
+                    identityLabel = selectionIdentityLabel(kind, mode),
+                    identity = { draft ->
+                        selectionIdentityRows(kind, draft, mode, candidates, taskMenuEntries, titleForTaskId, reminderMenuEntries)
+                    },
+                    suggestions = { draft -> selectionSuggestions(kind, draft, mode, taskTitleSuggestions, reminderTitleSuggestions, alarms) },
+                    onPick = { name -> search = name },
+                    selectedKey = search,
+                    onCleared = { search = "" },
+                    onDraftChange = { draft -> search = draft },
+                    width = 360.dp,
                 )
                 // The kind field of a RESTRICTIVE PERIOD is its identity, so it belongs in this section and
                 // not in the configuration below — the same control the task cell's categories field is.
@@ -607,75 +603,65 @@ private fun BoundRow(
     }
 }
 
+/** The element field's cell id: a cell of no tree. */
+private val CALENDAR_ELEMENT_CELL = org.example.project.scheduler.model.CellId("calendar/element")
+
+/** PRD §8 §1a: what the element field's identity menu is headed, for the family the chosen kind names. */
+private fun selectionIdentityLabel(kind: CalendarElements.Kind, mode: CalendarElementsMode): String =
+    when {
+        mode == CalendarElementsMode.Edit -> "Here"
+        kind == CalendarElements.Kind.TaskPanel -> "Tasks"
+        kind == CalendarElements.Kind.Reminder -> "Reminders"
+        kind == CalendarElements.Kind.Alarm -> "Alarms"
+        else -> ""
+    }
+
 /**
- * PRD §8 §1a: **the identity and title menus under the search bar**, read for whichever family the chosen
- * kind names — the tasks' (a task cell's own menus), the reminders' (§14's), the account's alarms, and, in
- * **edit** mode, the elements at the mouse and nothing else.
+ * PRD §8 §1a: **the identity rows of the element field**, read for whichever family the chosen kind names — the
+ * tasks' (a task cell's own menu, each a task element), the reminders' (§14's), and, in **edit** mode, the elements
+ * at the mouse and nothing else. A row's key is the NAME picking it puts in the field.
  *
- * It is [EditModeMenuBlock] in every case, which is the point: the question "which one of these do you
- * mean?" has one control in this app, and a second list rendered a second way is how two of them come to
- * disagree about what a pick does.
+ * No id rows for an alarm (PRD §18): an alarm picked by id would mean "ring alarm-3 here too", which an alarm cannot
+ * be — its occurrences come from its weekdays. A period's identity is its KIND, picked in the kind field.
  */
-@Composable
-private fun SelectionMenus(
+private fun selectionIdentityRows(
     kind: CalendarElements.Kind,
     search: String,
     mode: CalendarElementsMode,
     candidates: List<CalendarElements.Draft>,
     taskMenuEntries: (String, TaskId?) -> List<SchedulerDomain.ChangeTaskMenuEntry>,
-    taskTitleSuggestions: (String) -> List<String>,
     titleForTaskId: (TaskId) -> String?,
     reminderMenuEntries: (String) -> List<SchedulerDomain.ReminderMenuEntry>,
+): List<NamingRow> {
+    if (mode == CalendarElementsMode.Edit) {
+        return candidates.filter { it.kind == kind }.map { NamingRow(it.displayName, it.displayName) }.distinctBy { it.key }
+    }
+    return when (kind) {
+        CalendarElements.Kind.TaskPanel ->
+            taskMenuEntries(search, null).mapNotNull { entry ->
+                entry.taskId?.let { id -> NamingRow(titleForTaskId(id) ?: entry.label, entry.label, taskId = id) }
+            }
+        CalendarElements.Kind.Reminder -> reminderMenuEntries(search).map { NamingRow(it.title, it.title) }
+        CalendarElements.Kind.Alarm, CalendarElements.Kind.RestrictivePeriod -> emptyList()
+    }
+}
+
+/** The element field's title suggestions; an alarm's are the existing LABELS (naming a new one like an old one). */
+private fun selectionSuggestions(
+    kind: CalendarElements.Kind,
+    search: String,
+    mode: CalendarElementsMode,
+    taskTitleSuggestions: (String) -> List<String>,
     reminderTitleSuggestions: (String) -> List<String>,
     alarms: List<AlarmEntry>,
-    onSearchChange: (String) -> Unit,
-) {
-    if (mode == CalendarElementsMode.Edit) {
-        EditModeMenuBlock(
-            identityLabel = "Here",
-            identityRows = candidates.filter { it.kind == kind }.map { row ->
-                EditMenuItem(label = row.displayName, selected = row.displayName == search) {
-                    onSearchChange(row.displayName)
-                }
-            },
-        )
-        return
-    }
-    when (kind) {
-        CalendarElements.Kind.TaskPanel ->
-            EditModeMenuBlock(
-                identityLabel = "Tasks",
-                identityRows = taskMenuEntries(search, null).mapNotNull { entry ->
-                    entry.taskId?.let { id ->
-                        EditMenuItem(label = entry.label, selected = false, taskId = id) {
-                            onSearchChange(titleForTaskId(id) ?: entry.label)
-                        }
-                    }
-                },
-                suggestions = taskTitleSuggestions(search).map { s -> EditMenuItem(s) { onSearchChange(s) } },
-            )
-        CalendarElements.Kind.Reminder ->
-            EditModeMenuBlock(
-                identityLabel = "Reminders",
-                identityRows = reminderMenuEntries(search).map { entry ->
-                    EditMenuItem(label = entry.title, selected = false) { onSearchChange(entry.title) }
-                },
-                suggestions = reminderTitleSuggestions(search).map { s -> EditMenuItem(s) { onSearchChange(s) } },
-            )
-        // PRD §18: no id rows. An alarm picked by id would mean "ring alarm-3 here too", which an alarm
-        // cannot be — its occurrences come from its weekdays. Existing LABELS are still offered, because
-        // naming a new alarm the way an old one is named is an ordinary thing to want.
+): List<String> {
+    if (mode == CalendarElementsMode.Edit) return emptyList()
+    return when (kind) {
+        CalendarElements.Kind.TaskPanel -> taskTitleSuggestions(search)
+        CalendarElements.Kind.Reminder -> reminderTitleSuggestions(search)
         CalendarElements.Kind.Alarm ->
-            EditModeMenuBlock(
-                identityLabel = "Alarms",
-                identityRows = emptyList(),
-                suggestions = alarms.map { it.label }
-                    .filter { it.isNotBlank() && it.contains(search.trim(), ignoreCase = true) }
-                    .distinct()
-                    .map { s -> EditMenuItem(s) { onSearchChange(s) } },
-            )
-        // A period's identity is its KIND, and the kind field below the button is where it is picked.
-        CalendarElements.Kind.RestrictivePeriod -> Unit
+            alarms.map { it.label }.filter { it.isNotBlank() && it.contains(search.trim(), ignoreCase = true) }.distinct()
+        CalendarElements.Kind.RestrictivePeriod -> emptyList()
     }
 }
 

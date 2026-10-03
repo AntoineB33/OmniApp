@@ -1665,22 +1665,25 @@ internal fun TaskIdentityRow(
     val taskId = item.taskId ?: return
     val task = state.tasks[taskId]
     val title = task?.title?.takeIf { it.isNotBlank() } ?: item.label
-    val paths = allPaths[taskId].orEmpty()
-    val result = SearchDomain.TaskResult(taskId, title, paths.take(1), inTaskTree = paths.isNotEmpty())
+    // The row's own path when it stands for one place of the task (a task cell picker), else the task's first.
+    val paths = item.taskPath?.let { listOf(it) } ?: allPaths[taskId].orEmpty().take(1)
+    val result = SearchDomain.TaskResult(taskId, title, paths, inTaskTree = paths.isNotEmpty())
+    // One task id may be listed several times, once per path: the row's own state is keyed on both.
+    val rowKey = taskId.value + "@" + item.taskPath?.joinToString("/").orEmpty()
     val childListId = task?.childListId
     val hasChildren = childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
-    var expanded by remember(taskId) { mutableStateOf(false) }
-    var menuOpen by remember(taskId) { mutableStateOf(false) }
+    var expanded by remember(rowKey) { mutableStateOf(false) }
+    var menuOpen by remember(rowKey) { mutableStateOf(false) }
     val pick by rememberUpdatedState(item.onClick)
     // BOUNDED in width, whatever the parent offers. A tree cell's edit menus sit in a tree that scrolls sideways, so
     // they are measured with NO maximum width; the row shares its free width between the title and the path box, and
     // an unbounded one is the "Can't represent a width of 2147483563 … in Constraints" crash (anomaly 2026-10-03,
     // typing in a cell and picking from its menus). A narrower parent (a drop-down) still wins.
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().then(contextMenuModifier(item.actions != null, key = taskId to "identity") { menuOpen = true })) {
+        Box(Modifier.fillMaxWidth().then(contextMenuModifier(item.actions != null, key = rowKey) { menuOpen = true })) {
             TaskRow(
                 depth = 0,
-                cellId = CellId("identity-row/" + taskId.value),
+                cellId = CellId("identity-row/$rowKey"),
                 renderVia = null,
                 displayTitle = title,
                 isMainSelection = item.selected,

@@ -255,8 +255,8 @@ object CategoryRules {
         for (category in categoryIds.mapNotNull(state::categoryById)) {
             for (cellId in carrierCells(state, category)) {
                 for (path in ancestorPaths(state, cellId, occurrences)) {
-                    if (null !in seen) seen[null] = ScopeEntry(null, scopeLabel(state, null))
-                    for (ancestor in path) if (ancestor !in seen) seen[ancestor] = ScopeEntry(ancestor, scopeLabel(state, ancestor))
+                    if (null !in seen) seen[null] = scopeEntry(state, null)
+                    for (ancestor in path) if (ancestor !in seen) seen[ancestor] = scopeEntry(state, ancestor)
                 }
             }
         }
@@ -649,6 +649,24 @@ object CategoryRules {
             .filter { it.isNotBlank() && !it.equals(input.trim(), ignoreCase = true) }
             .distinct()
 
-    /** One row of the "relative to" picker: the ancestor cell (`null` = the whole tree), by its path. */
-    data class ScopeEntry(val cellId: CellId?, val label: String)
+    /**
+     * One row of the task cell picker: the cell (`null` = the whole tree), its [label] (its own path), the task it
+     * holds and the [parentPath] above it — what the row shows as the Search window's task row shows a task and its
+     * path, the same task id once per path it is reached by.
+     */
+    data class ScopeEntry(
+        val cellId: CellId?,
+        val label: String,
+        val taskId: TaskId? = null,
+        val parentPath: List<String> = emptyList(),
+    )
+
+    /** The picker row of [cellId]: its task, and the titles from the root down to its parent. */
+    private fun scopeEntry(state: SchedulerState, cellId: CellId?): ScopeEntry {
+        if (cellId == null) return ScopeEntry(null, scopeLabel(state, null))
+        val above = RelativePriorityDomain.ancestorCells(state, cellId).map { ancestor ->
+            SchedulerDomain.taskTitleLabel(state.cells[ancestor]?.taskId?.let { state.tasks[it]?.title })
+        }
+        return ScopeEntry(cellId, scopeLabel(state, cellId), state.cells[cellId]?.taskId, listOf(SchedulerDomain.ROOT_LABEL) + above)
+    }
 }

@@ -562,7 +562,9 @@ once). No Edit Mode, no list of the other paths, no percentage, minimum time, ca
 right-click keeps "go to task". `EditMenuItem.taskId` marks such a row; `LocalTaskIdentityRow`, provided once by the
 app over the live state with the trees' paths measured when the trees change, draws it — without a provider (tests,
 previews) the row is the plain text row. A row naming no task (New task, a title suggestion, a category, a reminder)
-stays the text row.
+stays the text row. **A field that picks a task CELL lists the same task id once per path**: each row carries its own
+path (`EditMenuItem.taskPath`) and shows only that one — the category rule's task cell field
+(`CategoryRules.taskCellEntries`, `ScopeEntry.parentPath`).
 
 ### A field that names an element is a configured task cell
 
@@ -575,13 +577,15 @@ suggestions before it was ever entered.
   the "Changed element" and category filters of the Search window, the "Set of tasks" action's "add a task", the
   category actions' "Add category" / "Remove category" and "Add a rule"'s "Relative to" (and the category
   edit window's), "Add under…" (Search action and task edit window, `AddUnderField`), the task cell's categories
-  field, the Categories window's "Add a category", and a period's "Kind of period".
+  field, the Categories window's "Add a category", a period's "Kind of period", and the calendar's "Edit task" Task
+  field and elements window's element field — the two whose typed text is itself a value, mirrored as it is typed
+  (`NamingCell.onDraftChange`) so their Save / Add read what is on screen.
 - **A field that may name something new** gives a `namingCreateRow` for the draft — the tree cell's "New task" row in
   its own words — rather than a button under the field.
 - **Never draw an `EditModeMenuBlock` under a plain text field** for a new naming field: that is the shape whose
-  menus show before the field is entered. Still drawn that way, by design, are the pop-ups whose only content is the
-  pick (the calendar's "Pick a task", the calendar elements window's search bar, the reminder windows) and the
-  calendar "Edit task" window's Task field, whose typed title is itself a value (a new calendar-only task).
+  menus show before the field is entered. Still drawn that way (2026-10-03), each for a behaviour `NamingCell` does not
+  have yet: the calendar's "Pick a task" (its arrows walk a list above the field and Enter commits the highlight), the
+  three reminder editors and the task-tree name field (a Change / Rename **Mode selector**).
 
 ### A task's set of tasks, and the tasks with no path
 

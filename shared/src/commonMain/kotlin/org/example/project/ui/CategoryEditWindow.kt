@@ -303,6 +303,7 @@ private fun RuleAdder(state: SchedulerState, categoryIds: List<CategoryId>, idPr
     var distanceText by remember(categoryIds) { mutableStateOf("1") }
     var newShare by remember(categoryIds) { mutableStateOf("") }
     val distance = distanceText.trim().toIntOrNull()?.takeIf { it >= 1 }
+    val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Task cell", style = MaterialTheme.typography.bodySmall)
@@ -330,8 +331,14 @@ private fun RuleAdder(state: SchedulerState, categoryIds: List<CategoryId>, idPr
             NamingCell(
                 cellId = CellId("$idPrefix/relative-to"),
                 shown = cellPick?.label.orEmpty(),
+                taskColor = cellPick?.taskId?.let { taskColors[it] },
                 identityLabel = "Task cells",
-                identity = { draft -> CategoryRules.taskCellEntries(state, categoryIds, draft).map { NamingRow(relativeKey(it), it.label) } },
+                // Each row is a task element with ITS path: the same task id appears once per path it is reached by.
+                identity = { draft ->
+                    CategoryRules.taskCellEntries(state, categoryIds, draft).map {
+                        NamingRow(relativeKey(it), it.label, taskColor = it.taskId?.let { id -> taskColors[id] }, taskId = it.taskId, taskPath = it.parentPath)
+                    }
+                },
                 // Every task title the draft appears in, as in a tree cell (PRD §4 Menu 2): picking one fills the
                 // field, which narrows the task cells to the paths holding it.
                 suggestions = { draft -> SchedulerDomain.titleSuggestions(state, draft) },
