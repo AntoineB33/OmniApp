@@ -407,3 +407,25 @@ It lives in the host because the host already sees the only two events that deci
   no window frame.
 
 ---
+
+### The notifications window
+
+- **A notification that fires while the app is NOT in focus brings up a Search window on the notifications posted since
+  the app LOST the focus — in front and focused, so it is what the user comes back to** (user rule 2026-10-04; `App`,
+  `SearchDomain.notificationsConfig` / `notificationsWindowOwed`, `NotificationsWindowTest`). Written, spoken or
+  both: whatever `notifyUser` logs (`SchedulerState.notificationLog`, also a Search kind, `Kind.Notification`, newest
+  first by its own date sort). What the user was there to see is not in it.
+- **It gathers until the user closes it; the next one starts at the next loss of focus.** Each further out-of-focus
+  notification brings the standing window back in front rather than opening another (`notificationAnsweredAtMillis`
+  keeps one notification from doing it twice). The first form (same day) listed from a stored "last closed" marker —
+  the whole log the first time, days of it — and did NOTHING when the window was already open, so a timer ending out
+  of focus was answered by a window opened at launch, behind the others, holding everything. There is no stored marker:
+  the instant is the window's own filter (`Filters.notificationsSinceMillis`), persisted with the window.
+- **"That window" is a frame id, not a look-alike.** `App` holds the id it opened or brought back
+  (`notificationsWindowId`, Compose-only); after a restart the one still open with that kind of configuration
+  (`isNotificationsWindow`: the notifications, FROM an instant) is the one brought back. A Search window on the
+  notifications opened by hand has no such instant and is never taken for it.
+- **Event-driven**: the log growing and the focus changing (`LocalWindowInfo.isWindowFocused`, the same on every
+  platform) are the only things that ask. The app counts as out of focus from its start until it first has it, and the
+  instant the focus was lost is kept, so a notification posted while the composition was not running (a phone's
+  activity stopped) is still answered on the way back. Never a timer.

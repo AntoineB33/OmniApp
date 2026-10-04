@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The notifications window — 2026-10-04
+
+User request: when a notification (written, spoken or both) fires while the app is not in focus, a Search window
+comes up on the notifications posted since then.
+- `SearchDomain.Kind.Notification` lists `notificationLog` (title, message, date, what was said); filter
+  `Filters.notificationsSinceMillis`, sort `SortKey.NotificationDate`; `notificationsConfig(since)`.
+- `App`: out of focus (`LocalWindowInfo.isWindowFocused`) + the log growing = the window, opened on what fired since
+  the focus was lost, or brought back in front if it is already standing; held by its frame id. Never a timer.
+- **Anomaly, same day** (user: a timer ended out of focus, and no focused window with that one notification): the
+  first form listed from a stored "last closed" marker — never set, so the WHOLE log — and did nothing when the window
+  was already open; the release DB showed it had opened at launch (two start-up notifications, the app not yet in
+  focus) and sat behind. Now the list starts where the focus was lost, every further out-of-focus notification brings
+  the window in front, and the marker (`notificationsClearedAtMillis`, `SetNotificationsCleared`) is removed.
+  `NotificationsWindowTest`.
+
 ### Timer: leaving a countdown field dropped the minutes it had held — 2026-10-04
 
 Anomaly (user): the minutes field holds the caret, the seconds read down through 0 to 59, a click outside leaves the

@@ -110,6 +110,13 @@ object SearchDomain {
         Quota("quota"),
         Reminder("reminder"),
         HistoryUnit("history unit"),
+
+        /**
+         * A notification the app posted — written, spoken or both ([org.example.project.scheduler.state.NotificationLogEntry],
+         * the History window's own log). Listed for the window the app opens when one fires while the app is not in
+         * focus (user rule 2026-10-04, [notificationsConfig]); read-only, like a history unit.
+         */
+        Notification("notification"),
         TaskTree("task tree"),
         TaskRelation("task relation"),
         Shortcut("keyboard shortcut"),
@@ -175,6 +182,42 @@ object SearchDomain {
      * nothing added — what a creation row's "Search every element of the kind" opens ([AddedAction.CreationSearchAll]).
      */
     fun kindSearchConfig(kind: Kind): Config = Config(kinds = setOf(kind))
+
+    /**
+     * **The notifications window** (user rule 2026-10-04): the Search window the app opens when a notification —
+     * written, spoken or both — fires while the app is not in focus. It lists the notifications posted from
+     * [sinceMillis] on: the instant the app LOST the focus, so what the user was there to see is not in it. The window
+     * stays, and goes on gathering, until the user closes it; the next one starts at the next loss of focus.
+     */
+    fun notificationsConfig(sinceMillis: Long): Config =
+        Config(
+            kinds = setOf(Kind.Notification),
+            filters = Filters(notificationsSinceMillis = sinceMillis),
+            // The newest first: the one that has just fired is the one the window was opened for.
+            sorts = listOf(SortMethod(Kind.Notification, SortKey.NotificationDate, descending = true)),
+        )
+
+    /** A [Kind.Notification] row's id: the instant it was posted at and its place in the log (two can share an instant). */
+    fun notificationId(entry: org.example.project.scheduler.state.NotificationLogEntry, index: Int): String =
+        entry.timeMillis.toString() + "#" + index
+
+    /** The instant the notification a [Kind.Notification] row's id names was posted at, or null for a malformed id. */
+    fun notificationTimeOf(id: String): Long? = id.substringBefore('#').toLongOrNull()
+
+    /** Whether [config] is a notifications window's ([notificationsConfig]): the notifications, from an instant on. */
+    fun isNotificationsWindow(config: Config): Boolean =
+        config.kinds == setOf(Kind.Notification) && config.filters.notificationsSinceMillis != null
+
+    /**
+     * Whether the notifications window is owed (user rule 2026-10-04): a notification was posted while the app was NOT
+     * in focus — at or after [unfocusedSinceMillis], the instant it lost it (null: it has the focus and never lost it
+     * since this was last asked) — that the window has not been shown for yet ([answeredAtMillis], the last one it
+     * was; null = none).
+     */
+    fun notificationsWindowOwed(lastNotificationAtMillis: Long?, unfocusedSinceMillis: Long?, answeredAtMillis: Long?): Boolean =
+        lastNotificationAtMillis != null && unfocusedSinceMillis != null &&
+            lastNotificationAtMillis >= unfocusedSinceMillis &&
+            (answeredAtMillis == null || lastNotificationAtMillis > answeredAtMillis)
 
     /** The kinds the added CREATION rows make, in the drop-down's order ([CREATABLE]), each once. */
     fun creationKinds(added: List<Result>): List<Kind> {
@@ -326,6 +369,7 @@ object SearchDomain {
                     calendarAddAtMillis = filters.calendarAddAtMillis,
                     calendarAtOn = filters.calendarAtOn,
                     calendarAtMillis = filters.calendarAtMillis,
+                    notificationsSinceMillis = filters.notificationsSinceMillis,
                     calendarClickMillis = calendarClickMillis,
                 ),
             )
@@ -382,6 +426,7 @@ object SearchDomain {
                         calendarAddAtMillis = stored.calendarAddAtMillis,
                         calendarAtOn = stored.calendarAtOn,
                         calendarAtMillis = stored.calendarAtMillis,
+                        notificationsSinceMillis = stored.notificationsSinceMillis,
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                     // Heals the index-shaped history-unit keys of builds before 2026-10-03 ([historyUnitId]): an
@@ -569,6 +614,11 @@ object SearchDomain {
          */
         val calendarAtOn: Boolean = false,
         val calendarAtMillis: Long? = null,
+        /**
+         * Null = every notification the log holds: else only those posted from this instant on — when the app lost
+         * the focus, for the notifications window the app opens ([notificationsConfig]).
+         */
+        val notificationsSinceMillis: Long? = null,
     ) {
         /** The instant the calendar filter keeps rows for, while it is on and has one; else null. */
         val calendarAddAt: Long?
@@ -655,6 +705,7 @@ object SearchDomain {
         ReminderTime(Kind.Reminder, "time"),
         ReminderCadence(Kind.Reminder, "cadence"),
         HistoryDate(Kind.HistoryUnit, "date"),
+        NotificationDate(Kind.Notification, "date"),
         TaskTreeDate(Kind.TaskTree, "date"),
         TaskTreeSize(Kind.TaskTree, "tasks"),
         RelationSection(Kind.TaskRelation, "section"),
@@ -738,6 +789,7 @@ object SearchDomain {
         QuotaSort(Kind.Quota, "Sort by", sorts = true),
         ReminderSort(Kind.Reminder, "Sort by", sorts = true),
         HistorySort(Kind.HistoryUnit, "Sort by", sorts = true),
+        NotificationSort(Kind.Notification, "Sort by", sorts = true),
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
         RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
@@ -863,6 +915,8 @@ object SearchDomain {
         /** New 2026-10-01 (the calendar's "edit…"): absent = off, no position. */
         val calendarAtOn: Boolean = false,
         val calendarAtMillis: Long? = null,
+        /** New 2026-10-04 (the notifications window): absent = every notification. */
+        val notificationsSinceMillis: Long? = null,
     )
 
     @Serializable
@@ -1348,6 +1402,15 @@ object SearchDomain {
                         ItemResult(kind, historyUnitId(category, unit), unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
                     }
                 }
+                Kind.Notification -> state.notificationLog.mapIndexed { index, entry ->
+                    val said = entry.spoken?.takeIf { it.isNotBlank() && it != entry.message }?.let { " · said: $it" }.orEmpty()
+                    ItemResult(
+                        kind,
+                        notificationId(entry, index),
+                        entry.title.ifBlank { "Notification" },
+                        listOf(entry.message, dateTime(entry.timeMillis, timeZone)).filter { it.isNotBlank() }.joinToString(" · ") + said,
+                    )
+                }
                 Kind.TaskTree -> state.taskTrees.map { entry ->
                     val open = entry.id == state.activeTaskTreeId
                     val size = if (open) state.tasks.size else entry.tree.tasks.size
@@ -1532,6 +1595,7 @@ object SearchDomain {
                 SortKey.ReminderTime -> chores[row.id]?.timeOfDayMinutes
                 SortKey.ReminderCadence -> chores[row.id]?.spanDays
                 SortKey.HistoryDate -> historyUnitOf(state, row.id)?.timeMillis
+                SortKey.NotificationDate -> notificationTimeOf(row.id)
                 SortKey.TaskTreeDate -> trees[row.id]?.dateMillis
                 SortKey.TaskTreeSize -> trees[row.id]?.let { entry ->
                     if (entry.id == state.activeTaskTreeId) state.tasks.size else entry.tree.tasks.size
@@ -1607,6 +1671,9 @@ object SearchDomain {
                         ReminderRepeats.Repeating -> chore.spanDays > 0.0
                     }
                 }
+                Kind.Notification ->
+                    filters.notificationsSinceMillis == null ||
+                        (notificationTimeOf(result.id) ?: Long.MAX_VALUE) >= filters.notificationsSinceMillis
                 Kind.HistoryUnit -> {
                     val unit = historyUnitOf(state, result.id) ?: return true
                     (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&

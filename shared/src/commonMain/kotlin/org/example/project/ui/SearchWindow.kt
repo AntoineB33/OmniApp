@@ -207,6 +207,8 @@ class SearchRowOpeners(
             SearchDomain.Kind.Reminder -> onEditReminder(item.id)
             SearchDomain.Kind.Quota -> onOpenQuota(item.id)
             SearchDomain.Kind.HistoryUnit -> onOpenHistoryUnit(item.id)
+            // A notification is a fact that happened: it has nothing to open.
+            SearchDomain.Kind.Notification -> Unit
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()

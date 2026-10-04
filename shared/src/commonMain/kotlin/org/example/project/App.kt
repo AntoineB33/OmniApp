@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1467,6 +1468,45 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // this right-click with the matching filter on and the other off — its added elements and the rest of its
         // configuration kept, its types those the filter is about — or a new one ([SearchDomain.calendarAddConfig],
         // [SearchDomain.calendarAtConfig]).
+        // User rule 2026-10-04: **the notifications window.** A notification — written, spoken or both — that fires
+        // while the app is NOT in focus brings up a Search window on the notifications posted since the app lost the
+        // focus (`SearchDomain.notificationsConfig`), in front and focused, so it is what the user comes back to. The
+        // window stays and goes on gathering until the user closes it; the next one starts at the next loss of focus.
+        // "That window" is the one opened here, held by its frame id (after a restart: the one still open with that
+        // kind of configuration) — closing another Search window that shows the same thing ends nothing.
+        // Event-driven: the log growing and the focus changing are the only things that ask (never a timer). The
+        // app counts as out of focus from its start until it first has the focus.
+        var notificationsWindowId by remember { mutableStateOf<String?>(null) }
+        var unfocusedSinceMillis by remember { mutableStateOf<Long?>(clock.nowMillis()) }
+        var notificationAnsweredAtMillis by remember { mutableStateOf<Long?>(null) }
+        val appFocused = LocalWindowInfo.current.isWindowFocused
+        val lastNotificationAtMillis = schedulerState.notificationLog.lastOrNull()?.timeMillis
+        fun openSearchFrames(): List<String> =
+            listOfNotNull(FloatingWindow.Search.name.takeIf { isWindowOpen(FloatingWindow.Search) }) +
+                windowCopies.filter { lateralWindowOf(it) == FloatingWindow.Search }
+        val notificationsWindowOpen = notificationsWindowId?.let { it in openSearchFrames() }
+        LaunchedEffect(appFocused, lastNotificationAtMillis) {
+            if (!appFocused && unfocusedSinceMillis == null) unfocusedSinceMillis = clock.nowMillis()
+            val since = unfocusedSinceMillis
+            if (since != null && SearchDomain.notificationsWindowOwed(lastNotificationAtMillis, since, notificationAnsweredAtMillis)) {
+                notificationAnsweredAtMillis = lastNotificationAtMillis
+                val open = openSearchFrames()
+                // The window already gathering (held, or left open across a restart) is brought back in front; else a
+                // new one opens on what fired since the focus was lost.
+                val standing = notificationsWindowId?.takeIf { it in open }
+                    ?: open.firstOrNull { SearchDomain.isNotificationsWindow(searchConfigOf(it)) }
+                notificationsWindowId =
+                    if (standing != null) standing.also { presentWindow(FloatingWindow.Search, it) }
+                    else openNewWindow(FloatingWindow.Search, SearchDomain.notificationsConfig(since).encode())
+            }
+            // Back in focus: what fired meanwhile has been answered above, and the next stretch starts when it leaves.
+            if (appFocused) unfocusedSinceMillis = null
+        }
+        // Closed: it is no longer held, and the next loss of focus starts a new one.
+        LaunchedEffect(notificationsWindowOpen) {
+            if (notificationsWindowOpen == false) notificationsWindowId = null
+        }
+
         // The Search windows (by frame id) whose type selector opens deployed once they show — the calendar's "add…".
         // A one-shot: the window takes its id off as it deploys the drop-down. Compose-only.
         val searchKindsToDeploy = remember { mutableStateListOf<String>() }
