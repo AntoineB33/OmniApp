@@ -185,6 +185,34 @@ class AlarmEngineTest {
     }
 
     @Test
+    fun a_phone_with_no_os_alarm_seam_rings_from_the_now_line() = runTest {
+        // iOS is a phone, but App() hands its engine no OS alarm armer. Gating the sweep on "is a phone" alone
+        // left it ringing nothing at all — not even with the app open on screen.
+        val start = at(6, 59)
+        val scheduler = testScheduler
+        val clock = object : AppClock {
+            override fun nowMillis(): Long = start + scheduler.currentTime
+        }
+        val rung = mutableListOf<ArmedAlarm>()
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        val engine = SchedulerEngine(
+            vm = vm,
+            clock = clock,
+            scope = backgroundScope,
+            deviceKind = DeviceKind.Phone,
+            screenActive = { true },
+            ringAlarm = { rung.add(it) },
+        )
+        vm.dispatch(SchedulerIntent.SetAlarms(listOf(alarm("alarm-0", 7 * 60, label = "Wake up"))))
+        engine.start()
+        runCurrent()
+        advanceTimeBy(60_001) // cross 07:00
+        runCurrent()
+
+        assertEquals(listOf("alarm-0"), rung.map { it.alarmId }, "a phone with no OS alarm clock rings in-process")
+    }
+
+    @Test
     fun a_desktop_stays_silent_for_an_alarm_the_machine_slept_through() = runTest {
         // The engine starts well PAST the alarm's instant: the first sweep has no previous sweep, so the
         // crossing measures Long.MAX_VALUE old and is swallowed. An app launch never replays a missed ring.

@@ -1088,6 +1088,12 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * User rule 2026-10-04: the scheduler engine's time limit after a change, in seconds
+     * ([SchedulerState.planCalculationLimitSeconds]) — this device's own setting: persisted, never synced, not undoable.
+     */
+    data class SetPlanCalculationLimit(val seconds: Int) : SchedulerIntent
+
+    /**
      * PRD §15 Screen breaks: show/hide the screen breaks on the calendar (a cosmetic display preference). Hiding
      * does not touch the schedule or notifications. Persisted; not undoable.
      */

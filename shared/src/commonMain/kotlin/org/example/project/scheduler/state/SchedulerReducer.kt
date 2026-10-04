@@ -627,6 +627,10 @@ object SchedulerReducer {
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
+            is SchedulerIntent.SetPlanCalculationLimit ->
+                intent.seconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS).let {
+                    if (it == state.planCalculationLimitSeconds) state else state.copy(planCalculationLimitSeconds = it)
+                }
             is SchedulerIntent.SetShowScreenBreaks ->
                 if (state.showScreenBreaks == intent.show) state
                 else state.copy(showScreenBreaks = intent.show)
@@ -2305,13 +2309,15 @@ object SchedulerReducer {
         state: SchedulerState,
         after: List<TaskPanel>,
         label: String = "Calendar edit",
+        /** Record periods the same gesture moves: one unit, one Ctrl+Z ([PanelDelta.records]). */
+        records: RecordChanges = RecordChanges(emptyMap(), emptyMap()),
     ): SchedulerState {
         val before = state.panels
         // PRD §8: same-task panels auto-merge (unless their pin state differs) the moment an add / edit
         // / move / resize / pin makes them touch or overlap.
         val normalized = SchedulerDomain.mergeSameTaskPanels(after)
-        if (before == normalized) return state
-        return commitDelta(state, PanelDelta(before, normalized, label), HistoryCategory.Calendar)
+        if (before == normalized && records.tasks.isEmpty()) return state
+        return commitDelta(state, PanelDelta(before, normalized, label, records), HistoryCategory.Calendar)
     }
 
     /**
@@ -2732,11 +2738,14 @@ object SchedulerReducer {
     ): SchedulerState {
         val sourceTask = state.tasks[intent.recordTaskId] ?: return state
         val sourceRange = TaskTimeRange(intent.recordStartEpochMillis, intent.recordEndEpochMillis)
-        // Record lives outside history; removing it here is a side effect (undo won't restore it).
-        val trimmedTasks =
-            state.tasks + (intent.recordTaskId to sourceTask.copy(record = sourceTask.record - sourceRange))
+        // The record period leaves in the SAME unit the panel arrives in, so one Ctrl+Z puts the block back where it
+        // was. (It used to leave outside the history: undoing the drag removed the panel, and the block was gone.)
+        val records = RecordChanges.of(
+            mapOf(intent.recordTaskId to sourceTask.record),
+            mapOf(intent.recordTaskId to sourceTask.record - sourceRange),
+        )
         val end = maxOf(intent.endEpochMillis, intent.startEpochMillis + SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS)
-        val (panelId, allocated) = state.copy(tasks = trimmedTasks).allocatePanelId()
+        val (panelId, allocated) = state.allocatePanelId()
         val weight =
             if (intent.allowOverlap) {
                 SchedulerDomain.seedOverlapWeight(allocated.panels, intent.startEpochMillis, end)
@@ -2755,7 +2764,7 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
             )
-        return commitPanels(allocated, allocated.panels + panel, label = "Pin record")
+        return commitPanels(allocated, allocated.panels + panel, label = "Pin record", records = records)
     }
 
     /** PRD §8 "Remove": delete a panel (undoable calendar delta). */
@@ -3384,8 +3393,8 @@ object SchedulerReducer {
      * resiliences. A kind the account defined strips exactly the tasks it left at `0`.
      *
      * A record is not an Undo/Redo unit (it lives outside the history, like every other banking side effect),
-     * so undoing the period restores the panels it trimmed but not the records it stripped — the same
-     * contract [reducePinRecord] and the advance tick already work under.
+     * so undoing the period restores the panels it trimmed but not the records it stripped — the contract the
+     * advance tick works under. ([reducePinRecord] no longer does: a dragged record comes back with one Ctrl+Z.)
      */
     private fun stripRecordsUnderPeriod(state: SchedulerState, panel: TaskPanel): SchedulerState {
         val kind = panel.restrictiveKind
@@ -6280,22 +6289,37 @@ internal data class WindowSelectionDelta(
 internal data class PanelDelta(
     val changes: EntryChanges<String, TaskPanel>,
     override val label: String = "Calendar edit",
+    /**
+     * The completed work the same gesture moved, when it moved any: a past block dragged off its record
+     * ([SchedulerReducer.reducePinRecord]) is the record period leaving AND the panel arriving, and undoing only
+     * the panel made the block vanish (2026-10-04). Empty for every other panel edit.
+     */
+    val records: RecordChanges = RecordChanges(emptyMap(), emptyMap()),
 ) : Delta {
     /** Built from the whole panel list before and after; only the panels that differ are kept. */
-    constructor(before: List<TaskPanel>, after: List<TaskPanel>, label: String = "Calendar edit") :
-        this(EntryChanges.ofList(before, after) { it.id }, label)
+    constructor(
+        before: List<TaskPanel>,
+        after: List<TaskPanel>,
+        label: String = "Calendar edit",
+        records: RecordChanges = RecordChanges(emptyMap(), emptyMap()),
+    ) : this(EntryChanges.ofList(before, after) { it.id }, label, records)
 
     override val details: List<String>
-        get() = panelDiffLines(changes)
+        get() = panelDiffLines(changes) + records.tasks.map { id ->
+            "${id.value}: record +${records.added[id].orEmpty().size} −${records.removed[id].orEmpty().size} periods"
+        }
 
     override fun undo(state: SchedulerState): SchedulerState =
-        state.copy(panels = changes.applyToList(state.panels, forward = false) { it.id })
+        records.applyTo(state.copy(panels = changes.applyToList(state.panels, forward = false) { it.id }), forward = false)
 
     override fun redo(state: SchedulerState): SchedulerState =
-        state.copy(panels = changes.applyToList(state.panels, forward = true) { it.id })
+        records.applyTo(state.copy(panels = changes.applyToList(state.panels, forward = true) { it.id }), forward = true)
 
     override fun commit(state: SchedulerState): SchedulerState =
-        state.copy(panels = changes.applyToList(state.panels, forward = true, exact = true) { it.id })
+        records.applyTo(
+            state.copy(panels = changes.applyToList(state.panels, forward = true, exact = true) { it.id }),
+            forward = true,
+        )
 }
 
 /**

@@ -760,6 +760,59 @@ class SchedulerCalendarTest {
         assertTrue(pinnedS.panels[0].pinned)
     }
 
+    @Test
+    fun undoing_a_dragged_past_block_puts_it_back_where_it_was() {
+        // 2026-10-04 anomaly: a past panel dragged elsewhere, then Undo, and the block VANISHED. The drag lifted the
+        // record period outside the history and only the new panel was the unit, so Undo took the panel away and
+        // nothing brought the record back.
+        val (s0, a, _) = stateWithTwoTasks()
+        val recorded = TaskTimeRange(10_000_000L, 10_000_000L + 45 * MIN)
+        val s = s0.copy(tasks = s0.tasks + (a to s0.tasks[a]!!.copy(record = listOf(recorded))))
+        val dragged =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.PinRecordAsPanel(
+                    recordTaskId = a,
+                    recordStartEpochMillis = recorded.startEpochMillis,
+                    recordEndEpochMillis = recorded.endEpochMillis,
+                    taskId = a,
+                    title = s.tasks[a]!!.title,
+                    startEpochMillis = recorded.startEpochMillis + 60 * MIN,
+                    endEpochMillis = recorded.endEpochMillis + 60 * MIN,
+                    pins = PanelPins(existence = true),
+                ),
+            )
+        val focused = SchedulerReducer.reduce(dragged, SchedulerIntent.SetCalendarFocus(true))
+
+        val undone = SchedulerReducer.reduce(focused, SchedulerIntent.Undo)
+        assertEquals(listOf(recorded), undone.tasks[a]!!.record, "one undo puts the block back on its record")
+        assertTrue(undone.panels.isEmpty(), "and takes the moved panel away")
+
+        val redone = SchedulerReducer.reduce(undone, SchedulerIntent.Redo)
+        assertTrue(redone.tasks[a]!!.record.isEmpty())
+        assertEquals(1, redone.panels.size)
+
+        // The unit survives a relaunch with its record half: undone after a reload, the block still comes back.
+        val reloaded = SchedulerStateCodec.decode(SchedulerStateCodec.encode(focused))!!
+        val undoneAfterReload = SchedulerReducer.reduce(reloaded, SchedulerIntent.Undo)
+        assertEquals(listOf(recorded), undoneAfterReload.tasks[a]!!.record)
+    }
+
+    @Test
+    fun a_panel_unit_written_before_it_could_carry_records_still_undoes() {
+        // Previous shape: a `panels` unit with no `recordRemoved` / `recordAdded`. Every plain panel edit still
+        // writes exactly that (null halves are omitted), so this is also what an older build reads.
+        val (s, _, _) = stateWithTwoTasks()
+        val withPanel = SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.AddTaskPanel(null, "x", 1_000_000L, 1_000_000L + 45 * MIN, PanelPins(existence = false)),
+        )
+        val encoded = SchedulerStateCodec.encode(SchedulerReducer.reduce(withPanel, SchedulerIntent.SetCalendarFocus(true)))
+        assertFalse("recordRemoved" in encoded || "recordAdded" in encoded, "a panel-only unit keeps the old shape")
+        val undone = SchedulerReducer.reduce(SchedulerStateCodec.decode(encoded)!!, SchedulerIntent.Undo)
+        assertTrue(undone.panels.isEmpty())
+    }
+
     // ----- §10 New Task overlap avoidance (pinned panels only) --------------------------------
 
     @Test

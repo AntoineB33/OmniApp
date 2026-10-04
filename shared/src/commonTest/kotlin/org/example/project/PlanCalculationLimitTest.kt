@@ -149,4 +149,56 @@ class PlanCalculationLimitTest {
             "the stages must reach the end of the week",
         )
     }
+
+    // ----- the limit is the device's own setting (user rule 2026-10-04) -----------------------------------------
+
+    @Test
+    fun the_limit_is_a_local_setting_kept_in_its_bounds_persisted_and_never_synced() {
+        val base = org.example.project.scheduler.state.SchedulerState.empty()
+        assertEquals(120, base.planCalculationLimitSeconds, "two minutes until the user sets another")
+        val r = { s: org.example.project.scheduler.state.SchedulerState, n: Int ->
+            org.example.project.scheduler.state.SchedulerReducer.reduce(s, SchedulerIntent.SetPlanCalculationLimit(n))
+        }
+        assertEquals(30, r(base, 30).planCalculationLimitSeconds)
+        assertEquals(1, r(base, 0).planCalculationLimitSeconds, "at least a second")
+        assertEquals(3600, r(base, 999_999).planCalculationLimitSeconds, "at most an hour")
+        assertTrue(r(base, 120) === base, "nothing changed")
+
+        val set = r(base, 30)
+        val codec = org.example.project.scheduler.persistence.SchedulerStateCodec
+        // Persisted…
+        assertEquals(30, codec.decode(codec.encode(set))!!.planCalculationLimitSeconds)
+        // …never synced: a device's budget is not an authoritative change, and a pull keeps this device's.
+        assertEquals(codec.syncFingerprint(base), codec.syncFingerprint(set))
+        assertEquals(30, base.withLocalViewStateFrom(set).planCalculationLimitSeconds)
+        // A payload written before the setting existed: the two minutes it always was.
+        val previous = codec.encode(base)
+        assertTrue("planCalculationLimitSeconds" !in previous, "an untouched limit writes no field — the older shape")
+        assertEquals(120, codec.decode(previous)!!.planCalculationLimitSeconds)
+    }
+
+    @Test
+    fun the_engine_reads_the_devices_limit_when_none_is_injected() = runTest {
+        val scheduler = testScheduler
+        val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        // No injected limit: the state's. A virtual-clock test spends no real time, so a one-second limit is never
+        // reached and the fill runs on to its goal — which a zero limit (the tests above) stops after one stage.
+        vm.dispatch(SchedulerIntent.SetPlanCalculationLimit(1))
+        val engine =
+            SchedulerEngine(
+                vm = vm,
+                clock = object : AppClock {
+                    override fun nowMillis(): Long = T0 + scheduler.currentTime
+                },
+                scope = backgroundScope,
+                tz = TimeZone.UTC,
+                deviceKind = DeviceKind.Desktop,
+                screenActive = { true },
+            )
+        engine.start()
+        seedAccount(vm)
+        advanceTimeBy(DEBOUNCE_MILLIS + 1)
+        runCurrent()
+        assertTrue(planFront(vm) > T0 + DEBOUNCE_MILLIS + PROGRESSIVE_FIRST_STAGE_MILLIS, "more than the first stage ran")
+    }
 }

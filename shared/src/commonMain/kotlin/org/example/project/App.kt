@@ -3307,6 +3307,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // notifications stay on).
                             showScreenBreaks = schedulerState.showScreenBreaks,
                             onToggleScreenBreaks = { vm.dispatch(SchedulerIntent.SetShowScreenBreaks(it)) },
+                            planCalculationLimitSeconds = schedulerState.planCalculationLimitSeconds,
+                            onPlanCalculationLimitChange = { vm.dispatch(SchedulerIntent.SetPlanCalculationLimit(it)) },
                             automaticSchedule = schedulerState.automaticSchedule,
                             onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
                             showReminders = schedulerState.showReminders,
@@ -4271,6 +4273,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         openNewWindow(FloatingWindow.Calendar)
                     }
                 },
+                onUndo = { vm.dispatch(SchedulerIntent.Undo) },
+                onRedo = { vm.dispatch(SchedulerIntent.Redo) },
             )
 
             // The menu's collapse toggle: a bookmark/tab sticking out of the menu's top-right border,

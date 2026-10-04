@@ -52,7 +52,10 @@ val Delta.changedElements: Set<ChangedElement>
                 trees.forEach { add(ChangedElement(SearchDomain.Kind.TaskTree, it.value)) }
                 addTasksOf(delta.diff.live)
             }
-            is PanelDelta -> addPanels(delta.changes.before.values + delta.changes.after.values)
+            is PanelDelta -> {
+                addPanels(delta.changes.before.values + delta.changes.after.values)
+                delta.records.tasks.forEach { add(ChangedElement(SearchDomain.Kind.Task, it.value)) }
+            }
             is RecordDelta -> delta.changes.tasks.forEach { add(ChangedElement(SearchDomain.Kind.Task, it.value)) }
             is SleepDelta -> add(ChangedElement(SearchDomain.Kind.RestrictivePeriod, PeriodKinds.SLEEP))
             is AlarmsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Alarm, it)) }

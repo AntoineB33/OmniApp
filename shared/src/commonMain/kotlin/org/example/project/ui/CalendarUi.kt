@@ -3829,6 +3829,9 @@ fun CalendarFloatingWindow(
     showScreenBreaks: Boolean = true,
     /** PRD §15: flip the "Screen breaks" display switch. */
     onToggleScreenBreaks: (Boolean) -> Unit = {},
+    /** The scheduler engine's time limit after a change, in seconds, and its edit — the configuration section's field. */
+    planCalculationLimitSeconds: Int = org.example.project.scheduler.state.DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+    onPlanCalculationLimitChange: (Int) -> Unit = {},
     /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
     showReminders: Boolean = true,
     /** PRD §14: flip the "Reminders" display switch. */
@@ -4036,6 +4039,8 @@ fun CalendarFloatingWindow(
                 onToggleReminders = onToggleReminders,
                 showScreenBreaks = showScreenBreaks,
                 onToggleScreenBreaks = onToggleScreenBreaks,
+                planCalculationLimitSeconds = planCalculationLimitSeconds,
+                onPlanCalculationLimitChange = onPlanCalculationLimitChange,
             )
         }
     }
@@ -4069,13 +4074,18 @@ private fun CalendarConfigurationSection(
     onToggleReminders: (Boolean) -> Unit,
     showScreenBreaks: Boolean,
     onToggleScreenBreaks: (Boolean) -> Unit,
+    planCalculationLimitSeconds: Int,
+    onPlanCalculationLimitChange: (Int) -> Unit,
 ) {
+    // A vertical scrollbar on its right (user rule 2026-10-04), the one the Search window's lists have: the section
+    // already scrolled when the window was shorter than it, with nothing saying so.
+    val scroll = rememberScrollState()
+    Box(Modifier.width(CALENDAR_CONFIGURATION_WIDTH).fillMaxHeight()) {
     Column(
         modifier = Modifier
-            .width(CALENDAR_CONFIGURATION_WIDTH)
-            .fillMaxHeight()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .fillMaxSize()
+            .verticalScroll(scroll)
+            .padding(start = 10.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         MiniMonth(
@@ -4113,7 +4123,42 @@ private fun CalendarConfigurationSection(
         }
         CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders)
         CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks)
+        HorizontalDivider()
+        // User rule 2026-10-04: the resources the scheduler engine may use, on THIS device.
+        Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
+        PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange)
     }
+    ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
+    }
+}
+
+/**
+ * The scheduler engine's **time limit after a change**: how long one calculation may run before the scheduler stops
+ * wherever it has reached (`docs/scheduler_requirements.md` § *Progressive Calculation*). Seconds, kept between
+ * [org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS] and
+ * [org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS]; a text that is not such a number shows the
+ * error state and writes nothing. The limit governs the NEXT calculation, never one already running.
+ */
+@Composable
+private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit) {
+    var draft by remember(seconds) { mutableStateOf(seconds.toString()) }
+    val bounds =
+        org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS..org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS
+    val parsed = draft.trim().toIntOrNull()?.takeIf { it in bounds }
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { typed ->
+            draft = typed
+            typed.trim().toIntOrNull()?.takeIf { it in bounds }?.let(onChange)
+        },
+        singleLine = true,
+        isError = parsed == null,
+        label = { Text("Time limit after a change") },
+        suffix = { Text("s") },
+        // A text field has to take the focus to be typed in (unlike the switches above, which must not); a press
+        // anywhere else gives the keyboard back to the calendar.
+        modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+    )
 }
 
 /**

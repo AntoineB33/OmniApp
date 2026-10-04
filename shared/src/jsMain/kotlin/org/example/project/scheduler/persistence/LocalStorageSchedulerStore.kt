@@ -2,6 +2,7 @@ package org.example.project.scheduler.persistence
 
 import kotlinx.browser.localStorage
 import kotlinx.serialization.json.Json
+import org.example.project.scheduler.platform.Diagnostics
 
 private const val STORAGE_KEY = "omniapp.scheduler-state"
 private val json = Json { ignoreUnknownKeys = true }
@@ -16,8 +17,12 @@ private class LocalStorageSchedulerStore : SchedulerStore {
             runCatching { json.decodeFromString<PersistedSnapshot>(it) }.getOrNull()
         }
 
+    // A browser caps an origin's localStorage (about 5 MB), and the whole account is ONE entry: a large history
+    // overflows it and `setItem` throws. Swallowed, so the save that failed does not also take down the sync push
+    // the view model requests after it — the server still has every edit (`docs/PLATFORMS.md`).
     override fun save(snapshot: PersistedSnapshot) {
-        localStorage.setItem(STORAGE_KEY, json.encodeToString(snapshot))
+        runCatching { localStorage.setItem(STORAGE_KEY, json.encodeToString(snapshot)) }
+            .onFailure { Diagnostics.log("web store: local save failed (${it.message}); the server copy is unaffected") }
     }
 }
 

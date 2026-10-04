@@ -464,10 +464,12 @@ class SchedulerEngine(
     private val planSearch: Boolean = false,
     /**
      * `docs/scheduler_requirements.md` § *Progressive Calculation*: the wall time ONE progressive fill may spend
-     * before the scheduler stops wherever it has reached — [PLAN_CALCULATION_LIMIT_MILLIS]. Injectable so a test
-     * can set it to zero and read the stop, which real time in a virtual-clock test otherwise cannot show.
+     * before the scheduler stops wherever it has reached. Null — every host — reads the device's own setting
+     * ([org.example.project.scheduler.state.SchedulerState.planCalculationLimitSeconds], two minutes until the user
+     * sets another, 2026-10-04) each time a fill starts; a test injects one (zero, to read the stop, which real time
+     * in a virtual-clock test otherwise cannot show).
      */
-    private val calculationLimitMillis: Long = PLAN_CALCULATION_LIMIT_MILLIS,
+    private val calculationLimitMillis: Long? = null,
     private val tz: TimeZone = TimeZone.currentSystemDefault(),
     // PRD §15: what kind of device this is — only the phone speaks the "pause finished" cue. Injectable for tests.
     private val deviceKind: DeviceKind = currentDeviceKind(),
@@ -528,9 +530,10 @@ class SchedulerEngine(
     private val localPauseCueDelivery: Boolean = false,
     // PRD §18 Alarms: arm the OS-level alarm clock for the next ring — a **real** wall-clock instant, since the
     // OS knows nothing of the debug sim clock (see [realInstantFor]) — or cancel the armed one when null. The
-    // phone wires AlarmManager here (its receiver calls [onAlarmFire]); the default no-op is what keeps every
-    // non-phone device silent (PRD §18: an alarm rings on the account's PHONES).
-    private val scheduleDeviceAlarm: (ArmedAlarm?) -> Unit = {},
+    // phone wires AlarmManager here (its receiver calls [onAlarmFire]). Null — every device App() builds the
+    // engine for (desktop, web, iOS until it has an OS alarm seam) — means there is NO OS alarm clock, so the
+    // engine rings from its own now-line sweep instead ([hasOsAlarmClock]).
+    private val scheduleDeviceAlarm: ((ArmedAlarm?) -> Unit)? = null,
     // PRD §18 Alarms: ring NOW — play the alarm sound for the armed length and vibrate if asked. Called from
     // [onAlarmFire]; injectable so tests can assert what rang.
     private val ringAlarm: (ArmedAlarm) -> Unit = {},
@@ -1035,6 +1038,13 @@ class SchedulerEngine(
     private var announcedReminderTags = mapOf<String, Long>()
 
     /**
+     * PRD §18: whether this device hands its rings to an OS alarm clock (arm the soonest, the receiver rings it)
+     * rather than ringing them from the now-line sweep. A PHONE that was given one — Android's AlarmManager. Not
+     * "is a phone": iOS is a phone with no arming seam yet, and gating on the kind alone left it ringing nothing.
+     */
+    private val hasOsAlarmClock: Boolean get() = deviceKind == DeviceKind.Phone && scheduleDeviceAlarm != null
+
+    /**
      * PRD §18 Alarms/Timers: keep the OS-level alarm armed for the soonest ring in the synced alarm **and
      * timer** lists. Re-runs on every now-tick and whenever either list changes (an edit here, a timer
      * started, or a peer's edit arriving over sync), and only touches the OS when the target actually moves.
@@ -1049,7 +1059,7 @@ class SchedulerEngine(
      * running cannot ring at all, so there is nothing to arm and the now-line IS the trigger.
      */
     private fun launchAlarmArming() = scope.launch {
-        if (deviceKind != DeviceKind.Phone) return@launch
+        if (!hasOsAlarmClock) return@launch
         combine(
             _nowMillis,
             vm.state.map { it.alarms }.distinctUntilChanged(),
@@ -1096,7 +1106,7 @@ class SchedulerEngine(
                 "alarm ${armed.alarmId} armed for ${Diagnostics.formatInstant(armed.atMillis)} (real clock)",
             )
         }
-        scheduleDeviceAlarm(armed)
+        scheduleDeviceAlarm?.invoke(armed)
     }
 
     /**
@@ -1124,7 +1134,7 @@ class SchedulerEngine(
      * locked device says nothing", and it is an exception about alarms, never about a break cue.
      */
     private fun launchAlarmSweep() = scope.launch {
-        if (deviceKind == DeviceKind.Phone) return@launch
+        if (hasOsAlarmClock) return@launch
         combine(
             _nowMillis,
             vm.state.map { it.alarms }.distinctUntilChanged(),
@@ -1264,7 +1274,7 @@ class SchedulerEngine(
         // other device) finds the next ring itself, and running the arming path there would log an OS arming
         // that never happened.
         armedAlarm = null
-        if (deviceKind == DeviceKind.Phone) {
+        if (hasOsAlarmClock) {
             val state = vm.state.value
             armNextAlarm(clock.nowMillis(), state.alarms, state.timers)
         }
@@ -2381,6 +2391,8 @@ class SchedulerEngine(
             // § *Progressive Calculation*, the calculation time limit: REAL time, not the clock the fill plans
             // against — a debug leap must not spend the budget, and a device asleep mid-fill has not computed.
             val calculationMark = TimeSource.Monotonic.markNow()
+            // Read as the fill starts: a limit changed mid-fill governs the next one.
+            val limitMillis = calculationLimitMillis ?: (vm.state.value.planCalculationLimitSeconds * 1_000L)
             // A stage whose search ran out of time without certifying the best (and without the solver finding
             // anything) tells the bigger stages after it that they cannot either: they stop paying for it.
             var searchUseful = planSearch
@@ -2407,7 +2419,7 @@ class SchedulerEngine(
                 stage = cap - now
                 val capOrNull = cap.takeIf { it < goal }
                 val span = (capOrNull ?: goal) - if (first) now else reached
-                val remaining = calculationLimitMillis - calculationMark.elapsedNow().inWholeMilliseconds
+                val remaining = limitMillis - calculationMark.elapsedNow().inWholeMilliseconds
                 val searchMillis = if (searchUseful) stageSearchMillis(span, remaining) else 0L
                 val intent =
                     if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds, generation)
@@ -2431,7 +2443,7 @@ class SchedulerEngine(
                 // § *Progressive Calculation*: the calculation time limit is reached, so the scheduler STOPS —
                 // the front stays where this stage left it, and [extensionStoodDown] keeps it there until the
                 // rules change or $t_{goal}$ grows past what was given up on.
-                if (calculationMark.elapsedNow().inWholeMilliseconds >= calculationLimitMillis) {
+                if (calculationMark.elapsedNow().inWholeMilliseconds >= limitMillis) {
                     calculationLimitStop = SchedulerDomain.schedulingSignature(vm.state.value) to goal
                     break
                 }

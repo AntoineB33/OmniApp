@@ -1491,7 +1491,13 @@ private fun Modifier.unplaced(active: Boolean): Modifier =
  * windows") and then does [onReset] — `App` puts the task tree window back to its default placement there.
  */
 @Composable
-fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () -> Unit = {}) {
+fun WindowBar(
+    host: WindowFrameHost,
+    modifier: Modifier = Modifier,
+    onReset: () -> Unit = {},
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
+) {
     val rows = host.registrations
     if (rows.isEmpty()) return
     // Where the right-click landed, in the bar; null while the bar's menu is closed.
@@ -1509,8 +1515,17 @@ fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () 
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                        if (event.type != PointerEventType.Press) continue
                         if (event.changes.any { it.isConsumed }) continue
+                        if (!event.buttons.isSecondaryPressed) {
+                            // A finger's right-click is a long-press (`docs/PLATFORMS.md`).
+                            val down = event.changes.singleOrNull() ?: continue
+                            if (awaitTouchLongPress(down) == TouchPressOutcome.Held) {
+                                menuAt = down.position
+                                consumeUntilUp()
+                            }
+                            continue
+                        }
                         event.changes.forEach { it.consume() }
                         menuAt = event.changes.first().position
                     }
@@ -1569,6 +1584,39 @@ fun WindowBar(host: WindowFrameHost, modifier: Modifier = Modifier, onReset: () 
                     }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
+            WindowBarMoreButton(onUndo = onUndo, onRedo = onRedo)
+        }
+    }
+}
+
+/**
+ * The "⋮" right of the bar's Reset (user request 2026-10-04): Undo and Redo on screen — the only way to reach them
+ * without a keyboard (`docs/PLATFORMS.md`). Each entry is the chord's own intent, so it walks what Ctrl+Z / Ctrl+Y
+ * walk: the changes made in the focused window. The menu STAYS OPEN, so "undo" three times is three clicks; it
+ * leaves like any menu, on the first press outside it (`popups.md`).
+ */
+@Composable
+private fun WindowBarMoreButton(onUndo: () -> Unit, onRedo: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Text(
+            text = "⋮",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .padding(end = 6.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { open = !open }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+        transientMenuDismissal(open) { open = false }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            properties = PopupProperties(focusable = false),
+        ) {
+            DropdownMenuItem(text = { Text("undo") }, onClick = onUndo)
+            DropdownMenuItem(text = { Text("redo") }, onClick = onRedo)
         }
     }
 }

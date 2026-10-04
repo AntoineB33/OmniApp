@@ -41,6 +41,13 @@ data class SchedulerSelection(
     val renderVia: CellId? = null,
 )
 
+/** The scheduler engine's time limit after a change until the user sets another: two minutes. */
+const val DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS: Int = 120
+
+/** The bounds a time limit is kept in: a second at least (a limit of nothing plans nothing), an hour at most. */
+const val MIN_PLAN_CALCULATION_LIMIT_SECONDS: Int = 1
+const val MAX_PLAN_CALCULATION_LIMIT_SECONDS: Int = 3600
+
 data class SchedulerHistory(
     val pointer: Int = -1,
     val units: List<HistoryUnit> = emptyList(),
@@ -744,6 +751,13 @@ data class SchedulerState(
      */
     val showScreenBreaks: Boolean = false,
     /**
+     * User rule 2026-10-04: **the scheduler engine's time limit after a change**, in seconds — the wall time ONE
+     * progressive fill may spend before the scheduler stops wherever it has reached (`docs/scheduler_requirements.md`
+     * § *Progressive Calculation*'s third stopping condition; it was a fixed two minutes). A resource of THIS device:
+     * local-only like the view state — a phone and a desktop are not given the same budget — persisted, never synced.
+     */
+    val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+    /**
      * PRD §14 Reminders: whether the calendar window draws the reminder tags. A purely cosmetic display
      * preference (persisted, not undoable) — when off, reminder tags are hidden. The underlying chores and
      * their scheduling/checked state are unaffected.
@@ -1122,6 +1136,7 @@ data class SchedulerState(
             windowSelections = other.windowSelections,
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
+            planCalculationLimitSeconds = other.planCalculationLimitSeconds,
             showReminders = other.showReminders,
             calendarDayMode = other.calendarDayMode,
             notificationLog = other.notificationLog,
@@ -1140,6 +1155,7 @@ data class SchedulerState(
             windowSelections = emptyMap(),
             selection = SchedulerSelection(),
             showScreenBreaks = false,
+            planCalculationLimitSeconds = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
             showReminders = true,
             calendarDayMode = false,
             // Not view state, but as local: the derived plan it describes is stripped from the wire too.

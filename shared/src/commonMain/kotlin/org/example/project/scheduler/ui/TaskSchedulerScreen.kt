@@ -104,6 +104,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
@@ -128,6 +129,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import org.example.project.ui.consumeUntilUp
+import org.example.project.ui.awaitTouchLongPress
+import org.example.project.ui.TouchPressOutcome
 import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.perf.Perf
@@ -1531,6 +1535,17 @@ private fun WeightTableHeader(
                                     // through the callbacks so the whole column re-renders.
                                     val down = press.changes.first()
                                     down.consume()
+                                    // A finger: a long-press is the right-click (`docs/PLATFORMS.md`), a tap
+                                    // does nothing, and only a drag goes on to reorder.
+                                    when (awaitTouchLongPress(down)) {
+                                        TouchPressOutcome.Held -> {
+                                            menuOpen = true
+                                            consumeUntilUp()
+                                            continue
+                                        }
+                                        TouchPressOutcome.Released -> continue
+                                        TouchPressOutcome.Moved, TouchPressOutcome.NotTouch -> Unit
+                                    }
                                     var started = false
                                     var traveled = 0f
                                     var localDrop: Int? = null
@@ -2877,8 +2892,11 @@ internal fun TaskRow(
                     val modifiers = currentEvent.keyboardModifiers
                     val ctrl = modifiers.pointerCtrlPressed
                     val shift = modifiers.pointerShiftPressed
+                    // A finger's drag SCROLLS the tree (`docs/PLATFORMS.md`): it never drag-selects, so it may
+                    // only select once it is known to be a tap — or every scroll would move the selection.
+                    val touch = down.type == PointerType.Touch
 
-                    currentOnClick(cellId, ctrl, shift, false)
+                    if (!touch) currentOnClick(cellId, ctrl, shift, false)
 
                     // Ctrl / Shift clicks never begin a drag — just wait for release.
                     if (ctrl || shift) {
@@ -2892,10 +2910,17 @@ internal fun TaskRow(
                     var traveled = 0f
                     while (true) {
                         val event = awaitPointerEvent()
-                        if (!event.changes.any { it.pressed }) break
+                        if (!event.changes.any { it.pressed }) {
+                            // A long-press opened the cell's menu ([contextMenuModifier]) and swallowed the
+                            // release: not a click, and above all not the single-click reset below.
+                            if (event.changes.any { it.isConsumed }) return@awaitEachGesture
+                            break
+                        }
                         val change =
                             event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
                         traveled += change.positionChange().getDistance()
+                        // Unconsumed, so the tree's own scroll takes the drag from here.
+                        if (touch && (traveled > touchSlop || change.isConsumed)) return@awaitEachGesture
                         if (traveled > touchSlop) {
                             dragged = true
                             change.consume()
@@ -2905,6 +2930,7 @@ internal fun TaskRow(
                         }
                     }
                     if (dragged) return@awaitEachGesture
+                    if (touch) currentOnClick(cellId, false, false, false)
 
                     // No drag: a second press within the timeout makes it a double-click. The first
                     // press kept any existing multi-selection intact (so a double-click & drag can
@@ -3386,6 +3412,15 @@ internal fun contextMenuModifier(
                     // menu opened over a stale one would offer the wrong block to copy.
                     onSelect?.invoke()
                     if (enabled) onOpen()
+                    continue
+                }
+                // A finger has no secondary button: a long-press is its right-click (`docs/PLATFORMS.md`). An
+                // inner menu that already answered it has consumed the press, exactly as for the mouse.
+                val down = press.changes.singleOrNull()?.takeIf { !it.isConsumed } ?: continue
+                if (awaitTouchLongPress(down) == TouchPressOutcome.Held) {
+                    onSelect?.invoke()
+                    if (enabled) onOpen()
+                    consumeUntilUp()
                 }
             }
         }

@@ -641,9 +641,12 @@ Global rules that always apply: `CLAUDE.md`.
   **refuses** — the same question the override rule asks, so the on-screen tasks' records go under a
   no-screen period and everybody's under a grey one, as two resiliences rather than as two rules. Same
   funnel as `StripNoScreenRecords` (`stripRecords`, now taking the predicate rather than an `onScreenOnly`
-  flag), applied at once rather than at the next engine start; outside Undo/Redo like every write to the
-  record. A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
+  flag), applied at once rather than at the next engine start; outside Undo/Redo (an open gap: undoing the
+  period does not bring the stripped work back). A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
   sleep band moving is not the user saying they were not working.
+- **A PAST BLOCK DRAGGED OFF ITS RECORD IS ONE UNDO** (`reducePinRecord`, 2026-10-04): the record period leaving
+  and the panel arriving are one `PanelDelta` (its `records` half), so Ctrl+Z puts the block back where it was.
+  The record used to leave outside the history, and undoing the drag made the block vanish.
 - **EVERYTHING A GESTURE CLOSURE READS MUST BE READ LIVE** (`rememberUpdatedState`), the ARITHMETIC included.
   A `Modifier.pointerInput` whose key has not changed keeps running the lambda it started with, captures and
   all — so the day column's handler (keyed on `day`) and a block's move/resize (keyed on its entry's id and

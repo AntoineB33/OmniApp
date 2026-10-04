@@ -7,7 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import platform.AVFAudio.AVAudioPlayer
-import platform.AVFAudio.AVSpeechBoundaryImmediate
+import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechUtterance
 import platform.Foundation.NSData
@@ -58,5 +58,5 @@ private fun playData(bytes: ByteArray): Boolean {
 actual fun stopSpeaking() {
     currentPlayer?.stop()
     currentPlayer = null
-    synthesizer.stopSpeakingAtBoundary(AVSpeechBoundaryImmediate)
+    synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
 }

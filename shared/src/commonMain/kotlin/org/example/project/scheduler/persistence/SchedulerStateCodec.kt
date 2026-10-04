@@ -30,6 +30,9 @@ import org.example.project.scheduler.domain.QuotaDomain
 import org.example.project.scheduler.model.QuotaEntry
 import org.example.project.scheduler.model.QuotaLoop
 import org.example.project.scheduler.state.QuotasDelta
+import org.example.project.scheduler.state.DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS
+import org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS
+import org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS
 import org.example.project.scheduler.state.ChronosDelta
 import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.EntryChanges
@@ -81,6 +84,7 @@ import org.example.project.scheduler.state.NotificationLogEntry
 import org.example.project.scheduler.state.SupabaseUsageEntry
 import org.example.project.scheduler.state.PlanBasis
 import org.example.project.scheduler.state.PanelDelta
+import org.example.project.scheduler.state.RecordChanges
 import org.example.project.scheduler.state.RecordDelta
 import org.example.project.scheduler.state.SchedulerEditSession
 import org.example.project.scheduler.state.SchedulerHistories
@@ -606,6 +610,7 @@ object SchedulerStateCodec {
                         )
                     },
             showScreenBreaks = showScreenBreaks,
+            planCalculationLimitSeconds = planCalculationLimitSeconds,
             showReminders = showReminders,
             calendarDayMode = calendarDayMode,
             planBasis = planBasis?.let { PersistedPlanBasis(it.signature, it.madeAtMillis) },
@@ -867,6 +872,8 @@ object SchedulerStateCodec {
                     changes.before.values.map { it.toPersistedPanel() },
                     changes.after.values.map { it.toPersistedPanel() },
                     label,
+                    recordRemoved = records.removed.toPersistedRanges(),
+                    recordAdded = records.added.toPersistedRanges(),
                 )
             is ToggleExpandDelta -> PersistedDelta.ToggleExpand(cellId.value)
             // A set change is written as (removed, added): `SetChanges.of(removed, added)` gives it back.
@@ -1250,6 +1257,9 @@ object SchedulerStateCodec {
                         )
                 },
             showScreenBreaks = showScreenBreaks,
+            // Healed into its bounds: an older payload has none (two minutes), a hand-edited one may hold anything.
+            planCalculationLimitSeconds =
+                planCalculationLimitSeconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS),
             showReminders = showReminders,
             calendarDayMode = calendarDayMode,
             planBasis = planBasis?.let { PlanBasis(it.signature, it.madeAtMillis) },
@@ -1411,7 +1421,13 @@ object SchedulerStateCodec {
                 ViewSelectionDelta(windowNamed(window) ?: HistoryWindow.Tree, before.toSelection(), after.toSelection())
             is PersistedDelta.WindowSelection ->
                 WindowSelectionDelta(windowNamed(window) ?: HistoryWindow.Tree, instance, before, after)
-            is PersistedDelta.Panels -> PanelDelta(before.map { it.toPanel() }, after.map { it.toPanel() }, label)
+            is PersistedDelta.Panels ->
+                PanelDelta(
+                    before.map { it.toPanel() },
+                    after.map { it.toPanel() },
+                    label,
+                    RecordChanges(added = recordAdded.toRecordRanges(), removed = recordRemoved.toRecordRanges()),
+                )
             is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
             is PersistedDelta.SetExpanded ->
                 SetExpandedDelta(before.map { CellId(it) }.toSet(), after.map { CellId(it) }.toSet())
@@ -1663,6 +1679,8 @@ private data class PersistedState(
     // field while new writes use `showScreenBreaks`.
     @JsonNames("showSideTasks")
     val showScreenBreaks: Boolean = false,
+    // New 2026-10-04: the engine's time limit after a change; absent = the two minutes it always was.
+    val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
     // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.
     val showReminders: Boolean = true,
     // PRD §8: the calendar's Day/Week display mode; default Week, which is what every payload written before
@@ -2279,6 +2297,13 @@ private sealed interface PersistedDelta {
         val before: List<PersistedPanel>,
         val after: List<PersistedPanel>,
         val label: String,
+        /**
+         * The record periods the same gesture removed / added per task ([PanelDelta.records]): a past block
+         * dragged off its record (2026-10-04). Absent (null) in every unit written before, and in every panel
+         * edit that moved no record.
+         */
+        val recordRemoved: Map<String, List<PersistedTimeRange>>? = null,
+        val recordAdded: Map<String, List<PersistedTimeRange>>? = null,
     ) : PersistedDelta
 
     @Serializable
@@ -2987,3 +3012,12 @@ private fun windowNamed(name: String): HistoryWindow? =
 
 private val RETIRED_WINDOWS: Map<String, HistoryWindow> =
     mapOf("TaskList" to HistoryWindow.Tree, "Reminders" to HistoryWindow.Search)
+
+/** [PanelDelta.records]' half on the wire: null when the gesture moved no record, so older units read the same. */
+private fun Map<TaskId, List<TaskTimeRange>>.toPersistedRanges(): Map<String, List<PersistedTimeRange>>? =
+    takeIf { it.isNotEmpty() }
+        ?.mapKeys { it.key.value }
+        ?.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } }
+
+private fun Map<String, List<PersistedTimeRange>>?.toRecordRanges(): Map<TaskId, List<TaskTimeRange>> =
+    orEmpty().mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } }

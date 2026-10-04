@@ -14,6 +14,9 @@ cross-device presence.
 - The **days** are part of the alarm and are synced. An empty set never rings and is not the default.
 - The phone arms its own OS exact alarm (soonest only; the receiver arms the next). The desktop **rings off
   the now-line** via an ordinary boundary sweep — it cannot arm what it isn't running for.
+- **Which of the two is decided by the seam, not the device kind** (`SchedulerEngine.hasOsAlarmClock`): a phone
+  that was handed an OS arming seam (Android) arms; every other device — iOS, which is a phone with no seam yet,
+  and the browser — sweeps. Gating on `DeviceKind.Phone` alone left iOS ringing nothing (2026-10-04).
 - The sweep **self-delays to the next ring**, de-dupes on **(id, instant)**, and has no screen-active gate.
 - The boundary is `LocalDateTime(day, hh:mm).toInstant(tz)` — **not** `startOfDay + minutes`, which skews on
   DST days.

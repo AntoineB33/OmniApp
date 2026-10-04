@@ -132,6 +132,24 @@ object AlarmTone {
         return toPcm16(mix)
     }
 
+    /**
+     * The whole ring as one WAV file — [loopPcm] repeated for [soundSeconds], scaled by the app's volume — for the
+     * players that take a finished file instead of a PCM stream they can write to (iOS's `AVAudioPlayer`, the
+     * browser's `Audio`). The desktop and Android stream the cycle and never build this.
+     */
+    fun ringWav(sound: AlertSound, soundSeconds: Int, sampleRate: Int = SAMPLE_RATE): ByteArray {
+        val cycle = loopPcm(sound, sampleRate)
+        val total = sampleRate * soundSeconds.coerceAtLeast(0) * 2
+        val pcm = ByteArray(total)
+        var written = 0
+        while (written < total) {
+            val chunk = minOf(cycle.size, total - written)
+            AppVolume.scaledPcm16Le(cycle, chunk).copyInto(pcm, written, 0, chunk)
+            written += chunk
+        }
+        return pcm16MonoWav(pcm, sampleRate)
+    }
+
     /** [AlertSound.Guitar]: the plucked arpeggio, each note summed onto the ones still ringing. */
     private fun renderGuitar(mix: DoubleArray, sampleRate: Int) {
         var seed = NOISE_SEED
@@ -381,4 +399,32 @@ object AlarmTone {
     /** The seed's high 53 bits mapped to [-1, 1). */
     private fun noiseOf(seed: Long): Double =
         (seed ushr 11).toDouble() / (1L shl 52).toDouble() - 1.0
+}
+
+/** [pcm] (signed 16-bit little-endian mono at [sampleRate]) behind the 44-byte RIFF/WAVE header that makes it a file. */
+fun pcm16MonoWav(pcm: ByteArray, sampleRate: Int): ByteArray {
+    val out = ByteArray(44 + pcm.size)
+    fun ascii(at: Int, text: String) = text.forEachIndexed { i, c -> out[at + i] = c.code.toByte() }
+    fun int32(at: Int, value: Int) {
+        for (i in 0 until 4) out[at + i] = (value ushr (8 * i)).toByte()
+    }
+    fun int16(at: Int, value: Int) {
+        out[at] = value.toByte()
+        out[at + 1] = (value ushr 8).toByte()
+    }
+    ascii(0, "RIFF")
+    int32(4, 36 + pcm.size)
+    ascii(8, "WAVE")
+    ascii(12, "fmt ")
+    int32(16, 16) // PCM fmt chunk size
+    int16(20, 1) // PCM
+    int16(22, 1) // mono
+    int32(24, sampleRate)
+    int32(28, sampleRate * 2) // byte rate
+    int16(32, 2) // block align
+    int16(34, 16) // bits per sample
+    ascii(36, "data")
+    int32(40, pcm.size)
+    pcm.copyInto(out, 44)
+    return out
 }

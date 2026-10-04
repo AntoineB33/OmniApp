@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Undoing a dragged past block made it vanish — 2026-10-04
+
+Anomaly (user, confirmed on the release DB: a "Pin record" unit undone 4 s after it was made): a past task panel
+dragged elsewhere, then Undo, and the block disappeared. `reducePinRecord` lifted the record period with a plain
+state copy, outside the history, and only the new panel was the unit — Undo removed the panel and nothing restored
+the record. `PanelDelta` now carries an optional `records` half (`RecordChanges`), committed, undone and redone with
+the panels; persisted as `recordRemoved` / `recordAdded` on the `panels` unit, both absent (null) on every unit that
+moved no record, so older units decode unchanged. `SchedulerCalendarTest`. Still open: a period laid over the past
+strips records outside the history the same way (`stripRecordsUnderPeriod`).
+
+### Every platform: touch menus, tree scrolling, iOS alarms, web outputs — 2026-10-04
+
+User request: the whole app working on every platform, and the list of necessary differences (`docs/PLATFORMS.md`).
+- **iOS rang nothing**: the engine skipped its now-line alarm sweep on every `DeviceKind.Phone`, but only Android
+  injects an OS alarm armer. Gated on `hasOsAlarmClock` (a phone WITH that seam); iOS now rings in-process, and
+  `ringAlarmPlatform` plays the ring (`AlarmTone.ringWav`) instead of being a no-op. `AlarmEngineTest`, `RingWavTest`.
+- **Touch reached no right-click menu outside the calendar grid**: a long-press now opens them
+  (`ui/TouchLongPress.kt`, through `contextMenuModifier`, the weight-column header and the window bar).
+- **A finger could not scroll the task tree** (the row's gesture consumed the drag as a drag-select): a touch drag
+  scrolls, a tap selects.
+- **Browser**: clipboard writes, Web Notifications, voice (bundled WAVs + `speechSynthesis`) and the alarm ring were
+  empty stubs; now one `webMain` implementation for JS and Wasm. An over-quota `localStorage` save no longer throws.
+- iOS clipboard via `UIPasteboard`; the iOS voice actual no longer fails to compile (`AVSpeechBoundary`).
+- **Undo / Redo on screen**: a "⋮" right of the window bar's Reset opens a menu with "undo" and "redo" — the
+  chords' own intents, so they walk the focused window's changes; the menu stays open between clicks.
+
+### Calendar configuration: a scrollbar, and the scheduler engine's time limit — 2026-10-04
+
+User request: the calendar's configuration section shows a vertical scrollbar (`ColumnScrollbar`; it scrolled with none),
+and holds a "Scheduler engine" setting: the **time limit after a change**, in seconds — the wall time one progressive
+fill may spend, a fixed 2 min until now. `SchedulerState.planCalculationLimitSeconds` (default 120, 1–3600),
+`SetPlanCalculationLimit`; a resource of THIS device: persisted, never synced (`withLocalViewStateNeutralized` /
+`withLocalViewStateFrom`), absent in an older payload = 120. The engine reads it as a fill starts. The first stage's
+length (1 h) is not a setting. `PlanCalculationLimitTest`.
+
 ### Search window: sections retract; no "All configurations" button in the actions — 2026-10-04
 
 User request: the actions section's "⚙ All configurations" button is removed (every action is already listed there),

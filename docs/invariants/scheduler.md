@@ -523,8 +523,10 @@ model exists to prevent.
      what `HorizonRefillRuleTest` reads.
   2. **the set of rules growing too heavy** — the 168 h ceiling, applied by `scheduleHorizonEndMillis`; only a
      calendar scrolled out can reach it. Past it the plan is a display-only far week (`display-hot-path.md`).
-  3. **the calculation time limit** (`SchedulerEngine.PLAN_CALCULATION_LIMIT_MILLIS`, 2 min of REAL time per
-     progressive fill). When it runs out the front stays where the last stage left it, and — this is the half
+  3. **the calculation time limit** — REAL time per progressive fill, **this device's own setting**
+     (`SchedulerState.planCalculationLimitSeconds`, 2 min until the user sets another in the calendar's configuration
+     section, 1 s – 1 h; local-only like the view state: a phone and a desktop are not given one budget; read as a
+     fill starts, user rule 2026-10-04). When it runs out the front stays where the last stage left it, and — this is the half
      that makes it a stop rather than a pause — `extensionStoodDown` keeps the rolling-horizon and calendar
      watchers from closing the shortfall it left. Only a **rule change** (the signature it was stopped under) or
      a **goal that has grown past the one abandoned** asks the question again. Without that latch the watcher
