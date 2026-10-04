@@ -2144,22 +2144,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
             val displayWorkPlanPanels =
                 Perf.measure("display.clipPlanForBreak") {
-                // `docs/scheduler_requirements.md` § *mode 1*: the same sliding-period regime for the no-screen
-                // periods that give way to a line at a screen. The plan runs across them (it must say which task
-                // holds and until when, and the line has to have something to be swept into between two fills);
-                // what is still ahead of the line is hidden here, so a band ahead reads whole and the one the line
-                // is in reads ]now;end].
-                SchedulerDomain.clipPlanForRetractedPeriod(
-                    SchedulerDomain.clipPlanForPinnedScreenBreak(
-                        workPlanPanels, displaySidePanels, nowMillis,
-                        // The break shapes + the task attributes, so only what a break REFUSES is cut: a pose's open
-                        // period keeps the off-screen work it accepts, which is the part the band draws hollow.
-                        schedulerState.screenBreaks, schedulerState.tasks,
-                    ),
-                    workPlanPanels.filter { it.isRestrictivePeriod },
-                    nowMillis,
-                    tpMode,
-                    schedulerState.periodKindConfig,
+                // `docs/scheduler_requirements.md` § *mode 1*: where a no-screen period gives way to a line at a screen,
+                // the rules hold the task AT THE LINE (line-bound runs), so the panels are drawn as the rules give them
+                // at the line — nothing is laid in a period still ahead, and nothing is hidden.
+                SchedulerDomain.atLine(
+                    workPlanPanels, displaySidePanels, nowMillis,
+                    // The break shapes + the task attributes, so a run gives way only where a break REFUSES its task:
+                    // a pose's open period keeps the off-screen work it accepts, the part the band draws hollow.
+                    schedulerState.screenBreaks, schedulerState.tasks,
                 )
                 }
 

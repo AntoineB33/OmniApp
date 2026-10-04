@@ -217,15 +217,18 @@ class LayerPeriodKindTest {
             SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_PHONE_UNLOCKED, NOW + HOUR, NOW + 2 * HOUR),
         )
         val both = SchedulerDomain.fillSchedule(s, NOW, TimeZone.UTC, horizonMillis = NOW + 6 * HOUR)
+        val drawn = drawnAt(both, NOW)
         assertEquals(
             0L,
-            placedMillisIn(both, solo, NOW + HOUR, NOW + 2 * HOUR),
-            "both layers fall here, so it is a no-screen period",
+            placedMillisIn(drawn, solo, NOW + HOUR, NOW + 2 * HOUR),
+            "both layers fall here, so it is a no-screen period: the calendar draws no on-screen task in it",
         )
         assertTrue(
-            placedMillisIn(both, solo, NOW + 2 * HOUR, NOW + 6 * HOUR) > 0L,
+            placedMillisIn(drawn, solo, NOW + 2 * HOUR, NOW + 6 * HOUR) > 0L,
             "and the rest of the horizon is untouched",
         )
+        // The rules (mode 1): a line reaching it at a screen pushes it forward and is on a task meanwhile.
+        assertTrue(placedMillisIn(both, solo, NOW + HOUR, NOW + 2 * HOUR) > 0L, "the rules name the task the line is on")
     }
 
     @Test

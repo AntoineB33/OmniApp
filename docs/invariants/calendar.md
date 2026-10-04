@@ -885,7 +885,7 @@ Global rules that always apply: `CLAUDE.md`.
   (`observedNoScreenRegions`, asked once and read by both). Only the bank half shipped, so the calendar went on
   drawing an on-screen task straight across a machine the OS reported asleep. Off-screen tasks are exempt (§9
   lets them run there), a period is never cut (it is what the cut is made of), and a **failed** own scan is not
-  evidence — no regions, no cut. Display-side, like `clipPlanForPinnedScreenBreak`: the regions are the past,
+  evidence — no regions, no cut. Display-side: the regions are the past,
   the fill only places ahead of the now-line, and what the OS reports is not a user edit. What the cut vacates
   is idle time and draws as a derived "Inactivity" band. **A panel the user PLACED is never cut by it**
   (`SchedulerDomain.isUserPlaced`, user rule 2026-10-02): a hand placement is the user's word that the work

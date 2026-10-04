@@ -1,6 +1,16 @@
 package org.example.project.scheduler.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerInput
+import org.example.project.ui.INDENT_STEP_DP
+import org.example.project.ui.SheetColors
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -537,8 +547,109 @@ internal fun TaskTreeView(
     }
     // The scrolled content's width, so the pinned copy is laid out exactly as wide as the rows it stands for.
     var treeContentWidthPx by remember { mutableStateOf(0) }
+
+    // `docs/PLATFORMS.md`: **the selection's two handles** — a finger's Shift+click. A phone has no Ctrl and no Shift,
+    // but a range can still be extended or shortened: the selection wears a dot on its top-left corner and one on its
+    // bottom-right, and dragging one moves that end while the other stays put — through the very `DragSelectCells` a
+    // mouse drag-select sends, so a range made by the dots is a range like any other. Shown while the last press in
+    // the tree was a finger's (decided per event: a touchscreen laptop's mouse brings back the desktop look).
+    var touchSelecting by remember { mutableStateOf(false) }
+    var treeBoxWindowTop by remember { mutableStateOf(0f) }
+    var treeBoxHeightPx by remember { mutableStateOf(0) }
+    var treeBoxWidthPx by remember { mutableStateOf(0) }
+    val handleRadiusPx = with(LocalDensity.current) { SELECTION_HANDLE_DIAMETER.toPx() / 2f }
+    val handleReachPx = with(LocalDensity.current) { SELECTION_HANDLE_REACH.toPx() }
+    val indentPx = with(LocalDensity.current) { INDENT_STEP_DP.dp.toPx() }
+    // The rows drawn selected — the one highlight funnel the rows themselves use — first and last in visible order.
+    val selectionEnds by remember {
+        derivedStateOf {
+            // Nothing to work out while a mouse drives the tree: the desktop never pays for the handles.
+            if (!touchSelecting) return@derivedStateOf null
+            val st = currentState
+            if (st.selection.selected.isEmpty() && st.selection.main == null) return@derivedStateOf null
+            val otherVias = SchedulerDomain.selectionHighlightVias(st)
+            val drawn = currentVisibleRows.filter { row ->
+                SchedulerDomain.isSelectableCell(st, row.occurrence.cellId) &&
+                    SchedulerDomain.shouldShowSelectionHighlight(st.selection, row.occurrence.cellId, row.occurrence.renderVia, otherVias)
+            }
+            if (drawn.isEmpty()) null else drawn.first() to drawn.last()
+        }
+    }
+    // Where the two dots stand, in the outer box's own coordinates (it never moves under a drag, so a finger is
+    // tracked there and not on a dot that the re-laid rows carry along).
+    // A corner the horizontal scroll has carried out of sight keeps its dot at the visible edge, whole: a dot half
+    // outside the tree is half out of a finger's reach.
+    fun inside(x: Float): Float = x.coerceIn(handleRadiusPx, maxOf(handleRadiusPx, treeBoxWidthPx - handleRadiusPx))
+    val handleCenters: Pair<Offset, Offset>? =
+        selectionEnds?.let { (first, last) ->
+            val top = rowBounds[first.path] ?: return@let null
+            val bottom = rowBounds[last.path] ?: return@let null
+            Offset(inside(first.depth * indentPx - treeHorizontalScroll.value), top.start - treeBoxWindowTop) to
+                Offset(inside(treeContentWidthPx.toFloat() - treeHorizontalScroll.value), bottom.endInclusive - treeBoxWindowTop)
+        }
+    val showHandles = touchSelecting && handleCenters != null && state.editSession == null && !moveDragActive
+    val currentHandleCenters by rememberUpdatedState(if (showHandles) handleCenters else null)
+    val currentSelectionEnds by rememberUpdatedState(selectionEnds)
     Box(
         modifier = modifier
+            .onGloballyPositioned {
+                treeBoxWindowTop = it.positionInWindow().y
+                treeBoxHeightPx = it.size.height
+                treeBoxWidthPx = it.size.width
+            }
+            // Initial pass, on the parent of everything the tree draws: it sees every press first. It notes which
+            // kind of pointer pressed, and takes the gesture only when a finger lands on a handle — anything else
+            // goes on to the rows and the scroll untouched.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    touchSelecting = down.type == PointerType.Touch
+                    if (down.type != PointerType.Touch) return@awaitEachGesture
+                    val (topDot, bottomDot) = currentHandleCenters ?: return@awaitEachGesture
+                    val (first, last) = currentSelectionEnds ?: return@awaitEachGesture
+                    val toTop = (down.position - topDot).getDistance()
+                    val toBottom = (down.position - bottomDot).getDistance()
+                    if (minOf(toTop, toBottom) > handleReachPx) return@awaitEachGesture
+                    // The OTHER end stays where it is.
+                    val grabbedTop = toTop <= toBottom
+                    val fixed = if (grabbedTop) last.occurrence else first.occurrence
+                    // The DOT is what is dragged, not the finger: it sits on a row boundary, and the finger took it a
+                    // little off its centre.
+                    val grab = (if (grabbedTop) topDot.y else bottomDot.y) - down.position.y
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        change.consume()
+                        val (row, upperHalf) = resolveRowAt(treeBoxWindowTop + change.position.y + grab) ?: continue
+                        // Snapped to the nearest boundary: the top dot makes the row BELOW it the first, the bottom dot
+                        // the row ABOVE it the last.
+                        val rows = currentVisibleRows.asSequence()
+                            .map { it.occurrence }
+                            .filter { SchedulerDomain.isSelectableCell(currentState, it.cellId) }
+                            .toList()
+                        val at = rows.indexOf(row)
+                        val hover =
+                            when {
+                                grabbedTop && !upperHalf -> rows.getOrNull(at + 1) ?: row
+                                !grabbedTop && upperHalf -> rows.getOrNull(at - 1) ?: row
+                                else -> row
+                            }
+                        rowIntent(
+                            SchedulerIntent.DragSelectCells(
+                                anchorCellId = fixed.cellId,
+                                hoverCellId = hover.cellId,
+                                visibleOrder = visibleOrder,
+                                renderVia = fixed.renderVia,
+                            ),
+                        )
+                    }
+                }
+            }
             .scrollable(
                 treeScroll,
                 Orientation.Vertical,
@@ -926,11 +1037,40 @@ internal fun TaskTreeView(
         }
 
 
+        // The selection's two handles (see `touchSelecting`). Drawing only: the gesture is the outer box's.
+        if (showHandles) {
+            val (topDot, bottomDot) = handleCenters!!
+            // A dot whose row is scrolled out of the tree is not drawn over whatever lies beyond it.
+            for (center in listOf(topDot, bottomDot).filter { it.y in 0f..treeBoxHeightPx.toFloat() }) {
+                SelectionHandleDot(
+                    Modifier.offset { IntOffset((center.x - handleRadiusPx).roundToInt(), (center.y - handleRadiusPx).roundToInt()) },
+                )
+            }
+        }
+
         // PRD §5: the priority-weight window is drawn by the app (App.kt) on the top floating-window
         // layer, above the calendar — not here — so it sits over every other window and dismisses on a
         // click anywhere else (which still does its normal job).
     }
     }
+}
+
+/** How big a selection handle is drawn. */
+private val SELECTION_HANDLE_DIAMETER = 14.dp
+
+/** How far from a handle's centre a finger still takes it: a finger is far less precise than the dot is wide. */
+private val SELECTION_HANDLE_REACH = 24.dp
+
+/** One selection handle: a filled dot ringed in the surface colour, so it reads over a selected and a plain cell alike. */
+@Composable
+private fun SelectionHandleDot(modifier: Modifier) {
+    Box(
+        modifier = modifier
+            .size(SELECTION_HANDLE_DIAMETER)
+            .background(MaterialTheme.colorScheme.surface, CircleShape)
+            .padding(2.dp)
+            .background(SheetColors.activeBorder, CircleShape),
+    )
 }
 
 /**

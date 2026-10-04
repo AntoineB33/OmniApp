@@ -17,6 +17,7 @@ It runs on Windows, macOS, Linux, Android, iOS and the web, and every device sig
 - [What the Task Scheduler does](#what-the-task-scheduler-does)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Test your change](#test-your-change)
 - [Usage](#usage)
 - [Development](#development)
 - [Documentation](#documentation)
@@ -116,6 +117,47 @@ To produce a **standalone desktop application** with a bundled JRE (no JDK neede
 ```
 
 Or, on Windows, use `scripts/account3-deploy-windows.bat`, which additionally installs it outside the project tree and registers it to start at login.
+
+---
+
+## Test your change
+
+Changed some code? Two steps. They are the same on Windows, macOS and Linux — on Windows, type `.\gradlew` instead of
+`./gradlew`.
+
+**1. Check it.**
+
+```bash
+./gradlew checkChange
+```
+
+It runs the tests and builds every app your computer can build (desktop, Android, web). It ends with
+**`checkChange: green.`** when all is well. If it fails, read the **first** error it prints: it names the file and the
+line. The first run downloads everything and takes several minutes; the next ones are much faster.
+
+**2. Try it** where you want to see it:
+
+| To see it on | Run | Set up once |
+| --- | --- | --- |
+| Your computer | `./gradlew tryDesktop` | Nothing. |
+| Your Android phone | `./gradlew tryAndroid` | The Android SDK ([Requirements](#requirements)). On the phone: Settings → About → tap *Build number* 7 times; then Developer options → **USB debugging** on. Plug it in and accept the "Allow USB debugging?" prompt. |
+| An Android emulator | `./gradlew tryAndroid` | Android Studio → Device Manager → Create Device, with a **Google Play** system image. Start it first. |
+| A web browser | `./gradlew tryWeb` (stop with `Ctrl+C`) | Nothing. |
+| An iPhone or the iOS Simulator | Open `iosApp/` in Xcode and press Run | A Mac with Xcode. |
+
+**Your own data is never touched.** `tryDesktop` opens the app on a throwaway account kept in `~/.omniapp-try`, working
+**offline** (add `-Ponline` to sign in as a guest and try sync); delete that folder to start from scratch.
+`tryAndroid` installs the test build over the test build already on the phone and never uninstalls anything — if it
+fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the phone holds a release build of OmniApp; uninstalling it from the
+phone (which erases that build's local data) lets the test build in. `tryWeb` keeps its data in the browser.
+
+**A real phone or an emulator?** Either works for most changes. Use a **real phone** for anything about notifications,
+sounds, vibration, screen breaks, alarms, working in the background or touch gestures: an emulator imitates those
+badly. The full per-feature checklists are in [`docs/MANUAL_TESTING.md`](docs/MANUAL_TESTING.md) (device setup in its
+Appendix A).
+
+The `scripts/` folder holds the maintainer's Windows tools for testing several accounts together
+([`docs/SCRIPTS.md`](docs/SCRIPTS.md)); you do not need them to test a change.
 
 ---
 

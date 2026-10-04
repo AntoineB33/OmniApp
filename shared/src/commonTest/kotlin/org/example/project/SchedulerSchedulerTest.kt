@@ -418,7 +418,7 @@ class SchedulerSchedulerTest {
             auto("c", now + 30 * MIN, now + 60 * MIN),
             pinned,
         )
-        val out = SchedulerDomain.clipPlanForPinnedScreenBreak(panels, listOf(breakPanel), now)
+        val out = SchedulerDomain.atLine(panels, listOf(breakPanel), now)
 
         // Nothing regenerable overlaps the break any more…
         assertTrue(
@@ -435,12 +435,12 @@ class SchedulerSchedulerTest {
         assertTrue(out.any { it.id == "pin" && it.startEpochMillis == now && it.endEpochMillis == now + 20_000L })
 
         // With no break on the now-line the plan is returned untouched.
-        assertEquals(panels, SchedulerDomain.clipPlanForPinnedScreenBreak(panels, emptyList(), now))
+        assertEquals(panels, SchedulerDomain.atLine(panels, emptyList(), now))
         // A break further ahead is cut out of what is drawn too: the plan runs straight through the breaks the line
         // will not meet ([SchedulerDomain.breaksTheLineWillMeet]), and the calendar still draws each as the period
         // it is.
         val future = listOf(breakPanel.copy(startEpochMillis = now + MIN, endEpochMillis = now + MIN + 20_000L))
-        val cut = SchedulerDomain.clipPlanForPinnedScreenBreak(panels, future, now)
+        val cut = SchedulerDomain.atLine(panels, future, now)
         assertTrue(
             cut.filter { it.auto }.none { it.startEpochMillis < now + MIN + 20_000L && it.endEpochMillis > now + MIN },
             "a break ahead of the line is cut out of the drawn plan",
@@ -452,7 +452,7 @@ class SchedulerSchedulerTest {
         // `side-dev/README.md` $t_p$ mode 1: the instant $t_p$ itself may not be covered, so the period the
         // line drags is the half-open `(t_p, t_p + duration]` — which in the app's discrete millisecond time
         // is the ordinary `[t_p + 1, t_p + duration + 1)` (`DynamicPeriods.Instance.coveredFromMillis`). That
-        // is the ONLY band [SchedulerDomain.clipPlanForPinnedScreenBreak] ever has to cut in mode 1, and the
+        // is the ONLY band [SchedulerDomain.atLine] ever has to cut in mode 1, and the
         // chain walk used to seed at $t_p$ and ask for `start <= t_p` — one millisecond too early to see it.
         // So the clip was a no-op for as long as any device stayed unlocked, and the owed look-away parked at
         // the now-line was drawn over the task panel the fill had placed there (reported 2026-08-29).
@@ -465,7 +465,7 @@ class SchedulerSchedulerTest {
             id = "a", taskId = TaskId("t"), title = "T",
             startEpochMillis = now - 10 * MIN, endEpochMillis = now + 10 * MIN, auto = true,
         )
-        val out = SchedulerDomain.clipPlanForPinnedScreenBreak(listOf(running), listOf(dragged), now)
+        val out = SchedulerDomain.atLine(listOf(running), listOf(dragged), now)
         assertTrue(
             out.none {
                 it.startEpochMillis < dragged.endEpochMillis && it.endEpochMillis > dragged.startEpochMillis

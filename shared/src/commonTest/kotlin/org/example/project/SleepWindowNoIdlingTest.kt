@@ -166,10 +166,9 @@ class SleepWindowNoIdlingTest {
         // user SEES of it reaches only as far as the line has gone. The user will still go to bed — a lock at
         // 01:00 flips the mode with nothing to undo — so the night ahead goes on reading as sleep.
         //
-        // The plan itself runs across it, and must: it has to name which task holds and until when, and the
-        // fill runs at a rule change rather than on time passing, so the line needs panels to be swept INTO
-        // between two fills. What hides them ahead of the line is the display clip, exactly as for the plan
-        // under a pinned screen break.
+        // The RULES run across it, and must: they name the task the line is on as it pushes the window forward
+        // (*"if $now line$ mode = 1, then … task B at $now line$"*). Those runs are held AT THE LINE
+        // ([TaskPanel.lineBound]) — nothing is laid in the night ahead, and nothing is hidden there.
         val panels = fill(account())
         val band = sleepBands(panels).single { it.startEpochMillis <= NOW && it.endEpochMillis > NOW }
         assertEquals(utc(18, 7, 45), band.endEpochMillis, "the window keeps its own end")
@@ -177,10 +176,15 @@ class SleepWindowNoIdlingTest {
             panels.any {
                 it.auto && it.taskId != null && it.startEpochMillis > NOW && it.startEpochMillis < band.endEpochMillis
             },
-            "the PLAN runs across the retracted night, or the line has nothing to be swept into",
+            "the RULES run across the retracted night, or the line has no task to be on there",
+        )
+        assertTrue(
+            panels.filter { it.auto && it.taskId != null && it.startEpochMillis >= NOW && it.startEpochMillis < band.endEpochMillis }
+                .all { it.lineBound },
+            "every run in the night ahead is one held at the line, never a task laid in it",
         )
 
-        val drawn = SchedulerDomain.clipPlanForRetractedPeriod(panels, sleepBands(panels), NOW, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT)
+        val drawn = SchedulerDomain.atLine(panels, NOW)
         val ahead = drawn.filter { it.auto && it.taskId != null && it.startEpochMillis > NOW }
         assertTrue(
             ahead.none { it.startEpochMillis < band.endEpochMillis },
@@ -192,9 +196,8 @@ class SleepWindowNoIdlingTest {
             ahead.any { it.startEpochMillis >= band.endEpochMillis },
             "the plan for after the wake must still be on the calendar",
         )
-        // …and the clip reaches FORWARD only, so the task at the line survives it. A clip reaching behind the
-        // line would put back an empty stretch nothing decided.
-        assertEquals(1, workAt(drawn, NOW).size, "the task at the line survives the display clip")
+        // …and the line is on a task: the rules name exactly one at the line.
+        assertEquals(1, workAt(panels, NOW).size, "the rules name the task at the line")
     }
 
     // ----- the controls ---------------------------------------------------------------------------
@@ -249,15 +252,10 @@ class SleepWindowNoIdlingTest {
         val s = account()
         val start = utc(18, 0, 40)
         val first = fill(s, start)
-        val firstDrawn = SchedulerDomain.clipPlanForRetractedPeriod(
-            first, sleepBands(first), start, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT,
-        )
-        assertTrue(workAt(firstDrawn, start).isNotEmpty(), "the case needs work at the line to begin with")
+        assertTrue(workAt(first, start).isNotEmpty(), "the case needs the rules to name a task at the line to begin with")
 
         val second = fill(s.copy(panels = first), NOW)
-        val drawn = SchedulerDomain.clipPlanForRetractedPeriod(
-            second, sleepBands(second), NOW, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT,
-        )
+        val drawn = SchedulerDomain.atLine(second, NOW)
         val uncovered = SchedulerDomain.derivedInactivityBands(
             drawn.filterNot { it.screenBreak || it.isRestrictivePeriod }
                 .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
@@ -278,9 +276,7 @@ class SleepWindowNoIdlingTest {
         assertEquals(utc(17, 22, 15), hour.startEpochMillis)
         assertEquals(utc(17, 23, 15), hour.endEpochMillis, "the band keeps its whole hour")
         assertEquals(1, workAt(panels, windDown).size, "the line at a screen is not covered by the hour")
-        val drawn = SchedulerDomain.clipPlanForRetractedPeriod(
-            panels, panels.filter { it.isRestrictivePeriod }, windDown, DynamicPeriods.MODE_AT_SCREEN, PeriodKindConfig.DEFAULT,
-        )
+        val drawn = SchedulerDomain.atLine(panels, windDown)
         assertTrue(
             drawn.none { it.auto && it.taskId != null && it.startEpochMillis > windDown && it.startEpochMillis < hour.endEpochMillis },
             "nothing may be drawn into the rest of the hour ahead of the line",

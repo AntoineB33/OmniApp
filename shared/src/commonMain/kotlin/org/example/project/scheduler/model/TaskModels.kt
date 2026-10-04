@@ -865,7 +865,21 @@ data class TaskPanel(
      * for a panel that happens once. Only a panel the user placed carries one; its later occurrences are derived.
      */
     val repeat: PanelRepeat? = null,
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: the stretches of this run that hold only AT
+     * THE LINE — *"if $now line$ mode = 1, then … task B at $now line$"* — where a "no screen" period or a screen break
+     * ahead gives way to a line still at a screen. There the run's extent is the line's: nothing of a stretch the line
+     * has not reached, its start up to the line while the line is in it, the whole of it once passed
+     * ([org.example.project.scheduler.domain.SchedulerDomain.atLine]). The line pushing the period forward is on this
+     * task because the rules SAY so (the forward cursor reads the run whole); it is never a task laid inside the
+     * period and hidden there. ONE run, not pieces: a run cut wherever a period crosses it is no longer the run the
+     * rules returned. Derived: only a fill lays these.
+     */
+    val heldAtLine: List<TaskTimeRange> = emptyList(),
 ) {
+    /** Whether any stretch of this run holds only at the line ([heldAtLine]). */
+    val lineBound: Boolean get() = heldAtLine.isNotEmpty()
+
     /** The alternative schedule at [millis] inside this panel (see [alternativeSpans]). */
     fun alternativeAt(millis: Long): TaskId? {
         val span = alternativeSpans.lastOrNull { it.fromMillis <= millis } ?: return alternativeTaskId

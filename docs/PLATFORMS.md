@@ -35,7 +35,8 @@ Two different questions, answered in two different places:
 | Drag over the task tree | Drag-selects a range | **Scrolls** the tree; a tap selects |
 | Move tree cells | Double-click and drag | Double-tap and drag |
 | Edit a tree cell's title | Double-click on the title | Double-tap on the title |
-| Ctrl / Shift multi-select | Ctrl+click, Shift+click | — (needs a keyboard) |
+| Shift+click (extend / shorten the range) | Shift+click | Drag one of the selection's two **dots** — top-left of the first selected row, bottom-right of the last; the other end stays put (`TaskTreeView`, `SelectionHandlesTouchTest`) |
+| Ctrl+click (disjoint multi-select) | Ctrl+click | — (no equivalent on a phone) |
 | Undo / Redo | `Ctrl+Z`, `Ctrl+Y` / `Ctrl+Shift+Z`, or the window bar's **⋮** menu | The window bar's **⋮** menu (right of Reset) |
 | Selection & position history | `Alt+←/→`, `Shift+Alt+←/→` | — **no on-screen control yet** (see *Open gaps*) |
 | Copy / cut / paste tree text, find (`Ctrl+F`), keyboard navigation (arrows, Tab, Enter, Delete) | Keyboard | Partly: "copy task id" is in the cell menu; the rest needs a keyboard (*Open gaps*) |
@@ -68,7 +69,7 @@ These make a touch-only device less capable than a computer, and need a product 
 
 1. **The selection/position history has no on-screen control** (Undo / Redo do: the window bar's ⋮ menu).
 2. **Tree editing commands that only a keyboard reaches**: paste, cut, find & replace, Tab/indent, Delete, arrow
-   navigation, Ctrl/Shift multi-select.
+   navigation, Ctrl+click (Shift+click has the selection's dots).
 3. **Browser presence**: a browser tab reports itself inactive, so it never counts as "someone is at a screen". A
    Page Visibility signal would fix it, but adds heartbeat traffic the server-quota budget does not yet cover
    (`docs/invariants/server-quota.md`).

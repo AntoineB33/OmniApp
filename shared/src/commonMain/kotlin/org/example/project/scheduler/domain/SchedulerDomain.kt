@@ -1556,6 +1556,10 @@ object SchedulerDomain {
                         keep.alternativeSpans
                     }
                 result[into] = keep.copy(
+                    // Where either held only at the line, the fused run does.
+                    heldAtLine =
+                        if (keep.heldAtLine.isEmpty() && panel.heldAtLine.isEmpty()) keep.heldAtLine
+                        else mergeOccupied(keep.heldAtLine + panel.heldAtLine),
                     endEpochMillis = maxOf(keep.endEpochMillis, panel.endEpochMillis),
                     auto = keep.auto && panel.auto,
                     alternativeSpans = joined,
@@ -2534,8 +2538,8 @@ object SchedulerDomain {
      *
      * - The span of the period the line is IN runs from the line to the period's end, not one millisecond: the
      *   rules it returns are *"task A from 00:40 to $now line$, until 01:25"*, and naming 01:25 means searching past
-     *   the line. The display hides what is still ahead of the line ([clipPlanForRetractedPeriod]), so the band
-     *   there reads ]$now line$;t2].
+     *   the line. Those runs are held AT THE LINE ([TaskPanel.lineBound], read by [atLine]): nothing is laid ahead
+     *   of the line, so the band there reads ]$now line$;t2].
      * - **A period AHEAD gives up its whole span too.** These are the rules for the line going on at a screen, and
      *   a line that does reaches it in mode 1 — so what the rules say for that (x, mode 1) has to be the task
      *   panels its passing creates, found now. Planned around instead, it left the line nobody to run when it got
@@ -4015,37 +4019,26 @@ object SchedulerDomain {
         listOf(DynamicPeriods.LABEL_20S, DynamicPeriods.LABEL_5MIN, DynamicPeriods.LABEL_15MIN)
 
     /**
-     * PRD §15 / `side-dev/scheduler_logic.py` tests 10–11: the work plan as it must be **displayed** while a screen break
-     * sits on the now-line — with the auto panels cut out of what the break REFUSES, so a break the now-line
-     * has reached really is the period it says it is for as long as it slides.
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and § *screen breaks*: **the panels as the rules give them
+     * at the line, with the breaks ahead of it** — [atLine], and a run does not hold where a break ahead of the line
+     * refuses its task.
      *
-     * Refuses, not covers: a break is a period of the kind `no task allowed`, so what it cuts is decided per
-     * TASK — is this one's resilience to that kind zero? ([breakRefusedRanges]). A task that has been given a
-     * non-zero one keeps its panel through the break; cutting the whole span would state on screen that the
-     * scheduler may not use a period it is in fact filling. (This was a per-SHAPE reading until 2026-08-28: a
-     * closed head cut, an open tail left alone. There are no shapes now — ADR 0003.)
+     * A break is a rule parameterized by the line like any other (*"this 5min break becomes ]$now line$; $now line$ +
+     * 5min]"*): the one the line drags is at `]line, line + d]` at every position of the line, so no stored span could
+     * say where it is — it is read here, with the rules, wherever the break stands when the question is asked. The
+     * runs the fill itself placed under a break are laid line-bound ([TaskPanel.lineBound]); this covers what no fill
+     * could know, the break the line has carried on to since.
      *
-     * The break's start is fixed, but the plan under it does not follow it: the plan is materialized by
-     * [fillSchedule], which by CLAUDE.md's trigger rule runs on a **rule change**, not on time passing — and
-     * every tick after that the marker slides forward over auto panels the fill placed past it. That is the
-     * sliding-period case the reference answers with its dynamic rule list (`MovingWindow`): between
-     * breakpoints the plan is *affine* in the period's position, so a display can follow the period without
-     * re-scheduling. Here the period is pinned to the plan's own origin (the now-line), which is that rule's
-     * simplest regime — the disturbed slot is the one the cursor is in, and nothing else changes shape.
+     * Refuses, not covers: what a break takes from a run is decided per TASK — is this one's resilience to the
+     * break's kind zero? ([breakRefusedRanges]). A task that has been given a non-zero one keeps its run through the
+     * break, and the calendar draws that part hollow.
      *
-     * For a period the line is **DRAGGING** the panels underneath are there on purpose
-     * ([isDraggedScreenBreak]): a dragged pose never happens, so the fill plans straight through it and this
-     * clip is the whole of what makes it read as a period on screen. That is also why the clip may only ever
-     * reach FORWARD. Every refusing region begins at or after the now-line, so a panel straddling it keeps its
-     * **elapsed** head — and for a dragged pose that head is the requirements' *"creating task panels in its
-     * passing"*: the drag recedes as the line advances and reveals the plan it was drawn over. A clip that
-     * reached behind the line would put back an empty stretch nothing decided (2026-09-05).
-     *
-     * Only [isRegeneratedPanel] panels are cut: a pinned/manual block and a chore are pre-placed blocks in the
-     * reference's sense and cannot be moved by a period. The cut is a hole, never a rewrite of the past. Each
-     * resumed piece takes a distinct id so two display blocks never share one.
+     * It only ever reaches FORWARD: every refusing region begins at or after the line, so a run straddling it keeps
+     * its elapsed head — the requirements' *"task panels in its passing"*. Only [isRegeneratedPanel] panels are
+     * concerned: a pinned/manual block and a chore are pre-placed blocks no period moves. Each resumed piece takes a
+     * distinct id so two blocks never share one.
      */
-    fun clipPlanForPinnedScreenBreak(
+    fun atLine(
         panels: List<TaskPanel>,
         breakPanels: List<TaskPanel>,
         nowMillis: Long,
@@ -4063,7 +4056,7 @@ object SchedulerDomain {
         // Every refusing region begins at or after the now-line (the dragged one at `t_p + 1`, the half-open
         // `(t_p, t_p + d]`), so the clip only ever reaches forward.
         val chain = breakPanels.filter { it.endEpochMillis > nowMillis }
-        if (chain.isEmpty()) return panels
+        if (chain.isEmpty()) return atLine(panels, nowMillis)
         val end = chain.maxOf { it.endEpochMillis }
         // What the chain refuses THIS task: `side-dev/README.md`'s resilience, and nothing else. A dynamic
         // period has no shape any more — it is one span of "no task allowed" end to end — so the question is
@@ -4083,7 +4076,7 @@ object SchedulerDomain {
             }
             mergeOccupied(out)
         }
-        return panels.flatMap { panel ->
+        return atLine(panels, nowMillis).flatMap { panel ->
             when {
                 // Fixed blocks and the bands are not the plan; a period cannot move them. A restrictive
                 // period is never cut at all — it is what the cut is made of (the §17 wind-down included).
@@ -4098,58 +4091,25 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**): the work plan as it must be
-     * **displayed** over the no-screen periods that give way to a line at a screen ([retractedAtLineSpans]) — the
-     * one the line is in, which reads ]$now line$;t2], and every one ahead of it, which reads whole.
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: **the panels as the rules give them at the
+     * line** — every panel as it is, and the stretches of a run held at the line ([TaskPanel.heldAtLine], *"task B at
+     * $now line$"*) with the line's extent: absent before the line reaches them, up to the line while it is in one,
+     * whole once passed.
+     * What the calendar draws and locks on: a "no screen" period still ahead reads whole because no task is laid in
+     * it, not because one is cut out of the drawing.
      *
-     * The requirement is *"the PASSING of the $now line$ line creates task panels not covered by the period"*,
-     * and a passing reaches exactly as far as the line has gone. So the plan is searched AND materialized across
-     * every retracted span — it has to name which task holds and until when (*"task A from 00:40 to $now line$,
-     * until 01:25"*), and the fill runs at a rule change rather than on time passing (CLAUDE.md), so a plan
-     * stopping at the line would leave nothing to be swept into — and what is still AHEAD of the line is cut here
-     * instead. A lock before the line gets there lays the covered modes' plan, with nothing to undo.
-     *
-     * **Forward only**, for the same reason [clipPlanForPinnedScreenBreak] is: the elapsed head of a straddling
-     * panel is the requirements' own *"task panels in its passing"*, and a cut reaching behind the line would put
-     * back an empty stretch nothing decided.
-     *
-     * Only [isRegeneratedPanel] panels are cut, and never a restrictive period: a pinned or manual block is a
-     * pre-placed block no period may move, and a period is what the cut is made OF.
-     *
-     * [periodPanels] is what is DRAWN AS A BAND — the periods on the calendar that give way to the line, a §17
-     * window and a wind-down hour among them (they carry `no screen`) — and that is the whole of what may be
-     * hidden: a companion has no band of its own, so it hides nothing a band does not already.
+     * Bounded by what it is handed (the visible span on the display path), and the same list when no run holds at
+     * the line at all.
      */
-    fun clipPlanForRetractedPeriod(
-        panels: List<TaskPanel>,
-        periodPanels: List<TaskPanel>,
-        nowMillis: Long,
-        tpMode: Int,
-        config: PeriodKindConfig,
-    ): List<TaskPanel> {
-        val retracted =
-            retractedAtLineSpans(
-                periodPanels.mapNotNull { panel ->
-                    val kind = panel.restrictiveKind
-                    if (kind.isEmpty()) null
-                    else RestrictivePeriod(panel.startEpochMillis, panel.endEpochMillis, kind, panel.title)
-                },
-                nowMillis,
-                tpMode,
-                config,
-            )
-        val cuts =
-            retracted.mapNotNull { span ->
-                val from = maxOf(span.startEpochMillis, nowMillis + 1L)
-                if (span.endEpochMillis > from) TaskTimeRange(from, span.endEpochMillis) else null
-            }
-        if (cuts.isEmpty()) return panels
+    fun atLine(panels: List<TaskPanel>, nowMillis: Long): List<TaskPanel> {
+        if (panels.none { it.lineBound }) return panels
         return panels.flatMap { panel ->
-            when {
-                !isRegeneratedPanel(panel) || panel.isRestrictivePeriod -> listOf(panel)
-                panel.endEpochMillis <= nowMillis -> listOf(panel)
-                else -> panel.minus(cuts)
+            // What of each held stretch the line has not reached yet: the rules give nothing there before it does.
+            val ahead = panel.heldAtLine.mapNotNull { span ->
+                TaskTimeRange(maxOf(span.startEpochMillis, nowMillis), span.endEpochMillis)
+                    .takeIf { it.endEpochMillis > it.startEpochMillis }
             }
+            if (ahead.isEmpty() || panel.endEpochMillis <= nowMillis) listOf(panel) else panel.minus(ahead)
         }
     }
 
@@ -4169,7 +4129,7 @@ object SchedulerDomain {
      * off-screen task run in a no-screen period, so its panel is true there and is left alone; so is every
      * restrictive period (a period is not work) and every panel of no task at all.
      *
-     * Display-side, like [clipPlanForPinnedScreenBreak] and [carveSleepPanels]: the regions are the past
+     * Display-side, like [atLine] and [carveSleepPanels]: the regions are the past
      * (`[floor, now]`), the fill only ever places ahead of the now-line, and what the devices report is not a
      * user edit — nothing here belongs in the stored plan. Whatever the cut vacates is then idle time and the
      * calendar draws it as a derived "Inactivity" band, exactly as any other uncovered past stretch.
@@ -4200,7 +4160,7 @@ object SchedulerDomain {
             val task = panel.taskId?.let { tasks[it] }
             // A panel the user PLACED ([isUserPlaced]) is their own word that the work happened there, which the
             // OS's evidence does not overrule: it keeps its length and the derived period gives way instead (user
-            // rule 2026-10-02) — the pre-placed block no period may move, as in [clipPlanForPinnedScreenBreak].
+            // rule 2026-10-02) — the pre-placed block no period may move, as in [atLine].
             if (task == null || panel.isRestrictivePeriod || !task.onScreen || isUserPlaced(panel)) listOf(panel)
             else panel.minus(regions)
         }
@@ -5929,13 +5889,36 @@ object SchedulerDomain {
             while ("auto/$idCounter" in keptIds) idCounter++
             return "auto/${idCounter++}"
         }
-        // The plan IS materialized across a retracted period ([retractedAtLineSpans]) and hidden ahead of the
-        // line on the DISPLAY side ([clipPlanForRetractedPeriod]), exactly as the plan under a pinned screen
-        // break is ([clipPlanForPinnedScreenBreak]). Clipping it here instead leaves nothing for the line to
-        // sweep INTO: the fill runs at a rule change and not on time passing (CLAUDE.md), so between two fills
-        // the line would advance over a stretch no panel was ever laid in and the calendar would draw the
-        // §17 carve's hole as a growing Inactivity band — the very anomaly this answers, moved three minutes
-        // to the right.
+        // The rules DO run across a retracted period ([retractedAtLineSpans]): the fill runs at a rule change and not
+        // on time passing (CLAUDE.md), so between two fills the line must find its task in the rules already
+        // returned — or the calendar would draw the §17 carve's hole as a growing Inactivity band. They are laid
+        // line-bound (just below), never as a panel inside the period that a display cut then hides.
+        // `docs/scheduler_requirements.md` § *mode 1*: where a "no screen" period gives way to a line still at a screen
+        // ([retractedSpans], the line onward), the rules hold the task AT THE LINE — *"if $now line$ mode = 1, then …
+        // task B at $now line$"*. Those stretches of a run are laid as held at the line ([TaskPanel.heldAtLine]): their
+        // extent is the line's, so nothing is laid inside a period still ahead, and the line reads its task off the
+        // rules when it gets there.
+        val atTheLine = retractedSpans.mapNotNull { span ->
+            TaskTimeRange(maxOf(span.startEpochMillis, nowMillis), span.endEpochMillis)
+                .takeIf { it.endEpochMillis > it.startEpochMillis }
+        }
+        // The same for a break ahead of the line (§ *screen breaks*): at a screen the line drags it and is on a task
+        // meanwhile, so the run the rules name under it — for a task the break refuses — holds at the line too, and no
+        // task is laid under a break. (Where the line carries the break on past this, [atLine] reads it.)
+        val breaksAhead = sidePanels.filter { it.screenBreak && it.endEpochMillis > nowMillis }
+        val underBreaks = HashMap<TaskId, List<TaskTimeRange>>()
+        fun heldAtTheLine(taskId: TaskId): List<TaskTimeRange> =
+            if (breaksAhead.isEmpty()) atTheLine
+            else underBreaks.getOrPut(taskId) {
+                mergeOccupied(
+                    atTheLine + breaksAhead.flatMap { band ->
+                        breakRefusedRanges(band, working.tasks[taskId]).mapNotNull { r ->
+                            TaskTimeRange(maxOf(r.startEpochMillis, nowMillis), r.endEpochMillis)
+                                .takeIf { it.endEpochMillis > it.startEpochMillis }
+                        }
+                    },
+                )
+            }
         val generated =
             placements.map { p ->
                 TaskPanel(
@@ -5949,6 +5932,10 @@ object SchedulerDomain {
                     auto = true,
                     alternativeTaskId = p.alternative,
                     alternativeSpans = p.alternativeSpans,
+                    heldAtLine = heldAtTheLine(p.taskId).mapNotNull { span ->
+                        TaskTimeRange(maxOf(span.startEpochMillis, p.startMillis), minOf(span.endEpochMillis, p.endMillis))
+                            .takeIf { it.endEpochMillis > it.startEpochMillis }
+                    },
                 )
             }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep

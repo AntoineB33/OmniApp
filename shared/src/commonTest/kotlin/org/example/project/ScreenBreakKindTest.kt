@@ -137,7 +137,7 @@ class ScreenBreakKindTest {
         fun auto(id: String, taskId: TaskId, start: Long, end: Long) =
             TaskPanel(id = id, taskId = taskId, title = tasks.getValue(taskId).title, startEpochMillis = start, endEpochMillis = end, auto = true)
         val plan = listOf(auto("s", screen, NOW - 10 * MIN, NOW + 30 * MIN), auto("o", resilient, NOW, NOW + 5 * MIN))
-        val out = SchedulerDomain.clipPlanForPinnedScreenBreak(plan, listOf(band), NOW, tasks = tasks)
+        val out = SchedulerDomain.atLine(plan, listOf(band), NOW, tasks = tasks)
         // The screen task keeps its elapsed head and resumes past the break: the break refuses it throughout.
         assertEquals(
             listOf(NOW - 10 * MIN to NOW, NOW + 5 * MIN to NOW + 30 * MIN),

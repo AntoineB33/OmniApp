@@ -6,9 +6,12 @@ Thanks for your interest. This document covers what you need to know before open
 
 Follow [Requirements](README.md#requirements) and [Installation](README.md#installation) in the README. For most work you need nothing beyond a JDK 17+ and the repository — the desktop target builds and runs with no Android SDK, no Supabase project and no network.
 
+**After every change: `./gradlew checkChange`, then `./gradlew tryDesktop` (or `tryAndroid`, `tryWeb`)** — see
+[Test your change](README.md#test-your-change). They never touch your own data.
+
 ## Before you open a pull request
 
-1. **Run the shared tests.** `./gradlew :shared:jvmTest` is the gate that matters and the one to run constantly while working. Before pushing, `./gradlew :shared:check` compiles every target.
+1. **Run the checks.** `./gradlew checkChange` runs the shared tests and builds every app your machine can build — the gate before pushing. While working, `./gradlew :shared:jvmTest` alone is the fast loop.
 2. **Add tests for behaviour, not just for code.** This project is test-driven by policy: state changes, selection rules, scheduler decisions and history mechanics are validated against the state holders *before* any UI exists for them. A pull request that changes behaviour without a test asserting the new behaviour will be asked for one.
 3. **Describe the user-visible change** in the PR body, and link the specification section it implements or changes — [`docs/PRD_TaskScheduler.md`](docs/PRD_TaskScheduler.md) for anything on the Task Scheduler page, [`PRD.md`](PRD.md) for the application shell around it (page navigation, accounts, persistence, sync). If the behaviour you are adding contradicts the spec, update the spec in the same PR — the two are meant to agree.
 

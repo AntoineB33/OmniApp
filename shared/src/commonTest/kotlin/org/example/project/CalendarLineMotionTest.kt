@@ -171,7 +171,7 @@ class CalendarLineMotionTest {
                 basePeriods = SchedulerDomain.restrictivePeriodsOf(work, PeriodKindConfig.DEFAULT),
                 mode = DynamicPeriods.MODE_AT_SCREEN,
             ).filter { it.startEpochMillis >= now }
-        val drawn = SchedulerDomain.clipPlanForPinnedScreenBreak(work, breaks, now, state.screenBreaks, state.tasks)
+        val drawn = SchedulerDomain.atLine(work, breaks, now, state.screenBreaks, state.tasks)
         return drawn.map { CalendarRecord(it.title, TaskTimeRange(it.startEpochMillis, it.endEpochMillis), entryId = it.id) } +
             breaks.map {
                 CalendarRecord(it.title, TaskTimeRange(it.startEpochMillis, it.endEpochMillis), entryId = it.id, screenBreak = true)

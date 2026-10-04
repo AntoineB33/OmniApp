@@ -230,15 +230,17 @@ class NoScreenInactivityPanelTest {
         val (s0, solo) = stateWithOneTask()
         val s = SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
         val panels = SchedulerDomain.fillSchedule(s, NOW)
-        val taskPanels = panels.filter { it.taskId == solo }
-        assertTrue(taskPanels.isNotEmpty())
-        assertTrue(
-            taskPanels.none { it.startEpochMillis < NOW + 2 * HOUR && it.endEpochMillis > NOW + HOUR },
-            "on-screen chunks must never overlap the no-screen period",
-        )
-        // The window before and after the period still fills (the fill flows around it).
-        assertTrue(taskPanels.any { it.startEpochMillis == NOW })
-        assertTrue(taskPanels.any { it.startEpochMillis == NOW + 2 * HOUR })
+        fun overlapsPeriod(p: TaskPanel) = p.startEpochMillis < NOW + 2 * HOUR && p.endEpochMillis > NOW + HOUR
+        // The calendar: the period ahead reads whole, with no on-screen chunk in it…
+        val drawn = drawnAt(panels, NOW).filter { it.taskId == solo }
+        assertTrue(drawn.isNotEmpty())
+        assertTrue(drawn.none(::overlapsPeriod), "on-screen chunks must never be drawn over the no-screen period ahead")
+        // …and the window before and after it still fills.
+        assertTrue(drawn.any { it.startEpochMillis == NOW })
+        assertTrue(drawn.any { it.startEpochMillis == NOW + 2 * HOUR })
+        // The rules (mode 1): a line reaching the period at a screen pushes it forward and stays on a task, so the
+        // rules name that task across the period.
+        assertTrue(panels.any { it.taskId == solo && overlapsPeriod(it) }, "the rules name the task the line is on")
     }
 
     @Test

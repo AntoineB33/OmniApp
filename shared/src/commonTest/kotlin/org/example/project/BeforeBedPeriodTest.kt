@@ -13,6 +13,7 @@ import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.RestrictivePeriod
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskId
+import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
@@ -267,14 +268,18 @@ class BeforeBedPeriodTest {
         val panels = SchedulerDomain.fillSchedule(state, now, tz)
         val windDowns = panels.filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }
         assertTrue(windDowns.isNotEmpty())
+        fun inside(p: TaskPanel, w: TaskPanel) = p.auto && p.startEpochMillis < w.endEpochMillis && p.endEpochMillis > w.startEpochMillis
+        // The calendar: a wind-down hour still ahead reads whole — its no-screen period keeps the on-screen task out.
+        val drawn = drawnAt(panels, now)
         windDowns.forEach { w ->
             assertTrue(
-                panels.none {
-                    it.auto && it.startEpochMillis < w.endEpochMillis && it.endEpochMillis > w.startEpochMillis
-                },
-                "an on-screen task was placed in the no-screen period the wind-down hour carries",
+                drawn.none { inside(it, w) },
+                "an on-screen task was drawn in the no-screen period the wind-down hour carries",
             )
         }
+        // The rules (mode 1): a line still at a screen when bedtime comes pushes that period forward and is on a
+        // task meanwhile, so the rules name the task — the task the wind-down hour itself accepts.
+        assertTrue(panels.any { inside(it, windDowns.first()) && it.taskId == solo }, "the rules name the task the line is on")
     }
 
     @Test

@@ -264,6 +264,14 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
 
 ### The selection and Edit Mode belong to the TREE, not to the pointer
 
+- **A finger's Shift+click is the selection's two DOTS** (user rule 2026-10-04, `TaskTreeView`,
+  `SelectionHandlesTouchTest`): while the last press in the tree was a finger's, the rows drawn selected (the one
+  highlight funnel, `shouldShowSelectionHighlight`) wear a dot on the first one's top-left corner and the last one's
+  bottom-right. Dragging a dot moves that end and keeps the other — through the ordinary `DragSelectCells`, so the
+  range is a range like a mouse's. The dot is tracked, not the finger, and snaps to the nearest row boundary. The
+  gesture is the tree's outer box's, on the Initial pass: it takes only a press within reach of a dot, and a mouse
+  press hides them (decided per event, `docs/PLATFORMS.md`). There is no touch Ctrl+click.
+
 - **A selected cell of ANOTHER sub-list is drawn selected on the row the click swept**
   (`SchedulerDomain.shouldShowSelectionHighlight` + `selectionHighlightVias`, 2026-10-03). `selection.renderVia` is
   the occurrence the MAIN selection is drawn under, which is the via of the main's sub-list only. For a selected cell

@@ -11,6 +11,43 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The task behind a "no screen" period is a rule held at the line, not a hidden panel — 2026-10-04
+
+User rule: *"the task must be found by reading the set of rules input and not by a strategy of hiding a task behind a
+'no screen' period."* The mode-1 plan laid full task panels across every no-screen period ahead of the line and the
+display cut them out (`clipPlanForRetractedPeriod`). Now `fillSchedule` lays those runs **line-bound**
+(`TaskPanel.lineBound`): the requirements' *"if mode = 1 … task B at $now line$"*, whose extent is the line itself —
+absent ahead, `[start, line]` while the line is in it, whole once passed. `SchedulerDomain.atLine` is the one reader of
+that extent (the calendar's drawing and its lock-on-task); the forward cursor reads the run like any other. The clip
+is deleted. `LineBoundRunTest`; the six rewritten tests and `SleepWindowNoIdlingTest` now read `atLine`.
+- **Screen breaks too** (user: "convert it too"): the stretches of a run under a break the fill lays ahead, for a task
+  the break refuses, hold at the line as well; and the break the line DRAGS — at `]line, line + d]` at every position
+  of the line, so no stored span can say where it is — is read with the rules by `atLine`'s overload taking the breaks
+  ahead, which replaces `clipPlanForPinnedScreenBreak`.
+- **One run, not pieces**: the first form cut a run into separate panels at every period edge, which fragmented the
+  plan (a run through a 20 s look-away became three panels). The stretches are recorded ON the run
+  (`TaskPanel.heldAtLine`, `PersistedPanel.heldAtLine`: local, absent = none); `lineBound` is whether it has any.
+
+### Mode 1 pushes "no screen" forward on a task; the calendar draws it the same for every no-screen period — 2026-10-04
+
+User clarification of `docs/scheduler_requirements.md`: in mode 1 the $now line$ is in a task even with a "no screen"
+period right after it, and the rules (if/then on the line and its mode) name that task. So the mode-1 plan holding a
+task across a no-screen period ahead is required, and six tests asserting the opposite on the mode-1 PLAN were wrong.
+- They now assert both halves: the calendar DRAWS no on-screen task inside the period ahead (`drawnAtAScreen`), and
+  the rules name the task the line is on. The zero-priority and peer-protocol tests, which were about a period's
+  refusal and not about screens, use a kind of the account's own, which no mode retracts.
+- Display fix found on the way: `clipPlanForRetractedPeriod` read the bands alone, so the no-screen period a wind-down
+  hour carries, or two declared layers make, hid nothing — an on-screen task was DRAWN inside a wind-down hour still
+  ahead. It now cuts the fill's own retracted spans, companions included.
+
+### A finger's Shift+click: the selection's two dots — 2026-10-04
+
+User rule: on a phone there is no Ctrl+click, but there is a Shift+click — the tree's selection wears a dot on its
+top-left corner and one on its bottom-right, and dragging one extends or shortens the range (`TaskTreeView`; through
+`DragSelectCells`). Shown while the last press in the tree was a finger's; a mouse press hides them. The dot snaps to
+the nearest row boundary and stays inside the tree at a horizontally scrolled edge. `SelectionHandlesTouchTest` drives
+it with real touch events on a rendered tree.
+
 ### Rule state input evolution: every stretch under the rule state in force there — 2026-10-04
 
 User rewrote `docs/scheduler_requirements.md` § *Rule state input evolution*. What the code did against it: a plan

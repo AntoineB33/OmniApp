@@ -37,7 +37,9 @@ object CalendarLockDomain {
         provisionalPanels: List<TaskPanel> = emptyList(),
     ): Long? {
         val ranges =
-            (state.panels.asSequence() + provisionalPanels.asSequence())
+            // As the rules give them at the line ([SchedulerDomain.atLine]): a run held at the line the line has not
+            // reached is not on the calendar, so it is nothing to lock on.
+            (SchedulerDomain.atLine(state.panels, nowMillis).asSequence() + SchedulerDomain.atLine(provisionalPanels, nowMillis).asSequence())
                 .filter { it.taskId == taskId }
                 .map { it.startEpochMillis to it.endEpochMillis } +
                 state.tasks[taskId]?.record.orEmpty().asSequence().map { it.startEpochMillis to it.endEpochMillis }

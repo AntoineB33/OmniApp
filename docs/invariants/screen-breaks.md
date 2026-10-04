@@ -152,8 +152,9 @@ persisted keys.
   through the rest. A line away is covered from now on — one stretch of "no screen" — so it takes each break once.
 - **What is DRAWN ahead is the machine for a line that follows the app** (`SchedulerDomain.screenBreakPanels` —
   `BreakMachine.predictExpected`): at a screen, it takes each break where it falls and is away in every known no-screen
-  period; away, it goes on away (the plan's own breaks). The calendar clips the plan out of every break drawn ahead of the
-  line (`clipPlanForPinnedScreenBreak`), so a pose ahead reads as the period it is.
+  period; away, it goes on away (the plan's own breaks). No task is laid under a break ahead of the line: the runs the rules name there hold at the line
+  (`TaskPanel.heldAtLine`), and `SchedulerDomain.atLine` reads the breaks drawn ahead with the rules, so a pose ahead
+  reads as the period it is (`scheduler.md` § *Across a retracted span…*).
 - **A break is never STRETCHED to keep covering the line; the gap behind it is covered instead** — the derived
   **Inactivity** band, or **Sleep** inside a §17 window; the oblique layers hatch it by their own rule.
 - **Modes 2 and 3: `t_p` is covered**, and the fill covers the WHOLE continuation, `[now, searchEnd]`, as an environment

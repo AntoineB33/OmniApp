@@ -167,7 +167,10 @@ class PeriodCompanionsAndDrawingsTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPeriodCombinations(combinationsWithCompanions("commute" to setOf(PeriodKinds.NO_SCREEN))))
         assertNotEquals(before, SchedulerDomain.schedulingSignature(s), "a companion change must re-plan")
         val kept = SchedulerDomain.fillSchedule(s, NOW, TimeZone.UTC, horizonMillis = NOW + 6 * HOUR)
-        assertEquals(0L, placedMillisIn(kept, solo, NOW + HOUR, NOW + 2 * HOUR))
+        // The calendar: the commute ahead now reads as no-screen time, with no on-screen task drawn in it…
+        assertEquals(0L, placedMillisIn(drawnAt(kept, NOW), solo, NOW + HOUR, NOW + 2 * HOUR))
+        // …while the rules (mode 1) still name the task a line reaching it at a screen is on as it pushes it forward.
+        assertTrue(placedMillisIn(kept, solo, NOW + HOUR, NOW + 2 * HOUR) > 0L, "the rules name the task the line is on")
         assertEquals(
             listOf(TaskTimeRange(NOW + HOUR, NOW + 2 * HOUR)),
             SchedulerDomain.assertedNoScreenRanges(s.panels, s.periodKindConfig),

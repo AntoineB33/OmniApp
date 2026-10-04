@@ -85,3 +85,8 @@ Even if the optimization score is not perfect for all infinite paths, the schedu
 ### Use of the set of rules output
 
 * A re-run of the scheduler engine would make it take a screenshot of the schedule without what is deduced from the current set of rules but not saved in history, and find a good schedule from the current rule state inputs. The calendar stays with the previous set of rules, until the scheduler finds one. Then, it removes everything deduced from the previous set of rules but not saved in history, and apply the set of rules input. It will do it again when a better set of rules input is found.
+
+
+
+
+

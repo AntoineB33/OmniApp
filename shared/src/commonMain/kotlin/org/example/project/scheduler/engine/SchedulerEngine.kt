@@ -2728,7 +2728,7 @@ class SchedulerEngine(
      * rewrote it (until 2026-09-29). The rules already say what happens in both cases, and they are applied where the
      * line is, in O(1):
      *  - **a task inside a break**: the break wins — the record is banked without it (`SchedulerReducer`'s record
-     *    append leaves out every break refusing the task) and the calendar clips it ([SchedulerDomain.clipPlanForPinnedScreenBreak]);
+     *    append leaves out every break refusing the task) and the calendar clips it ([SchedulerDomain.atLine]);
      *  - **an empty stretch where no break is left**: nobody runs there, which the requirements allow — schedulable time
      *    the rules leave to nobody.
      * The check survives as a diagnostic, because either answer means the plan was built around a placement the line

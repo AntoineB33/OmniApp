@@ -38,9 +38,19 @@ compose.desktop {
 // Forward `-Pomniapp.stateDir=<path>` to the launched app JVM as a system
 // property so dev scripts can point the app at an isolated state directory.
 // (The compose `run` task is a JavaExec subtype.)
+// `./gradlew tryDesktop` (root build, README § Test your change): the app on a THROWAWAY account in ~/.omniapp-try,
+// never the live release app's state (CLAUDE.md), and offline unless `-Ponline` — a try needs no account, no secret
+// and no server traffic. An explicit -Pomniapp.stateDir / -Pomniapp.startOffline still wins.
+val tryingDesktop = gradle.startParameter.taskNames.any { it.substringAfterLast(':') == "tryDesktop" }
+
 tasks.withType<JavaExec>().configureEach {
-    (project.findProperty("omniapp.stateDir") as String?)?.let { stateDir ->
+    val stateDirProperty = (project.findProperty("omniapp.stateDir") as String?)
+        ?: if (tryingDesktop) File(System.getProperty("user.home"), ".omniapp-try").path else null
+    stateDirProperty?.let { stateDir ->
         systemProperty("omniapp.stateDir", stateDir)
+    }
+    if (tryingDesktop && project.findProperty("omniapp.startOffline") == null && project.findProperty("online") == null) {
+        systemProperty("omniapp.startOffline", "true")
     }
     // Forward non-interactive login credentials (the per-account `/scripts` pass these via -P) so the app
     // can sign in to a chosen account at launch. Properties (not env) because the `run` task forks from a

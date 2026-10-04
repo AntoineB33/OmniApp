@@ -153,13 +153,16 @@ class SchedulerPeerProtocolTest {
     @Test
     fun a_follower_never_gives_a_task_a_stretch_its_own_period_refuses_it() {
         // `docs/scheduler_requirements.md` § *Restrictive Period*: resilience 0 forbids the task there. Only the
-        // follower has the no-screen period, and only C may run in it: the leader's A or B there is no answer here.
+        // follower has the period, and only C may run in it: the leader's A or B there is no answer here. A kind of
+        // the account's own (A and B at 0), which no $now line$ mode retracts — unlike "no screen", which a line at a
+        // screen pushes forward (mode 1), so that the rules may rightly name A or B there.
         var s = account()
         val c = s.tasks.keys.first { s.tasks[it]!!.title == "C" }
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, PeriodKinds.NO_SCREEN, 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPeriodKind("lab"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(c, "lab", 1.0))
         val (leader, _) = leaderPlan(s, NOW + DAY)
         val from = NOW + 3 * HOUR
-        val follower = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, from, from + HOUR))
+        val follower = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod("lab", from, from + HOUR))
         val adopted = SchedulerReducer.reduce(follower, SchedulerIntent.AdoptScheduleRules(NOW, placements(leader), null, NOW + DAY))
         val inside = adopted.panels.filter { it.auto && it.taskId != null && it.startEpochMillis < from + HOUR && it.endEpochMillis > from }
         assertTrue(inside.isNotEmpty() && inside.all { it.taskId == c }, "only C may run in the follower's period: $inside")

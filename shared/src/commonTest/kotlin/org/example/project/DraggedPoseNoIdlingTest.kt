@@ -133,7 +133,7 @@ class DraggedPoseNoIdlingTest {
     @Test
     fun the_display_clip_reaches_forward_only_so_the_swept_stretch_survives_it() {
         // The calendar does not draw the fill's panels raw: `App.kt` runs them through
-        // [SchedulerDomain.clipPlanForPinnedScreenBreak], which cuts the work out of the break chain sitting
+        // [SchedulerDomain.atLine], which cuts the work out of the break chain sitting
         // on the now-line — and that clip is now the whole of what makes a DRAGGED pose read as a period on
         // screen, since the plan deliberately runs under it. It may only ever reach forward: a clip that
         // reached behind the line would put the grey band straight back.
@@ -142,7 +142,7 @@ class DraggedPoseNoIdlingTest {
         val later = NOW + 10 * MIN
         val second = fill(s.copy(panels = first), later, frozen = owing(later))
         val drawn =
-            SchedulerDomain.clipPlanForPinnedScreenBreak(
+            SchedulerDomain.atLine(
                 second.filterNot { it.screenBreak },
                 second.filter { it.screenBreak },
                 later,

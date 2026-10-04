@@ -88,9 +88,11 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   ranking of first runs (`Evaluation`): `choose(refused = …)` and `alternativeTo(…)`. Do not let the two drift
   into two answers.
 - **Do not answer a sliding period by re-planning per tick.** A mode-1 drag moves the owed pose with the
-  line, and the plan under it was materialized at the last rule change: the answer is a display clip
-  (`clipPlanForPinnedScreenBreak`, over every break ahead of the line), cutting what a break **refuses** — not what
-  it covers. The plan itself is built around the breaks the line WILL MEET (`breaksTheLineWillMeet` — the break
+  line, and the rules under it were returned at the last rule change: the answer is the one rules-reading funnel
+  (`SchedulerDomain.atLine`, its overload taking the breaks ahead of the line): a run does not hold where a break
+  ahead **refuses** its task — not where one merely covers it. The break is a rule parameterized by the line
+  (`]line, line + d]`), so it is read with the rules, wherever it stands when asked; the stretches the fill itself
+  placed under a break are `heldAtLine` on the run (below). The plan itself is built around the breaks the line WILL MEET (`breaksTheLineWillMeet` — the break
   machine run forward with the mode held, `screen-breaks.md`), so it runs through a pose the line will drag rather
   than leaving it a hole.
 
@@ -261,15 +263,27 @@ model exists to prevent.
     the window stayed over the line; before that `sleep` retracted on PRD §17's *"carved by activity"*.) The
     predicate is deliberately **not** `coversNoScreen`, or a grey period the user drew would be pulled out from
     under them.
-  - **The plan is searched AND materialized across the retracted span; the DISPLAY is what stops at the
-    line** (`clipPlanForRetractedPeriod`, beside `clipPlanForPinnedScreenBreak` in `App.kt`, forward only).
-    The rules must name which task holds and until when (*"task A from 00:40 to $now line$, until 01:25"*),
-    and the fill runs at a rule change rather than on time passing — so a plan stopping at the line leaves
-    the stretch between two fills with nothing to be swept into, and the anomaly comes back three minutes to
-    the right. Behind the line the band is already gone by §17's own carve, off the same account activity
-    that makes the mode 1, so band-hole and task panels coincide. Ahead of it the band is whole and a lock
-    flips the mode with nothing to undo. **Neither away mode retracts anything**: their clause is the
+  - **Across a retracted span the rules hold the task AT THE LINE, and nothing is laid in the period ahead**
+    (`TaskPanel.heldAtLine`, user rule 2026-10-04: *"the task must be found by reading the set of rules, not by a
+    strategy of hiding a task behind a 'no screen' period"*). The requirements' own shape — *"if $now line$ mode = 1,
+    then … task B at $now line$"*: the search still runs across the span (it must name which task holds and until
+    when, and the fill runs at a rule change, not on time passing), but `fillSchedule` records on each run the
+    stretches of it that hold only AT THE LINE: the retracted spans from the line on, and — per task — what a break
+    the fill lays ahead refuses it. There the run's extent is the line's: absent before the line reaches the stretch,
+    up to the line while it is in it, whole once passed. ONE funnel reads that — `SchedulerDomain.atLine` — for what
+    is drawn and what the calendar locks on; the forward cursor (`RuleProgram`) reads the run whole, which is how the
+    line finds its task. **One run, not pieces**: cutting a run into panels wherever a period crosses it fragmented
+    the plan (a run through a 20 s look-away became three panels, and every count of runs moved);
+    `mergeSameTaskPanels` unions the stretches. Persisted locally with the plan (`PersistedPanel.heldAtLine`, absent
+    = none), derived like every auto panel. The display clip it replaced (`clipPlanForRetractedPeriod`, which cut a
+    full panel out of the drawing) is gone — do not put a display-side cut back. Behind the line the band is already
+    gone by §17's own carve, so band-hole and task panels coincide; ahead the band is whole and a lock flips the mode
+    with nothing to undo. `LineBoundRunTest`. **Neither away mode retracts anything**: their clause is the
     opposite one (the line must BE covered), which is what `DynamicPeriods.awayCover` is for.
+  - **Every no-screen period is treated alike, companions included**: the line-bound runs are cut from the FILL's own
+    retracted spans, so the no-screen period a wind-down hour carries, or the one two declared layers make (neither
+    has a band), holds no laid task ahead either. A test that "a no-screen period keeps an on-screen task out" asks
+    what the rules give at the line (`drawnAt`, commonTest); one about what the line will be on asks the rules.
 - **PRD §17's wind-down is a KIND, not a rule: `before bed` (`PeriodKinds.BEFORE_BED`).** The hour before
   each §17 bedtime is covered by a period of it (`SchedulerDomain.beforeBedPanels`, derived from
   `sleepPanels` so the hour drifts with the wake time it is measured back from). The hour is empty for the

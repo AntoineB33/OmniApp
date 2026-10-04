@@ -9,6 +9,10 @@ every Supabase and SQLite migration, is in `CHANGELOG.md`.
 
 ## Commands
 
+- `./gradlew checkChange` — the contributor's one gate (README § *Test your change*): `:shared:jvmTest`, every target
+  and app shell this machine can build, and `startupCheck` where a release DB exists. `tryDesktop` (throwaway
+  `~/.omniapp-try`, offline unless `-Ponline`), `tryAndroid` (installs debug, never uninstalls) and `tryWeb` are its
+  try-it half. Keep them cross-platform and away from the release state; a new check belongs in `checkChange`.
 - `./gradlew :shared:check` — verify syntax/compile errors after editing the `shared` module.
 - `./gradlew :shared:jvmTest` — the real logic gate (see *Verification* below).
 - `./gradlew :desktopApp:run` — run the desktop app to verify UI/desktop changes.

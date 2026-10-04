@@ -553,6 +553,7 @@ object SchedulerStateCodec {
                         periodKind = it.periodKind,
                         repeatEveryDays = it.repeat?.everyDays ?: 0,
                         repeatUntil = it.repeat?.untilMillis,
+                        heldAtLine = it.heldAtLine.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -955,6 +956,7 @@ object SchedulerStateCodec {
             periodKind = periodKind,
             repeatEveryDays = repeat?.everyDays ?: 0,
             repeatUntil = repeat?.untilMillis,
+            heldAtLine = heldAtLine.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) },
         )
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
@@ -1203,6 +1205,7 @@ object SchedulerStateCodec {
                         conductedBreak = it.conductedBreak,
                         periodKind = it.periodKind,
                         repeat = PanelRepeat.of(it.repeatEveryDays, it.repeatUntil),
+                        heldAtLine = it.heldAtLine.map { r -> TaskTimeRange(r.start, r.end) },
                     )
                 },
             nextPanelCounter = nextPanelCounter,
@@ -1538,6 +1541,7 @@ object SchedulerStateCodec {
             // kinds the README's one grey kind became ([PeriodKinds.migrateStoredKind]).
             periodKind = PeriodKinds.migrateStoredKind(periodKind, sleep),
             repeat = PanelRepeat.of(repeatEveryDays, repeatUntil),
+            heldAtLine = heldAtLine.map { TaskTimeRange(it.start, it.end) },
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -2559,6 +2563,8 @@ private data class PersistedPanel(
     val repeatEveryDays: Int = 0,
     /** The instant a repeating panel stops starting new occurrences; null repeats for ever. */
     val repeatUntil: Long? = null,
+    /** [org.example.project.scheduler.model.TaskPanel.heldAtLine]; a payload that predates it holds none. */
+    val heldAtLine: List<PersistedTimeRange> = emptyList(),
 )
 
 @Serializable

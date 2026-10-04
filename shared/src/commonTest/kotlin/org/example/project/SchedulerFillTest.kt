@@ -128,25 +128,22 @@ class SchedulerFillTest {
 
     @Test
     fun a_zero_priority_task_only_runs_where_it_is_the_only_task_a_period_accepts() {
-        // OmniApp's "period that accepts a set of tasks" is the §9 screen zone: an off-screen task may run
-        // ONLY inside a no-screen period, an on-screen task only outside one. A 0 % task is kept out of the
-        // share model (the reference would drop it outright) but must still fill a period nothing else can.
+        // A period that accepts only B (a kind of the account's own, which A has a resilience of 0 to — and which no
+        // $now line$ mode retracts, unlike "no screen" in mode 1). A 0 % task is kept out of the share model (the
+        // reference would drop it outright) but must still fill a period nothing else can.
         val (s0, ids) = stateWithTasks("A", "B")
         val (a, b) = ids
         var s = s0
         val cellB = s.lists[s.rootListId]!!.cellIds[1]
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cellB, 0, 0.0))
-        s = SchedulerReducer.reduce(
-            s,
-            SchedulerIntent.SetTaskResilience(b, PeriodKinds.NO_SCREEN, 1.0),
-        )
-        val noScreen =
-            TaskPanel("ns/0", null, "No screen", NOW + 2 * HOUR, NOW + 4 * HOUR, noScreen = true)
-        s = s.copy(panels = listOf(noScreen))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddPeriodKind("lab"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(a, "lab", 0.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(b, "lab", 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod("lab", NOW + 2 * HOUR, NOW + 4 * HOUR))
 
         val autos = SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 8 * HOUR).filter { it.auto }
         val bBlocks = autos.filter { it.taskId == b }
-        assertTrue(bBlocks.isNotEmpty(), "B must fill the no-screen window nothing else can occupy")
+        assertTrue(bBlocks.isNotEmpty(), "B must fill the window nothing else can occupy")
         assertTrue(
             bBlocks.all { it.startEpochMillis >= NOW + 2 * HOUR && it.endEpochMillis <= NOW + 4 * HOUR },
             "the zero-priority task escaped its period: ${bBlocks.map { it.startEpochMillis - NOW }}",
