@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -98,7 +99,7 @@ fun AddedElementsConfigurationWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState(ADDED_CONFIGURATION_FRAME_ID, initialOffset, initialSize)
-    val addedKinds = added.mapTo(HashSet()) { SearchDomain.actionKindOf(it) }
+    val addedKinds = SearchDomain.actionKindsOf(added)
     val sections = SearchDomain.addedActions(config.actionQuery, own.kinds, addedKinds.takeIf { own.onlyResultKinds })
 
     AppWindowFrame(
@@ -180,6 +181,8 @@ class AddedActionHandlers(
     val onDeepCopyCell: (CellId) -> Unit,
     /** A period's "Search its tasks": the Search window of its tasks' resilience ([SearchDomain.resilienceSearchConfig]). */
     val onOpenResilienceSearch: (String) -> Unit,
+    /** A creation row's "Search every element of the kind": the Search window on that kind ([SearchDomain.kindSearchConfig]). */
+    val onOpenKindSearch: (SearchDomain.Kind) -> Unit,
     val timerRun: @Composable (Set<AlarmWindowSubject>) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
     /**
@@ -251,7 +254,7 @@ internal fun AddedActionsSection(
         val sections =
             SearchDomain.actionsFor(
                 SearchDomain.addedActions(
-                    config.actionQuery, SearchDomain.Kind.entries.toSet(), added.mapTo(HashSet()) { SearchDomain.actionKindOf(it) },
+                    config.actionQuery, SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added),
                 ),
                 added,
             )
@@ -352,6 +355,16 @@ private fun AddedActionEditor(
     when (action) {
         SearchDomain.AddedAction.OpenEach -> FrameButton("Open ${added.size}", enabled = added.isNotEmpty(), onClick = onOpenEach)
         SearchDomain.AddedAction.ClearList -> FrameButton("Remove all", enabled = added.isNotEmpty(), onClick = onClear)
+        // A creation row leads to every element of the kind it makes: one button per kind among the added rows.
+        SearchDomain.AddedAction.CreationSearchAll -> {
+            val kinds = SearchDomain.creationKinds(added)
+            if (kinds.isEmpty()) {
+                Text("No creation row is added.", style = MaterialTheme.typography.bodySmall)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                kinds.forEach { kind -> FrameButton("Every " + kind.label) { handlers.onOpenKindSearch(kind) } }
+            }
+        }
         // The calendar's "add…": at the calendar filter's instant, whether its switch is on or not.
         SearchDomain.AddedAction.PlaceOnCalendar -> {
             val at = config.filters.calendarAddAtMillis

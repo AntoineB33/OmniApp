@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a creation row leads to every element of its kind — 2026-10-04
+
+User request: the actions of an added creation row ("New quota", "New alarm"…) hold a button opening a Search window
+on all the elements of that kind. `AddedAction.CreationSearchAll` (group `Kind.Creation`), one "Every <kind>" button
+per kind among the added rows (`creationKinds`), opening `kindSearchConfig(kind)` in a new Search window
+(`AddedActionHandlers.onOpenKindSearch`). The section's kinds are now `actionKindsOf` (acted-on kind + own kind), so
+the "New quota" row, acted on as a quota, shows it too. `QuotaTest`.
+
 ### Search window: a timer's countdown and its reverse were on no screen — 2026-10-04
 
 Anomaly (user): the actions section showed neither a timer's countdown nor Elapsed (the countdown in reverse). When the

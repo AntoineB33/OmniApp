@@ -315,4 +315,10 @@ actions being its editor.
   the default and nothing else (`SearchDomain.actionsFor`, `DEFAULT_CONFIGURATION_ACTIONS`: Title, Amount, Loop,
   Resilience — and "New", which creates one from that default) — Duplicate, Delete, the progression and the particular loops are about a quota that exists. Its loop is unset until the user sets it: a new quota then runs over the week it is made in; once
   set, over the default's loop that now falls in (a default that does not repeat keeps its own dates).
+- **EVERY creation row leads to all the elements of its kind** (user rule 2026-10-04):
+  `AddedAction.CreationSearchAll`, in the creation rows' OWN group (`Kind.Creation`), draws one "Every <kind>" button
+  per kind among the added creation rows (`SearchDomain.creationKinds`), each opening a new Search window on that kind
+  alone, nothing filtered and nothing added (`kindSearchConfig`). The groups an added element brings are
+  `SearchDomain.actionKindsOf` — the kind it is acted on as AND its own — so a "New quota" row keeps both the quota's
+  default-configuration actions and this one; asking `actionKindOf` alone would have left it without.
 

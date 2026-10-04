@@ -171,6 +171,26 @@ object SearchDomain {
         Config(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
 
     /**
+     * **Every element of a kind** (user rule 2026-10-04): the Search window listing [kind] alone, nothing filtered and
+     * nothing added — what a creation row's "Search every element of the kind" opens ([AddedAction.CreationSearchAll]).
+     */
+    fun kindSearchConfig(kind: Kind): Config = Config(kinds = setOf(kind))
+
+    /** The kinds the added CREATION rows make, in the drop-down's order ([CREATABLE]), each once. */
+    fun creationKinds(added: List<Result>): List<Kind> {
+        val made = added.filter { it.kind == Kind.Creation }.filterIsInstance<ItemResult>().mapTo(HashSet()) { it.id }
+        return CREATABLE.filter { it.name in made }
+    }
+
+    /**
+     * The kinds whose action groups [added] brings (the top right section's `onlyKinds`): the kind each element is
+     * acted on as ([actionKindOf]) and its own — a "New quota" row is acted on as a quota AND is a creation row, so it
+     * brings the quota's default-configuration actions and the creation row's own.
+     */
+    fun actionKindsOf(added: List<Result>): Set<Kind> =
+        added.flatMapTo(HashSet()) { listOf(actionKindOf(it), it.kind) }
+
+    /**
      * What the Search window's **Reset** puts in the place of [current] (user rule 2026-10-02): the configuration the
      * window [opened] with while it has changed since — so a window opened on something ("edit…" on the calendar)
      * goes back to it — else the default configuration, to start on something unrelated. The WHOLE configuration:
@@ -1929,6 +1949,11 @@ object SearchDomain {
         /** The calendar's "add…" (user rule 2026-10-01): every added element that can go there, at the filter's instant. */
         PlaceOnCalendar(null, "Add to the calendar"),
         ClearList(null, "Remove every element from the list"),
+        /**
+         * An added CREATION row (user rule 2026-10-04): a Search window on every element of the kind the row makes —
+         * "New quota" leads to all the quotas ([kindSearchConfig]). One button per kind among the added creation rows.
+         */
+        CreationSearchAll(Kind.Creation, "Search every element of the kind"),
         TaskAddCategory(Kind.Task, "Add a category"),
         TaskRemoveCategory(Kind.Task, "Remove a category"),
         TaskMinimumTime(Kind.Task, "Minimum time"),
@@ -2073,7 +2098,8 @@ object SearchDomain {
         sections.sortedByDescending { reachOf(it.first, added) }
 
     /** How many of [added] the actions of the group [kind] apply to: all of them for the general group (null). */
-    fun reachOf(kind: Kind?, added: List<Result>): Int = added.count { kind == null || actionKindOf(it) == kind }
+    fun reachOf(kind: Kind?, added: List<Result>): Int =
+        added.count { kind == null || actionKindOf(it) == kind || it.kind == kind }
 
     /**
      * The kind whose actions apply to an added element (user rule 2026-10-03): its own — except an added **creation

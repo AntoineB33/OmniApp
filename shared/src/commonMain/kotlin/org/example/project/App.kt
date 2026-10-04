@@ -3906,6 +3906,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenResilienceSearch = { kind ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.resilienceSearchConfig(kind).encode())
                             },
+                            onOpenKindSearch = { kind ->
+                                openNewWindow(FloatingWindow.Search, SearchDomain.kindSearchConfig(kind).encode())
+                            },
                             timerRun = { subjects ->
                                 AccountAlarmWindow(
                                     subject = null,
