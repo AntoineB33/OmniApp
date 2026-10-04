@@ -93,7 +93,11 @@ class BreaksAndSlidingPrioritiesTest {
     // ----- the plan satisfies the percentages of the position it is planned from ------------------
 
     @Test
-    fun the_plan_follows_the_percentages_of_exactly_the_position_it_is_planned_from() {
+    fun the_plan_follows_the_percentages_in_force_where_it_places_them() {
+        // `docs/scheduler_requirements.md` § *Rule state input evolution* (2026-10-04): every stretch is placed under
+        // the rule state in force THERE, not under the one at the position the plan was made from. One plan, made a
+        // day before the first keyframe and reaching a day past the last, follows "before" before it, the halfway
+        // blend halfway through, and "after" after it. (It used to hold the line's own percentages for its whole reach.)
         val s = keyframes()
         val focus = taskId(s, "Focus")
         val admin = taskId(s, "Admin")
@@ -102,24 +106,22 @@ class BreaksAndSlidingPrioritiesTest {
         assertEquals(0.6, SchedulerDomain.blendedTaskPriorities(s, T0)[focus]!!, 1e-9)
         assertEquals(0.6, SchedulerDomain.blendedTaskPriorities(s, T0 + DAY)[admin]!!, 1e-9)
 
-        fun ratioAt(now: Long): Double {
-            val panels = SchedulerDomain.fillSchedule(s, now, horizonMillis = now + 2 * DAY)
-            val f = servedMillis(panels, focus)
-            val a = servedMillis(panels, admin)
-            assertTrue(f > 0 && a > 0, "both screen tasks must be placed at $now (focus=$f admin=$a)")
-            return f.toDouble() / a.toDouble()
+        val from = T0 - DAY
+        val panels = SchedulerDomain.fillSchedule(s, from, horizonMillis = T0 + 3 * DAY)
+        fun served(id: TaskId, a: Long, b: Long): Long =
+            panels.filter { it.auto && it.taskId == id }.sumOf { maxOf(0L, minOf(it.endEpochMillis, b) - maxOf(it.startEpochMillis, a)) }
+        fun ratio(a: Long, b: Long): Double {
+            val f = served(focus, a, b)
+            val d = served(admin, a, b)
+            assertTrue(f > 0 && d > 0, "both screen tasks must be placed in [$a, $b) (focus=$f admin=$d)")
+            return f.toDouble() / d.toDouble()
         }
-        // A plan made at t_p satisfies the percentages AT t_p and holds them across its own reach, so the
-        // ratio a fill comes out with tracks the blend position it was made from: 3:1 for Focus at the
-        // start, even at the midpoint, and 1:3 by the far keyframe.
-        val start = ratioAt(T0)
-        val middle = ratioAt(T0 + DAY / 2)
-        val end = ratioAt(T0 + DAY)
-        assertTrue(start > middle, "the transition must move the plan: $start then $middle")
-        assertTrue(middle > end, "the transition must keep moving it: $middle then $end")
-        assertTrue(start > 1.5, "Focus owns 60% against Admin's 20% at the near keyframe, got $start")
+        val before = ratio(from, T0)
+        val middle = ratio(T0 + DAY / 2 - 6 * HOUR, T0 + DAY / 2 + 6 * HOUR)
+        val after = ratio(T0 + DAY, T0 + 3 * DAY)
+        assertTrue(before > 1.5, "Focus owns 60% against Admin's 20% before the transition, got $before")
         assertTrue(middle in 0.7..1.4, "the two are 40/40 halfway through the transition, got $middle")
-        assertTrue(end < 0.7, "Admin owns 60% against Focus's 20% at the far keyframe, got $end")
+        assertTrue(after < 0.7, "Admin owns 60% against Focus's 20% after it, got $after")
     }
 
     @Test

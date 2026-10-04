@@ -21,12 +21,16 @@ import org.example.project.scheduler.model.TaskTimeRange
  *   progress at the line. A panel the line is standing in is part of it, which is why the chunk in progress
  *   continues without a rule of its own: stopping it short costs its shortfall.
  *
- * ### The rule state
- * The rules at a position `x` of the line are computed with `R(x)`, held for the whole continuation — the reading
- * under which the requirements' two-scenario example holds. Inside a transition the engine re-plans at every
- * decision boundary the line reaches ([SchedulerDomain.taskTreeBlendDecisionKey]), and the fill ends the first run
- * where `R` has moved far enough for the best first run to change ([Input.ruleStateAt]) — so every decision the
- * frozen past records was taken with the rule state at its own instant, a switch inside a run included.
+ * ### The rule state (`docs/scheduler_requirements.md` § *Rule state input evolution*)
+ * Every stretch is placed under the rule state in force THERE, never under the one at the line ([run], the walk):
+ * - where `R` is **constant** up to its next change `t_s`, the stretch is the perfect schedule of that `R` ALONE on
+ *   the whole timeline — searched past `t_s` under it, so its hypothetical backward compensation from what lies
+ *   beyond `t_s` reaches back — and emitted only up to `t_s`;
+ * - from `t_s` on, the next rule state plans with everything placed before `t_s` as its frozen past (it catches up
+ *   on how that past deviated from its own goals), and nothing of it reaches back before `t_s`;
+ * - where `R` **moves** (a transition), the same logic to infinitesimals: one decision at a time, each under `R` at
+ *   its own instant with everything before it frozen, and a run ends where the moving `R` turns against it.
+ * So the whole plan is right before the line gets there, and stays definitive as it passes: time never re-plans.
  *
  * ### The search looks past what it materializes
  * [Input.searchUntilMillis] reaches past [Input.horizonMillis]: the runs are searched that far and emitted only up
@@ -35,13 +39,13 @@ import org.example.project.scheduler.model.TaskTimeRange
  */
 internal object ScheduleFill {
 
-    class Input(
+    data class Input(
         /** Where placement starts: the now-line, or the end of the head an extension keeps. */
         val startMillis: Long,
         val horizonMillis: Long,
         /** How far back the frozen past and the deprivations are read. */
         val lookbackMillis: Long,
-        /** `R(x)` at the now-line, in the tie-break order. */
+        /** `R` at [startMillis], in the tie-break order — the whole rule state when [ruleStates] is null. */
         val ruleState: List<PlanTask>,
         /**
          * Every restrictive period, whatever its kind. A ZERO-width one with a closed end at [startMillis] restricts the
@@ -90,11 +94,10 @@ internal object ScheduleFill {
         /** Wall time the search may spend past its step-bounded passes (the exhaustive search, the platform solver). */
         val budget: SearchBudget = SearchBudget.NONE,
         /**
-         * `docs/scheduler_requirements.md` § *Rule State Evolution*: `R(x)` at another position of the line, when the
-         * rule state is moving (a task-tree transition). Null outside one. When given, the first free run is ended at
-         * the first instant (to [RULE_SWITCH_RESOLUTION_MILLIS]) where the best first run under `R` there is another.
+         * `docs/scheduler_requirements.md` § *Rule state input evolution*: the rule state along the timeline, when it
+         * changes over this fill (dated task trees). Null: [ruleState] holds everywhere. When given, [run] walks it.
          */
-        val ruleStateAt: ((Long) -> List<PlanTask>)? = null,
+        val ruleStates: RuleStates? = null,
         /**
          * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a line walked across a
          * stretch nothing ran in (a wake from device sleep) is given *"the current set of rules … while no better set
@@ -146,6 +149,21 @@ internal object ScheduleFill {
         }
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *Rule state input evolution*: the rule state input along the timeline — a
+     * sequence of pieces, each either constant or moving continuously, separated by the instants it changes at.
+     */
+    interface RuleStates {
+        /** `R` at [x], right-continuous: at a discrete switch, the state switched TO. */
+        fun at(x: Long): List<PlanTask>
+
+        /** The first instant after [x] where the piece `R` is on changes, or null when it never does. */
+        fun nextChange(x: Long): Long?
+
+        /** Whether `R` moves over `[x, nextChange(x))` (a transition) rather than holding. */
+        fun movingAt(x: Long): Boolean
+    }
+
     /** One placed panel: who, when, and the alternative schedule inside it. */
     data class Placement(
         val taskId: TaskId,
@@ -168,6 +186,10 @@ internal object ScheduleFill {
         val report: SearchReport = SearchReport(),
         val cost: Double? = null,
         val idle: List<TaskTimeRange> = emptyList(),
+        /** How far this placed, when it decided less than its horizon (one decision of a moving rule state). */
+        internal val endMillis: Long? = null,
+        /** The task a moving rule state turned against at [endMillis]: it may not be the next first run. */
+        internal val turnedAgainst: TaskId? = null,
     )
 
     /**
@@ -194,9 +216,76 @@ internal object ScheduleFill {
         return out
     }
 
+    /**
+     * The walk over the rule state (see the class doc): stretch by stretch where it holds, decision by decision where
+     * it moves, each placed under the rule state in force there with everything placed before it as the frozen past.
+     */
     fun run(input: Input): Result {
-        // Every entry, the recursion through a rule-state switch included: a fill nobody wants any more stops
-        // here rather than planning the next stretch of a timeline that has already changed.
+        val states = input.ruleStates ?: return runSegment(input, firstOnly = false)
+        if (input.unrollOnly) return runSegment(input.copy(ruleState = states.at(input.startMillis)), firstOnly = false)
+        val placements = ArrayList<Placement>()
+        val idle = ArrayList<TaskTimeRange>()
+        var history = input.history
+        var start = input.startMillis
+        var forced = input.forcedFirst
+        var refused = input.refusedFirst
+        var first: Result? = null
+        var cycle: ScheduleCycle? = null
+        while (start < input.horizonMillis) {
+            // A fill nobody wants any more stops here rather than planning the next stretch of a timeline that has
+            // already changed.
+            input.budget.checkAbandoned()
+            val change = states.nextChange(start)?.takeIf { it < input.horizonMillis }
+            val stepEnd = change ?: input.horizonMillis
+            val moving = states.movingAt(start)
+            val ruleState = states.at(start)
+            val searchCeiling = maxOf(input.horizonMillis, input.searchUntilMillis ?: input.horizonMillis)
+            // One decision of a moving rule state looks one decision window ahead — the view every published run is
+            // decided with ([ScheduleOptimizer.searchMarginMillis]) — rather than the whole reach: the score's discount
+            // has forgotten what lies further, and searching it again for every run of a transition cost 30 times a fill.
+            val margin = ScheduleOptimizer.searchMarginMillis(ruleState)
+            val emitUntil = if (moving) minOf(stepEnd, start + margin) else stepEnd
+            val step = input.copy(
+                startMillis = start,
+                horizonMillis = emitUntil,
+                lookbackMillis = input.lookbackMillis + (start - input.startMillis),
+                ruleState = ruleState,
+                history = history,
+                forcedFirst = forced,
+                refusedFirst = refused,
+                // The rule state in force here ALONE, searched past its own end: what lies beyond is its hypothetical
+                // future, whose backward compensation reaches back into this stretch.
+                searchUntilMillis =
+                    if (moving) maxOf(emitUntil, minOf(emitUntil + margin, searchCeiling))
+                    else maxOf(stepEnd, searchCeiling),
+            )
+            var result = runSegment(step, firstOnly = moving)
+            var until = result.endMillis ?: emitUntil
+            if (until <= start) {
+                // A decision that placed nothing (cannot happen on a well-formed model): never loop on it.
+                result = runSegment(step, firstOnly = false)
+                until = emitUntil
+            }
+            if (first == null) first = result
+            placements += result.placements
+            idle += result.idle
+            history = history + result.placements.map { PlanBlock(it.taskId, it.startMillis, it.endMillis) }
+            forced = null
+            refused = result.turnedAgainst
+            // The rules repeat only where one rule state holds to the end.
+            cycle = if (!moving && change == null && until >= input.horizonMillis) result.cycle else null
+            start = until
+        }
+        val head = first ?: return Result(emptyList(), null)
+        return Result(placements, cycle, head.report, head.cost, idle)
+    }
+
+    /**
+     * One rule state ([Input.ruleState]) over `[startMillis, horizonMillis)`. With [firstOnly], only the first decision
+     * is placed — the first free run, ended where [Input.ruleStates] turns against it — and [Result.endMillis] says
+     * where the next one is taken.
+     */
+    private fun runSegment(input: Input, firstOnly: Boolean): Result {
         input.budget.checkAbandoned()
         val from = input.startMillis - input.lookbackMillis
         val emitEnd = input.horizonMillis
@@ -264,37 +353,17 @@ internal object ScheduleFill {
             plan = optimizer.plan(cursor, model.uEnd, forcedFirst, refusedFirst, seeds = seeds + listOf(plan.runs), budget = input.budget, firstAmong = among)
             settled = plan.runs to null
         }
-        val moving = input.ruleStateAt
-        if (moving != null && forcedFirst < 0 && refusedFirst < 0 && among.isEmpty()) {
-            val switch = ruleStateSwitch(input, model, settled.first, emitEnd, moving)
-            if (switch != null) {
-                val (cut, head) = switch
-                emit(model, head, raw, emitU)
-                val ended = head.last { model.fixedAt(it.fromU) < 0 }.task
-                val headHistory = head.filter { it.task >= 0 }.flatMap { r ->
-                    model.wallIntervals(r.fromU, r.toU).map { PlanBlock(model.taskId(r.task), it.startMillis, it.endMillis) }
-                }
-                // From the cut on, the rules are the ones in force THERE: a fill from the cut under R(cut), with the run
-                // just ended as the frozen past and refused as the first run — which is what the switch found.
-                val tail = run(
-                    Input(
-                        startMillis = cut,
-                        horizonMillis = input.horizonMillis,
-                        lookbackMillis = input.lookbackMillis + (cut - input.startMillis),
-                        ruleState = moving(cut),
-                        periods = input.periods,
-                        blocks = input.blocks,
-                        history = input.history + headHistory,
-                        refusedFirst = model.taskId(ended),
-                        repeatBeyondMillis = input.repeatBeyondMillis,
-                        searchUntilMillis = input.searchUntilMillis,
-                        seeds = input.seeds,
-                        budget = input.budget,
-                    ),
-                )
-                val laid = group(raw) + tail.placements
-                return Result(laid, null, plan.report, plan.cost, idleSpans(model, laid, input.startMillis, emitEnd))
-            }
+        if (firstOnly) {
+            // The moving rule state may turn against the first run only where nothing else decided it.
+            val probe = input.ruleStates.takeIf { forcedFirst < 0 && refusedFirst < 0 && among.isEmpty() }
+            val decision = firstDecision(input, model, settled.first, emitEnd, probe)
+            emit(model, decision.head, raw, model.uAt(decision.cut))
+            val laid = group(raw)
+            return Result(
+                laid, null, plan.report, plan.cost, idleSpans(model, laid, input.startMillis, decision.cut),
+                endMillis = decision.cut,
+                turnedAgainst = decision.turnedAgainst,
+            )
         }
         emit(model, settled.first, raw, emitU)
         val laid = group(raw)
@@ -331,6 +400,34 @@ internal object ScheduleFill {
             .sortedBy { it.fromU }
             .toList()
 
+    /** One decision of a moving rule state: the runs up to [cut], and the task turned against there (if any). */
+    private class Decision(val cut: Long, val head: List<ScheduleOptimizer.Run>, val turnedAgainst: TaskId?)
+
+    /**
+     * The first decision of [runs]: the pre-placed pieces before it, then the first free run (a task's, or one left to
+     * nobody) to its end — or to where [states] turns against it, when given.
+     */
+    private fun firstDecision(
+        input: Input,
+        model: ScoreModel,
+        runs: List<ScheduleOptimizer.Run>,
+        emitEnd: Long,
+        states: RuleStates?,
+    ): Decision {
+        val firstIndex = runs.indexOfFirst { model.fixedAt(it.fromU) < 0 && model.wallEndAt(it.toU) > input.startMillis }
+        if (firstIndex < 0) return Decision(emitEnd, runs, null)
+        if (states != null && runs[firstIndex].task >= 0) {
+            ruleStateSwitch(input, model, runs, emitEnd, states::at)?.let { (cut, head) ->
+                return Decision(cut, head, model.taskId(runs[firstIndex].task))
+            }
+        }
+        var lastIndex = firstIndex
+        while (lastIndex + 1 < runs.size && runs[lastIndex + 1].task == runs[firstIndex].task &&
+            abs(runs[lastIndex + 1].fromU - runs[lastIndex].toU) <= ScoreModel.EPS && model.fixedAt(runs[lastIndex + 1].fromU) < 0
+        ) lastIndex++
+        return Decision(minOf(model.wallEndAt(runs[lastIndex].toU), emitEnd), runs.subList(0, lastIndex + 1), null)
+    }
+
     /**
      * `docs/scheduler_requirements.md` § *Rule State Evolution*: *"When $now line$ is between two rule states, the
      * rule state being applied is the one found at this moment in the transition."* The runs were searched under
@@ -339,8 +436,7 @@ internal object ScheduleFill {
      *
      * The earliest such `x` (probed at [RULE_SWITCH_PROBES] positions of the emitted run, then bisected to
      * [RULE_SWITCH_RESOLUTION_MILLIS]) and the runs up to it, or null when the run is never turned against. What follows
-     * the cut is planned under `R(cut)` by the caller; the engine re-plans again when the line reaches it, a run start
-     * like any other ([SchedulerDomain.taskTreeBlendDecisionKey]).
+     * the cut is planned under `R(cut)` by the walk ([run]).
      */
     private fun ruleStateSwitch(
         input: Input,

@@ -241,54 +241,94 @@ class TaskTreeTimelineTest {
         assertEquals(before, SchedulerDomain.schedulingSignature(s))
     }
 
+    // ---- `docs/scheduler_requirements.md` § *Rule state input evolution* ------------------------------------
+
+    private val hour = 60L * 60 * 1000
+
+    /**
+     * A discrete switch at [ts]: "Before" (A and B) and "After" (A and C) are dated on the SAME instant, so the rule
+     * state jumps from one to the other there instead of blending. B exists only before, C only after.
+     */
+    private fun switchScenario(ts: Long, afterDated: Boolean = true): SchedulerState {
+        var s = stateWithTasks("A", "B")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Before"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("After"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds.last(), "C"))
+        val bCell = s.lists[s.rootListId]!!.cellIds.first { s.tasks[s.cells[it]?.taskId]?.title == "B" }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(bCell, ""))
+        s = dated(s, "Before", ts)
+        return if (afterDated) dated(s, "After", ts) else s
+    }
+
+    private fun runs(state: SchedulerState, now: Long, horizon: Long) =
+        SchedulerDomain.fillSchedule(state, now, horizonMillis = now + horizon)
+            .filter { it.taskId != null && !it.isRestrictivePeriod && it.auto }
+            .sortedBy { it.startEpochMillis }
+
     @Test
-    fun inside_a_transition_the_plan_is_remade_only_where_the_line_reaches_a_decision() {
-        val s0 = twoKeyframes()
-        val now = t0 + day
-        val s = s0.copy(panels = SchedulerDomain.fillSchedule(s0, now, horizonMillis = now + day))
-        val starts = s.panels.filter { it.auto && it.taskId != null }.map { it.startEpochMillis }.sorted()
-        assertTrue(starts.size > 2, "the fixture must place several runs")
-        val samples = (0..2_000).map { now + it * (12L * 60 * 60 * 1000 / 2_000) }
-        val keys = samples.map { SchedulerDomain.taskTreeBlendDecisionKey(s, it) }
-        val changes = samples.zip(keys).zipWithNext().filter { (x, y) -> x.second != y.second }
-        assertTrue(changes.isNotEmpty(), "the transition must move the trigger")
-        for ((x, y) in changes) {
-            assertTrue(
-                starts.any { it in (x.first + 1)..y.first },
-                "the key moved between two samples no run starts between",
-            )
-        }
-        // With no dated tree the key is constant, so an account that never uses the timeline never fires.
-        val plain = SchedulerReducer.reduce(stateWithTasks("A"), SchedulerIntent.CreateTaskTree("Only"))
+    fun a_switch_ahead_is_planned_under_the_rule_state_in_force_on_each_side_of_it() {
+        // The plan made NOW reaches past the switch: before it, only what "Before" holds; from it on, only what
+        // "After" holds — the line does not have to get there for the far side to be right.
+        val ts = t0 + 6 * hour
+        val s = switchScenario(ts)
+        assertEquals(listOf("Before", "After"), SchedulerDomain.datedTaskTrees(s).map { it.title }, "the switch order")
+        val plan = runs(s, t0, 12 * hour)
+        val before = plan.filter { it.startEpochMillis < ts }
+        val after = plan.filter { it.endEpochMillis > ts }
+        assertTrue(before.isNotEmpty() && after.isNotEmpty(), "the fixture places runs on both sides")
+        assertTrue(before.all { it.title != "C" && it.endEpochMillis <= ts }, "nothing of After before the switch: $before")
+        assertTrue(after.all { it.title != "B" && it.startEpochMillis >= ts }, "nothing of Before after it: $after")
+        // The new rule state catches up on the frozen past: C, never served, leads from the switch.
+        assertEquals("C", after.first().title)
+    }
+
+    @Test
+    fun before_a_switch_the_plan_is_the_one_the_old_rule_state_alone_would_give() {
+        // "the perfect schedule for t < t_s is the part where t < t_s in the perfect schedule if RSI A is the only RSI in
+        // the whole timeline": nothing of the rule state switched to leaks back across the switch.
+        val ts = t0 + 6 * hour
+        val withSwitch = runs(switchScenario(ts), t0, 12 * hour).filter { it.startEpochMillis < ts }
+        val aloneTimeline = runs(switchScenario(ts, afterDated = false), t0, 12 * hour)
+            .filter { it.startEpochMillis < ts }
+            .map { it.copy(endEpochMillis = minOf(it.endEpochMillis, ts)) }
         assertEquals(
-            SchedulerDomain.taskTreeBlendDecisionKey(plain, t0),
-            SchedulerDomain.taskTreeBlendDecisionKey(plain, t0 + 900 * day),
+            aloneTimeline.map { Triple(it.title, it.startEpochMillis, it.endEpochMillis) },
+            withSwitch.map { Triple(it.title, it.startEpochMillis, it.endEpochMillis) },
         )
     }
 
     @Test
-    fun the_watch_is_armed_for_the_very_instant_the_trigger_next_moves_and_for_nothing_without_a_dated_tree() {
-        // `docs/scheduler_requirements.md` § *Rule Structure*: the watch sleeps until an armed instant instead of
-        // looking again every minute — so the instant it is armed for must never fall AFTER the key has moved.
-        val s0 = twoKeyframes()
-        val now = t0 + day
-        val s = s0.copy(panels = SchedulerDomain.fillSchedule(s0, now, horizonMillis = now + day))
-        val samples = (0..2_000).map { now + it * (12L * 60 * 60 * 1000 / 2_000) }
-        val keys = samples.map { SchedulerDomain.taskTreeBlendDecisionKey(s, it) }
-        val changes = samples.zip(keys).zipWithNext().filter { (x, y) -> x.second != y.second }
-        assertTrue(changes.isNotEmpty(), "the transition must move the trigger")
-        for ((x, y) in changes) {
-            val armed = SchedulerDomain.nextTaskTreeBlendWakeMillis(s, x.first)
-            assertTrue(armed != null && armed > x.first && armed <= y.first, "armed for $armed, the key moved by ${y.first}")
+    fun the_far_side_of_a_switch_is_definitive_before_the_line_reaches_it() {
+        // Progressive Calculation: what is planned past the switch must be what a plan made AT the switch, with the
+        // near side as its frozen past, gives — so reaching the switch rewrites nothing (time never re-plans).
+        val ts = t0 + 6 * hour
+        val s = switchScenario(ts)
+        val early = runs(s, t0, 24 * hour)
+        val frozen = s.copy(panels = early.filter { it.startEpochMillis < ts }.map { it.copy(endEpochMillis = minOf(it.endEpochMillis, ts)) })
+        val atSwitch = runs(frozen, ts, 18 * hour).filter { it.startEpochMillis >= ts }
+        val window = ts + 6 * hour
+        assertEquals(
+            atSwitch.filter { it.startEpochMillis < window }.map { Triple(it.title, it.startEpochMillis, minOf(it.endEpochMillis, window)) },
+            early.filter { it.startEpochMillis >= ts && it.startEpochMillis < window }
+                .map { Triple(it.title, it.startEpochMillis, minOf(it.endEpochMillis, window)) },
+        )
+    }
+
+    @Test
+    fun inside_a_transition_every_run_is_decided_under_the_rule_state_at_its_own_instant() {
+        // The same logic taken to infinitesimals: a plan made at the transition's start already holds, at each later
+        // run start, the decision the rule state THERE takes with the runs before it frozen. So the plan needs no
+        // re-plan as the line moves through the transition.
+        val minute = 60_000L
+        val s = rampScenario(endPercent = 100, spanMinutes = 600)
+        val early = runs(s, t0, 6 * hour)
+        assertTrue(early.size >= 3, "the fixture places several runs")
+        for (k in 1..2) {
+            val at = early[k].startEpochMillis
+            val frozen = s.copy(panels = early.filter { it.startEpochMillis < at })
+            val first = runs(frozen, at, 6 * hour).first { it.startEpochMillis >= at }
+            assertEquals(early[k].title, first.title, "run $k (at ${(at - t0) / minute} min) is the rule state's own decision")
         }
-        // Before the first keyframe nothing is interpolated: the next thing that can happen is that keyframe.
-        val first = SchedulerDomain.datedTaskTrees(s).first().dateMillis!!
-        assertEquals(first, SchedulerDomain.nextTaskTreeBlendWakeMillis(s, first - day))
-        // Past the last one, and on an account with no dated tree, nothing is armed at all.
-        val last = SchedulerDomain.datedTaskTrees(s).last().dateMillis!!
-        assertEquals(null, SchedulerDomain.nextTaskTreeBlendWakeMillis(s, last + day))
-        val plain = SchedulerReducer.reduce(stateWithTasks("A"), SchedulerIntent.CreateTaskTree("Only"))
-        assertEquals(null, SchedulerDomain.nextTaskTreeBlendWakeMillis(plain, t0))
     }
 
     // ---- the intents ---------------------------------------------------------------------------

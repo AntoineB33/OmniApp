@@ -754,6 +754,8 @@ the line.
    period) onto the score and back into panels.
 5. **The rule-state blend is exact**: inside a transition the plan holds `R(x)` and is re-made at every run start
    the line reaches (`taskTreeBlendDecisionKey`), which is what makes the two-scenario example hold (a test).
+   *Superseded 2026-10-04 (ADR 0008): every stretch is placed under the rule state in force THERE, ahead of time, and
+   the run-start re-plan is gone.*
 6. **Progressive calculation** — the engine fills in doubling stages (1 h, 2 h, 4 h, … to $t_{goal}$), each an
    extension that keeps what the previous stage published (`dispatchProgressivePlan`).
 

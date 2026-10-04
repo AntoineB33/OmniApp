@@ -97,8 +97,9 @@ form; the file named after each one carries the whole rule and the reasons.
 - **Time passing must never re-plan.** Anything that wants to trigger a re-plan belongs in
   `SchedulerDomain.schedulingSignature` (or `requestReschedule`), never in a fresh dispatch site or a tick. A re-plan
   of unchanged rules rewrites a schedule the progressive calculation already made definitive — the hourly
-  "staleness bound" did exactly that and was removed (2026-09-17). One bounded exception exists and is named in
-  `scheduler.md`.
+  "staleness bound" did exactly that and was removed (2026-09-17). There is no exception any more: the task-tree
+  timeline's re-plan at every run start went on 2026-10-04, when the fill started placing every stretch under the
+  rule state in force THERE (`scheduler.md` § *Rule state input evolution*).
 - **The scheduler's answer need not be the same on two devices; the score decides.** Budgets may be wall time, a
   platform may bring its own solver (the desktop's OR-Tools MIP), and plans made apart compete on the score under the
   rules in force now. Never refuse a solver or a budget "because every device must reach the same rules".

@@ -957,7 +957,6 @@ class SchedulerEngine(
         launchNoScreenEvidenceScan()
         launchAdvanceTick()
         launchRuleChangeReschedule()
-        launchTaskTreeBlendReschedule()
         launchHorizonReschedule()
         launchCalendarHorizonReschedule()
         launchPendingRescheduleOnSwitch()
@@ -3421,44 +3420,6 @@ class SchedulerEngine(
                         "${observed.sumOf { it.endEpochMillis - it.startEpochMillis } / 60_000}min " +
                         "over the last ${NO_SCREEN_EVIDENCE_LOOKBACK_MILLIS / 3_600_000}h",
                 )
-            }
-        }
-    }
-
-    /**
-     * The task-tree timeline's re-plan: refill when the now-line reaches a DECISION BOUNDARY inside a transition
-     * between two dated task trees ([SchedulerDomain.taskTreeBlendDecisionKey]).
-     *
-     * This is the one deliberate exception to "time passing must never re-plan" — the plan's CONTENT is a
-     * function of time here: `docs/scheduler_requirements.md`
-     * § *Rule State Evolution* applies the rule state found at the now-line, so a decision must be taken with the
-     * rule state at the instant the line reaches it. It is boundary-driven rather than a tick: the key moves only
-     * when the line crosses the start of a run the plan placed, so a transition costs one fill per run it spans,
-     * and nothing at all outside one.
-     *
-     * **It sleeps until its next ARMED instant and does nothing before it** (§ *Rule Structure*;
-     * [SchedulerDomain.nextTaskTreeBlendWakeMillis]). It used to wake at least once a minute and read the whole
-     * panel list each time, whether or not a single tree was dated — a timeline-wide lookup on a timer, the exact
-     * shape the requirements forbid. Now the instant is armed when the trees or the plan change (a re-plan may move
-     * the next start) and when the clock is reconfigured, and with no dated tree nothing is armed at all.
-     *
-     * A re-arming never compares the key: only REACHING the armed instant does. A re-plan rewrites the very panels
-     * the key is read from, so comparing on every change of them would let the watch answer its own fill.
-     *
-     * The first sample only primes `last`, so starting up mid-transition does not itself force a fill: a boundary
-     * the line crossed while the app was closed is the rule-change watcher's to answer at launch
-     * ([SchedulerDomain.planHoldsAtLaunch] compares the key at the plan's own instant with the key now).
-     */
-    private fun launchTaskTreeBlendReschedule() = scope.launch {
-        var last: Long? = null
-        vm.state.map { it.panels to it.taskTrees }.distinctUntilChanged().collectLatest {
-            if (last == null) last = SchedulerDomain.taskTreeBlendDecisionKey(vm.state.value, clock.nowMillis())
-            while (true) {
-                val wake = SchedulerDomain.nextTaskTreeBlendWakeMillis(vm.state.value, clock.nowMillis()) ?: break
-                sleepUntil(wake)
-                val key = SchedulerDomain.taskTreeBlendDecisionKey(vm.state.value, clock.nowMillis())
-                if (key != last) requestReschedule()
-                last = key
             }
         }
     }

@@ -7,10 +7,11 @@ requirement: it only fixes what "best" means. Every § below names a section of 
 ## Notation
 
 * All times are in minutes. $x$ is the $now line$ and $m$ its mode.
-* $R(x)$ is the rule state applied at $now line$ $x$ (§ *Rule state evolution*). **Every quantity below that
-  depends on the rule state is read from $R(x)$, over the whole timeline, past included.** That is the reading
-  that makes the two-scenario example hold: up to $t_1 + 5min$, both scenarios have the same $R(x)$ at every
-  $now line$, so every score they are optimized against is the same.
+* $R(t)$ is the rule state input in force at instant $t$ (§ *Rule state input evolution*). **The decision at $t$ is
+  scored with every quantity read from $R(t)$ alone, over the whole timeline, past included** — the past measured
+  against $R(t)$'s targets (the catch-up), the future as if $R(t)$ held forever (its hypothetical backward
+  compensation). Where $R$ holds over a stretch, that is one continuation searched under it and emitted up to its
+  next change; where it moves, one decision at a time. Nothing of a later rule state reaches back before it.
 * For each task $i$: priority $P_i \ge 0$, minimum execution time $M_i$, resilience $r_{i,k}$ to each kind $k$.
   The nominal share is $\pi_i = P_i / \sum_j P_j$ (uniform over all tasks if every priority is 0).
 * The environment at instant $t$ is the set of restrictive periods covering it, the pre-placed tasks, and the

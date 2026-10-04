@@ -1008,26 +1008,23 @@ object SchedulerDomain {
      * timeline at all and every priority question falls back to the live tree, exactly as before this
      * feature existed. That null is the "feature is off" signal every caller below keys on.
      */
-    fun taskTreeBlendAt(state: SchedulerState, nowMillis: Long): TaskTreeBlend? {
-        val dated = datedTaskTrees(state)
+    fun taskTreeBlendAt(state: SchedulerState, nowMillis: Long): TaskTreeBlend? =
+        taskTreeBlendAt(datedTaskTrees(state), nowMillis)
+
+    /**
+     * [taskTreeBlendAt] over trees already in date order. **Right-continuous**: the last keyframe dated at or before
+     * the instant (of several on ONE date, the last — `docs/scheduler_requirements.md` § *Rule state input evolution*:
+     * at a discrete switch the state switched TO is the one in force), blended towards the next one dated after it.
+     * Before the first date the first keyframe holds; from the last date on, the last.
+     */
+    fun taskTreeBlendAt(dated: List<TaskTreeEntry>, nowMillis: Long): TaskTreeBlend? {
         if (dated.isEmpty()) return null
-        val first = dated.first()
-        if (nowMillis <= (first.dateMillis ?: 0L)) return TaskTreeBlend(first, first, 0.0)
-        val last = dated.last()
-        if (nowMillis >= (last.dateMillis ?: 0L)) return TaskTreeBlend(last, last, 0.0)
-        for (i in 0 until dated.size - 1) {
-            val a = dated[i]
-            val b = dated[i + 1]
-            val ta = a.dateMillis ?: continue
-            val tb = b.dateMillis ?: continue
-            if (nowMillis < ta || nowMillis > tb) continue
-            // Two keyframes on the same instant have no span to cross: the earlier one (by the id
-            // tie-break above) governs, rather than dividing by zero.
-            val span = tb - ta
-            return if (span <= 0L) TaskTreeBlend(a, a, 0.0)
-            else TaskTreeBlend(a, b, (nowMillis - ta).toDouble() / span.toDouble())
-        }
-        return TaskTreeBlend(last, last, 0.0)
+        val k = dated.lastOrNull { (it.dateMillis ?: Long.MIN_VALUE) <= nowMillis }
+            ?: return TaskTreeBlend(dated.first(), dated.first(), 0.0)
+        val next = dated.firstOrNull { (it.dateMillis ?: Long.MIN_VALUE) > nowMillis } ?: return TaskTreeBlend(k, k, 0.0)
+        val ta = k.dateMillis ?: return TaskTreeBlend(k, k, 0.0)
+        val tb = next.dateMillis ?: return TaskTreeBlend(k, k, 0.0)
+        return TaskTreeBlend(k, next, (nowMillis - ta).toDouble() / (tb - ta).toDouble())
     }
 
     /** The absolute priorities the task tree [entry] defines on its own, as if it were the live tree. */
@@ -1129,55 +1126,6 @@ object SchedulerDomain {
         }
         return merged
     }
-
-    /**
-     * **The decision boundaries inside a task-tree transition** — the trigger the engine watches.
-     *
-     * `docs/scheduler_requirements.md` § *Rule State Evolution*: the rule state applied is the one at the
-     * now-line, so a plan made at `x` holds `R(x)` for its whole continuation, and a decision the line has not
-     * reached yet may be taken with another rule state by the time it is. So inside a transition the plan is
-     * re-made each time the line reaches the start of a run the plan placed: every decision the frozen past
-     * records is then taken with the rule state at its own instant, which is what makes two transitions with the
-     * same slope the same schedule while they overlap. It is boundary-driven, not a tick: the key changes only
-     * when the line crosses a run's start, and re-planning there keeps that start (the run's elapsed head is the
-     * frozen past), so a re-plan never moves the key it was triggered by.
-     *
-     * 0 whenever no tree is dated, and constant outside a transition except when the bracketing keyframe
-     * changes — the feature-off case must never dispatch anything.
-     */
-    fun taskTreeBlendDecisionKey(state: SchedulerState, nowMillis: Long): Long {
-        val blend = taskTreeBlendAt(state, nowMillis) ?: return 0L
-        val result = 31L * blend.from.id.value.hashCode() + blend.to.id.value.hashCode()
-        if (blend.isSingle) return result
-        val decided = state.panels.asSequence()
-            .filter { it.auto && it.taskId != null && it.startEpochMillis <= nowMillis }
-            .maxOfOrNull { it.startEpochMillis } ?: 0L
-        return 31L * result + decided
-    }
-
-    /**
-     * `docs/scheduler_requirements.md` § *Rule Structure*: **the next ARMED instant of the task-tree timeline** —
-     * the first moment after [nowMillis] at which [taskTreeBlendDecisionKey] can move, or null when it never
-     * will under this state (no dated tree, or the line is past the last keyframe).
-     *
-     * Outside a transition the key moves only at the next keyframe, which is a date the trees themselves hold.
-     * Inside one it also moves where the line reaches the start of the next run the plan placed
-     * ([nextDecisionMillis]). That is one reading of the plan PER ARMING — when the trees or the plan change, or
-     * when the armed instant is reached — never a poll: before the instant it names, nothing is asked at all.
-     */
-    fun nextTaskTreeBlendWakeMillis(state: SchedulerState, nowMillis: Long): Long? {
-        val blend = taskTreeBlendAt(state, nowMillis) ?: return null
-        val nextKeyframe =
-            datedTaskTrees(state).asSequence().mapNotNull { it.dateMillis }.filter { it > nowMillis }.minOrNull()
-        if (blend.isSingle) return nextKeyframe
-        return listOfNotNull(nextDecisionMillis(state, nowMillis), nextKeyframe).minOrNull()
-    }
-
-    /** The next run start the plan placed after [nowMillis] — where [taskTreeBlendDecisionKey] next moves. */
-    fun nextDecisionMillis(state: SchedulerState, nowMillis: Long): Long? =
-        state.panels.asSequence()
-            .filter { it.auto && it.taskId != null && it.startEpochMillis > nowMillis }
-            .minOfOrNull { it.startEpochMillis }
 
     // ----- PRD §9 Scheduler -------------------------------------------------------------------
 
@@ -5917,8 +5865,9 @@ object SchedulerDomain {
         val refusedHere = liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
         val forcedStartTask = liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
 
-        // --- the rule state at the line, `R(now)` — exact inside a task-tree transition (the minimum in millis,
-        // not rounded to a minute), and held for the whole continuation.
+        // --- the rule state: `R(now)` — exact inside a task-tree transition (the minimum in millis, not rounded to a
+        // minute) — and, where it changes over this fill, the timeline the fill walks (`docs/scheduler_requirements.md`
+        // § *Rule state input evolution*: every stretch is placed under the rule state in force THERE).
         val inTransition = taskTreeBlendAt(state, nowMillis)?.isSingle == false
         // The rule state MOVES over this fill when the transitions (first keyframe to last) overlap what it searches —
         // at a transition's very first instant the blend still reads as a single tree, and from the next millisecond
@@ -5927,7 +5876,7 @@ object SchedulerDomain {
         val moving = inTransition ||
             (dated.size >= 2 && (dated.first().dateMillis ?: Long.MAX_VALUE) < searchEnd && (dated.last().dateMillis ?: Long.MIN_VALUE) > nowMillis)
         val timeline = if (moving) RuleStateTimeline(state) else null
-        val ruleState = if (inTransition) timeline!!.planTasksAt(nowMillis) else planTasks
+        val ruleState = timeline?.at(startMillis) ?: planTasks
 
         // `docs/scheduler_score.md` § *Degradation*: the plan this re-plan replaces competes with the search, re-scored
         // under the rules in force now — so a re-plan never returns a continuation worse than the one on screen. An
@@ -5960,7 +5909,7 @@ object SchedulerDomain {
                     searchUntilMillis = searchEnd,
                     seeds = seeds,
                     budget = searchBudget,
-                    ruleStateAt = timeline?.let { t -> { x: Long -> t.planTasksAt(x) } },
+                    ruleStates = timeline,
                     unrollOnly = unrollOnly,
                 ),
             )
@@ -5992,7 +5941,8 @@ object SchedulerDomain {
                 TaskPanel(
                     id = nextAutoId(),
                     taskId = p.taskId,
-                    title = working.tasks[p.taskId]?.title.orEmpty(),
+                    // A task only a LATER keyframe holds is not among the line's: its title is the timeline's.
+                    title = working.tasks[p.taskId]?.title?.takeIf { it.isNotBlank() } ?: timeline?.titleOf(p.taskId).orEmpty(),
                     startEpochMillis = p.startMillis,
                     endEpochMillis = p.endMillis,
                     pinned = false,
@@ -6016,7 +5966,8 @@ object SchedulerDomain {
      * minute. The keyframes' own readings are computed once per keyframe, since a transition asks at every
      * decision.
      */
-    private class RuleStateTimeline(val state: SchedulerState) {
+    private class RuleStateTimeline(val state: SchedulerState) : ScheduleFill.RuleStates {
+        private val dated = datedTaskTrees(state)
         private val priorities = HashMap<TaskTreeId, Map<TaskId, Double>>()
         private val leaves = HashMap<TaskTreeId, List<TaskId>>()
 
@@ -6030,8 +5981,17 @@ object SchedulerDomain {
                 ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[id]?.title?.takeIf { t -> t.isNotBlank() } }
                 ?: ""
 
-        fun planTasksAt(x: Long): List<PlanTask> {
-            val blend = taskTreeBlendAt(state, x) ?: return emptyList()
+        /** The piece [x] is on — the ONE reading of the timeline ([taskTreeBlendAt]), over trees dated once. */
+        private fun pieceAt(x: Long): TaskTreeBlend? = taskTreeBlendAt(dated, x)
+
+        override fun at(x: Long): List<PlanTask> = planTasksOf(pieceAt(x))
+
+        override fun nextChange(x: Long): Long? = dated.asSequence().mapNotNull { it.dateMillis }.firstOrNull { it > x }
+
+        override fun movingAt(x: Long): Boolean = pieceAt(x)?.isSingle == false
+
+        private fun planTasksOf(blend: TaskTreeBlend?): List<PlanTask> {
+            if (blend == null) return emptyList()
             val f = if (blend.isSingle) 0.0 else blend.fraction.coerceIn(0.0, 1.0)
             val pa = prioritiesOf(blend.from)
             val pb = if (blend.isSingle) pa else prioritiesOf(blend.to)
@@ -6111,8 +6071,8 @@ object SchedulerDomain {
      * The **dated** task trees are in it too, content and date alike — they are keyframes the fill reads
      * directly ([blendedTaskPriorities]), so editing one that is not on screen changes the plan exactly as
      * editing the live tree does. Undated trees are not: nothing reads them until they are selected, at
-     * which point they *are* the live tree. Note this still leaves the plan a function of `now` through the
-     * blend, which the signature cannot express — see [taskTreeBlendDecisionKey].
+     * which point they *are* the live tree. The plan is NOT a function of `now` through the blend: every stretch
+     * is placed under the rule state in force there (`ScheduleFill.run`), so time passing never re-plans.
      *
      * **It is PERSISTED** ([SchedulerState.planBasis]) and compared across launches ([planHoldsAtLaunch]), so it
      * must hash only values whose hash is the same in every process: strings, numbers, booleans and collections
@@ -6158,14 +6118,14 @@ object SchedulerDomain {
      * `docs/invariants/scheduler.md` § *When the plan is recomputed*: **a restart is not a rule change.** True when
      * the plan [state] was loaded with was made for the rules [state] holds now ([SchedulerState.planBasis]), so the
      * launch keeps it and only extends it; false when no plan was made, when the rules moved after the last re-plan
-     * (an edit the app closed inside the debounce of, a rule an older build or a pull changed), or when the line
-     * crossed a task-tree decision boundary while the app was closed — the one sanctioned re-plan
-     * ([taskTreeBlendDecisionKey]) the running engine would have made on the way.
+     * (an edit the app closed inside the debounce of, a rule an older build or a pull changed). A task-tree
+     * transition the line crossed while the app was closed is no reason: the plan was made under the rule state in
+     * force at every instant of it (`ScheduleFill.run`), so it holds.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun planHoldsAtLaunch(state: SchedulerState, nowMillis: Long): Boolean {
         val basis = state.planBasis ?: return false
-        if (basis.signature != schedulingSignature(state)) return false
-        return taskTreeBlendDecisionKey(state, basis.madeAtMillis) == taskTreeBlendDecisionKey(state, nowMillis)
+        return basis.signature == schedulingSignature(state)
     }
 
     /**

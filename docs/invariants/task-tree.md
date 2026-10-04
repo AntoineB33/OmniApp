@@ -19,15 +19,12 @@ Global rules that always apply: `CLAUDE.md`.
   that side's minimum and resilience throughout — only its **percentage** fades.
 - `datedTaskTrees` **flushes** the active tree first. Dated trees are in `schedulingSignature`; undated ones
   deliberately are not.
-- **The one sanctioned exception to "time never re-plans"** — and only because it is **boundary-driven**: inside a
-  transition the plan holds the exact rule state at the line and is re-made when the line reaches the start of a
-  run it placed (`SchedulerDomain.taskTreeBlendDecisionKey`, `SchedulerEngine.launchTaskTreeBlendReschedule`),
-  so a transition costs one fill per run it spans. The watch **sleeps until its next armed instant**
-  (`nextTaskTreeBlendWakeMillis`: the next run start or keyframe) and arms nothing with no dated tree; a
-  re-arming (the plan or the trees changed) never compares the key — only reaching the instant does, or the
-  watch would answer its own fill. The former 100-step cursor is gone: its steps did not line up
-  across two transitions of the same slope, which broke the requirements' two-scenario example. Do not
-  reintroduce a per-tick or a stepped form.
+- **Time passing never re-plans a transition** (2026-10-04): the fill places every stretch under the rule state in
+  force there — a keyframe's state alone up to the next change, decision by decision inside a transition — ahead of
+  time (`scheduler.md` § *Every stretch is placed under the rule state in force there*). The engine's re-plan at every
+  run start (`launchTaskTreeBlendReschedule`, `taskTreeBlendDecisionKey`) is gone. Several keyframes on ONE date are a
+  discrete switch; the last of them is in force from that instant (`taskTreeBlendAt` is right-continuous). Do not
+  reintroduce a per-tick, stepped or run-start re-plan.
 
 ### The tree has ONE root, and it is a real cell
 

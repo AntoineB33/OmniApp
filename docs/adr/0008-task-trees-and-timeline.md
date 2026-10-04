@@ -106,7 +106,20 @@ next instead of snapping over on the date.
    screen changes the plan and must re-plan. Undated trees deliberately are not: nothing reads one until it is
    selected, at which point it *is* the live tree.
 
-### The ONE sanctioned exception to "time passing must never re-plan"
+### 2026-10-04: no exception any more — every stretch under the rule state in force there
+
+The user rewrote § *Rule state input evolution*: before a switch at `t_s` the schedule is the old rule state's own
+perfect schedule (its hypothetical backward compensation from beyond `t_s` included), after it the new one's with
+the near side as a frozen past, and a transition is the same to infinitesimals. A plan made at `x` that held `R(x)`
+for its whole reach broke all three — the far side of a switch was planned under the near side's rules until the
+line arrived and re-planned it, rewriting what Progressive Calculation had made definitive. `ScheduleFill.run` now
+walks the timeline (`RuleStates`): a held state is searched alone past its end and emitted up to it, a moving one
+decision by decision, each with everything before it frozen. Since every decision is already taken with the rule
+state at its own instant, the re-plan below could only rewrite the plan, so it was removed with its key and wake.
+The cost moved: a transition's runs are decided when the plan is made (one search per run, one decision window
+ahead each), instead of one full re-plan per run start as the line moved through it.
+
+### (superseded) The ONE sanctioned exception to "time passing must never re-plan"
 
 By the user's spec the plan genuinely IS a function of time here, so a plan computed once would be wrong from the
 next instant.

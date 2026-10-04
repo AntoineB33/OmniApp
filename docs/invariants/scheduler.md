@@ -379,16 +379,27 @@ model exists to prevent.
   prefix that breaks a hard constraint is cut (`legalPrefix`), and a seed whose first free run breaks §7/§13 is
   dropped whole.
 - **`Fraction` → `Double` millis**, with the tie tolerance of `docs/scheduler_score.md` § *Ties*.
-- **The two-scenario example of § *Rule state evolution* is a test**
-  (`TaskTreeTimelineTest.the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap`): inside a
-  transition the plan holds `R(x)` and is re-made at every run start the line reaches
-  (`SchedulerDomain.taskTreeBlendDecisionKey`).
-- **A run the moving rule state turns against ends where it does** (`ScheduleFill.Input.ruleStateAt`,
-  `TaskTreeTimelineTest.a_run_the_moving_rule_state_turns_against_ends_where_it_does`). The first free run is probed at
-  evenly spaced positions of the line and bisected to a second: where the best first run under `R(x)`, with the run
-  so far as the frozen past, is another task, the run is cut and the next run starts there — a run start, so the
-  engine re-plans on reaching it. Re-planning at run starts alone left a whole run under the rule state of its
-  first instant.
+- **EVERY STRETCH IS PLACED UNDER THE RULE STATE IN FORCE THERE** (§ *Rule state input evolution*, rewritten by
+  the user 2026-10-04; `ScheduleFill.run`, the walk over `ScheduleFill.RuleStates`). Never under the one at the line:
+  - where the rule state **holds** up to its next change `t_s`, the stretch is the perfect schedule of that state
+    ALONE on the whole timeline — searched past `t_s` under it, so its hypothetical backward compensation from what
+    lies beyond reaches back — and emitted only up to `t_s`
+    (`TaskTreeTimelineTest.before_a_switch_the_plan_is_the_one_the_old_rule_state_alone_would_give`);
+  - from `t_s` the next state plans with everything placed before `t_s` as its **frozen past**, so it catches up on
+    how that past deviated from its goals, and nothing of it leaks back before `t_s`
+    (`a_switch_ahead_is_planned_under_the_rule_state_in_force_on_each_side_of_it`);
+  - where it **moves** (a transition), the same to infinitesimals: one decision at a time, each under `R` at its own
+    instant with all before it frozen, and a run the moving `R` turns against ends where it does (probed at evenly
+    spaced positions, bisected to a second; `a_run_the_moving_rule_state_turns_against_ends_where_it_does`). One
+    decision searches one decision window ahead (`ScheduleOptimizer.searchMarginMillis`), not the whole reach — the
+    whole reach for every run of a transition cost 30 times a fill.
+  - The timeline is **right-continuous** (`SchedulerDomain.taskTreeBlendAt`): of several keyframes on ONE date the
+    last is in force from that instant — a discrete switch. Distinct dates blend linearly.
+  So the far side of a switch or a transition is right BEFORE the line gets there, and stays definitive as it passes
+  (`the_far_side_of_a_switch_is_definitive_before_the_line_reaches_it`,
+  `inside_a_transition_every_run_is_decided_under_the_rule_state_at_its_own_instant`): time never re-plans for it. Two
+  transitions of the same slope still give the same schedule while they overlap
+  (`the_same_slope_gives_the_same_schedule_while_the_two_transitions_overlap`).
 
 ### One device plans
 
@@ -620,13 +631,13 @@ placed (`screenBreak`). Pre-placed blocks, user-drawn periods and sleep windows 
 - **A restart is not a rule change** (2026-10-03, `RestartKeepsPlanTest`). Every re-plan reduction records the
   rules its plan was made for (`SchedulerState.planBasis`: the signature and the line's instant), the store keeps it,
   and the rule-change watcher's FIRST value — the rules the app came up with — re-plans only when
-  `SchedulerDomain.planHoldsAtLaunch` says the persisted plan was not made for them (no basis, the signature moved,
-  or a task-tree decision boundary was crossed while closed). Otherwise the plan is kept and the horizon watcher only
+  `SchedulerDomain.planHoldsAtLaunch` says the persisted plan was not made for them (no basis, or the signature
+  moved — a transition crossed while closed is no reason since 2026-10-04). Otherwise the plan is kept and the horizon watcher only
   extends it. Every launch used to re-plan. This makes `schedulingSignature` a PERSISTED value: it may hash only
   process-stable values — never an enum, whose hash is its identity.
-- Exactly one sanctioned exception, bounded: inside a task-tree transition only, a re-plan at every **run start the
-  line reaches** (`taskTreeBlendDecisionKey`, ADR 0008) — one fill per run the transition spans, nothing outside one.
-  That is the rules being parameterized by the line, not the plan going stale.
+- **No exception.** The task-tree transition's re-plan at every run start the line reached (`taskTreeBlendDecisionKey`,
+  ADR 0008) was removed on 2026-10-04: the fill now decides every run of a transition under the rule state at its own
+  instant ahead of time, so the re-plan could only rewrite a definitive schedule.
 - The signature excludes records deliberately, so `RemoveRecordPeriod` refills inside its own reducer.
 - **A RE-PLAN NOBODY IS WAITING FOR ANY MORE STOPS WHERE IT STANDS** (user rule, 2026-09-23: *"if the
   scheduler was already running, then it stops abruptly and runs again with the new data"*). A fill is

@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Rule state input evolution: every stretch under the rule state in force there — 2026-10-04
+
+User rewrote `docs/scheduler_requirements.md` § *Rule state input evolution*. What the code did against it: a plan
+held the rule state at the line, `R(x)`, for its whole reach (only its FIRST run was cut where a moving `R` turned
+against it), and the engine re-planned at every run start inside a transition. So the far side of a switch ahead was
+planned under the near side's rules, and became right only by rewriting a definitive schedule as the line arrived.
+- `ScheduleFill.run` walks the timeline (`ScheduleFill.RuleStates`, implemented by `RuleStateTimeline`): a held rule
+  state is searched ALONE past its next change and emitted up to it; from the change the next one plans with
+  everything before it frozen (the catch-up); a moving one is decided run by run, each under `R` at its own instant,
+  one decision window ahead.
+- `taskTreeBlendAt` is right-continuous: of keyframes on one date, the last is in force from that instant (it was
+  the first) — a discrete switch.
+- Removed: `SchedulerEngine.launchTaskTreeBlendReschedule`, `SchedulerDomain.taskTreeBlendDecisionKey` /
+  `nextTaskTreeBlendWakeMillis` / `nextDecisionMillis`, and the key's part in `planHoldsAtLaunch` — the last
+  exception to "time passing must never re-plan".
+- A placement of a task only a LATER keyframe holds takes its title from the timeline.
+- Tests: four new in `TaskTreeTimelineTest`; the two that pinned the re-plan trigger are gone;
+  `BreaksAndSlidingPrioritiesTest`'s ratio test now measures one plan at each position it places (it pinned the old
+  "holds the line's percentages for its whole reach"). Cost: a 1-day transition inside a plan is ~4x a plain fill
+  (2.2 s vs 0.5 s in the test), once, instead of one re-plan per run start.
+
 ### Undoing a dragged past block made it vanish — 2026-10-04
 
 Anomaly (user, confirmed on the release DB: a "Pin record" unit undone 4 s after it was made): a past task panel
