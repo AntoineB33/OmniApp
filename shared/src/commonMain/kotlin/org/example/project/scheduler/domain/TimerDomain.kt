@@ -189,6 +189,24 @@ object TimerDomain {
     fun displayedCountdown(live: TimerCountdown, held: TimerCountdown?, editing: TimerField?): TimerCountdown =
         if (held == null || editing == null) live else live.withHeld(held, through = editing.ordinal)
 
+    /**
+     * **What leaving the field [editing] owes the countdown** (anomaly 2026-10-04): the time left has to move by this
+     * much for the countdown to be what the fields were SHOWING — [held] in [editing] and every coarser field ([typed]
+     * in [editing] itself once it parses), the finer ones as they read ([live]).
+     *
+     * A field holding the caret stands still while the timer runs on underneath it; each second wrapping takes a
+     * minute off the minutes the user is looking at, held on screen and gone in the state. Typing a value writes
+     * against the held numbers, but leaving WITHOUT typing wrote nothing — the held minutes were simply dropped, and
+     * the field snapped back to a minute the user had been shown they still had. Zero when nothing drifted (an idle or
+     * paused row, a field left before the next wrap).
+     */
+    fun heldDriftMillis(live: TimerCountdown, held: TimerCountdown, editing: TimerField, typed: Int? = null): Long =
+        shownWhileEditing(live, held, editing, typed).millis - live.millis
+
+    /** The countdown the fields show while [editing] holds the caret: [displayedCountdown], with what is typed in it. */
+    fun shownWhileEditing(live: TimerCountdown, held: TimerCountdown, editing: TimerField, typed: Int? = null): TimerCountdown =
+        displayedCountdown(live, held, editing).let { if (typed != null) it.with(editing, typed) else it }
+
     /** This countdown with every component down to the one at [through] (an ordinal) taken from [held]. */
     private fun TimerCountdown.withHeld(held: TimerCountdown, through: Int): TimerCountdown =
         TimerField.entries.filter { it.ordinal <= through }.fold(this) { acc, f -> acc.with(f, held.component(f)) }

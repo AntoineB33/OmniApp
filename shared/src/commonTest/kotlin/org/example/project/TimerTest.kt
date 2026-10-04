@@ -134,6 +134,42 @@ class TimerTest {
     }
 
     @Test
+    fun leaving_a_held_field_keeps_the_minutes_the_user_was_shown() {
+        // Anomaly 2026-10-04: the minutes field holds the caret at 0:05:02; the seconds read down through 0 to 59,
+        // so the live countdown is 0:04:59 while the fields show 0:05:59. Leaving the field without typing dropped
+        // the held minutes and the field snapped to 4 — a minute the user had been shown they still had.
+        val running = timer(endsAtMillis = now + 5 * minute + 2 * second - 400L)
+        val held = TimerDomain.countdownOf(running.remainingAtMillis(now))
+        assertEquals(TimerDomain.TimerCountdown(0, 5, 2), held)
+
+        val later = now + 3 * second
+        val live = TimerDomain.countdownOf(running.remainingAtMillis(later))
+        assertEquals(TimerDomain.TimerCountdown(0, 4, 59), live)
+        assertEquals(
+            TimerDomain.TimerCountdown(0, 5, 59),
+            TimerDomain.shownWhileEditing(live, held, TimerDomain.TimerField.MINUTES),
+            "the minutes stand still, the seconds read on",
+        )
+
+        val drift = TimerDomain.heldDriftMillis(live, held, TimerDomain.TimerField.MINUTES)
+        assertEquals(minute, drift, "one wrap of the seconds is one minute owed")
+        val kept = TimerDomain.nudged(running, drift, later)
+        assertTrue(kept.running, "leaving a field never stops the timer")
+        assertEquals(TimerDomain.TimerCountdown(0, 5, 59), TimerDomain.countdownOf(kept.remainingAtMillis(later)))
+
+        // Left before any wrap, nothing drifted and nothing is written.
+        val soon = TimerDomain.countdownOf(running.remainingAtMillis(now + second))
+        assertEquals(0L, TimerDomain.heldDriftMillis(soon, held, TimerDomain.TimerField.MINUTES))
+        // A value typed into the field is part of what was shown.
+        assertEquals(
+            TimerDomain.TimerCountdown(0, 7, 59),
+            TimerDomain.shownWhileEditing(live, held, TimerDomain.TimerField.MINUTES, typed = 7),
+        )
+        // The seconds field holds all three: left untouched after 3 s, the countdown is the one it showed.
+        assertEquals(3 * second, TimerDomain.heldDriftMillis(live, held, TimerDomain.TimerField.SECONDS))
+    }
+
+    @Test
     fun setting_the_hours_leaves_the_minutes_and_seconds_running() {
         // 2:30:45 left, and the sub-second phase deliberately non-zero so a rewrite would show up as a jump.
         val running = timer(endsAtMillis = now + 2 * hour + 30 * minute + 45 * second - 400L)

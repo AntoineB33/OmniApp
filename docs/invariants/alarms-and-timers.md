@@ -125,7 +125,13 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   "editing the hours does not stop the minutes and seconds" looks like on screen. The coarser fields are held
   too because the seconds wrapping would otherwise take a minute off the minutes beside the caret. **A commit
   is measured against the held numbers** (`SetTimerCountdownField.held` → `withCountdownField`), never the
-  live ones, so what lands is what the user saw. Display-only Compose state, like the poll below it; each
+  live ones, so what lands is what the user saw. **LEAVING the field lands it too, typed in or not**
+  (`TimerRowEditor.setDraft`, `TimerDomain.heldDriftMillis`, anomaly 2026-10-04): the held fields stood still while
+  the timer ran on, so each wrap of the seconds took a minute off the state that the screen still showed; dropping the
+  draft snapped the field back to it. On the way out the time left is moved by what drifted — through
+  `NudgeTimerRemaining`, so a running row keeps running, and nothing is written when nothing drifted (an idle or paused
+  row, a field left before the next wrap). The same when the caret goes straight to another field of the row, which
+  then holds the countdown as it was shown. Display-only Compose state, like the poll below it; each
   keystroke that parses commits, one that does not shows the error state, so a half-typed value never reaches
   the state. Nothing downstream needs a change: `launchAlarmArming` already re-runs on every `state.timers`
   change.

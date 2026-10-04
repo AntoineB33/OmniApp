@@ -839,6 +839,26 @@ private fun TimerRowEditor(
     // holding it keep reading down throughout, which is exactly what "editing the hours does not stop the
     // minutes and seconds" looks like on screen. Display-only Compose state, like the window's own clock.
     var draft by remember(row.id) { mutableStateOf<CountdownDraft?>(null) }
+    // Leaving a field keeps what the fields were SHOWING (anomaly 2026-10-04, [TimerDomain.heldDriftMillis]): the held
+    // numbers stood still on screen while the timer ran on underneath, so the time left is moved by what drifted —
+    // through the nudge, which moves it WITHOUT stopping the row. Also when the caret goes straight to another field
+    // of the row (Compose reports that gain before the loss, so the leaving field's own loss never drops the draft):
+    // the next field then holds the countdown as it was shown, not the live one it read a moment before.
+    fun setDraft(next: CountdownDraft?) {
+        val leaving = draft
+        if (leaving == null || next?.field == leaving.field) {
+            draft = next
+            return
+        }
+        val typed = parseCountdownComponent(leaving.text, leaving.field)
+        val kept = TimerDomain.shownWhileEditing(shown, leaving.held, leaving.field, typed)
+        val drift = TimerDomain.heldDriftMillis(shown, leaving.held, leaving.field, typed)
+        if (drift != 0L && entry != null) onNudge(drift)
+        draft = next?.copy(
+            held = kept,
+            text = kept.component(next.field).toString().padStart(if (next.field == TimerDomain.TimerField.HOURS) 1 else 2, '0'),
+        )
+    }
     // The countdown is editable in all three states, the idle one included: setting up how long this run is
     // to be BEFORE pressing the button is the ordinary way to use a timer, and it is not the same question as
     // the Duration beside it (that one is the row's setting, what Reset goes back to and what a start from
@@ -911,7 +931,7 @@ private fun TimerRowEditor(
                     // three fields spell the H:MM:SS the rest of the app prints.
                     pad = if (field == TimerDomain.TimerField.HOURS) 1 else 2,
                     draft = draft,
-                    onDraftChange = { draft = it },
+                    onDraftChange = ::setDraft,
                     onCommit = { value, held -> onSetCountdownField(field, value, held) },
                     onNudge = onNudge,
                     editable = countdownEditable,

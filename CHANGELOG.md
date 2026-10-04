@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Timer: leaving a countdown field dropped the minutes it had held — 2026-10-04
+
+Anomaly (user): the minutes field holds the caret, the seconds read down through 0 to 59, a click outside leaves the
+field — and the minutes drop by one, "as if I never prevented the minutes to decrease". The held fields stood still on
+screen only; with nothing typed nothing was written, so dropping the draft snapped to the live countdown. Leaving now
+moves the time left by what drifted (`TimerDomain.heldDriftMillis` → `NudgeTimerRemaining`, the row keeps running);
+moving straight to another field does the same and that field holds what was shown. `TimerTest`.
+
 ### Search window: a creation row leads to every element of its kind — 2026-10-04
 
 User request: the actions of an added creation row ("New quota", "New alarm"…) hold a button opening a Search window
