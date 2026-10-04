@@ -41,9 +41,9 @@ Each task has a defined minimum execution time. Another optimization goal is to 
 * **screen breaks:** There are the 20s, 5min and 15min screen break periods, always accompanied by the "no screen" period. The 20s screen break allows no task. The 5min break is accompanied by two periods: the first minute that allow no tasks and the 4 next minutes. The three screen breaks are placed everywhere in the timeline as earliest as possible where it doesn't violate the frozen past rule and the rules below.
     * A screen break period lasts as long as its name implies.
     * The $now line$ must be in mode 1 or 3 before entering the 20s break.
-    * After the end of a screen break, no 20s break in the next **20 minutes**.
+    * After the end of a 20s break, no 20s break in the next **20 minutes**.
     * After a $\ge 5$-minute of "no screen", no 5min break in the next **1 hour**.
-    * After a $\ge 15$-minute of "no screen", no 20s break in the next **20 minutes**, and no 15min break in the next **2 hours**.
+    * After a $\ge 15$-minute of "no screen", no 15min break in the next **2 hours**.
     * Where the five rules above allow a continuous chain of breaks, then the interval of the whole chain only contains one screen break, which is the longest screen break of the chain brought to the start of the interval.
     * In a "no screen" period, if $t_b$ is in a screen break, where $t_b$ is the start of a screen break, and that $now line$ < $t_b$, then this screen break must now start at max($now line$, $t_s$), where $t_s$ is the start of the continuous "no screen" period, even if it contradicts with the five first screen break rules.
     * A 20s break can only be crossed by the $now line$ in mode 3.
