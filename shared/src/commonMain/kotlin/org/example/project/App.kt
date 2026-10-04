@@ -3633,6 +3633,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         defaults: Boolean = false,
                         // The Search window's actions: the rows of exactly these elements, embedded (AlarmWindow).
                         embeddedSubjects: Set<AlarmWindowSubject>? = null,
+                        embeddedRunOnly: Boolean = false,
                         initialOffset: Offset = Offset.Zero,
                         initialSize: Size = Size.Zero,
                         onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
@@ -3713,6 +3714,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             defaults = defaults,
                             embeddedSubjects = embeddedSubjects,
+                            embeddedRunOnly = embeddedRunOnly,
                         )
                     }
 
@@ -3904,12 +3906,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenResilienceSearch = { kind ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.resilienceSearchConfig(kind).encode())
                             },
-                            alarmEditor = { subjects ->
+                            timerRun = { subjects ->
                                 AccountAlarmWindow(
                                     subject = null,
                                     onDismiss = {},
                                     modifier = Modifier,
                                     embeddedSubjects = subjects,
+                                    embeddedRunOnly = true,
                                 )
                             },
                             onCreate = ::createElement,

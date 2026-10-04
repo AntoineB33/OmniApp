@@ -169,9 +169,9 @@ const val ADDED_CONFIGURATION_FRAME_ID: String = "AddedConfig"
  * ones are a task cell's right-click menu's own handlers ([org.example.project.scheduler.ui.TaskCellMenuActions]);
  * "go to calendar" is read off [org.example.project.scheduler.ui.LocalCalendarGoTo] like the menu's.
  *
- * [alarmEditor] and [reminderEditor] draw the editors of the given elements as the Alarms window and the reminder
- * editor draw them — embedded, the same component over the same callbacks (user rule 2026-10-01: the actions on the
- * added elements replaced each element's own window).
+ * [timerRun] and [reminderEditor] draw the given elements as the Alarms window and the reminder editor draw them —
+ * embedded, the same component over the same callbacks (user rule 2026-10-01: the actions on the added elements
+ * replaced each element's own window). [timerRun] is a timer's RUN alone: its countdown and the countdown in reverse.
  */
 class AddedActionHandlers(
     val onStartNow: (TaskId) -> Unit,
@@ -180,7 +180,7 @@ class AddedActionHandlers(
     val onDeepCopyCell: (CellId) -> Unit,
     /** A period's "Search its tasks": the Search window of its tasks' resilience ([SearchDomain.resilienceSearchConfig]). */
     val onOpenResilienceSearch: (String) -> Unit,
-    val alarmEditor: @Composable (Set<AlarmWindowSubject>) -> Unit,
+    val timerRun: @Composable (Set<AlarmWindowSubject>) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
     /**
      * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`) — and opened in a
@@ -511,12 +511,23 @@ private fun AddedActionEditor(
                 Text("${SearchDomain.volumePercent(draft.toDouble())} %", style = MaterialTheme.typography.labelMedium)
             }
         }
-        SearchDomain.AddedAction.TimerRun ->
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                SearchDomain.RunStep.entries.forEach { step ->
-                    FrameButton(step.label) { run(SearchDomain.AddedCommand.TimersRun(step)) }
+        SearchDomain.AddedAction.TimerRun -> {
+            // PRD §18 / `alarms-and-timers.md`: a timer's run IS its countdown — the three fields reading down (and
+            // editable, each by its own unit) and Elapsed, the countdown in reverse. Each added timer's own, drawn by
+            // the Alarms window's row over the same callbacks; the buttons below them act on every added timer at once.
+            val timers = SearchDomain.addedTimers(state, added)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (timer in timers) {
+                    ElementHeading(timer.label.ifBlank { "Timer" }, timers.size)
+                    handlers.timerRun(setOf(AlarmWindowSubject(timer.id, AlarmWindowSubject.Kind.Timer)))
+                }
+                if (timers.size != 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SearchDomain.RunStep.entries.forEach { step ->
+                        FrameButton(step.label + if (timers.size > 1) " all" else "") { run(SearchDomain.AddedCommand.TimersRun(step)) }
+                    }
                 }
             }
+        }
         SearchDomain.AddedAction.ChronoRun ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SearchDomain.RunStep.entries.forEach { step ->

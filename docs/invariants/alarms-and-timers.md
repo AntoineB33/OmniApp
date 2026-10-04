@@ -132,8 +132,12 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
 - **A right-click on a countdown field nudges by THAT field's unit** (±1/5/10 s, min or h), through the same
   `NudgeTimerRemaining` as the ± buttons, **stays open when an entry is picked** (so a step repeats click after
   click; it leaves on the first press outside it), and replaces the text field's own cut/copy/paste menu. The timer's
-  own editor (the Search window's "Edit" action, `AlarmWindow(embeddedSubjects)`) has the menu only — no ± buttons — and an
-  **Elapsed** read-only field, the countdown in reverse (`TimerDomain.elapsedMillis`: the run's length − the
+  **run** in the Search window (the actions section's "Run", one block per added timer:
+  `AlarmWindow(embeddedSubjects, embeddedRunOnly = true)` → `TimerRowEditor(runOnly = true)`) is the countdown's three
+  fields, start / pause / reset, the menu only — no ± buttons — and an **Elapsed** read-only field. No setting is drawn
+  there: the settings are that section's other actions, one shared field each. (2026-10-04: "Run" had been left with
+  the three buttons alone when the settings became shared fields, and the countdown and Elapsed were on no screen of
+  the Search window at all — `AddedActionHandlers.alarmEditor` was built and never drawn.) Elapsed is the countdown in reverse (`TimerDomain.elapsedMillis`: the run's length − the
   countdown AS SHOWN; 0 when idle; negative once pushed above the run's length). **It mirrors the fields, not the
   live countdown**: while a field holds the caret, Elapsed counts against `TimerDomain.displayedCountdown` (the
   held fields, what is typed) — the same function the fields draw from — so it never runs on beside a

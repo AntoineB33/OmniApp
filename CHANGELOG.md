@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a timer's countdown and its reverse were on no screen — 2026-10-04
+
+Anomaly (user): the actions section showed neither a timer's countdown nor Elapsed (the countdown in reverse). When the
+timer's settings became one shared field each, "Run" kept only start / pause / reset, and the embedded editor that drew
+the countdown (`AddedActionHandlers.alarmEditor`) was still built by `App` but never called. "Run" now draws, per added
+timer, the Alarms window's own row in a run-only form (`AlarmWindow(embeddedRunOnly)`, `TimerRowEditor(runOnly)`): the
+three countdown fields, start / pause / reset and Elapsed — no setting, so nothing is editable by two routes. With
+several timers added, "start all / pause all / reset all" stay under them.
+
 ### The task behind a "no screen" period is a rule held at the line, not a hidden panel — 2026-10-04
 
 User rule: *"the task must be found by reading the set of rules input and not by a strategy of hiding a task behind a

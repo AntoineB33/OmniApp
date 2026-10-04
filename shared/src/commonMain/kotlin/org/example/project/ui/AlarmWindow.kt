@@ -184,6 +184,12 @@ fun AlarmWindow(
      * actions on its added alarms, timers and chronos, which replaced each element's own window. Null = a window.
      */
     embeddedSubjects: Set<AlarmWindowSubject>? = null,
+    /**
+     * With [embeddedSubjects]: each timer's RUN alone — the countdown fields, start / pause / reset and the Elapsed
+     * field — and none of its settings. The Search window's "Run" action: the settings are its other actions, one
+     * shared field each over every added timer, so drawing them here again would be a second way to edit them.
+     */
+    embeddedRunOnly: Boolean = false,
 ) {
     val embedded = embeddedSubjects != null
     val frame =
@@ -481,6 +487,7 @@ fun AlarmWindow(
                     // alone, and reads the run in reverse beside the countdown.
                     nudgeButtons = only == null,
                     showElapsed = only != null,
+                    runOnly = embeddedRunOnly,
                     onRemove = {
                         timerRows.removeAt(index)
                         pushTimers()
@@ -813,6 +820,8 @@ private fun TimerRowEditor(
     showElapsed: Boolean = false,
     /** A default configuration: the settings alone — no label, no bin, no countdown or run ([NewElementDefaults]). */
     settingsOnly: Boolean = false,
+    /** The opposite: the run alone — the countdown, its controls and Elapsed — and no setting ([AlarmWindow]'s `embeddedRunOnly`). */
+    runOnly: Boolean = false,
 ) {
     val running = entry?.running == true
     val paused = entry?.paused == true
@@ -839,7 +848,7 @@ private fun TimerRowEditor(
     val countdownEditable = entry != null
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (!runOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = row.durationText,
                 onValueChange = { onRowChange(row.copy(durationText = it), FIELD_DURATION) },
@@ -970,7 +979,7 @@ private fun TimerRowEditor(
                 )
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (!runOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = "Rings for", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.width(6.dp))
             OutlinedTextField(
@@ -989,7 +998,7 @@ private fun TimerRowEditor(
             Switch(checked = row.goesNegative, onCheckedChange = { onRowChange(row.copy(goesNegative = it), null) })
         }
         // PRD §11: the alarms' own block, unchanged — a timer rings exactly like an alarm.
-        AlertSettingsEditor(
+        if (!runOnly) AlertSettingsEditor(
             alert = row.alert,
             onChange = { onRowChange(row.copy(alert = it), null) },
         )
