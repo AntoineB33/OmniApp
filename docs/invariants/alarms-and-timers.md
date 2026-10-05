@@ -311,16 +311,80 @@ actions being its editor.
 - **A list like the chronos'**: `SetQuotas` writes the whole list as one History Unit (`QuotasDelta`), ids are minted
   `quota-{n}`, `QuotaDomain.healed` is applied on decode, on merge and in the reducer, the sync splits it one row per
   quota (`EntityRows`) and merges a quota whole.
-- **Its resilience action shares the window's period** (`SearchDomain.Config.resiliencePeriod`) with the tasks', so a
-  period edit window's Search names the period for both.
+- **Its resilience action is ONE button whose drop-down lists every period with a field for its value** (user rule
+  2026-10-04, `QuotaResilienceEditor`): each field over every added quota at once (the shared value, "mixed"
+  otherwise), written as soon as it reads as a percentage in 0…100; the button says how many periods are not at 100 %.
+  It no longer reads the window's `Config.resiliencePeriod` (that is the TASKS' resilience action's period). The menu
+  is `focusable` — the one menu that is, because its fields must take the keyboard (`popups.md`).
+- **A quota's resilience is read by `QuotaDomain.resilienceFor`, never `PeriodKinds.resilienceFor`, and it lists EVERY
+  period** (`state.allPeriodKinds`; anomaly 2026-10-04: the 20 s break was missing). The task reading refuses every
+  value for the kinds that *"allow no task"* (the 20 s break, `inactivity`) — a rule about tasks the scheduler places.
+  A quota is not one: whether its progression goes on through a 20 s break is the user's to say. Untouched, those two
+  default to 0, so the progression stands still there exactly as it did. Do not route a quota's rate back through the
+  tasks' function.
 - **A new quota starts from the account's default configuration** (`SchedulerState.newQuotaDefaults`,
   `NewElementDefaults.newQuota`) — and that default is edited through the QUOTA ACTIONS themselves: an added
   **"New quota" creation row** is acted on as a quota (`SearchDomain.actionKindOf`), `addedQuotas` leads with the
   default (wearing `DEFAULT_CONFIGURATION_ID`), and `QuotaEditors`' one `write` sends its changes to
   `SetNewQuotaDefaults` (a setting, not a History Unit — the alarms' rule). With ONLY the creation row added, the section shows the actions that edit
   the default and nothing else (`SearchDomain.actionsFor`, `DEFAULT_CONFIGURATION_ACTIONS`: Title, Amount, Loop,
-  Resilience — and "New", which creates one from that default) — Duplicate, Delete, the progression and the particular loops are about a quota that exists. Its loop is unset until the user sets it: a new quota then runs over the week it is made in; once
+  Restarts, Resilience — and "New", which creates one from that default) — Duplicate, Delete, the progression and the particular loops are about a quota that exists. Its loop is unset until the user sets it: a new quota then runs over the week it is made in; once
   set, over the default's loop that now falls in (a default that does not repeat keeps its own dates).
+- **A QUOTA'S PACE IS WEIGHTED BY THE PERIODS OF ITS WHOLE LOOP — WHAT IS KNOWN ON BOTH SIDES OF THE NOW-LINE, OR NOT
+  AT ALL** (`SchedulerDomain.quotaPeriods`, anomaly 2026-10-04, `QuotaTest`). The profile used to read the restrictive
+  panels the state holds (`restrictivePeriods`) — and the state holds the §17 nights, the wind-down hours and the
+  screen breaks only as the last fill laid them, AHEAD of the line. So a loop's past ran at full rate while its future
+  had the nights taken out: "claude limit" read 82 % elapsed (64.5 % of its second renewal) where 71 % of the waking
+  time had gone (43 %) — checked on the release DB, where the old reading reproduces 64.5 % to the digit. Now:
+  - the **nights and wind-down hours are projected from the sleep schedule** over the loop (`sleepPanels`,
+    `beforeBedPanels`), past and future alike, and the fill's own copies are left out;
+  - the **periods the user placed** count where they are, their repeats expanded over the loop;
+  - the **three screen breaks do not**: the machine's are predictions ahead of the line and the conducted ones are
+    records behind it — five hours of one-sided time on that account. A period of a break's kind the user DRAWS counts.
+  Do not hand a quota `state.panels` again, and do not add a derived, one-sided period to it (the observed "no screen"
+  stretches of the lock history are the next candidate: they exist only behind the line).
+- **THE QUOTA'S PERIOD IS STATED AS A START, AN END SAID ONE OF TWO WAYS, AND A COUNT** (user rule 2026-10-04; the
+  "Loop" action, `QuotaLoopEditor`; the rules are `QuotaDomain`'s, `QuotaTest`):
+  - **Start**: a day and a time of day. The day field's drop-down holds a row of the seven weekdays — a pick is the
+    latest such day up to today (`latestWeekday`), so it names the period being lived — and, below it, the calendar
+    window's own month grid (`MiniMonth`, now shared) to pick a date instead.
+  - **End**: `QuotaEntry.endByDelta` says which way it is stated. `true` (the default) — a LENGTH after the start
+    (`formatLength` / `parseLength`: `7d`, `1d 12h`, `90min`; 7 days by default, `DEFAULT_LOOP_MILLIS`); `false` — a
+    date and a time of its own. The period is `[startMillis, endMillis)` either way: the flag only says what a moved
+    start keeps (`withStart`: a length travels with it, a date stays put, and a start at or past a dated end is
+    refused). An end not after the start, or a length of nothing, is never written.
+  - **How many times it repeats**: `QuotaEntry.repeatCount`, null = without end (the default), `n` = `n` more periods
+    after the first. ONE fact said once: a count of 0 IS "does not repeat" (`repeats` false, count null — `healed`
+    makes it so, `withRepeatCount` writes it). Past its last period a counted quota stays on it at 100 %
+    (`lastLoopIndex`, `loopAt`), and what was particular to a later one is dropped.
+  - Both fields are persisted and synced with the quota (`PersistedQuota`, absent = a length / without end, which is
+    how every earlier quota behaved) and carried by the default configuration into a new quota.
+- **THE QUOTA'S RESTARTS, AND THE LIST OF PARTICULAR LOOPS** (user rule 2026-10-04; `QuotaRestartsEditor`,
+  `QuotaLoopsEditor`, `QuotaTest`):
+  - **`QuotaEntry.renewals`** (the "Restarts" action, 1 by default, one of the default configuration's): how many
+    times the percentage runs from 0 to 100 % in ONE period — with 2 it reaches 100 % where it would have reached
+    50 %, restarts at 0 %. It was a per-loop number only.
+  - **"Particular loops" is a LIST with "+ Add a loop"** (the period of a number; by default the one being lived).
+    Each element holds what is particular to that period: its restarts (`QuotaLoop.renewals`, **null = the quota's**
+    — an explicit 1 is particular while the quota says 2), its **ending time**, and ✕. An element with nothing
+    particular yet is on screen only (`healed` keeps no empty entry). (The amount factor, "two times more quota in
+    that loop", was dropped by the user the same day: the model has none, an older payload's is ignored, and the
+    amount is the quota's own in every loop.)
+  - **A particular ending time is INSIDE the period** (`QuotaDomain.endInsidePeriod`: after the period's start, at
+    its regular end at the latest) and stands alone, with no start of its own: the quota is at 100 % from there to
+    the start of the next period, which starts where it always did. Refused otherwise — by the row (an error, nothing
+    written) and by `healed` (dropped). **A refused time may not go on reading as entered** (anomaly, same day: the
+    field kept the typed time with only a small line under it, and it read as accepted): the field is in error while
+    refused, the row says NOT SAVED, and on leaving the field it reads the real end again (`TimeOfDayField`). The
+    refusal ends when the field reads the stored time again — left, OR typed back: a field reports only a time that
+    DIFFERS from the stored one, so typing the real end back told the row nothing and the message stayed (second
+    anomaly, same day; `onSettled`). And the quota's text fields leave edit mode on the first press outside them
+    (`endsEditOnOutsidePress` → `leaveOnOutsidePress`, `popups.md`): a bare text field keeps the caret when the press
+    lands on something that takes no focus. A start AND an end of its own is the shape an earlier build wrote; it still
+    reads, and setting the end from the row drops the start.
+  - **Stored**: `PersistedQuota.renewals` (absent = 1); `PersistedQuotaLoop.ownRenewals` (null = the quota's). The
+    legacy `renewals` is still written (own, else 1) for an older build, and an older payload is read off it — 1 was
+    "nothing particular" there.
 - **EVERY creation row leads to all the elements of its kind** (user rule 2026-10-04):
   `AddedAction.CreationSearchAll`, in the creation rows' OWN group (`Kind.Creation`), draws one "Every <kind>" button
   per kind among the added creation rows (`SearchDomain.creationKinds`), each opening a new Search window on that kind

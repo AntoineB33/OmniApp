@@ -2113,9 +2113,11 @@ object SearchDomain {
         QuotaAmount(Kind.Quota, "Amount"),
         /** The first loop's start and end, and whether it repeats. */
         QuotaLoop(Kind.Quota, "Loop"),
+        /** How many times the percentage runs from 0 to 100 % in one period ([QuotaEntry.renewals]). */
+        QuotaRestarts(Kind.Quota, "Restarts"),
         /** The quota's resilience to each kind of restrictive period, a task's own. */
         QuotaResilience(Kind.Quota, "Resilience"),
-        /** What is particular to one loop: its own start and end, its amount factor, its renewals. */
+        /** The list of the periods with something particular — its restarts, its own end, its amount factor — and "add". */
         QuotaLoops(Kind.Quota, "Particular loops"),
         ReminderEvery(Kind.Reminder, "Every"),
         ReminderTime(Kind.Reminder, "Time"),
@@ -2190,7 +2192,7 @@ object SearchDomain {
     val DEFAULT_CONFIGURATION_ACTIONS: Set<AddedAction> =
         setOf(
             AddedAction.QuotaNew, AddedAction.QuotaTitle, AddedAction.QuotaAmount, AddedAction.QuotaLoop,
-            AddedAction.QuotaResilience,
+            AddedAction.QuotaRestarts, AddedAction.QuotaResilience,
         )
 
     /**

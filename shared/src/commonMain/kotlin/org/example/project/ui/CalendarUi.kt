@@ -3598,9 +3598,12 @@ internal fun MenuButton(
     }
 }
 
-/** PRD §7 Calendar: the day selector in the calendar window's configuration section — pick a day, or page months with ‹ / ›. */
+/**
+ * PRD §7 Calendar: the day selector in the calendar window's configuration section — pick a day, or page months with ‹ / ›.
+ * Also the calendar of a quota's day picker (`QuotaEditors`), the one month grid of the app.
+ */
 @Composable
-private fun MiniMonth(
+internal fun MiniMonth(
     monthAnchor: LocalDate,
     onMonthAnchorChange: (LocalDate) -> Unit,
     selectedDate: LocalDate,

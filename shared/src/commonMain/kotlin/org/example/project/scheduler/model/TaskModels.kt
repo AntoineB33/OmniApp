@@ -529,19 +529,41 @@ data class QuotaEntry(
     val repeats: Boolean = true,
     val resilience: Map<String, Double> = emptyMap(),
     val loops: List<QuotaLoop> = emptyList(),
+    /**
+     * User rule 2026-10-04: **how the end of the period is said** — `true` (the default): a length of time after the
+     * start, so moving the start moves the end with it; `false`: a date and a time of its own, which a moved start
+     * leaves where it is. Either way the period is `[startMillis, endMillis)`; this only says which of the two the
+     * user states, and so which one an edit of the start keeps.
+     */
+    val endByDelta: Boolean = true,
+    /**
+     * User rule 2026-10-04: **how many times it repeats** after its first period, while it [repeats]; null — the
+     * default — is without end. `3` is four periods in all. Never 0 or less: that is a quota that does not repeat
+     * ([repeats] false), which [org.example.project.scheduler.domain.QuotaDomain.healed] makes of it.
+     */
+    val repeatCount: Int? = null,
+    /**
+     * User rule 2026-10-04: **how many times the percentage runs from 0 to 100 % in one period** — `1` (the default)
+     * once over the whole period; `2` and it reaches 100 % where it would have reached 50 %, restarts at 0 % and
+     * reaches 100 % again at the end. The quota's own number; a particular period may say another ([QuotaLoop.renewals]).
+     */
+    val renewals: Int = 1,
 )
 
 /**
- * What is particular to loop [index] of a quota: its own [startMillis] and [endMillis] (both, or the regular ones),
- * its [amountFactor] (`2` — two times more quota in that loop) and its [renewals] (`2` — the progression moves twice
- * as fast and comes back to 0 % on reaching 100 % in the loop's middle).
+ * What is particular to loop [index] of a quota:
+ *  - its own END ([endMillis], user rule 2026-10-04): an instant INSIDE the period, at which the quota reaches 100 %
+ *    and where it stays until the next period starts. With a [startMillis] too (a shape an earlier build wrote) the
+ *    loop runs over those bounds instead, wherever they are;
+ *  - its [renewals] — how many times the percentage runs from 0 to 100 % in it; null is the quota's own
+ *    ([QuotaEntry.renewals]).
+ * (Until 2026-10-04 a loop could also hold an amount factor, "two times more quota in that loop"; the user dropped it.)
  */
 data class QuotaLoop(
     val index: Int,
     val startMillis: Long? = null,
     val endMillis: Long? = null,
-    val amountFactor: Double = 1.0,
-    val renewals: Int = 1,
+    val renewals: Int? = null,
 )
 
 /**

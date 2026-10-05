@@ -2127,6 +2127,12 @@ private data class PersistedQuota(
     val repeats: Boolean = true,
     val resilience: Map<String, Double> = emptyMap(),
     val loops: List<PersistedQuotaLoop> = emptyList(),
+    // New 2026-10-04: absent = the end is a length after the start, which is how every earlier quota behaved.
+    val endByDelta: Boolean = true,
+    // New 2026-10-04: absent = it repeats without end (while `repeats`).
+    val repeatCount: Int? = null,
+    // New 2026-10-04: absent = the percentage runs once over a period.
+    val renewals: Int = 1,
 )
 
 /** What is particular to one loop of a quota, as stored. */
@@ -2135,8 +2141,14 @@ private data class PersistedQuotaLoop(
     val index: Int = 0,
     val startMillis: Long? = null,
     val endMillis: Long? = null,
-    val amountFactor: Double = 1.0,
+    // (`amountFactor`, "two times more quota in that loop", was dropped on 2026-10-04: an older payload's is ignored,
+    // and a loop that held nothing else is no longer particular.)
+    // What a build before 2026-10-04 reads, and wrote: 1 was "nothing particular" there, the quota having no number
+    // of its own. Kept written (the loop's own, else 1) so such a build still reads a quota it is handed.
     val renewals: Int = 1,
+    // New 2026-10-04: the loop's own number, null = the quota's. Absent in an older payload, which is then read off
+    // [renewals] — anything but 1 was particular.
+    val ownRenewals: Int? = null,
 )
 
 private fun QuotaEntry.toPersisted(): PersistedQuota =
@@ -2145,7 +2157,12 @@ private fun QuotaEntry.toPersisted(): PersistedQuota =
         repeats = repeats,
         // Sorted, so the payload — and the sync fingerprint with it — does not depend on the order edits were made in.
         resilience = resilience.entries.sortedBy { it.key }.associate { it.key to it.value },
-        loops = loops.sortedBy { it.index }.map { PersistedQuotaLoop(it.index, it.startMillis, it.endMillis, it.amountFactor, it.renewals) },
+        loops = loops.sortedBy { it.index }.map {
+            PersistedQuotaLoop(it.index, it.startMillis, it.endMillis, it.renewals ?: 1, ownRenewals = it.renewals)
+        },
+        endByDelta = endByDelta,
+        repeatCount = repeatCount,
+        renewals = renewals,
     )
 
 /** The inverse of [QuotaEntry.toPersisted]. The caller heals it ([QuotaDomain.healed]). */
@@ -2153,7 +2170,12 @@ private fun PersistedQuota.toQuotaEntry(): QuotaEntry =
     QuotaEntry(
         id = id, title = title, amount = amount, unit = unit, startMillis = startMillis, endMillis = endMillis,
         repeats = repeats, resilience = resilience,
-        loops = loops.map { QuotaLoop(it.index, it.startMillis, it.endMillis, it.amountFactor, it.renewals) },
+        loops = loops.map {
+            QuotaLoop(it.index, it.startMillis, it.endMillis, it.ownRenewals ?: it.renewals.takeIf { n -> n != 1 })
+        },
+        endByDelta = endByDelta,
+        repeatCount = repeatCount,
+        renewals = renewals,
     )
 
 /** PRD §18 Chronos: one persisted chrono. Every field defaulted, so a later build's shape decodes cleanly. */

@@ -936,6 +936,16 @@ Global rules that always apply: `CLAUDE.md`.
   off-screen tasks too. What a strip vacates is idle time the calendar already derives a band for, so the
   deletion changed no pixel. `materializePastSleep` is the deliberate counter-case: a sleep session is a fact
   the **user** asserted with the Sleep/Work toggle, not something a scan observed.
+  The other past Sleep is **frozen by the line** (`docs/scheduler_requirements.md` § *frozen past*; 2026-10-05): the
+  part of a scheduled Sleep period the line crossed in mode 2 or 3, covered by "no screen", stays behind it; the part
+  crossed in mode 1, where its "no screen" retracts at the line, does not. `SchedulerEngine.freezeSleepBehindLine`,
+  called by the one interpreter — live, on a wake's fast move, on the catch-up of a stretch the app did not run in —
+  with two armed triggers: the end of the Sleep period, and the mode edge back to 1. The start of the away stretch is
+  in memory; a new process takes it back from the persisted break machine (`BreakMachine.State.stretchStart`), so a
+  process ended at a locked computer loses none of it. Never put back a second writer
+  beside it (the step it replaced read the active sessions for what "this session" had seen, and a computer shut
+  down every night never recorded one night). An account this device never ran has no stretch to walk, so an emptied
+  account still assumes no past sleep. `PastSleepAfterShutdownTest`.
 - **Known inconsistency:** layers **and the §9 record bank** read the OS lock history; the engine's pause
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.

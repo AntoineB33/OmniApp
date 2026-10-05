@@ -4645,6 +4645,42 @@ object SchedulerDomain {
         state.panels.filter { it.isRestrictivePeriod && !isDraggedScreenBreak(it) }
 
     /**
+     * **The restrictive periods over `[fromMillis, toMillis)` a quota's pace is weighted by** — the whole of one of
+     * its loops, the part already lived as much as the part to come ([QuotaDomain.profile]).
+     *
+     * Not [restrictivePeriods] alone: the panels hold the §17 sleep windows and wind-down hours only as the last fill
+     * laid them, from the now-line on. Read off them, a loop's PAST had no night in it — it was counted at full rate
+     * while the future had its nights taken out, so a quota five days into a week read 82 % elapsed where 71 % of its
+     * waking time had gone (anomaly 2026-10-04: "claude limit" at 64.5 % of its second renewal instead of 43 %).
+     *
+     * So the nights and the wind-down hours are PROJECTED from the sleep schedule over the whole span
+     * ([sleepPanels], [beforeBedPanels]) — the same on both sides of the line — and the fill's own copies are left
+     * out. Everything else is the periods the user placed, their repeats expanded over the span
+     * ([PanelRepeats.expand]).
+     *
+     * **The three screen breaks are NOT in it.** The panels hold them the way they hold the nights: the ones the
+     * scheduler expects AHEAD of the line (and the few the app conducted behind it), so they too took time out of the
+     * future alone — five hours of it on the same account, 7 points of the percentage. Where a break falls is not
+     * known until it is taken, so there is nothing to project over a loop; a pace is measured against what is known
+     * on both sides of the line or not at all. A period of a break's KIND that the user draws is theirs, and counts.
+     * A scan, asked when the state or the loop changes, never per tick.
+     */
+    fun quotaPeriods(state: SchedulerState, fromMillis: Long, toMillis: Long, timeZone: TimeZone): List<TaskPanel> {
+        if (toMillis <= fromMillis) return emptyList()
+        val scheduled = setOf(PeriodKinds.SLEEP, PeriodKinds.BEFORE_BED)
+        val held = PanelRepeats.expand(state.panels, fromMillis, toMillis, timeZone).filter { panel ->
+            panel.isRestrictivePeriod && !isDraggedScreenBreak(panel) &&
+                panel.startEpochMillis < toMillis && panel.endEpochMillis > fromMillis &&
+                // A night or a wind-down hour the fill laid is the projection's, and a break the machine placed is
+                // nobody's to count; one the user drew is their own.
+                // (A look-away the app CONDUCTED is a record, kept behind the line only: one-sided too.)
+                !panel.conductedBreak &&
+                (isUserPlaced(panel) || (panel.restrictiveKind !in scheduled && !panel.screenBreak))
+        }
+        return held + sleepPanels(state.sleep, fromMillis, toMillis, timeZone) + beforeBedPanels(state.sleep, fromMillis, toMillis, timeZone)
+    }
+
+    /**
      * A task's **resilience multiplier** inside [kinds] — `1` where nothing restricts it, `0` where it is
      * forbidden, and a fraction where its share is merely scaled. [PeriodKinds.multiplier] is the whole of
      * it; this overload exists only so a caller asking it of many tasks reads the kinds once.

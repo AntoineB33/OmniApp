@@ -588,7 +588,8 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.QuotaProgress -> QuotaProgressEditor(state, addedQuotas(state, added), nowMillis)
         SearchDomain.AddedAction.QuotaAmount -> QuotaAmountEditor(state, addedQuotas(state, added), run.asIntentSink())
         SearchDomain.AddedAction.QuotaLoop -> QuotaLoopEditor(state, addedQuotas(state, added), run.asIntentSink())
-        SearchDomain.AddedAction.QuotaResilience -> QuotaResilienceEditor(state, addedQuotas(state, added), config, onConfigChange, run.asIntentSink())
+        SearchDomain.AddedAction.QuotaRestarts -> QuotaRestartsEditor(state, addedQuotas(state, added), run.asIntentSink())
+        SearchDomain.AddedAction.QuotaResilience -> QuotaResilienceEditor(state, addedQuotas(state, added), run.asIntentSink())
         SearchDomain.AddedAction.QuotaLoops -> QuotaLoopsEditor(state, addedQuotas(state, added), run.asIntentSink(), nowMillis)
         SearchDomain.AddedAction.TaskCellCategories -> TaskCellCategoriesEditor(state, taskIds, run)
         SearchDomain.AddedAction.TaskPaths -> {

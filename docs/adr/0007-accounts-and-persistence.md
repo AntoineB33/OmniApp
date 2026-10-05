@@ -197,12 +197,12 @@ emptied DB's past simply carries both "nobody unlocked" layers and no panel, per
 
 Past "Sleep" is instead **persisted**:
 
-- `SchedulerEngine.maybeMaterializePastSleep` banks a materialized "Sleep" panel (allocated id, NOT a derived
-  `sleep/{day}` one — `SchedulerReducer.materializePastSleep`, `MaterializePastSleep` intent, outside
-  Undo/Redo like the record bank) when a scheduled sleep window fully elapses **while this session ran**
-  (`sessionStartMillis` lower-bounds the candidate span so a fresh/empty account never retroactively
-  materializes the whole 168 h) and the account was inactive there
-  (`intersectRegions(scheduledSleep, inactivityGaps)`).
+- The now line freezes it (`SchedulerEngine.freezeSleepBehindLine`, since 2026-10-05): the part of a scheduled Sleep
+  period the line crossed in mode 2 or 3 is banked as a materialized "Sleep" panel (allocated id, NOT a derived
+  `sleep/{day}` one — `SchedulerReducer.materializePastSleep`, `MaterializePastSleep` intent, outside Undo/Redo like
+  the record bank). A fresh/empty account has no stretch behind it for the line to walk, so it materializes nothing.
+  (Before: `maybeMaterializePastSleep`, a scheduled window ∩ the inactivity gaps ∩ "while this session ran" — which a
+  computer shut down every night never satisfied.)
 - The Sleep/Work **toggle** also writes one: `SchedulerState.sleepingSinceMillis` (persisted, decodes null on
   old DBs) stamps the session start, a live "Sleep" band grows to the now-line while the toggle is on, and
   `reduceSetSleepMode(null)` (Work press / wake lapse via the tick) finalizes `[since, now]`.

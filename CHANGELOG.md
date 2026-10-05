@@ -11,6 +11,90 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Past sleep is frozen by the now line — 2026-10-05
+
+Question (user): "why is there no sleep periods in the past?" It was written by a step apart from the line
+(`maybeMaterializePastSleep`): a scheduled window, where the active sessions showed no device, "while this session
+ran". On account 3 the computer is off every night (release log: "the app was not running for 495min", an engine
+start at every wake), so the session always starts after the night and nothing was ever recorded.
+
+Now the requirements' own rule (§ *frozen past*, user: "do it if it allows to strictly satisfy" them): the line
+freezes the part of a Sleep period it crosses in mode 2 or 3; the part crossed in mode 1 is not (its "no screen"
+retracts there). `SchedulerEngine.freezeSleepBehindLine`, in `interpretTo`, armed at the Sleep period's end and at the
+mode edge back to 1 — so the wake's fast move and the restart catch-up record the night as they walk it.
+`maybeMaterializePastSleep` and its session anchor are deleted. Behaviour changes: a lock history that cannot be read
+is walked in mode 2 and so freezes the night; a declared "I'm away" inside the window (mode 3) freezes it too. Not
+retroactive. A process ended while the line was away from a screen (a locked computer that restarts) goes on with
+that stretch at the next start: the persisted break machine holds where it began (`stretchStart`), so the part of the
+Sleep period crossed before the process ended is frozen too. `PastSleepAfterShutdownTest`.
+
+### Quota: every resilience value in one drop-down — 2026-10-04
+
+User request: the quota's resilience action is a button opening a drop-down that lists every period with a field for
+its resilience value (it was one period picker, one field and "Apply"). `QuotaResilienceEditor`: a field per period
+of `SearchDomain.resilienceKinds`, over every added quota (shared value or "mixed"), written when it parses as
+0…100 %; the button's caption counts the periods not at 100 %. The menu is focusable, since its fields are typed into.
+
+### Quota: the progression counted the nights to come and not the nights gone — 2026-10-04
+
+Anomaly (user): "claude limit" read 64.5 % where a script removing sleep gave 43 %. The pace profile read the
+restrictive panels of the state, which hold the nights, the wind-down hours and the breaks only from the now-line on
+(the last fill's): the loop's past ran at full rate, its future had them taken out. `SchedulerDomain.quotaPeriods`
+gives a quota the periods of its WHOLE loop — nights and wind-down hours projected from the sleep schedule, the
+user's own periods with their repeats — and no machine-placed or conducted screen break (one-sided too). On a copy of
+the release DB: 64.5 % before (reproduced to the digit), 42.8 % after. `QuotaTest`.
+
+### Quota: a refusal that outlived its cause, and fields that kept the caret — 2026-10-04
+
+(Same day, third report: after a REFUSED date the "regular end" button stayed grey — it was enabled only by a stored
+end, and a refusal stores none. It is now enabled by a refusal on screen too, and clears it.)
+
+Anomalies (user): a particular loop's end typed one minute past the regular end, then typed back — the red message
+stayed; and a click outside the field did not leave edit mode. `TimeOfDayField` reported only a time different from
+the stored one, so the real end typed back cleared nothing: it now says so (`onSettled`), and is red only for what is
+on screen. The quota's text fields end their edit on the first outside press (`endsEditOnOutsidePress`, the app's
+`leaveOnOutsidePress`) and read the stored value again when left.
+
+### Quota: no amount factor, and a refused ending time no longer reads as entered — 2026-10-04
+
+- User: "drop the × quota". `QuotaLoop.amountFactor` is gone from the model, the progression, the row and the stored
+  shape; an older payload's factor is ignored (a loop that held nothing else is no longer particular).
+- Anomaly (user): a particular loop took an ending time later than the loop's regular end. It was refused and NOT
+  stored (checked on the release DB: the loop held its restarts and no end) — but the time field went on showing what
+  was typed, with a small line of text under it. Now the field is in error while refused, the row says NOT SAVED, and
+  the field reads the real end again once it is left. `QuotaTest`.
+
+### Quota: restarts for the quota, and the particular loops as a list — 2026-10-04
+
+User request: the form under "Particular loops" is removed; a field says how many times the percentage restarts in a
+period (2 = 100 % where it would have reached 50 %, then back to 0 %); a button adds a loop to the list of particular
+loops, and each element has its own actions — its restarts, its ending time (inside the loop: the quota is at 100 %
+from that end to the start of the next loop), its amount factor, ✕.
+- `QuotaEntry.renewals` (1) + the "Restarts" action (`AddedAction.QuotaRestarts`, also a default-configuration
+  action). `QuotaLoop.renewals` is now nullable (null = the quota's).
+- `QuotaDomain.regularBounds` / `particular` / `withParticular` / `endInsidePeriod`; `healed` accepts an end alone
+  inside its period.
+- `PersistedQuota.renewals`, `PersistedQuotaLoop.ownRenewals`; older payloads read as they meant. `QuotaTest`.
+
+### Quota: the 20 s break (and inactivity) can be given a resilience — 2026-10-04
+
+Anomaly (user): the 20 s break was not among the periods of the quota's resilience drop-down. The list and the reading
+were the TASKS' (`SearchDomain.resilienceKinds`, `PeriodKinds.resilienceFor`), which leave out — and refuse any value
+for — the kinds that "allow no task". A quota is not a task: `QuotaDomain.resilienceFor` / `multiplier` honour the
+value the quota was given for every kind (defaults unchanged: 0 for those two), the progression profile reads them,
+and the drop-down lists `state.allPeriodKinds`. `QuotaTest`.
+
+### Quota: the period's start, its end as a length or a date, and a repeat count — 2026-10-04
+
+User request, on the quota's "Loop" action (`QuotaLoopEditor`): the start is a day field — its drop-down a row of the
+seven weekdays, and below it a calendar to pick a date instead — and a time field; a switch says whether the end is a
+length of time after the start (the default, 7 days) or a date and time of its own; a field says how many times it
+repeats, without end by default.
+- `QuotaEntry.endByDelta` (default true) and `QuotaEntry.repeatCount` (null = without end; 0 heals into "does not
+  repeat"); `QuotaDomain.withStart` / `withLength` / `withEnd` / `withRepeatCount` / `lastLoopIndex` / `latestWeekday` /
+  `formatLength` / `parseLength`. `PersistedQuota` gains both fields, absent = the earlier behaviour.
+- The calendar's month grid (`MiniMonth`) is shared with the day picker. `QuotaTest`.
+
 ### The notifications window — 2026-10-04
 
 User request: when a notification (written, spoken or both) fires while the app is not in focus, a Search window

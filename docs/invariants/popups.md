@@ -323,6 +323,10 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   is selected in the same gesture. **Wherever a menu is given `focusable = false`, the
   `transientMenuDismissal` registration must come with it** — a non-focusable menu nobody registered never
   closes at all.
+- **The one exception is a menu that holds text fields** (the quota's resilience values, `QuotaResilienceEditor`): a
+  field in a popup that cannot be focused cannot be typed into, so that menu is `focusable = true`, registers nothing
+  with the observer, and leaves through its own `onDismissRequest` on the first press outside — which it consumes.
+  Do not make an ordinary menu focusable to save a registration.
 - **The field a drop-down hangs from toggles it** (`Modifier.menuToggleClickable`): a click while the menu is
   open closes it. A plain `clickable { open = true }` reopens it instead, because the root observer has
   already closed it on the press and the click lands after; the field reads the menu's state as last

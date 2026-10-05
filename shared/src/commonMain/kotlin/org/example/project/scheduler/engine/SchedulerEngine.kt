@@ -306,7 +306,7 @@ private const val BREAK_INPUTS_REACH_MILLIS: Long = 24L * 60L * 60L * 1000L
 // late to be worth saying (the sweep's own real-age budget then decides; this only keeps the queues bounded).
 private const val PENDING_CUE_REACH_MILLIS: Long = 10L * 60L * 1000L
 
-// How far ahead the next scheduled sleep window's end is looked for, to arm the past-sleep check.
+// How far ahead the next scheduled sleep window's end is looked for, to arm the freezing of a Sleep period.
 private const val PAST_SLEEP_CHECK_REACH_MILLIS: Long = 2L * 24L * 60L * 60L * 1000L
 
 /**
@@ -547,12 +547,6 @@ class SchedulerEngine(
     /** The advancing "now" (epoch millis); the UI collects this for display. */
     val nowMillis: StateFlow<Long> = _nowMillis.asStateFlow()
 
-    // PRD §17 past sleep: the instant this engine session began. A scheduled sleep window is materialized as a
-    // persisted past "Sleep" panel only for the portion that elapsed WHILE THIS SESSION RAN (bounded below by
-    // this anchor) — a freshly opened/emptied account must not retroactively assume sleep across the whole
-    // derive window. The past is Inactivity + No-screen until the running app observes a scheduled window pass
-    // with no device active; already-materialized panels persist across restarts.
-    private val sessionStartMillis: Long = clock.nowMillis()
 
     // PRD §15 server-derived pauses: the account-wide pauses (windows when NO device was active), surfaced for
     // the calendar to draw as greyed "Inactivity" bands. Display-only and derived — by the server from every
@@ -1370,40 +1364,88 @@ class SchedulerEngine(
         // PRD §17: the Sleep toggle auto-wakes when its scheduled wake instant lapses mid-session — finalize
         // the sleep session as a past "Sleep" panel (reduceSetSleepMode) and stop suppressing the pause cue.
         current.sleepingUntilMillis?.let { until -> if (now >= until) vm.setSleepMode(null) }
-        if (now >= nextPastSleepCheckMillis) maybeMaterializePastSleep(now)
         // PRD §15: a look-away the app CONDUCTED is written into the past where it happened, by
         // [SchedulerIntent.RecordConductedBreak] at the moment it finishes ([restartLookAway]) — the bars
         // then read it out of the timeline as the rest stretch it is. The tick has nothing to serve.
     }
 
-    // When [maybeMaterializePastSleep] next has anything to look at: the end of the next scheduled sleep window.
-    private var nextPastSleepCheckMillis = Long.MIN_VALUE
+    // ---- § *frozen past*: the Sleep period the line crossed away from a screen ------------------------------------
+    //
+    // `docs/scheduler_requirements.md`: the "sleep" period is placed at the same times every day and is always
+    // accompanied by "no screen"; the schedule behind the line never changes. So a Sleep period the line crosses in
+    // mode 2 or 3 — covered by "no screen" — stays behind it as the period it was, and the part crossed in mode 1,
+    // where its "no screen" retracts at the line, does not. The LINE decides, in the mode it is walked in: live, on a
+    // wake's fast move, on the catch-up of a stretch the app did not run in. (Until 2026-10-05 a separate step wrote
+    // it from the active sessions, for what "this session" had seen — and a computer shut down every night, whose
+    // session starts after the night, never recorded one.)
 
-    // PRD §9/§17 past sleep: as `now` advances, record any scheduled sleep window that has fully elapsed and
-    // turned out to be a no-screen/inactive period as a persisted past "Sleep" panel. Bounded to the portion
-    // that elapsed while THIS session ran ([sessionStartMillis]) so a freshly-opened/emptied account never
-    // retroactively assumes sleep across the whole derive window; the empty case ([inactivityGaps] empty = no
-    // evidence yet) records nothing, matching the conservative sleep-band carve. The reducer dedups against
-    // already-materialized panels and drops sub-minute slivers, so an over-eager call is a cheap no-op.
-    private fun maybeMaterializePastSleep(now: Long) {
-        val st = vm.state.value
-        val sleep = st.sleep ?: return
-        // § *Rule Structure*: armed at the end of the next scheduled window — the only instant this can change at.
-        nextPastSleepCheckMillis =
-            SchedulerDomain.sleepRegions(sleep, now, now + PAST_SLEEP_CHECK_REACH_MILLIS, tz)
-                .firstOrNull { it.endEpochMillis > now }?.endEpochMillis ?: (now + PAST_SLEEP_CHECK_REACH_MILLIS)
-        val gaps = _inactivityGaps.value
-        if (gaps.isEmpty()) return
-        val scheduled =
-            SchedulerDomain.sleepRegions(sleep, now - PAUSE_DERIVE_HORIZON_MILLIS, now, tz)
-                .filter { it.endEpochMillis <= now }
-        if (scheduled.isEmpty()) return
-        // The scheduled sleep that was inactive AND observed this session (start ≥ session start).
-        val observed = listOf(TaskTimeRange(sessionStartMillis, now))
-        val candidates =
-            SchedulerDomain.intersectRegions(SchedulerDomain.intersectRegions(scheduled, gaps), observed)
-                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS }
-        if (candidates.isNotEmpty()) vm.dispatch(SchedulerIntent.MaterializePastSleep(candidates))
+    // Where the line was at the last move, and the start of the stretch it has walked away from a screen since the
+    // last freeze (null: at a screen).
+    private var sleepWalkAtMillis: Long? = null
+    private var awayFromMillis: Long? = null
+
+    // § *Rule Structure*: the armed trigger — the end of the Sleep period the away stretch is in or will next reach.
+    // A mode edge back to 1 is the other one.
+    private var sleepFreezeAtMillis = Long.MAX_VALUE
+
+    /** A journey starts at [fromMillis]: the stretch it walks is measured from there, not from its first step. */
+    private fun sleepWalkStartsAt(fromMillis: Long) {
+        val at = sleepWalkAtMillis
+        if (at == null) resumeAwayStretch(fromMillis)
+        if (at == null || at > fromMillis) sleepWalkAtMillis = fromMillis
+    }
+
+    /**
+     * The first move of this process, from [lineMillis]: a line that was already away from a screen when the last
+     * process ended (a computer locked, then shut down or restarted) goes on with THAT stretch — the break machine the
+     * line carries is persisted with where it began ([BreakMachine.State.stretchStart]). Without it the part of a
+     * Sleep period crossed before the process ended was never frozen.
+     */
+    private fun resumeAwayStretch(lineMillis: Long) {
+        val machine = _frozenBreaks.value?.machine ?: return
+        val since = machine.stretchStart ?: return
+        if (machine.baseMode == DynamicPeriods.MODE_AT_SCREEN || since >= lineMillis) return
+        awayFromMillis = since
+        sleepFreezeAtMillis = nextSleepEndAfter(since)
+    }
+
+    /**
+     * The line moved to [now] in [mode] ([interpretTo]). Before the armed trigger, in an unchanged mode class, this is
+     * two comparisons. At the end of a Sleep period, or where the line comes back to a screen, the part of the
+     * scheduled Sleep the away stretch covered is frozen ([SchedulerIntent.MaterializePastSleep], which drops what is
+     * already recorded and sub-minute slivers).
+     */
+    private fun freezeSleepBehindLine(now: Long, mode: Int) {
+        val prev = sleepWalkAtMillis
+        if (prev == null) resumeAwayStretch(now)
+        sleepWalkAtMillis = now
+        if (prev == null || now <= prev) return
+        val away = mode != DynamicPeriods.MODE_AT_SCREEN
+        var from = awayFromMillis
+        if (away && from == null) {
+            from = prev
+            awayFromMillis = prev
+            sleepFreezeAtMillis = nextSleepEndAfter(prev)
+        }
+        if (from == null || (away && now < sleepFreezeAtMillis)) return
+        // The stretch just walked at a screen is no part of it.
+        val until = if (away) now else prev
+        val sleep = vm.state.value.sleep
+        if (sleep != null && until > from) {
+            val crossed =
+                SchedulerDomain.intersectRegions(
+                    SchedulerDomain.sleepRegions(sleep, from, until, tz), listOf(TaskTimeRange(from, until)),
+                )
+            if (crossed.isNotEmpty()) vm.dispatch(SchedulerIntent.MaterializePastSleep(crossed))
+        }
+        awayFromMillis = if (away) until else null
+        sleepFreezeAtMillis = if (away) nextSleepEndAfter(until) else Long.MAX_VALUE
+    }
+
+    private fun nextSleepEndAfter(atMillis: Long): Long {
+        val sleep = vm.state.value.sleep ?: return atMillis + PAST_SLEEP_CHECK_REACH_MILLIS
+        return SchedulerDomain.sleepRegions(sleep, atMillis, atMillis + PAST_SLEEP_CHECK_REACH_MILLIS, tz)
+            .firstOrNull { it.endEpochMillis > atMillis }?.endEpochMillis ?: (atMillis + PAST_SLEEP_CHECK_REACH_MILLIS)
     }
 
     /**
@@ -1755,6 +1797,7 @@ class SchedulerEngine(
         var plannedUntil = Long.MAX_VALUE
         try {
             var cursor = fromMillis
+            sleepWalkStartsAt(fromMillis)
             if (mode != null) {
                 val planMode = planTpModeNow(cursor)
                 sweepMode = modeAt(cursor, mode)
@@ -2219,9 +2262,6 @@ class SchedulerEngine(
         // `side-dev/README.md`: a pause is a REST STRETCH the recurrence bars read straight off the
         // timeline, so a derive has nothing to fold into a break's configuration — the periods it reveals
         // bar what follows them by the ordinary rule, wherever they are asked about.
-        // PRD §17: a fresh derive (startup, sync-pull) may reveal a scheduled sleep window was inactive — record
-        // the observed part as a past "Sleep" panel now, not only on the next schedule advance.
-        maybeMaterializePastSleep(until)
     }
 
     // Startup heal for the retired adoption scheme: delete the [REMOTE_ACTIVITY_DEVICE_ID] rows an older
@@ -2763,7 +2803,9 @@ class SchedulerEngine(
      */
     private fun interpretTo(now: Long, bank: Boolean = false) {
         val state = vm.state.value
-        val breakEvents = advanceBreaks(now, machineMode(now))
+        val mode = machineMode(now)
+        val breakEvents = advanceBreaks(now, mode)
+        freezeSleepBehindLine(now, mode)
         val cursor = ruleCursorFor(state, now)
         val crossed = cursor.moveTo(now)
         if (crossed.windDowns.isNotEmpty() || crossed.reminders.isNotEmpty()) {
