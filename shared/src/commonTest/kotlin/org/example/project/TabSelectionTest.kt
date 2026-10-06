@@ -158,4 +158,51 @@ class TabSelectionTest {
         host.closeSelection()
         assertEquals(listOf<String?>("x", "x"), focusedAfterClose)
     }
+
+    /**
+     * User rule 2026-10-06: *"When the user closes a window which another window originates from, then this window
+     * gets closed too."* The calendar, a Search window opened from it and that one's configurations window: closing
+     * the calendar closes all three, and the focus goes to the window that stays.
+     */
+    @Test
+    fun a_window_that_closes_takes_the_windows_opened_from_it_and_theirs() {
+        val host = WindowFrameHost()
+        val parents = mapOf("Search" to "Calendar", "ConfigSearch" to "Search")
+        host.tabParentOf = { parents[it] }
+        val closed = mutableListOf<String>()
+        val focusedAfterClose = mutableListOf<String?>()
+        // App's close of a window: the windows opened from it first, then the focus handed on.
+        fun close(id: String) {
+            host.closeOpenedFrom(id)
+            closed += id
+            focusedAfterClose += host.frontIdExcluding(id)
+        }
+        for (id in listOf("Alarms", "Calendar", "Search", "ConfigSearch")) {
+            host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) { close(id) })
+        }
+        close("Calendar")
+        assertEquals(listOf("ConfigSearch", "Search", "Calendar"), closed)
+        assertEquals(listOf<String?>("Alarms", "Alarms", "Alarms"), focusedAfterClose)
+    }
+
+    @Test
+    fun a_window_that_closes_leaves_the_one_it_was_opened_from_and_the_others_open() {
+        val host = WindowFrameHost()
+        val parents = mapOf("ConfigSearch" to "Search", "ConfigSearch#2" to "Search#2")
+        host.tabParentOf = { parents[it] }
+        val closed = mutableListOf<String>()
+        for (id in listOf("Search", "Search#2", "ConfigSearch", "ConfigSearch#2")) {
+            host.register(
+                WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) {
+                    host.closeOpenedFrom(id)
+                    closed += id
+                },
+            )
+        }
+        host.registrations.first { it.id == "ConfigSearch" }.onClose()
+        assertEquals(listOf("ConfigSearch"), closed)
+        closed.clear()
+        host.registrations.first { it.id == "Search#2" }.onClose()
+        assertEquals(listOf("ConfigSearch#2", "Search#2"), closed)
+    }
 }

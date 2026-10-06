@@ -510,6 +510,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The calendar's layer bands as last drawn — the hatch read off the lock history, which is not in the state —
         // for the Search window's "is on the calendar at" filter.
         val calendarLayers = remember { CalendarLayersHolder() }
+        // Every framed WINDOW registers here, which is what draws the bar of reduced windows along the
+        // bottom of the app and what answers "does the tree still own the keyboard?" (see `WindowFrame.kt`).
+        // Until the start-up has put the windows back, none of them claims the focus by opening (below).
+        val windowFrames = remember { WindowFrameHost().also { it.claimOnOpen = false } }
         // Keyed by the window's FRAME id: the lateral-menu window's name, or a copy's (`Search#2`).
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
@@ -517,6 +521,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (next == previous && id in placements) return
             placements[id] = next
             placementStore?.savePlacement(id, next)
+            // A window that closes takes the windows opened from it with it (user rule 2026-10-06) — here, the one
+            // write every close makes, and before the close hands the focus on (`onLayout`).
+            if (previous.visible && !next.visible && id !in VIEW_ROWS) windowFrames.closeOpenedFrom(id)
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
         }
         fun updatePlacement(id: FloatingWindow, change: (WindowPlacement) -> WindowPlacement) =
@@ -860,10 +867,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Every right-click MENU registers here: the host keeps at most one open and closes it on the first
         // press outside it. Windows do not — nothing takes a window away any more (see `PopupWindows.kt`).
         val transientMenus = remember { TransientMenuHost() }
-        // …and every framed WINDOW registers here, which is what draws the bar of reduced windows along the
-        // bottom of the app and what answers "does the tree still own the keyboard?" (see `WindowFrame.kt`).
-        // Until the start-up has put the windows back, none of them claims the focus by opening (below).
-        val windowFrames = remember { WindowFrameHost().also { it.claimOnOpen = false } }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
         remember(placementStore) {
@@ -1225,8 +1228,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowFrames.focus(id)
         }
         fun closeWindowCopy(id: String) {
-            windowCopies.remove(id)
+            // The row first: it closes the windows opened from this one, which name it only while it is a copy
+            // (`configTargetOf`).
             updatePlacementById(id) { it.copy(visible = false, minimized = false) }
+            windowCopies.remove(id)
         }
         // An undone or redone change to what `App` keeps, put back — three-way: only while it is still as the unit
         // left it.
@@ -1483,6 +1488,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // lists and edits: the one it was opened from — or the original, once that copy is closed.
         fun configTargetOf(configId: String): String =
             configSearchOf(configId).target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+        // The window bar's tab of a window opened from another stands beside that one's, a line under the two (user
+        // rule 2026-10-06, `WindowTabGroups`): a configurations window's Search window, and the calendar for a Search
+        // window its right-click opened. Read off what the windows hold; a parent that is closed is none.
+        windowFrames.tabParentOf = { frameId ->
+            when (lateralWindowOf(frameId)) {
+                FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> configTargetOf(frameId)
+                FloatingWindow.Search ->
+                    FloatingWindow.Calendar.name.takeIf { searchConfigOf(frameId).calendarClickMillis != null }
+                else -> null
+            }
+        }
         // **EACH Search window has its own configurations window** (anomaly 2026-10-06: two Search windows' buttons
         // led to one and the same window, which the last press re-pointed — the first Search window lost its own).
         // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the

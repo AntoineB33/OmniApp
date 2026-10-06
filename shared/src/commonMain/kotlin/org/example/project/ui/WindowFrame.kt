@@ -60,6 +60,11 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -622,8 +627,36 @@ class WindowFrameHost {
     /** The tab the last plain or Ctrl click landed on — where a Shift+click's range starts. */
     private var tabAnchor: String? = null
 
+    /**
+     * The window [id] was opened from, by frame id — what puts its tab beside that one's ([WindowTabGroups]). `App`
+     * answers it off what the windows hold (a configurations window's Search window, the calendar for a Search window
+     * its right-click opened); null for a window that stands alone.
+     */
+    var tabParentOf: (String) -> String? = { null }
+
+    /**
+     * User rule 2026-10-06: **a window that closes takes the windows opened from it with it** ([tabParentOf]) — a
+     * Search window its configurations windows, the calendar the Search windows its right-click opened. Called by
+     * `App` as [id] closes, BEFORE the close hands the focus on: [id] and the windows opened from it are all
+     * [closing], so that focus goes to a window that stays. Each of them closes by its own close, which is what
+     * takes the windows opened from IT in turn.
+     */
+    fun closeOpenedFrom(id: String) {
+        val opened = entries.filter { it.id != id && it.id !in closing && tabParentOf(it.id) == id }
+        if (opened.isEmpty()) return
+        closing += id
+        closeWindows(opened)
+    }
+
+    /** The bar: the tabs in the order it draws them, and the lines under them ([WindowTabGroups.layout]). */
+    internal val tabLayout: WindowTabGroups.Layout get() = WindowTabGroups.layout(entries.map { it.id }, tabParentOf)
+
     /** The selected windows, in bar order — what the bar's menu acts on. */
-    private val selectedEntries: List<Registration> get() = entries.filter { it.id in selectedTabs }
+    private val selectedEntries: List<Registration>
+        get() {
+            val byId = entries.associateBy { it.id }
+            return tabLayout.order.filter { it in selectedTabs }.mapNotNull(byId::get)
+        }
 
     /** Whether the bar menu's "minimize selection" has anything to reduce. */
     val selectionHasShown: Boolean get() = selectedEntries.any { !it.state.minimized }
@@ -661,7 +694,8 @@ class WindowFrameHost {
      * a Shift or Ctrl click only changes the selection, so selecting several tabs never reduces or raises a window.
      */
     fun onTabPressed(id: String, shift: Boolean, ctrl: Boolean) {
-        val next = ClickSelection.click(entries.map { it.id }, selectedTabs, tabAnchor, id, shift, ctrl)
+        // The range is over the tabs as the bar draws them, which is not the order they were opened in.
+        val next = ClickSelection.click(tabLayout.order, selectedTabs, tabAnchor, id, shift, ctrl)
         selectedTabs = next.selected
         tabAnchor = next.anchor
         if (!shift && !ctrl) onTabClicked(id)
@@ -1039,6 +1073,11 @@ private val HEAD_BUTTON_SIZE: Dp = 24.dp
 /** The outline of the focused window's tab in the window bar, and the less thick one of a selected tab. */
 private val TAB_FOCUSED_OUTLINE: Dp = 3.dp
 private val TAB_SELECTED_OUTLINE: Dp = 1.5.dp
+
+/** The lines under the tabs of windows opened one from another: their weight, the gap under a tab, and a level's step. */
+private val TAB_LINE_WIDTH: Dp = 1.5.dp
+private val TAB_LINE_GAP: Dp = 2.dp
+private val TAB_LINE_PITCH: Dp = 3.dp
 
 /** Where a head's title starts, from the window's left edge. */
 private val HEAD_TITLE_START: Dp = 14.dp
@@ -1529,8 +1568,9 @@ private fun Modifier.unplaced(active: Boolean): Modifier =
 
 /**
  * The app's **window bar** along the bottom — its system tray. It appears whenever a window is open and has a
- * TAB for each one, the reduced ones included, in the order they were opened; drawn at the app ROOT, over the
- * lateral menu, so a window reduced while the menu is open is not filed behind it.
+ * TAB for each one, the reduced ones included, in the order they were opened — a window opened from another beside
+ * that one, a line under the two ([WindowTabGroups]); drawn at the app ROOT, over the lateral menu, so a window
+ * reduced while the menu is open is not filed behind it.
  *
  * A tab is a taskbar's ([WindowFrameHost.onTabClicked]); its ✕ closes its window outright. **Reset**, at the bar's
  * right corner, closes every window at once (it was "Close all", and before that the lateral menu's "Close
@@ -1549,6 +1589,11 @@ fun WindowBar(
     // Where the right-click landed, in the bar; null while the bar's menu is closed.
     var menuAt by remember { mutableStateOf<Offset?>(null) }
     val density = LocalDensity.current
+    val tabs = host.tabLayout
+    val rowsById = rows.associateBy { it.id }
+    // Where each tab stands in the row of tabs (left, right, bottom): what the lines under them are drawn from.
+    val tabBounds = remember { mutableStateMapOf<String, Rect>() }
+    val lineColor = MaterialTheme.colorScheme.onSurface
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shadowElevation = 12.dp,
@@ -1610,11 +1655,37 @@ fun WindowBar(
                 modifier = Modifier
                     .weight(1f)
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 6.dp),
+                    .padding(horizontal = 6.dp)
+                    // The lines under the tabs of windows opened one from another, in the room the bar leaves under
+                    // them: the deeper a line starts, the nearer the tabs it is drawn.
+                    .drawBehind {
+                        for (line in tabs.underlines) {
+                            val from = tabBounds[line.from] ?: continue
+                            val to = tabBounds[line.to] ?: continue
+                            val y = maxOf(from.bottom, to.bottom) + TAB_LINE_GAP.toPx() +
+                                (tabs.levels - 1 - line.depth) * TAB_LINE_PITCH.toPx()
+                            drawLine(
+                                color = lineColor,
+                                start = Offset(from.left, y),
+                                end = Offset(to.right, y),
+                                strokeWidth = TAB_LINE_WIDTH.toPx(),
+                                cap = StrokeCap.Round,
+                            )
+                        }
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                for (row in rows.toList()) MinimizedChip(row, host)
+                for (id in tabs.order) {
+                    val row = rowsById[id] ?: continue
+                    key(id) {
+                        DisposableEffect(id) { onDispose { tabBounds.remove(id) } }
+                        MinimizedChip(
+                            row, host,
+                            Modifier.onPlaced { tabBounds[id] = Rect(it.positionInParent(), it.size.toSize()) },
+                        )
+                    }
+                }
             }
             Text(
                 text = "Reset",
@@ -1668,7 +1739,7 @@ private fun WindowBarMoreButton(onUndo: () -> Unit, onRedo: () -> Unit) {
 }
 
 @Composable
-private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHost) {
+private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHost, modifier: Modifier = Modifier) {
     // A reduced window's tab is set back, so the bar tells at a glance which windows are on screen; the tab of
     // the window that has the FOCUS ([WindowFrameHost.focusedId]) stands out, so it also tells which one a
     // keystroke — or a click on its tab, which reduces it — goes to. A reduced window never has the focus.
@@ -1685,6 +1756,7 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
     val fill = host.colors[row.id]?.let(::windowColor) ?: colors.surface
     val onFill = TaskPalette.foreground(fill)
     Surface(
+        modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         color = fill,
         contentColor = onFill,

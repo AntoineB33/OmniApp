@@ -142,6 +142,23 @@ means.
   reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window
   that HAS the focus is reduced — giving the focus up, so no hidden window keeps the keyboard. Its ✕ closes it
   outright.
+- **A window opened from another has its tab beside that one's, a line under the two** (user rule 2026-10-06,
+  `WindowTabGroups`, `WindowTabGroupsTest`): a Search configurations window (and an Added elements configurations
+  window) right of its Search window, a Search window the calendar's right-click opened right of the calendar. The
+  parent is DERIVED (`WindowFrameHost.tabParentOf`, answered by `App` off `ConfigurationSearch.target` and
+  `Config.calendarClickMillis`), never stored, and is none once that window is closed. The bar lists a window then
+  the windows opened from it, in opening order, so only the opened ones leave the order of opening; one line runs
+  from a window to the last of those opened from it, and the line of a deeper window is drawn ABOVE (calendar,
+  Search, configurations: a line under the first two, and above it a line under the last two). Everything that
+  reads "bar order" — the Shift+click range, the menu's selection — reads `tabLayout.order`, never `registrations`.
+- **A window that closes takes the windows opened from it with it** (user rule 2026-10-06,
+  `WindowFrameHost.closeOpenedFrom`, `TabSelectionTest`): a Search window its configurations windows, the calendar
+  the Search windows its right-click opened — and each of those its own, by its own close. The parent is the bar's
+  (`tabParentOf`), never a second reading. It is called from the ONE write every close makes
+  (`App`'s `updatePlacementById`, a row going from visible to not), BEFORE that close hands the focus on, the closing
+  window and those opened from it all marked *closing* — so the focus goes to a window that stays. Reducing a window
+  closes nothing. `closeWindowCopy` writes the row before it takes the copy out of `windowCopies`: a configurations
+  window names a Search copy only while it is one (`configTargetOf`).
 - **The bar's tabs are selected the file explorer's way** (user rule 2026-10-01; `ClickSelection` — shared with the Search window's result list —
   `WindowFrameHost.onTabPressed`): a click selects its tab alone (and is still the taskbar toggle above); Shift+click
   selects every tab from the last one clicked to it — the range is `CheckRange.keysToSet`, never a second reading;

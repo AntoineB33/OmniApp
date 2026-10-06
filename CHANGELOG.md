@@ -11,6 +11,34 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window that closes takes the windows opened from it — 2026-10-06
+
+User request: "When the user closes a window which another window originates from, then this window gets closed too."
+
+- **`WindowFrameHost.closeOpenedFrom`**: the windows whose `tabParentOf` is the closing one are closed by their own
+  close (so theirs follow), all marked *closing* first so the focus is handed to a window that stays.
+- Called from `App`'s `updatePlacementById` when a row goes from visible to not — the ✕, a tab's ✕, the lateral
+  menu, "close selection", Reset and an undone opening all pass there. Reducing closes nothing.
+- `closeWindowCopy` writes the row before leaving `windowCopies`, so a Search copy's configurations window still
+  names it when it closes.
+
+Client only. `TabSelectionTest`.
+
+### The window bar groups a window with the one it was opened from — 2026-10-06
+
+User request: the tab of a Search configurations window stands right of its Search window's, a line under the two;
+the same for a Search window the calendar's right-click opened, beside the calendar; with all three, a line under the
+first two and, above it, a line under the last two.
+
+- **`WindowTabGroups`** (new, pure): the bar's order (a window, then those opened from it, in opening order) and its
+  lines (from a window to the last of those opened from it, told by depth; the deeper one drawn nearer the tabs).
+- **`WindowFrameHost.tabParentOf`**, answered by `App`: a configurations window's target Search window, the calendar
+  for a Search window holding a `calendarClickMillis`. Derived, nothing stored. The Added elements configurations
+  window follows its Search window alike.
+- The Shift+click range and the bar menu's selection follow the order the bar draws (`tabLayout.order`).
+
+Client only. `WindowTabGroupsTest`.
+
 ### Each Search window has its own configurations window — 2026-10-06
 
 Anomaly (user): "All configurations" pressed in two distinct Search windows led to one and the same Search
