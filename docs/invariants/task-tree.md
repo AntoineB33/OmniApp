@@ -708,6 +708,11 @@ suggestions before it was ever entered.
   same list the window bar draws — plus every lateral-menu window that is not open). Every open instance is its
   own row, keyed by its frame id; the detail says "open", "minimized" (reduced to the window bar) or
   "not open". Opening one opens the window or brings it back, never closes it. Never stored, never synced.
+- **EACH Search window has its own Configuration Search window** (anomaly 2026-10-06; the Added elements
+  configurations window alike): the button brings back the one whose `ConfigurationSearch.target` is that Search
+  window, else opens one — the original where it is not open, else a copy (`App.openConfigurationsOf`, through
+  `openNewWindow`). Never re-point an open one at another Search window: that took the first window's own away. A
+  window whose Search copy was closed falls back on the original (`configTargetOf`).
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`, and "show the filters that are on", which keeps a filter that is on listed
@@ -857,6 +862,15 @@ suggestions before it was ever entered.
   existing window to a new right-click, and — for a window still open at a restart — what it held then.
 - **The configuration windows' Reset (`ResetButton`) clears ITS OWN search field and types**, and never touches the
   Search window's configuration it lists.
+- **The settings sections are COMPACT, and shrinking one hides its content** (user rule 2026-10-06): the
+  Configuration Search window, the Added elements configurations window and the actions section are drawn inside
+  `CompactFields` (`ui/CompactSection.kt`). There the app's one text field is one task cell tall
+  (`CompactTextField`, behind the same `OutlinedTextField` every window calls — never a Material field imported by
+  name), and a drop-down face or a button is as tall (`fieldFaceVerticalPadding`, `buttonVerticalPadding`): a new
+  control beside a field reads those, never a padding of its own. The content is laid out at
+  `COMPACT_SECTION_MIN_WIDTH` at least and cut at the section's edge (`keepsWidthAbove`), and a button, a chip, a
+  setting's name and an explanation (`NoteText`) are ONE line — a text that wraps makes the section taller as it
+  is narrowed, which is the anomaly.
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
   `SectionSeparator` + `draggedSplit`, each section kept above a minimum), and **their joint drags both at once**

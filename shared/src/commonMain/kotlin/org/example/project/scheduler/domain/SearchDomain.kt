@@ -580,7 +580,7 @@ object SearchDomain {
         val onlyResultKinds: Boolean = false,
         /**
          * The frame id of the Search window whose configurations this window lists and edits — the original's
-         * (`Search`) or a copy's (`Search#2`): the one whose button opened it last.
+         * (`Search`) or a copy's (`Search#2`): the one whose button opened it. Each Search window has its own.
          */
         val target: String = "Search",
         /**

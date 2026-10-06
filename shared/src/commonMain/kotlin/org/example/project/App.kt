@@ -1479,6 +1479,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
             return id
         }
+        // The Search window a configurations window ([FloatingWindow.ConfigSearch], [FloatingWindow.AddedConfig])
+        // lists and edits: the one it was opened from — or the original, once that copy is closed.
+        fun configTargetOf(configId: String): String =
+            configSearchOf(configId).target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+        // **EACH Search window has its own configurations window** (anomaly 2026-10-06: two Search windows' buttons
+        // led to one and the same window, which the last press re-pointed — the first Search window lost its own).
+        // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the
+        // original where it is not open (keeping what its bar and types were left on), else a copy.
+        fun openConfigurationsOf(kind: FloatingWindow, searchId: String) {
+            val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
+            open.firstOrNull { configTargetOf(it) == searchId }?.let { existing ->
+                presentWindow(kind, existing)
+                return
+            }
+            val own = if (isWindowOpen(kind)) SearchDomain.ConfigurationSearch() else configSearchOf(kind.name)
+            openNewWindow(kind, own.copy(target = searchId).encode())
+        }
         // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
         // this right-click with the matching filter on and the other off — its added elements and the rest of its
         // configuration kept, its types those the filter is about — or a new one ([SearchDomain.calendarAddConfig],
@@ -4069,21 +4086,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             openedConfig = searchOpenedConfigs[searchId],
                             deployKinds = searchId in searchKindsToDeploy,
                             onKindsDeployed = { searchKindsToDeploy.remove(searchId) },
-                            // Opened if closed, brought to the front either way — and pointed at THIS Search
-                            // window, which is the one whose configurations it then lists and edits.
-                            onOpenConfigurations = {
-                                val configId = FloatingWindow.ConfigSearch.name
-                                setConfigSearch(configId, configSearchOf(configId).copy(target = searchId))
-                                configSearchWindowOpen = true
-                                focusWindow(FloatingWindow.ConfigSearch)
-                            },
+                            // THIS Search window's own configurations window: brought back, else opened.
+                            onOpenConfigurations = { openConfigurationsOf(FloatingWindow.ConfigSearch, searchId) },
                             // The same, for the actions on the added elements.
-                            onOpenAddedConfigurations = {
-                                val configId = FloatingWindow.AddedConfig.name
-                                setConfigSearch(configId, configSearchOf(configId).copy(target = searchId))
-                                addedConfigWindowOpen = true
-                                focusWindow(FloatingWindow.AddedConfig)
-                            },
+                            onOpenAddedConfigurations = { openConfigurationsOf(FloatingWindow.AddedConfig, searchId) },
                             initialOffset = searchOffset,
                             initialSize = searchSize,
                             onGeometryChange = { windowOffset, windowSize ->
@@ -4129,8 +4135,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     LateralWindow(FloatingWindow.ConfigSearch, configSearchWindowOpen) {
                         val configId = windowInstanceId(FloatingWindow.ConfigSearch.name)
                         val own = configSearchOf(configId)
-                        // The Search window it was pointed at — or the original, once that copy is closed.
-                        val target = own.target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+                        val target = configTargetOf(configId)
                         ConfigurationSearchWindow(
                             state = schedulerState,
                             config = searchConfigOf(target),
@@ -4158,7 +4163,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     LateralWindow(FloatingWindow.AddedConfig, addedConfigWindowOpen) {
                         val configId = windowInstanceId(FloatingWindow.AddedConfig.name)
                         val own = configSearchOf(configId)
-                        val target = own.target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+                        val target = configTargetOf(configId)
                         val targetConfig = searchConfigOf(target)
                         val windows = if (targetConfig.readsWindows) searchWindowEntries() else emptyList()
                         val added =

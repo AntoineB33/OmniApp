@@ -333,7 +333,7 @@ internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                 .then(if (enabled) Modifier.menuToggleClickable(open) { open = it } else Modifier)
-                .padding(horizontal = 10.dp, vertical = 14.dp),
+                .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
         transientMenuDismissal(open) { open = false }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {

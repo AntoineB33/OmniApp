@@ -112,14 +112,19 @@ fun AddedElementsConfigurationWindow(
         onGeometryChange = onGeometryChange,
         claimsKeyboard = true,
     ) {
+        CompactFields {
         Column(
-            modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // --- The configuration ------------------------------------------------------------------
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
@@ -146,17 +151,12 @@ fun AddedElementsConfigurationWindow(
             // --- The actions ------------------------------------------------------------------------
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
-                if (sections.isEmpty()) {
-                    Text(
-                        text = "No configuration matches.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                if (sections.isEmpty()) NoteText("No configuration matches.")
                 AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear)
             }
+        }
         }
     }
 }
@@ -222,7 +222,8 @@ internal fun AddedActionsSection(
     onToggleCollapsed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    CompactFields {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // No "All configurations" button (removed 2026-10-04): every action is listed right here.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             SectionArrow(collapsed, onToggleCollapsed)
@@ -238,20 +239,13 @@ internal fun AddedActionsSection(
         // action is never a mystery.
         if (config.actionQuery.isNotBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Only the actions matching “${config.actionQuery.trim()}”",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // The way off first: it is the part a narrow section must keep in view.
                 FrameButton("Show all") { onConfigChange(config.copy(actionQuery = "")) }
+                NoteText("Only the actions matching “${config.actionQuery.trim()}”")
             }
         }
         if (added.isEmpty()) {
-            Text(
-                text = "Nothing is added yet: the actions act on every added element at once.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            NoteText("Nothing is added yet: the actions act on every added element at once.")
             return@Column
         }
         val sections =
@@ -265,20 +259,19 @@ internal fun AddedActionsSection(
         val scroll = rememberScrollState()
         Box(Modifier.fillMaxWidth().weight(1f)) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(end = 12.dp).verticalScroll(scroll),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 12.dp)
+                .verticalScroll(scroll)
+                .keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+            verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
         ) {
-            if (sections.isEmpty()) {
-                Text(
-                    text = "No action matches.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            if (sections.isEmpty()) NoteText("No action matches.")
             AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear)
         }
         ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
         }
+    }
     }
 }
 
@@ -303,16 +296,17 @@ private fun AddedActionSections(
     // User rule 2026-10-02: the group whose actions reach the most added elements first.
     for ((kind, actions) in SearchDomain.sortedByReach(sections, added)) {
         val count = SearchDomain.reachOf(kind, added)
-        Text(
-            text = (kind?.label?.replaceFirstChar { it.uppercase() } ?: "Every element") + "  ·  $count",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        SectionTitle((kind?.label?.replaceFirstChar { it.uppercase() } ?: "Every element") + "  ·  $count")
         for (action in actions) {
             if (action in STACKED_ACTIONS) {
                 // An editor too tall for the label's row: under its label, at the section's width.
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(action.label, style = MaterialTheme.typography.bodyMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+                    Text(
+                        action.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
                     AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear)
                 }
             } else {
@@ -364,7 +358,7 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.CreationSearchAll -> {
             val kinds = SearchDomain.creationKinds(added)
             if (kinds.isEmpty()) {
-                Text("No creation row is added.", style = MaterialTheme.typography.bodySmall)
+                NoteText("No creation row is added.", color = MaterialTheme.colorScheme.onSurface)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 kinds.forEach { kind -> FrameButton("Every " + kind.label) { handlers.onOpenKindSearch(kind) } }
@@ -431,7 +425,7 @@ private fun AddedActionEditor(
             when {
                 calendar == null || reach == null -> OneTaskButton("Go", taskIds) {}
                 reach == CalendarLockDomain.Reach.None ->
-                    Text("No panel of it can come", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    NoteText("No panel of it can come")
                 else -> FrameButton(if (reach == CalendarLockDomain.Reach.Pending) "Go (being placed)" else "Go") { single?.let(calendar.go) }
             }
         }
@@ -454,7 +448,7 @@ private fun AddedActionEditor(
             }
         SearchDomain.AddedAction.TaskAddDefaultSubtree ->
             if (state.defaultSubtreeIsEmpty) {
-                Text("No default sub-tree", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NoteText("No default sub-tree")
             } else {
                 FrameButton("Add", enabled = SearchDomain.addedTaskCells(state, added).isNotEmpty()) {
                     run(SearchDomain.AddedCommand.AddDefaultSubtree)
@@ -560,27 +554,19 @@ private fun AddedActionEditor(
             val rows = added.filterIsInstance<SearchDomain.ItemResult>()
                 .filter { it.kind == SearchDomain.Kind.HistoryUnit && SearchDomain.isSchedulerRunId(it.id) }
             if (rows.isEmpty()) {
-                Text(
-                    "No history unit made in the scheduler engine is added: only those return a set of rules.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                NoteText("No history unit made in the scheduler engine is added: only those return a set of rules.")
             }
             for (row in rows) {
                 val found = SearchDomain.schedulerRunOf(runs, row.id)
                 ElementHeading(row.name, rows.size)
                 if (found == null) {
                     // Runs are kept in memory for the session: one added before a restart is no longer held.
-                    Text(
-                        "This run is no longer in memory (the scheduler engine's runs are kept for the session only).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    NoteText("This run is no longer in memory (the scheduler engine's runs are kept for the session only).")
                     continue
                 }
                 val text = found.rules.joinToString("\n").ifBlank { "(the scheduler placed nothing)" }
                 androidx.compose.foundation.text.selection.SelectionContainer {
-                    Text(text, style = MaterialTheme.typography.bodySmall)
+                    Text(text, style = MaterialTheme.typography.bodySmall, softWrap = false)
                 }
                 HistoryCopyButton(label = "Copy the set of rules", value = text)
             }
@@ -600,7 +586,7 @@ private fun AddedActionEditor(
                         }
                     }
             if (units.isEmpty()) {
-                Text("No history unit is added.", style = MaterialTheme.typography.bodySmall)
+                NoteText("No history unit is added.", color = MaterialTheme.colorScheme.onSurface)
             }
             for ((label, entry) in units) {
                 val infos = historyEntryInfos(entry)
@@ -624,7 +610,7 @@ private fun AddedActionEditor(
                 val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }
                 ElementHeading(state.tasks[taskId]?.title.orEmpty(), taskIds.size)
                 if (places.isEmpty()) {
-                    Text("In no place of the open task tree.", style = MaterialTheme.typography.bodySmall)
+                    NoteText("In no place of the open task tree.", color = MaterialTheme.colorScheme.onSurface)
                 }
                 for (place in places) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -725,7 +711,7 @@ private fun AddedActionEditor(
                     restore = { alarm, before -> alarm.copy(soundSeconds = before.soundSeconds) },
                     write = { key, change -> run(SearchDomain.AddedCommand.AlarmsEdit(key, change)) },
                 )
-                Text("s", style = MaterialTheme.typography.bodySmall)
+                NoteText("s", color = MaterialTheme.colorScheme.onSurface)
             }
         SearchDomain.AddedAction.AlarmDays -> {
             val alarms = SearchDomain.addedAlarms(state, added)
@@ -770,7 +756,7 @@ private fun AddedActionEditor(
                     restore = { timer, before -> timer.copy(soundSeconds = before.soundSeconds) },
                     write = { key, change -> run(SearchDomain.AddedCommand.TimersEdit(key, change)) },
                 )
-                Text("s", style = MaterialTheme.typography.bodySmall)
+                NoteText("s", color = MaterialTheme.colorScheme.onSurface)
             }
         SearchDomain.AddedAction.TimerBelowZero -> {
             val shared = SearchDomain.sharedValue(SearchDomain.addedTimers(state, added)) { it.goesNegative }
@@ -1075,7 +1061,7 @@ private fun OneTaskButton(text: String, eligible: List<TaskId>, onClick: (TaskId
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         FrameButton(text, enabled = single != null) { single?.let(onClick) }
         if (eligible.size > 1) {
-            Text("one task at a time", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            NoteText("one task at a time")
         }
     }
 }
@@ -1123,11 +1109,7 @@ private fun ResilienceEditor(
             }
         }
         if (leaves.size < added.count { it.kind == SearchDomain.Kind.Task }) {
-            Text(
-                "Only the schedulable tasks (${leaves.size}): a parent task is never placed.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            NoteText("Only the schedulable tasks (${leaves.size}): a parent task is never placed.")
         }
     }
 }
@@ -1146,7 +1128,7 @@ private fun TaskCellCategoriesEditor(state: SchedulerState, taskIds: List<TaskId
             ElementHeading(task.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }, taskIds.size)
             val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }
             if (places.isEmpty()) {
-                Text("In no place of the open task tree.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NoteText("In no place of the open task tree.")
             }
             for (place in places) {
                 val carried = state.cells[place.cellId]?.categoryIds.orEmpty().mapNotNull { state.categoryById(it) }
@@ -1205,7 +1187,7 @@ private fun FulfilmentEditor(
     val leaves = SearchDomain.addedLeafIds(state, added)
     val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
     if (leaves.isEmpty()) {
-        Text("Only a schedulable task has a set of tasks.", style = MaterialTheme.typography.bodySmall)
+        NoteText("Only a schedulable task has a set of tasks.", color = MaterialTheme.colorScheme.onSurface)
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (leaf in leaves) {
@@ -1213,7 +1195,7 @@ private fun FulfilmentEditor(
             ElementHeading(task.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }, leaves.size)
             val entries = task.fulfilment.entries.sortedBy { state.tasks[it.key]?.title.orEmpty().lowercase() }
             if (entries.isEmpty()) {
-                Text("It fulfils no other task.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NoteText("It fulfils no other task.")
             }
             for ((target, fraction) in entries) {
                 FulfilmentLine(
@@ -1262,7 +1244,7 @@ private fun FulfilledByEditor(
             ElementHeading(SchedulerDomain.taskTitleLabel(state, id), taskIds.size)
             val holders = state.tasks.values.filter { id in it.fulfilment }.sortedBy { it.title.lowercase() }
             if (holders.isEmpty()) {
-                Text("No task's set holds it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NoteText("No task's set holds it.")
             }
             for (holder in holders) {
                 FulfilmentLine(
@@ -1392,10 +1374,12 @@ internal fun FrameButton(text: String, enabled: Boolean = true, onClick: () -> U
         style = MaterialTheme.typography.labelLarge,
         color = color,
         maxLines = 1,
+        // Squeezed, it is cut — never wrapped under itself.
+        softWrap = false,
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .border(1.dp, if (enabled) MaterialTheme.colorScheme.outlineVariant else color, RoundedCornerShape(6.dp))
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(6.dp)),
     )
 }

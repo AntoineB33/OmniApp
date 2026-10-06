@@ -45,7 +45,7 @@ internal fun Modifier.leavesEditOnEnter(): Modifier {
  * **The app's text field**: Material's `OutlinedTextField`, which a single-line one leaves on Enter
  * ([leavesEditOnEnter]). Every window draws its fields with THIS one — the rule is stated once, here, and a field
  * added tomorrow has it without being told. (A file that imports Material's own by name would opt out of it: none
- * should.)
+ * should.) In a compact section ([LocalCompactFields]) it is drawn one task cell tall ([CompactTextField]).
  */
 @Composable
 internal fun OutlinedTextField(
@@ -69,6 +69,14 @@ internal fun OutlinedTextField(
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
 ) {
+    if (LocalCompactFields.current) {
+        CompactTextField(
+            value, onValueChange, if (singleLine) modifier.leavesEditOnEnter() else modifier, enabled, readOnly, textStyle,
+            label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError, visualTransformation,
+            keyboardOptions, singleLine, maxLines, minLines,
+        )
+        return
+    }
     androidx.compose.material3.OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -115,6 +123,14 @@ internal fun OutlinedTextField(
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
 ) {
+    if (LocalCompactFields.current) {
+        CompactTextField(
+            value, onValueChange, if (singleLine) modifier.leavesEditOnEnter() else modifier, enabled, readOnly, textStyle,
+            label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError, visualTransformation,
+            keyboardOptions, singleLine, maxLines, minLines,
+        )
+        return
+    }
     androidx.compose.material3.OutlinedTextField(
         value = value,
         onValueChange = onValueChange,

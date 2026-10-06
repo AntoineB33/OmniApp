@@ -48,11 +48,11 @@ internal fun CalendarPlacementEditor(
     val refused = start != null && SearchDomain.placementRefused(placement, start)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("starts", style = MaterialTheme.typography.bodySmall)
+            NoteText("starts", color = MaterialTheme.colorScheme.onSurface)
             DayField(startAt?.date, "day", today, enabled = true) { date ->
                 write { it.copy(startMillis = instantOf(date, startMinutes ?: 0, tz)) }
             }
-            Text("at", style = MaterialTheme.typography.bodySmall)
+            NoteText("at", color = MaterialTheme.colorScheme.onSurface)
             // A step past midnight is the next day's (or the day before's): the start is an instant.
             TimeOfDayField(
                 startMinutes,
@@ -68,19 +68,19 @@ internal fun CalendarPlacementEditor(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = placement.endByDelta, onCheckedChange = { on -> write { it.copy(endByDelta = on) } })
             if (placement.endByDelta) {
-                Text("ends", style = MaterialTheme.typography.bodySmall)
+                NoteText("ends", color = MaterialTheme.colorScheme.onSurface)
                 LengthField(placement.lengthMillis, mixed = false, blank = "1", defaultUnit = QuotaDomain.LengthUnit.Hours) { length ->
                     write { it.copy(lengthMillis = length) }
                 }
-                Text("after the start", style = MaterialTheme.typography.bodySmall)
+                NoteText("after the start", color = MaterialTheme.colorScheme.onSurface)
             } else {
                 val endAt = placement.endMillis?.let { localOf(it, tz) }
                 val endMinutes = endAt?.let { it.hour * 60 + it.minute }
-                Text("ends on", style = MaterialTheme.typography.bodySmall)
+                NoteText("ends on", color = MaterialTheme.colorScheme.onSurface)
                 DayField(endAt?.date, "day", today, enabled = true) { date ->
                     write { it.copy(endMillis = instantOf(date, endMinutes ?: startMinutes ?: 0, tz)) }
                 }
-                Text("at", style = MaterialTheme.typography.bodySmall)
+                NoteText("at", color = MaterialTheme.colorScheme.onSurface)
                 TimeOfDayField(
                     endMinutes,
                     enabled = true,
@@ -93,11 +93,7 @@ internal fun CalendarPlacementEditor(
             }
         }
         if (start == null) {
-            Text(
-                "Give it a start.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            NoteText("Give it a start.")
             return@Column
         }
         val end = SearchDomain.placementEnd(placement, start)
@@ -121,6 +117,8 @@ internal fun CalendarPlacementEditor(
             else "A task's panel and a period end there; a tag and a ring are at the start.",
             style = if (refused) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelSmall,
             color = if (refused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }
 }

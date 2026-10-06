@@ -11,6 +11,34 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Each Search window has its own configurations window — 2026-10-06
+
+Anomaly (user): "All configurations" pressed in two distinct Search windows led to one and the same Search
+configurations window. There was one, and the button re-pointed it (`ConfigurationSearch.target`) at whichever Search
+window pressed last. The button now brings back the configurations window that is on ITS Search window, else opens
+one — the original where it is not open, else a copy (`App.openConfigurationsOf`). Same for the Added elements
+configurations window. Client only; no test (the rule lives in `App`'s composition).
+
+### The settings sections are as compact as the task tree — 2026-10-06
+
+User request: the Search configurations window and the Search window's actions section were not compact enough —
+Material's 56 dp text fields beside 28 dp task cells, wide gaps, a 48 dp Reset — and narrowing a section wrapped its
+rows, so it grew downwards as it shrank.
+
+- **`CompactFields`** (`ui/CompactSection.kt`, new): inside it the app's one text field (`OutlinedTextField`) draws
+  as `CompactTextField` — one task cell tall (`TASK_ROW_MIN_HEIGHT`), the cell's text size, the drop-down faces'
+  outline, its label in the placeholder's place — and the drop-down faces, `ResetButton`, `FrameButton` and
+  `ToggleChip` take the same height (`fieldFaceVerticalPadding`, `buttonVerticalPadding`). Material's 48 dp minimum
+  touch target is off there. Read by the controls, so the editors embedded in the actions (a quota's, a reminder's,
+  a timer's) are compact there and unchanged in their own windows.
+- **Wrapped**: the Search configurations window, the Added elements configurations window and the Search window's
+  actions section. Rows 2 dp apart (`COMPACT_ROW_GAP`), a setting's name on one line.
+- **Shrinking hides, never wraps** (`Modifier.keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH)`, 440 dp): narrower than
+  that, the content keeps its layout and is cut at the section's edge. Buttons, chips and explanations
+  (`NoteText`) are one line whatever the width.
+
+Client only. No test: layout only (`:shared:jvmTest` unchanged).
+
 ### Every window has a colour — 2026-10-06
 
 *"Give a color to every window. A window also keeps the same color (not updated when there is a change like for task

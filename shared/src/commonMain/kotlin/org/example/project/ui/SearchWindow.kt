@@ -876,7 +876,7 @@ fun SearchWindow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(if (actionsCollapsed) Modifier else Modifier.weight(if (bothOpen) topRightShare else 1f))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
             )
             if (bothOpen) SectionSeparator(vertical = false, onDrag = dragTopRightShare) else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
@@ -1125,11 +1125,13 @@ internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {
         text = "Reset",
         style = MaterialTheme.typography.labelLarge,
         color = color,
+        maxLines = 1,
+        softWrap = false,
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .border(1.dp, color, RoundedCornerShape(6.dp))
             .then(if (enabled) Modifier.clickable(onClick = onReset) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 14.dp),
+            .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
     )
 }
 
@@ -1202,7 +1204,7 @@ internal fun <T> CheckBoxDropDown(
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                 .menuToggleClickable(open) { open = it }
-                .padding(horizontal = 10.dp, vertical = 14.dp),
+                .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
         transientMenuDismissal(open) { open = false }
         DropdownMenu(
@@ -1268,7 +1270,7 @@ internal fun <T> ChoiceDropDown(
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                 .then(if (usable) Modifier.menuToggleClickable(open) { open = it } else Modifier)
-                .padding(horizontal = 10.dp, vertical = 14.dp),
+                .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         ) {
             if (selected != null && leading != null) leading(selected)
             Text(

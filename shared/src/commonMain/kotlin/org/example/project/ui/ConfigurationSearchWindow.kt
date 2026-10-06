@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +55,7 @@ import org.example.project.scheduler.domain.TaskRelationsDomain
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.ui.TASK_ROW_MIN_HEIGHT
 import org.example.project.scheduler.ui.TaskRow
 
 /**
@@ -118,14 +120,19 @@ fun ConfigurationSearchWindow(
         onGeometryChange = onGeometryChange,
         claimsKeyboard = true,
     ) {
+        CompactFields {
         Column(
-            modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // --- The configuration ------------------------------------------------------------------
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
@@ -142,7 +149,7 @@ fun ConfigurationSearchWindow(
                     onOwnChange(own.copy(query = "", kinds = emptySet()))
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 ToggleChip(
                     text = "Only the types in the Search results",
                     on = own.onlyResultKinds,
@@ -163,26 +170,17 @@ fun ConfigurationSearchWindow(
             SortMethodList(config.sorts) { onConfigChange(config.copy(sorts = it)) }
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
-                if (sections.isEmpty()) {
-                    Text(
-                        text = "No configuration matches.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                if (sections.isEmpty()) NoteText("No configuration matches.")
                 for ((kind, settings) in sections) {
-                    Text(
-                        text = kind?.label?.replaceFirstChar { it.uppercase() } ?: "General",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    SectionTitle(kind?.label?.replaceFirstChar { it.uppercase() } ?: "General")
                     for (setting in settings) {
                         SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows) }
                     }
                 }
             }
+        }
         }
     }
 }
@@ -190,13 +188,32 @@ fun ConfigurationSearchWindow(
 /** The frame id of the Configuration Search window — also its `FloatingWindow` name in `App`. */
 const val CONFIGURATION_SEARCH_FRAME_ID: String = "ConfigSearch"
 
+/** A group's title in a compact section: one line, a little room above it to part it from the group before. */
+@Composable
+internal fun SectionTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** One setting: its name, on ONE line, then its control — a row one task cell tall unless the control is taller. */
 @Composable
 internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().heightIn(min = TASK_ROW_MIN_HEIGHT),
+    ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.width(130.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.width(130.dp).padding(end = 6.dp),
         )
         Box(Modifier.weight(1f)) { editor() }
     }
@@ -286,7 +303,7 @@ private fun SettingEditor(
                     text = if (f.blocksOf.isEmpty()) "every element"
                     else f.blocksOf.map { SearchDomain.changedElementTitle(state, it, windows) }.sorted().joinToString(", "),
                     style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
@@ -394,7 +411,7 @@ private fun SortMethodPicker(
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                 .menuToggleClickable(open) { open = it }
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         transientMenuDismissal(open) { open = false }
         DropdownMenu(
@@ -439,17 +456,11 @@ private fun SortMethodList(sorts: List<SearchDomain.SortMethod>, onChange: (List
     var dragY by remember { mutableStateOf(0f) }
     // One row's height plus the gap between rows: what a drag must cover to pass one row.
     var pitch by remember { mutableStateOf(1f) }
-    val gap = 4.dp
+    val gap = COMPACT_ROW_GAP
     val gapPx = with(LocalDensity.current) { gap.toPx() }
     Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
-        Text("Sort by — most dominant first", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-        if (sorts.isEmpty()) {
-            Text(
-                text = "No sorting method: the results keep their default order. Check one in a Sort by below.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        SectionTitle("Sort by — most dominant first")
+        if (sorts.isEmpty()) NoteText("No sorting method: the results keep their default order. Check one in a Sort by below.")
         sorts.forEachIndexed { index, method ->
             val isDragged = dragged == index
             key(method.kind, method.key) {
@@ -486,7 +497,7 @@ private fun SortMethodList(sorts: List<SearchDomain.SortMethod>, onChange: (List
                                 dragY += amount.y
                             }
                         }
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp),
                 ) {
                     Text("⠿", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
@@ -532,12 +543,15 @@ internal fun ToggleChip(text: String, on: Boolean, onToggle: (Boolean) -> Unit) 
         text = text,
         style = MaterialTheme.typography.labelLarge,
         color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+        maxLines = 1,
+        // Squeezed, it is cut — never wrapped under itself.
+        softWrap = false,
         modifier = Modifier
             .clip(shape)
             .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface, shape)
             .border(1.dp, MaterialTheme.colorScheme.primary, shape)
             .clickable { onToggle(!on) }
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(5.dp)),
     )
 }
 
@@ -565,7 +579,7 @@ private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String,
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                 .menuToggleClickable(open) { open = it }
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         transientMenuDismissal(open) { open = false }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
