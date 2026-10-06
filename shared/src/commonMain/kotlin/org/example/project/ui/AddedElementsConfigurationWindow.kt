@@ -197,6 +197,8 @@ class AddedActionHandlers(
     val onEditReminderConstraint: (List<String>) -> Unit = {},
     /** "Blocks on the calendar": the Search window of these elements' (by key) blocks ([SearchDomain.blocksSearchConfig]). */
     val onOpenBlocksSearch: (List<String>) -> Unit = {},
+    /** The scheduler engine's runs, for the history units' "Information" (they are the view model's, kept in memory). */
+    val schedulerRuns: () -> List<org.example.project.scheduler.state.SchedulerRunEntry> = { emptyList() },
 )
 
 /**
@@ -330,6 +332,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.AlarmAlert,
         SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
         SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
+        SearchDomain.AddedAction.HistoryRules,
         SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
         SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
         SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
@@ -550,16 +553,58 @@ private fun AddedActionEditor(
         // --- The removed edit windows' contents, one block per added element ----------------------------
         // Every fact of each added history unit — the History window's own list of them ([historyEntryInfos]), each
         // with its copy button, and "Copy all" per unit. What opening the History window on the unit used to show.
+        // The set of rules each added scheduler-engine row returned: its own block, so it is not looked for under
+        // the rule state. A History Unit the user made returned none.
+        SearchDomain.AddedAction.HistoryRules -> {
+            val runs = handlers.schedulerRuns()
+            val rows = added.filterIsInstance<SearchDomain.ItemResult>()
+                .filter { it.kind == SearchDomain.Kind.HistoryUnit && SearchDomain.isSchedulerRunId(it.id) }
+            if (rows.isEmpty()) {
+                Text(
+                    "No history unit made in the scheduler engine is added: only those return a set of rules.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            for (row in rows) {
+                val found = SearchDomain.schedulerRunOf(runs, row.id)
+                ElementHeading(row.name, rows.size)
+                if (found == null) {
+                    // Runs are kept in memory for the session: one added before a restart is no longer held.
+                    Text(
+                        "This run is no longer in memory (the scheduler engine's runs are kept for the session only).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    continue
+                }
+                val text = found.rules.joinToString("\n").ifBlank { "(the scheduler placed nothing)" }
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(text, style = MaterialTheme.typography.bodySmall)
+                }
+                HistoryCopyButton(label = "Copy the set of rules", value = text)
+            }
+        }
         SearchDomain.AddedAction.HistoryInformation -> {
-            val units = added.filterIsInstance<SearchDomain.ItemResult>()
-                .filter { it.kind == SearchDomain.Kind.HistoryUnit }
-                .mapNotNull { historyUnitEntryOfSearchId(state, it.id) }
+            // A row is a History Unit, or a set of rules the scheduler engine found — whose facts are the rule state it
+            // read and the rules it returned ([historyEntryInfos], the one statement of what each kind of row holds).
+            val runs = handlers.schedulerRuns()
+            val units: List<Pair<String, FilteredHistoryEntry>> =
+                added.filterIsInstance<SearchDomain.ItemResult>()
+                    .filter { it.kind == SearchDomain.Kind.HistoryUnit }
+                    .mapNotNull { row ->
+                        if (SearchDomain.isSchedulerRunId(row.id)) {
+                            SearchDomain.schedulerRunOf(runs, row.id)?.let { row.name to FilteredHistoryEntry.SchedulerRun(it) }
+                        } else {
+                            historyUnitEntryOfSearchId(state, row.id)?.let { it.unit.delta.label to it }
+                        }
+                    }
             if (units.isEmpty()) {
                 Text("No history unit is added.", style = MaterialTheme.typography.bodySmall)
             }
-            for (entry in units) {
+            for ((label, entry) in units) {
                 val infos = historyEntryInfos(entry)
-                ElementHeading(entry.unit.delta.label, units.size)
+                ElementHeading(label, units.size)
                 infos.forEach { HistoryInfoLine(it) }
                 HistoryCopyButton(label = "Copy all", value = infos.joinToString("\n") { "${it.label}: ${it.value}" })
             }

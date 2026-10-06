@@ -313,7 +313,8 @@ private fun SettingEditor(
                 filters(f.copy(historyCategory = it))
             }
         SearchDomain.Setting.HistoryWindowSetting ->
-            EnumPicker(HistoryWindow.entries, f.historyWindow, { it.label }) { filters(f.copy(historyWindow = it)) }
+            // The windows — and the scheduler engine, where the sets of rules were made ([SearchDomain.MadeIn]).
+            EnumPicker(SearchDomain.MADE_IN_CHOICES, f.madeIn, { it.label }) { filters(f.withMadeIn(it)) }
         SearchDomain.Setting.HistoryUndoneSetting ->
             Choices(SearchDomain.Tri.entries, f.historyUndone, { it.label }) { filters(f.copy(historyUndone = it)) }
         // The kinds of element the unit changed: the app's one check-box drop-down, so several can be ticked.

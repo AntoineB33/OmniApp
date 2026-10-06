@@ -1834,6 +1834,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val calendarDisplayMode =
             if (schedulerState.calendarDayMode) org.example.project.ui.CalendarDisplayMode.Day
             else org.example.project.ui.CalendarDisplayMode.Week
+        // PRD §6 (user rule 2026-10-06): a block dragged or resized on the calendar is a History Unit MADE IN THE
+        // CALENDAR, whichever window had the focus when the press landed (a drag does not have to take it).
+        fun dispatchFromCalendar(intent: SchedulerIntent) = vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Calendar, "", intent))
         // A task cell's "go to calendar": the calendar opened (or brought back) and focused, locked on the task.
         fun goToCalendar(taskId: TaskId) {
             calendarLockTask = taskId
@@ -3277,7 +3280,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         SearchDomain.calendarRingMoveIntent(
                                             schedulerState, id, block.timer, block.fullStartMillis, newStart, nowMillis, tz,
                                         )
-                                    }?.let(vm::dispatch)
+                                    }?.let(::dispatchFromCalendar)
                                 } else commitBoundsIntent(
                                     block,
                                     block.taskId,
@@ -3286,7 +3289,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     newEnd,
                                     SchedulerDomain.pinsAfterHandPlacement(block.pins),
                                     allowOverlap,
-                                )?.let(vm::dispatch)
+                                )?.let(::dispatchFromCalendar)
                             },
                             // PRD §8 "edit…": the chooser's pick, routed to the editor that already OWNS the
                             // thing the row names — and that is the whole of the routing, for EVERY edit the
@@ -3973,6 +3976,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenKindSearch = { kind ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.kindSearchConfig(kind).encode())
                             },
+                            schedulerRuns = { schedulerRuns },
                             onOpenBlocksSearch = { owners ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.blocksSearchConfig(owners).encode())
                             },
@@ -4042,6 +4046,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
                             onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
                             windows = if (searchConfig.readsWindows) searchWindowEntries() else emptyList(),
+                            schedulerRuns = schedulerRuns,
                             nowMillis = clock::nowMillis,
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfig,
@@ -4149,9 +4154,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 schedulerState.alarms, schedulerState.timers, schedulerState.chronos, schedulerState.quotas, schedulerState.quotas,
                                 schedulerState.chores, schedulerState.histories, schedulerState.taskRelations,
                                 schedulerState.shortcutBindings, schedulerState.activeTaskTreeId,
-                                schedulerState.cells, schedulerState.lists, windows,
+                                schedulerState.cells, schedulerState.lists, windows, schedulerState.notificationLog, schedulerRuns,
                             ) {
-                                SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows)
+                                SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns)
                             }
                         AddedElementsConfigurationWindow(
                             state = schedulerState,

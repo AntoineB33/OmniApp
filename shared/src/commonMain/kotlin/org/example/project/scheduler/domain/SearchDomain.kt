@@ -209,6 +209,52 @@ object SearchDomain {
     fun notificationId(entry: org.example.project.scheduler.state.NotificationLogEntry, index: Int): String =
         entry.timeMillis.toString() + "#" + index
 
+    /** What a scheduler RUN's row id starts with ([schedulerRunId]) — no history category is called that. */
+    private const val RUN_ID_PREFIX: String = "run#"
+
+    /**
+     * User rule 2026-10-06: **the scheduler engine's entries among the History Unit rows** — each set of rules it found
+     * ([org.example.project.scheduler.state.SchedulerRunEntry]: a re-plan, a horizon extension, rules adopted from a
+     * peer, a mode switch), what the History window lists under "Scheduler engine". The id is what the run IS — its
+     * instant, event, horizon and panel count — never its place in a list that drops its oldest.
+     */
+    fun schedulerRunId(run: org.example.project.scheduler.state.SchedulerRunEntry): String =
+        RUN_ID_PREFIX + run.timeMillis + "#" + run.kind.ordinal + "." + run.horizonMillis + "." + run.panelCount
+
+    /** Whether a [Kind.HistoryUnit] row's id names a run of the scheduler engine ([schedulerRunId]) rather than a unit. */
+    fun isSchedulerRunId(id: String): Boolean = id.startsWith(RUN_ID_PREFIX)
+
+    /** The instant of the run a row id names, or null for anything else. */
+    fun schedulerRunTimeOf(id: String): Long? =
+        if (isSchedulerRunId(id)) id.removePrefix(RUN_ID_PREFIX).substringBefore('#').toLongOrNull() else null
+
+    /** The run a row id names among [runs], or null once it has left the list (it is kept in memory only). */
+    fun schedulerRunOf(runs: List<org.example.project.scheduler.state.SchedulerRunEntry>, id: String): org.example.project.scheduler.state.SchedulerRunEntry? =
+        runs.lastOrNull { schedulerRunId(it) == id }
+
+    /** How a run of the scheduler engine says where it comes from, in its row's detail and in "Made in". */
+    const val SCHEDULER_ENGINE_LABEL: String = "Scheduler engine"
+
+    /**
+     * One choice of the history units' **"Made in"** (user rule 2026-10-06): a window of the app — or the scheduler
+     * engine, where the sets of rules were made. The engine is not a window (nothing focuses it, and the History
+     * window lists it as a source of its own), so it is a choice beside them rather than one more [HistoryWindow].
+     */
+    sealed interface MadeIn {
+        val label: String
+
+        data object Engine : MadeIn {
+            override val label: String get() = SCHEDULER_ENGINE_LABEL
+        }
+
+        data class Window(val window: HistoryWindow) : MadeIn {
+            override val label: String get() = window.label
+        }
+    }
+
+    /** Every choice of "Made in": the scheduler engine first, then the windows in their own order. */
+    val MADE_IN_CHOICES: List<MadeIn> = listOf<MadeIn>(MadeIn.Engine) + HistoryWindow.entries.map { MadeIn.Window(it) }
+
     /** The instant the notification a [Kind.Notification] row's id names was posted at, or null for a malformed id. */
     fun notificationTimeOf(id: String): Long? = id.substringBefore('#').toLongOrNull()
 
@@ -357,6 +403,7 @@ object SearchDomain {
                     historyCategory = filters.historyCategory?.name,
                     historyWindow = filters.historyWindow?.name,
                     historyUndone = filters.historyUndone.name,
+                    historyEngine = filters.historyEngine.name,
                     historyChangedKinds = Kind.entries.filter { it in filters.historyChangedKinds }.map { it.name },
                     historyChangedElement = filters.historyChangedElement,
                     taskTreeOpen = filters.taskTreeOpen.name,
@@ -423,6 +470,7 @@ object SearchDomain {
                         historyCategory = HistoryCategory.entries.firstOrNull { it.name == stored.historyCategory },
                         historyWindow = HistoryWindow.entries.firstOrNull { it.name == stored.historyWindow },
                         historyUndone = enumNamed(stored.historyUndone, Tri.Any),
+                        historyEngine = enumNamed(stored.historyEngine, Tri.Any),
                         historyChangedKinds = kindsNamed(stored.historyChangedKinds).filterTo(HashSet()) { it in HISTORY_CHANGED_KINDS },
                         historyChangedElement = stored.historyChangedElement?.takeIf { it.isNotBlank() },
                         taskTreeOpen = enumNamed(stored.taskTreeOpen, Tri.Any),
@@ -592,6 +640,12 @@ object SearchDomain {
         /** Yes = undone on its device (still redoable there). */
         val historyUndone: Tri = Tri.Any,
         /**
+         * User rule 2026-10-06: Yes = only what the SCHEDULER ENGINE produced — each new set of rules it found
+         * ([schedulerRunId]). It is a choice of "Made in" ([madeIn]), beside the windows: the engine is where those
+         * rows were made. (No = only the units made in a window; no control sets it.)
+         */
+        val historyEngine: Tri = Tri.Any,
+        /**
          * Empty = any: else the unit changed an element of one of these kinds ([HISTORY_CHANGED_KINDS],
          * [org.example.project.scheduler.state.changedElements]) — several can be checked.
          */
@@ -655,6 +709,21 @@ object SearchDomain {
          */
         val blocksOf: Set<String> = emptySet(),
     ) {
+        /** What "Made in" stands on: the scheduler engine, a window, or null for anything. */
+        val madeIn: MadeIn?
+            get() = when {
+                historyEngine == Tri.Yes -> MadeIn.Engine
+                else -> historyWindow?.let { MadeIn.Window(it) }
+            }
+
+        /** These filters with "Made in" on [choice] — the one field, so the engine and a window are never both asked. */
+        fun withMadeIn(choice: MadeIn?): Filters =
+            when (choice) {
+                null -> copy(historyWindow = null, historyEngine = Tri.Any)
+                MadeIn.Engine -> copy(historyWindow = null, historyEngine = Tri.Yes)
+                is MadeIn.Window -> copy(historyWindow = choice.window, historyEngine = Tri.Any)
+            }
+
         /** The instant the calendar filter keeps rows for, while it is on and has one; else null. */
         val calendarAddAt: Long?
             get() = calendarAddAtMillis.takeIf { calendarAddOn }
@@ -693,7 +762,7 @@ object SearchDomain {
                 Setting.QuotaRepeatsSetting -> quotaRepeats != Tri.Any
                 Setting.ReminderRepeatsSetting -> reminderRepeats != ReminderRepeats.Any
                 Setting.HistoryCategorySetting -> historyCategory != null
-                Setting.HistoryWindowSetting -> historyWindow != null
+                Setting.HistoryWindowSetting -> madeIn != null
                 Setting.HistoryUndoneSetting -> historyUndone != Tri.Any
                 Setting.HistoryChangedKindsSetting -> historyChangedKinds.isNotEmpty()
                 Setting.HistoryChangedElementSetting -> historyChangedElement != null
@@ -923,6 +992,8 @@ object SearchDomain {
         val historyCategory: String? = null,
         val historyWindow: String? = null,
         val historyUndone: String? = null,
+        /** New 2026-10-06: absent = any. */
+        val historyEngine: String? = null,
         /** New 2026-10-03: absent from what an older build stored, which reads as any. */
         val historyChangedKinds: List<String> = emptyList(),
         /** New 2026-10-03: absent = any element. */
@@ -1394,6 +1465,8 @@ object SearchDomain {
         windows: List<WindowEntry> = emptyList(),
         /** One row per window TYPE ([WindowDuplicates.Hidden]) rather than one per window. */
         windowTypesOnly: Boolean = false,
+        /** The scheduler engine's runs, for [Kind.HistoryUnit] — the view model's to know (they are kept in memory only). */
+        schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     ): List<ItemResult> {
         val items =
             when (kind) {
@@ -1453,6 +1526,15 @@ object SearchDomain {
                         val undone = if (unit.undone) " · undone" else ""
                         ItemResult(kind, historyUnitId(category, unit), unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
                     }
+                } + schedulerRuns.map { run ->
+                    // The scheduler engine's own entries: each set of rules it found, named by the event it was. The
+                    // rule state it read and the rules it returned are the "Information" action's to show.
+                    ItemResult(
+                        kind,
+                        schedulerRunId(run),
+                        run.kind.label,
+                        SCHEDULER_ENGINE_LABEL + " · " + dateTime(run.timeMillis, timeZone) + " · " + plural(run.rules.size, "rule"),
+                    )
                 }
                 // The detail is where the block is: two blocks of one element are told apart by it, and it orders them.
                 Kind.CalendarBlock -> calendarBlocks(state, timeZone).map { block ->
@@ -1542,6 +1624,8 @@ object SearchDomain {
          * the state — for the "is on the calendar at" filter ([calendarElementsAt]). `App` holds them.
          */
         layerKindsAt: (Long) -> Set<String> = { emptySet() },
+        /** The scheduler engine's runs, read only when [Kind.HistoryUnit] is checked ([itemResults]). */
+        schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
@@ -1554,6 +1638,7 @@ object SearchDomain {
                         itemResults(
                             state, kind, query, windows = windows,
                             windowTypesOnly = filters.windowDuplicates == WindowDuplicates.Hidden,
+                            schedulerRuns = schedulerRuns,
                         )
                     }
                 }
@@ -1673,7 +1758,7 @@ object SearchDomain {
                 SortKey.ReminderTime -> chores[row.id]?.timeOfDayMinutes
                 SortKey.ReminderCadence -> chores[row.id]?.spanDays
                 SortKey.BlockStart -> blocks[row.id]?.startMillis
-                SortKey.HistoryDate -> historyUnitOf(state, row.id)?.timeMillis
+                SortKey.HistoryDate -> schedulerRunTimeOf(row.id) ?: historyUnitOf(state, row.id)?.timeMillis
                 SortKey.NotificationDate -> notificationTimeOf(row.id)
                 SortKey.TaskTreeDate -> trees[row.id]?.dateMillis
                 SortKey.TaskTreeSize -> trees[row.id]?.let { entry ->
@@ -1756,6 +1841,14 @@ object SearchDomain {
                         (notificationTimeOf(result.id) ?: Long.MAX_VALUE) >= filters.notificationsSinceMillis) &&
                         (filters.notificationSources.isEmpty() || NotificationSource.of(result.name) in filters.notificationSources)
                 Kind.HistoryUnit -> {
+                    // A set of rules the scheduler engine found: kept by its own filter, and by none of a unit's — it
+                    // was made in no window, belongs to no stack, changed no element and is never undone.
+                    if (isSchedulerRunId(result.id)) {
+                        return tri(filters.historyEngine, true) && filters.historyCategory == null &&
+                            filters.historyWindow == null && filters.historyUndone != Tri.Yes &&
+                            filters.historyChangedKinds.isEmpty() && filters.historyChangedElement == null
+                    }
+                    if (!tri(filters.historyEngine, false)) return false
                     val unit = historyUnitOf(state, result.id) ?: return true
                     (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&
                         (filters.historyWindow == null || unit.window == filters.historyWindow) &&
@@ -2069,6 +2162,7 @@ object SearchDomain {
         keys: List<String>,
         allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
         windows: List<WindowEntry> = emptyList(),
+        schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     ): List<Result> {
         if (keys.isEmpty()) return emptyList()
         val kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
@@ -2081,7 +2175,7 @@ object SearchDomain {
                     Kind.Window ->
                         itemResults(state, kind, "", windows = windows) +
                             itemResults(state, kind, "", windows = windows, windowTypesOnly = true)
-                    else -> itemResults(state, kind, "", windows = windows)
+                    else -> itemResults(state, kind, "", windows = windows, schedulerRuns = schedulerRuns)
                 }
             for (row in rows) found.getOrPut(keyOf(row)) { row }
         }
@@ -2229,6 +2323,12 @@ object SearchDomain {
          * Everything known of each added history unit, each fact with its copy button (user rule 2026-10-03): what the
          * History window's row and its information window showed, which a history unit's row opened until then.
          */
+        /**
+         * Anomaly 2026-10-06: the set of rules of an added scheduler-engine row was the LAST line of "Information",
+         * under the whole rule state — one line per task of the account — and was not found. It is an action of its
+         * own, listed first: the rules the engine returned, as the text the requirements ask for, with its copy button.
+         */
+        HistoryRules(Kind.HistoryUnit, "Set of rules"),
         HistoryInformation(Kind.HistoryUnit, "Information"),
     }
 

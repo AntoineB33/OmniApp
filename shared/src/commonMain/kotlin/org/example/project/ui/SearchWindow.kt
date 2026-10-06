@@ -255,6 +255,8 @@ fun SearchWindow(
      * "window" kind. `App` holds them, not the state.
      */
     windows: List<SearchDomain.WindowEntry> = emptyList(),
+    /** The scheduler engine's runs (`TaskSchedulerViewModel.schedulerRuns`): its entries among the notification rows. */
+    schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     /** The app's clock — what a timer's or a chrono's run, started from the added elements' actions, is read at. */
     nowMillis: () -> Long = { 0L },
     onDismiss: () -> Unit,
@@ -319,13 +321,14 @@ fun SearchWindow(
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations,
-            state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
+            state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
         ) {
             // One kind checked and nothing of it found: its "creation" row stands in the list.
             SearchDomain.withCreationWhenEmpty(
                 state,
                 SearchDomain.results(
                     state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
+                    schedulerRuns = schedulerRuns,
                 ),
                 kinds,
             )
@@ -565,10 +568,10 @@ fun SearchWindow(
         remember(
             config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
             state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
-            state.activeTaskTreeId, state.cells, state.lists, windows,
+            state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
         ) {
             // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
-            SearchDomain.resolve(state, config.added, { emptyMap() }, windows)
+            SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns)
         }
 
     AppWindowFrame(

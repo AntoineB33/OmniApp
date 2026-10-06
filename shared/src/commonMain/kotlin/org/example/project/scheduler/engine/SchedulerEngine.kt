@@ -2348,7 +2348,12 @@ class SchedulerEngine(
             if (launching) {
                 launching = false
                 // The plan already on screen is kept; the horizon watcher extends it if it falls short.
-                if (SchedulerDomain.planHoldsAtLaunch(vm.state.value, clock.nowMillis())) return@collectLatest
+                if (SchedulerDomain.planHoldsAtLaunch(vm.state.value, clock.nowMillis())) {
+                    // Nothing runs, so the set of rules in force is recorded as what it is: found before the restart.
+                    val now = clock.nowMillis()
+                    SchedulerDomain.planInForceRun(vm.state.value, now, tpModeNow(now))?.let(SchedulerReducer.recordSchedulerRun)
+                    return@collectLatest
+                }
             }
             // THE RULES MOVED, so whatever is being planned is about data nobody holds any more: stop it
             // where it stands, at once, and let the debounce decide when to ask again (the user's rule:

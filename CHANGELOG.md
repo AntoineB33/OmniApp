@@ -11,6 +11,60 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search: the scheduler engine's sets of rules are listed with the history units — 2026-10-06
+
+The user asked for the set of rules behind "notifications from the scheduler engine", then corrected it: *"I was wrong
+in my previous prompt, the notifications should not lead to the set of rules output. Filtering for only history units
+from scheduler engine should only show the history units of new set of rules found. Dragging blocks in the calendar
+should be considered history unit from calendar."* (The first reading — runs listed among the notifications, with an
+"Information" action there — was built and is removed.)
+
+- **Each set of rules the scheduler engine found is a row of the HISTORY UNIT kind** (`SchedulerRunEntry` — a re-plan,
+  a horizon extension, rules adopted from a peer, a mode switch; `SearchDomain.itemResults`' `schedulerRuns`, threaded
+  from `TaskSchedulerViewModel.schedulerRuns`, which keeps them in memory), named by the event it was.
+- **"Scheduler engine" is a choice of "Made in"** (`SearchDomain.MadeIn`, `MADE_IN_CHOICES`; `Filters.historyEngine`
+  behind it), the first of the list, beside the windows: it lists those rows alone. It was a filter of its own for an
+  hour (*"Why isn't scheduler engine in 'made in'?"*) — the engine is where those rows were made, so that is where
+  the user looks for it. It is not added to `HistoryWindow`: nothing focuses it, and the History window lists it as a
+  source of its own. A unit's other filters (category, undone, changed element) and a window picked in "Made in" leave
+  the engine's rows out — a set of rules is in no stack and is never undone.
+- **The history units' "Information" action** shows a run's facts — the now line and its mode, the horizon, the rule
+  state it read and the set of rules it returned — from the History window's own list (`historyEntryInfos`).
+- **A block dragged or resized on the calendar is made in the calendar** (`App.dispatchFromCalendar`, the existing
+  `SchedulerIntent.MadeIn`): its unit was stamped with whichever window had the focus when the press landed.
+- **Notifications are the posted ones alone.** Their source filter no longer has "scheduler engine" (it had meant "task
+  to do now", then the runs); the "Task to do now" notifications keep their own source.
+
+A run's row id is what the run is, never its place in the list; runs live for the session, so an added one lists
+nothing after a restart. `NotificationsWindowTest`.
+
+Anomaly the same day: *"I filtered for history units from scheduler engine and got nothing."* The app had just been
+restarted. A launch that keeps the plan it was closed with runs nothing (`planHoldsAtLaunch` — a restart is not a rule
+change), and the runs are kept in memory, so the list was empty until the plan was next extended or re-made. The launch
+now records the set of rules IN FORCE as a row of its own (`SchedulerRunEntry.Kind.KeptAtLaunch`, "Plan in force at
+launch", `SchedulerDomain.planInForceRun`): dated when the plan was made, its rules read at the launch. The runs of
+earlier sessions are still not kept (they were never persisted, by design: hundreds of KB of text per save).
+
+Then: *"I don't see the set of rules input in the history unit from the scheduler engine. According to
+docs\\scheduler_requirements.md, it must be a text with if...then...else clauses and instructions, so easy to read."*
+- **The set of rules is written as the requirements' § *Rule Structure* asks** (`SchedulerDomain.describeScheduleRules`).
+  It read `+0:00:00 → +0:45:00  run A  else B`: a table to decode. Each rule is now its interval (whose end is the
+  trigger for the next), `if A is accepted, then run A until …`, and `else run B on [now-line; now-line + 0:10:00],
+  then the scheduler runs again` — one `else` per stretch where the alternative changes inside the run, `else nothing`
+  where no other task may run, and the mode-1 clause of a run held at the line. A dynamic period is `restrict [kind]`
+  under its own interval. The head carries the triggers that are no instant of the timeline: a mode switch, a rewrite
+  of history or of the rule state input.
+- **The "Plan in force at launch" row carries its rule state input** — the state's own, read as a fill reads it
+  (`planTasksOf` + `describePlanRule`); it was a placeholder line.
+`SchedulerRuleSetTest`.
+
+Then: *"I don't see it in the action section of the history unit made from the scheduler engine."* Not reproduced; the
+one cause the code shows is that the set of rules was the LAST line of "Information", under the whole rule state — one
+line per task of the account. Two changes: **"Set of rules" is an action of its own** (`AddedAction.HistoryRules`),
+listed first for a history unit: the rules text and "Copy the set of rules" (and a line saying so when the run is no
+longer in memory, or when no scheduler-engine unit is added); and in a run's information the set of rules now comes
+before the rule state, in the History window too.
+
 ### Search: an empty list of one kind offers to create one — 2026-10-06
 
 Asked for as: *"In the Search window, when only one element type is selected and that the result list is empty, the

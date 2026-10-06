@@ -93,6 +93,34 @@ class SchedulerRuleSetTest {
         }
     }
 
+    /**
+     * User rule 2026-10-06, `docs/scheduler_requirements.md` § *Rule Structure*: the set of rules is a TEXT of
+     * `if … then … else …` clauses and their triggers, not a table of offsets to decode.
+     */
+    @Test
+    fun the_returned_rules_read_as_if_then_else_clauses_and_their_triggers() {
+        val (panels, reported) = run(threeTasks())
+        // The head: what every rule is read against, and the triggers that are no instant of the timeline.
+        val head = reported.rules.first()
+        assertTrue(head.startsWith("now-line mode"), head)
+        assertTrue("if the now-line changes mode, then" in head && "if the history is rewritten" in head, head)
+        // Each run: the interval it holds over (its end is the next trigger), the scheduled task, the alternative.
+        val pick = panels.filter { it.auto && it.taskId != null && it.endEpochMillis > T0 }.minByOrNull { it.startEpochMillis }!!
+        val rule = reported.rules.drop(1).first { "run ${pick.title}" in it && it.startsWith("+0:00:00") }
+        val lines = rule.lines()
+        assertTrue(lines.size >= 3, rule)
+        assertTrue(" → " in lines[0], "the interval: $rule")
+        assertTrue(lines[1].trim().startsWith("if ${pick.title} is accepted, then run ${pick.title} until +"), rule)
+        assertTrue(lines[2].trim().startsWith("else "), rule)
+        // § *Alternative Schedules*: the alternative is a task set at the line for d, and the scheduler runs again.
+        val alternative = pick.alternativeTaskId?.let { id -> panels.first { it.taskId == id }.title }
+        if (alternative != null) {
+            assertTrue("else run $alternative on [now-line; now-line + 0:10:00], then the scheduler runs again" in rule, rule)
+        }
+        // A dynamic period is an instruction too, under its own interval.
+        reported.rules.filter { "restrict [" in it }.forEach { assertTrue(it.lines().size == 2 && it.startsWith("+"), it) }
+    }
+
     // ----- the answer is the schedule, read from the now-line -------------------------------------
 
     @Test

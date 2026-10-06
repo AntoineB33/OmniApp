@@ -3253,13 +3253,8 @@ internal fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
                 ),
                 HistoryInfo("Horizon", formatHistoryTime(entry.entry.horizonMillis)),
                 HistoryInfo("Panels", entry.entry.panelCount.toString()),
-                // The scheduler's INPUT: the rule state it read — the tasks the user authored, with their
-                // priority shares, minimum times and resilience values. Its own section, because it is the
-                // question, and the section below is the answer.
-                HistoryInfo(
-                    "Rule state",
-                    entry.entry.ruleState.joinToString("\n").ifBlank { "(no schedulable task)" },
-                ),
+                // The answer BEFORE the question (2026-10-06): the rule state is one line per task of the account,
+                // and the set of rules below it was not found.
                 // The scheduler's ANSWER, and nothing else: the set of rules it returned, one line per
                 // instruction, parameterized by the two infos above. One copyable block — this is what "copy
                 // the current set of rules from the scheduler" asks for, and splitting it would make it
@@ -3267,6 +3262,13 @@ internal fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
                 HistoryInfo(
                     "Set of rules",
                     entry.entry.rules.joinToString("\n").ifBlank { "(the scheduler placed nothing)" },
+                ),
+                // The scheduler's INPUT: the rule state it read — the tasks the user authored, with their
+                // priority shares, minimum times and resilience values. Its own section, because it is the
+                // question, and the section below is the answer.
+                HistoryInfo(
+                    "Rule state",
+                    entry.entry.ruleState.joinToString("\n").ifBlank { "(no schedulable task)" },
                 ),
             )
     }

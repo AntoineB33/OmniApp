@@ -221,12 +221,15 @@ object NotificationTitles {
 }
 
 /**
- * **What a notification came from** (anomaly 2026-10-05: the Search window could not keep only the scheduler
- * engine's): the scheduler engine itself — the plan's "task to do now" — or one of the other things that post one.
- * Read off the title it was posted under ([of]), so the notifications logged before this existed have a source too.
+ * **What a notification came from** (anomaly 2026-10-05: the Search window could not tell them apart): read off the
+ * title it was posted under ([of]), so the notifications logged before this existed have a source too.
+ *
+ * The scheduler engine is not one of them: it posts no notification of its own. What IT produces — each set of rules
+ * it found — is listed with the History Units (user rule 2026-10-06, `SearchDomain.Filters.historyEngine`).
  */
 enum class NotificationSource(val label: String) {
-    SchedulerEngine("scheduler engine"),
+    /** PRD §11: the notification naming the task the plan says to do now. */
+    TaskToDoNow("task to do now"),
     ScreenBreak("screen break"),
     SleepSchedule("sleep schedule"),
     Alarm("alarm"),
@@ -240,7 +243,7 @@ enum class NotificationSource(val label: String) {
     companion object {
         fun of(title: String): NotificationSource =
             when (title) {
-                NotificationTitles.TASK_TO_DO_NOW -> SchedulerEngine
+                NotificationTitles.TASK_TO_DO_NOW -> TaskToDoNow
                 NotificationTitles.SCREEN_BREAK, NotificationTitles.SCREEN_BREAK_OVER -> ScreenBreak
                 NotificationTitles.STOP_WORK -> SleepSchedule
                 NotificationTitles.ALARM -> Alarm
@@ -496,6 +499,14 @@ data class SchedulerRunEntry(
          * ([org.example.project.scheduler.model.OtherModePlan]), or re-planned where they were no legal answer.
          */
         ModeSwitch("Now-line mode switch"),
+
+        /**
+         * The app started and KEPT the plan it was closed with (`SchedulerDomain.planHoldsAtLaunch`): no run happens
+         * then, so without this row the session's list is empty until the plan is next extended or re-made — and the
+         * set of rules in force, found before the restart, is listed nowhere (anomaly 2026-10-06). Dated when the plan
+         * was made.
+         */
+        KeptAtLaunch("Plan in force at launch"),
     }
 
     companion object {

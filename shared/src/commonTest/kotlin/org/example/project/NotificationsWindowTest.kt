@@ -59,9 +59,9 @@ class NotificationsWindowTest {
             return titles(s, config).sorted()
         }
         assertEquals(6, from().size, "nothing checked: from anything")
-        assertEquals(listOf(titles.TASK_TO_DO_NOW, titles.TASK_TO_DO_NOW), from(NotificationSource.SchedulerEngine))
+        assertEquals(listOf(titles.TASK_TO_DO_NOW, titles.TASK_TO_DO_NOW), from(NotificationSource.TaskToDoNow))
         assertEquals(listOf(titles.SCREEN_BREAK, titles.SCREEN_BREAK_OVER), from(NotificationSource.ScreenBreak))
-        assertEquals(listOf(titles.TASK_TO_DO_NOW, titles.TASK_TO_DO_NOW, titles.TIMER), from(NotificationSource.SchedulerEngine, NotificationSource.Timer))
+        assertEquals(listOf(titles.TASK_TO_DO_NOW, titles.TASK_TO_DO_NOW, titles.TIMER), from(NotificationSource.TaskToDoNow, NotificationSource.Timer))
         assertEquals(listOf("posted by an older build"), from(NotificationSource.Other))
         assertEquals(emptyList(), from(NotificationSource.Alarm))
         // Every title the app posts under has a source of its own, and a ring's title is its kind's label.
@@ -73,7 +73,7 @@ class NotificationsWindowTest {
         assertEquals(NotificationSource.Shortcut, NotificationSource.of(titles.NOTIFICATIONS_ON))
         // The app's own notifications window keeps its "since" beside the filter.
         val since = SearchDomain.notificationsConfig(t0 + 2 * minute)
-            .let { it.copy(filters = it.filters.copy(notificationSources = setOf(NotificationSource.SchedulerEngine))) }
+            .let { it.copy(filters = it.filters.copy(notificationSources = setOf(NotificationSource.TaskToDoNow))) }
         assertEquals(listOf(titles.TASK_TO_DO_NOW), titles(s, since))
         // A configuration stored before the filter existed, or naming a source this build does not know: from anything.
         assertEquals(emptySet(), SearchDomain.Config.decode("""{"kinds":["Notification"]}""")!!.filters.notificationSources)
@@ -81,6 +81,110 @@ class NotificationsWindowTest {
             setOf(NotificationSource.Timer),
             SearchDomain.Config.decode("""{"kinds":["Notification"],"notificationSources":["Timer","FromALaterBuild"]}""")!!.filters.notificationSources,
         )
+    }
+
+    /**
+     * User rule 2026-10-06: what the scheduler engine produces — each set of rules it found — is listed with the
+     * HISTORY UNITS, kept alone by "From the scheduler engine"; a notification never leads to a set of rules.
+     */
+    @Test
+    fun the_scheduler_engines_sets_of_rules_are_listed_with_the_history_units() {
+        val run = org.example.project.scheduler.state.SchedulerRunEntry(
+            timeMillis = t0 + minute, kind = org.example.project.scheduler.state.SchedulerRunEntry.Kind.Replan,
+            horizonMillis = t0 + 60 * minute, panelCount = 4,
+            ruleState = listOf("Read 50% min 10"), rules = listOf("+0:00:00  run Read", "+0:10:00  run Walk"),
+        )
+        val later = run.copy(timeMillis = t0 + 5 * minute, kind = org.example.project.scheduler.state.SchedulerRunEntry.Kind.Extension)
+        val runs = listOf(run, later)
+        // An account with one History Unit of the user's (a task named) and one posted notification.
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[0], "Read"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RecordNotification(org.example.project.scheduler.state.NotificationTitles.TASK_TO_DO_NOW, "Read", t0))
+        fun units(engine: SearchDomain.Tri, extra: SearchDomain.Filters.() -> SearchDomain.Filters = { this }) =
+            SearchDomain.results(
+                s, setOf(SearchDomain.Kind.HistoryUnit), "",
+                filters = SearchDomain.Filters(historyEngine = engine).extra(), schedulerRuns = runs,
+            ).map { it as SearchDomain.ItemResult }
+        val all = units(SearchDomain.Tri.Any)
+        val engine = units(SearchDomain.Tri.Yes)
+        val users = units(SearchDomain.Tri.No)
+        // From the scheduler engine: the sets of rules it found, and nothing else.
+        assertEquals(setOf("Re-plan", "Horizon extension"), engine.mapTo(HashSet()) { it.name })
+        assertTrue(engine.all { SearchDomain.isSchedulerRunId(it.id) && "2 rules" in it.detail })
+        assertTrue(users.isNotEmpty() && users.none { SearchDomain.isSchedulerRunId(it.id) }, "the user's own units")
+        assertEquals(all.size, engine.size + users.size)
+        // It is a choice of "Made in", beside the windows — and the first of them.
+        assertEquals(SearchDomain.MadeIn.Engine, SearchDomain.MADE_IN_CHOICES.first())
+        assertEquals(1 + org.example.project.scheduler.state.HistoryWindow.entries.size, SearchDomain.MADE_IN_CHOICES.size)
+        val onEngine = SearchDomain.Filters().withMadeIn(SearchDomain.MadeIn.Engine)
+        assertEquals(SearchDomain.Filters(historyEngine = SearchDomain.Tri.Yes), onEngine)
+        assertEquals(SearchDomain.MadeIn.Engine, onEngine.madeIn)
+        assertTrue(onEngine.isOn(SearchDomain.Setting.HistoryWindowSetting))
+        val calendar = SearchDomain.MadeIn.Window(org.example.project.scheduler.state.HistoryWindow.Calendar)
+        // Picking a window leaves the engine, and the other way round: one field, never both asked.
+        assertEquals(calendar, onEngine.withMadeIn(calendar).madeIn)
+        assertEquals(SearchDomain.Tri.Any, onEngine.withMadeIn(calendar).historyEngine)
+        assertEquals(null, SearchDomain.Filters().withMadeIn(calendar).withMadeIn(SearchDomain.MadeIn.Engine).historyWindow)
+        assertEquals(SearchDomain.Filters(), onEngine.withMadeIn(null))
+        assertEquals("Scheduler engine", SearchDomain.MadeIn.Engine.label)
+        // A set of rules was made in no window, is in no stack and is never undone: a unit's own filters leave it out.
+        assertEquals(emptyList(), units(SearchDomain.Tri.Any) { copy(historyWindow = org.example.project.scheduler.state.HistoryWindow.Calendar) }.filter { SearchDomain.isSchedulerRunId(it.id) })
+        assertEquals(emptyList(), units(SearchDomain.Tri.Yes) { copy(historyUndone = SearchDomain.Tri.Yes) })
+        // A row leads back to its run — by what the run is, never its place in a list that drops its oldest.
+        val row = engine.first { it.name == "Re-plan" }
+        assertEquals(run, SearchDomain.schedulerRunOf(runs, row.id))
+        assertEquals(run, SearchDomain.schedulerRunOf(listOf(later, run), row.id))
+        assertEquals(null, SearchDomain.schedulerRunOf(listOf(later), row.id), "kept in memory only: gone with the list")
+        assertEquals(t0 + minute, SearchDomain.schedulerRunTimeOf(row.id))
+        // An added run is found again by its key, kept by the stored configuration, and listed newest first by date.
+        val key = SearchDomain.keyOf(row)
+        assertEquals(listOf<SearchDomain.Result>(row), SearchDomain.resolve(s, listOf(key), schedulerRuns = runs))
+        val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.HistoryUnit), added = listOf(key), filters = SearchDomain.Filters(historyEngine = SearchDomain.Tri.Yes))
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        assertEquals(SearchDomain.Tri.Any, SearchDomain.Config.decode("""{"kinds":["HistoryUnit"]}""")!!.filters.historyEngine)
+        val byDate = SearchDomain.results(
+            s, setOf(SearchDomain.Kind.HistoryUnit), "", filters = SearchDomain.Filters(historyEngine = SearchDomain.Tri.Yes),
+            sorts = listOf(SearchDomain.SortMethod(SearchDomain.Kind.HistoryUnit, SearchDomain.SortKey.HistoryDate, descending = true)),
+            schedulerRuns = runs,
+        )
+        assertEquals(listOf("Horizon extension", "Re-plan"), byDate.map { it.name })
+        // The notifications are the posted ones alone, whatever the engine ran.
+        assertEquals(1, SearchDomain.results(s, setOf(SearchDomain.Kind.Notification), "", schedulerRuns = runs).size)
+        assertEquals(SearchDomain.Filters(notificationsSinceMillis = t0), SearchDomain.notificationsConfig(t0).filters)
+    }
+
+    /**
+     * Anomaly 2026-10-06: *"I filtered for history units from scheduler engine and got nothing"* — the app had just
+     * started and kept its plan, so nothing had run in this session, and the runs are kept in memory only.
+     */
+    @Test
+    fun a_launch_that_keeps_its_plan_lists_the_set_of_rules_in_force() {
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[0], "Read"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[1], "Walk"))
+        assertEquals(null, org.example.project.scheduler.domain.SchedulerDomain.planInForceRun(s, t0, 1), "no plan, no rules")
+        val planned = SchedulerReducer.reduce(s, SchedulerIntent.RefreshSchedule(t0))
+        val madeAt = planned.planBasis!!.madeAtMillis
+        // The next launch, ten minutes on: the plan is kept, nothing runs — the rules in force are a row all the same.
+        val run = org.example.project.scheduler.domain.SchedulerDomain.planInForceRun(planned, t0 + 10 * minute, 1)!!
+        assertEquals(org.example.project.scheduler.state.SchedulerRunEntry.Kind.KeptAtLaunch, run.kind)
+        assertEquals(madeAt, run.timeMillis, "dated when the rules were found, not when the app started")
+        assertTrue(run.rules.size > 1 && run.rules.any { "run " in it }, "the set of rules, read at the launch: ${run.rules}")
+        // The rule state input it answers is the state's own, read as a fill reads it.
+        assertEquals(setOf("Read", "Walk"), run.ruleState.mapTo(HashSet()) { it.substringBefore(" — ") })
+        assertTrue(run.ruleState.all { "priority" in it && "minimum" in it && "resilience" in it }, run.ruleState.toString())
+        val rows = SearchDomain.results(
+            planned, setOf(SearchDomain.Kind.HistoryUnit), "",
+            filters = SearchDomain.Filters().withMadeIn(SearchDomain.MadeIn.Engine), schedulerRuns = listOf(run),
+        )
+        assertEquals(listOf("Plan in force at launch"), rows.map { it.name })
+        // Added, its actions lead with "Set of rules" — an action of its own, before "Information".
+        val added = SearchDomain.resolve(planned, listOf(SearchDomain.keyOf(rows.single())), schedulerRuns = listOf(run))
+        val actions = SearchDomain.actionsFor(
+            SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added,
+        ).first { it.first == SearchDomain.Kind.HistoryUnit }.second
+        assertEquals(listOf(SearchDomain.AddedAction.HistoryRules, SearchDomain.AddedAction.HistoryInformation), actions)
+        assertEquals("Set of rules", SearchDomain.AddedAction.HistoryRules.label)
     }
 
     @Test

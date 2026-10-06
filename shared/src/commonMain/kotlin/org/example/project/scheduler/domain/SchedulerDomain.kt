@@ -5568,7 +5568,11 @@ object SchedulerDomain {
 
     /**
      * PRD §6 / `docs/scheduler_requirements.md`: **the set of rules the scheduler RETURNED**, spelled for a
-     * human — one line per instruction, and nothing else.
+     * human — one entry per rule, written as § *Rule Structure* asks: the interval it holds over (its end is the
+     * trigger for the next), `if … then …` for the task scheduled there, `else …` for the alternative set at the line
+     * when it is refused (§ *Alternative Schedules*), and, in the head, the two triggers that are not an instant of the
+     * timeline (a mode switch, a rewrite of history). User rule 2026-10-06: it read `+0:00:00 → +0:45:00  run A else B`,
+     * a table to decode rather than a text to read.
      *
      * The requirements are explicit about what this is and what it is not. *"The scheduler returns a set of
      * rules that define the task schedule for a given timeline"*, and those rules are *"parameterized by
@@ -5594,6 +5598,30 @@ object SchedulerDomain {
      * [org.example.project.scheduler.state.SchedulerRunEntry.MAX_ENTRIES] runs, and a week of horizon at a
      * short minimum time is a few thousand instructions per run.
      */
+    /**
+     * **The set of rules [state] holds, as a run of the scheduler engine** — for a launch that keeps the persisted plan
+     * ([planHoldsAtLaunch]) and so runs nothing: the rules in force were found before the restart, and the runs are
+     * kept in memory, so the session would otherwise list none of them until the next extension. Dated when the plan
+     * was made ([SchedulerState.planBasis]); the rules are read at [nowMillis] in [tpMode], as any run's are. Null when
+     * the state holds no plan.
+     */
+    fun planInForceRun(state: SchedulerState, nowMillis: Long, tpMode: Int): org.example.project.scheduler.state.SchedulerRunEntry? {
+        val basis = state.planBasis ?: return null
+        val planned = state.panels.filter { it.auto && !it.chore }
+        if (planned.isEmpty()) return null
+        return org.example.project.scheduler.state.SchedulerRunEntry(
+            timeMillis = basis.madeAtMillis,
+            kind = org.example.project.scheduler.state.SchedulerRunEntry.Kind.KeptAtLaunch,
+            horizonMillis = planned.maxOf { it.endEpochMillis },
+            panelCount = state.panels.size,
+            // The rule state input the kept plan answers: the same reading a fill makes of the state.
+            ruleState = planTasksOf(state, nowMillis).map { describePlanRule(it, state.tasks[it.id]?.title.orEmpty()) },
+            rules = describeScheduleRules(state.panels, nowMillis, tpMode),
+            nowMillis = nowMillis,
+            tpMode = tpMode,
+        )
+    }
+
     fun describeScheduleRules(panels: List<TaskPanel>, nowMillis: Long, tpMode: Int): List<String> {
         val instructions =
             panels.asSequence()
@@ -5601,23 +5629,46 @@ object SchedulerDomain {
                 .filter { (it.auto && !it.chore) || it.screenBreak }
                 .sortedWith(compareBy({ it.startEpochMillis }, { it.endEpochMillis }))
                 .toList()
+        // § *Rule Structure*: the rules are sequential local branches and the triggers they change at. The head says
+        // what every rule below is read against, and the triggers that are not an instant of the timeline.
         val head =
-            "now-line mode $tpMode — ${DynamicPeriods.modeLabel(tpMode)}; offsets are from the now-line"
+            "now-line mode $tpMode — ${DynamicPeriods.modeLabel(tpMode)}; offsets are from the now-line\n" +
+                "    each rule below holds from its first offset until its second: that instant is the trigger for the next one\n" +
+                "    if the now-line changes mode, then the rules found for that mode take over from the now-line\n" +
+                "    if the history is rewritten or the rule state input changes, then the scheduler runs again"
         // The alternative is named by id; the titles are on the panels, so they are collected once rather
         // than searched for per rule.
         val titles = panels.mapNotNull { p -> p.taskId?.let { it to p.title } }.filter { it.second.isNotBlank() }.toMap()
+        fun nameOf(id: TaskId) = titles[id] ?: id.value
+        val alternativeLength = formatRuleOffset(ALTERNATIVE_SCHEDULE_MILLIS).removePrefix("+")
         val body =
             instructions.take(MAX_DESCRIBED_RULES).map { panel ->
-                val span =
-                    "${formatRuleOffset(panel.startEpochMillis - nowMillis)} → " +
-                        formatRuleOffset(panel.endEpochMillis - nowMillis)
+                val from = formatRuleOffset(panel.startEpochMillis - nowMillis)
+                val until = formatRuleOffset(panel.endEpochMillis - nowMillis)
+                val span = "$from → $until"
                 if (panel.screenBreak) {
-                    "$span  restrict [${panel.restrictiveKind}] ${panel.title.ifBlank { "period" }}"
+                    "$span\n    restrict [${panel.restrictiveKind}] ${panel.title.ifBlank { "period" }}: " +
+                        "only a task this kind of period admits may run"
                 } else {
                     val name = panel.title.ifBlank { panel.taskId?.value ?: "(nobody)" }
-                    val alternative =
-                        panel.alternativeTaskId?.let { id -> "  else ${titles[id] ?: id.value}" }.orEmpty()
-                    "$span  run $name$alternative"
+                    // § *Alternative Schedules*: what is set at the line if the scheduled task is refused — one
+                    // answer for the run, or one per stretch of it where the answer changes inside the run.
+                    val answers =
+                        listOf(panel.startEpochMillis to panel.alternativeTaskId) +
+                            panel.alternativeSpans.filter { it.fromMillis > panel.startEpochMillis }.map { it.fromMillis to it.taskId }
+                    val otherwise =
+                        answers.mapIndexed { i, (at, task) ->
+                            val prefix = if (i == 0) "    else " else "    else, from ${formatRuleOffset(at - nowMillis)}, "
+                            if (task == null) {
+                                prefix + "nothing: no other task may run here"
+                            } else {
+                                prefix + "run ${nameOf(task)} on [now-line; now-line + $alternativeLength], then the scheduler runs again"
+                            }
+                        }
+                    val held =
+                        if (panel.lineBound) listOf("    if the now-line is in mode 1, then this run is held at the now-line where a period gives way to it")
+                        else emptyList()
+                    (listOf(span, "    if $name is accepted, then run $name until $until") + otherwise + held).joinToString("\n")
                 }
             }
         val overflow = instructions.size - body.size
