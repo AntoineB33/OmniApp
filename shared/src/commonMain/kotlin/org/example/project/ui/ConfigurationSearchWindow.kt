@@ -20,7 +20,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -280,6 +279,19 @@ private fun SettingEditor(
             Choices(SearchDomain.Tri.entries, f.periodOnCalendar, { it.label }) { filters(f.copy(periodOnCalendar = it)) }
         SearchDomain.Setting.PeriodBoxesFrom -> DayFilterField(f.periodBoxesFrom) { filters(f.copy(periodBoxesFrom = it)) }
         SearchDomain.Setting.PeriodBoxesUntil -> DayFilterField(f.periodBoxesUntil) { filters(f.copy(periodBoxesUntil = it)) }
+        // Set by "Blocks on the calendar": said here, with its way off (every block of the calendar).
+        SearchDomain.Setting.BlockElements ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (f.blocksOf.isEmpty()) "every element"
+                    else f.blocksOf.map { SearchDomain.changedElementTitle(state, it, windows) }.sorted().joinToString(", "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (f.blocksOf.isNotEmpty()) FrameButton("✕") { filters(f.copy(blocksOf = emptySet())) }
+            }
         SearchDomain.Setting.CategoryHasRules ->
             Choices(SearchDomain.Tri.entries, f.categoryHasRules, { it.label }) { filters(f.copy(categoryHasRules = it)) }
         SearchDomain.Setting.PeriodOriginSetting ->
@@ -313,6 +325,16 @@ private fun SettingEditor(
                 label = { it.label },
                 onChange = { filters(f.copy(historyChangedKinds = it)) },
             )
+        SearchDomain.Setting.NotificationSourceSetting ->
+            CheckBoxDropDown(
+                options = org.example.project.scheduler.state.NotificationSource.entries,
+                checked = f.notificationSources,
+                face = if (f.notificationSources.isEmpty()) "anything"
+                else org.example.project.scheduler.state.NotificationSource.entries
+                    .filter { it in f.notificationSources }.joinToString(", ") { it.label },
+                label = { it.label },
+                onChange = { filters(f.copy(notificationSources = it)) },
+            )
         SearchDomain.Setting.HistoryChangedElementSetting ->
             ChangedElementField(state, f.historyChangedKinds, f.historyChangedElement, windows) {
                 filters(f.copy(historyChangedElement = it))
@@ -337,7 +359,7 @@ private fun SettingEditor(
         SearchDomain.Setting.SortResults,
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort, SearchDomain.Setting.QuotaSort,
-        SearchDomain.Setting.ReminderSort,
+        SearchDomain.Setting.ReminderSort, SearchDomain.Setting.BlockSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.NotificationSort, SearchDomain.Setting.TaskTreeSort,
         SearchDomain.Setting.RelationSort,
         SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.WindowSort,

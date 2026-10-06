@@ -160,6 +160,20 @@ class CalendarPanelOutlineTest {
         }
     }
 
+    /** User rule 2026-10-05: the blue and the orange outlines are above every other outline of the calendar. */
+    @Test
+    fun the_blue_and_the_orange_outlines_are_the_ones_drawn_on_top() {
+        assertEquals(
+            setOf(SchedulerDomain.PanelOutline.User, SchedulerDomain.PanelOutline.Pattern),
+            SchedulerDomain.PanelOutline.entries.filterTo(HashSet()) { org.example.project.ui.outlineOnTop(it) },
+            "a hand's and a rule's — never the grey of a dynamic period, never no outline at all",
+        )
+        // A ring and a tag are topmost already, and their outlines are of these two.
+        assertTrue(org.example.project.ui.outlineOnTop(SchedulerDomain.ringOutline()))
+        assertTrue(org.example.project.ui.outlineOnTop(SchedulerDomain.ringOutline(isolated = true)))
+        assertTrue(org.example.project.ui.outlineOnTop(SchedulerDomain.reminderTagOutline()))
+    }
+
     @Test
     fun every_period_the_user_draws_is_outlined_blue_whatever_its_kind() {
         var s = SchedulerState.empty()

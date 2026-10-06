@@ -161,6 +161,64 @@ fun SchedulerState.withExternalRestore(key: String, from: String?, to: String?):
 }
 
 /**
+ * **The titles the app's notifications are posted under** — one per thing that can speak up. Stated here, once, because
+ * a title is read twice: the engine posts under it, and [NotificationSource.of] tells from it what a logged
+ * notification came from.
+ */
+object NotificationTitles {
+    /** PRD §11: the scheduler's own — the task the plan says to do now. */
+    const val TASK_TO_DO_NOW: String = "Task to do now"
+
+    /** PRD §15: a screen break starting, and the end of one. */
+    const val SCREEN_BREAK: String = "Screen break"
+    const val SCREEN_BREAK_OVER: String = "Screen break over"
+
+    /** PRD §17: the wind-down, an hour before bedtime. */
+    const val STOP_WORK: String = "Stop work"
+
+    /** PRD §18 / §14: a ring, titled by what rang. */
+    const val ALARM: String = "Alarm"
+    const val TIMER: String = "Timer"
+    const val REMINDER: String = "Reminder"
+
+    /** PRD §7 / §11: a system-wide chord's receipt, and the chord turning the notifications back on. */
+    const val SHORTCUT_RECEIVED: String = "Shortcut received"
+    const val NOTIFICATIONS_ON: String = "Notifications on"
+}
+
+/**
+ * **What a notification came from** (anomaly 2026-10-05: the Search window could not keep only the scheduler
+ * engine's): the scheduler engine itself — the plan's "task to do now" — or one of the other things that post one.
+ * Read off the title it was posted under ([of]), so the notifications logged before this existed have a source too.
+ */
+enum class NotificationSource(val label: String) {
+    SchedulerEngine("scheduler engine"),
+    ScreenBreak("screen break"),
+    SleepSchedule("sleep schedule"),
+    Alarm("alarm"),
+    Timer("timer"),
+    Reminder("reminder"),
+    Shortcut("keyboard shortcut"),
+
+    /** A title no source claims — one an older build posted under. */
+    Other("other");
+
+    companion object {
+        fun of(title: String): NotificationSource =
+            when (title) {
+                NotificationTitles.TASK_TO_DO_NOW -> SchedulerEngine
+                NotificationTitles.SCREEN_BREAK, NotificationTitles.SCREEN_BREAK_OVER -> ScreenBreak
+                NotificationTitles.STOP_WORK -> SleepSchedule
+                NotificationTitles.ALARM -> Alarm
+                NotificationTitles.TIMER -> Timer
+                NotificationTitles.REMINDER -> Reminder
+                NotificationTitles.SHORTCUT_RECEIVED, NotificationTitles.NOTIFICATIONS_ON -> Shortcut
+                else -> Other
+            }
+    }
+}
+
+/**
  * PRD §6: the History window's **other** origin dimension — the rows the app itself produced rather than
  * the user, in a window. The two dimensions partition the list: a row either came out of a window (it is a
  * History Unit and carries a [HistoryWindow]) or out of one of these (it is not a History Unit at all —

@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SearchDomain
+import org.example.project.scheduler.state.NotificationSource
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -40,6 +41,46 @@ class NotificationsWindowTest {
         // Two posted on one instant are two rows.
         val twins = logged(t0 to "a", t0 to "b")
         assertEquals(2, SearchDomain.results(twins, setOf(SearchDomain.Kind.Notification), "").map { (it as SearchDomain.ItemResult).id }.toSet().size)
+    }
+
+    /** Anomaly 2026-10-05: the Search window could not keep only the scheduler engine's notifications. */
+    @Test
+    fun the_notifications_are_filtered_by_what_they_came_from() {
+        val titles = org.example.project.scheduler.state.NotificationTitles
+        val s = logged(
+            t0 to titles.TASK_TO_DO_NOW, t0 + minute to titles.SCREEN_BREAK, t0 + 2 * minute to titles.SCREEN_BREAK_OVER,
+            t0 + 3 * minute to titles.TIMER, t0 + 4 * minute to titles.TASK_TO_DO_NOW, t0 + 5 * minute to "posted by an older build",
+        )
+        fun from(vararg sources: NotificationSource): List<String> {
+            val config = SearchDomain.kindSearchConfig(SearchDomain.Kind.Notification)
+                .let { it.copy(filters = it.filters.copy(notificationSources = sources.toSet())) }
+            assertEquals(config, SearchDomain.Config.decode(config.encode()), "kept with the configuration")
+            assertEquals(sources.isNotEmpty(), config.filters.isOn(SearchDomain.Setting.NotificationSourceSetting))
+            return titles(s, config).sorted()
+        }
+        assertEquals(6, from().size, "nothing checked: from anything")
+        assertEquals(listOf(titles.TASK_TO_DO_NOW, titles.TASK_TO_DO_NOW), from(NotificationSource.SchedulerEngine))
+        assertEquals(listOf(titles.SCREEN_BREAK, titles.SCREEN_BREAK_OVER), from(NotificationSource.ScreenBreak))
+        assertEquals(listOf(titles.TASK_TO_DO_NOW, titles.TASK_TO_DO_NOW, titles.TIMER), from(NotificationSource.SchedulerEngine, NotificationSource.Timer))
+        assertEquals(listOf("posted by an older build"), from(NotificationSource.Other))
+        assertEquals(emptyList(), from(NotificationSource.Alarm))
+        // Every title the app posts under has a source of its own, and a ring's title is its kind's label.
+        assertEquals(NotificationSource.Alarm, NotificationSource.of(org.example.project.scheduler.engine.RingKind.Alarm.label))
+        assertEquals(NotificationSource.Timer, NotificationSource.of(org.example.project.scheduler.engine.RingKind.Timer.label))
+        assertEquals(NotificationSource.Reminder, NotificationSource.of(org.example.project.scheduler.engine.RingKind.Reminder.label))
+        assertEquals(NotificationSource.SleepSchedule, NotificationSource.of(titles.STOP_WORK))
+        assertEquals(NotificationSource.Shortcut, NotificationSource.of(titles.SHORTCUT_RECEIVED))
+        assertEquals(NotificationSource.Shortcut, NotificationSource.of(titles.NOTIFICATIONS_ON))
+        // The app's own notifications window keeps its "since" beside the filter.
+        val since = SearchDomain.notificationsConfig(t0 + 2 * minute)
+            .let { it.copy(filters = it.filters.copy(notificationSources = setOf(NotificationSource.SchedulerEngine))) }
+        assertEquals(listOf(titles.TASK_TO_DO_NOW), titles(s, since))
+        // A configuration stored before the filter existed, or naming a source this build does not know: from anything.
+        assertEquals(emptySet(), SearchDomain.Config.decode("""{"kinds":["Notification"]}""")!!.filters.notificationSources)
+        assertEquals(
+            setOf(NotificationSource.Timer),
+            SearchDomain.Config.decode("""{"kinds":["Notification"],"notificationSources":["Timer","FromALaterBuild"]}""")!!.filters.notificationSources,
+        )
     }
 
     @Test

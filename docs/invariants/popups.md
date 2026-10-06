@@ -331,6 +331,13 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   open closes it. A plain `clickable { open = true }` reopens it instead, because the root observer has
   already closed it on the press and the click lands after; the field reads the menu's state as last
   composed at the press. Every drop-down field uses it, never a hand-rolled toggle.
+- **Enter ends the edit of any single-line field** (user rule 2026-10-05; `ui/EnterLeavesField.kt`,
+  `EnterLeavesFieldTest`): the field gives up the focus, as a press outside it does. The app has ONE text field —
+  `org.example.project.ui.OutlinedTextField`, Material's plus `Modifier.leavesEditOnEnter` — and every window draws
+  it: **never import `androidx.compose.material3.OutlinedTextField` by name**, which opts a file out of the rule. A
+  bare `BasicTextField` wears the modifier itself, LAST in its chain. Last is the precedence: a preview key event
+  runs from the outside in, so a field with an Enter of its own (a tree cell, the Search bar, find & replace, a
+  picker) answers first. A field of several lines keeps Enter as its new line; a chord is not Enter.
 - **A field's edit mode that must end on a press elsewhere registers with the SAME observer**
   (`Modifier.leaveOnOutsidePress`, `TransientMenuHost.openEditor`) — never a per-field outside-press handler.
   A text field alone keeps the caret when the press lands on something that takes no focus (a window's bare

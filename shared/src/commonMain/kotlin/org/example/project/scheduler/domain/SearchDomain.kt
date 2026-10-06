@@ -6,6 +6,7 @@ import org.example.project.scheduler.model.TaskRelationKey
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.scheduler.state.NotificationSource
 import org.example.project.scheduler.state.ChangedElement
 import org.example.project.scheduler.state.changedElements
 import kotlinx.datetime.number
@@ -109,6 +110,13 @@ object SearchDomain {
         /** User rule 2026-10-03: a quota ([org.example.project.scheduler.model.QuotaEntry]). */
         Quota("quota"),
         Reminder("reminder"),
+
+        /**
+         * User rule 2026-10-05: one **blue outlined block** of the calendar ([CalendarBlock]) — what a hand placed there:
+         * a task panel, a period, a reminder tag, a ring moved on the calendar. Listed by the element it is a block of
+         * ([Filters.blocksOf], [blocksSearchConfig]); opening one opens what is on the calendar there.
+         */
+        CalendarBlock("calendar block"),
         HistoryUnit("history unit"),
 
         /**
@@ -321,6 +329,8 @@ object SearchDomain {
          * this is set. Null for a window that did not come from the calendar.
          */
         val calendarClickMillis: Long? = null,
+        /** Where "Add to the calendar" lays the added elements, and until when ([Placement], user rule 2026-10-05). */
+        val placement: Placement = Placement(),
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
@@ -370,7 +380,13 @@ object SearchDomain {
                     calendarAtOn = filters.calendarAtOn,
                     calendarAtMillis = filters.calendarAtMillis,
                     notificationsSinceMillis = filters.notificationsSinceMillis,
+                    notificationSources = NotificationSource.entries.filter { it in filters.notificationSources }.map { it.name },
                     calendarClickMillis = calendarClickMillis,
+                    blocksOf = filters.blocksOf.sorted(),
+                    placeStartMillis = placement.startMillis,
+                    placeEndByDelta = placement.endByDelta,
+                    placeLengthMillis = placement.lengthMillis,
+                    placeEndMillis = placement.endMillis,
                 ),
             )
 
@@ -427,6 +443,9 @@ object SearchDomain {
                         calendarAtOn = stored.calendarAtOn,
                         calendarAtMillis = stored.calendarAtMillis,
                         notificationsSinceMillis = stored.notificationsSinceMillis,
+                        notificationSources =
+                            NotificationSource.entries.filterTo(HashSet()) { it.name in stored.notificationSources },
+                        blocksOf = stored.blocksOf.toSet(),
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                     // Heals the index-shaped history-unit keys of builds before 2026-10-03 ([historyUnitId]): an
@@ -435,6 +454,12 @@ object SearchDomain {
                     actionQuery = stored.actionQuery,
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
+                    placement = Placement(
+                        startMillis = stored.placeStartMillis,
+                        endByDelta = stored.placeEndByDelta,
+                        lengthMillis = stored.placeLengthMillis?.takeIf { it > 0L } ?: DEFAULT_PLACEMENT_LENGTH_MILLIS,
+                        endMillis = stored.placeEndMillis,
+                    ),
                 )
             }
 
@@ -619,6 +644,16 @@ object SearchDomain {
          * the focus, for the notifications window the app opens ([notificationsConfig]).
          */
         val notificationsSinceMillis: Long? = null,
+        /**
+         * Empty = from anything: else only the notifications that came from one of these ([NotificationSource] — the
+         * scheduler engine's "task to do now", a screen break, an alarm…); several can be checked.
+         */
+        val notificationSources: Set<NotificationSource> = emptySet(),
+        /**
+         * Empty = every block of the calendar: else only the blocks of these elements, by their Search keys ([keyOf],
+         * `Task/…`, `RestrictivePeriod/…`) — what "Blocks on the calendar" opens ([blocksSearchConfig]).
+         */
+        val blocksOf: Set<String> = emptySet(),
     ) {
         /** The instant the calendar filter keeps rows for, while it is on and has one; else null. */
         val calendarAddAt: Long?
@@ -674,6 +709,8 @@ object SearchDomain {
                 Setting.PeriodOnCalendar -> periodOnCalendar != Tri.Any
                 Setting.PeriodBoxesFrom -> periodBoxesFrom != null
                 Setting.PeriodBoxesUntil -> periodBoxesUntil != null
+                Setting.BlockElements -> blocksOf.isNotEmpty()
+                Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
                 else -> false
             }
     }
@@ -704,6 +741,8 @@ object SearchDomain {
         TimerDuration(Kind.Timer, "duration"),
         ReminderTime(Kind.Reminder, "time"),
         ReminderCadence(Kind.Reminder, "cadence"),
+        /** When the block starts on the calendar ([CalendarBlock.startMillis]). */
+        BlockStart(Kind.CalendarBlock, "start"),
         HistoryDate(Kind.HistoryUnit, "date"),
         NotificationDate(Kind.Notification, "date"),
         TaskTreeDate(Kind.TaskTree, "date"),
@@ -788,6 +827,7 @@ object SearchDomain {
         ChronoSort(Kind.Chrono, "Sort by", sorts = true),
         QuotaSort(Kind.Quota, "Sort by", sorts = true),
         ReminderSort(Kind.Reminder, "Sort by", sorts = true),
+        BlockSort(Kind.CalendarBlock, "Sort by", sorts = true),
         HistorySort(Kind.HistoryUnit, "Sort by", sorts = true),
         NotificationSort(Kind.Notification, "Sort by", sorts = true),
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
@@ -813,11 +853,15 @@ object SearchDomain {
         ChronoStateSetting(Kind.Chrono, "State"),
         QuotaRepeatsSetting(Kind.Quota, "Repeats"),
         ReminderRepeatsSetting(Kind.Reminder, "Repeats"),
+        /** The elements whose blocks are listed ([Filters.blocksOf]). */
+        BlockElements(Kind.CalendarBlock, "Blocks of"),
         HistoryCategorySetting(Kind.HistoryUnit, "Category"),
         HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
         HistoryUndoneSetting(Kind.HistoryUnit, "Undone"),
         HistoryChangedKindsSetting(Kind.HistoryUnit, "Changed element types"),
         HistoryChangedElementSetting(Kind.HistoryUnit, "Changed element"),
+        /** What the notification came from ([Filters.notificationSources]). */
+        NotificationSourceSetting(Kind.Notification, "From"),
         TaskTreeOpenSetting(Kind.TaskTree, "Open"),
         TaskTreeDatedSetting(Kind.TaskTree, "On the timeline"),
         RelationSectionSetting(Kind.TaskRelation, "Section"),
@@ -917,6 +961,14 @@ object SearchDomain {
         val calendarAtMillis: Long? = null,
         /** New 2026-10-04 (the notifications window): absent = every notification. */
         val notificationsSinceMillis: Long? = null,
+        /** New 2026-10-05: absent = from anything; a source this build does not know is dropped. */
+        val notificationSources: List<String> = emptyList(),
+        /** New 2026-10-05 (the calendar blocks, "Add to the calendar"'s start and end): absent = every block, nothing said. */
+        val blocksOf: List<String> = emptyList(),
+        val placeStartMillis: Long? = null,
+        val placeEndByDelta: Boolean = true,
+        val placeLengthMillis: Long? = null,
+        val placeEndMillis: Long? = null,
     )
 
     @Serializable
@@ -1402,6 +1454,12 @@ object SearchDomain {
                         ItemResult(kind, historyUnitId(category, unit), unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
                     }
                 }
+                // The detail is where the block is: two blocks of one element are told apart by it, and it orders them.
+                Kind.CalendarBlock -> calendarBlocks(state, timeZone).map { block ->
+                    val span = dateTime(block.startMillis, timeZone) +
+                        if (block.endMillis > block.startMillis) " → " + dateTime(block.endMillis, timeZone) else ""
+                    ItemResult(kind, block.id, block.name, span)
+                }
                 Kind.Notification -> state.notificationLog.mapIndexed { index, entry ->
                     val said = entry.spoken?.takeIf { it.isNotBlank() && it != entry.message }?.let { " · said: $it" }.orEmpty()
                     ItemResult(
@@ -1501,6 +1559,12 @@ object SearchDomain {
                 }
                 .filter { passes(state, it, filters, calendar) }
                 .let { rows ->
+                    // The blocks of the given elements: each block's element read once, not once per row.
+                    if (filters.blocksOf.isEmpty() || rows.none { it.kind == Kind.CalendarBlock }) return@let rows
+                    val owners = calendarBlocks(state, timeZone).associate { it.id to it.owner }
+                    rows.filter { it.kind != Kind.CalendarBlock || owners[(it as? ItemResult)?.id] in filters.blocksOf }
+                }
+                .let { rows ->
                     // The calendar filter: about every kind, so asked of every row, once the instant's kinds are read.
                     val at = filters.calendarAddAt ?: return@let rows
                     val kindsAt = calendarKindsAt(state, at)
@@ -1567,6 +1631,7 @@ object SearchDomain {
         private val timers by lazy { state.timers.associateBy { it.id } }
         private val chores by lazy { state.chores.associateBy { it.id.ifEmpty { it.title } } }
         private val trees by lazy { state.taskTrees.associateBy { it.id.value } }
+        private val blocks by lazy { calendarBlocks(state).associateBy { it.id } }
         private val sectionRank by lazy {
             TaskRelationsDomain.Section.entries.associate { relationSectionLabel(it) to it.ordinal }
         }
@@ -1594,6 +1659,7 @@ object SearchDomain {
                 SortKey.TimerDuration -> timers[row.id]?.durationSeconds
                 SortKey.ReminderTime -> chores[row.id]?.timeOfDayMinutes
                 SortKey.ReminderCadence -> chores[row.id]?.spanDays
+                SortKey.BlockStart -> blocks[row.id]?.startMillis
                 SortKey.HistoryDate -> historyUnitOf(state, row.id)?.timeMillis
                 SortKey.NotificationDate -> notificationTimeOf(row.id)
                 SortKey.TaskTreeDate -> trees[row.id]?.dateMillis
@@ -1671,9 +1737,11 @@ object SearchDomain {
                         ReminderRepeats.Repeating -> chore.spanDays > 0.0
                     }
                 }
+                // The row's name IS the title it was posted under, which is what says where it came from.
                 Kind.Notification ->
-                    filters.notificationsSinceMillis == null ||
-                        (notificationTimeOf(result.id) ?: Long.MAX_VALUE) >= filters.notificationsSinceMillis
+                    (filters.notificationsSinceMillis == null ||
+                        (notificationTimeOf(result.id) ?: Long.MAX_VALUE) >= filters.notificationsSinceMillis) &&
+                        (filters.notificationSources.isEmpty() || NotificationSource.of(result.name) in filters.notificationSources)
                 Kind.HistoryUnit -> {
                     val unit = historyUnitOf(state, result.id) ?: return true
                     (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&
@@ -1694,7 +1762,8 @@ object SearchDomain {
                     tri(filters.shortcutRebound, binding != shortcut.defaultBinding)
                 }
                 Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
-                Kind.Creation, Kind.AppSetting -> true
+                // [Filters.blocksOf] is asked of the whole list at once ([results]).
+                Kind.Creation, Kind.AppSetting, Kind.CalendarBlock -> true
             }
         }
     }
@@ -2015,6 +2084,11 @@ object SearchDomain {
         OpenEach(null, "Open each"),
         /** The calendar's "add…" (user rule 2026-10-01): every added element that can go there, at the filter's instant. */
         PlaceOnCalendar(null, "Add to the calendar"),
+        /**
+         * User rule 2026-10-05: a Search window on every blue outlined block the added elements have on the calendar
+         * ([blocksSearchConfig]).
+         */
+        CalendarBlocks(null, "Blocks on the calendar"),
         ClearList(null, "Remove every element from the list"),
         /**
          * An added CREATION row (user rule 2026-10-04): a Search window on every element of the kind the row makes —
@@ -2203,12 +2277,19 @@ object SearchDomain {
      */
     fun actionsFor(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<Pair<Kind?, List<AddedAction>>> =
         sections.mapNotNull { (kind, actions) ->
-            if (kind == null || added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
+            if (kind == null) {
+                // The calendar's actions are those of an element that can be on the calendar (user rule 2026-10-05).
+                val onCalendar = added.any { it.kind in CALENDAR_ADD_KINDS }
+                actions.filter { onCalendar || it !in CALENDAR_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
+            } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
                 kind to actions
             } else {
                 actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
             }
         }
+
+    /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
+    val CALENDAR_ACTIONS: Set<AddedAction> = setOf(AddedAction.PlaceOnCalendar, AddedAction.CalendarBlocks)
 
     /** The id a default configuration wears among the added elements of its kind: no element's own. */
     const val DEFAULT_CONFIGURATION_ID: String = "(default configuration)"
@@ -2674,6 +2755,11 @@ object SearchDomain {
         added: List<Result>,
         atMillis: Long,
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        /**
+         * Where a task's panel and a period end ([placementEnd]); null, or not after [atMillis] = each its own length.
+         * A tag and a ring have no length of the calendar's to give.
+         */
+        endMillis: Long? = null,
     ): List<CalendarElements.Draft> {
         val kindsAt = calendarKindsAt(state, atMillis)
         return added.filter { calendarAddable(state, it, kindsAt, atMillis, nowMillis = atMillis - 1) }.mapNotNull { row ->
@@ -2717,9 +2803,109 @@ object SearchDomain {
                 panelSpanMillis = (pick.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 45) * 60_000L,
                 noScreenResilience = pick.taskId?.let { state.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN) },
                 newAlarm = state.newAlarmDefaults,
-            )
+            ).let { draft ->
+                val spans = draft.kind == CalendarElements.Kind.TaskPanel || draft.kind == CalendarElements.Kind.RestrictivePeriod
+                if (spans && endMillis != null && endMillis > atMillis) draft.copy(endMillis = endMillis) else draft
+            }
         }
     }
+
+    /**
+     * **Where "Add to the calendar" lays the added elements** (user rule 2026-10-05), said the way a quota's loop is:
+     * a START — null until one is given, and the calendar filter's position stands for it then ([placementStart]) —
+     * and an END stated as a LENGTH after the start ([endByDelta], the default: 1 hour, user rule 2026-10-05) or as an
+     * instant of its own ([endMillis]; until one is given, the length still says it). Local-only view state, kept with
+     * the Search window's configuration.
+     */
+    data class Placement(
+        val startMillis: Long? = null,
+        val endByDelta: Boolean = true,
+        val lengthMillis: Long = DEFAULT_PLACEMENT_LENGTH_MILLIS,
+        val endMillis: Long? = null,
+    )
+
+    /** What "Add to the calendar" ends after until the user says otherwise: 1 hour after the start. */
+    const val DEFAULT_PLACEMENT_LENGTH_MILLIS: Long = 3_600_000L
+
+    /** The instant "Add to the calendar" lays at: the start given, else the calendar filter's position, else none. */
+    fun placementStart(config: Config): Long? = config.placement.startMillis ?: config.filters.calendarAddAtMillis
+
+    /** Where a block laid at [startMillis] ends as [placement] states it. */
+    fun placementEnd(placement: Placement, startMillis: Long): Long =
+        placement.endMillis?.takeIf { !placement.endByDelta } ?: (startMillis + placement.lengthMillis)
+
+    /** Whether [placement] states an end that is not after [startMillis] — nothing is laid then. */
+    fun placementRefused(placement: Placement, startMillis: Long): Boolean =
+        placementEnd(placement, startMillis) <= startMillis
+
+    // ----- The calendar's blocks (user rule 2026-10-05) ----------------------------------------------------
+
+    /**
+     * **One blue outlined block of the calendar** — what a hand placed there, by the calendar's own reading of it:
+     * a panel outlined [SchedulerDomain.PanelOutline.User] (a task's panel added, dragged or resized; a period drawn),
+     * a reminder's tag ([SchedulerDomain.reminderTagOutline]) and a ring moved on the calendar
+     * ([SchedulerDomain.ringOutline]: an isolated alarm, a timer put there). [owner] is the Search key ([keyOf]) of the
+     * element it is a block of; a tag and a ring are an instant, their end their start.
+     */
+    data class CalendarBlock(val id: String, val owner: String, val name: String, val startMillis: Long, val endMillis: Long)
+
+    private const val BLOCK_ALARM_PREFIX: String = "alarm:"
+    private const val BLOCK_TIMER_PREFIX: String = "timer:"
+
+    /** Every [CalendarBlock] of the account, in the timeline's order. */
+    fun calendarBlocks(state: SchedulerState, timeZone: TimeZone = TimeZone.currentSystemDefault()): List<CalendarBlock> {
+        val out = ArrayList<CalendarBlock>()
+        for (panel in state.panels) {
+            if (panel.chore) {
+                val reminderId = SchedulerDomain.reminderIdOfChorePanel(panel.id) ?: continue
+                out += CalendarBlock(panel.id, Kind.Reminder.name + "/" + reminderId, panel.title, panel.startEpochMillis, panel.startEpochMillis)
+                continue
+            }
+            if (SchedulerDomain.panelOutline(panel) != SchedulerDomain.PanelOutline.User) continue
+            if (panel.isRestrictivePeriod) {
+                val kind = panel.restrictiveKind
+                out += CalendarBlock(
+                    panel.id, Kind.RestrictivePeriod.name + "/" + kind, PeriodKinds.periodTitle(kind),
+                    panel.startEpochMillis, panel.endEpochMillis,
+                )
+            } else {
+                val taskId = panel.taskId ?: continue
+                out += CalendarBlock(
+                    panel.id, taskKey(taskId), state.tasks[taskId]?.title?.ifBlank { null } ?: panel.title,
+                    panel.startEpochMillis, panel.endEpochMillis,
+                )
+            }
+        }
+        for (alarm in state.alarms) {
+            val day = alarm.onlyOnEpochDay ?: continue
+            val at = AlarmDomain.occurrenceMillis(alarm, LocalDate.fromEpochDays(day.toInt()), timeZone)
+            out += CalendarBlock(BLOCK_ALARM_PREFIX + alarm.id, Kind.Alarm.name + "/" + alarm.id, alarm.label.ifBlank { "Alarm" }, at, at)
+        }
+        for (timer in state.timers) {
+            val at = timer.endsAtMillis?.takeIf { timer.calendarPlaced } ?: continue
+            out += CalendarBlock(BLOCK_TIMER_PREFIX + timer.id, Kind.Timer.name + "/" + timer.id, timer.label.ifBlank { "Timer" }, at, at)
+        }
+        return out.sortedBy { it.startMillis }
+    }
+
+    /** The block a [Kind.CalendarBlock] row's id names, or null once it is gone from the calendar. */
+    fun calendarBlockOf(state: SchedulerState, id: String, timeZone: TimeZone = TimeZone.currentSystemDefault()): CalendarBlock? =
+        calendarBlocks(state, timeZone).firstOrNull { it.id == id }
+
+    /** The keys of the [added] elements that can have a block on the calendar ([CALENDAR_ADD_KINDS]), each once. */
+    fun blockOwners(added: List<Result>): List<String> =
+        added.filter { it.kind in CALENDAR_ADD_KINDS }.map(::keyOf).distinct()
+
+    /**
+     * **The blocks of the given elements** (user rule 2026-10-05): the Search window "Blocks on the calendar" opens —
+     * the calendar blocks alone, those of [owners] ([Filters.blocksOf]), in the timeline's order.
+     */
+    fun blocksSearchConfig(owners: List<String>): Config =
+        Config(
+            kinds = setOf(Kind.CalendarBlock),
+            filters = Filters(blocksOf = owners.toSet()),
+            sorts = listOf(SortMethod(Kind.CalendarBlock, SortKey.BlockStart)),
+        )
 
     /** "New alarm here": the element window's fresh alarm at [atMillis], the account's default configuration. */
     fun calendarAlarmDraft(state: SchedulerState, atMillis: Long): CalendarElements.Draft =

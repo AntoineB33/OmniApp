@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
@@ -349,7 +350,30 @@ class CalendarEditChoicesTest {
 
     // --- the drawing half -------------------------------------------------------------------------------
 
-    /** A lone period is ONE box, not a run of them: the cut is a consequence of overlap and nothing else. */
+    /**
+     * Anomaly 2026-10-05: a dragged task panel jumped back where it was picked up for an instant at the release. The
+     * preview now waits for the records to show the commit.
+     */
+    @Test
+    fun aReleasedDragsPreviewWaitsUntilTheRecordsShowItsCommit() {
+        // The bounds a release is told apart by are the block's whole ones, not the hours of the day it is drawn in.
+        fun placed(id: String, startHour: Float, endHour: Float) =
+            period(id, "deep work", startHour, endHour)
+                .copy(fullStartMillis = (startHour * 3_600_000f).toLong(), fullEndMillis = (endHour * 3_600_000f).toLong())
+        val atRest = placed("p", 10f, 12f)
+        val released = org.example.project.ui.ReleasedDrag.of(atRest)
+        val other = placed("q", 14f, 15f)
+        // The state has not moved yet — the records are re-derived, equal, as time passes: still waiting.
+        assertFalse(released.arrivedIn(listOf(other, atRest)))
+        assertFalse(released.arrivedIn(listOf(atRest.copy())))
+        // The commit is drawn: the block stands elsewhere…
+        assertTrue(released.arrivedIn(listOf(other, placed("p", 11f, 13f))))
+        // …or under another id (a scheduler panel a hand moved becomes the user's own), or not at all.
+        assertTrue(released.arrivedIn(listOf(other, placed("p2", 11f, 13f))))
+        assertTrue(released.arrivedIn(listOf(other)))
+    }
+
+    /** A period is ONE box, over its own hours. */
     @Test
     fun onePeriodIsOneBox() {
         val segments = periodSegments(listOf(period("a", PeriodKinds.INACTIVITY, 10f, 12f)))
@@ -357,42 +381,50 @@ class CalendarEditChoicesTest {
         assertEquals(10f to 12f, segments.single().let { it.startHour to it.endHour })
     }
 
-    /** The user's own example: A 10–12 and B 11–13 draw three boxes — A, then A and B, then B. */
+    /**
+     * User rule 2026-10-05: a period A added 10–12 where a period A 11–13 already was is a blue outline round 10–12,
+     * and the outline the other one had still round 11–13 — never three boxes cut at 11 and at 12.
+     */
     @Test
-    fun overlappingPeriodsCutIntoThreeBoxes() {
-        val a = period("a", PeriodKinds.INACTIVITY, 10f, 12f).copy(title = "A")
-        val b = period("b", "deep work", 11f, 13f).copy(title = "B")
-        val segments = periodSegments(listOf(a, b))
+    fun overlappingPeriodsAreEachTheirOwnBoxWithTheirOwnOutline() {
+        val added = period("new", "deep work", 10f, 12f, SchedulerDomain.PanelOutline.User).copy(title = "A")
+        val already = period("old", "deep work", 11f, 13f, SchedulerDomain.PanelOutline.Pattern).copy(title = "A")
+        val segments = periodSegments(listOf(already, added))
+        assertEquals(listOf(10f to 12f, 11f to 13f), segments.map { it.startHour to it.endHour }, "in the timeline's order")
         assertEquals(
-            listOf(10f to 11f, 11f to 12f, 12f to 13f),
-            segments.map { it.startHour to it.endHour },
+            listOf(SchedulerDomain.PanelOutline.User, SchedulerDomain.PanelOutline.Pattern),
+            segments.map(::periodSegmentOutline),
         )
-        assertEquals(listOf("A", "A, B", "B"), segments.map(::periodSegmentLabel))
+        assertEquals(listOf("A", "A"), segments.map(::periodSegmentLabel))
+        assertTrue(segments.all { it.records.size == 1 })
+        // Of two kinds too: A 10–12 and B 11–13 are A and B, not A, "A, B" and B.
+        val b = period("b", PeriodKinds.INACTIVITY, 11f, 13f).copy(title = "B")
+        assertEquals(listOf("A", "B"), periodSegments(listOf(added, b)).map(::periodSegmentLabel))
     }
 
-    /** Every box is full width — the periods never enter the shared-width layout at all. */
+    /** Every box is full width — the periods never enter the shared-width layout at all — and names its period. */
     @Test
-    fun aBoxNamesEveryPeriodInForce() {
+    fun periodsOverTheSameHoursAreAsManyBoxes() {
         val a = period("a", PeriodKinds.INACTIVITY, 9f, 12f).copy(title = "A")
         val b = period("b", "deep work", 9f, 12f).copy(title = "B")
         val c = period("c", PeriodKinds.BEFORE_BED, 9f, 12f).copy(title = "C")
-        val segments = periodSegments(listOf(a, b, c))
-        assertEquals(1, segments.size)
-        assertEquals("A, B, C", periodSegmentLabel(segments.single()))
+        assertEquals(listOf("A", "B", "C"), periodSegments(listOf(a, b, c)).map(::periodSegmentLabel))
+        // A period of no length draws nothing.
+        assertEquals(emptyList(), periodSegments(listOf(period("z", "deep work", 9f, 9f))))
     }
 
     /**
-     * The outline answers "did a hand state any of this?", which is the user's layer example: an evidence
-     * hour draws unoutlined and the hour they extended it by draws blue.
+     * A box wears its own period's outline, which is the user's layer example: an evidence hour draws unoutlined
+     * and the hour they extended it by draws blue.
      */
     @Test
-    fun theStrongestHandOutlinesTheBox() {
+    fun eachBoxWearsItsOwnPeriodsOutline() {
         val derived = period("d", PeriodKinds.INACTIVITY, 10f, 12f, SchedulerDomain.PanelOutline.None)
         val byRule = period("r", PeriodKinds.BEFORE_BED, 10f, 12f, SchedulerDomain.PanelOutline.Pattern)
         val byHand = period("h", "deep work", 11f, 12f, SchedulerDomain.PanelOutline.User)
         val segments = periodSegments(listOf(derived, byRule, byHand))
         assertEquals(
-            listOf(SchedulerDomain.PanelOutline.Pattern, SchedulerDomain.PanelOutline.User),
+            listOf(SchedulerDomain.PanelOutline.None, SchedulerDomain.PanelOutline.Pattern, SchedulerDomain.PanelOutline.User),
             segments.map(::periodSegmentOutline),
         )
     }

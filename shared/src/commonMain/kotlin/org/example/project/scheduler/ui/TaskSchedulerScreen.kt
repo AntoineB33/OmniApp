@@ -56,7 +56,8 @@ import androidx.compose.material3.VerticalDivider
 import org.example.project.ui.outsidePressPart
 import org.example.project.ui.checkRangeShift
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import org.example.project.ui.OutlinedTextField
+import org.example.project.ui.leavesEditOnEnter
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -1260,7 +1261,8 @@ private fun WeightInputCell(
             modifier = Modifier
                 .weight(1f)
                 .border(1.dp, SheetColors.grid)
-                .padding(horizontal = 4.dp, vertical = 3.dp),
+                .padding(horizontal = 4.dp, vertical = 3.dp)
+                .leavesEditOnEnter(),
         )
         Column {
             WeightStepButton(label = "▲", onClick = { onSet(stepWeight(value, step, maxValue)) })
@@ -1364,7 +1366,8 @@ private fun MinTimeInputCell(
                 .weight(1f)
                 .focusRequester(focusRequester)
                 .border(1.dp, SheetColors.grid)
-                .padding(horizontal = 4.dp, vertical = 3.dp),
+                .padding(horizontal = 4.dp, vertical = 3.dp)
+                .leavesEditOnEnter(),
         )
         Text(
             text = "m",
@@ -2543,7 +2546,8 @@ private fun PercentInputField(fraction: Double, onSet: (Double) -> Unit) {
             modifier = Modifier
                 .width(72.dp)
                 .border(1.dp, SheetColors.grid)
-                .padding(horizontal = 4.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                .leavesEditOnEnter(),
         )
         Text(
             text = " %",

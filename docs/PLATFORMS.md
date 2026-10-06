@@ -76,3 +76,7 @@ These make a touch-only device less capable than a computer, and need a product 
 4. **Browser storage**: a large account outgrows `localStorage`; IndexedDB would lift the cap.
 5. **iOS**: no OS alarm seam (rings only while running), no activity signal, push path unverified — all wait on a Mac
    build.
+
+6. **A text field's right-click menu has no touch stand-in**: a time field's "+1 h … −1 h" (`ui/TimeNudgeMenu.kt`)
+   and a timer's countdown fields' steps. A long-press inside a text field is the platform's own (select, paste), so
+   it cannot be taken for the menu; a button beside the field would be the port.

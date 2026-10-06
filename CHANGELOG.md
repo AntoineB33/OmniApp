@@ -11,7 +11,183 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
-### Past sleep is frozen by the now line — 2026-10-05
+### Calendar: a dragged task panel no longer jumps back at the release — 2026-10-06
+
+Anomaly (user): *"when I drag a task panel, it glitches a microsecond when releasing the mouse click."* The release
+dispatched the move and dropped the drag's preview together, but the records the column draws come out of the state
+later (the reduce, then `App`'s derivation): for a frame or more the block was drawn back where it had been picked up,
+then jumped to where it was dropped. The preview now stays until the records show the commit (`ReleasedDrag`,
+`endDragPreview` in the day column): the block no longer stands at its bounds at rest under its key — moved, or
+re-keyed. Asked when the records change, never polled; a release that changed nothing lets the preview go after
+`RELEASED_DRAG_WAIT_MILLIS`. The mouse drag and the phone's "move" both. A dragged PERIOD box has the same hand-over
+and is not changed here. `CalendarEditChoicesTest`; the hand-over itself is not render-tested.
+
+### Calendar: a sleep period dragged onto a mode-1 line is retracted by it — 2026-10-05
+
+Asked for as: *"If the user drags a sleep period and the block reaches the $now line$ in mode 1, then the dragged block
+gets retracted, and when it gets completely erased and the mouse continues, the block appears in full size on the other
+side of the $now line$. This is supposed to be a consequence of the requirements: $now line$ in mode 1 is not in 'no
+screen'; if a period is added because of a period rule ('no screen' when there is 'sleep'), then if the 'sleep' period
+gets dragged away, the 'no screen' doesn't stay there and expand to cover the new position of 'sleep', but moves
+alongside it."* A held period box was drawn, and stored on release, wherever the hand had it — across the line whole.
+
+`SchedulerDomain.periodAtLine` says where a period put at a span stands: over a mode-1 line, one that is or carries
+"no screen" is ]line; its end] (the requirements' own sentence for a "no screen" period the line is in), nothing once
+under a minute is left, and whole when the line is not in it. It is `retractedAtLineSpans` — the plan's one predicate
+of "gives way to a mode-1 line" — asked of the period where it is being put, not a rule of the drag. The calendar asks
+it at each step of a period's drag and at its release (`LocalPeriodAtLine`, provided by `App` over the live clock and
+`engine.tpModeNow()`): the box is drawn over what is left (`HeldPeriodCut`), the task panels it refuses retract under
+that, and the release stores that. Released while nothing is left, the period stays where it was. Modes 2 and 3 cut
+nothing. `PeriodAtLineTest`.
+
+Not done: a period the user ADDS across a mode-1 line (the menu, "Add to the calendar") is still stored whole, and the
+layer hatches a dragged period lays are still drawn where it was until the release.
+
+### Calendar: overlapping periods are each their own box — 2026-10-05
+
+Asked for as: *"If the user adds period A 10h-12h and there was already a period A 11h-13h, there is a blue outline
+surrounding the 10h-12h block, and the black outline of the 11h-13h period is still there. Get rid of the current
+logic that would make it visually three blocks."* `periodSegments` cut the periods at every boundary and drew each
+stretch once (A, then "A, B", then B — the user's own rule of 2026-09), the shared stretch in the strongest hand's
+outline: the period just added drew as two boxes, and the outline of the one already there was broken at 12.
+
+It now answers ONE box per period, over its own hours, with its own outline and its own title (`periodSegments`,
+`periodSegmentOutline`, `periodSegmentLabel`; the `PeriodSegment` type and its readers are unchanged, each box holding
+one period). Two overlapping periods are two boxes overlapping. **This reverses the three-box rule for periods of
+different kinds too**, and with it the gesture's: a box moves ITS period (it moved every period in force over a
+shared box); where two overlap, the later-starting one is on top and takes the press. A period still never shares the
+column's width. `CalendarEditChoicesTest`.
+
+### Calendar: the blue and the orange outlines are above every other outline — 2026-10-05
+
+Asked for as: *"The blue and orange outlines must be above all other outlines in the calendar."* A period box's and a
+sleep window's outline were drawn UNDER the task panels (`zIndex(-1f)`): a panel covered the blue or the orange and
+redrew it in its own contrast colour, and its plain border cut across it. A hand-placed panel's blue outline was
+itself under the grey outline of a screen break drawn over it.
+
+The day column now ends its drawing with an **outline pass** (`CalendarUi.kt`, `outlineOnTop`): every blue (`User`) and
+orange (`Pattern`) outline once more, over the panels and the breaks — a sleep window's, a period box's (the box being
+dragged too), each slice of a hand-placed panel — as a bare border with no pointer input. The under-panel pass no
+longer draws those two (only a grey one), and a panel no longer redraws them in a contrast colour. Grey outlines and a
+block's plain border are where they were. Labels, rings and reminder tags stay above. `CalendarPanelOutlineTest` pins
+which outlines are the top ones; the stacking itself is not render-tested.
+
+### Search: the notifications are filtered by what they came from — 2026-10-05
+
+Anomaly (user): *"In the search window, I can't filter to only notifications of the scheduler engine."* A logged
+notification is a title, a message and an instant: nothing said where it came from, so the only filter the
+notifications had was the app's own "since". They now have **"From"** (`Setting.NotificationSourceSetting`,
+`Filters.notificationSources`, a check box per `NotificationSource`): scheduler engine (the plan's "Task to do now"),
+screen break (its start and its end), sleep schedule (the wind-down), alarm, timer, reminder, keyboard shortcut
+(a chord's receipt, "Notifications on"), other.
+
+The source is READ OFF THE TITLE (`NotificationSource.of`), not stored: the notifications already in the log have one
+too, and nothing persisted changed shape. The titles are stated once (`NotificationTitles`), which the engine now posts
+under (they were literals in `SchedulerEngine`, `RingKind.label` included). Stored with the Search configuration; an
+older payload has none, and a source a build does not know is dropped. `NotificationsWindowTest`.
+
+### Enter ends the edit of any field — 2026-10-05
+
+Asked for as: *"Pressing enter in edit mode must exit edit mode for any field."* Enter (the keypad's too) makes a
+single-line field give up the focus, as a press outside it does — so what a field does when it is left (reads its
+stored value again, closes its typing session) it does on Enter. Stated ONCE: `ui/EnterLeavesField.kt` holds the app's
+own `OutlinedTextField` (Material's, plus `Modifier.leavesEditOnEnter`), and the 13 files that drew Material's field
+now draw that one; the three bare number fields of the priority windows (weight, minimum time, percentage) wear the
+modifier themselves.
+
+- A field that gives Enter a meaning of its own answers first and keeps it (the modifier is the LAST of the chain,
+  and a preview key event runs from the outside in): the tree's cells, the Search bar, the find & replace bar, a task
+  picker, a lateral-menu button's name.
+- A field of several lines (a task's text) keeps Enter as its new line. A chord (Shift+Enter…) is not Enter.
+
+`EnterLeavesFieldTest` (jvmTest: real key events on a rendered field).
+
+### A time field's right-click menu: add or remove 1 h, 10 min, 1 min — 2026-10-05
+
+Asked for as: *"In a field where the user can configure a time in the format hh:mm, add a right-click menu with the
+option to add or remove 1h, 10min, or 1min."* ONE menu (`ui/TimeNudgeMenu.kt`: `TimeNudgeMenu`, `TIME_NUDGE_MINUTES`,
+`nudgedTimeOfDay`), wrapped round every `HH:MM` field: a quota's start and end times and a particular loop's end
+(`TimeOfDayField`), "Add to the calendar"'s start and end, an alarm's time (the Alarms window's row and the Search
+action), a reminder's (its window's row and the Search action) and the sleep schedule's three. It stays open, like a
+timer's countdown fields' menu, and leaves on the first press outside it.
+
+- A time of day steps round the clock (23:30 + 1 h = 00:30). "Add to the calendar"'s start and end are instants, so
+  they carry the day; the sleep DURATION stops at 0 and at 24 h.
+- The Search actions step every added alarm / reminder from its OWN time, so the menu works where the field reads
+  nothing because they differ. A reminder whose time is not defined has nothing to step from.
+- An alarm row's step is a History Unit of its own (never absorbed into the typing session before it).
+- Not given the menu: the `YYYY-MM-DD HH:MM` fields (the calendar filters' positions, a quota's instants), which are
+  a date and a time in one text. Touch has no stand-in for this right-click yet (`docs/PLATFORMS.md`).
+
+### Search: "Add to the calendar" has a start and an end, and the blocks of an element are a search — 2026-10-05
+
+Asked for as: *"In the actions for an element that can appear in the calendar, add configurations for the start and end
+and a button to add in the calendar. It is like in the actions for quota where the user can configure the start and end
+of a loop. A button opens a Search window showing in the search result all the blue outlined blocks of this element in
+the calendar."*
+
+- **"Add to the calendar"** (`AddedAction.PlaceOnCalendar`, `ui/CalendarPlacementEditor.kt`) is the quota loop's own
+  fields (`DayField`, `TimeOfDayField`, `LengthField`, made `internal`): a START (a day, a time of day, "Now") and an
+  END stated by a switch as a LENGTH after the start (1 hour by default, see the follow-up below) or as a day and a
+  time of its own. They are the Search window's (`Config.placement`, local-only, stored with
+  the configuration; an older payload has none). Until a start is given it is the calendar filter's position
+  (`SearchDomain.placementStart`), so the calendar's "add…" lays where it did. It replaced *"Give the calendar filter a
+  position first"*: the action no longer needs the filter. An end not after the start is shown as an error and nothing
+  is laid (`placementRefused`). A panel and a period take the end (`calendarDrafts(endMillis)`); a tag, an alarm's ring
+  and a timer's end are an instant, at the start.
+- **"Blocks on the calendar"** (`AddedAction.CalendarBlocks`) opens a Search window on a new kind of row, **calendar
+  block** (`Kind.CalendarBlock`, `SearchDomain.calendarBlocks`): every block the calendar outlines in blue — a panel
+  `SchedulerDomain.panelOutline` calls `User`, a reminder's tag, an isolated alarm, a timer's ring moved there — of the
+  added elements (`Filters.blocksOf`, their Search keys; `blocksSearchConfig`), in the timeline's order
+  (`SortKey.BlockStart`). The filter is listed in the Configuration Search window ("Blocks of", with its ✕). Opening a
+  block's row opens what is on the calendar at its start (`calendarAtConfig`, the calendar's own "edit…").
+- Both are GENERAL actions, listed in the top right quarter only while the added list holds an element that can be on
+  the calendar (`SearchDomain.actionsFor`, `CALENDAR_ACTIONS` over `CALENDAR_ADD_KINDS`): a list of categories no
+  longer shows "Add to the calendar".
+
+- Follow-up (same day, *"for the end configuration, add a button with a drop-down field with 'days', 'hours'
+  etc"*): the length is a NUMBER and a unit's drop-down (`QuotaDomain.LengthUnit`: minutes, hours, days, weeks;
+  `lengthUnitOf` / `lengthIn` / `parseLengthIn`) instead of a typed `1d 12h`. `LengthField` is the one field, so a
+  quota's loop length reads the same way. A stored length shows in the largest unit it is a whole number of, and the
+  unit never changes under the hand typing the number.
+
+- Anomaly (user, same day): the start read `20:30`; a backspace at its end and it read `20:03`. `TimeOfDayField` kept
+  its text keyed on the stored time, and `20:3` IS a time (20:03): written at once, it came back as the field's whole
+  text. Typing `2` on the way to `20:45` did the same (`02:00`). A field now keeps what is typed while it still says
+  the stored value, and reads the stored value's own text only when that was written from elsewhere
+  (`draftAfterStoreChange`, `rememberFieldDraft`) or when it is left. The quota's own time fields had the fault too
+  (the same field), and so had a resilience percentage (`5.` on its way to `5.5` lost its point).
+
+- Follow-up (user, same day: *"Why is the default … ends its own hours after the start? What does it mean? It should
+  be ends 1 hours after the start"*): the length is 1 hour until the user says otherwise
+  (`DEFAULT_PLACEMENT_LENGTH_MILLIS`). It was blank, read "its own" and meant each element's own length (a task's
+  minimum time, a period's hour) — a placeholder that read as a value. A task's panel laid by the action is now an hour
+  long, not its minimum time; `placementEnd` always has an answer.
+
+`CalendarBlocksSearchTest`, `QuotaTest`. No migration: nothing of the account's state changed.
+
+### Screen breaks: only a 20 s break bars the next 20 s break — 2026-10-05
+
+`docs/scheduler_requirements.md` (user edit, f73ee9d): *"After the end of a **20s** break, no 20s break in the next
+20 minutes"* (was: of a screen break), and a ≥15-minute "no screen" bars the 15 min break only (it barred the 20 s
+break for 20 minutes too). `BreakMachine.endActive` / `absorbHistory` set the 20 s bar only from a 20 s break (one
+the app conducted included); `stretchBars` no longer touches it; `BAR_20S_AFTER_ANY_MILLIS` →
+`BAR_20S_AFTER_20S_MILLIS`, `BAR_20S_AFTER_LONG_MILLIS` deleted.
+
+**What the user will see:** coming back to the screen after any absence longer than the 20 s break's remaining bar —
+a night included — the 20 s break is taken at once (it was barred for 20 minutes after an absence of 15 minutes or
+more). A 20 s break may also follow a pose directly.
+
+Two faults the old rule was hiding, fixed with it:
+- The 20 s break entered at the return kept the stretch open, so the poses the stretch had taken fell due inside it
+  and grew it into a 15-minute break holding the line in mode 3 (a wake would have landed in one). The stretch's
+  bars now hold from the line, on the machine and on one rebuilt from history.
+- A journey (wake, restart catch-up) told the break machine each stretch's mode at the stretch's END: a locked
+  stretch followed by an unlocked one was walked the other way round, and the first stride of every wake at a
+  screen. It is told where the stretch starts.
+
+`BreakMachineTest` (two new), and eleven tests re-stated under the new rules.
+
 
 Question (user): "why is there no sleep periods in the past?" It was written by a step apart from the line
 (`maybeMaterializePastSleep`): a scheduled window, where the active sessions showed no device, "while this session

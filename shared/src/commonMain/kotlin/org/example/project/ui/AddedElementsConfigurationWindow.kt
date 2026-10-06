@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -196,6 +195,8 @@ class AddedActionHandlers(
     val onPlaceOnCalendar: (List<org.example.project.scheduler.domain.CalendarElements.Draft>) -> Unit,
     /** "Constrained in": the constraint picker over these reminders (by id) at once; what it saves, all of them get. */
     val onEditReminderConstraint: (List<String>) -> Unit = {},
+    /** "Blocks on the calendar": the Search window of these elements' (by key) blocks ([SearchDomain.blocksSearchConfig]). */
+    val onOpenBlocksSearch: (List<String>) -> Unit = {},
 )
 
 /**
@@ -332,6 +333,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
         SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
         SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
+        SearchDomain.AddedAction.PlaceOnCalendar,
     )
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
@@ -365,32 +367,12 @@ private fun AddedActionEditor(
                 kinds.forEach { kind -> FrameButton("Every " + kind.label) { handlers.onOpenKindSearch(kind) } }
             }
         }
-        // The calendar's "add…": at the calendar filter's instant, whether its switch is on or not.
-        SearchDomain.AddedAction.PlaceOnCalendar -> {
-            val at = config.filters.calendarAddAtMillis
-            if (at == null) {
-                Text(
-                    "Give the calendar filter a position first.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                val drafts = SearchDomain.calendarDrafts(state, added, at)
-                // A timer is put on the clock to end there (it has no start on the calendar to give).
-                val timers = SearchDomain.calendarTimerIntents(state, added, at, nowMillis())
-                val timerCount = (timers.firstOrNull() as? SchedulerIntent.SetTimers)?.let { set ->
-                    set.entries.count { entry -> state.timers.none { it == entry } }
-                } ?: 0
-                val count = drafts.size + timerCount
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FrameButton(if (count == 1) "Add here" else "Add $count here", enabled = count > 0) {
-                        if (drafts.isNotEmpty()) handlers.onPlaceOnCalendar(drafts)
-                        timers.forEach { run(SearchDomain.AddedCommand.Raw(it)) }
-                    }
-                    // An alarm is added as a new one (an existing one's occurrences are its weekdays').
-                    FrameButton("New alarm here") { handlers.onPlaceOnCalendar(listOf(SearchDomain.calendarAlarmDraft(state, at))) }
-                }
-            }
+        // The calendar's "add…": where its start and end say ([CalendarPlacementEditor]).
+        SearchDomain.AddedAction.PlaceOnCalendar ->
+            CalendarPlacementEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
+        SearchDomain.AddedAction.CalendarBlocks -> {
+            val owners = SearchDomain.blockOwners(added)
+            FrameButton("Search the blocks", enabled = owners.isNotEmpty()) { handlers.onOpenBlocksSearch(owners) }
         }
         SearchDomain.AddedAction.TaskAddCategory ->
             CategoryChooser(
@@ -685,6 +667,7 @@ private fun AddedActionEditor(
                 parse = { text -> parseAlarmTime(text)?.let { minutes -> { a: AlarmEntry -> a.copy(timeOfDayMinutes = minutes) } } },
                 restore = { alarm, before -> alarm.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
                 write = { key, change -> run(SearchDomain.AddedCommand.AlarmsEdit(key, change)) },
+                timeNudge = { alarm, delta -> alarm.copy(timeOfDayMinutes = nudgedTimeOfDay(alarm.timeOfDayMinutes, delta)) },
             )
         SearchDomain.AddedAction.AlarmRingsFor ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -796,6 +779,10 @@ private fun AddedActionEditor(
                 parse = { text -> { c: ChoreEntry -> c.copy(timeOfDayMinutes = parseTimeOfDay(text)) } },
                 restore = { chore, before -> chore.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
                 write = { _, change -> run(SearchDomain.AddedCommand.RemindersEdit(change)) },
+                // A time not defined (the tag goes at the current time) has nothing to step from.
+                timeNudge = { chore, delta ->
+                    if (chore.timeOfDayMinutes < 0) chore else chore.copy(timeOfDayMinutes = nudgedTimeOfDay(chore.timeOfDayMinutes, delta))
+                },
             )
         SearchDomain.AddedAction.ReminderConstraint -> {
             val reminders = SearchDomain.addedReminders(state, added)
@@ -975,11 +962,17 @@ private fun <T> SharedTextField(
     sanitize: (String) -> String = { it },
     /** A name rather than a number: the field takes the row's width. */
     wide: Boolean = false,
+    /**
+     * For a field that holds a time as `HH:MM`: one element [deltaMinutes] later — the right-click menu's step
+     * ([TimeNudgeMenu]), applied to every element from its OWN time, so it works where they differ too.
+     */
+    timeNudge: ((T, deltaMinutes: Int) -> T)? = null,
 ) {
     var before by remember(field) { mutableStateOf<Map<String, T>?>(null) }
     var draft by remember(field) { mutableStateOf("") }
     var session by remember(field) { mutableStateOf(0) }
     val editKey = "added/$field@$session"
+    val textField: @Composable () -> Unit = {
     OutlinedTextField(
         value = if (before != null) draft else SearchDomain.sharedValue(items, read).orEmpty(),
         onValueChange = { raw ->
@@ -1010,6 +1003,20 @@ private fun <T> SharedTextField(
                 true
             },
     )
+    }
+    if (timeNudge == null) {
+        textField()
+    } else {
+        TimeNudgeMenu(
+            enabled = items.isNotEmpty(),
+            onNudge = { delta ->
+                // Inside a typing session the step joins it, and the field reads the stepped time.
+                if (before != null) draft = SearchDomain.sharedValue(items.map { timeNudge(it, delta) }, read).orEmpty()
+                write(editKey) { timeNudge(it, delta) }
+            },
+            field = textField,
+        )
+    }
 }
 
 /** A raw intent through the actions' one write path: [SearchDomain.AddedCommand.Raw]. */

@@ -175,6 +175,41 @@ object QuotaDomain {
         return kotlinx.datetime.LocalDate.fromEpochDays(today.toEpochDays() - back)
     }
 
+    /**
+     * **The unit a length is typed in** (user rule 2026-10-05): the length field is a number and a drop-down of these.
+     * A length is stored in millis whatever unit it was typed in; the unit is how the field reads it.
+     */
+    enum class LengthUnit(val label: String, val millis: Long) {
+        Minutes("minutes", 60_000L),
+        Hours("hours", 3_600_000L),
+        Days("days", 86_400_000L),
+        Weeks("weeks", 604_800_000L),
+    }
+
+    /** The unit a stored length reads best in: the largest it is a whole number of (36 h is hours, 24 h a day). */
+    fun lengthUnitOf(millis: Long): LengthUnit =
+        LengthUnit.entries.lastOrNull { millis > 0L && millis % it.millis == 0L } ?: LengthUnit.Minutes
+
+    /** [millis] as a number of [unit]: whole where it is (`7`), else to the hundredth (`1.5`). */
+    fun lengthIn(millis: Long, unit: LengthUnit): String {
+        val hundredths = kotlin.math.round(millis.toDouble() / unit.millis * 100.0).toLong()
+        val whole = (hundredths / 100L).toString()
+        val rest = (hundredths % 100L).toString().padStart(2, '0').trimEnd('0')
+        return if (rest.isEmpty()) whole else "$whole.$rest"
+    }
+
+    /**
+     * A typed number of [unit], in millis, to the minute (`1.5` hours is 90 minutes; a comma reads as the point). Null
+     * for anything that is not a number, or for a length of nothing.
+     */
+    fun parseLengthIn(text: String, unit: LengthUnit): Long? {
+        // Digits and one point only: the JVM's own reading takes `1d` and `1f` for numbers, and they are not lengths.
+        val typed = text.trim().replace(',', '.').takeIf { Regex("""\d+\.?\d*|\.\d+""").matches(it) } ?: return null
+        val number = typed.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        val minutes = kotlin.math.round(number * unit.millis / 60_000.0)
+        return if (minutes < 1.0 || minutes > 5_256_000_000.0) null else minutes.toLong() * 60_000L
+    }
+
     /** A length as the field reads it: `7d`, `1d 12h`, `2h 30min`, `45min` — whole minutes, the largest units first. */
     fun formatLength(millis: Long): String {
         val minutes = (millis / 60_000L).coerceAtLeast(0L)

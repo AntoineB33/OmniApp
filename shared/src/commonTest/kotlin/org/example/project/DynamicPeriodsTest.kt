@@ -69,16 +69,17 @@ class DynamicPeriodsTest {
     // ----- the three bars -----------------------------------------------------------------------
 
     @Test
-    fun after_any_dynamic_period_there_is_no_20s_period_for_twenty_minutes() {
+    fun after_a_20s_period_there_is_no_20s_period_for_twenty_minutes() {
         val panels = place()
         assertTrue(panels.isNotEmpty(), "the placement must produce something to be about")
         for (i in panels.indices) {
             for (j in i + 1 until panels.size) {
-                if (panels[j].title != lookAway) continue
+                // Only the end of a 20 s period bars the next one (requirements 2026-10-05), not the end of a pose.
+                if (panels[j].title != lookAway || panels[i].title != lookAway) continue
                 val gap = panels[j].startEpochMillis - panels[i].endEpochMillis
                 assertTrue(
-                    gap >= DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS || gap < 0,
-                    "a 20 s period fell ${gap / 1000}s after a dynamic period ending at " +
+                    gap >= DynamicPeriods.BAR_20S_AFTER_20S_MILLIS || gap < 0,
+                    "a 20 s period fell ${gap / 1000}s after a 20 s period ending at " +
                         "${(panels[i].endEpochMillis - NOW) / 1000}s",
                 )
             }
@@ -126,9 +127,10 @@ class DynamicPeriodsTest {
         assertEquals(10 * MIN, starts(panels, lookAway).minOrNull(), "the 20 s period the stretch takes starts where the stretch does")
         val firstLookAwayAfter = starts(panels, lookAway).filter { it >= 40 * MIN }.minOrNull()
         assertTrue(firstLookAwayAfter != null)
+        // Requirements 2026-10-05: a stretch of "no screen" bars no 20 s period — only the end of a 20 s period does.
         assertTrue(
-            firstLookAwayAfter - 40 * MIN >= DynamicPeriods.BAR_20S_AFTER_LONG_MILLIS,
-            "a 30-minute rest must bar the 20 s period for 20 minutes after it; got ${(firstLookAwayAfter - 40 * MIN) / 60000}min",
+            firstLookAwayAfter - 40 * MIN < 20 * MIN,
+            "a 30-minute rest must not bar the 20 s period for 20 minutes after it; got ${(firstLookAwayAfter - 40 * MIN) / 60000}min",
         )
         val first15 = starts(panels, pose15).minOrNull()
         assertTrue(first15 != null)
@@ -255,7 +257,7 @@ class DynamicPeriodsTest {
         val panels = place(toMillis = NOW + 6 * HOUR, sides = listOf(dense))
         assertTrue(panels.isNotEmpty())
         val gaps = panels.zipWithNext { a, b -> b.startEpochMillis - a.endEpochMillis }
-        assertTrue(gaps.all { it >= DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS }, "gaps ${gaps.map { it / 1000 }}")
+        assertTrue(gaps.all { it >= DynamicPeriods.BAR_20S_AFTER_20S_MILLIS }, "gaps ${gaps.map { it / 1000 }}")
         assertTrue(panels.size <= 6 * 3 + 1)
     }
 
@@ -357,11 +359,13 @@ class DynamicPeriodsTest {
     @Test
     fun a_break_the_app_conducted_bars_the_20s_period_for_twenty_minutes() {
         // The reported anomaly (2026-09-03): the user pressed "Look away now" and the instant it finished another 20 s
-        // period was owed at the line. A conducted break is one of the three: "after the end of a screen break, no 20s
-        // break in the next 20 minutes".
-        val earlierRest = RestrictivePeriod(NOW - 50 * MIN, NOW - 30 * MIN, PeriodKinds.INACTIVITY, "Inactivity")
+        // period was owed at the line. A conducted break is a 20 s break: "after the end of a 20s break, no 20s break in
+        // the next 20 minutes".
+        val earlier =
+            SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.RecordConductedBreak(lookAway, NOW - 10 * MIN - 20 * SEC, NOW - 10 * MIN)).panels
+        val earlierRest = SchedulerDomain.restrictivePeriodsOf(earlier, PeriodKindConfig.DEFAULT)
         assertTrue(
-            starts(place(periods = listOf(earlierRest)), lookAway).any { it in 0 until DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS },
+            starts(place(periods = earlierRest), lookAway).any { it in 0 until DynamicPeriods.BAR_20S_AFTER_20S_MILLIS },
             "the scenario must be one where a 20 s period falls due inside the next twenty minutes",
         )
         val conducted =
@@ -369,7 +373,7 @@ class DynamicPeriodsTest {
         assertTrue(conducted.single().conductedBreak, "the recorded break must say it was one of the three")
         val periods = SchedulerDomain.restrictivePeriodsOf(conducted, PeriodKindConfig.DEFAULT)
         assertTrue(periods.any { it.dynamic }, "…and reach the machine as a DYNAMIC period")
-        val offending = starts(place(periods = listOf(earlierRest) + periods), lookAway).filter { it < DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS }
+        val offending = starts(place(periods = earlierRest + periods), lookAway).filter { it < DynamicPeriods.BAR_20S_AFTER_20S_MILLIS }
         assertTrue(offending.isEmpty(), "a 20 s period fell ${offending.firstOrNull()?.div(1000)}s after a conducted look-away")
     }
 

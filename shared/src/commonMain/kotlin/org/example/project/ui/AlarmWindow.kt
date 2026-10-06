@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -702,13 +701,22 @@ private fun AlarmRowEditor(
                 Text(text = "Armed", style = MaterialTheme.typography.bodySmall)
             } else {
                 Spacer(Modifier.width(8.dp))
-                OutlinedTextField(
-                    value = row.timeText,
-                    onValueChange = { onRowChange(row.copy(timeText = it), FIELD_TIME) },
-                    singleLine = true,
-                    isError = parseAlarmTime(row.timeText) == null,
-                    modifier = Modifier.width(92.dp).editSession(FIELD_TIME, onFieldFocus),
-                )
+                // The right-click menu's step is a change of its own (null): never absorbed into a typing session.
+                val time = parseAlarmTime(row.timeText)
+                TimeNudgeMenu(
+                    enabled = time != null,
+                    onNudge = { delta ->
+                        time?.let { onRowChange(row.copy(timeText = formatAlarmTime(nudgedTimeOfDay(it, delta))), null) }
+                    },
+                ) {
+                    OutlinedTextField(
+                        value = row.timeText,
+                        onValueChange = { onRowChange(row.copy(timeText = it), FIELD_TIME) },
+                        singleLine = true,
+                        isError = time == null,
+                        modifier = Modifier.width(92.dp).editSession(FIELD_TIME, onFieldFocus),
+                    )
+                }
                 Spacer(Modifier.width(8.dp))
                 OutlinedTextField(
                     value = row.label,

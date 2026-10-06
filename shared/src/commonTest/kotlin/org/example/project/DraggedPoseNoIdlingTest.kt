@@ -171,7 +171,8 @@ class DraggedPoseNoIdlingTest {
         // the recurrence bars still count from it — the whole point of the drag is that the break is OWED.
         val panels = fill(account(), NOW)
         val pose = draggedPose(panels)!!
-        // A dynamic period bars the 20 s look-away for twenty minutes after it, dragged or not.
+        // The look-away that fell due with the pose is of its chain, so the next one is twenty minutes after it,
+        // dragged or not. (The end of a pose alone bars no look-away: requirements 2026-10-05.)
         val lookAways =
             panels.filter { it.screenBreak && it.title == SchedulerDomain.DEFAULT_SCREEN_BREAKS[0].title }
         assertTrue(

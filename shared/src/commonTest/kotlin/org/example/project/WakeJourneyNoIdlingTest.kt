@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
@@ -101,7 +102,10 @@ class WakeJourneyNoIdlingTest {
         val held = TaskTimeRange(sleepStart + 5 * MIN, sleepStart + 3 * HOUR - 10 * MIN)
         val worked = SchedulerDomain.intersectRegions(walk.record, listOf(held)).sumOf { it.endEpochMillis - it.startEpochMillis }
         assertTrue(worked > (held.endEpochMillis - held.startEpochMillis) / 2, "the held rules for mode 2 are walked: ${worked / MIN} min")
-        // …and the landing is back on the live reading.
-        assertTrue(engine.tpModeNow(NOW) == DynamicPeriods.MODE_AT_SCREEN)
+        // …and the landing is back on the live reading: the 20 s break mode 2 dragged through the journey is entered
+        // where the line lands at a screen (requirements 2026-10-05: no stretch of "no screen" bars it), in mode 3 for
+        // its twenty seconds, and the line is at the screen after it.
+        assertEquals(DynamicPeriods.LABEL_20S, engine.frozenBreaks.value?.machine?.active?.label, "the 20 s break, and no pose grown out of it")
+        assertTrue(engine.tpModeNow(NOW + MIN) == DynamicPeriods.MODE_AT_SCREEN)
     }
 }

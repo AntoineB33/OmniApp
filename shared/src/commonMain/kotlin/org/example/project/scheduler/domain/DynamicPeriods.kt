@@ -13,14 +13,14 @@ package org.example.project.scheduler.domain
  */
 object DynamicPeriods {
 
-    /** After ANY dynamic period, no 20 s period for 20 minutes. */
-    const val BAR_20S_AFTER_ANY_MILLIS: Long = 20L * 60_000L
+    /**
+     * After the end of a 20 s period, no 20 s period for 20 minutes. (Until 2026-10-05 the end of ANY of the three
+     * barred it, and so did a >= 15-minute rest stretch: the requirements dropped both.)
+     */
+    const val BAR_20S_AFTER_20S_MILLIS: Long = 20L * 60_000L
 
     /** After a >= 5-minute rest stretch, no 5 min period for an hour. */
     const val BAR_5MIN_AFTER_STRETCH_MILLIS: Long = 60L * 60_000L
-
-    /** After a >= 15-minute rest stretch, no 20 s period for 20 minutes. */
-    const val BAR_20S_AFTER_LONG_MILLIS: Long = 20L * 60_000L
 
     /** After a >= 15-minute rest stretch, no 15 min period for two hours. */
     const val BAR_15MIN_AFTER_LONG_MILLIS: Long = 2L * 60L * 60_000L
@@ -28,7 +28,7 @@ object DynamicPeriods {
     /** The length at which a rest stretch starts barring the 5-minute period. */
     const val STRETCH_SHORT_MILLIS: Long = 5L * 60_000L
 
-    /** The length at which a rest stretch starts barring the 20 s and the 15-minute periods. */
+    /** The length at which a rest stretch starts barring the 15-minute period. */
     const val STRETCH_LONG_MILLIS: Long = 15L * 60_000L
 
     /** The stable label of the 20-second period. */

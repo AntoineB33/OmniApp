@@ -197,20 +197,20 @@ private const val LOOK_AWAY_RESUME_POLL_MILLIS: Long = 200
 // PRD §15: what the end of a look-away break announces (see [SchedulerEngine.announceResumeWork]). Posted as a
 // notification, not merely spoken, so the History window's Notifications column shows a break's end as well as
 // its start; the `resume_work` voice cue speaks the same thing.
-private const val RESUME_WORK_TITLE: String = "Screen break over"
+private const val RESUME_WORK_TITLE: String = org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK_OVER
 private const val RESUME_WORK_MESSAGE: String = "Resume your work"
 
 // PRD §7/§15: the title every system-wide chord's receipt is posted under (see
 // [SchedulerEngine.announceShortcutReceived]). One shared title, so the receipts group together in the
 // History window's Notifications column and in the OS's own notification list — the chord itself is the
 // message, which is what tells the user WHICH press landed.
-private const val SHORTCUT_RECEIVED_TITLE: String = "Shortcut received"
+private const val SHORTCUT_RECEIVED_TITLE: String = org.example.project.scheduler.state.NotificationTitles.SHORTCUT_RECEIVED
 
 // PRD §11: what the CHORD turning notifications back ON announces (see [SchedulerEngine.setNotificationsEnabled];
 // the switch announces nothing). The
 // only notification the mute cannot hide, because it is posted from the far side of the flip — which is what
 // makes the un-mute chord's own (still-muted, hence swallowed) receipt visible after all.
-private const val NOTIFICATIONS_ON_TITLE: String = "Notifications on"
+private const val NOTIFICATIONS_ON_TITLE: String = org.example.project.scheduler.state.NotificationTitles.NOTIFICATIONS_ON
 private const val NOTIFICATIONS_ON_MESSAGE: String = "OmniApp will notify you again"
 
 // PRD §12/§15 device-sleep detection: the *real*-time gap between two advance ticks that means the process was
@@ -368,10 +368,10 @@ class AppSchedulerHost(val vm: TaskSchedulerViewModel, val engine: SchedulerEngi
  */
 enum class RingKind(val label: String) {
     /** PRD §18: a wall-clock time of day on a set of local weekdays. */
-    Alarm("Alarm"),
+    Alarm(org.example.project.scheduler.state.NotificationTitles.ALARM),
 
     /** PRD §18: one stored instant, fixed when the countdown was started. */
-    Timer("Timer"),
+    Timer(org.example.project.scheduler.state.NotificationTitles.TIMER),
 
     /**
      * PRD §14: a reminder tag falling due. It reaches the ring seam through the same [ArmedAlarm] the other
@@ -379,7 +379,7 @@ enum class RingKind(val label: String) {
      * belongs to the alarms and the timers (`alarms-and-timers.md`), so a reminder is announced by the running
      * app, from the ordered cue sweep, exactly as a screen break is.
      */
-    Reminder("Reminder"),
+    Reminder(org.example.project.scheduler.state.NotificationTitles.REMINDER),
 }
 
 data class ArmedAlarm(
@@ -1809,6 +1809,13 @@ class SchedulerEngine(
                 // Crossing into the other mode class is a mode flip: the rules held for the new class are laid there.
                 val was = sweepMode
                 sweepMode = stepMode
+                // The break machine walks a stretch in the mode it holds and takes a new one where it is told to, at
+                // the line: so it is told HERE, where the stretch starts — not by the step that ends it, which had it
+                // walk every stretch of a journey in the mode of the one before (a locked stretch then an unlocked one,
+                // walked the other way round; the first stride of every wake, at a screen).
+                if (stepMode != null && _frozenBreaks.value?.machine?.let { it.baseMode != stepMode && it.atMillis <= cursor } == true) {
+                    advanceBreaks(cursor, stepMode)
+                }
                 if (was != null && stepMode != null && SchedulerDomain.tpModeFlipChangesPlan(was, stepMode)) {
                     layHeldModePlan(cursor, was, stepMode)
                     plannedUntil = unrollJourney(cursor, toMillis)
@@ -3706,7 +3713,7 @@ class SchedulerEngine(
                                     lastNotifiedTaskId = currentTaskId
                                     lastAwaySuppressedTaskId = null
                                     notifyUser(
-                                        "Task to do now",
+                                        org.example.project.scheduler.state.NotificationTitles.TASK_TO_DO_NOW,
                                         message,
                                         spoken = SpokenMessages.currentTask(
                                             st.tasks[currentTaskId]?.title.orEmpty(),
@@ -3773,7 +3780,7 @@ class SchedulerEngine(
                                             // this cue's wording), while the notification says what the
                                             // break runs out into — the two halves of one funnel call.
                                             notifyUser(
-                                                "Screen break",
+                                                org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK,
                                                 SchedulerDomain.screenBreakStartNotificationMessage(
                                                     panels = st.panels,
                                                     title = title,
@@ -3825,7 +3832,7 @@ class SchedulerEngine(
                                         val poseEnd = due +
                                             (st.screenBreaks.firstOrNull { it.title == title }?.durationMillis ?: 0L)
                                         notifyUser(
-                                            "Screen break",
+                                            org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK,
                                             SchedulerDomain.screenBreakStartNotificationMessage(
                                                 panels = st.panels,
                                                 title = title,
@@ -3906,7 +3913,7 @@ class SchedulerEngine(
                                     if (cueSweep.realLatenessMillis(wd) <= LOOK_AWAY_START_FRESH_MILLIS &&
                                         deviceUnlocked()
                                     ) {
-                                        notifyUser("Stop work", "Wind down — bedtime in 1 hour", spoken = SpokenMessages.WIND_DOWN)
+                                        notifyUser(org.example.project.scheduler.state.NotificationTitles.STOP_WORK, "Wind down — bedtime in 1 hour", spoken = SpokenMessages.WIND_DOWN)
                                     }
                                 }
                             }
@@ -3984,7 +3991,7 @@ class SchedulerEngine(
             // The break machine the line carries starts it: a look-away falling due while it runs joins it.
             conductBreak(startedAt)
             notifyUser(
-                "Screen break",
+                org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK,
                 SchedulerDomain.screenBreakStartNotificationMessage(
                     panels = st.panels,
                     title = lookAway.title,

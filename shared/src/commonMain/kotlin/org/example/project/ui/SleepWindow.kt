@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -92,16 +91,26 @@ private fun TimeField(
     var text by remember { mutableStateOf(formatHourMinute(minutes)) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        OutlinedTextField(
-            value = text,
-            onValueChange = {
-                text = it
-                parseHourMinute(it, allowOver24)?.let(onMinutes)
+        // A time of day steps round the clock; a duration stops at nothing and at a day.
+        TimeNudgeMenu(
+            onNudge = { delta ->
+                val from = parseHourMinute(text, allowOver24) ?: minutes
+                val stepped = if (allowOver24) (from + delta).coerceIn(0, 24 * 60) else nudgedTimeOfDay(from, delta)
+                text = formatHourMinute(stepped)
+                onMinutes(stepped)
             },
-            singleLine = true,
-            isError = parseHourMinute(text, allowOver24) == null,
-            modifier = Modifier.width(96.dp),
-        )
+        ) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = {
+                    text = it
+                    parseHourMinute(it, allowOver24)?.let(onMinutes)
+                },
+                singleLine = true,
+                isError = parseHourMinute(text, allowOver24) == null,
+                modifier = Modifier.width(96.dp),
+            )
+        }
     }
 }
 

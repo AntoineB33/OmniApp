@@ -2593,6 +2593,35 @@ object SchedulerDomain {
         config.isOrImpliesNoScreen(period.kind) && (period.kind == PeriodKinds.NO_SCREEN || period.startMillis <= nowMillis)
 
     /**
+     * **Where a period the user is putting at [range] stands, the line being where it is** — what a drag of it draws
+     * and what its release stores (user rule 2026-10-05).
+     *
+     * `docs/scheduler_requirements.md`: *"When the $now line$ is in mode 1 and reaches a 'no screen' period that
+     * extends to [t1;t2], I want the 'no screen' period to become ]$now line$;t2] when $now line$ is in [t1;t2["* — and
+     * a period that CARRIES "no screen" (`when sleep then no screen`) cannot stand where its "no screen" cannot, the
+     * companion being laid where the period is and nowhere else. So a `sleep` period carried onto a mode-1 line is
+     * ]line; its end]: it shortens as it is carried further across, is gone as its end reaches the line (null: under a
+     * minute is left, [MIN_MANUAL_ENTRY_MILLIS]), and stands whole again once it is wholly on the other side. Nothing
+     * here is about dragging: it is [retractedAtLineSpans] — the one predicate of "gives way to a mode-1 line" —
+     * asked of the period at the place it is being put. Any other period, and any period in modes 2 and 3 (where the
+     * line must BE covered), is [range].
+     */
+    fun periodAtLine(
+        range: TaskTimeRange,
+        kind: String,
+        nowMillis: Long,
+        tpMode: Int,
+        config: PeriodKindConfig,
+    ): TaskTimeRange? {
+        if (nowMillis < range.startEpochMillis || nowMillis >= range.endEpochMillis) return range
+        val left =
+            retractedAtLineSpans(
+                listOf(RestrictivePeriod(range.startEpochMillis, range.endEpochMillis, kind)), nowMillis, tpMode, config,
+            ).firstOrNull() ?: return range
+        return left.takeIf { it.endEpochMillis - it.startEpochMillis >= MIN_MANUAL_ENTRY_MILLIS }
+    }
+
+    /**
      * [retractedAtLineSpans] applied: the periods that **give their remainder up** ([retractsAtLine], where
      * the whole rule and its reasons live) with those spans taken out of them — a `sleep` window or a `before bed`
      * hour the line is in as well as its companion. Every other period is returned untouched.

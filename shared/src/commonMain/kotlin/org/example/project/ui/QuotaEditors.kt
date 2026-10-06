@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -319,7 +318,7 @@ private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Su
  * (the calendar window's own month grid). The field reads the day picked, with its weekday.
  */
 @Composable
-private fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled: Boolean, onPick: (LocalDate) -> Unit) {
+internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled: Boolean, onPick: (LocalDate) -> Unit) {
     var open by remember { mutableStateOf(false) }
     var month by remember(date, open) { mutableStateOf(date ?: today) }
     Box(Modifier.width(170.dp)) {
@@ -393,64 +392,142 @@ private fun Modifier.endsEditOnOutsidePress(onLeft: () -> Unit = {}): Modifier {
 }
 
 /**
+ * **What a field reads once the value it edits has changed** (anomaly 2026-10-05: `20:30`, one backspace, and the field
+ * read `20:03`). A field writes what is typed as soon as it reads as a value, and the stored value then comes back to
+ * it: [draft] is kept while it still says that value (`20:3` IS 20:03 — the hand is not done typing), and replaced by
+ * the stored value's own text only when it says something else (written by another field, or by Undo).
+ */
+internal fun <T> draftAfterStoreChange(draft: String, stored: T?, format: (T) -> String, parse: (String) -> T?): String =
+    if (parse(draft) == stored) draft else stored?.let(format).orEmpty()
+
+/** A field's text over the value it edits ([draftAfterStoreChange]): never rewritten under the hand typing it. */
+@Composable
+private fun <T> rememberFieldDraft(stored: T?, format: (T) -> String, parse: (String) -> T?): androidx.compose.runtime.MutableState<String> {
+    val draft = remember { mutableStateOf(stored?.let(format).orEmpty()) }
+    var seen by remember { mutableStateOf(stored) }
+    if (seen != stored) {
+        seen = stored
+        draft.value = draftAfterStoreChange(draft.value, stored, format, parse)
+    }
+    return draft
+}
+
+/** A time of day as its field reads it: `HH:MM`. */
+internal fun timeOfDayText(minutes: Int): String =
+    (minutes / 60).toString().padStart(2, '0') + ":" + (minutes % 60).toString().padStart(2, '0')
+
+/** A typed time of day in minutes — `7`, `07:5`, `07:05` — or null for anything else. */
+internal fun timeOfDayOf(text: String): Int? {
+    val parts = text.trim().split(':')
+    val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val m = if (parts.size > 1) parts[1].toIntOrNull() ?: return null else 0
+    return if (parts.size <= 2 && h in 0..23 && m in 0..59) h * 60 + m else null
+}
+
+/**
  * A time of day, `HH:MM`; [minutes] null reads "mixed". A time that does not parse shows as an error, unwritten — and
  * so does one the caller [refused]. Left, the field reads [minutes] again: it never goes on showing a time that is
  * not the one stored.
  */
 @Composable
-private fun TimeOfDayField(
+internal fun TimeOfDayField(
     minutes: Int?,
     enabled: Boolean,
     refused: Boolean = false,
+    /** What the empty field reads while [minutes] is null: several values, or none given yet. */
+    blank: String = "mixed",
     /** The field reads the stored time again — typed back, or left: whatever was refused is no longer on screen. */
     onSettled: () -> Unit = {},
+    /**
+     * The right-click menu's step ([TimeNudgeMenu]), where it is not simply the time of day moved round the clock: a
+     * time that belongs to a date carries the date along.
+     */
+    onNudge: ((deltaMinutes: Int) -> Unit)? = null,
     onChange: (Int) -> Unit,
 ) {
-    fun format(m: Int) = (m / 60).toString().padStart(2, '0') + ":" + (m % 60).toString().padStart(2, '0')
-    fun parse(text: String): Int? {
-        val parts = text.trim().split(':')
-        val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
-        val m = if (parts.size > 1) parts[1].toIntOrNull() ?: return null else 0
-        return if (parts.size <= 2 && h in 0..23 && m in 0..59) h * 60 + m else null
+    fun format(m: Int) = timeOfDayText(m)
+    fun parse(text: String): Int? = timeOfDayOf(text)
+    var draft by rememberFieldDraft(minutes, ::timeOfDayText, ::timeOfDayOf)
+    TimeNudgeMenu(
+        enabled = enabled && minutes != null,
+        onNudge = { delta -> if (onNudge != null) onNudge(delta) else minutes?.let { onChange(nudgedTimeOfDay(it, delta)) } },
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { text ->
+                draft = text
+                val typed = parse(text)
+                // The stored time typed back is no change to write — but it IS the end of whatever was refused before
+                // it (anomaly 2026-10-04: the red message stayed on after the real end was typed back).
+                if (typed != null && typed == minutes) onSettled() else typed?.let(onChange)
+            },
+            singleLine = true,
+            enabled = enabled,
+            // Red for what is ON SCREEN: a refusal no longer colours a field that reads the stored time.
+            isError = (refused && parse(draft) != minutes) || (draft.isNotBlank() && parse(draft) == null),
+            placeholder = { Text(if (minutes == null) blank else "HH:MM") },
+            modifier = Modifier.width(92.dp).endsEditOnOutsidePress {
+                draft = minutes?.let(::format).orEmpty()
+                onSettled()
+            },
+        )
     }
-    var draft by remember(minutes) { mutableStateOf(minutes?.let(::format).orEmpty()) }
-    OutlinedTextField(
-        value = draft,
-        onValueChange = { text ->
-            draft = text
-            val typed = parse(text)
-            // The stored time typed back is no change to write — but it IS the end of whatever was refused before it
-            // (anomaly 2026-10-04: the red message stayed on after the real end was typed back).
-            if (typed != null && typed == minutes) onSettled() else typed?.let(onChange)
-        },
-        singleLine = true,
-        enabled = enabled,
-        // Red for what is ON SCREEN: a refusal no longer colours a field that reads the stored time.
-        isError = (refused && parse(draft) != minutes) || (draft.isNotBlank() && parse(draft) == null),
-        placeholder = { Text(if (minutes == null) "mixed" else "HH:MM") },
-        modifier = Modifier.width(92.dp).endsEditOnOutsidePress {
-            draft = minutes?.let(::format).orEmpty()
-            onSettled()
-        },
-    )
 }
 
-/** A length of time ([QuotaDomain.formatLength]: `7d`, `1d 12h`, `90min`); one that does not parse is never written. */
+/**
+ * **A length of time: a number and the unit it is in** (user rule 2026-10-05) — a field, and a button whose drop-down
+ * lists the units ([QuotaDomain.LengthUnit]: minutes, hours, days, weeks). The number is written as soon as it is one
+ * (to the minute, [QuotaDomain.parseLengthIn]); picking a unit keeps the number and writes it in that unit. A stored
+ * length reads in the largest unit it is a whole number of ([QuotaDomain.lengthUnitOf]) — but never changes unit under
+ * the hand that is typing it (`24` hours stays hours while a `240` is on its way).
+ * [blank] is what the empty field reads; where no length is an answer too, emptying the field says it ([onBlank]).
+ */
 @Composable
-private fun LengthField(millis: Long?, mixed: Boolean, onChange: (Long) -> Unit) {
-    var draft by remember(millis) { mutableStateOf(millis?.let(QuotaDomain::formatLength).orEmpty()) }
-    OutlinedTextField(
-        value = draft,
-        onValueChange = { text ->
-            draft = text
-            QuotaDomain.parseLength(text)?.takeIf { it != millis }?.let(onChange)
-        },
-        singleLine = true,
-        isError = draft.isNotBlank() && QuotaDomain.parseLength(draft) == null,
-        placeholder = { Text(if (millis == null && mixed) "mixed" else "7d") },
-        // Left, it reads the stored length again: a length that was not one is not left on screen.
-        modifier = Modifier.width(120.dp).endsEditOnOutsidePress { draft = millis?.let(QuotaDomain::formatLength).orEmpty() },
-    )
+internal fun LengthField(
+    millis: Long?,
+    mixed: Boolean,
+    blank: String = "7",
+    /** The unit the drop-down stands on while there is no length to read one off. */
+    defaultUnit: QuotaDomain.LengthUnit = QuotaDomain.LengthUnit.Days,
+    onBlank: (() -> Unit)? = null,
+    onChange: (Long) -> Unit,
+) {
+    var unit by remember { mutableStateOf(millis?.let(QuotaDomain::lengthUnitOf) ?: defaultUnit) }
+    var draft by remember { mutableStateOf(millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty()) }
+    // The stored length changed and it is not what the field says: written elsewhere (another field, Undo), so read again.
+    var seen by remember { mutableStateOf(millis) }
+    if (seen != millis) {
+        seen = millis
+        if (QuotaDomain.parseLengthIn(draft, unit) != millis) {
+            millis?.let { unit = QuotaDomain.lengthUnitOf(it) }
+            draft = millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty()
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { text ->
+                draft = text
+                if (text.isBlank() && millis != null) onBlank?.invoke()
+                QuotaDomain.parseLengthIn(text, unit)?.takeIf { it != millis }?.let(onChange)
+            },
+            singleLine = true,
+            isError = draft.isNotBlank() && QuotaDomain.parseLengthIn(draft, unit) == null,
+            placeholder = { Text(if (millis == null && mixed) "mixed" else blank) },
+            // Left, it reads the stored length again: a length that was not one is not left on screen.
+            modifier = Modifier.width(96.dp).endsEditOnOutsidePress { draft = millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty() },
+        )
+        ChoiceDropDown(
+            options = QuotaDomain.LengthUnit.entries,
+            selected = unit,
+            label = { it.label },
+            onSelect = { picked ->
+                unit = picked
+                QuotaDomain.parseLengthIn(draft, picked)?.takeIf { it != millis }?.let(onChange)
+            },
+            modifier = Modifier.width(120.dp),
+        )
+    }
 }
 
 /**
@@ -509,9 +586,10 @@ internal fun QuotaResilienceEditor(state: SchedulerState, quotas: List<QuotaEntr
 @Composable
 private fun ResilienceField(values: List<Double>, onChange: (Double) -> Unit) {
     val shared = values.distinct().singleOrNull()
-    var draft by remember(shared) { mutableStateOf(shared?.let { SearchDomain.formatQuotaNumber(it * 100.0) }.orEmpty()) }
     fun parse(text: String): Double? =
         text.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in 0.0..100.0 }?.let { it / 100.0 }
+    // `5.` on its way to `5.5` is 5 %: the field keeps the point ([draftAfterStoreChange]).
+    var draft by rememberFieldDraft(shared, { SearchDomain.formatQuotaNumber(it * 100.0) }, ::parse)
     OutlinedTextField(
         value = draft,
         onValueChange = { text ->
@@ -561,9 +639,9 @@ internal fun QuotaRestartsEditor(state: SchedulerState, quotas: List<QuotaEntry>
     }
 }
 
-private fun localOf(millis: Long, tz: TimeZone): LocalDateTime = kotlin.time.Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
+internal fun localOf(millis: Long, tz: TimeZone): LocalDateTime = kotlin.time.Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
 
-private fun instantOf(date: LocalDate, minutes: Int, tz: TimeZone): Long =
+internal fun instantOf(date: LocalDate, minutes: Int, tz: TimeZone): Long =
     LocalDateTime(date.year, date.month, date.day, minutes / 60, minutes % 60).toInstant(tz).toEpochMilliseconds()
 
 /**

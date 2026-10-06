@@ -470,6 +470,25 @@ class QuotaTest {
         assertEquals(90 * 60_000L, QuotaDomain.parseLength("90 min"))
         for (bad in listOf("", "0d", "soon", "7d 3d", "7x")) assertEquals(null, QuotaDomain.parseLength(bad), "\"$bad\"")
         for (length in listOf(WEEK, DAY + 12 * HOUR, 45 * 60_000L)) assertEquals(length, QuotaDomain.parseLength(QuotaDomain.formatLength(length)))
+        // User rule 2026-10-05: the field is a number and a unit's drop-down. A stored length reads in the largest unit
+        // it is a whole number of; a number is written in the unit picked, to the minute.
+        val units = QuotaDomain.LengthUnit.entries.associateBy { it.label }
+        assertEquals(listOf("minutes", "hours", "days", "weeks"), QuotaDomain.LengthUnit.entries.map { it.label })
+        assertEquals(units["weeks"], QuotaDomain.lengthUnitOf(WEEK))
+        assertEquals(units["days"], QuotaDomain.lengthUnitOf(3 * DAY))
+        assertEquals(units["hours"], QuotaDomain.lengthUnitOf(DAY + 12 * HOUR))
+        assertEquals(units["minutes"], QuotaDomain.lengthUnitOf(90 * 60_000L))
+        assertEquals("36", QuotaDomain.lengthIn(DAY + 12 * HOUR, units.getValue("hours")))
+        assertEquals("1.5", QuotaDomain.lengthIn(DAY + 12 * HOUR, units.getValue("days")))
+        assertEquals("1", QuotaDomain.lengthIn(WEEK, units.getValue("weeks")))
+        assertEquals(90 * 60_000L, QuotaDomain.parseLengthIn("1.5", units.getValue("hours")))
+        assertEquals(90 * 60_000L, QuotaDomain.parseLengthIn(" 1,5 ", units.getValue("hours")), "a comma is the point")
+        assertEquals(2 * WEEK, QuotaDomain.parseLengthIn("2", units.getValue("weeks")))
+        for (bad in listOf("", "0", "-1", "soon", "1d", "0.001")) assertEquals(null, QuotaDomain.parseLengthIn(bad, units.getValue("minutes")), "\"$bad\"")
+        for (length in listOf(WEEK, DAY + 12 * HOUR, 45 * 60_000L)) {
+            val unit = QuotaDomain.lengthUnitOf(length)
+            assertEquals(length, QuotaDomain.parseLengthIn(QuotaDomain.lengthIn(length, unit), unit))
+        }
     }
 
     @Test

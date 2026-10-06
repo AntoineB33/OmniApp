@@ -220,7 +220,8 @@ class NowLineSweepTest {
     @Test
     fun the_swept_cover_bars_the_breaks_that_follow_it() {
         // The behavioural payoff, in the requirements' own terms: a stretch covered by "no screen" is a rest, so a night
-        // of it bars the 20 s break for twenty minutes and the 15 min for two hours after the wake. The swept cover
+        // of it bars the 5 min break for an hour and the 15 min for two hours after the wake. (Not the 20 s break:
+        // since 2026-10-05 only the end of a 20 s break bars the next one.) The swept cover
         // reaches the machine the line carries as history rewritten behind it ([SchedulerDomain.absorbScreenBreakHistory]).
         val specs = SchedulerDomain.dynamicPeriodSpecs(breaks)
         // Before the night the line was at a screen and owed a pose: without the cover the machine has no idea the night
@@ -236,10 +237,10 @@ class NowLineSweepTest {
 
         val swept = SchedulerDomain.absorbScreenBreakHistory(breaks, blindRecord, listOf(TaskTimeRange(NOW - 8 * HOUR, NOW)), emptyList())
         val placed = place(swept)
-        val earliest = placed.minOfOrNull { it.startEpochMillis }
+        val earliestPose = placed.filter { it.title != lookAway }.minOfOrNull { it.startEpochMillis }
         assertTrue(
-            earliest == null || earliest >= NOW + 20 * MIN,
-            "a swept night bars every break for twenty minutes; got ${earliest?.minus(NOW)?.div(MIN)}min",
+            earliestPose == null || earliestPose >= NOW + 60 * MIN,
+            "a swept night bars both poses for an hour; got ${earliestPose?.minus(NOW)?.div(MIN)}min",
         )
         val pose = placed.filter { it.title == pose15 }.minOfOrNull { it.startEpochMillis }
         assertTrue(pose == null || pose >= NOW + 2 * HOUR, "a swept night bars the 15 min period for two hours")

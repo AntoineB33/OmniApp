@@ -528,6 +528,11 @@ Global rules that always apply: `CLAUDE.md`.
     block, sleep window or non-screen period of the user's still covers it; the idle stretch it enters gives
     way. A block past the definitive-schedule front (`provisional`) vacates nothing: no band is derived there.
 
+  **A released drag's preview stays until the records show its commit** (`ReleasedDrag`, anomaly 2026-10-05): the
+  state a release commits reaches the column a frame or more after the release, so dropping the preview at the
+  release drew the block back where it was picked up for that long. Never clear `dragPreview` at a release directly
+  — `endDragPreview` does, when the records change (or after `RELEASED_DRAG_WAIT_MILLIS` for a commit that changed
+  nothing).
   Every retraction is computed from the bounds **at rest**, never from the preview's previous answer: that is
   the whole of "what the drag retracted grows back as the drag recedes", and of "a second drag does not
   restore what the first release saved". The gesture half of a period box keeps reading `drawnPeriods` —
@@ -596,18 +601,26 @@ Global rules that always apply: `CLAUDE.md`.
   hand-placed panel is placed *through* them (§15/§17), never over their corpses.
 - **NO RESTRICTIVE PERIOD EVER SHARES THE COLUMN'S WIDTH.** Periods leave the block pipeline entirely
   (`isRestrictivePeriodRecord` — so they are out of `overlapLayout` and out of `weightHandles` by
-  construction, not by a guard) and are drawn as **one full-width box per stretch**: `periodSegments` cuts
-  them at every boundary and fuses back the adjacent stretches carrying the identical set, so A 10–12 with
-  B 11–13 is three boxes — A, then A and B, then B — and a lone period is still one box. Each box is labelled
-  with **every period in force over it, at the top left** (`periodSegmentLabel`) and outlined by the
-  strongest hand among them (`periodSegmentOutline`: blue over orange over grey). Splitting the width is
-  Overlap Mode's answer for panels genuinely competing for the same hours, which periods never are — they
-  state things about a stretch, and several statements about one stretch are not competitors. The box is a
-  DRAWING: each period stays its own object with its own bounds, kind, editor and bin, which is what the
-  "edit…" chooser reaches.
-- **A SHARED BOX MOVES EVERYTHING IN IT.** A box was cut at a boundary belonging to no single period, so
-  there is no one period a press there could mean: `PeriodSegmentGesture` drags or resizes **every** period
-  in force, by the same delta. And the gesture is emitted UNDER the panels while the marking is emitted OVER
+  construction, not by a guard) and are drawn as **one full-width box per PERIOD, over its own hours, with its
+  own outline** (user rule 2026-10-05; `periodSegments`, `periodSegmentOutline`). A period added 10–12 over a period
+  11–13 is a blue outline round 10–12 and the other's outline still round 11–13: two boxes overlapping from 11 to 12.
+  They were cut at every boundary until then — three boxes (A, then "A, B", then B), the middle one in the strongest
+  hand's outline — which drew the period just added as two boxes and broke the outline of the one already there.
+  **Do not cut a period's box at another period's boundary again.** Splitting the width is Overlap Mode's answer
+  for panels genuinely competing for the same hours, which periods never are. Each box is labelled with its
+  period's title at the top left (`calendarLabelSlots` keeps two labels apart). The box is a DRAWING: each period
+  stays its own object with its own bounds, kind, editor and bin, which is what the "edit…" chooser reaches.
+- **A period dragged onto a mode-1 line is cut by it** (user rule 2026-10-05; `SchedulerDomain.periodAtLine`,
+  `LocalPeriodAtLine`, `HeldPeriodCut`, `PeriodAtLineTest`). A held box that is or carries "no screen" (a `sleep`
+  period) is drawn ]line; its end] while the line is in it, not at all once under a minute is left, and whole again
+  wholly on the other side; the release stores what was drawn (nothing left: the period stays where it was). It is
+  not a drag rule: it is `retractedAtLineSpans` asked of the period where it is being put — *the line in mode 1 is
+  not in "no screen"*, and the "no screen" a rule lays with a period is where the period is. Never clamp a drag at
+  the line or special-case `sleep` here.
+- **A BOX IS ONE PERIOD, AND MOVES THAT PERIOD.** `PeriodSegmentGesture` drags or resizes the period its box is
+  (it moved every period in force over a shared box while boxes were cut). Where two boxes overlap, the
+  later-starting one is on top and takes the press; the other is reached from the part of it that sticks out.
+  And the gesture is emitted UNDER the panels while the marking is emitted OVER
   them — a full-width interactive box drawn on top would be a lid over every task panel inside the period
   (the "a cursor shape is never a lid over the tile" rule, read for a press), while a marking drawn
   underneath would be hidden by the very task the period admits.
@@ -746,12 +759,23 @@ Global rules that always apply: `CLAUDE.md`.
   the periods covering that instant (`calendarKindsAt`, the panels' kinds with what each carries) is above 0; any kind
   of period; a reminder; an **alarm** and a **timer** (user rule 2026-10-01 — a timer only while the instant is ahead
   of the clock and within its longest run); a "creation" row of a kind the calendar lays. Its action **"Add to the
-  calendar"** lays the added ones at the filter's position through `SearchDomain.calendarDrafts` — the element window's
+  calendar"** lays the added ones at its START (`Config.placement`, user rule 2026-10-05: a day and a time, the
+  filter's position until one is given — `SearchDomain.placementStart`) through `SearchDomain.calendarDrafts` — the element window's
   own seeding (`CalendarElements.seeded`) and Save (`saveCalendarElementIntents`); an alarm is the window's edit of that
   alarm (`existingId`): it rings at that time of day, that weekday added to its days, switched on — and a timer is put
   on the clock to END there (`calendarTimerIntents`: reset, time left = instant − now, started; one `SetTimers`).
   "New alarm here" makes a new alarm. ONE such window: a later "add…" moves it to the
   new right-click, keeping what it holds.
+- **The blue and the orange outlines are above every other outline** (user rule 2026-10-05; `outlineOnTop`, the day
+  column's **outline pass**). The column's LAST drawing before the labels and the two markers is every `User` and
+  `Pattern` outline again — a sleep window's, a period box's (`PeriodSegmentMarking(outlineOnly)`, a held box
+  included), a hand-placed panel's slices — as a border and nothing else: no fill, no marking, **no pointer input**
+  (the "never a lid" rule: what is underneath keeps its hover, drag and right-click). Under the panels a period's
+  blue was covered and redrawn in a contrast colour that was not blue, and a panel's own was under the grey outline
+  of a break. So a sleep band and a period box no longer draw a top outline in their own (under-panel) pass, and
+  `PanelDecor` redraws for contrast only an outline that STAYS under the panel — a grey one
+  (`PanelDecorBand.outlined`). Grey and a block's plain border stay with their element. A new outlined thing drawn
+  under something else owes the pass a line; one drawn topmost (a ring, a tag) does not.
 - **A task panel is opaque, in its task's colour, and redraws what crosses it for contrast** (user rule 2026-10-01;
   `CalendarBlockBody(opaque)`, `PanelDecor`). The 30 % wash is gone for a task panel (it merged the colours
   `TaskColorCurve` keeps apart); the title and the plain border take `TaskPalette.foreground`. The column's

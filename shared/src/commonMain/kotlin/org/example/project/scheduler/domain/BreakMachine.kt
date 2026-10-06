@@ -19,10 +19,11 @@ import org.example.project.scheduler.domain.DynamicPeriods.Spec
  * ### The rules, as the machine applies them
  * - **As early as possible** where the rules below allow: each label has a **bar**, the earliest instant it may start;
  *   it falls due when the line reaches the bar. The timeline starts rested ([initial]: one cadence after the start).
- * - *"After the end of a screen break, no 20s break in the next 20 minutes"* and each break's own recurrence
- *   ([Spec.cadenceMillis]): applied when a break ENDS ([endActive]).
- * - *"After a ≥5-minute of 'no screen', no 5min break in the next 1 hour; after a ≥15-minute … no 20s break in the
- *   next 20 minutes, and no 15min break in the next 2 hours"*: applied when the line's stretch of "no screen" ENDS
+ * - *"After the end of a 20s break, no 20s break in the next 20 minutes"* and each break's own recurrence
+ *   ([Spec.cadenceMillis]): applied when a break ENDS ([endActive]). The end of a 5min or a 15min break bars no 20s
+ *   break (requirements, 2026-10-05).
+ * - *"After a ≥5-minute of 'no screen', no 5min break in the next 1 hour; after a ≥15-minute … no 15min break in the
+ *   next 2 hours"* — a stretch of "no screen" bars no 20s break either: applied when the line's stretch of "no screen" ENDS
  *   ([endStretch]). "After" is after the stretch: a break falling due INSIDE a stretch is taken there.
  * - *"Where the rules allow a continuous chain of breaks, the interval of the whole chain only contains one screen
  *   break, the longest of the chain brought to the start"*: a break falling due while another is in progress (or
@@ -400,7 +401,7 @@ object BreakMachine {
         return enter(state.copy(drag = null), spec, state.atMillis, members, emptyList(), events, conducted = false, policy = policy)
     }
 
-    /** The break the line was in ends: its labels' own bars and the 20 s bar are set from its end. */
+    /** The break the line was in ends: its labels' own bars — and, where a 20 s break was of it, the 20 s bar — are set from its end. */
     private fun endActive(
         state: State,
         byLabel: Map<String, Spec>,
@@ -414,7 +415,9 @@ object BreakMachine {
             val spec = byLabel[m] ?: continue
             bars[m] = maxOf(bars[m] ?: Long.MIN_VALUE, a.endMillis + spec.cadenceMillis)
         }
-        if (LABEL_20S in bars) bars[LABEL_20S] = maxOf(bars.getValue(LABEL_20S), a.endMillis + DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS)
+        if (LABEL_20S in a.members && LABEL_20S in bars) {
+            bars[LABEL_20S] = maxOf(bars.getValue(LABEL_20S), a.endMillis + DynamicPeriods.BAR_20S_AFTER_20S_MILLIS)
+        }
         var s = state.copy(active = null, bars = bars)
         if (effectiveMode(s) == MODE_AT_SCREEN) s = endStretch(s, chains)
         return s
@@ -444,7 +447,6 @@ object BreakMachine {
         val out = bars.toMutableMap()
         out[DynamicPeriods.LABEL_5MIN]?.let { out[DynamicPeriods.LABEL_5MIN] = maxOf(it, b + DynamicPeriods.BAR_5MIN_AFTER_STRETCH_MILLIS) }
         if (length >= DynamicPeriods.STRETCH_LONG_MILLIS) {
-            out[LABEL_20S]?.let { out[LABEL_20S] = maxOf(it, b + DynamicPeriods.BAR_20S_AFTER_LONG_MILLIS) }
             out[DynamicPeriods.LABEL_15MIN]?.let {
                 out[DynamicPeriods.LABEL_15MIN] = maxOf(it, b + DynamicPeriods.BAR_15MIN_AFTER_LONG_MILLIS)
             }
@@ -479,12 +481,15 @@ object BreakMachine {
                 s = s.copy(active = null, drag = Drag(a.label, a.startMillis, a.members))
             }
             // The stretch ends here — unless the line walks straight into the 20 s break mode 2 was dragging, which it
-            // now enters: then it never left "no screen".
+            // now enters: then it never left "no screen", and the stretch goes on to that break's end. What the stretch
+            // already bars is barred from here all the same: a pose it took may not fall due again inside the twenty
+            // seconds and grow them into a pose that holds the line (a wake landed in a fifteen-minute hold once
+            // nothing barred the 20 s break after a long stretch — requirements 2026-10-05).
             val ended = endStretch(s, chains)
             val drag = stillOwed(ended, chains, byLabel)
             s =
                 if (drag != null && drag.label == LABEL_20S) {
-                    enter(s.copy(drag = null), byLabel.getValue(LABEL_20S), x, drag.members, chains, events, false, policy)
+                    enter(s.copy(drag = null, bars = ended.bars), byLabel.getValue(LABEL_20S), x, drag.members, chains, events, false, policy)
                 } else {
                     ended.copy(drag = drag)
                 }
@@ -550,15 +555,27 @@ object BreakMachine {
         val x = state.atMillis
         val byLabel = specs.associateBy { it.label }
         var bars = state.bars.toMutableMap()
+        // [label] null: a look-away the app conducted ([dynamic]) — a 20 s break, the only kind that bars the next one.
         fun afterBreak(label: String?, end: Long) {
             val cadence = label?.let { byLabel[it]?.cadenceMillis }
             if (label != null && cadence != null) bars[label] = maxOf(bars[label] ?: Long.MIN_VALUE, end + cadence)
-            if (LABEL_20S in bars) bars[LABEL_20S] = maxOf(bars.getValue(LABEL_20S), end + DynamicPeriods.BAR_20S_AFTER_ANY_MILLIS)
+            if ((label == null || label == LABEL_20S) && LABEL_20S in bars) {
+                bars[LABEL_20S] = maxOf(bars.getValue(LABEL_20S), end + DynamicPeriods.BAR_20S_AFTER_20S_MILLIS)
+            }
         }
         for (b in banked) if (b.endMillis <= x && b.endMillis > b.startMillis) afterBreak(b.label, b.endMillis)
         for (d in dynamic) if (d.endMillis <= x) afterBreak(null, d.endMillis)
         val rests = chainsOfSpans(stretches + banked.map { Span(it.startMillis, it.endMillis) } + dynamic)
-        for (r in rests) if (r.endMillis <= x) bars = stretchBars(bars, r.startMillis, r.endMillis).toMutableMap()
+        for (r in rests) {
+            if (r.endMillis <= x) {
+                bars = stretchBars(bars, r.startMillis, r.endMillis).toMutableMap()
+            } else if (r.startMillis < x) {
+                // The rest the line is still in — a stretch of "no screen" running into the 20 s break the line entered
+                // where it came back: what it already bars is barred from the line (as [switchMode] has it), or the
+                // poses it took fall due again inside those twenty seconds and grow them into a pose that holds the line.
+                bars = stretchBars(bars, r.startMillis, x).toMutableMap()
+            }
+        }
         val kept = stillOwed(state.copy(bars = bars), chains, byLabel)
         // What is left of it is dragged only if the mode drags it; otherwise its labels simply fall due at the line.
         val drag = kept?.takeIf { drags(it.label, state, Policy.HOLD) }

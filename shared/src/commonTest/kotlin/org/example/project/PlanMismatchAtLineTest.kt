@@ -66,9 +66,15 @@ class PlanMismatchAtLineTest {
 
     @Test
     fun a_task_inside_a_break_the_line_is_in_is_a_mismatch() {
-        // A 25-minute rest ending twenty minutes ago bars the look-away until exactly now: the line is in it, and
-        // the plan still has the on-screen task there.
-        val s = account(listOf(rest(NOW - 20 * MIN), auto("auto/0", NOW - 10 * MIN, NOW + 30 * MIN)))
+        // A look-away that ended twenty minutes ago bars the next one until exactly now: the line is in it, and the
+        // plan still has the on-screen task there.
+        val lookAway = SchedulerDomain.DEFAULT_SCREEN_BREAKS.first { !it.restBreak }
+        val conducted =
+            SchedulerReducer.reduce(
+                SchedulerState.empty(),
+                SchedulerIntent.RecordConductedBreak(lookAway.title, NOW - 20 * MIN - lookAway.durationMillis, NOW - 20 * MIN),
+            ).panels
+        val s = account(conducted + auto("auto/0", NOW - 10 * MIN, NOW + 30 * MIN))
         assertEquals("task inside a break", mismatch(s)?.first())
     }
 

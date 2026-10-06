@@ -174,12 +174,12 @@ the desktop app signed in as account 1). Default dev run enables debug tooling (
         AND the hour after it.** The first hour shows the oblique lines with no outline; the second shows
         the same lines inside a **blue-outlined** box. The outline is the whole of what says a hand stated
         it.
-- [ ] **Overlapping periods share ONE box (PRD §8).**
-  - [ ] Draw an "inactivity" period 10:00→12:00 and a period of a kind you defined 11:00→13:00. The column
-        shows **three full-width boxes**, never two half-width ones: 10–11 named for the first, 11–12 named
-        for both (`A, B` at the top left), 12–13 named for the second.
-  - [ ] **Drag the middle box down an hour** → BOTH periods move an hour: the three boxes are now 11–12,
-        12–13, 13–14. Drag its top edge instead → both periods' starts move.
+- [ ] **Overlapping periods are each their own box (PRD §8, 2026-10-05).**
+  - [ ] Draw a period of a kind 11:00→13:00, then one of the SAME kind 10:00→12:00. The column shows **two
+        full-width boxes that overlap from 11 to 12**, each with its whole outline (blue round 10–12, blue round
+        11–13) — never three boxes cut at 11 and at 12, never two half-width ones.
+  - [ ] Add one over a sleep window or a wind-down hour: its blue outline is whole, and so is the orange one.
+  - [ ] **Drag the 11–13 box from its 12–13 part** → that period alone moves; the other stays.
   - [ ] **Right-click inside a task panel that sits inside one of those periods** → the menu offers
         "edit…", not the panel's editor directly (see the chooser check below).
 - [ ] **The menu's one "add…" entry (PRD §8).** Right-click empty grid, and again on a panel — both menus

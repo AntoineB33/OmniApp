@@ -2826,6 +2826,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val periodRefusal = remember(periodRefusalTasks) {
             { taskId: TaskId?, kind: String -> SchedulerDomain.periodRefuses(periodRefusalTasks, taskId, kind) }
         }
+        // PRD §8 (user rule 2026-10-05): where a period being dragged stands at the line — asked of the live clock and
+        // of the mode the engine reads the line in, at each step of the drag and at its release.
+        val periodAtLineConfig = schedulerState.periodKindConfig
+        val periodAtLine = remember(periodAtLineConfig, engine) {
+            { kind: String, range: TaskTimeRange ->
+                SchedulerDomain.periodAtLine(range, kind, clock.nowMillis(), engine.tpModeNow(), periodAtLineConfig)
+            }
+        }
         // User rule 2026-10-03: every id suggestion list's task row is the Search window's task result row, configured
         // ([TaskIdentityRow]). Its paths are one walk of every tree, measured when the trees change — never per row.
         val identityPaths =
@@ -2838,6 +2846,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         CompositionLocalProvider(
             LocalTaskIdentityRow provides taskIdentityRow,
             LocalPeriodRefusal provides periodRefusal,
+            org.example.project.ui.LocalPeriodAtLine provides periodAtLine,
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,
             LocalHeadObstacle provides menuToggleBounds,
@@ -3912,6 +3921,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onEditReminder = { openElementSearch(SearchDomain.Kind.Reminder, it) },
                             onOpenAppSetting = { openElementSearch(SearchDomain.Kind.AppSetting, it) },
+                            onOpenCalendarAt = { openNewWindow(FloatingWindow.Search, SearchDomain.calendarAtConfig(it).encode()) },
                             // A history unit's own window is the Search window holding it alone, whose "Information"
                             // action shows all of it (user rule 2026-10-03) — not the History window any more.
                             onOpenHistoryUnit = { openElementSearch(SearchDomain.Kind.HistoryUnit, it) },
@@ -3948,6 +3958,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onOpenKindSearch = { kind ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.kindSearchConfig(kind).encode())
+                            },
+                            onOpenBlocksSearch = { owners ->
+                                openNewWindow(FloatingWindow.Search, SearchDomain.blocksSearchConfig(owners).encode())
                             },
                             timerRun = { subjects ->
                                 AccountAlarmWindow(

@@ -893,6 +893,21 @@ suggestions before it was ever entered.
   action (`SearchDomain.addedActions`) exactly as the Configuration Search window lists the settings — a name bar,
   the kind drop-down, "only the types in the added elements" — and acts on the added list of the Search window
   that opened it; the top right quarter draws the same sections for the kinds the list holds.
+- **The calendar's two actions belong to what can be on the calendar** (user rule 2026-10-05). "Add to the calendar"
+  and "Blocks on the calendar" are general actions, but the top right quarter lists them only while the added list
+  holds a task, a period, a reminder, an alarm or a timer (`SearchDomain.actionsFor`, `CALENDAR_ACTIONS`).
+  - **"Add to the calendar" states a start and an end the way a quota's loop does** — the SAME fields
+    (`ui/QuotaEditors.kt`'s `DayField` / `TimeOfDayField` / `LengthField`, drawn by `CalendarPlacementEditor`), never a
+    second drawing of them: a start, and an end that a switch states as a length after the start or as an instant of
+    its own. They are `Config.placement`, local-only with the rest of the configuration. The length is 1 hour until said
+    otherwise (`DEFAULT_PLACEMENT_LENGTH_MILLIS`) — never a blank that stands for something; a panel and a period
+    take the end, a tag and a ring are an instant. An end not after the start lays nothing.
+  - **A blue outlined block is a Search row** (`Kind.CalendarBlock`), and what makes a block blue is asked of the
+    calendar's own reading — `SchedulerDomain.panelOutline(panel) == User`, a reminder tag (`reminderTagOutline`), an
+    isolated alarm and a timer put on the calendar (`ringOutline`) — never restated in `SearchDomain.calendarBlocks`.
+    A block names its element by that element's Search key (`CalendarBlock.owner`), which is what
+    `Filters.blocksOf` keeps; the row's id is the panel's (or `alarm:` / `timer:` + the ring's), so a moved block is
+    the same added row. Opening one is the calendar's "edit…" at its start.
 - **The actions' filter is the Search window's** (`Config.actionQuery`, user rule 2026-10-01): the Added elements
   configurations window's bar edits the configuration of the Search window it acts for, and the same filter narrows
   that window's top right quarter (which says so, with "Show all"). The kind drop-down and "only the types in the

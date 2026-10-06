@@ -50,7 +50,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -229,6 +228,15 @@ private fun outlineColor(outline: SchedulerDomain.PanelOutline): Color? = when (
     SchedulerDomain.PanelOutline.Pattern -> CalColors.pattern
     SchedulerDomain.PanelOutline.Dynamic -> CalColors.muted
 }
+
+/**
+ * PRD §8 (user rule 2026-10-05): **the blue and the orange outlines are above every other outline of the calendar** —
+ * a hand's and a rule's, the two that say somebody STATED this. Whether [outline] is one of them: the column then
+ * draws it in its last pass, over the panels and over the grey outline of a break (see the day column's "outline
+ * pass"); the grey of a dynamic period and a block's plain border stay where their element is drawn.
+ */
+internal fun outlineOnTop(outline: SchedulerDomain.PanelOutline): Boolean =
+    outline == SchedulerDomain.PanelOutline.User || outline == SchedulerDomain.PanelOutline.Pattern
 
 private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val WEEKDAY_INITIAL = listOf("M", "T", "W", "T", "F", "S", "S")
@@ -600,6 +608,52 @@ fun recordsByDay(
  * the release would leave it. Provided by `App`; the default refuses nothing a column drawn outside it holds.
  */
 val LocalPeriodRefusal = compositionLocalOf<(TaskId?, String) -> Boolean> { { _, _ -> false } }
+
+/**
+ * PRD §8 (user rule 2026-10-05): **where a period of a kind being put at a span stands, the now-line being where it
+ * is and in the mode it is in** ([SchedulerDomain.periodAtLine]: a period that is or carries "no screen" is
+ * ]line; its end] over a mode-1 line; null = nothing of it is left). Asked at each step of a period's drag and at its
+ * release, so the box is drawn as the release would leave it. Provided by `App`, which knows the line; the default
+ * leaves a period where it is put.
+ */
+val LocalPeriodAtLine = compositionLocalOf<(kind: String, range: TaskTimeRange) -> TaskTimeRange?> { { _, range -> range } }
+
+/**
+ * PRD §8 (anomaly 2026-10-05: *"when I drag a task panel, it glitches … when releasing the mouse click"*): **a
+ * released drag's preview stays until the state it committed is what the column draws.** The release dispatches the
+ * move and used to drop the preview in the same breath — but the records the column draws come out of the state a
+ * frame or more later (the reduce, then `App`'s derivation), so for that long the block was drawn back where it had
+ * been picked up, then jumped to where it was dropped.
+ *
+ * This is what a release leaves behind: the block's key and the bounds it had AT REST. The committed state has
+ * arrived ([arrivedIn]) once no record of that key still stands at those bounds — it moved, or it was re-keyed (a
+ * scheduler panel a hand has moved becomes the user's own, under a new id).
+ */
+internal data class ReleasedDrag(val key: String, val restStartMillis: Long, val restEndMillis: Long) {
+    fun arrivedIn(records: List<PlacedRecord>): Boolean =
+        records.none {
+            calendarBlockKey(it) == key && it.fullStartMillis == restStartMillis && it.fullEndMillis == restEndMillis
+        }
+
+    companion object {
+        /** The release of a drag that picked [atRest] up. */
+        fun of(atRest: PlacedRecord): ReleasedDrag =
+            ReleasedDrag(calendarBlockKey(atRest), atRest.fullStartMillis, atRest.fullEndMillis)
+    }
+}
+
+/**
+ * How long a released preview may wait for its commit: one that changed nothing (a block dropped where it was) never
+ * [ReleasedDrag.arrivedIn], and the preview must not outlive the gesture for good.
+ */
+internal const val RELEASED_DRAG_WAIT_MILLIS: Long = 1_000L
+
+/**
+ * PRD §8: a held period box the line has CUT ([LocalPeriodAtLine]) — the hours of this day it is drawn over, or
+ * [hours] null where nothing of it is left. A held box the line leaves whole is not one of these: it is drawn by the
+ * hand's own travel, as before.
+ */
+internal data class HeldPeriodCut(val key: String, val hours: Pair<Float, Float>?)
 
 /**
  * PRD §8 (user rule 2026-10-02): **whether a block gesture keeps raw, overlapping bounds** — a MOVE always
@@ -1456,76 +1510,44 @@ internal fun calendarBlockEditChoice(record: PlacedRecord): CalendarEditChoice? 
 // ---------------------------------------------------------------------------------------------------------
 
 /**
- * PRD §8: **one drawn box of the period layer** — a stretch of the timeline over which the same set of
- * restrictive periods is in force, and the [records] that make it up, in the order their titles are written.
+ * PRD §8: **one drawn box of the period layer — ONE period**, over its own hours. [records] holds that period alone
+ * (a list for the readers that were written for a shared box: the label, the outline, the gesture's move).
  */
 data class PeriodSegment(
     val startHour: Float,
     val endHour: Float,
-    /** Every period covering this segment. Never empty. */
+    /** The period this box is. Exactly one. */
     val records: List<PlacedRecord>,
 )
 
 /**
- * PRD §8: **overlapping restrictive periods are ONE box per stretch, never a shared column width.**
+ * PRD §8: **every restrictive period is its own full-width box, with its own outline** (user rule 2026-10-05).
  *
- * A period is not an object owning a slice of the timeline the way a task panel is — it is a statement about
- * it — so two of them overlapping are two statements about one stretch, not two competitors for its width.
- * Overlap Mode's side-by-side answer is for panels genuinely fighting over the same hours, which these never
- * are. So the periods are cut at every boundary and each resulting stretch is drawn **full width, once**,
- * labelled with the title of every period in force over it (the user's rule: *"A 10–12 and B 11–13 shows
- * three boxes: A, then A and B, then B"*).
+ * A period added 10–12 over a period 11–13 is two boxes that overlap from 11 to 12: the blue outline goes round
+ * 10–12, and the outline the other one had goes on round 11–13. Until then the periods were cut at every boundary and
+ * each stretch drawn once — three boxes, the middle one wearing the strongest hand's outline — which drew a period
+ * the user had just added as two boxes and broke the outline of the one already there.
  *
- * Adjacent stretches carrying the IDENTICAL set are fused back into one box, so a lone period is one box and
- * not a run of them — the cut is a consequence of overlap, never of how many boundaries happen to be nearby.
- *
- * What this deliberately does NOT do is merge the periods themselves: each stays its own object with its own
- * bounds, its own kind and its own editor, which is what the "edit…" chooser reaches
- * ([calendarEditChoices]). The box is a drawing; [SchedulerDomain.unifyNoScreenPeriods] is the one place
- * periods are actually fused, and it still runs on the state.
+ * What stays: a period never shares the column's WIDTH (Overlap Mode's side-by-side answer is for task panels
+ * fighting over the same hours; several statements about one stretch are not competitors), and nothing here merges
+ * the periods themselves — [SchedulerDomain.unifyNoScreenPeriods] is the one place periods are fused, in the state.
+ * In the timeline's order, so of two overlapping boxes the later-starting one is drawn, and pressed, on top.
  */
-fun periodSegments(periods: List<PlacedRecord>): List<PeriodSegment> {
-    if (periods.isEmpty()) return emptyList()
-    // Same shape as [overlapLayout]'s sweep and for the same reason: `sortedSetOf` is JVM-only, so distinct
-    // boundaries are collected then sorted, which also keeps this file portable to iOS/JS.
-    val bounds = periods.flatMap { listOf(it.startHour, it.endHour) }.distinct().sorted()
-    val out = mutableListOf<PeriodSegment>()
-    for (i in 0 until bounds.size - 1) {
-        val a = bounds[i]
-        val b = bounds[i + 1]
-        if (b <= a) continue
-        val active =
-            periods
-                .filter { it.startHour <= a && it.endHour >= b }
-                .sortedWith(compareBy({ it.startHour }, { calendarBlockKey(it) }))
-        if (active.isEmpty()) continue
-        val last = out.lastOrNull()
-        if (last != null && last.endHour == a && last.records == active) {
-            out[out.size - 1] = last.copy(endHour = b)
-        } else {
-            out += PeriodSegment(a, b, active)
-        }
-    }
-    return out
-}
+fun periodSegments(periods: List<PlacedRecord>): List<PeriodSegment> =
+    periods
+        .filter { it.endHour > it.startHour }
+        .sortedWith(compareBy({ it.startHour }, { calendarBlockKey(it) }))
+        .map { PeriodSegment(it.startHour, it.endHour, listOf(it)) }
 
-/**
- * PRD §8: the label of a [PeriodSegment] — **every period in force over it, at the top left**.
- *
- * One box says as many things as are true of the stretch it covers, which is the price of drawing them as one
- * box; the chooser is what tells them apart again.
- */
+/** PRD §8: the label of a period's box, at its top left: the period's title. */
 fun periodSegmentLabel(segment: PeriodSegment): String =
     segment.records.joinToString(", ") { it.title.ifBlank { SchedulerDomain.UNTITLED_LABEL } }
 
 /**
- * PRD §8: the outline a [PeriodSegment] wears — **the strongest hand among the periods in force**, in the
- * order [SchedulerDomain.panelOutline] itself ranks them: a hand (blue) over a repeating rule (orange) over
- * the app's own dynamic periods (grey).
- *
- * The box is shared, so the outline answers "did a hand state any of this?" rather than "who placed this
- * one" — and the user's own example is that reading: a `no computer unlocked` stretch that is OS evidence for
- * one hour and the user's extension for the next draws unoutlined, then blue.
+ * PRD §8: the outline a period's box wears — **its own period's** ([SchedulerDomain.panelOutline]: blue for a hand,
+ * orange for a repeating rule, grey for the app's dynamic periods, none for a derived stretch). The user's layer
+ * example reads the same as it did: a `no computer unlocked` stretch that is OS evidence for one hour and the user's
+ * extension for the next draws unoutlined, then blue.
  */
 fun periodSegmentOutline(segment: PeriodSegment): SchedulerDomain.PanelOutline =
     when {
@@ -2131,13 +2153,22 @@ fun ChoresManagerWindow(
                         onSelect = { rows[index] = row.copy(unit = it); push() },
                     )
                     if (!defaults) {
-                        OutlinedTextField(
-                            value = row.timeText,
-                            onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
-                            singleLine = true,
-                            label = { Text("Time") },
-                            modifier = Modifier.width(80.dp),
-                        )
+                        // A blank time is "not defined" (the tag goes at the current time): nothing to step from.
+                        TimeNudgeMenu(
+                            enabled = row.timeText.isNotEmpty(),
+                            onNudge = { delta ->
+                                rows[index] = row.copy(timeText = formatTimeOfDay(nudgedTimeOfDay(parseTimeOfDay(row.timeText), delta)))
+                                push()
+                            },
+                        ) {
+                            OutlinedTextField(
+                                value = row.timeText,
+                                onValueChange = { rows[index] = row.copy(timeText = sanitizeTimeOfDay(it)); push() },
+                                singleLine = true,
+                                label = { Text("Time") },
+                                modifier = Modifier.width(80.dp),
+                            )
+                        }
                         // Bin: remove this reminder (the window then closes itself).
                         TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
                     }
@@ -5576,8 +5607,8 @@ private fun DayColumn(
     val periodKindConfig = LocalPeriodKindConfig.current
     // PRD §8: **EVERY restrictive period leaves the block pipeline.** A period is not an object owning a
     // slice of the timeline the way a task panel is — it states something about it — so it never competes for
-    // the column's width: overlapping periods are cut at their boundaries and each stretch is drawn once,
-    // full width, naming every period in force over it ([periodSegments]). Which also means they are out of
+    // the column's width: each period is drawn full width over its own hours, two that overlap as two boxes
+    // overlapping ([periodSegments]). Which also means they are out of
     // [overlapLayout] and out of [weightHandles] below, by construction rather than by a guard.
     //
     // Derived and authored alike: a past "Inactivity" stretch nothing covers, the §17 wind-down hour and a
@@ -5597,6 +5628,7 @@ private fun DayColumn(
     // lies in a period the layers derive that refuses its task — by default an on-screen task where both layers
     // fall, a "no screen" period ([layerBandsAroundPlaced]). The bubble, the menu and the drawing all read these.
     val refuses = LocalPeriodRefusal.current
+    val periodAtLine = LocalPeriodAtLine.current
     val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
         .toInstant(tz).toEpochMilliseconds()
     val layerBands =
@@ -5608,7 +5640,7 @@ private fun DayColumn(
         remember(layerBands, periodHits, sleepBands, screenBreakMarkers, periodKindConfig, midnightMillis) {
             derivedLayerPeriods(layerBands, periodHits + sleepBands + screenBreakMarkers, periodKindConfig, midnightMillis)
         }
-    // PRD §8: the drawn period boxes — one per stretch over which the same set of periods is in force.
+    // PRD §8: the drawn period boxes — one per period ([periodSegments]).
     // Cached on the record list like [overlapLayout], for the same reason: this column recomposes for every
     // state change App's body sees, and the partition is a pure function of the periods.
     val drawnPeriods = remember(periodRecords) { periodSegments(periodRecords) }
@@ -5840,6 +5872,33 @@ private fun DayColumn(
     // resting slices keep their committed positions (so the drag gesture node never changes and is never
     // cancelled); they are hidden while the overlay shows.
     var dragPreview by remember { mutableStateOf<BlockDragPreview?>(null) }
+    // The preview a release has committed, kept on screen until the records show the commit ([ReleasedDrag]).
+    var releasedDrag by remember { mutableStateOf<ReleasedDrag?>(null) }
+    // A drag's end: the preview goes at once when nothing was being previewed, else once its commit is drawn.
+    fun endDragPreview() {
+        val preview = dragPreview ?: return
+        val rest = effRecords.firstOrNull { calendarBlockKey(it) == preview.key }
+        if (rest == null) {
+            dragPreview = null
+        } else {
+            releasedDrag = ReleasedDrag.of(rest)
+        }
+    }
+    releasedDrag?.let { released ->
+        // Asked when the records change — an event, never a poll; the one wait is the bound on a commit that
+        // changed nothing.
+        LaunchedEffect(released, effRecords) {
+            if (dragPreview?.key != released.key || released.arrivedIn(effRecords)) {
+                if (dragPreview?.key == released.key) dragPreview = null
+                releasedDrag = null
+            }
+        }
+        LaunchedEffect(released) {
+            delay(RELEASED_DRAG_WAIT_MILLIS)
+            if (dragPreview?.key == released.key) dragPreview = null
+            releasedDrag = null
+        }
+    }
     // A held period box is a preview too: the task panels it refuses retract as it moves.
     val previewActive = dragPreview != null || periodDrag != null
     // PRD §8 (user rule 2026-10-02): the block drag a right-click suspended, if any — see [HeldBlockDrag].
@@ -5859,9 +5918,24 @@ private fun DayColumn(
             val hourPx = with(density) { hourHeight.toPx() }
             val deltaMillis = if (hourPx > 0f) ((drag.deltaPx / hourPx) * 3_600_000f).toLong() else 0L
             drawnPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.mapNotNull { period ->
-                periodDragBounds(period, drag.edge, deltaMillis)?.let { period to it }
+                // Where the line leaves it ([LocalPeriodAtLine]): cut at a mode-1 line, gone as its end reaches it.
+                periodDragBounds(period, drag.edge, deltaMillis)
+                    ?.let { periodAtLine(period.restrictiveKind, it) }
+                    ?.let { period to it }
             }
         }.orEmpty()
+    // The held box, where the line has cut it: drawn over what is left of it rather than where the hand has it.
+    val heldCut =
+        periodDrag?.let { drag ->
+            val hourPx = with(density) { hourHeight.toPx() }
+            val deltaMillis = if (hourPx > 0f) ((drag.deltaPx / hourPx) * 3_600_000f).toLong() else 0L
+            val period = drawnPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.singleOrNull()
+            val raw = period?.let { periodDragBounds(it, drag.edge, deltaMillis) } ?: return@let null
+            val left = periodAtLine(period.restrictiveKind, raw)
+            if (left == raw) return@let null
+            fun hour(millis: Long) = ((millis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+            HeldPeriodCut(drag.key, left?.let { hour(it.startEpochMillis) to hour(it.endEpochMillis) }?.takeIf { it.second > it.first })
+        }
     val liveRecords =
         dragPreview?.let { blocksForBlockDrag(effRecords, it.key, it.range, it.shareWidth, midnightMillis) }
             ?: if (movedPeriods.isEmpty()) effRecords
@@ -6062,7 +6136,7 @@ private fun DayColumn(
                                         )
                                     }
                                     movePlaced = null
-                                    dragPreview = null
+                                    endDragPreview()
                                     movePending = null
                                     onLockScroll(false)
                                     touch.consume()
@@ -6348,6 +6422,7 @@ private fun DayColumn(
                 lineDriftHours = lineDriftHours,
                 drag = periodDrag,
                 onDragChange = { periodDrag = it },
+                atLine = periodAtLine,
                 onCommitBounds = onCommitBounds,
                 onLockScroll = onLockScroll,
                 onResizingEdge = onResizingEdge,
@@ -6382,14 +6457,16 @@ private fun DayColumn(
             PanelDecor(
                 bands =
                     sleepBands.mapNotNull { band ->
-                        outlineColor(band.outline)?.let { PanelDecorBand(band.startHour, band.endHour, sleepDrawingsForPanels, outlined = true) }
+                        outlineColor(band.outline)?.let {
+                            PanelDecorBand(band.startHour, band.endHour, sleepDrawingsForPanels, outlined = !outlineOnTop(band.outline))
+                        }
                     } +
                         shownPeriods.map { segment ->
                             PanelDecorBand(
                                 segment.startHour,
                                 segment.endHour,
                                 segment.records.flatMap { periodKindConfig.boxDrawings(it.restrictiveKind) }.distinct(),
-                                outlined = outlineColor(periodSegmentOutline(segment)) != null,
+                                outlined = periodSegmentOutline(segment).let { outlineColor(it) != null && !outlineOnTop(it) },
                             )
                         } +
                         shownLayerBands.map { band ->
@@ -6521,7 +6598,13 @@ private fun DayColumn(
                 // Hide the resting (gesture-holding) slices while any move/resize preview overlay shows.
                 previewActive = previewActive,
                 onPreviewChange = { range, shareWidth ->
-                    dragPreview = range?.let { BlockDragPreview(key, it, shareWidth) }
+                    if (range == null) {
+                        endDragPreview()
+                    } else {
+                        // A new drag: whatever an earlier release was waiting for is no longer what is shown.
+                        releasedDrag = null
+                        dragPreview = BlockDragPreview(key, range, shareWidth)
+                    }
                 },
                 onHoldDrag = { edge, dragPx, armed -> heldDrag = HeldBlockDrag(record, edge, dragPx, armed) },
                 onCommitBounds = onCommitBounds,
@@ -6711,11 +6794,15 @@ private fun DayColumn(
                     .zIndex(-1f)
                     .clipToBounds()
                     .periodDrawings(sleepDrawings, CalColors.muted)
-                    .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
+                    .then(
+                        // Blue and orange are drawn in the outline pass, over everything ([outlineOnTop]).
+                        if (outlineOnTop(band.outline)) Modifier
+                        else Modifier.border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
+                    ),
             )
         }
 
-        // PRD §8: **the restrictive periods, as one full-width box per stretch** ([periodSegments]).
+        // PRD §8: **the restrictive periods, each as one full-width box** ([periodSegments]).
         //
         // Three things are drawn and each answers one question:
         //  • the MARKING says what kinds of statement are in force — the drawing of every period's kind and of
@@ -6740,6 +6827,7 @@ private fun DayColumn(
                 followsLine = ::followsLine,
                 lineDriftHours = lineDriftHours,
                 drag = periodDrag,
+                heldCut = heldCut,
             )
         }
 
@@ -6846,6 +6934,66 @@ private fun DayColumn(
                             topFollowsLine = followsLine(slice.topHour),
                             bottomFollowsLine = followsLine(slice.bottomHour),
                             lineDriftHours = lineDriftHours,
+                        )
+                    }
+                }
+            }
+        }
+
+        // PRD §8 (user rule 2026-10-05): **the OUTLINE PASS — the blue and the orange outlines, above every other
+        // outline** ([outlineOnTop]). A sleep window's and a period box's are otherwise under the panels (which
+        // covered them, and redrew them in a contrast colour that was not theirs), and a panel's own is under the
+        // grey outline of a break drawn across it. Each is drawn here a second time with the geometry its element
+        // has, and nothing else: no fill, no marking — and no pointer input, so every block, box and band underneath
+        // keeps its hover, its drag and its right-click. Only the labels and the two zero-duration markers go
+        // above (a ring and a tag wear a blue or orange outline of their own).
+        sleepBands.forEach { band ->
+            if (!outlineOnTop(band.outline) || !onScreen(band.startHour, band.endHour)) return@forEach
+            val bandOutline = outlineColor(band.outline) ?: return@forEach
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .timelineSpan(
+                        hourHeight, band.startHour, band.endHour,
+                        followsLine(band.startHour), followsLine(band.endHour), lineDriftHours,
+                    )
+                    .border(USER_PLACED_BORDER_DP, bandOutline, RoundedCornerShape(3.dp)),
+            )
+        }
+        shownPeriods.forEach { segment ->
+            if (!outlineOnTop(periodSegmentOutline(segment)) || !onScreen(segment.startHour, segment.endHour)) return@forEach
+            PeriodSegmentMarking(
+                segment = segment,
+                hourHeight = hourHeight,
+                followsLine = ::followsLine,
+                lineDriftHours = lineDriftHours,
+                drag = periodDrag,
+                heldCut = heldCut,
+                outlineOnly = true,
+            )
+        }
+        // The panels a hand placed, where they are drawn NOW: at their in-progress layout during a move or a resize.
+        val outlinedRecords = (if (previewActive) liveRecords else effRecords)
+            .filter { outlineOnTop(it.outline) && onScreen(it.startHour, it.endHour) }
+        if (outlinedRecords.isNotEmpty()) {
+            val outlinedLayout = if (previewActive) liveLayout else layout
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val colWidth = maxWidth
+                outlinedRecords.forEach { record ->
+                    val color = outlineColor(record.outline) ?: return@forEach
+                    val slices = outlinedLayout[calendarBlockKey(record)]
+                        ?: listOf(PanelSlice(record.startHour, record.endHour, xFraction = 0f, widthFraction = 1f))
+                    slices.forEach { slice ->
+                        Box(
+                            modifier = Modifier
+                                .timelineSpan(
+                                    hourHeight, slice.topHour, slice.bottomHour,
+                                    followsLine(slice.topHour), followsLine(slice.bottomHour), lineDriftHours,
+                                    x = colWidth * slice.xFraction,
+                                )
+                                .width(colWidth * slice.widthFraction)
+                                .padding(horizontal = 1.dp)
+                                .border(USER_PLACED_BORDER_DP, color, RoundedCornerShape(3.dp)),
                         )
                     }
                 }
@@ -8453,8 +8601,18 @@ private fun PeriodSegmentMarking(
     /** ADR 0009: whether an hour this box is cut at follows the now-line — see [timelineSpan]. */
     followsLine: (Float) -> Boolean = { false },
     lineDriftHours: () -> Double = { 0.0 },
+    /**
+     * The column's outline pass (user rule 2026-10-05): the box's blue or orange outline ALONE, drawn over the panels
+     * and the breaks ([outlineOnTop]) with the same geometry — a held box's included — and nothing else of it.
+     */
+    outlineOnly: Boolean = false,
+    /** The held box as the line has cut it ([HeldPeriodCut]); null = whole, where the hand has it. */
+    heldCut: HeldPeriodCut? = null,
 ) {
     val density = LocalDensity.current
+    val cut = heldCut?.takeIf { it.key == periodSegmentKey(segment) }
+    // Nothing of it is left at the line: the box is gone until the hand has carried it across.
+    if (cut != null && cut.hours == null) return
     val (topShiftPx, heightShiftPx) = periodDragShift(segment, drag)
     val height = hourHeight * (segment.endHour - segment.startHour) + with(density) { heightShiftPx.toDp() }
     // PRD §8 + the period edit window: every period in force over the box paints its kind's drawing and the
@@ -8462,32 +8620,43 @@ private fun PeriodSegmentMarking(
     // two one-sided layer kinds are left to the layer hatch ([PeriodKindConfig.boxDrawings]).
     val config = LocalPeriodKindConfig.current
     val drawings = segment.records.flatMap { config.boxDrawings(it.restrictiveKind) }.distinct()
-    val outline = outlineColor(periodSegmentOutline(segment))
+    val outlineKind = periodSegmentOutline(segment)
+    val outline = outlineColor(outlineKind)
+    val onTop = outlineOnTop(outlineKind)
+    val border = outline?.let { Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(3.dp)) } ?: Modifier
+    val place = Modifier
+        .fillMaxWidth()
+        .then(
+            // A box the user is holding is placed by the hand — over what the line leaves of it, where the line
+            // has cut it; one at rest by the rules, line included.
+            if (cut?.hours != null) {
+                Modifier
+                    .offset(y = hourHeight * cut.hours.first)
+                    .height((hourHeight * (cut.hours.second - cut.hours.first)).coerceAtLeast(1.dp))
+            } else if (drag?.key == periodSegmentKey(segment)) {
+                Modifier
+                    .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
+                    .height(height.coerceAtLeast(1.dp))
+            } else {
+                Modifier.timelineSpan(
+                    hourHeight, segment.startHour, segment.endHour,
+                    followsLine(segment.startHour), followsLine(segment.endHour), lineDriftHours,
+                    minHeight = 1.dp,
+                )
+            },
+        )
+    if (outlineOnly) {
+        if (onTop) Box(modifier = place.then(border))
+        return
+    }
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                // A box the user is holding is placed by the hand; one at rest by the rules, line included.
-                if (drag?.key == periodSegmentKey(segment)) {
-                    Modifier
-                        .offset(y = hourHeight * segment.startHour + with(density) { topShiftPx.toDp() })
-                        .height(height.coerceAtLeast(1.dp))
-                } else {
-                    Modifier.timelineSpan(
-                        hourHeight, segment.startHour, segment.endHour,
-                        followsLine(segment.startHour), followsLine(segment.endHour), lineDriftHours,
-                        minHeight = 1.dp,
-                    )
-                },
-            )
+        modifier = place
             // Under the task panels, which redraw it over themselves ([PanelDecor]).
             .zIndex(-1f)
             .clipToBounds()
             .periodDrawings(drawings, CalColors.muted)
-            .then(
-                outline?.let { Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(3.dp)) }
-                    ?: Modifier,
-            ),
+            // A grey outline stays with its box; a blue or orange one is the outline pass's.
+            .then(if (onTop) Modifier else border),
     )
 }
 
@@ -8512,6 +8681,8 @@ private fun PeriodSegmentGesture(
     onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
     onLockScroll: (Boolean) -> Unit,
     onResizingEdge: (PanelResizeEdge?) -> Unit,
+    /** Where the line leaves the period at the bounds the release has reached ([LocalPeriodAtLine]); null = nowhere. */
+    atLine: (kind: String, range: TaskTimeRange) -> TaskTimeRange? = { _, range -> range },
     /** PRD §8: what this box hides from the hover bubble — see the call site. */
     overlays: List<BubbleOverlay>,
     hoverScope: CalendarTitleHoverScope,
@@ -8531,6 +8702,7 @@ private fun PeriodSegmentGesture(
     val currentHeightPx = rememberUpdatedState(heightPx)
     val currentHourPx = rememberUpdatedState(hourHeightPx)
     val currentRecords = rememberUpdatedState(segment.records)
+    val currentAtLine = rememberUpdatedState(atLine)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -8601,10 +8773,12 @@ private fun PeriodSegmentGesture(
                                 }
                             // Every period in force moves together; a period is free to overlap anything, so
                             // the non-overlap snap the task panels use is deliberately bypassed.
+                            // Stored as it was drawn: what the line leaves of it, and nothing where it leaves none
+                            // (the period then stays where it was).
                             currentRecords.value.forEach { record ->
-                                periodDragBounds(record, edge, deltaMillis)?.let {
-                                    onCommitBounds(record, it.startEpochMillis, it.endEpochMillis, true)
-                                }
+                                periodDragBounds(record, edge, deltaMillis)
+                                    ?.let { currentAtLine.value(record.restrictiveKind, it) }
+                                    ?.let { onCommitBounds(record, it.startEpochMillis, it.endEpochMillis, true) }
                             }
                         }
                     } finally {
@@ -8753,7 +8927,10 @@ private fun CalendarBlockBody(
  */
 internal data class PanelDecor(val bands: List<PanelDecorBand>, val tickMinutes: Int)
 
-/** One full-width band of [PanelDecor]: its hours, its drawings, and its outline's thickness (none: null). */
+/**
+ * One full-width band of [PanelDecor]: its hours, its drawings, and whether the panel redraws its outline — a grey
+ * one; a blue or orange one is drawn over the panel in its own colour ([outlineOnTop]).
+ */
 internal data class PanelDecorBand(
     val startHour: Float,
     val endHour: Float,

@@ -71,7 +71,7 @@ class CatchUpAtUnlockedScreenTest {
                 atMillis = closed,
                 baseMode = DynamicPeriods.MODE_AT_SCREEN,
                 bars = mapOf(
-                    DynamicPeriods.LABEL_20S to closed + 60 * MIN,
+                    DynamicPeriods.LABEL_20S to closed + 20 * MIN + 20 * SEC,
                     DynamicPeriods.LABEL_5MIN to closed + 10 * MIN,
                     DynamicPeriods.LABEL_15MIN to closed + 90 * MIN,
                 ),
@@ -130,6 +130,7 @@ class CatchUpAtUnlockedScreenTest {
         // Asleep for the first twenty minutes, then unlocked with the app still closed.
         val (m, noScreen) = afterRestart(locked = listOf(DeviceSleepGap(CLOSED, CLOSED + 20 * MIN)))
         assertEquals(listOf(TaskTimeRange(CLOSED, CLOSED + 20 * MIN)), noScreen)
+        // (The 20 s break due twenty minutes after the last one is taken where the device was unlocked, and is over.)
         assertEquals(null, m.stretchStart, "the line lands at a screen")
     }
 }

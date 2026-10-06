@@ -120,6 +120,9 @@ the line has reached, so the two questions came apart again and now have two fun
 
 ### The look-away is announced from the AT-LINE run, and the two runs are not one run filtered
 
+(Written under the rule "after the end of ANY screen break, no 20s break for 20 minutes". Since 2026-10-05 only the
+end of a 20 s break bars the next one — `docs/invariants/screen-breaks.md`.)
+
 Reading *both* halves off the due run was the natural next step and it is wrong, because the two runs are not
 the same sequence of look-aways. The drag re-anchors the bar it fires on: an owed pose is a **placed dynamic
 period** in the undragged run, so it bars the 20 s for twenty minutes after itself; at the line that same

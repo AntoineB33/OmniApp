@@ -39,10 +39,20 @@ persisted keys.
     starts **rested**: each bar is what the past it can see sets (the banked record, the conducted breaks, the
     stretches of "no screen" behind the line — `BreakMachine.absorbHistory`), and a break that past says nothing
     about is barred one cadence from the line.
-  - *"After the end of a screen break, no 20s break in the next 20 minutes"* and each break's own recurrence
-    (`ScreenBreak.intervalMillis`) are set when a break ENDS.
+  - *"After the end of a 20s break, no 20s break in the next 20 minutes"* and each break's own recurrence
+    (`ScreenBreak.intervalMillis`) are set when a break ENDS. **Only a 20 s break bars the next 20 s break**
+    (requirements 2026-10-05; it was "a screen break", any of the three): the end of a pose bars none, unless a 20 s
+    break was of its chain.
   - *"After a ≥5-minute / ≥15-minute of 'no screen'"* is set when the line's stretch of "no screen" ENDS (a mode edge
-    back to 1, or a break the line entered at a screen ending). A break falling due INSIDE a stretch is taken there
+    back to 1, or a break the line entered at a screen ending). It bars the 5 min and the 15 min break, **never the
+    20 s break** (the ≥15-minute clause that did was dropped the same day). The consequence is the requirements' own
+    example: the 20 s break mode 2 drags through an absence — a night included — is entered where the line comes back
+    to a screen. The poses that stretch took are barred from the line there (`switchMode`, and `absorbHistory` for a
+    rest the line is still in), or they fall due again inside those twenty seconds and grow them into a pose that
+    holds the line.
+  - **A journey tells the machine each stretch's mode where the stretch STARTS** (`sweepNowLineTo`). The machine
+    walks in the mode it holds and takes a new one at the line; told by the step that ended a stretch, it walked every
+    stretch in the mode of the one before. A break falling due INSIDE a stretch is taken there
     — the stretch bars what comes after it, never the break it is the taking of.
   - *The chain rule*: a break falling due while another is in progress (or touching its end) joins it; the break the
     line is in becomes the longest of them from the same start (`Event.Grew`), re-banked as that. A break falling due

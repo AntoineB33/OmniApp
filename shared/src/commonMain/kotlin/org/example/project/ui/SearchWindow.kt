@@ -25,7 +25,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -187,16 +186,18 @@ class SearchRowOpeners(
     val onCreate: (SearchDomain.Kind) -> Unit = {},
     /** An app setting's row (by [SearchDomain.AppSettingEntry] name): the Search window holding it alone. */
     val onOpenAppSetting: (String) -> Unit = {},
+    /** A calendar block's row: what is on the calendar at its start — the calendar's own "edit…" there. */
+    val onOpenCalendarAt: (Long) -> Unit = {},
 ) {
     /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
     fun open(state: SchedulerState, result: SearchDomain.Result) {
         when (result) {
             is SearchDomain.TaskResult -> if (result.taskId in state.tasks) onOpenTaskEdit(result.taskId)
-            is SearchDomain.ItemResult -> openItem(result)
+            is SearchDomain.ItemResult -> openItem(state, result)
         }
     }
 
-    private fun openItem(item: SearchDomain.ItemResult) {
+    private fun openItem(state: SchedulerState, item: SearchDomain.ItemResult) {
         when (item.kind) {
             SearchDomain.Kind.Task -> Unit
             SearchDomain.Kind.Category -> onOpenCategory(CategoryId(item.id))
@@ -209,6 +210,8 @@ class SearchRowOpeners(
             SearchDomain.Kind.HistoryUnit -> onOpenHistoryUnit(item.id)
             // A notification is a fact that happened: it has nothing to open.
             SearchDomain.Kind.Notification -> Unit
+            SearchDomain.Kind.CalendarBlock ->
+                SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()

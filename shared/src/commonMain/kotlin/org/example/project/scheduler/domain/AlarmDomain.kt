@@ -129,7 +129,7 @@ object AlarmDomain {
      * 07:00 is what the user set. A local time the shift skips entirely is resolved forward by
      * [LocalDateTime.toInstant] (the alarm still rings exactly once that day).
      */
-    private fun occurrenceMillis(
+    internal fun occurrenceMillis(
         entry: AlarmEntry,
         date: LocalDate,
         timeZone: TimeZone,

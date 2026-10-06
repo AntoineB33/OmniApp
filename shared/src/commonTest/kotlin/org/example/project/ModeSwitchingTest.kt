@@ -80,7 +80,11 @@ class ModeSwitchingTest {
         assertEquals(DynamicPeriods.LABEL_5MIN, s.active?.label, "the pose was entered where it fell due")
         val events = ArrayList<Event>()
         s = BreakMachine.switchMode(s, MODE_AT_SCREEN, emptyList(), specs, events)
-        assertEquals(MODE_AT_SCREEN, BreakMachine.effectiveMode(s))
         assertTrue(events.any { it is Event.Removed })
+        assertTrue(s.active?.label != DynamicPeriods.LABEL_5MIN, "the pose is gone, and is not what holds the line")
+        // What may hold it is the 20 s break that fell due meanwhile (requirements 2026-10-05: a stretch of "no screen"
+        // no longer bars it) — and then only for its twenty seconds.
+        s = BreakMachine.advance(s, 61 * MIN + 30_000L, emptyList(), specs)
+        assertEquals(MODE_AT_SCREEN, BreakMachine.effectiveMode(s))
     }
 }

@@ -61,7 +61,7 @@ class BreakMachineTest {
         assertEquals(
             T0 + 40 * MIN + 20 * SEC,
             BreakMachine.dueOf(after, LABEL_20S, emptyList()),
-            "after the end of a screen break, no 20s break in the next 20 minutes",
+            "after the end of a 20s break, no 20s break in the next 20 minutes",
         )
     }
 
@@ -138,12 +138,53 @@ class BreakMachineTest {
     }
 
     @Test
-    fun a_20s_break_mode_2_drags_does_not_survive_a_fifteen_minute_stretch() {
+    fun a_20s_break_mode_2_drags_is_entered_where_the_line_comes_back_to_a_screen_however_long_the_stretch() {
+        // Requirements 2026-10-05: a >= 15-minute stretch of "no screen" no longer bars the 20 s break, so the one
+        // mode 2 was dragging is still owed at the return, and is entered there (in mode 3).
         val s = run(BreakMachine.initial(T0, specs, MODE_AWAY), T0 + 25 * MIN)
+        assertEquals(LABEL_20S, s.drag?.label)
         val back = BreakMachine.switchMode(s, MODE_AT_SCREEN, emptyList(), specs)
-        assertNull(back.drag, "after >= 15 minutes of no screen, no 20s break in the next 20 minutes")
-        assertEquals(T0 + 45 * MIN, back.bars[LABEL_20S])
-        assertEquals(T0 + 25 * MIN + 2 * HOUR, back.bars[LABEL_15MIN])
+        assertNull(back.drag)
+        assertEquals(LABEL_20S, back.active?.label, "entered at the return")
+        assertEquals(T0 + 25 * MIN, back.active?.startMillis)
+    }
+
+    @Test
+    fun the_end_of_a_pose_bars_no_20s_break() {
+        // Requirements 2026-10-05: "After the end of a 20s break, no 20s break in the next 20 minutes" — of a 20 s
+        // break, where it read "of a screen break". A 20 s break due a minute after a 5 min one ended is taken there.
+        val s0 = BreakMachine.initial(T0, specs, MODE_ON_BREAK)
+            .copy(bars = mapOf(LABEL_5MIN to T0 + 10 * MIN, LABEL_20S to T0 + 16 * MIN, LABEL_15MIN to T0 + 5 * HOUR))
+        val events = ArrayList<Event>()
+        run(s0, T0 + 30 * MIN, events = events)
+        assertEquals(
+            listOf(LABEL_5MIN to T0 + 10 * MIN, LABEL_20S to T0 + 16 * MIN),
+            started(events).map { it.label to it.startMillis },
+        )
+    }
+
+    @Test
+    fun the_20s_break_entered_at_the_return_from_a_night_does_not_grow_into_a_pose() {
+        // Nothing bars the 20 s break after a long stretch any more, so it is entered where the line comes back to a
+        // screen. The poses the stretch took are barred from there: they may not fall due inside those twenty seconds
+        // and turn them into fifteen minutes that hold the line — neither on the machine, nor on one rebuilt from history.
+        val night = run(BreakMachine.initial(T0, specs, MODE_AWAY), T0 + 10 * HOUR)
+        val events = ArrayList<Event>()
+        val back = BreakMachine.switchMode(night, MODE_AT_SCREEN, emptyList(), specs, events)
+        assertEquals(LABEL_20S, back.active?.label)
+        assertEquals(listOf(LABEL_20S), back.active?.members)
+        assertTrue(events.none { it is Event.Grew }, "$events")
+        assertTrue(back.bars.getValue(LABEL_5MIN) >= T0 + 11 * HOUR)
+        assertTrue(back.bars.getValue(LABEL_15MIN) >= T0 + 12 * HOUR)
+
+        val rebuilt =
+            BreakMachine.absorbHistory(
+                back.copy(bars = night.bars), emptyList(), specs,
+                banked = listOf(org.example.project.scheduler.domain.BankedBreak(LABEL_20S, T0 + 10 * HOUR, T0 + 10 * HOUR + 20 * SEC)),
+                stretches = listOf(Span(T0, T0 + 10 * HOUR)),
+            )
+        assertTrue(rebuilt.bars.getValue(LABEL_5MIN) >= T0 + 11 * HOUR, "the rest the line is still in bars from the line")
+        assertTrue(rebuilt.bars.getValue(LABEL_15MIN) >= T0 + 12 * HOUR)
     }
 
     @Test
@@ -193,9 +234,10 @@ class BreakMachineTest {
         val placed = BreakMachine.predictExpected(BreakMachine.initial(T0, specs), T0 + 12 * HOUR, chains, specs)
         val inNight = placed.filter { it.startMillis >= night.startMillis && it.startMillis < night.endMillis }
         assertEquals(listOf(BreakMachine.Placed(LABEL_15MIN, night.startMillis, night.startMillis + 15 * MIN)), inNight)
-        // After a >= 15-minute stretch: no 20 s for 20 minutes, no 5 min for an hour, no 15 min for two hours.
+        // After a >= 15-minute stretch: no 5 min for an hour, no 15 min for two hours — and nothing bars the 20 s break
+        // (requirements 2026-10-05: only the end of a 20 s break does), so it falls due where the stretch ends.
         val after = placed.filter { it.startMillis >= night.endMillis }
-        assertEquals(night.endMillis + 20 * MIN, after.first { it.label == LABEL_20S }.startMillis)
+        assertEquals(night.endMillis, after.first { it.label == LABEL_20S }.startMillis)
         assertEquals(night.endMillis + HOUR, after.first { it.label == LABEL_5MIN }.startMillis)
         assertEquals(night.endMillis + 2 * HOUR, after.first { it.label == LABEL_15MIN }.startMillis)
     }

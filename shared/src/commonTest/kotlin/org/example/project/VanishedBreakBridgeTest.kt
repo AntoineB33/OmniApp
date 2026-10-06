@@ -18,8 +18,8 @@ import org.example.project.scheduler.state.SchedulerState
  * break re-anchors the recurrence bars — pressed just before a look-away falls due, it takes that look-away's
  * place), and ONE task touches both of its edges, the look-away is replaced by that task.
  *
- * The scenario is a real plan: one on-screen task, the default breaks, and a twenty-minute rest that bars both poses
- * and ends so that the next look-away falls due at +20 s — the plan is `Write` up to +20 s, the look-away over
+ * The scenario is a real plan: one on-screen task, the default breaks, and an earlier look-away that ends so that the
+ * next one falls due at +20 s (only the end of a 20 s break bars the next: requirements 2026-10-05) — the plan is `Write` up to +20 s, the look-away over
  * [+20 s, +40 s), and `Write` again from +40 s.
  */
 class VanishedBreakBridgeTest {
@@ -41,13 +41,9 @@ class VanishedBreakBridgeTest {
     private fun planned(): SchedulerState {
         var s = SchedulerState.empty().copy(screenBreaks = breaks)
         s = r(s, SchedulerIntent.SetCellTitle(freeRootCell(s), "Write"))
-        // Twenty minutes of rest ending so that the look-away it bars falls due twenty seconds past NOW.
-        val rest =
-            TaskPanel(
-                "rest", null, "Inactivity", NOW - 40 * MIN, NOW - 20 * MIN + 20 * SEC,
-                inactivity = true, periodKind = PeriodKinds.INACTIVITY,
-            )
-        s = r(s.copy(panels = s.panels + rest), SchedulerIntent.RefreshSchedule(NOW - 5 * MIN))
+        // A look-away ending so that the next one, barred for twenty minutes, falls due twenty seconds past NOW.
+        s = r(s, SchedulerIntent.RecordConductedBreak(lookAway.title, NOW - 20 * MIN, NOW - 20 * MIN + 20 * SEC))
+        s = r(s, SchedulerIntent.RefreshSchedule(NOW - 5 * MIN))
         val write = taskId(s, "Write")
         val around = s.panels.filter { it.endEpochMillis > NOW - MIN && it.startEpochMillis < NOW + MIN }
         assertTrue(around.any { it.taskId == write && it.endEpochMillis == hole.startEpochMillis }, "the scenario: Write up to the look-away")
@@ -127,7 +123,8 @@ class VanishedBreakBridgeTest {
         val s = planned()
         // Pressed just after the look-away's cue: it stays drawn, so it has no hole to give back.
         val after = press(s, NOW + 42 * SEC)
-        assertEquals(s.panels, after.panels.filterNot { it.conductedBreak })
+        // (The earlier look-away the scenario is built on is a conducted break too.)
+        assertEquals(s.panels.filterNot { it.conductedBreak }, after.panels.filterNot { it.conductedBreak })
         assertEquals(s.tasks, after.tasks)
     }
 }
