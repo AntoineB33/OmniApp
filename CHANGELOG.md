@@ -11,6 +11,36 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Scheduler simulations in two tiers, and the balance of the two criteria as a setting — 2026-10-06
+
+Asked for as: *"Are there automatic tests for very complex situations, like a chaotic timeline with lots of pre-placed
+tasks and restrictive periods with hundreds of different task and period ids? Do they test if all those hundreds of
+tasks all reach their target when simulating lots of weeks with or without minor or major changes to the state rules
+inputs? There should be rapid tests and very long tests…"* — there were none (the largest scheduler fixture held
+twelve tasks) — then *"Build it. The balance between the two optimization problems is for you to decide, and if
+possible to be adjusted in the configuration section of the calendar."*
+
+- **The simulations** (`shared/src/jvmTest/.../simulation/`): a seeded generator of chaotic accounts, lived through
+  for days through the reducer, measured off the banked records against targets computed from the requirements alone.
+  The **fast tier** (`ScheduleSimulationTest`) is in every `jvmTest`; the **long tier** (`ScheduleSimulationLongTest`:
+  60 / 120 / 200 tasks over two to four weeks, with minor and major rule changes) is `./gradlew :shared:longTest`
+  (`-PlongScale`, `-PlongSeeds`). `docs/invariants/scheduler.md` § *Simulations* says which changes owe the long one.
+- **What they found, the day they were written.** No hard constraint is broken on any scenario run. But the plan
+  leaves 3 % to 31 % of the schedulable time to nobody (15 % on a bare eight-task account, one three-hour gap among
+  them), and a task with a short minimum time and a large share gets down to about half its lower target among what
+  is served. Neither moves with search time or with the balance below. Both are recorded as the gap between
+  `ScheduleSimulation.TOLERATED` (asserted: today's behaviour and a margin) and `GOAL` (printed by every long run);
+  the scheduler itself is NOT changed here.
+- **The balance** — `J = J_1 + w·J_2`, `SchedulerState.minimumTimeWeight`, "Minimum time weight" under *Scheduler
+  engine* in the calendar's configuration section: 0 follows the percentages alone, 1 is the default, more holds the
+  minimum times harder (0…100). Decided: the default stays 1 — between 0.1 and 10 the plan barely moves, and only
+  towards 0 are panels cut short (38 of 193 on the eight-task account, against none). An ACCOUNT setting (persisted,
+  synced, merged like the other settings; not undoable), because plans made on two devices compete on one score, and
+  part of `schedulingSignature` (an account at the default hashes as before). It reaches the score in one place
+  (`ScoreModel.shortfallCost`) and the desktop solver's three copies of that term. `MinimumTimeWeightTest`.
+
+No migration: the new field has a default, and a payload without it loads at 1.
+
 ### Calendar: a dragged task panel no longer jumps back at the release — 2026-10-06
 
 Anomaly (user): *"when I drag a task panel, it glitches a microsecond when releasing the mouse click."* The release

@@ -225,7 +225,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                         val short = m - length
                         if (charged && short > 0.0) {
                             val endU = if (joinOut) tailEnd else cuts[q + 1]
-                            addObj(v, exp(-(endU - origin) / theta) * tau * short * (2.0 * m + short))
+                            addObj(v, model.minimumWeight * exp(-(endU - origin) / theta) * tau * short * (2.0 * m + short))
                         }
                     }
                 }
@@ -257,7 +257,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 val t = tasks.indexOf(runIn)
                 val m = model.minimum[runIn] / UNIT
                 val short = m - runInLen / UNIT
-                val c = exp(-(a - origin) / theta) * (model.tau[runIn] / UNIT) * short * (2.0 * m + short)
+                val c = model.minimumWeight * exp(-(a - origin) / theta) * (model.tau[runIn] / UNIT) * short * (2.0 * m + short)
                 offset += c
                 y[t][0]?.forEach { v -> v?.let { addObj(it, -c) } }
             }
@@ -267,7 +267,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 val t = tasks.indexOf(j)
                 val m = model.minimum[j] / UNIT
                 val short = m - tailLen / UNIT
-                val c = exp(-(tailEnd - origin) / theta) * (model.tau[j] / UNIT) * short * (2.0 * m + short)
+                val c = model.minimumWeight * exp(-(tailEnd - origin) / theta) * (model.tau[j] / UNIT) * short * (2.0 * m + short)
                 offset += c
                 for (p in 0 until K) y[t][p]?.get(K - 1)?.let { addObj(it, -c) }
             }

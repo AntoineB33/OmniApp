@@ -16,6 +16,10 @@ every Supabase and SQLite migration, is in `CHANGELOG.md`.
 - `./gradlew :shared:check` — verify syntax/compile errors after editing the `shared` module.
 - `./gradlew :shared:jvmTest` — the real logic gate (see *Verification* below).
 - `./gradlew :desktopApp:run` — run the desktop app to verify UI/desktop changes.
+- `./gradlew :shared:longTest` — the LONG scheduler simulations (hundreds of tasks lived through for weeks; minutes to
+  hours, `-PlongScale=0.25` to shrink them). Not in `checkChange`: run it before reporting done a change to what the
+  scheduler ANSWERS (the score, the search, the fill, the advance — `docs/invariants/scheduler.md` § *Simulations*),
+  and read what it prints even when it passes.
 - `./gradlew :shared:startupCheck` — headless start-up on a copy of the release DB (never takes the screen); run it
   before reporting a client change done — a green `jvmTest` once shipped a release that drew no window for 90 s.
   `docs/PERFORMANCE.md` § *Start-up on a real account*.

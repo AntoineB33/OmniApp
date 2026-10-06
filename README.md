@@ -131,7 +131,8 @@ Changed some code? Two steps. They are the same on Windows, macOS and Linux — 
 ./gradlew checkChange
 ```
 
-It runs the tests and builds every app your computer can build (desktop, Android, web). It ends with
+It runs the tests and builds every app your computer can build (desktop, Android, web). (Changed how the scheduler
+plans? Also run `./gradlew :shared:longTest` — hundreds of tasks simulated over weeks; it takes minutes to hours.) It ends with
 **`checkChange: green.`** when all is well. If it fails, read the **first** error it prints: it names the file and the
 line. The first run downloads everything and takes several minutes; the next ones are much faster.
 

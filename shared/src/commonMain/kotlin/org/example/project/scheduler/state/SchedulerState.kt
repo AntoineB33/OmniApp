@@ -41,6 +41,21 @@ data class SchedulerSelection(
     val renderVia: CellId? = null,
 )
 
+/**
+ * `docs/scheduler_score.md` § *The score*: **the balance of the two optimization criteria**, `w` in `J = J_1 + w·J_2`
+ * — how much a task panel cut short of its minimum execution time (criterion 2) weighs against the priority
+ * percentages being followed over the smallest window (criterion 1). 1 is the balance the definition derives (both
+ * criteria in one unit); 0 follows the percentages alone, cutting panels as short as that takes; a larger value holds
+ * panels at their minimum and lets the percentages lag further behind.
+ */
+const val DEFAULT_MINIMUM_TIME_WEIGHT: Double = 1.0
+const val MIN_MINIMUM_TIME_WEIGHT: Double = 0.0
+const val MAX_MINIMUM_TIME_WEIGHT: Double = 100.0
+
+/** A balance kept in its bounds; a value that is not a number is the default. */
+fun minimumTimeWeightOf(value: Double): Double =
+    if (value.isNaN()) DEFAULT_MINIMUM_TIME_WEIGHT else value.coerceIn(MIN_MINIMUM_TIME_WEIGHT, MAX_MINIMUM_TIME_WEIGHT)
+
 /** The scheduler engine's time limit after a change until the user sets another: two minutes. */
 const val DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS: Int = 120
 
@@ -735,6 +750,13 @@ data class SchedulerState(
      * setting" element holds its slider. A setting: persisted and synced (defaults to full), not undoable.
      */
     val soundVolume: Double = 1.0,
+    /**
+     * User rule 2026-10-06: the balance of the score's two criteria ([DEFAULT_MINIMUM_TIME_WEIGHT]) — set in the
+     * calendar's configuration section. A RULE of the account, not a resource of a device: it changes which plan is
+     * best, and plans made on two devices compete on ONE score, so it is authoritative (persisted and synced) and a
+     * change of it re-plans (`SchedulerDomain.schedulingSignature`). Not undoable, like the other settings.
+     */
+    val minimumTimeWeight: Double = DEFAULT_MINIMUM_TIME_WEIGHT,
     /**
      * PRD §7 the window the user is currently focused on — any window of the app, the task tree included.
      * Every history chord is relative to it (PRD §5/§6), each unit is stamped with it, and it gates which

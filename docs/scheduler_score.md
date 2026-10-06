@@ -134,7 +134,16 @@ fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80
 
 ## The score
 
-* **The score of a continuation is $J = J_1 + J_2$, lower is better.** Hard constraints are not in the score:
+* **The balance of the two criteria is the account's** (user rule 2026-10-06): $J = J_1 + w\,J_2$, with $w$ the
+  **minimum time weight** (`SchedulerState.minimumTimeWeight`, the calendar's configuration section). $w = 1$ is the
+  default and the balance this document derives — § *Criterion 2* puts a shortfall in the unit of a lag, so the two
+  add up as they are. $w = 0$ follows the percentages alone and cuts panels as short as that takes; a larger $w$
+  holds panels at their minimum and lets the percentages lag. Measured (`MinimumTimeWeightTest`, the simulations):
+  between $0.1$ and $10$ the plan barely moves — the slope of criterion 2 at a shortfall of nothing is already steep
+  enough that panels are held at their minimum — and it is only towards $0$ that panels are cut. So the default
+  stays $1$, and the setting is for an account that wants the other extreme. $w$ is part of the rule state: another
+  $w$ is another best continuation, and every device of the account scores with the same one.
+* **The score of a continuation is $J = J_1 + w\,J_2$, lower is better.** Hard constraints are not in the score:
   a continuation that violates any requirement of `docs/scheduler_requirements.md` (resilience 0, pre-placed tasks,
   dynamic restrictive periods, $now line$ modes, frozen past) is not a candidate at all. Leaving schedulable time to
   nobody violates none of them: it is a candidate, and it is kept only where it scores lower than any task — as a

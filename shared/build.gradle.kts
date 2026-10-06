@@ -130,6 +130,26 @@ tasks.whenTaskAdded {
         enabled = false
     }
 }
+// The LONG tier of the scheduler simulations (`ScheduleSimulationLongTest`): hundreds of tasks lived through for weeks.
+// Minutes to hours, so it is not in `jvmTest` (its tests skip themselves there); run it when the scheduler's answer
+// can have changed — `docs/invariants/scheduler.md` § *Simulations*. `-PlongScale=0.25` shrinks the accounts,
+// `-PlongSeeds=1,2,3` lives each scenario under several seeds.
+val longTest by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Runs the long scheduler simulations (hundreds of tasks over weeks); prints how far each is from the goal."
+    val testCompilation = kotlin.jvm().compilations.getByName("test")
+    testClassesDirs = testCompilation.output.classesDirs
+    classpath = files(testCompilation.output.allOutputs, testCompilation.runtimeDependencyFiles)
+    dependsOn("jvmTestClasses")
+    filter { includeTestsMatching("org.example.project.simulation.ScheduleSimulationLongTest") }
+    systemProperty("omniapp.longTests", "true")
+    providers.gradleProperty("longScale").orNull?.let { systemProperty("omniapp.longTests.scale", it) }
+    providers.gradleProperty("longSeeds").orNull?.let { systemProperty("omniapp.longTests.seeds", it) }
+    maxHeapSize = "4g"
+    testLogging { showStandardStreams = true }
+    outputs.upToDateWhen { false }
+}
+
 // `StartupOnRealDbTest`: the desktop's start-up, minus its window, on a COPY of a real database — headless, so it
 // never takes the screen. Copies the release DB (or `-PstartupDb=<path to scheduler-state.db>`) into the build dir
 // first; the release app's own files are only read. `docs/PERFORMANCE.md` § *Start-up on a real account*.

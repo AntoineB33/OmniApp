@@ -151,6 +151,7 @@ object SnapshotMerge {
                 quotas = quotas.map(org.example.project.scheduler.domain.QuotaDomain::healed),
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),
                 soundVolume = pick(base.soundVolume, local.soundVolume, remote.soundVolume),
+                minimumTimeWeight = pick(base.minimumTimeWeight, local.minimumTimeWeight, remote.minimumTimeWeight),
                 // PRD §4 Default sub-tree: the template resolves as ONE value, like a task tree — and it IS
                 // a tree, a shape the user drew, not independent rows to interleave (two devices each
                 // inserting a row would otherwise produce a template neither of them authored). The switch

@@ -3866,6 +3866,9 @@ fun CalendarFloatingWindow(
     /** The scheduler engine's time limit after a change, in seconds, and its edit — the configuration section's field. */
     planCalculationLimitSeconds: Int = org.example.project.scheduler.state.DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
     onPlanCalculationLimitChange: (Int) -> Unit = {},
+    /** The balance of the score's two criteria (`SchedulerState.minimumTimeWeight`) and its edit. */
+    minimumTimeWeight: Double = org.example.project.scheduler.state.DEFAULT_MINIMUM_TIME_WEIGHT,
+    onMinimumTimeWeightChange: (Double) -> Unit = {},
     /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
     showReminders: Boolean = true,
     /** PRD §14: flip the "Reminders" display switch. */
@@ -4075,6 +4078,8 @@ fun CalendarFloatingWindow(
                 onToggleScreenBreaks = onToggleScreenBreaks,
                 planCalculationLimitSeconds = planCalculationLimitSeconds,
                 onPlanCalculationLimitChange = onPlanCalculationLimitChange,
+                minimumTimeWeight = minimumTimeWeight,
+                onMinimumTimeWeightChange = onMinimumTimeWeightChange,
             )
         }
     }
@@ -4110,6 +4115,8 @@ private fun CalendarConfigurationSection(
     onToggleScreenBreaks: (Boolean) -> Unit,
     planCalculationLimitSeconds: Int,
     onPlanCalculationLimitChange: (Int) -> Unit,
+    minimumTimeWeight: Double,
+    onMinimumTimeWeightChange: (Double) -> Unit,
 ) {
     // A vertical scrollbar on its right (user rule 2026-10-04), the one the Search window's lists have: the section
     // already scrolled when the window was shorter than it, with nothing saying so.
@@ -4161,6 +4168,7 @@ private fun CalendarConfigurationSection(
         // User rule 2026-10-04: the resources the scheduler engine may use, on THIS device.
         Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
         PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange)
+        MinimumTimeWeightField(minimumTimeWeight, onMinimumTimeWeightChange)
     }
     ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
     }
@@ -4193,6 +4201,46 @@ private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit) {
         // anywhere else gives the keyboard back to the calendar.
         modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
     )
+}
+
+/**
+ * User rule 2026-10-06: **the balance of the scheduler's two criteria** (`docs/scheduler_score.md` § *The score*,
+ * `SchedulerState.minimumTimeWeight`) — following the priority percentages over the smallest window against holding
+ * each panel at its minimum execution time. A number: 1 is the default balance, 0 follows the percentages alone, a
+ * larger one holds the minimum times harder. The account's, on every device; written as soon as it reads as a number
+ * in its bounds, and the plan is then made again under it.
+ */
+@Composable
+private fun MinimumTimeWeightField(weight: Double, onChange: (Double) -> Unit) {
+    fun text(value: Double) = if (value == kotlin.math.floor(value)) value.toLong().toString() else value.toString()
+    val bounds = org.example.project.scheduler.state.MIN_MINIMUM_TIME_WEIGHT..org.example.project.scheduler.state.MAX_MINIMUM_TIME_WEIGHT
+    fun parse(typed: String): Double? = typed.trim().replace(',', '.').toDoubleOrNull()?.takeIf { !it.isNaN() && it in bounds }
+    var draft by remember { mutableStateOf(text(weight)) }
+    // Written from elsewhere (another device): read it again — never under the hand typing it (`1.` is 1).
+    var seen by remember { mutableStateOf(weight) }
+    if (seen != weight) {
+        seen = weight
+        if (parse(draft) != weight) draft = text(weight)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { typed ->
+                draft = typed
+                parse(typed)?.takeIf { it != weight }?.let(onChange)
+            },
+            singleLine = true,
+            isError = parse(draft) == null,
+            label = { Text("Minimum time weight") },
+            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+        )
+        Text(
+            "0: follow the percentages only · 1: default · more: keep panels at their minimum time",
+            style = MaterialTheme.typography.labelSmall,
+            color = CalColors.muted,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+    }
 }
 
 /**

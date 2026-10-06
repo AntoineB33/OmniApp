@@ -1088,6 +1088,12 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * User rule 2026-10-06: the balance of the score's two criteria ([SchedulerState.minimumTimeWeight]), kept in its
+     * bounds — an account setting: persisted and synced, not undoable; the plan is made again under it.
+     */
+    data class SetMinimumTimeWeight(val weight: Double) : SchedulerIntent
+
+    /**
      * User rule 2026-10-04: the scheduler engine's time limit after a change, in seconds
      * ([SchedulerState.planCalculationLimitSeconds]) — this device's own setting: persisted, never synced, not undoable.
      */

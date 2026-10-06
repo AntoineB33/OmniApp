@@ -39,6 +39,12 @@ class ScoreModel(
     windows: List<PlanWindow>,
     val fromMillis: Long,
     val toMillis: Long,
+    /**
+     * `docs/scheduler_score.md` § *The score*: the **balance** `w` of `J = J_1 + w·J_2` — how much a panel short of
+     * its minimum execution time weighs against a lag (`SchedulerState.minimumTimeWeight`; 1 is the common unit the
+     * definition derives, 0 follows the percentages alone).
+     */
+    val minimumWeight: Double = 1.0,
 ) {
     val n: Int = tasks.size
     val indexOf: Map<TaskId, Int> = tasks.withIndex().associate { (i, t) -> t.id to i }
@@ -729,7 +735,7 @@ class ScoreModel(
      * to `M_i + s` costs over the task's window. Its slope at `s = 0` is `2M_i·τ_i`, more than any lag a panel of
      * minimum length leaves behind can repay, so a panel is cut short only where a larger debt calls for it.
      */
-    fun shortfallCost(i: Int, s: Double): Double = tau[i] * s * (2.0 * minimum[i] + s)
+    fun shortfallCost(i: Int, s: Double): Double = minimumWeight * tau[i] * s * (2.0 * minimum[i] + s)
 
     /**
      * A LOWER bound on task [i]'s criterion 1 from [fromU] to [untilU], from its lag [lag] at [fromU], whatever is

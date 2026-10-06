@@ -366,6 +366,48 @@ model exists to prevent.
   (PRD §15/§17) — it is not on the schedulable clock — where a stretch somebody ELSE may run in cuts it. That is
   about the panel's length, never about whether anything is placed.
 
+### Simulations: the scheduler is tested on chaotic accounts, in two tiers
+
+`shared/src/jvmTest/.../simulation/` (`ScheduleSimulation`, 2026-10-06). A scenario is a SEED: an account of N tasks
+with random weights, minimum times and resiliences to K period kinds, a timeline crowded with periods, nights and
+pre-placed panels, lived through for days through the app's own reducer (`RefreshSchedule`, then `AdvanceSchedule` +
+`ExtendSchedule` step by step, a rule change being its intents and the re-plan they bring). What is asserted is
+measured off the RECORDS the walk banked, against targets the harness computes from the requirements alone — never
+off the scheduler's own score, so a fault in the score model cannot hide behind itself.
+
+- **Two tiers, and which changes owe the long one.**
+  - **Fast** — `ScheduleSimulationTest`, in every `:shared:jvmTest` (so in `checkChange`): ten tasks, a week, with and
+    without rule changes. Seconds.
+  - **Long** — `ScheduleSimulationLongTest`, `./gradlew :shared:longTest` only (its tests skip themselves anywhere
+    else): 60 / 120 / 200 tasks, two to four weeks, unchanged / a minor change every week / an upheaval on the way.
+    Minutes to hours. `-PlongScale=0.25` shrinks the accounts, `-PlongSeeds=1,2,3` lives each under several seeds.
+    **Run it before reporting done any change to what the scheduler ANSWERS**: `ScheduleScore.kt`,
+    `ScheduleOptimizer.kt`, `ScheduleImprover.kt`, `ScheduleSearch.kt`, `ScheduleFill.kt`, `MipScheduleSolver.kt`,
+    the fill and the advance in `SchedulerDomain.kt` / `SchedulerReducer.kt`, `PeriodKinds.kt`'s multipliers, and
+    the score's constants. A change to the UI, the sync or the break cues does not owe it.
+- **Hard constraints have one level: none is ever broken.** No task ran in a period it has resilience 0 to, or inside
+  another task's pre-placed panel; no two ran at once; no stretch of banked record was gone a step later (the frozen
+  past). These hold today on every scenario run.
+- **The division of the time has two levels** (`ScheduleSimulation.GOAL` / `TOLERATED`), and the gap between them is
+  the scheduler's open debt, found by these tests the day they were written:
+  - **The plan leaves time to nobody** — 3 % to 31 % of the schedulable time on a ten-task account, 15 % on eight
+    tasks with nothing laid at all, one gap of three hours among them — while tasks are behind their share. Giving
+    the search wall time (`SearchBudget`) does not change it, and neither does the balance of the two criteria.
+  - **A task with a short minimum time and a large share is under-served**, down to about half its lower target among
+    what IS served on a sixty-task account; the difference goes to the tasks with long minimums.
+  `TOLERATED` is today's behaviour with a margin: the tests fail past it, so nothing gets worse unnoticed, and every
+  long run prints how far it is from `GOAL`. **Tighten `TOLERATED` when the scheduler improves; never loosen it to
+  make a change pass** — a change that needs it loosened has made the scheduler worse on the one measure the user
+  asked for (*"do all those hundreds of tasks reach their target"*).
+- **Two targets per task, and the truth between them**: its priority percentage of every instant it MAY run at
+  (resilience applied — no deprivation repaid), and its percentage of all the time anybody may run in (every
+  deprivation repaid). Compensation is bounded (`docs/scheduler_score.md`), so the service is owed between the two; a
+  task whose lower target is under three of its minimum times over the stretch is not judged (one panel more or less
+  IS the difference).
+- **What the scenarios leave out**, so a green run says nothing about it: the sleep schedule (nights are laid as
+  periods, so no time zone enters a seed), the three dynamic periods and the line's modes 2 and 3 (the walk is in
+  mode 1 with no screen break), dated task trees, sets of tasks, quotas, and more than one level of tree.
+
 ### The best score, and what "as close as possible" means
 
 → `docs/scheduler_score.md` § *Degradation*, ADR 0001 § 12.

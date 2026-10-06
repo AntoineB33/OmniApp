@@ -98,6 +98,8 @@ internal object ScheduleFill {
          * changes over this fill (dated task trees). Null: [ruleState] holds everywhere. When given, [run] walks it.
          */
         val ruleStates: RuleStates? = null,
+        /** The balance of the score's two criteria ([ScoreModel.minimumWeight], `SchedulerState.minimumTimeWeight`). */
+        val minimumWeight: Double = 1.0,
         /**
          * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a line walked across a
          * stretch nothing ran in (a wake from device sleep) is given *"the current set of rules … while no better set
@@ -303,7 +305,7 @@ internal object ScheduleFill {
         // runs competing as a seed, exactly as a device with no rules does.
         var adoptedSeed: List<RulePlacement>? = null
         input.adopted?.let { adopted ->
-            val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to)
+            val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to, input.minimumWeight)
             val cursor = replay(model, input.history, input.startMillis)
             val among = firstAmong(input, model)
             if (ScheduleOptimizer(model).isLegalContinuation(cursor, adoptedRuns(model, adopted, input.startMillis), model.uAt(emitEnd), among)) {
@@ -320,7 +322,7 @@ internal object ScheduleFill {
             input.refusedFirst == null && linePoints(input).isEmpty() && cycle.anchorMillis <= input.startMillis
         ) {
             val modelFrom = minOf(from, cycle.anchorMillis)
-            val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, modelFrom, to), modelFrom, to)
+            val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, modelFrom, to), modelFrom, to, input.minimumWeight)
             val unrolled = unroll(model, cycle, model.uAt(input.startMillis), model.uAt(emitEnd))
             if (unrolled != null) {
                 emit(model, unrolled.first, raw, model.uAt(emitEnd))
@@ -331,7 +333,7 @@ internal object ScheduleFill {
 
         if (input.unrollOnly) return Result(emptyList(), input.cycle)
 
-        val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to)
+        val model = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, from, to), from, to, input.minimumWeight)
         val cursor = replay(model, input.history, input.startMillis)
         val forcedFirst = input.forcedFirst?.let { model.indexOf[it] } ?: -1
         val refusedFirst = input.refusedFirst?.let { model.indexOf[it] } ?: -1
@@ -467,7 +469,7 @@ internal object ScheduleFill {
             val tasks = ruleStateAt(x)
             val idx = tasks.indexOfFirst { it.id == taskId }
             if (idx < 0) return true
-            val probe = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, model.fromMillis, model.toMillis), model.fromMillis, model.toMillis)
+            val probe = ScoreModel(tasks, input.blocks, windowsFor(input.periods, tasks, model.fromMillis, model.toMillis), model.fromMillis, model.toMillis, input.minimumWeight)
             val at = replay(probe, input.history + prefixHistory + PlanBlock(taskId, runStart, x), x)
             if (!probe.permitted(idx, at.u)) return true
             val eval = ScheduleOptimizer(probe).evaluate(at, probe.uEnd) ?: return false

@@ -35,6 +35,7 @@ import org.example.project.scheduler.model.TaskTimeRange
 import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.CalendarEdge
+import org.example.project.scheduler.state.DEFAULT_MINIMUM_TIME_WEIGHT
 import org.example.project.scheduler.state.SchedulerSelection
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.state.TaskTreeEntry
@@ -5936,6 +5937,7 @@ object SchedulerDomain {
                     budget = searchBudget,
                     ruleStates = timeline,
                     unrollOnly = unrollOnly,
+                    minimumWeight = state.minimumTimeWeight,
                 ),
             )
         cycleSink?.invoke(filled.cycle)
@@ -6163,6 +6165,9 @@ object SchedulerDomain {
                 result = 31 * result + PeriodFormula.describe(rule.then).hashCode()
             }
         }
+        // The balance of the score's two criteria: another balance is another best plan (an account at the default
+        // hashes as it always did).
+        if (state.minimumTimeWeight != DEFAULT_MINIMUM_TIME_WEIGHT) result = 31 * result + state.minimumTimeWeight.hashCode()
         return result
     }
 

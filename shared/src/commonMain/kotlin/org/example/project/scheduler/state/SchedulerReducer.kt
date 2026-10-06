@@ -627,6 +627,10 @@ object SchedulerReducer {
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
+            is SchedulerIntent.SetMinimumTimeWeight ->
+                minimumTimeWeightOf(intent.weight).let {
+                    if (it == state.minimumTimeWeight) state else state.copy(minimumTimeWeight = it)
+                }
             is SchedulerIntent.SetPlanCalculationLimit ->
                 intent.seconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS).let {
                     if (it == state.planCalculationLimitSeconds) state else state.copy(planCalculationLimitSeconds = it)
