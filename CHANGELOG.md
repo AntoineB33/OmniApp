@@ -11,6 +11,92 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search: an empty list of one kind offers to create one — 2026-10-06
+
+Asked for as: *"In the Search window, when only one element type is selected and that the result list is empty, the
+corresponding creation element must appear in the result list."* `SearchDomain.withCreationWhenEmpty`, applied where
+the window builds its list: one kind checked, nothing found, and the kind is one the user can make (`CREATABLE`) — the
+list is that kind's "creation" row, the same row the "creation" kind lists, so it opens and is added like it. Several
+kinds, or a kind nobody makes by hand (history unit, notification, shortcut, calendar block…), still list nothing.
+`CalendarBlocksSearchTest`.
+
+### A period the user stated gives way to a mode-1 line, without ever being rewritten — 2026-10-06
+
+The first of the audit's open findings (entry below), on the user's go-ahead. The requirements: *"When the $now line$
+is in mode 1 and reaches a 'no screen' period that extends to [t1;t2], I want the 'no screen' period to become
+]$now line$;t2] when $now line$ is in [t1;t2[. When $now line$ >= t2, then this 'no screen' period is removed."* That
+held for the periods a rule lays (the sleep schedule's, cut where they are drawn) and not for one the user drew, which
+stayed whole behind a line at a screen.
+
+- **The statement is never rewritten.** Trimming the stored panel as the line crosses it would change the rules
+  (`schedulingSignature`) and re-plan because time passed. What the line crossed at a screen is kept BESIDE the period
+  (`SchedulerState.periodCrossings`, a `PeriodCrossing` per panel id — the line's own history on this device, like the
+  breaks it banked: persisted locally, never synced), and the period every reader sees is the statement less that:
+  `SchedulerDomain.afterCrossings` / `statedPanels`, the ONE reading the plan's environment, the break machine's, the
+  plan-mismatch check, the calendar (and the layers a period lays) and the Search window's calendar readers take.
+- **Banked at two armed triggers, never per tick** (`domain/AtScreenWalk.kt`, called by the engine's one interpreter
+  beside `freezeSleepBehindLine`): the end of the next period that gives way, and the edge out of mode 1
+  (`SchedulerIntent.RecordAtScreenCrossing`). The trigger is armed again where it fired and where the panels changed.
+  Between two triggers the calendar takes the stretch being walked live (`SchedulerEngine.atScreenSince`).
+- **Stating a period again starts it afresh** (`PeriodCrossing.sinceMillis`, set where the reducer resolves a drawn,
+  moved or resized period): what the line crossed before is about a period that is no longer this one, so a period put
+  over the past — rewriting history, which the requirements allow — stands whole.
+- Which periods: the ones the user placed that are or carry "no screen" (`SchedulerDomain.retractsAtScreen`, the plan's
+  own predicate) — a hand-drawn `sleep` period as well as a "No screen" one.
+
+Known limits: a process that ends in mode 1 loses the stretch it had not banked yet; a period crossed in its middle
+stands in two pieces, and the second (id `…~1`) cannot be edited by itself.
+
+`PeriodCrossingTest`, `AtScreenWalkTest`. A new persisted field with a default (a payload without it has no crossing;
+a crossing of a panel the state no longer holds is dropped on load). No Supabase change.
+
+**The tolerances** (the audit's third finding), read one by one:
+- `BREAK_EDGE_TOLERANCE_MILLIS` 1 s → **1 ms**: the exact amount the half-open form of a dragged break moves an edge
+  by, which is the one way two readings of that edge differ. The whole suite passes with the exact figure.
+- `LOOK_AWAY_START_FRESH_MILLIS` (2 s) was wrongly listed: it is how late a spoken cue may still be worth saying, a
+  rule about notifications, not a tolerance on the schedule.
+- `CARRIED_MACHINE_LEAD_MILLIS` (60 s) and `MIN_INACTIVITY_BAND_MILLIS` (90 s) are unchanged. The first needs the
+  display and the engine to read the line off one clock; the second is the definition of how short an absence still
+  counts, used by five derivations. Neither is a one-line change, and neither was attempted.
+
+### Scheduler audit against the requirements: a lag is counted in the task's own minimum time — 2026-10-06
+
+Asked for as: *"In the logic of the scheduler and the display of the schedule, make sure that everything strictly
+satisfies the docs\\scheduler_requirements.md file. Make sure that the logic doesn't contain mendings added to solve
+specific anomalies to avoid changing the fundamental logic and solving more global issues."*
+
+**Changed — the score's definition** (`ScoreModel.lagWeight`, `docs/scheduler_score.md` § *Criterion 1*). The
+simulations of the entry below had found the plan leaving up to 31 % of the schedulable time to nobody and
+short-minimum tasks at 0.63× their share (about half on sixty tasks). The cause was fundamental, not a search
+shortfall: criterion 1 summed lags in bare minutes, so a task under-served by a given FRACTION of its share cost
+`M_i²` — 81 times less for a 5-minute minimum than for a 45-minute one. Each task's lag (and its shortfall, derived
+from it) is now counted in units of its own minimum: the same relative miss costs the same for every task. Same
+accounts after: 0 % to 5 % left to nobody, 0.88× at worst. The whole suite kept passing but two tests that pinned the
+old unit (`ScheduleImproverTest`'s shortfall formula; `ScheduleCycleTest`, where the requirements' A30 B15 C15 example
+now comes out with the two identical tasks B and C the other way round). `ScheduleSimulation.TOLERATED` tightened to
+15 % / 0.75× / 1.6× from 40 % / 0.5× / 2×; the desktop solver's objective carries the same unit.
+
+**Verified against the text, unchanged:** the three bars (20 min after a 20 s break only; 1 h after ≥ 5 min of "no
+screen"; 2 h after ≥ 15 min), the 5-min break's first minute, the alternative's `d` of 10 minutes, the pace (10 s →
+10 min) and the first 10 s. Two comments that still described rules since removed were corrected (the 20 s bar
+"after ANY dynamic period"; the fill's "once an hour" staleness bound).
+
+**Found and NOT changed — each needs a decision or its own piece of work:**
+- *A "no screen" period the user drew is not retracted by a mode-1 line.* **Done the same day — the entry above.**
+- *The runtime is not purely cursor-driven.* § *Rule Structure* forbids timeline-wide scans as the line moves; the
+  engine still has a 30 s advance tick, a cue sweep that scans a window behind the line
+  (`LOOK_AWAY_SWEEP_CAP_MILLIS`) and a 200 ms poll while a manual look-away counts down.
+- *Tolerances that stand where an exact rule would*: `BREAK_EDGE_TOLERANCE_MILLIS` (1 s), `CARRIED_MACHINE_LEAD_MILLIS`
+  (60 s), `MIN_INACTIVITY_BAND_MILLIS` (90 s), `LOOK_AWAY_START_FRESH_MILLIS` (2 s). Each papers over two clocks or
+  two derivations of one fact disagreeing by a little; the global answer is one reading of the fact.
+- *"Nobody" in the rollout.* With "no idling" gone from the requirements, leaving time to nobody is a priced choice;
+  but on one account offering it at every decision made the plan's own score WORSE (7.50e19 against 7.01e19): the
+  rollout's window closes on an optimistic bound for a lag that is behind. A search-quality fault, allowed as
+  degradation, not yet fixed.
+
+Not audited line by line: the break machine's chain and drag rules, the mode switching around a 20 s break, and the
+rule-state transitions — their constants and tests were checked, their code paths were not re-derived from the text.
+
 ### Scheduler simulations in two tiers, and the balance of the two criteria as a setting — 2026-10-06
 
 Asked for as: *"Are there automatic tests for very complex situations, like a chaotic timeline with lots of pre-placed

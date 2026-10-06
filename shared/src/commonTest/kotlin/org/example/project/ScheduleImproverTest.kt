@@ -98,10 +98,13 @@ class ScheduleImproverTest {
         val m = ScoreModel(listOf(task("A", 1.0, 30), task("B", 3.0, 30)), emptyList(), emptyList(), 0L, 24 * HOUR)
         val s = MIN.toDouble()
         for (i in 0 until m.n) {
+            // In the task's own unit (`ScoreModel.lagWeight`: a lag is counted in its minimum execution times).
+            val unit = m.lagWeight[i]
+            assertEquals((MIN / m.minimum[i]).let { it * it }, unit, 1e-12)
             // Slope at zero: 2·M·τ — the first minute already costs about that much per minute.
-            assertTrue(m.shortfallCost(i, s) >= 2.0 * m.minimum[i] * m.tau[i] * s)
+            assertTrue(m.shortfallCost(i, s) >= unit * 2.0 * m.minimum[i] * m.tau[i] * s * (1.0 - 1e-12))
             // Measured in the task's own window, the charge does not depend on the task's share.
-            assertEquals(s * (2.0 * m.minimum[i] + s), m.shortfallCost(i, s) / m.tau[i], 1e-6 * s * m.minimum[i])
+            assertEquals(s * (2.0 * m.minimum[i] + s), m.shortfallCost(i, s) / (unit * m.tau[i]), 1e-6 * s * m.minimum[i])
         }
         assertEquals(0.0, m.shortfallCost(0, 0.0))
     }

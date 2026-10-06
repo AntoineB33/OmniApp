@@ -613,6 +613,12 @@ object SchedulerStateCodec {
                     },
             showScreenBreaks = showScreenBreaks,
             planCalculationLimitSeconds = planCalculationLimitSeconds,
+            periodCrossings = periodCrossings.entries.sortedBy { it.key }.map { (id, crossing) ->
+                PersistedPeriodCrossing(
+                    id, crossing.sinceMillis.takeIf { it != Long.MIN_VALUE },
+                    crossing.ranges.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) },
+                )
+            },
             showReminders = showReminders,
             calendarDayMode = calendarDayMode,
             planBasis = planBasis?.let { PersistedPlanBasis(it.signature, it.madeAtMillis) },
@@ -1266,6 +1272,15 @@ object SchedulerStateCodec {
             // Healed into its bounds: an older payload has none (two minutes), a hand-edited one may hold anything.
             planCalculationLimitSeconds =
                 planCalculationLimitSeconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS),
+            // Healed on the way in: a crossing of a panel the state no longer holds is dropped, and an empty stretch too.
+            periodCrossings = periodCrossings
+                .filter { stored -> panels.any { it.id == stored.panelId } }
+                .associate { stored ->
+                    stored.panelId to org.example.project.scheduler.state.PeriodCrossing(
+                        stored.sinceMillis ?: Long.MIN_VALUE,
+                        stored.ranges.filter { it.end > it.start }.map { TaskTimeRange(it.start, it.end) },
+                    )
+                },
             showReminders = showReminders,
             calendarDayMode = calendarDayMode,
             planBasis = planBasis?.let { PlanBasis(it.signature, it.madeAtMillis) },
@@ -1690,6 +1705,8 @@ private data class PersistedState(
     val showScreenBreaks: Boolean = false,
     // New 2026-10-04: the engine's time limit after a change; absent = the two minutes it always was.
     val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+    // New 2026-10-06: what a mode-1 line crossed of the user's "no screen" periods; absent = nothing crossed.
+    val periodCrossings: List<PersistedPeriodCrossing> = emptyList(),
     // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.
     val showReminders: Boolean = true,
     // PRD §8: the calendar's Day/Week display mode; default Week, which is what every payload written before
@@ -3054,3 +3071,11 @@ private fun Map<TaskId, List<TaskTimeRange>>.toPersistedRanges(): Map<String, Li
 
 private fun Map<String, List<PersistedTimeRange>>?.toRecordRanges(): Map<TaskId, List<TaskTimeRange>> =
     orEmpty().mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } }
+
+/** [org.example.project.scheduler.state.PeriodCrossing] of one panel; [sinceMillis] null = never restated. */
+@Serializable
+private data class PersistedPeriodCrossing(
+    val panelId: String,
+    val sinceMillis: Long? = null,
+    val ranges: List<PersistedTimeRange> = emptyList(),
+)

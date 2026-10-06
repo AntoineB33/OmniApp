@@ -56,6 +56,25 @@ const val MAX_MINIMUM_TIME_WEIGHT: Double = 100.0
 fun minimumTimeWeightOf(value: Double): Double =
     if (value.isNaN()) DEFAULT_MINIMUM_TIME_WEIGHT else value.coerceIn(MIN_MINIMUM_TIME_WEIGHT, MAX_MINIMUM_TIME_WEIGHT)
 
+/**
+ * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and its examples: **what a mode-1 line has crossed of ONE
+ * period the user stated** — *"When the $now line$ is in mode 1 and reaches a 'no screen' period that extends to
+ * [t1;t2], I want the 'no screen' period to become ]$now line$;t2] … When $now line$ >= t2, then this 'no screen'
+ * period is removed."*
+ *
+ * The period itself is the user's statement and is never rewritten by the line: a trimmed panel would be a changed
+ * rule, and time passing must never re-plan. What the line crossed at a screen is kept beside it, here, and the
+ * period every reader sees is the statement less that ([SchedulerDomain.statedPanels]).
+ *
+ * [sinceMillis] is when the user last stated the period (drew it, moved it, resized it): a crossing before that is
+ * about a period that was not there, so stating a period over the past — rewriting history, which the requirements
+ * allow — is never undone by a stretch the line had walked before.
+ */
+data class PeriodCrossing(
+    val sinceMillis: Long = Long.MIN_VALUE,
+    val ranges: List<org.example.project.scheduler.model.TaskTimeRange> = emptyList(),
+)
+
 /** The scheduler engine's time limit after a change until the user sets another: two minutes. */
 const val DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS: Int = 120
 
@@ -838,6 +857,12 @@ data class SchedulerState(
      */
     val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
     /**
+     * What a mode-1 line has crossed of each period the user stated that is or carries "no screen", by panel id
+     * ([PeriodCrossing]). The line's own history on THIS device, like the screen breaks it banked: persisted locally,
+     * never synced, and outside `schedulingSignature` — the line crossing a period is not a change of the rules.
+     */
+    val periodCrossings: Map<String, PeriodCrossing> = emptyMap(),
+    /**
      * PRD §14 Reminders: whether the calendar window draws the reminder tags. A purely cosmetic display
      * preference (persisted, not undoable) — when off, reminder tags are hidden. The underlying chores and
      * their scheduling/checked state are unaffected.
@@ -1217,6 +1242,7 @@ data class SchedulerState(
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
             planCalculationLimitSeconds = other.planCalculationLimitSeconds,
+            periodCrossings = other.periodCrossings,
             showReminders = other.showReminders,
             calendarDayMode = other.calendarDayMode,
             notificationLog = other.notificationLog,
@@ -1236,6 +1262,7 @@ data class SchedulerState(
             selection = SchedulerSelection(),
             showScreenBreaks = false,
             planCalculationLimitSeconds = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+            periodCrossings = emptyMap(),
             showReminders = true,
             calendarDayMode = false,
             // Not view state, but as local: the derived plan it describes is stripped from the wire too.

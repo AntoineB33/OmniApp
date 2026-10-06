@@ -1597,6 +1597,19 @@ object SearchDomain {
     }
 
     /**
+     * **The Search window's list** (user rule 2026-10-06): [rows] — and, where ONE kind alone is checked and nothing of
+     * it is found, that kind's "creation" row, so a search that finds nothing offers to make the thing looked for. The
+     * row is the very one the "creation" kind lists ([itemResults]), opened and added like it. A kind the user cannot
+     * make (a history unit, a notification, a shortcut…) has none, and its list stays empty; so does a list of several
+     * kinds, where there is no one thing to make.
+     */
+    fun withCreationWhenEmpty(state: SchedulerState, rows: List<Result>, kinds: Set<Kind>): List<Result> {
+        if (rows.isNotEmpty()) return rows
+        val kind = kinds.singleOrNull()?.takeIf { it in CREATABLE } ?: return rows
+        return itemResults(state, Kind.Creation, "").filter { it.id == kind.name }
+    }
+
+    /**
      * [rows] stably ordered by [sort]. Each row's key is read once (a comparison would read it again per pair),
      * and a row without a value for the key — a task no live cell holds has no priority, a tree no date —
      * goes last in either direction.
@@ -2602,7 +2615,7 @@ object SearchDomain {
         val out = HashSet<String>()
         fun covers(start: Long, end: Long) = start <= atMillis && atMillis < end
         fun near(instant: Long) = kotlin.math.abs(instant - atMillis) <= CALENDAR_MARK_TOLERANCE_MILLIS
-        for (panel in state.panels) {
+        for (panel in SchedulerDomain.statedPanels(state)) {
             if (panel.chore) {
                 if (near(panel.startEpochMillis)) {
                     SchedulerDomain.reminderIdOfChorePanel(panel.id)?.let { out += Kind.Reminder.name + "/" + it }
@@ -2636,7 +2649,7 @@ object SearchDomain {
      */
     fun calendarKindsAt(state: SchedulerState, atMillis: Long): Set<String> {
         val config = state.periodKindConfig
-        return state.panels
+        return SchedulerDomain.statedPanels(state)
             .filter { it.startEpochMillis <= atMillis && atMillis < it.endEpochMillis }
             .mapNotNull { it.restrictiveKind.takeIf(String::isNotEmpty) }
             .flatMapTo(HashSet()) { config.kindsOf(it) }
@@ -2855,7 +2868,8 @@ object SearchDomain {
     /** Every [CalendarBlock] of the account, in the timeline's order. */
     fun calendarBlocks(state: SchedulerState, timeZone: TimeZone = TimeZone.currentSystemDefault()): List<CalendarBlock> {
         val out = ArrayList<CalendarBlock>()
-        for (panel in state.panels) {
+        // As they stand on the calendar: a period a mode-1 line has crossed is listed over what is left of it.
+        for (panel in SchedulerDomain.statedPanels(state)) {
             if (panel.chore) {
                 val reminderId = SchedulerDomain.reminderIdOfChorePanel(panel.id) ?: continue
                 out += CalendarBlock(panel.id, Kind.Reminder.name + "/" + reminderId, panel.title, panel.startEpochMillis, panel.startEpochMillis)

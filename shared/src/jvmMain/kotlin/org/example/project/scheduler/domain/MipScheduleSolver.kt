@@ -225,7 +225,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                         val short = m - length
                         if (charged && short > 0.0) {
                             val endU = if (joinOut) tailEnd else cuts[q + 1]
-                            addObj(v, model.minimumWeight * exp(-(endU - origin) / theta) * tau * short * (2.0 * m + short))
+                            addObj(v, model.lagWeight[i] * model.minimumWeight * exp(-(endU - origin) / theta) * tau * short * (2.0 * m + short))
                         }
                     }
                 }
@@ -257,7 +257,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 val t = tasks.indexOf(runIn)
                 val m = model.minimum[runIn] / UNIT
                 val short = m - runInLen / UNIT
-                val c = model.minimumWeight * exp(-(a - origin) / theta) * (model.tau[runIn] / UNIT) * short * (2.0 * m + short)
+                val c = model.lagWeight[runIn] * model.minimumWeight * exp(-(a - origin) / theta) * (model.tau[runIn] / UNIT) * short * (2.0 * m + short)
                 offset += c
                 y[t][0]?.forEach { v -> v?.let { addObj(it, -c) } }
             }
@@ -267,7 +267,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 val t = tasks.indexOf(j)
                 val m = model.minimum[j] / UNIT
                 val short = m - tailLen / UNIT
-                val c = model.minimumWeight * exp(-(tailEnd - origin) / theta) * (model.tau[j] / UNIT) * short * (2.0 * m + short)
+                val c = model.lagWeight[j] * model.minimumWeight * exp(-(tailEnd - origin) / theta) * (model.tau[j] / UNIT) * short * (2.0 * m + short)
                 offset += c
                 for (p in 0 until K) y[t][p]?.get(K - 1)?.let { addObj(it, -c) }
             }
@@ -286,7 +286,8 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                     val f = s.target[i]
                     val xInc = if (incumbentTask[k] == i) 1.0 else 0.0
                     val decay = exp(-h / tau)
-                    val disc = exp(-(s.from - origin) / theta)
+                    // The task's own unit ([ScoreModel.lagWeight]), on every term of its criterion 1.
+                    val disc = model.lagWeight[i] * exp(-(s.from - origin) / theta)
                     val i0 = integral(1.0 / thetaMin, h)
                     val i1 = integral(1.0 / thetaMin + 1.0 / tau, h)
                     val i2 = integral(1.0 / thetaMin + 2.0 / tau, h)

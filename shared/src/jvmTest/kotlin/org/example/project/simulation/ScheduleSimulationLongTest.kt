@@ -42,7 +42,7 @@ class ScheduleSimulationLongTest {
                 val goal = ScheduleSimulation.shortOf(outcome, ScheduleSimulation.GOAL)
                 println(if (goal.isEmpty()) "[$name] at the goal." else "[$name] short of the goal:\n  " + goal.joinToString("\n  "))
                 ScheduleSimulation.broken(run, outcome).forEach { failures += "seed $seed: HARD CONSTRAINT: $it" }
-                ScheduleSimulation.shortOf(outcome, ScheduleSimulation.TOLERATED).forEach { failures += "seed $seed, +${(epoch.fromMillis - ScheduleSimulation.T0) / DAY}d: $it" }
+                ScheduleSimulation.shortOf(outcome, ScheduleSimulation.toleratedFor(run, epoch)).forEach { failures += "seed $seed, +${(epoch.fromMillis - ScheduleSimulation.T0) / DAY}d: $it" }
             }
         }
         assertEquals(emptyList(), failures, "$name: worse than tolerated (the reports are printed above)")

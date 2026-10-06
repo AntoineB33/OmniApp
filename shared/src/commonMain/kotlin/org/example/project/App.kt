@@ -810,6 +810,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // derived gaps don't cover yet. Unioned in below so the "Inactivity" band grows live behind an
         // advancing now-line (display-only, non-syncing; see SchedulerDomain.displayInactivityGaps).
         val inactiveSince by engine.inactiveSince.collectAsState()
+        // The mode-1 stretch the line is walking and has not banked: taken live from the user's "no screen" periods.
+        val atScreenSince by engine.atScreenSince.collectAsState()
         // PRD §15: every stored active session (this device's own + the peers' rows pulled by the Sync button) —
         // the full unclipped session history. Used both to segment past task panels by which devices were open
         // (hover bubble + dashed separators) and to re-derive the display Inactivity bands over any focused past
@@ -2374,7 +2376,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // to the panels it covers. An off-screen task is left alone (§9 lets it run in one).
                     SchedulerDomain.retractOverAtScreenPast(
                         SchedulerDomain.clipPanelsForObservedNoScreen(
-                            displayWorkPlanPanels, schedulerState.tasks, observedNoScreenRegions,
+                            // The user's own periods as a mode-1 line leaves them (`afterCrossings`): the one it is
+                            // in reads ]line; its end], one it has left is gone.
+                            SchedulerDomain.afterCrossings(
+                                displayWorkPlanPanels, schedulerState.periodCrossings, schedulerState.periodKindConfig,
+                                live = atScreenSince?.takeIf { it < nowMillis }?.let { TaskTimeRange(it, nowMillis) },
+                            ),
+                            schedulerState.tasks, observedNoScreenRegions,
                         ),
                         atScreenPast,
                         schedulerState.periodKindConfig,
@@ -2468,7 +2476,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // 2026-10-01).
                 val stated =
                     SchedulerDomain.statedKindRegions(
-                        workPlanPanels,
+                        // The layers a period lays stop where the period does: less what a mode-1 line crossed of it.
+                        SchedulerDomain.afterCrossings(
+                            workPlanPanels, schedulerState.periodCrossings, periodKindConfig,
+                            live = atScreenSince?.takeIf { it < nowMillis }?.let { TaskTimeRange(it, nowMillis) },
+                        ),
                         periodKindConfig,
                         away = mapOf(PeriodKinds.fakeLayerKind(ownLayer) to declaredAwayRegions),
                         knownAbsent = mapOf(PeriodKinds.layerKind(ownLayer) to ownKnownUnlocked),

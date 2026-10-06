@@ -27,7 +27,7 @@ class ScheduleSimulationTest {
             val report = ScheduleSimulation.describe(run, outcome)
             assertEquals(emptyList(), ScheduleSimulation.broken(run, outcome), "a hard constraint was broken\n$report")
             assertEquals(
-                emptyList(), ScheduleSimulation.shortOf(outcome, ScheduleSimulation.TOLERATED),
+                emptyList(), ScheduleSimulation.shortOf(outcome, ScheduleSimulation.toleratedFor(run, epoch)),
                 "worse than what the scheduler did when this was written\n$report",
             )
             assertTrue(outcome.runs > 0 && outcome.servedMillis > 0, "nothing ran at all\n$report")

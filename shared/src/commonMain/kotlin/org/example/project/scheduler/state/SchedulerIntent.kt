@@ -1088,6 +1088,15 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the line walked `[fromMillis, untilMillis)` in MODE 1.
+     * Whatever of it lies in a period the user stated that is or carries "no screen" is no longer that period's
+     * ([SchedulerState.periodCrossings]). Dispatched by the engine's interpreter at its two armed triggers — the end of
+     * such a period, and the mode edge out of mode 1 — never per tick. The line's own history: local, not undoable,
+     * not a change of the rules.
+     */
+    data class RecordAtScreenCrossing(val fromMillis: Long, val untilMillis: Long) : SchedulerIntent
+
+    /**
      * User rule 2026-10-06: the balance of the score's two criteria ([SchedulerState.minimumTimeWeight]), kept in its
      * bounds — an account setting: persisted and synced, not undoable; the plan is made again under it.
      */

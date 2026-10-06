@@ -86,9 +86,12 @@ class ScheduleCycleTest {
             if (last != null && last.first == r.taskId) merged[merged.size - 1] = last.first to last.second + r.lengthMillis
             else merged += r.taskId to r.lengthMillis
         }
-        val expected = listOf(a to 30.0 * MIN, b to 15.0 * MIN, c to 15.0 * MIN, b to 15.0 * MIN, c to 15.0 * MIN)
-        val rotations = expected.indices.map { k -> expected.drop(k) + expected.take(k) }
-        assertTrue(merged in rotations, "expected a rotation of $expected, got $merged")
+        // B and C are the same task twice (33 %, 15 min each), so which of the two follows A is not the rules' to say:
+        // the example read with the two swapped is the example.
+        fun example(first: TaskId, second: TaskId) =
+            listOf(a to 30.0 * MIN, first to 15.0 * MIN, second to 15.0 * MIN, first to 15.0 * MIN, second to 15.0 * MIN)
+        val rotations = listOf(example(b, c), example(c, b)).flatMap { e -> e.indices.map { k -> e.drop(k) + e.take(k) } }
+        assertTrue(merged in rotations, "expected a rotation of ${example(b, c)} (B and C either way round), got $merged")
     }
 
     @Test

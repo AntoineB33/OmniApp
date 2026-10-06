@@ -167,6 +167,27 @@ class CalendarBlocksSearchTest {
         assertEquals(emptyList(), SearchDomain.resolve(s.copy(panels = emptyList()), listOf(key)))
     }
 
+    /** User rule 2026-10-06: one kind checked and nothing of it found — its "creation" row stands in the list. */
+    @Test
+    fun an_empty_list_of_one_kind_offers_to_create_one() {
+        val s = account()
+        fun shown(kinds: Set<SearchDomain.Kind>, query: String): List<String> =
+            SearchDomain.withCreationWhenEmpty(s, SearchDomain.results(s, kinds, query), kinds)
+                .map { (it as? SearchDomain.ItemResult)?.let { row -> row.kind.name + "/" + row.id } ?: it.name }
+        // Nothing of the one kind is found: its creation row, the very one the "creation" kind lists.
+        assertEquals(listOf("Creation/Task"), shown(setOf(SearchDomain.Kind.Task), "no task is called this"))
+        assertEquals(listOf("Creation/Quota"), shown(setOf(SearchDomain.Kind.Quota), ""), "the account holds no quota")
+        val row = SearchDomain.withCreationWhenEmpty(s, emptyList(), setOf(SearchDomain.Kind.Alarm)).single()
+        assertEquals(SearchDomain.itemResults(s, SearchDomain.Kind.Creation, "").first { it.id == "Alarm" }, row)
+        // Something is found: the list as it is.
+        assertEquals(listOf("Read"), shown(setOf(SearchDomain.Kind.Task), "Read"))
+        // Several kinds: there is no one thing to make. A kind the user cannot make: nothing either.
+        assertEquals(emptyList(), shown(setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm), "no such thing"))
+        assertEquals(emptyList(), shown(setOf(SearchDomain.Kind.Notification), ""))
+        assertEquals(emptyList(), shown(setOf(SearchDomain.Kind.CalendarBlock), ""))
+        assertEquals(emptyList(), shown(emptySet(), ""))
+    }
+
     /** Anomaly 2026-10-05: the start read `20:30`; one backspace at its end, and it read `20:03`. */
     @Test
     fun a_field_is_not_rewritten_under_the_hand_typing_it() {

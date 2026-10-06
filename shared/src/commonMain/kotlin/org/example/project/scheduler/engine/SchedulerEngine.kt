@@ -1442,6 +1442,32 @@ class SchedulerEngine(
         sleepFreezeAtMillis = if (away) nextSleepEndAfter(until) else Long.MAX_VALUE
     }
 
+    // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: a mode-1 line is never in "no screen", so what it walks
+    // of a period the user stated that is or carries one is taken from that period ([AtScreenWalk], which holds the
+    // one armed trigger). The panels the trigger was armed for, so it is armed again only when they change.
+    private val atScreenWalk =
+        org.example.project.scheduler.domain.AtScreenWalk { at -> SchedulerDomain.nextStatedNoScreenEndAfter(vm.state.value, at) }
+    private var crossingArmedFor: List<org.example.project.scheduler.model.TaskPanel>? = null
+    private val _atScreenSince = MutableStateFlow<Long?>(null)
+
+    /** [org.example.project.scheduler.domain.AtScreenWalk.since], for the calendar: the stretch it takes LIVE. */
+    val atScreenSince: StateFlow<Long?> = _atScreenSince.asStateFlow()
+
+    /**
+     * The line moved to [now] in [mode] ([interpretTo]): before the walk's armed trigger this is a few comparisons;
+     * at it, and at the edge out of mode 1, the stretch walked at a screen is banked
+     * ([SchedulerIntent.RecordAtScreenCrossing]).
+     */
+    private fun bankAtScreenCrossing(now: Long, mode: Int) {
+        val panels = vm.state.value.panels
+        val changed = panels !== crossingArmedFor
+        crossingArmedFor = panels
+        atScreenWalk.moveTo(now, mode == DynamicPeriods.MODE_AT_SCREEN, changed)?.let {
+            vm.dispatch(SchedulerIntent.RecordAtScreenCrossing(it.startEpochMillis, it.endEpochMillis))
+        }
+        _atScreenSince.value = atScreenWalk.since
+    }
+
     private fun nextSleepEndAfter(atMillis: Long): Long {
         val sleep = vm.state.value.sleep ?: return atMillis + PAST_SLEEP_CHECK_REACH_MILLIS
         return SchedulerDomain.sleepRegions(sleep, atMillis, atMillis + PAST_SLEEP_CHECK_REACH_MILLIS, tz)
@@ -2813,6 +2839,7 @@ class SchedulerEngine(
         val mode = machineMode(now)
         val breakEvents = advanceBreaks(now, mode)
         freezeSleepBehindLine(now, mode)
+        bankAtScreenCrossing(now, mode)
         val cursor = ruleCursorFor(state, now)
         val crossed = cursor.moveTo(now)
         if (crossed.windDowns.isNotEmpty() || crossed.reminders.isNotEmpty()) {

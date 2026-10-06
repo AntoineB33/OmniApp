@@ -59,6 +59,18 @@ class ScoreModel(
     val minimum: DoubleArray = DoubleArray(n) { tasks[it].minimumMillis.coerceAtLeast(0L).toDouble() }
 
     /**
+     * `docs/scheduler_score.md` § *Criterion 1*: **each task's lag is counted in units of its own minimum execution
+     * time** — `w_i = (1 min / max(M_i, 1 min))²`, on both criteria. A lag of one minimum then costs the same for
+     * every task, so a task under-served by a FRACTION of its share costs that fraction squared whatever its minimum
+     * is: the percentages are matched for each task, not for the tasks with the longest minimums (counted in bare
+     * minutes, a lag of a 5-minute task weighed 81 times less than a 45-minute task's, and the plan under-served the
+     * short ones by a quarter to a half and left hours to nobody — the simulations, 2026-10-06).
+     */
+    val lagWeight: DoubleArray = DoubleArray(n) {
+        (MIN_WINDOW_MILLIS / maxOf(minimum[it], MIN_WINDOW_MILLIS)).let { w -> w * w }
+    }
+
+    /**
      * `docs/scheduler_score.md` § *Sets of tasks*: for each task, the tasks its time also counts for ([PlanTask.credits])
      * and the rate it counts at, by index.
      */
@@ -668,7 +680,7 @@ class ScoreModel(
         val d = cursor.lag[i] - lInf
         val acc = lInf * lInf * integral(kd, h) + 2.0 * lInf * d * integral(kd + 1.0 / t, h) +
             d * d * integral(kd + 2.0 / t, h)
-        cursor.cost += exp(-(u - cursor.originU) / theta) * acc
+        cursor.cost += lagWeight[i] * exp(-(u - cursor.originU) / theta) * acc
         cursor.lag[i] = lInf + d * exp(-h / t)
     }
 
@@ -731,11 +743,12 @@ class ScoreModel(
     }
 
     /**
-     * Criterion 2's charge for a panel of task [i] short by [s]: `τ_i·s·(2M_i + s)` — what raising a lag of `M_i`
-     * to `M_i + s` costs over the task's window. Its slope at `s = 0` is `2M_i·τ_i`, more than any lag a panel of
+     * Criterion 2's charge for a panel of task [i] short by [s]: `w·w_i·τ_i·s·(2M_i + s)` — what raising a lag of `M_i`
+     * to `M_i + s` costs over the task's window, in the task's own unit ([lagWeight]) and at the account's balance
+     * ([minimumWeight]). Its slope at `s = 0` is `2M_i·τ_i`, more than any lag a panel of
      * minimum length leaves behind can repay, so a panel is cut short only where a larger debt calls for it.
      */
-    fun shortfallCost(i: Int, s: Double): Double = minimumWeight * tau[i] * s * (2.0 * minimum[i] + s)
+    fun shortfallCost(i: Int, s: Double): Double = lagWeight[i] * minimumWeight * tau[i] * s * (2.0 * minimum[i] + s)
 
     /**
      * A LOWER bound on task [i]'s criterion 1 from [fromU] to [untilU], from its lag [lag] at [fromU], whatever is
@@ -752,7 +765,7 @@ class ScoreModel(
         val w0 = minOf(span, t * ln(1.0 + l0 / t))
         val a = l0 + t
         val acc = a * a * integral(kd + 2.0 / t, w0) - 2.0 * a * t * integral(kd + 1.0 / t, w0) + t * t * integral(kd, w0)
-        return exp(-(fromU - originU) / theta) * acc.coerceAtLeast(0.0)
+        return lagWeight[i] * exp(-(fromU - originU) / theta) * acc.coerceAtLeast(0.0)
     }
 
     /** The lower bound of every task's criterion 1 from a settled [cursor] to [untilU]. */

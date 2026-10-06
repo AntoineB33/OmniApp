@@ -366,6 +366,27 @@ model exists to prevent.
   (PRD §15/§17) — it is not on the schedulable clock — where a stretch somebody ELSE may run in cuts it. That is
   about the panel's length, never about whether anything is placed.
 
+### A period the user stated gives way to a mode-1 line — and is never rewritten by it
+
+`docs/scheduler_requirements.md`: a "no screen" period the line is in at a screen is `]$now line$; t2]`, and is removed
+once the line is past `t2`. For the periods a rule lays that is `retractOverAtScreenPast` (above). For one the USER
+placed that is or carries "no screen" (`SchedulerDomain.retractsAtScreen`):
+
+- **The stored panel is the user's statement and the line never touches it.** A trimmed panel is a changed rule, and
+  time passing must never re-plan. What a mode-1 line crossed of it is kept beside it
+  (`SchedulerState.periodCrossings`, local-only) and subtracted wherever periods are READ —
+  `SchedulerDomain.afterCrossings` / `statedPanels`. **Every reader of the user's periods goes through it**: the fill's
+  environment, the break machine's, `planMismatchAtLine`, the calendar and the layers, the Search window's calendar
+  readers. A new reader that takes `state.panels` for "the periods on the timeline" draws a period the line has
+  removed; `schedulingSignature` is the one that must keep reading the statement.
+- **Banked at two armed triggers** (`AtScreenWalk`, in the one interpreter): the end of the next period that gives
+  way, and the edge out of mode 1. Never per tick — a write per tick of persisted state is the shape the engine
+  forbids. The calendar takes the stretch being walked live (`atScreenSince`), so the period reads `]line; t2]` between
+  two triggers.
+- **A period stated again starts afresh** (`PeriodCrossing.sinceMillis`): only what the line crosses AFTER the user
+  drew, moved or resized it is taken from it, so a period put over the past stands whole (the requirements' "the user
+  wants to rewrite history").
+
 ### Simulations: the scheduler is tested on chaotic accounts, in two tiers
 
 `shared/src/jvmTest/.../simulation/` (`ScheduleSimulation`, 2026-10-06). A scenario is a SEED: an account of N tasks
@@ -389,16 +410,22 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   another task's pre-placed panel; no two ran at once; no stretch of banked record was gone a step later (the frozen
   past). These hold today on every scenario run.
 - **The division of the time has two levels** (`ScheduleSimulation.GOAL` / `TOLERATED`), and the gap between them is
-  the scheduler's open debt, found by these tests the day they were written:
-  - **The plan leaves time to nobody** — 3 % to 31 % of the schedulable time on a ten-task account, 15 % on eight
-    tasks with nothing laid at all, one gap of three hours among them — while tasks are behind their share. Giving
-    the search wall time (`SearchBudget`) does not change it, and neither does the balance of the two criteria.
-  - **A task with a short minimum time and a large share is under-served**, down to about half its lower target among
-    what IS served on a sixty-task account; the difference goes to the tasks with long minimums.
-  `TOLERATED` is today's behaviour with a margin: the tests fail past it, so nothing gets worse unnoticed, and every
-  long run prints how far it is from `GOAL`. **Tighten `TOLERATED` when the scheduler improves; never loosen it to
-  make a change pass** — a change that needs it loosened has made the scheduler worse on the one measure the user
-  asked for (*"do all those hundreds of tasks reach their target"*).
+  the scheduler's open debt.
+  - **What the simulations found the day they were written, and what answered it.** The plan left 3 % to 31 % of the
+    schedulable time to nobody on a ten-task account (15 % on eight tasks with nothing laid at all, one gap of three
+    hours), and a task with a short minimum time and a large share got down to 0.63× its lower target — about half on
+    a sixty-task account. Search time did not move it, nor the balance of the two criteria. The cause was in the
+    score itself: a lag was counted in bare minutes, so the same relative miss cost 81 times less on a 5-minute task
+    than on a 45-minute one. **A lag is now counted in the task's own minimum time** (`ScoreModel.lagWeight`,
+    `docs/scheduler_score.md` § *Criterion 1*): the same accounts read 0 % to 5 % left to nobody and 0.88× at worst.
+    That is a change of the DEFINITION, made because the definition was what missed the requirement — not a term
+    added for the short tasks. Do not answer the next such finding with a floor, a boost or a special case for the
+    tasks it names.
+  - `TOLERATED` is today's behaviour with a margin: the tests fail past it, so nothing gets worse unnoticed, and
+    every long run prints how far it is from `GOAL`. **Tighten `TOLERATED` when the scheduler improves; never loosen
+    it to make a change pass.** A stretch that FOLLOWS a rule change is held to `TOLERATED_AFTER_CHANGE`: the
+    requirements ask a new rule state to catch up on how the past deviated from its goals, so the days after a change
+    are divided away from the new shares by design.
 - **Two targets per task, and the truth between them**: its priority percentage of every instant it MAY run at
   (resilience applied — no deprivation repaid), and its percentage of all the time anybody may run in (every
   deprivation repaid). Compensation is bounded (`docs/scheduler_score.md`), so the service is owed between the two; a

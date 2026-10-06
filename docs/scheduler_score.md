@@ -81,10 +81,21 @@ past, so the past has to be replayed far enough back that what is left out no lo
   schedulable clock:
   $$\frac{dL_i}{du} = \mathbb{1}[\sigma = i] - f_i - \frac{L_i}{\tau_i}$$
   $L_i(x)$ is determined by the frozen past (the past schedule measured against the targets of $R(x)$).
-* Criterion 1 is the discounted squared lag of the continuation:
-  $$J_1 = \int_{u(x)}^{\infty} e^{-(u - u(x))/\Theta} \sum_i L_i^2 \, du$$
+* Criterion 1 is the discounted squared lag of the continuation, **each task's lag counted in units of its own
+  minimum execution time**:
+  $$J_1 = \int_{u(x)}^{\infty} e^{-(u - u(x))/\Theta} \sum_i \Big(\frac{L_i}{\max(M_i, 1)}\Big)^2 \, du$$
   A block twice as long produces a lag excursion twice as high, so this criterion strictly prefers the smallest
   windows: two 50% tasks alternating every 10min score 4 times better than every 20min.
+* **Why the unit is the task's own minimum** (2026-10-06, `ScoreModel.lagWeight`). A task served a fraction
+  $\delta$ under its share settles at a lag of $-\delta\,\pi_i\tau_i = -\delta M_i$. Counted in bare minutes that
+  costs $\delta^2 M_i^2$: the same RELATIVE miss weighed 81 times less on a task with a 5-minute minimum than on one
+  with 45 minutes, so the best continuation under-served the short-minimum tasks to spare the long ones — and, a
+  missed share costing so little there, left time to nobody rather than give it to them. Measured by the simulations
+  (`docs/invariants/scheduler.md` § *Simulations*) on ten-task accounts over a week: up to 31 % of the schedulable
+  time left to nobody and a task at 0.63× its share. In its own unit the same miss costs $\delta^2$ for every task —
+  the requirement is that EACH task's percentage is matched — and the same accounts read 0 % to 5 % and 0.88×. The
+  unit changes nothing between tasks of equal minimum (the two examples of § *Priority, Granularity and
+  Compensation* are scored as before).
 
 ## Criterion 2: soft minimum execution time
 
@@ -94,7 +105,8 @@ past, so the past has to be replayed far enough back that what is left out no lo
 * Its **shortfall** is $s = (M_i - \ell)^+$. A panel short by $s$ costs what raising a lag of $M_i$ to
   $M_i + s$ costs over the task's own window in criterion 1, charged when the panel ends, for every panel ending
   after $x$ (the panel still open at the end of the continuation is not charged):
-  $$J_2 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta}\; \tau_i\, s\,(2M_i + s)$$
+  $$J_2 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta}\; \frac{\tau_i\, s\,(2M_i + s)}{\max(M_i, 1)^2}$$
+  (in the task's own unit, like the lag it is derived from)
   This common unit is what lets the two criteria form one score, and two properties of it are deliberate:
   * **It is scaled by $\tau_i$, not by $M_i$.** A lag in criterion 1 is forgotten over $\tau_i = M_i/\pi_i$, so it
     costs in proportion to $\tau_i$. Scaled by $M_i$ alone, a shortfall would grow cheaper against the lag as the

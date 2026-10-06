@@ -2188,9 +2188,9 @@ object SchedulerDomain {
      * spanning time. The §9 fill weaves them in without letting them reduce the surrounding task's minimum.
      */
     val DEFAULT_SCREEN_BREAKS: List<ScreenBreak> = listOf(
-        // The 20-20-20 micro-break. Its interval IS the README's own bar: after ANY dynamic period, no 20 s
-        // period for 20 minutes (and a >=15-min rest stretch bars it for the same 20 minutes). Nothing has to
-        // "serve" it — [DynamicPeriods] reads the rest stretches out of the timeline it is asked about.
+        // The 20-20-20 micro-break. Its interval IS the requirements' own bar: after the end of a 20 s break, no
+        // 20 s break in the next 20 minutes — and only a 20 s break bars it (`docs/scheduler_requirements.md`
+        // § *screen breaks*). Nothing has to "serve" it — the break machine reads what the line has crossed.
         ScreenBreak(
             "look 20 feet away",
             intervalMillis = 20L * 60_000,
@@ -2594,6 +2594,95 @@ object SchedulerDomain {
         config.isOrImpliesNoScreen(period.kind) && (period.kind == PeriodKinds.NO_SCREEN || period.startMillis <= nowMillis)
 
     /**
+     * Whether [panel] is a period the USER stated that **gives way to a mode-1 line**: placed by hand
+     * ([isUserPlaced]) and is or carries "no screen" ([PeriodKindConfig.isOrImpliesNoScreen], the predicate
+     * [retractedAtLineSpans] gives way by). The periods a rule lays (the sleep schedule's) are cut where they are
+     * drawn, off the devices' own evidence ([retractOverAtScreenPast]).
+     */
+    fun retractsAtScreen(panel: TaskPanel, config: PeriodKindConfig): Boolean =
+        panel.isRestrictivePeriod && isUserPlaced(panel) && config.isOrImpliesNoScreen(panel.restrictiveKind)
+
+    /**
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the periods as they stand once a mode-1 line has
+     * crossed them** — each period the user stated that is or carries "no screen" ([retractsAtScreen]) less what the
+     * line crossed of it at a screen ([crossings], and [live]: the stretch it is walking now, not banked yet). So a
+     * period the line is in reads ]$now line$;t2], and one it has left is gone. The ONE reading of it: the plan, the
+     * break machine, the calendar and the Search window all take their periods through here.
+     *
+     * A piece under a minute is no period ([MIN_MANUAL_ENTRY_MILLIS]). Where the line crossed the middle of a period
+     * (in mode 1 between two stretches away), it stands in two pieces; the first keeps the panel's id.
+     */
+    fun afterCrossings(
+        panels: List<TaskPanel>,
+        crossings: Map<String, org.example.project.scheduler.state.PeriodCrossing>,
+        config: PeriodKindConfig,
+        live: TaskTimeRange? = null,
+    ): List<TaskPanel> {
+        if (crossings.isEmpty() && live == null) return panels
+        return panels.flatMap { panel ->
+            if (!retractsAtScreen(panel, config)) return@flatMap listOf(panel)
+            val crossing = crossings[panel.id]
+            val walking =
+                live?.let { TaskTimeRange(maxOf(it.startEpochMillis, crossing?.sinceMillis ?: Long.MIN_VALUE), it.endEpochMillis) }
+                    ?.takeIf { it.endEpochMillis > it.startEpochMillis }
+            val crossed = crossing?.ranges.orEmpty() + listOfNotNull(walking)
+            if (crossed.none { it.startEpochMillis < panel.endEpochMillis && panel.startEpochMillis < it.endEpochMillis }) {
+                return@flatMap listOf(panel)
+            }
+            subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), crossed)
+                .filter { it.endEpochMillis - it.startEpochMillis >= MIN_MANUAL_ENTRY_MILLIS }
+                .mapIndexed { i, piece ->
+                    panel.copy(
+                        id = if (i == 0) panel.id else panel.id + CROSSED_PIECE_SEPARATOR + i,
+                        startEpochMillis = piece.startEpochMillis,
+                        endEpochMillis = piece.endEpochMillis,
+                    )
+                }
+        }
+    }
+
+    /** What the id of a later piece of a crossed period carries after the panel's own ([afterCrossings]). */
+    const val CROSSED_PIECE_SEPARATOR: String = "~"
+
+    /** [state]'s panels as they stand once the line has crossed them ([afterCrossings]). */
+    fun statedPanels(state: SchedulerState): List<TaskPanel> =
+        afterCrossings(state.panels, state.periodCrossings, state.periodKindConfig)
+
+    /**
+     * [state] once a mode-1 line has walked `[fromMillis, untilMillis)` ([SchedulerIntent.RecordAtScreenCrossing]):
+     * the part of it inside each period that gives way ([retractsAtScreen]), from the instant the user last stated
+     * that period on, joins what the line crossed of it. The crossings of panels the state no longer holds are
+     * dropped here, so the map is bounded by the periods. The same instance when nothing was crossed.
+     */
+    fun withAtScreenCrossing(state: SchedulerState, fromMillis: Long, untilMillis: Long): SchedulerState {
+        if (untilMillis <= fromMillis) return state
+        val config = state.periodKindConfig
+        var crossings = state.periodCrossings
+        val held = HashSet<String>()
+        for (panel in state.panels) {
+            if (!retractsAtScreen(panel, config)) continue
+            held += panel.id
+            val entry = crossings[panel.id] ?: org.example.project.scheduler.state.PeriodCrossing()
+            val from = maxOf(fromMillis, entry.sinceMillis, panel.startEpochMillis)
+            val until = minOf(untilMillis, panel.endEpochMillis)
+            if (until <= from) continue
+            val merged = mergeOccupied(entry.ranges + TaskTimeRange(from, until))
+            if (merged != entry.ranges) crossings = crossings + (panel.id to entry.copy(ranges = merged))
+        }
+        val kept = if (crossings.keys.all { it in held }) crossings else crossings.filterKeys { it in held }
+        return if (kept == state.periodCrossings) state else state.copy(periodCrossings = kept)
+    }
+
+    /**
+     * The next instant after [atMillis] a period that gives way to a mode-1 line ends ([retractsAtScreen]) — the
+     * interpreter's armed trigger for banking what the line crossed; `Long.MAX_VALUE` when there is none. Asked when
+     * the trigger is armed (the rules or the panels changed, a trigger fired), never as the line moves.
+     */
+    fun nextStatedNoScreenEndAfter(state: SchedulerState, atMillis: Long): Long =
+        state.panels.filter { it.endEpochMillis > atMillis && retractsAtScreen(it, state.periodKindConfig) }
+            .minOfOrNull { it.endEpochMillis } ?: Long.MAX_VALUE
+
+    /**
      * **Where a period the user is putting at [range] stands, the line being where it is** — what a drag of it draws
      * and what its release stores (user rule 2026-10-05).
      *
@@ -2721,7 +2810,7 @@ object SchedulerDomain {
     ): BreakEnvironment {
         // Every occurrence of a repeating period or block over what the machine reads, from the lookback to [untilMillis].
         val panels =
-            PanelRepeats.expand(state.panels, nowMillis - DYNAMIC_PLACEMENT_LOOKBACK_MILLIS, maxOf(nowMillis, untilMillis), timeZone)
+            PanelRepeats.expand(statedPanels(state), nowMillis - DYNAMIC_PLACEMENT_LOOKBACK_MILLIS, maxOf(nowMillis, untilMillis), timeZone)
         val standing =
             panels.filterNot { (it.sleep && it.id.startsWith("sleep/")) || it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) }
         val live = liveRest?.takeUnless { it.ongoing && mode == DynamicPeriods.MODE_AT_SCREEN }
@@ -2767,7 +2856,7 @@ object SchedulerDomain {
         if (breaksHere.isNotEmpty()) return null
         if (state.plannedIdle.any { it.startEpochMillis <= nowMillis && nowMillis < it.endEpochMillis }) return null
         val standingPanels =
-            state.panels.filterNot { it.screenBreak || (it.sleep && it.id.startsWith("sleep/")) || it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) }
+            statedPanels(state).filterNot { it.screenBreak || (it.sleep && it.id.startsWith("sleep/")) || it.id.startsWith(BEFORE_BED_PANEL_ID_PREFIX) }
         val standing =
             restrictivePeriodsOf(standingPanels, state.periodKindConfig) +
                 projectedSleepPeriods(state, nowMillis, nowMillis + 1, timeZone)
@@ -3995,10 +4084,12 @@ object SchedulerDomain {
 
     /**
      * How far apart a task's box may end before a vanished break (or start after it) and still count as
-     * **touching** its edge: the drag's half-open form moves an edge by one millisecond
-     * ([BreakMachine.Placed.coveredFromMillis]), and a second is far below anything the calendar can draw.
+     * **touching** its edge: exactly the one millisecond the half-open form of a dragged break moves an edge by
+     * (`]line; line + d]`, [BreakMachine.Placed.coveredFromMillis]) — the one way two readings of the same edge
+     * differ. It was a whole second ("far below anything the calendar can draw"), which is a tolerance standing where
+     * the representation says the exact figure; a box that ends further from the break than that does not touch it.
      */
-    const val BREAK_EDGE_TOLERANCE_MILLIS: Long = 1_000L
+    const val BREAK_EDGE_TOLERANCE_MILLIS: Long = 1L
 
     /**
      * The task a vanished break's hole belongs to: the ONE task whose calendar boxes
@@ -5208,10 +5299,10 @@ object SchedulerDomain {
      * ([mergeSameTaskPanels]), so a sole task shows as a single continuous panel. Auto panels get
      * deterministic `auto/{i}` ids (regenerated each run, skipping ids held by kept panels).
      *
-     * PRD §9 trigger: this runs when [schedulingSignature] moves, plus once an hour if nothing moved it —
-     * a staleness bound, not a tick (every re-plan re-arms it, so an edited account never reaches it). The
-     * `SchedulerIntent.ExtendSchedule` path merely materializes more of the same plan (see
-     * [keepExistingUntilMillis]).
+     * PRD §9 trigger: this runs when [schedulingSignature] moves, and never because time passed (the hourly
+     * "staleness bound" was removed on 2026-09-17: a re-plan of unchanged rules rewrites a schedule the progressive
+     * calculation had made definitive). The `SchedulerIntent.ExtendSchedule` path merely materializes more of the same
+     * plan (see [keepExistingUntilMillis]).
      */
     fun fillSchedule(
         state: SchedulerState,
@@ -5801,8 +5892,10 @@ object SchedulerDomain {
         // inside one is its own resilience to that kind ([Task.resilience]). A stretch nobody may run in is simply
         // not on the score's schedulable clock, which is what makes a break or a night suspend a run rather than
         // cut it (PRD §15/§17) without a rule of its own.
+        // The user's periods as they stand once a mode-1 line has crossed them ([afterCrossings]).
         val periodPanels =
-            kept.filter { it.isRestrictivePeriod } + envSleepPanels + envBeforeBedPanels + obstructingSidePanels
+            afterCrossings(kept.filter { it.isRestrictivePeriod }, state.periodCrossings, state.periodKindConfig) +
+                envSleepPanels + envBeforeBedPanels + obstructingSidePanels
         val periodOwn =
             periodPanels.flatMap { panel ->
                 if (panel.screenBreak) screenBreakPeriods(panel)

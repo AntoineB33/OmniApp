@@ -79,12 +79,12 @@ internal object ScheduleSimulation {
      *
      *  - [GOAL] is what "every task reaches its target" means: nearly all the time anybody may run in is given to
      *    somebody, and every task gets its share of it.
-     *  - [TOLERATED] is what the scheduler does TODAY, with a margin — measured when these tests were written
-     *    (2026-10-06): the plan leaves 3 % to 31 % of the schedulable time to nobody, and a task with a short minimum
-     *    execution time and a large share gets as little as 0.5× its lower target among what is served, the difference
-     *    going to the tasks with long minimums. The tests FAIL past it, so nothing gets worse unnoticed; every run also
-     *    says how far from [GOAL] it is. **Tightening [TOLERATED] towards [GOAL] is the work this file exists to
-     *    measure — never loosen it to make a change pass.**
+     *  - [TOLERATED] is what the scheduler does TODAY, with a margin. Measured 2026-10-06 on ten-task accounts over a
+     *    week, once the score counted each task's lag in its own minimum time: 0 % to 5 % of the schedulable time
+     *    left to nobody, the least served task at 0.88× its lower target, the most served at 1.34× its upper one.
+     *    (Before that change: up to 31 % left to nobody and a task at 0.63×.) The tests FAIL past it, so nothing gets
+     *    worse unnoticed; every run also says how far from [GOAL] it is. **Tightening [TOLERATED] towards [GOAL] is
+     *    the work this file exists to measure — never loosen it to make a change pass.**
      *
      * The hard constraints have one level: none may be broken, ever.
      */
@@ -100,7 +100,19 @@ internal object ScheduleSimulation {
     )
 
     val GOAL = Levels(idleFraction = 0.05, underService = 0.90, overService = 1.15, shortRunFraction = 0.05)
-    val TOLERATED = Levels(idleFraction = 0.40, underService = 0.50, overService = 2.00, shortRunFraction = 0.10)
+    val TOLERATED = Levels(idleFraction = 0.15, underService = 0.75, overService = 1.60, shortRunFraction = 0.10)
+
+    /**
+     * [TOLERATED] for a stretch that FOLLOWS a rule change. `docs/scheduler_requirements.md` § *Rule state input
+     * evolution*: *"a new rule state should dynamically 'catch up' or compensate for how the past deviated from its
+     * newly established goals"* — so over the days after a change a task whose share went up is served past its new
+     * share, and one whose share went down under it, by design. The targets of [measure] are the new rules' alone, so
+     * the division is held to a wider band there; the hard constraints and the idle time are held as anywhere.
+     */
+    val TOLERATED_AFTER_CHANGE = Levels(idleFraction = 0.15, underService = 0.50, overService = 2.50, shortRunFraction = 0.10)
+
+    /** The level [epoch] of [run] is held to: [TOLERATED], or [TOLERATED_AFTER_CHANGE] once the rules have changed. */
+    fun toleratedFor(run: Run, epoch: Epoch): Levels = if (epoch === run.epochs.first()) TOLERATED else TOLERATED_AFTER_CHANGE
 
     /** What of [outcome] is past [levels] — empty when it is within them. */
     fun shortOf(outcome: Outcome, levels: Levels): List<String> = buildList {

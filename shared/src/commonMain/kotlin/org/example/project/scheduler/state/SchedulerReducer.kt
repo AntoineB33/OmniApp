@@ -627,6 +627,8 @@ object SchedulerReducer {
             is SchedulerIntent.SetAutomaticSchedule ->
                 if (state.automaticSchedule == intent.enabled) state
                 else state.copy(automaticSchedule = intent.enabled)
+            is SchedulerIntent.RecordAtScreenCrossing ->
+                SchedulerDomain.withAtScreenCrossing(state, intent.fromMillis, intent.untilMillis)
             is SchedulerIntent.SetMinimumTimeWeight ->
                 minimumTimeWeightOf(intent.weight).let {
                     if (it == state.minimumTimeWeight) state else state.copy(minimumTimeWeight = it)
@@ -2622,6 +2624,16 @@ object SchedulerReducer {
     ): Pair<SchedulerState, List<TaskPanel>> {
         val panels = SchedulerDomain.unifyNoScreenPeriods(rawPanels, keepId = changedId)
         val changed = panels.firstOrNull { it.id == changedId } ?: return state to panels
+        // The user has just STATED this period (drawn, moved or resized it): what a mode-1 line crossed of it before
+        // is about a period that is no longer this one, and only what the line crosses from now on is taken from it
+        // ([PeriodCrossing.sinceMillis]) — so a period stated over the past, rewriting history, stands whole.
+        @Suppress("NAME_SHADOWING")
+        val state =
+            if (SchedulerDomain.retractsAtScreen(changed, state.periodKindConfig)) {
+                state.copy(periodCrossings = state.periodCrossings + (changedId to PeriodCrossing(sinceMillis = clock.nowMillis())))
+            } else {
+                state
+            }
         val trimTarget: (TaskPanel) -> Boolean =
             when {
                 // A period the user just laid or dragged: it takes the task panels it refuses.

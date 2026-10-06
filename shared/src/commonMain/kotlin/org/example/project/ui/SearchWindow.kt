@@ -321,8 +321,13 @@ fun SearchWindow(
             state.panels, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows,
         ) {
-            SearchDomain.results(
-                state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
+            // One kind checked and nothing of it found: its "creation" row stands in the list.
+            SearchDomain.withCreationWhenEmpty(
+                state,
+                SearchDomain.results(
+                    state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
+                ),
+                kinds,
             )
         }
     val count = results.size
