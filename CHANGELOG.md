@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every window has a colour — 2026-10-06
+
+*"Give a color to every window. A window also keeps the same color (not updated when there is a change like for task
+cells). Take the 256\*256\*256 color space. For all the default windows, separate the cube into equivalent parts. When a
+new window is created by duplication, it gets the color that is in the furthest position from all currently used
+colors and the edge of the part of the cube of the default window."*
+
+- **`WindowColorSpace`** (new): the cube cut into one equal part per kind of window (33 kinds, `DEFAULT_WINDOWS`); a
+  kind's own colour is its part's centre, and another window of the kind takes the point of the part furthest from
+  the colours in use and from the part's edge (`pick`, exact over the part).
+- **`WindowFrameHost.colors`**: given once in `register`, dropped in `unregister`, kept on the local `WindowColors`
+  placement row so a window comes back in its colour. Never synced.
+- **The head and the tab are filled with it**, their text and buttons in `TaskPalette.foreground` of it. The tab's
+  states lost their fills: the focused tab has a 3 dp outline, a selected one 1.5 dp, a reduced one oblique type
+  (replaces the primary-container fill, 2 dp border and semi-bold title of 2026-10-01).
+- **A changed notifications window stops gathering** (`SearchDomain.isUntouchedNotificationsWindow`): the next
+  notification out of focus opens a new one beside it — it used to bring the changed one back in front.
+
+Client only. `WindowColorSpaceTest`.
+
+### The notifications window is called "unfocused notif" — 2026-10-06
+
+The Search window the app opens on what fired out of focus read "Search" like any other. Its head and its tab now
+read "unfocused notif" (`SearchDomain.windowTitle`, off `isNotificationsWindow` — derived from the window's
+configuration, nothing stored; `NotificationsWindowTest`). A Search window opened by hand is unchanged.
+
 ### Search: the scheduler engine's sets of rules are listed with the history units — 2026-10-06
 
 The user asked for the set of rules behind "notifications from the scheduler engine", then corrected it: *"I was wrong

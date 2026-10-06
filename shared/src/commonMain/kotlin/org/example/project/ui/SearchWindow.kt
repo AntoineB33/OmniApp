@@ -575,7 +575,9 @@ fun SearchWindow(
         }
 
     AppWindowFrame(
-        title = "Search",
+        title = SearchDomain.windowTitle(config),
+        // The notifications window is a default window of its own: its colours are not the Search windows'.
+        colorKind = org.example.project.scheduler.domain.WindowColorSpace.UNFOCUSED_NOTIF.takeIf { SearchDomain.isNotificationsWindow(config) },
         state = frame,
         onClose = onDismiss,
         defaultWidth = 1040.dp,

@@ -4015,7 +4015,8 @@ fun CalendarFloatingWindow(
                 Text(
                     text = "Calculating…",
                     style = MaterialTheme.typography.labelMedium,
-                    color = CalColors.muted,
+                    // On the head: the colour drawn on the window's own (`AppWindowFrame`).
+                    color = androidx.compose.material3.LocalContentColor.current,
                     modifier = Modifier.padding(end = 8.dp),
                 )
             }

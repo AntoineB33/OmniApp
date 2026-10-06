@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.graphics.Color
+import org.example.project.scheduler.domain.WindowColorSpace
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -79,7 +82,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -423,6 +425,13 @@ class WindowFrameHost {
         menuKey: String?,
         val onClose: () -> Unit,
     ) {
+        /**
+         * The default window whose part of the colour cube this window takes its colour in, where the frame id does
+         * not say it ([WindowColorSpace.kindOf]): the "unfocused notif" window is a Search window by its id. Read
+         * once, as the window opens ([register]).
+         */
+        var colorKind: String? = null
+
         /** Observable for the reason [title] is: a per-object window moves on to another object while it stands. */
         var menuKey: String? by mutableStateOf(menuKey)
 
@@ -447,6 +456,17 @@ class WindowFrameHost {
 
     /** What the window bar's tab of [registration] reads: its own name ([tabTitles]), else the window's title. */
     fun tabTitleOf(registration: Registration): String = tabTitles[registration.id] ?: registration.title
+
+    /**
+     * User rule 2026-10-06: **every window's colour**, `0xRRGGBB` by frame id — the background of its head and of its
+     * tab ([WindowColorSpace]). Given ONCE, as the window opens ([register]), and kept until it closes ([unregister]):
+     * nothing that changes afterwards moves it. Kept by `App` on a placement row of its own ([onColorAssigned]), so a
+     * window that comes back after a restart comes back in its colour.
+     */
+    val colors = mutableStateMapOf<String, Int>()
+
+    /** A window that opened was given a colour: `App` writes [colors] down. */
+    var onColorAssigned: (() -> Unit)? = null
 
     val registrations: List<Registration> get() = entries
 
@@ -559,6 +579,13 @@ class WindowFrameHost {
         closing -= registration.id
         entries.removeAll { it.id == registration.id }
         entries += registration
+        // Its colour, unless it came back with one: its kind's own while no open window has it, else the one of its
+        // kind's part furthest from those in use ([WindowColorSpace.pick]).
+        if (registration.id !in colors) {
+            val part = WindowColorSpace.partOf(registration.colorKind ?: registration.id)
+            colors[registration.id] = WindowColorSpace.pick(part, colors.values)
+            onColorAssigned?.invoke()
+        }
         // A window that has just opened is the one the user asked for, so it opens on top.
         raise(registration.id)
     }
@@ -578,6 +605,7 @@ class WindowFrameHost {
         stack.remove(id)
         if (focusedId == id) focusedId = null
         tabTitles.remove(id)
+        colors.remove(id)
         selectedTabs = selectedTabs - id
         if (tabAnchor == id) tabAnchor = null
         closing -= id
@@ -1008,6 +1036,10 @@ private const val HEAD_DOUBLE_CLICK_MILLIS: Long = 350
 
 private val HEAD_BUTTON_SIZE: Dp = 24.dp
 
+/** The outline of the focused window's tab in the window bar, and the less thick one of a selected tab. */
+private val TAB_FOCUSED_OUTLINE: Dp = 3.dp
+private val TAB_SELECTED_OUTLINE: Dp = 1.5.dp
+
 /** Where a head's title starts, from the window's left edge. */
 private val HEAD_TITLE_START: Dp = 14.dp
 private val RESIZE_EDGE_THICKNESS: Dp = 6.dp
@@ -1051,6 +1083,8 @@ fun AppWindowFrame(
     canMinimize: Boolean = true,
     /** Extra head controls, drawn between the title and the five buttons. */
     headTrailing: @Composable RowScope.() -> Unit = {},
+    /** The default window whose colours this one takes its own among, where its id does not say it ([WindowFrameHost.Registration.colorKind]). */
+    colorKind: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val host = LocalWindowFrameHost.current
@@ -1069,7 +1103,8 @@ fun AppWindowFrame(
     val latestTitle by rememberUpdatedState(title)
     DisposableEffect(host, state.id, claimsKeyboard) {
         host?.register(
-            WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard, menuKey) { latestClose() },
+            WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard, menuKey) { latestClose() }
+                .also { it.colorKind = colorKind },
         )
         // A window that answers keystrokes takes the keyboard the moment it OPENS — the press that opened
         // it landed in the tree, so nothing else would hand it over, and PRD §4's "type a letter to rename"
@@ -1158,6 +1193,8 @@ fun AppWindowFrame(
                 WindowHead(
                     title = title,
                     state = state,
+                    // The window's own colour; a frame outside any host (a preview) keeps the theme's.
+                    color = host?.colors?.get(state.id)?.let(::windowColor) ?: MaterialTheme.colorScheme.surfaceVariant,
                     obstacle = headObstacle,
                     onClose = onClose,
                     onDuplicate = instance?.onDuplicate,
@@ -1258,6 +1295,8 @@ fun AppWindowFrame(
 private fun WindowHead(
     title: String,
     state: WindowFrameState,
+    /** The head's background — the window's colour; what is drawn on it takes [TaskPalette.foreground]. */
+    color: Color,
     /** [LocalHeadObstacle]'s bounds, in root coordinates. */
     obstacle: Rect?,
     onClose: () -> Unit,
@@ -1304,6 +1343,9 @@ private fun WindowHead(
         if (shift != titleShiftPx) titleShiftPx = shift
     }
     LaunchedEffect(obstacle) { updateShift() }
+    // The title, the head's buttons and whatever a window adds to its head are all drawn in the colour of highest
+    // contrast with the window's own, like what is drawn on a task's.
+    CompositionLocalProvider(LocalContentColor provides TaskPalette.foreground(color)) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1313,7 +1355,7 @@ private fun WindowHead(
                 headLeft[0] = it.positionInRoot().x
                 updateShift()
             }
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(color)
             .windowHeadGestures(
                 // A maximized window comes back to its normal size under the pointer, then follows it.
                 onDragStart = { pointer, headWidth -> state.unmaximizeUnder(pointer, headWidth, defaultSizePx) },
@@ -1354,7 +1396,11 @@ private fun WindowHead(
         }
         WindowHeadButton("✕", "Close", onClose)
     }
+    }
 }
+
+/** A window's colour ([WindowFrameHost.colors], `0xRRGGBB`) to paint with: opaque, like a task's. */
+internal fun windowColor(rgb: Int): Color = Color(0xFF000000.toInt() or rgb)
 
 /**
  * One head button. [label] is what it does, carried for accessibility rather than drawn: the head has five
@@ -1373,7 +1419,7 @@ private fun WindowHeadButton(glyph: String, label: String, onClick: () -> Unit) 
         Text(
             text = glyph,
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = LocalContentColor.current,
         )
     }
 }
@@ -1628,27 +1674,24 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
     // keystroke — or a click on its tab, which reduces it — goes to. A reduced window never has the focus.
     // A SELECTED tab ([WindowFrameHost.selectedTabs]) is filled in the secondary container, so the selection reads
     // apart from the focus; the focused tab keeps its own look whether it is selected or not.
+    //
+    // User rule 2026-10-06: the tab's fill is its WINDOW'S COLOUR, whatever its state, with the name and the ✕ in the
+    // colour of highest contrast on it — so no state is said by a fill any more. The focused tab has the thick
+    // outline, a selected one a less thick outline; a reduced one is in oblique type, as it was.
     val reduced = row.state.minimized
     val focused = !reduced && host.focusedId == row.id
     val selected = row.id in host.selectedTabs
     val colors = MaterialTheme.colorScheme
+    val fill = host.colors[row.id]?.let(::windowColor) ?: colors.surface
+    val onFill = TaskPalette.foreground(fill)
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = when {
-            focused -> colors.primaryContainer
-            selected -> colors.secondaryContainer
-            reduced -> colors.surfaceVariant
-            else -> colors.surface
-        },
-        contentColor = when {
-            focused -> colors.onPrimaryContainer
-            selected -> colors.onSecondaryContainer
-            else -> colors.onSurface
-        },
+        color = fill,
+        contentColor = onFill,
         border = when {
-            focused -> BorderStroke(2.dp, colors.primary)
-            selected -> BorderStroke(1.dp, colors.secondary)
-            else -> BorderStroke(1.dp, colors.outlineVariant)
+            focused -> BorderStroke(TAB_FOCUSED_OUTLINE, colors.onSurface)
+            selected -> BorderStroke(TAB_SELECTED_OUTLINE, colors.onSurface)
+            else -> null
         },
     ) {
         Row(
@@ -1660,7 +1703,6 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 text = host.tabTitleOf(row),
                 style = MaterialTheme.typography.labelLarge,
                 fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
-                fontWeight = if (focused) FontWeight.SemiBold else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 // The taskbar's toggle ([WindowFrameHost.onTabClicked]): a reduced window comes back, one without
@@ -1691,11 +1733,7 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 Text(
                     text = "✕",
                     style = MaterialTheme.typography.labelMedium,
-                    color = when {
-                        focused -> colors.onPrimaryContainer
-                        selected -> colors.onSecondaryContainer
-                        else -> colors.onSurfaceVariant
-                    },
+                    color = onFill,
                 )
             }
         }

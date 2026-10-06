@@ -269,7 +269,7 @@ private class CalendarLayersHolder {
 
 /** The placement rows that are not a window's layout: they are recorded by what they hold, or not at all. */
 private val VIEW_ROWS: Set<String> =
-    setOf(CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, "AppWindow")
+    setOf(CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID, "AppWindow")
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
 private const val SEARCH_KEY: String = org.example.project.scheduler.state.ExternalKeys.SEARCH
@@ -876,6 +876,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             updatePlacementById(CustomMenuButtons.TAB_TITLES_PLACEMENT_ID) {
                 it.copy(config = CustomMenuButtons.encodeTabTitles(windowFrames.tabTitles.toMap()))
             }
+        // The windows' colours (user rule 2026-10-06; [WindowFrameHost.colors]): loaded once, for the windows that
+        // come back — so each comes back in its colour — and written whenever a window that opens is given one.
+        remember(placementStore) {
+            val visible = CustomMenuButtons.decodeWindowColors(placements[CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID]?.config)
+                .filterKeys { placements[it]?.visible == true }
+            windowFrames.colors.putAll(visible)
+            windowFrames.onColorAssigned = {
+                updatePlacementById(CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID) {
+                    it.copy(config = CustomMenuButtons.encodeWindowColors(windowFrames.colors.toMap()))
+                }
+            }
+            true
+        }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
         // windows ([ObjectWindows]) — opening one on another object opens a second window, and the first stays.
         // All are hoisted here so they draw on the top layer, above whichever window stands over the tree. The
@@ -1494,9 +1507,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 notificationAnsweredAtMillis = lastNotificationAtMillis
                 val open = openSearchFrames()
                 // The window already gathering (held, or left open across a restart) is brought back in front; else a
-                // new one opens on what fired since the focus was lost.
-                val standing = notificationsWindowId?.takeIf { it in open }
-                    ?: open.firstOrNull { SearchDomain.isNotificationsWindow(searchConfigOf(it)) }
+                // new one opens on what fired since the focus was lost. One the user CHANGED since (its search
+                // configuration or its added elements) is theirs now: it stays as it is and a new one opens beside it.
+                fun gathering(id: String) = SearchDomain.isUntouchedNotificationsWindow(searchConfigOf(id))
+                val standing = notificationsWindowId?.takeIf { it in open && gathering(it) }
+                    ?: open.firstOrNull { gathering(it) }
                 notificationsWindowId =
                     if (standing != null) standing.also { presentWindow(FloatingWindow.Search, it) }
                     else openNewWindow(FloatingWindow.Search, SearchDomain.notificationsConfig(since).encode())

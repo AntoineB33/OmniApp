@@ -128,8 +128,10 @@ means.
   by dragging its bottom edge, which is the whole point of the edge.
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
-  they were opened. **The focused window's tab stands out** (2026-10-01: primary-container fill, a 2 dp primary
-  border, semi-bold title), read straight off `WindowFrameHost.focusedId` — no tab stands out while nothing
+  they were opened. **A tab's fill is its window's colour** (§ *Window colours*), so no state is said by a fill:
+  **the focused window's tab has the thick outline** (3 dp), **a selected tab a less thick one** (1.5 dp), a reduced
+  one oblique type (user rule 2026-10-06; it was a primary-container fill, a 2 dp border and a semi-bold title). The
+  focus is read straight off `WindowFrameHost.focusedId` — no tab stands out while nothing
   framed has the focus (a press on the background), and a reduced tab never does. **A tab a button made is named
   after it** (user rule 2026-10-01): the window a lateral-menu button the user made (☆) CREATES carries that button's
   name on its tab (`WindowFrameHost.tabTitles`, `tabTitleOf`) — the window registering in the frames after the click;
@@ -419,6 +421,27 @@ It lives in the host because the host already sees the only two events that deci
 
 ---
 
+### Window colours
+
+- **Every window has a colour, and KEEPS it** (user rule 2026-10-06; `WindowColorSpace`, `WindowFrameHost.colors`,
+  `WindowColorSpaceTest`): the background of its head and of its tab in the window bar. It is given ONCE, as the
+  window opens (`WindowFrameHost.register` — the one place every framed window passes), and goes when it closes.
+  Unlike a task's colour it is never worked out again because something else changed. Do not derive it per frame.
+- **The default windows share the `256³` cube in equal parts** (`WindowColorSpace.DEFAULT_WINDOWS`, `parts`): one
+  part per kind of window, named by what its frame id starts with — the calendar, the task tree, a Search window, the
+  notifications window (a Search window by its id, so it says its kind itself: `AppWindowFrame`'s `colorKind`), each
+  per-object window; a kind not listed (a notice) is in `OTHER`. A default window's colour is its part's centre. A new
+  kind goes at the END of its group in the list: the list's order is where the parts lie.
+- **Another window of a kind takes the colour of that kind's part furthest from every colour in use and from the
+  part's edge** (`WindowColorSpace.pick`): a duplicate (⧉), a second window on another object, a second notifications
+  window. A colour of another part is never nearer than the edge between them, so only the part's own count. The
+  part's centre is taken back by the next window of the kind once no open window has it.
+- **What is drawn on it takes the colour of highest contrast** (`TaskPalette.foreground`, the tasks' rule): the
+  title, the head's buttons and whatever a window puts in its head (`LocalContentColor` — a `headTrailing` must not
+  hard-code a colour), the tab's name and its ✕.
+- **Local-only view state**, kept on the `WindowColors` placement row (`CustomMenuButtons.encodeWindowColors`),
+  written when a colour is given and read back at startup for the windows that come back.
+
 ### The notifications window
 
 - **A notification that fires while the app is NOT in focus brings up a Search window on the notifications posted since
@@ -436,6 +459,13 @@ It lives in the host because the host already sees the only two events that deci
   (`notificationsWindowId`, Compose-only); after a restart the one still open with that kind of configuration
   (`isNotificationsWindow`: the notifications, FROM an instant) is the one brought back. A Search window on the
   notifications opened by hand has no such instant and is never taken for it.
+- **A window the user CHANGED stops gathering** (user rule 2026-10-06; `SearchDomain.isUntouchedNotificationsWindow`):
+  once its search configuration or its added elements differ from what the app opened it with, it is theirs — the
+  next notification out of focus leaves it as it is and opens a NEW notifications window beside it, in a colour of
+  the same part of the cube (§ *Window colours*). An untouched one is still brought back in front.
+- **It is called "unfocused notif", not "Search"** (user rule 2026-10-06; `SearchDomain.windowTitle`), on its head and on
+  its tab of the window bar. The name is read off the configuration — never stored — so it comes back with the window,
+  and a window the user turns into another search is a Search window again. A tab a ☆ button named keeps that name.
 - **Event-driven**: the log growing and the focus changing (`LocalWindowInfo.isWindowFocused`, the same on every
   platform) are the only things that ask. The app counts as out of focus from its start until it first has it, and the
   instant the focus was lost is kept, so a notification posted while the composition was not running (a phone's

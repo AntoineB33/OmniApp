@@ -92,6 +92,22 @@ object CustomMenuButtons {
     fun decodeTabTitles(text: String?): Map<String, String> =
         text?.let { runCatching { json.decodeFromString(StoredTabTitles.serializer(), it).titles }.getOrNull() }.orEmpty()
 
+    /**
+     * The placement row the open windows' colours are kept on ([WindowFrameHost.colors]) — frame id → `0xRRGGBB` — so
+     * a window that comes back after a restart comes back in its colour. No window has this frame id.
+     */
+    const val WINDOW_COLORS_PLACEMENT_ID: String = "WindowColors"
+
+    @Serializable
+    private data class StoredWindowColors(val colors: Map<String, Int> = emptyMap())
+
+    fun encodeWindowColors(colors: Map<String, Int>): String =
+        json.encodeToString(StoredWindowColors.serializer(), StoredWindowColors(colors))
+
+    /** [encodeWindowColors]' reverse; nothing stored, or nothing readable, is no colour. */
+    fun decodeWindowColors(text: String?): Map<String, Int> =
+        text?.let { runCatching { json.decodeFromString(StoredWindowColors.serializer(), it).colors }.getOrNull() }.orEmpty()
+
     /** [encode]'s reverse; nothing stored, or nothing readable, is no button. */
     fun decode(text: String?): List<CustomMenuButton> =
         text?.let { runCatching { json.decodeFromString(Stored.serializer(), it).buttons }.getOrNull() }.orEmpty()

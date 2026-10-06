@@ -197,6 +197,10 @@ class NotificationsWindowTest {
         val byHand = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Notification))
         assertEquals(null, SearchDomain.Config.decode(byHand.encode())!!.filters.notificationsSinceMillis)
         assertFalse(SearchDomain.isNotificationsWindow(byHand))
+        // User rule 2026-10-06: the window the app opens has a name of its own; one opened by hand is a Search window.
+        assertEquals("unfocused notif", SearchDomain.windowTitle(SearchDomain.Config.decode(config.encode())!!))
+        assertEquals("Search", SearchDomain.windowTitle(byHand))
+        assertEquals("Search", SearchDomain.windowTitle(SearchDomain.Config()))
     }
 
     @Test

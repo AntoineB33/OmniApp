@@ -263,6 +263,28 @@ object SearchDomain {
         config.kinds == setOf(Kind.Notification) && config.filters.notificationsSinceMillis != null
 
     /**
+     * Whether [config] is a notifications window's exactly as the app opened it (user rule 2026-10-06): nothing of its
+     * search configuration changed and nothing added. Only such a window goes on gathering — once the user has changed
+     * it, the next notification out of focus opens a new one beside it.
+     */
+    fun isUntouchedNotificationsWindow(config: Config): Boolean =
+        config.filters.notificationsSinceMillis?.let { config == notificationsConfig(it) } == true
+
+    /** What a Search window is called, on its head and on its tab of the window bar. */
+    const val WINDOW_TITLE: String = "Search"
+
+    /** What the notifications window ([notificationsConfig]) is called instead (user rule 2026-10-06). */
+    const val NOTIFICATIONS_WINDOW_TITLE: String = "unfocused notif"
+
+    /**
+     * The title of the Search window showing [config] (user rule 2026-10-06): the notifications window has a name of
+     * its own. Read off the configuration, so it comes back with the window after a restart — and a window the user
+     * turns into another search is a Search window again.
+     */
+    fun windowTitle(config: Config): String =
+        if (isNotificationsWindow(config)) NOTIFICATIONS_WINDOW_TITLE else WINDOW_TITLE
+
+    /**
      * Whether the notifications window is owed (user rule 2026-10-04): a notification was posted while the app was NOT
      * in focus — at or after [unfocusedSinceMillis], the instant it lost it (null: it has the focus and never lost it
      * since this was last asked) — that the window has not been shown for yet ([answeredAtMillis], the last one it
