@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Add to the calendar": "Right-click time", and both buttons on a dated end — 2026-10-07
+
+User rule: beside "Now", a "Right-click time" button sets the time to the position of the right-click on the calendar,
+offered only in a Search window that came from one (`Config.calendarClickMillis`); and when the end is a day and a
+time, it has the two buttons too. `CalendarPlacementEditor`. No test (two buttons writing existing fields); not
+verified on screen. Client only.
+
 ### "add…" on a Sleep period: "Can be added" listed no task — 2026-10-07
 
 Anomaly (account 3): right-click on a Sleep period, "add…", only tasks checked, the filter on "Can be added" — the list

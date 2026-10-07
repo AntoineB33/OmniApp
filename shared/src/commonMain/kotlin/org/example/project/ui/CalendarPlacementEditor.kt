@@ -25,6 +25,10 @@ import org.example.project.scheduler.state.SchedulerState
  *  - the button that lays every added element that can go there ([SearchDomain.calendarDrafts], saved as the
  *    calendar's element window saves its own). A task's panel and a period take the end; a reminder's tag, an alarm's
  *    ring and a timer's end are an instant, at the start.
+ * Beside each day-and-time (the start, and the end when it is stated as one) stand **"Now"** and — user rule
+ * 2026-10-07, *"only if the Search window originates from the calendar from a right-click"*
+ * ([SearchDomain.Config.calendarClickMillis]) — **"Right-click time"**, which set it to the clock's instant and to the
+ * position of that right-click, to the minute as the fields say it.
  * The start and the end are this Search window's ([SearchDomain.Config.placement], local-only view state). An end not
  * after the start is shown as the error it is, and nothing is laid.
  */
@@ -46,6 +50,12 @@ internal fun CalendarPlacementEditor(
     val startAt = start?.let { localOf(it, tz) }
     val startMinutes = startAt?.let { it.hour * 60 + it.minute }
     val refused = start != null && SearchDomain.placementRefused(placement, start)
+    // "Now" and "Right-click time" for one day-and-time: to the minute, as the fields say it.
+    @Composable
+    fun instantButtons(set: (Long) -> Unit) {
+        FrameButton("Now") { set(nowMillis() / 60_000L * 60_000L) }
+        config.calendarClickMillis?.let { click -> FrameButton("Right-click time") { set(click / 60_000L * 60_000L) } }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             NoteText("starts", color = MaterialTheme.colorScheme.onSurface)
@@ -62,8 +72,7 @@ internal fun CalendarPlacementEditor(
             ) { minutes ->
                 write { it.copy(startMillis = instantOf(startAt?.date ?: today, minutes, tz)) }
             }
-            // To the minute, as the fields say it.
-            FrameButton("Now") { write { it.copy(startMillis = nowMillis() / 60_000L * 60_000L) } }
+            instantButtons { at -> write { it.copy(startMillis = at) } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = placement.endByDelta, onCheckedChange = { on -> write { it.copy(endByDelta = on) } })
@@ -90,6 +99,7 @@ internal fun CalendarPlacementEditor(
                 ) { minutes ->
                     write { it.copy(endMillis = instantOf(endAt?.date ?: startAt?.date ?: today, minutes, tz)) }
                 }
+                instantButtons { at -> write { it.copy(endMillis = at) } }
             }
         }
         if (start == null) {

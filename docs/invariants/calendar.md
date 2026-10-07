@@ -847,7 +847,9 @@ Global rules that always apply: `CLAUDE.md`.
   of period; a reminder; an **alarm** and a **timer** (user rule 2026-10-01 — a timer only while the instant is ahead
   of the clock and within its longest run); a "creation" row of a kind the calendar lays. Its action **"Add to the
   calendar"** lays the added ones at its START (`Config.placement`, user rule 2026-10-05: a day and a time, the
-  filter's position until one is given — `SearchDomain.placementStart`) through `SearchDomain.calendarDrafts` — the element window's
+  filter's position until one is given — `SearchDomain.placementStart`; beside it, and beside the END when that is a
+  day and a time, "Now" and — only while `Config.calendarClickMillis` says the window came from a right-click on the
+  calendar — "Right-click time", user rule 2026-10-07) through `SearchDomain.calendarDrafts` — the element window's
   own seeding (`CalendarElements.seeded`) and Save (`saveCalendarElementIntents`); an alarm is the window's edit of that
   alarm (`existingId`): it rings at that time of day, that weekday added to its days, switched on — and a timer is put
   on the clock to END there (`calendarTimerIntents`: reset, time left = instant − now, started; one `SetTimers`).
