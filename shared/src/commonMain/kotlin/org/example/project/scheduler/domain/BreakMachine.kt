@@ -76,6 +76,14 @@ object BreakMachine {
     data class Drag(val label: String, val dueMillis: Long, val members: List<String>)
 
     /**
+     * `docs/scheduler_requirements.md` § *frozen past*, its first exception, ahead of the line: **a break the user
+     * dragged on the calendar** — the occurrence of [label] the rules put at [fromMillis] stands at [toMillis] instead
+     * ([handDue]). Kept until an occurrence of the label starts at or after the earlier of the two.
+     */
+    @Serializable
+    data class HandPlaced(val label: String, val fromMillis: Long, val toMillis: Long)
+
+    /**
      * The machine at the instant [atMillis] of the line. Persisted with the banked record ([FrozenScreenBreaks.machine]),
      * so a restart continues from it rather than re-deriving where the breaks fall.
      */
@@ -99,6 +107,8 @@ object BreakMachine {
          */
         val lastStretchStart: Long? = null,
         val lastStretchEnd: Long? = null,
+        /** The breaks ahead of the line a hand placed ([HandPlaced]). Absent from a row an older build wrote: none. */
+        val placed: List<HandPlaced> = emptyList(),
     )
 
     /** What happened as the line moved: the runtime banks, un-banks and announces from these. */
@@ -111,6 +121,8 @@ object BreakMachine {
             val startMillis: Long,
             val endMillis: Long,
             val conducted: Boolean = false,
+            /** It started where a hand put it ([HandPlaced]): banked as the user's. */
+            val byHand: Boolean = false,
         ) : Event {
             override val atMillis: Long get() = startMillis
         }
@@ -212,7 +224,7 @@ object BreakMachine {
         if (state.active?.members?.contains(label) == true) return null
         val bar = state.bars[label] ?: return null
         val at = state.atMillis
-        val q = maxOf(bar, at)
+        val q = handDue(state, label, maxOf(bar, at))
         val period = periodAt(state, q, chains) ?: return q
         if (state.taken[label] == period.startMillis) {
             // One occurrence per continuous period: the next is looked for past it — at its known end, or not at all
@@ -220,6 +232,38 @@ object BreakMachine {
             return if (period.endMillis > at) period.endMillis else null
         }
         return maxOf(at, period.startMillis)
+    }
+
+    /**
+     * [due] — where the rules put [label] — as the user's hand moved it ([State.placed]): an occurrence due in
+     * `[from, to)` of a placement that moved it LATER waits for `to`; one due in `]to, from]` of a placement that moved
+     * it EARLIER is due at `to`, while the line has not passed it.
+     */
+    private fun handDue(state: State, label: String, due: Long): Long {
+        if (state.placed.isEmpty()) return due
+        var q = due
+        for (p in state.placed) {
+            if (p.label != label) continue
+            if (p.toMillis > p.fromMillis) {
+                if (q >= p.fromMillis - HAND_PLACED_TOLERANCE_MILLIS && q < p.toMillis) q = p.toMillis
+            } else if (p.toMillis >= state.atMillis && q > p.toMillis && q <= p.fromMillis + HAND_PLACED_TOLERANCE_MILLIS) {
+                q = p.toMillis
+            }
+        }
+        return q
+    }
+
+    /** How far from where it was picked up an occurrence may fall due and still be the one a hand moved ([handDue]). */
+    private const val HAND_PLACED_TOLERANCE_MILLIS: Long = 1_000L
+
+    /** [state] once an occurrence of each of [labels] started at [x]: the placements it answered are spent. */
+    private fun spent(state: State, labels: List<String>, x: Long): State {
+        if (state.placed.isEmpty()) return state
+        val kept =
+            state.placed.filterNot {
+                it.label in labels && minOf(it.fromMillis, it.toMillis) <= x + HAND_PLACED_TOLERANCE_MILLIS
+            }
+        return if (kept.size == state.placed.size) state else state.copy(placed = kept)
     }
 
     /**
@@ -342,7 +386,7 @@ object BreakMachine {
         val x = state.atMillis
         if (drags(spec.label, state, policy)) {
             if (spec.label != LABEL_20S) events?.add(Event.Owed(x, spec.label))
-            return state.copy(drag = Drag(spec.label, x, listOf(spec.label)))
+            return spent(state, listOf(spec.label), x).copy(drag = Drag(spec.label, x, listOf(spec.label)))
         }
         return enter(state, spec, x, listOf(spec.label), chains, events, conducted = false, policy = policy)
     }
@@ -363,10 +407,12 @@ object BreakMachine {
         val active = Active(spec.label, start, start + spec.durationMillis, members, held = held, conducted = conducted)
         // A line at a screen entering a break is covered from its start: the stretch starts here.
         val stretch = state.stretchStart ?: start
-        var s = state.copy(active = active, drag = null, stretchStart = stretch)
+        val byHand =
+            state.placed.any { it.label in members && kotlin.math.abs(it.toMillis - start) <= HAND_PLACED_TOLERANCE_MILLIS }
+        var s = spent(state, members, start).copy(active = active, drag = null, stretchStart = stretch)
         val key = periodAt(s, s.atMillis, chains)?.startMillis ?: stretch
         s = s.copy(taken = s.taken + members.associateWith { key })
-        events?.add(Event.Started(spec.label, active.startMillis, active.endMillis, conducted))
+        events?.add(Event.Started(spec.label, active.startMillis, active.endMillis, conducted, byHand))
         return s
     }
 
@@ -378,7 +424,7 @@ object BreakMachine {
             if (grows) a.copy(label = spec.label, endMillis = a.startMillis + spec.durationMillis, members = a.members + spec.label)
             else a.copy(members = a.members + spec.label)
         if (grows) events?.add(Event.Grew(state.atMillis, spec.label, a.startMillis, next.endMillis, a.label, a.endMillis))
-        return state.copy(active = next, taken = state.taken + (spec.label to key))
+        return spent(state, listOf(spec.label), state.atMillis).copy(active = next, taken = state.taken + (spec.label to key))
     }
 
     private fun joinDrag(
@@ -389,6 +435,8 @@ object BreakMachine {
         policy: Policy,
     ): State {
         val d = state.drag ?: return state
+        @Suppress("NAME_SHADOWING")
+        val state = spent(state, listOf(spec.label), state.atMillis)
         val members = d.members + spec.label
         val longer = spec.durationMillis > (byLabel[d.label]?.durationMillis ?: 0L)
         if (!longer) return state.copy(drag = d.copy(members = members))
@@ -680,7 +728,14 @@ object BreakMachine {
     // ---- Where they fall ahead of the line -------------------------------------------------------------------------
 
     /** One break the machine places: `[startMillis, endMillis)`, or `]start; start + d]` when [openStart] (dragged). */
-    data class Placed(val label: String, val startMillis: Long, val endMillis: Long, val openStart: Boolean = false) {
+    data class Placed(
+        val label: String,
+        val startMillis: Long,
+        val endMillis: Long,
+        val openStart: Boolean = false,
+        /** It stands where a hand put it ([HandPlaced]). */
+        val byHand: Boolean = false,
+    ) {
         val coveredFromMillis: Long get() = if (openStart) startMillis + 1 else startMillis
         val coveredUntilMillis: Long get() = if (openStart) endMillis + 1 else endMillis
     }
@@ -727,7 +782,8 @@ object BreakMachine {
         fun collect() {
             for (e in events) {
                 when (e) {
-                    is Event.Started -> if (!e.conducted) out[e.startMillis to false] = Placed(e.label, e.startMillis, e.endMillis)
+                    is Event.Started ->
+                        if (!e.conducted) out[e.startMillis to false] = Placed(e.label, e.startMillis, e.endMillis, byHand = e.byHand)
                     is Event.Grew -> out[e.startMillis to false] = Placed(e.label, e.startMillis, e.endMillis)
                     is Event.Removed -> out.remove(e.startMillis to false)
                     else -> Unit

@@ -657,6 +657,92 @@ Global rules that always apply: `CLAUDE.md`.
   flag), applied at once rather than at the next engine start; outside Undo/Redo (an open gap: undoing the
   period does not bring the stripped work back). A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
   sleep band moving is not the user saying they were not working.
+- **ANY BLOCK CAN BE DRAGGED, AND IT THEN GETS A BLUE OUTLINE** (user rule 2026-10-07; anomaly 2026-10-06 *"I
+  tried to drag a past 15min screen break but I couldn't"*). The blocks that had no object behind them — a screen
+  break, the Sleep band, the hour before bed — were the exception list; there is none now:
+  - **One gesture**: `Modifier.periodBoxGesture`, the period box's own (a double click whose second press is held and
+    dragged; a resize from a grab strip), worn by `PeriodSegmentGesture` (period boxes, and the Sleep band, which is
+    emitted with them under the panels) and by `ScreenBreakBand` (on the band, which is drawn on top; no resize — a
+    break lasts as long as its name implies). Never a second copy of it.
+  - **One preview**: the held block is a `PeriodSegment` of its kind (`sleepSegments`, `breakSegments`,
+    `heldPeriods`), so the column draws it where the hand has it, cut where a mode-1 line leaves it
+    (`periodAtLine`), with the task panels it refuses retracted under it and growing back as it leaves — exactly a
+    period box's. The band's own drawing stands aside while it is held.
+  - **One release**: `onCommitBounds`. `commitBoundsIntent` answers `PlaceDerivedPeriod` for an occurrence a RULE
+    lays (`derivedPeriodKind`: the schedule's Sleep window `sleep/{wake day}`, its hour before bed): the night
+    leaves the schedule (`SleepSchedule.skippedWakeEpochDays` / `skippedBeforeBedEpochDays` — the way a dragged ring
+    leaves its alarm) and the period is laid by `reduceAddRestrictivePeriod`, the panel a fill had laid for that
+    night leaving in the same unit. Two units, both in the CALENDAR history: one Ctrl+Z takes the period away, the
+    next gives the night back. A Sleep window the past recorded (a stored panel) goes through `UpdateTaskPanel`,
+    which makes it the user's `sleep` period. A **screen break** is not the state's: `App` hands it to
+    `SchedulerEngine.placeBreakByHand` (`screen-breaks.md` § *A break is put by hand*).
+  - **What stands where it was is never the period again**: the schedule lays no window (and no hour before bed) for
+    a skipped night; the machine lays no break of that role between where one was picked up and where it was put.
+  - Whether a break band may be held is asked AT THE PRESS (`movable`: not the one the line is in or drags), never
+    read in composition — a read of the line there would recompose every past column with it.
+  - `DraggedSleepWindowTest`, `MovedPastBreakTest`. Open: a dragged Sleep window has no hour before bed of its own
+    (that hour is derived from the schedule's windows only); the wake alarm and the quota's nights still read the
+    schedule's hours for a skipped night.
+- **THE SEARCH WINDOW'S "DRAG ON THE CALENDAR" HOLDS BLOCKS FROM ANOTHER WINDOW** (user rule 2026-10-07;
+  `CalendarElementDrag`, `LocalCalendarElementDrag`, `CalendarDragEditor`, `CalendarElementDragTest`). The press is
+  on a button of the Search window, so the drag cannot be a gesture of the calendar's: the holder is what the two
+  share. Each day column on screen LENDS it the instant a window position is on it (`millisAt`, the column's own
+  reading), the records it draws, and `onCommitBounds`. **The field selects the blocks**: the app's one check-box
+  drop-down over every block the added elements have on the days shown (`blocksOf`), checked by default on the ones
+  at the right-click the window was opened from (`calendarDragBlocks` — the reading "edit…" lists them by). **How
+  they follow**: every block by the same time — the instant under the pointer less the instant they were chosen at
+  (the right-click's; the earliest block's start for blocks picked by hand) — so each keeps its place under the
+  pointer; off every column they stay. **The release** is each block through `onCommitBounds`, at `targets()`: a
+  period over what a mode-1 line leaves of it (`periodAtLine`), and not at all where the line leaves nothing.
+- **HELD AND RELEASED LOOK THE SAME; THE ONE DIFFERENCE IS THAT WHAT THE HELD BLOCK REMOVED IS REMEMBERED** (user
+  rule 2026-10-07: *"The only difference there must be between keeping the mouse click and having released it is that
+  whatever got removed when the dragged element got there is remembered if the mouse click is not released. If period A
+  is dragged to period B and period B doesn't have to retract, then it doesn't. If it must retract, it retracts."*).
+  **By the release's own code, for every drag** (`App`: `calendarMoveOf`, `calendarMovePreview`;
+  `HeldDragPreviewTest`). What a release does is said ONCE (`calendarMoveOf`: the intent, or the engine's break
+  move); `onCommitBounds` runs it, and while anything is held the same moves are run through the same reducers on a
+  copy of the stored state — nothing saved, the plan not asked again — and `deriveCalendarDisplay` draws THAT state.
+  So a period over a period fuses or not exactly as the reducer says, a task under a period gives way, the "no
+  screen" a sleep period carries (its layers) stands where the period is held, the place it left shows what the
+  edges choose — and **"remembered" is the stored state itself**: every step of the drag is asked of it again, so
+  what was removed is back the moment the block moves on; released, it is gone for good.
+  - **From the Search window** the held state is what the calendar is given (`shownState`, `shownFrozenBreaks`).
+  - **In the calendar** the column tells `App` what it holds (`CalendarElementDrag.heldInCalendar`: a period box or
+    band from `movedPeriods`, a task panel from `dragPreview`, where the hand has it, to the minute) and the week
+    view draws the released calendar in a second column per day (`LocalHeldCalendarRecords`, `heldRecordsPerDay`) —
+    UNDER the column that holds the press, which stays with the records at rest and is not seen
+    (`graphicsLayer { alpha }`): **a gesture's nodes must not move under the press**, so the released records are
+    never fed to the column holding it. The drawn-only columns are given a holder of their own and report nothing.
+  - The column's older drawing-only previews (`blocksForPeriodDrag`, `periodsForBlockDrag`, `HeldPeriodCut`…) are
+    still computed under it and seen only where the release would do nothing (a period the line leaves nothing of).
+    They are a second reading of what a release leaves: do not extend them — remove them when the gesture no longer
+    needs their bounds.
+  - Cost: a reduce and a calendar derivation per minute the hand moves the block by, and two columns per day, only
+    while something is held. Not yet measured on a large account.
+- **WHAT STANDS WHERE A DRAGGED PERIOD WAS IS CHOSEN FROM ITS EDGES** (user rule 2026-10-07;
+  `SchedulerDomain.vacatedPastFill`, `SchedulerReducer.withVacatedPastFilled`, `VacatedPeriodFillTest`). Behind the
+  line only — ahead of it the plan fills. What is at an edge is the kinds of the periods stated there and the task
+  whose work is recorded (or placed) there; the period at its NEW place is what is at the edge it touches. **The same
+  at both edges, and not the period again** (it does not carry the kind that left, nor both layers where a "no
+  screen" left): that is what is put — its kinds laid over the span where no period already states them across it,
+  its task's work given back (less the breaks banked there). **Anything else: a period of `inactivity` alone**; bare
+  edges put nothing. One funnel for the three ways a period leaves a span: a stored period moved
+  (`reduceUpdateTaskPanel` — BOTH ends moved; a resize is not a drag elsewhere, and a repeating period is a pattern that leaves no one span), a Sleep window or hour before bed
+  dragged (`reduceAddRestrictivePeriod`'s `vacated`), a screen break (`FillVacatedBreak`). In the SAME unit as the
+  move for the first two (`PanelDelta`'s `records` half): one Ctrl+Z puts the period back and takes the fill away.
+  **The layers count at an edge** (`SchedulerReducer.layerKindsAt`, injected by `App` over the layer bands the
+  calendar draws — the devices' own history included): the user's example is *"'no phone unlocked' and not ('no
+  computer unlocked' or 'not on a computer') and task A"*. A layer both edges carry is laid as that layer's period
+  where the calendar does not already draw it across the span; what the rules only derive from the layers is never
+  laid; and both layers at both edges are the "no screen" that left — inactivity.
+- **A REMINDER'S CHIP IS DRAGGED LIKE A RING** (user rule 2026-10-07 — *"the block (or chip) being dragged is the one
+  at the top of the priority rank"*; `clickOrDoubleClickHeldDrag`, `DraggedReminderTagTest`). The press already went
+  to the top of the rank everywhere else (tag, ring, break, panel, period — the order they are drawn in); the tag was
+  the one top of the rank with no move. Its node has a click too, so the check-off is told once the double-tap
+  window has passed with no second press — a drag never checks the tag on its way (a touch tap is immediate). The
+  release goes through `onCommitBounds`, where `App` saves the tag the way its edit window does
+  (`AddCalendarElements`, the tag's own draft at the new instant) and PINS it. A tag the state holds no panel for (one
+  projected past the schedule's window) is not moved — the same limit its edit window has.
 - **A PAST BLOCK DRAGGED OFF ITS RECORD IS ONE UNDO** (`reducePinRecord`, 2026-10-04): the record period leaving
   and the panel arriving are one `PanelDelta` (its `records` half), so Ctrl+Z puts the block back where it was.
   The record used to leave outside the history, and undoing the drag made the block vanish.

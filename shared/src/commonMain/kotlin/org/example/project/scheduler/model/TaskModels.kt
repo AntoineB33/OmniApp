@@ -617,6 +617,14 @@ data class SleepSchedule(
     val goalWakeMinutes: Int = 450, // 07:30
     val sleepDurationMinutes: Int = 510, // 8h30
     val anchorEpochDay: Long? = null,
+    /**
+     * User rule 2026-10-07 (*"Any block can be dragged"*): the nights whose Sleep window the user dragged away, by
+     * WAKE day — the schedule lays no window for them (nor the hour before bed, which comes with a window), and the
+     * dragged window is a period of its own on the calendar. An alarm's `skippedEpochDays`, for the sleep schedule.
+     */
+    val skippedWakeEpochDays: Set<Long> = emptySet(),
+    /** The same for the hour before bed alone, dragged away from a window that stays. */
+    val skippedBeforeBedEpochDays: Set<Long> = emptySet(),
 )
 
 /**

@@ -960,7 +960,7 @@ private fun calendarBlockKey(
 private fun calendarBlockKey(r: CalendarRecord): String =
     calendarBlockKey(r.entryId, r.scheduled, r.taskId, r.range.startEpochMillis, r.range.endEpochMillis)
 
-private fun calendarBlockKey(r: PlacedRecord): String =
+internal fun calendarBlockKey(r: PlacedRecord): String =
     calendarBlockKey(r.entryId, r.scheduled, r.taskId, r.fullStartMillis, r.fullEndMillis)
 
 /**
@@ -4990,6 +4990,16 @@ private fun WeekView(
     val recordsPerDay = remember(records, anchorDay, visibleDayCount, tz) {
         recordsByDay(records, anchorDay, visibleDayCount, tz)
     }
+    // User rule 2026-10-07: held and released look the same. While a day column holds a block, what is DRAWN is the
+    // calendar its release would leave ([LocalHeldCalendarRecords]) — a second, unreachable column per day, under the
+    // one that holds the press, which stays with the records at rest and is not seen.
+    val heldRecords = LocalHeldCalendarRecords.current
+    val heldRecordsPerDay = remember(heldRecords, anchorDay, visibleDayCount, tz) {
+        heldRecords?.let { recordsByDay(it, anchorDay, visibleDayCount, tz) }
+    }
+    val heldShown = rememberUpdatedState(heldRecordsPerDay != null)
+    // What the drawn-only columns tell goes nowhere: they hold nothing and lend nothing.
+    val drawnOnlyDrag = remember { CalendarElementDrag() }
 
     // PRD §8 / ADR 0009 hot path: which hours of each day-row are on screen, so the columns below can cull
     // everything else out of the UI tree entirely (see [HourWindow]). Read through a derivedStateOf -- and
@@ -5339,6 +5349,61 @@ private fun WeekView(
                             // armed move) belongs to the date it was opened on and cannot be inherited by
                             // the next day that rolls into the same slot.
                             key(day) {
+                                if (heldRecordsPerDay != null) {
+                                    androidx.compose.runtime.CompositionLocalProvider(LocalCalendarElementDrag provides drawnOnlyDrag) {
+                                        DayColumn(
+                                            day = day,
+                                            tz = tz,
+                                            isToday = day == today,
+                                            hourHeight = hourHeight,
+                                            now = if (day == today) now else null,
+                                            sampleNowMillis = nowMillis,
+                                            frameNowMillis = frameNowMillis,
+                                            compositionNowMillis = compositionNowMillis,
+                                            sampledRecords = heldRecordsPerDay[day].orEmpty(),
+                                            taskColors = taskColors,
+                                            taskSheetColors = taskSheetColors,
+                                            visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
+                                            // The badge below is drawn for every row but the top one.
+                                            showsDayDate = row > 0,
+                                            onAddAt = onAddAt,
+                                            onCommitBounds = { _, _, _, _ -> },
+                                            onEditChoice = onEditChoice,
+                                            onEditElementsAt = onEditElementsAt,
+                                            onGoToTaskTree = onGoToTaskTree,
+                                                                onToggleReminder = onToggleReminder,
+                                            onLockScroll = { scrollLocked = it },
+                                            onResizingEdge = { resizingEdge = it },
+                                            onAdjustWeights = onAdjustWeights,
+                                            allBlocks = allBlocks,
+                                            overlapArmed = overlapArmed,
+                                            hoverScope = hoverScope,
+                                            // A day-row is `dayHeightPx` tall by construction (that is what the
+                                            // placement above assumes), but the scroll viewport is not —
+                                            // [Modifier.scrollable] passes its own bounded constraints straight
+                                            // through, where the old [verticalScroll] measured its content with
+                                            // maxHeight = Infinity. [Modifier.height] ENFORCES the incoming
+                                            // constraints, so it would clamp each row to the viewport height: the
+                                            // hour-line Column would then run out of main-axis space and measure its
+                                            // trailing hour boxes at zero height (the grid vanishing in the lower
+                                            // part of the view), and the rows would no longer tile. But
+                                            // [Modifier.requiredHeight] is NOT the answer either: it ignores the
+                                            // incoming constraints and then CENTERS the over-tall content in the
+                                            // clamped slot, adding a `(viewport - dayHeight) / 2` shift the scroll
+                                            // math does not know about — the grid then draws hours the offset never
+                                            // asked for and the now-line is pushed off the top of the view (its
+                                            // whole column with it). Measure unbounded, align TOP, then take the
+                                            // full day height.
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .wrapContentHeight(Alignment.Top, unbounded = true)
+                                                .height(hourHeight * 24)
+                                                .offset {
+                                                    IntOffset(0, (row * dayHeightPx - columnOffset(column, columnShift)).roundToInt())
+                                                },
+                                        )
+                                    }
+                                }
                                 DayColumn(
                                     day = day,
                                     tz = tz,
@@ -5388,7 +5453,9 @@ private fun WeekView(
                                         .height(hourHeight * 24)
                                         .offset {
                                             IntOffset(0, (row * dayHeightPx - columnOffset(column, columnShift)).roundToInt())
-                                        },
+                                        }
+                                        // Under the press, and unseen, while the released calendar is drawn.
+                                        .graphicsLayer { alpha = if (heldShown.value) 0f else 1f },
                                 )
                             }
                             // The header only names each column's TOP day, so every boundary scrolled into
@@ -5695,6 +5762,13 @@ private fun DayColumn(
     // Cached on the record list like [overlapLayout], for the same reason: this column recomposes for every
     // state change App's body sees, and the partition is a pure function of the periods.
     val drawnPeriods = remember(periodRecords) { periodSegments(periodRecords) }
+    // User rule 2026-10-07 (*"Any block can be dragged"*): the Sleep band and the screen breaks draw themselves, but
+    // they are HELD the way a period box is — one gesture, one preview, one release ([periodBoxGesture]). Each as a
+    // box of its own kind, read where a period's kind is read (the line's cut, what it refuses, its drawings).
+    val sleepSegments = remember(sleepBands) { periodSegments(sleepBands.map { it.copy(restrictiveKind = PeriodKinds.SLEEP) }) }
+    val breakSegments =
+        remember(screenBreakMarkers) { periodSegments(screenBreakMarkers.map { it.copy(restrictiveKind = it.breakKind) }) }
+    val heldPeriods = remember(drawnPeriods, sleepSegments, breakSegments) { drawnPeriods + sleepSegments + breakSegments }
     // PRD §8 / ADR 0009: is any of `[top, bottom]` on screen? Every emission below asks this first. The
     // lists themselves are deliberately NOT filtered — the sweeps and layouts above/below need the whole
     // day — so culling can never move an element, only omit one that is not visible anyway.
@@ -5968,7 +6042,7 @@ private fun DayColumn(
         periodDrag?.let { drag ->
             val hourPx = with(density) { hourHeight.toPx() }
             val deltaMillis = if (hourPx > 0f) ((drag.deltaPx / hourPx) * 3_600_000f).toLong() else 0L
-            drawnPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.mapNotNull { period ->
+            heldPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.mapNotNull { period ->
                 // Where the line leaves it ([LocalPeriodAtLine]): cut at a mode-1 line, gone as its end reaches it.
                 periodDragBounds(period, drag.edge, deltaMillis)
                     ?.let { periodAtLine(period.restrictiveKind, it) }
@@ -5980,7 +6054,7 @@ private fun DayColumn(
         periodDrag?.let { drag ->
             val hourPx = with(density) { hourHeight.toPx() }
             val deltaMillis = if (hourPx > 0f) ((drag.deltaPx / hourPx) * 3_600_000f).toLong() else 0L
-            val period = drawnPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.singleOrNull()
+            val period = heldPeriods.firstOrNull { periodSegmentKey(it) == drag.key }?.records?.singleOrNull()
             val raw = period?.let { periodDragBounds(it, drag.edge, deltaMillis) } ?: return@let null
             val left = periodAtLine(period.restrictiveKind, raw)
             if (left == raw) return@let null
@@ -6065,8 +6139,58 @@ private fun DayColumn(
         }
     }
 
+    // The Search window's "Drag on the calendar" ([CalendarElementDrag]): this column lends it the instant a point of
+    // the window is on it, the blocks it draws and the blocks' one release. What it holds is drawn by `App`, as the
+    // calendar a release would leave.
+    val elementDrag = LocalCalendarElementDrag.current
+    var columnCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val currentColumnCoords = rememberUpdatedState(columnCoords)
+    val currentAllRecords = rememberUpdatedState(records)
+    val currentMillisAt = rememberUpdatedState(::millisAt)
+    // …and it tells `App` the block IT holds — a period box or band, a task panel being moved or resized — where the
+    // hand has it (to the minute), as its release would put it. The calendar is then drawn as that release would
+    // leave it ([LocalHeldCalendarRecords]): held and released look the same.
+    fun toTheMinute(range: TaskTimeRange) =
+        TaskTimeRange(range.startEpochMillis / 60_000L * 60_000L, range.endEpochMillis / 60_000L * 60_000L)
+    val heldByThisColumn =
+        movedPeriods.singleOrNull()?.let { (period, at) -> CalendarElementDrag.Held(period, toTheMinute(at), allowOverlap = true) }
+            ?: dragPreview?.let { preview ->
+                effRecords.firstOrNull { calendarBlockKey(it) == preview.key }
+                    ?.let { CalendarElementDrag.Held(it, toTheMinute(preview.range), preview.shareWidth) }
+            }
+    var toldHeld by remember { mutableStateOf(false) }
+    SideEffect {
+        elementDrag.commitBounds = onCommitBounds
+        if (heldByThisColumn != null) {
+            if (elementDrag.heldInCalendar != heldByThisColumn) elementDrag.heldInCalendar = heldByThisColumn
+            toldHeld = true
+        } else if (toldHeld) {
+            elementDrag.heldInCalendar = null
+            toldHeld = false
+        }
+    }
+    // A column that leaves while it holds something (the calendar closed under the press) holds nothing any more.
+    androidx.compose.runtime.DisposableEffect(elementDrag) {
+        onDispose { if (toldHeld) elementDrag.heldInCalendar = null }
+    }
+    androidx.compose.runtime.DisposableEffect(elementDrag, midnightMillis) {
+        val lent =
+            CalendarElementDrag.Column(
+                timeAt = { windowPosition ->
+                    currentColumnCoords.value?.takeIf { it.isAttached }?.let { coords ->
+                        val local = coords.windowToLocal(windowPosition)
+                        if (local.x >= 0f && local.x < coords.size.width) currentMillisAt.value(local.y) else null
+                    }
+                },
+                records = { currentAllRecords.value },
+            )
+        elementDrag.columns[midnightMillis] = lent
+        onDispose { if (elementDrag.columns[midnightMillis] === lent) elementDrag.columns.remove(midnightMillis) }
+    }
+
     Box(
         modifier = modifier
+            .onGloballyPositioned { columnCoords = it }
             .fillMaxHeight()
             .background(if (isToday) CalColors.today.copy(alpha = 0.4f) else Color.Transparent)
             .border(width = 0.5.dp, color = CalColors.grid)
@@ -6464,7 +6588,7 @@ private fun DayColumn(
         // itself — a press on a task panel moves the task panel, a press on the part of the period no panel
         // covers moves the period — and the MARKING still has to be drawn on top, because a task resilient to
         // the kind is drawn straight through the period and would otherwise hide the statement covering it.
-        drawnPeriods.forEach { segment ->
+        (drawnPeriods + sleepSegments).forEach { segment ->
             if (!onScreen(segment.startHour, segment.endHour)) return@forEach
             PeriodSegmentGesture(
                 segment = segment,
@@ -6832,8 +6956,12 @@ private fun DayColumn(
         val sleepDrawings = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
         // Drawn UNDER the task panels (user rule 2026-10-01): a panel is opaque now, and redraws whatever of these
         // crosses it in the colour of highest contrast with it ([PanelDecor]).
+        // The band the hand holds is drawn by the held box instead ([PeriodSegmentMarking], below).
+        val heldSegment = periodDrag?.let { drag -> (sleepSegments + breakSegments).firstOrNull { periodSegmentKey(it) == drag.key } }
+        val heldBlockKey = heldSegment?.records?.singleOrNull()?.let(::calendarBlockKey)
         sleepBands.forEach { band ->
             if (!onScreen(band.startHour, band.endHour)) return@forEach
+            if (calendarBlockKey(band) == heldBlockKey) return@forEach
             val bandOutline = outlineColor(band.outline) ?: return@forEach
             Box(
                 modifier = Modifier
@@ -6870,8 +6998,8 @@ private fun DayColumn(
         // The box is also the GESTURE: dragging or resizing it moves every period in force over it at once
         // (see [PeriodSegmentBox]) — the boundary it was cut at belongs to no single period, so there is no
         // one period a press there could mean.
-        shownPeriods.forEach { segment ->
-            if (!onScreen(segment.startHour, segment.endHour)) return@forEach
+        (shownPeriods + listOfNotNull(heldSegment)).forEach { segment ->
+            if (!onScreen(segment.startHour, segment.endHour) && segment !== heldSegment) return@forEach
             PeriodSegmentMarking(
                 segment = segment,
                 hourHeight = hourHeight,
@@ -6985,6 +7113,20 @@ private fun DayColumn(
                             topFollowsLine = followsLine(slice.topHour),
                             bottomFollowsLine = followsLine(slice.bottomHour),
                             lineDriftHours = lineDriftHours,
+                            // Held like a period box ([periodBoxGesture]) — but for the break the line is in or
+                            // drags, which is the line's own. Asked at the press, never read in composition.
+                            held = breakSegments.firstOrNull { it.records.singleOrNull()?.let(::calendarBlockKey) == key },
+                            drag = periodDrag,
+                            onDragChange = { periodDrag = it },
+                            movable = {
+                                val now = compositionNowMillis.value
+                                (marker.fullEndMillis <= now || marker.fullStartMillis > now) &&
+                                    marker.entryId?.endsWith(SchedulerDomain.DRAGGED_BREAK_ID_SUFFIX) != true
+                            },
+                            atLine = periodAtLine,
+                            onCommitBounds = onCommitBounds,
+                            onLockScroll = onLockScroll,
+                            onResizingEdge = onResizingEdge,
                         )
                     }
                 }
@@ -7000,6 +7142,7 @@ private fun DayColumn(
         // above (a ring and a tag wear a blue or orange outline of their own).
         sleepBands.forEach { band ->
             if (!outlineOnTop(band.outline) || !onScreen(band.startHour, band.endHour)) return@forEach
+            if (calendarBlockKey(band) == heldBlockKey) return@forEach
             val bandOutline = outlineColor(band.outline) ?: return@forEach
             Box(
                 modifier = Modifier
@@ -7182,6 +7325,13 @@ private fun DayColumn(
                     tz = tz,
                     hoverScope = hoverScope,
                     modifier = Modifier.offset(y = y),
+                    // User rule 2026-10-07: the chip is the top of the priority rank, so it is what a double click
+                    // held and dragged moves — committed through the blocks' own funnel, which knows a tag.
+                    onMoveBy = { deltaMillis ->
+                        val target = tag.fullStartMillis + deltaMillis
+                        onCommitBounds(tag, target, target, false)
+                    },
+                    onLockScroll = onLockScroll,
                 ) { onToggleReminder(tag) }
             }
         reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
@@ -7205,6 +7355,13 @@ private fun DayColumn(
                 modifier = Modifier.graphicsLayer {
                     translationY = nowLineOffsetPx(hourHeight, nowLineHour()) + stackOffset.toPx()
                 },
+                // User rule 2026-10-07: the chip is the top of the priority rank, so it is what a double click
+                // held and dragged moves — committed through the blocks' own funnel, which knows a tag.
+                onMoveBy = { deltaMillis ->
+                    val target = tag.fullStartMillis + deltaMillis
+                    onCommitBounds(tag, target, target, false)
+                },
+                onLockScroll = onLockScroll,
             ) { onToggleReminder(tag) }
         }
     }
@@ -7422,9 +7579,32 @@ private fun ScreenBreakBand(
     topFollowsLine: Boolean = false,
     bottomFollowsLine: Boolean = false,
     lineDriftHours: () -> Double = { 0.0 },
+    /**
+     * User rule 2026-10-07 (*"Any block can be dragged"*): the band is held the way a period box is — [held] is the
+     * box it is to the one gesture ([periodBoxGesture]: a double click whose second press is held and dragged), [drag]
+     * the box the column holds. A break lasts as long as its name implies, so it has no resize strip. [movable] is
+     * asked at the press — never read in composition, or every past column would recompose with the line.
+     */
+    held: PeriodSegment? = null,
+    drag: PeriodDragState? = null,
+    onDragChange: (PeriodDragState?) -> Unit = {},
+    movable: () -> Boolean = { false },
+    atLine: (kind: String, range: TaskTimeRange) -> TaskTimeRange? = { _, range -> range },
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
+    onLockScroll: (Boolean) -> Unit = {},
+    onResizingEdge: (PanelResizeEdge?) -> Unit = {},
 ) {
     val height = (hourHeight * (slice.bottomHour - slice.topHour)).coerceAtLeast(SCREEN_BREAK_MIN_HEIGHT)
     val timeRange = bubbleTimeRange(marker.fullStartMillis, marker.fullEndMillis, tz)
+    val heldKey = held?.let(::periodSegmentKey)
+    // The held band is drawn by the column, as the box the hand has ([PeriodSegmentMarking]): this one stands aside.
+    val isHeld = heldKey != null && drag?.key == heldKey
+    val currentHourPx = rememberUpdatedState(with(LocalDensity.current) { hourHeight.toPx() })
+    val currentHeightPx = rememberUpdatedState(with(LocalDensity.current) { height.toPx() })
+    val noEdge = rememberUpdatedState(0f)
+    val currentRecords = rememberUpdatedState(held?.records.orEmpty())
+    val currentAtLine = rememberUpdatedState(atLine)
+    val currentMovable = rememberUpdatedState(movable)
     Box(
         modifier = Modifier
             .timelineSpan(
@@ -7433,7 +7613,17 @@ private fun ScreenBreakBand(
                 x = colWidth * slice.xFraction,
                 minHeight = SCREEN_BREAK_MIN_HEIGHT,
             )
-            .width(colWidth * slice.widthFraction),
+            .width(colWidth * slice.widthFraction)
+            // On the ANCESTOR of the hover tiles, like a period box's: the tiles never consume.
+            .then(
+                if (heldKey == null) Modifier
+                else Modifier.periodBoxGesture(
+                    heldKey, noEdge, currentHeightPx, currentHourPx, currentRecords, currentAtLine,
+                    resizable = false, enabled = { currentMovable.value() },
+                    onDragChange = onDragChange, onCommitBounds = onCommitBounds, onLockScroll = onLockScroll,
+                    onResizingEdge = onResizingEdge,
+                ),
+            ),
     ) {
         // A break falling at midnight has the day's own date written where its name goes, so the name is
         // inset below the badge — and dropped when the band has no room for it there, which is the same
@@ -7443,7 +7633,7 @@ private fun ScreenBreakBand(
             showTitle = labelInset != null && height >= labelInset + SCREEN_BREAK_LABEL_MIN_HEIGHT,
             titleTopInset = labelInset ?: 0.dp,
             outline = marker.outline,
-            modifier = Modifier.fillMaxWidth().height(height),
+            modifier = Modifier.fillMaxWidth().height(height).graphicsLayer { alpha = if (isHeld) 0f else 1f },
         )
         // PRD §8: tiled by whatever else covers each sub-range (see [bubbleHoverZones]), so the bubble
         // stacks those sections below this screen break's own. The zones are mapped onto the RENDERED
@@ -7975,12 +8165,24 @@ private fun ReminderTag(
     tz: TimeZone,
     hoverScope: CalendarTitleHoverScope,
     modifier: Modifier = Modifier,
+    /**
+     * User rule 2026-10-07 (*"the block (or chip) being dragged is the one at the top of the priority rank"*): the tag
+     * was dragged by this much time — a mouse double click whose second press is kept down and dragged, as a ring is.
+     */
+    onMoveBy: (deltaMillis: Long) -> Unit = {},
+    onLockScroll: (Boolean) -> Unit = {},
     onClick: () -> Unit,
 ) {
+    // How far the held tag has been dragged (px); null = not held. Only the drawing follows it ([AlarmMarker]).
+    var dragPx by remember(tag.entryId, tag.fullStartMillis) { mutableStateOf<Float?>(null) }
+    val currentHourHeightPx = rememberUpdatedState(with(LocalDensity.current) { hourHeight.toPx() })
+    val currentOnMoveBy = rememberUpdatedState(onMoveBy)
+    val currentOnClick = rememberUpdatedState(onClick)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(REMINDER_TAG_HEIGHT)
+            .graphicsLayer { translationY = dragPx ?: 0f }
             .padding(horizontal = 2.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(if (tag.checked) CalColors.muted.copy(alpha = 0.3f) else CalColors.accent)
@@ -7993,7 +8195,9 @@ private fun ReminderTag(
                     Modifier.border(USER_PLACED_BORDER_DP, it, RoundedCornerShape(4.dp))
                 } ?: Modifier,
             )
-            .clickable(onClick = onClick),
+            .clickOrDoubleClickHeldDrag(
+                tag.entryId, tag.fullStartMillis, currentHourHeightPx, currentOnClick, currentOnMoveBy, onLockScroll,
+            ) { dragPx = it },
     ) {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
@@ -8046,6 +8250,150 @@ internal fun reminderBubbleSection(tag: PlacedRecord, tz: TimeZone): CalendarBub
     )
 
 /**
+ * PRD §14 / user rule 2026-10-07: **a reminder tag's two gestures on one node** — a click checks it off, a double
+ * click whose second press is kept down and dragged moves it ([doubleClickHeldDrag]'s rule, for a node that also has
+ * a click). The click is told once the double-tap window has passed with no second press (a touch tap at once: a
+ * finger drags nothing here), so a drag never checks the tag on its way; a second press released without a drag is the
+ * click. [onDragPx] and [onMoveBy] are the ring's.
+ */
+private fun Modifier.clickOrDoubleClickHeldDrag(
+    key1: Any?,
+    key2: Any?,
+    hourHeightPx: State<Float>,
+    onClick: State<() -> Unit>,
+    onMoveBy: State<(deltaMillis: Long) -> Unit>,
+    onLockScroll: (Boolean) -> Unit,
+    onDragPx: (Float?) -> Unit,
+): Modifier =
+    pointerInput(key1, key2) {
+        val touchSlop = viewConfiguration.touchSlop
+        val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            // A right-click is the column's menu.
+            if (down.isConsumed || currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+            down.consume()
+            var moved = 0f
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
+                moved += change.positionChangeIgnoreConsumed().getDistance()
+                if (!change.pressed) break
+            }
+            // A press that travelled is neither.
+            if (moved > touchSlop) return@awaitEachGesture
+            if (down.type == PointerType.Touch) {
+                onClick.value()
+                return@awaitEachGesture
+            }
+            val second = withTimeoutOrNull(doubleTapWindowMs) { awaitFirstDown(requireUnconsumed = false) }
+            if (second == null || currentEvent.buttons.isSecondaryPressed) {
+                onClick.value()
+                return@awaitEachGesture
+            }
+            second.consume()
+            var started = false
+            var movedPx = 0f
+            onLockScroll(true)
+            try {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    if (!event.changes.any { it.pressed }) {
+                        val scale = hourHeightPx.value
+                        if (started && scale > 0f) onMoveBy.value(((movedPx / scale) * 3_600_000f).toLong())
+                        else if (!started) onClick.value()
+                        break
+                    }
+                    val change = event.changes.firstOrNull { it.id == second.id } ?: event.changes.first()
+                    val delta = change.positionChangeIgnoreConsumed()
+                    if (delta.y != 0f) started = true
+                    change.consume()
+                    if (started) {
+                        movedPx += delta.y
+                        onDragPx(movedPx)
+                    }
+                }
+            } finally {
+                onLockScroll(false)
+                onDragPx(null)
+            }
+        }
+    }
+
+/**
+ * PRD §8 (user rule 2026-10-02): **the one gesture that moves a ring or a past screen break — a mouse DOUBLE click
+ * whose second press is kept down and dragged.** A plain press-and-drag moves nothing, so neither is moved by a click
+ * that slipped; a right-click is the column's menu and a touch drag scrolls the grid (PRD §8, phone).
+ *
+ * [onDragPx] is told how far the held element has been dragged (px), and null when the press ends; [onMoveBy] is the
+ * release, as a time. Only the DRAWING may follow [onDragPx]: the node holding the gesture stays put, or the pointer's
+ * own position would move with it and the drag stall. [hourHeightPx] and [onMoveBy] are read live — the gesture
+ * outlives a zoom — and so is [enabled], asked at each press: a press it refuses is left to whatever is underneath.
+ */
+private fun Modifier.doubleClickHeldDrag(
+    key1: Any?,
+    key2: Any?,
+    hourHeightPx: State<Float>,
+    onMoveBy: State<(deltaMillis: Long) -> Unit>,
+    onLockScroll: (Boolean) -> Unit,
+    enabled: () -> Boolean = { true },
+    onDragPx: (Float?) -> Unit,
+): Modifier =
+    pointerInput(key1, key2) {
+        val touchSlop = viewConfiguration.touchSlop
+        val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
+        // The previous press that was a plain click (no drag), so the next one can be told as the second of a
+        // double click.
+        var lastTapUptime = 0L
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            if (down.isConsumed || currentEvent.buttons.isSecondaryPressed || down.type == PointerType.Touch || !enabled()) {
+                return@awaitEachGesture
+            }
+            if (down.uptimeMillis - lastTapUptime > doubleTapWindowMs) {
+                var moved = 0f
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    moved += change.positionChangeIgnoreConsumed().getDistance()
+                    if (!change.pressed) break
+                }
+                lastTapUptime = if (moved <= touchSlop) down.uptimeMillis else 0L
+                return@awaitEachGesture
+            }
+            lastTapUptime = 0L
+            down.consume()
+            var started = false
+            var movedPx = 0f
+            onLockScroll(true)
+            try {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    if (!event.changes.any { it.pressed }) {
+                        val scale = hourHeightPx.value
+                        if (started && scale > 0f) onMoveBy.value(((movedPx / scale) * 3_600_000f).toLong())
+                        break
+                    }
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+                    val delta = change.positionChangeIgnoreConsumed()
+                    // No slop here: the double click has already said this press is a drag, so the element follows
+                    // the pointer from its first pixel (a slop left a radius around the press in which it did not
+                    // move).
+                    if (delta.y != 0f) started = true
+                    change.consume()
+                    if (started) {
+                        movedPx += delta.y
+                        onDragPx(movedPx)
+                    }
+                }
+            } finally {
+                onLockScroll(false)
+                onDragPx(null)
+            }
+        }
+    }
+
+/**
  * PRD §18 Alarms and Timers: one ring on the calendar — an alarm's, or (when [PlacedRecord.timer] is set) a
  * running timer's. Zero duration, so it draws as a fixed-height marker at its instant rather than a
  * height-proportional block, and it is inert — neither is a task, so there is nothing to check off, drag or
@@ -8094,64 +8442,9 @@ private fun AlarmMarker(
             .height(ALARM_MARKER_HEIGHT)
             // On the ANCESTOR of the hover tiles, like a §14 tag's click: it stays on the hit path of
             // whichever tile is hit, and the tiles never consume.
-            .pointerInput(marker.entryId, marker.fullStartMillis) {
-                val touchSlop = viewConfiguration.touchSlop
-                val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
-                // The previous press that was a plain click (no drag), so the next one can be told as the
-                // second of a double click.
-                var lastTapUptime = 0L
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    // A right-click is the column's menu; a touch drag scrolls the grid (PRD §8, phone).
-                    if (down.isConsumed || currentEvent.buttons.isSecondaryPressed || down.type == PointerType.Touch) {
-                        return@awaitEachGesture
-                    }
-                    // User rule 2026-10-02: a ring is dragged only by a DOUBLE click whose second press is
-                    // kept down — a plain press-and-drag moves nothing, so a ring is never moved by accident.
-                    if (down.uptimeMillis - lastTapUptime > doubleTapWindowMs) {
-                        var moved = 0f
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            moved += change.positionChangeIgnoreConsumed().getDistance()
-                            if (!change.pressed) break
-                        }
-                        lastTapUptime = if (moved <= touchSlop) down.uptimeMillis else 0L
-                        return@awaitEachGesture
-                    }
-                    lastTapUptime = 0L
-                    down.consume()
-                    var started = false
-                    var movedPx = 0f
-                    onLockScroll(true)
-                    try {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (!event.changes.any { it.pressed }) {
-                                val scale = currentHourHeightPx.value
-                                if (started && scale > 0f) {
-                                    currentOnMoveBy.value(((movedPx / scale) * 3_600_000f).toLong())
-                                }
-                                break
-                            }
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-                            val delta = change.positionChangeIgnoreConsumed()
-                            // No slop here: the double click has already said this press is a drag, so the
-                            // ring follows the pointer from its first pixel (a slop left a radius around the
-                            // press in which the ring did not move).
-                            if (delta.y != 0f) started = true
-                            change.consume()
-                            if (started) {
-                                movedPx += delta.y
-                                dragPx = movedPx
-                            }
-                        }
-                    } finally {
-                        onLockScroll(false)
-                        dragPx = null
-                    }
-                }
-            },
+            .doubleClickHeldDrag(
+                marker.entryId, marker.fullStartMillis, currentHourHeightPx, currentOnMoveBy, onLockScroll,
+            ) { dragPx = it },
     ) {
         Row(
             modifier = Modifier
@@ -8712,6 +9005,100 @@ private fun PeriodSegmentMarking(
 }
 
 /**
+ * PRD §8, user rule 2026-10-07 (*"Any block can be dragged"*): **the ONE gesture that moves or resizes a period-like
+ * block** — a period's box, the Sleep band, a screen break's band. A move is a double click whose second press is held
+ * and dragged; a resize starts at the first press on a grab strip, where the block is [resizable]. The held block is
+ * reported through [onDragChange] (the column draws it where the hand has it, cut where the line leaves it, the
+ * blocks it refuses retracted under it) and the release goes through [onCommitBounds], the blocks' one funnel.
+ * Everything it reads is read live — the gesture outlives a zoom — and [enabled] is asked at each press.
+ */
+private fun Modifier.periodBoxGesture(
+    key: String,
+    edgePx: State<Float>,
+    heightPx: State<Float>,
+    hourPx: State<Float>,
+    records: State<List<PlacedRecord>>,
+    atLine: State<(kind: String, range: TaskTimeRange) -> TaskTimeRange?>,
+    resizable: Boolean,
+    enabled: () -> Boolean,
+    onDragChange: (PeriodDragState?) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
+    onLockScroll: (Boolean) -> Unit,
+    onResizingEdge: (PanelResizeEdge?) -> Unit,
+): Modifier =
+    pointerInput(key) {
+        val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
+        // The previous press that was a plain click, so the next one can be told as the second of a
+        // double click — the same rule a task block's move follows ([CalendarBlock]).
+        var lastTapUptime = 0L
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            if (down.isConsumed) return@awaitEachGesture
+            // Right-click belongs to the column's contextual menu, and a touch press to the grid's
+            // scroll / double-tap menu — the same two exemptions a task panel's gesture makes.
+            if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+            if (down.type == PointerType.Touch) return@awaitEachGesture
+            // A press it refuses is left to whatever is underneath.
+            if (!enabled()) return@awaitEachGesture
+            val grab = edgePx.value
+            val boxHeight = heightPx.value
+            val edge = when {
+                !resizable -> null
+                down.position.y <= grab -> CalendarEdge.Start
+                down.position.y >= boxHeight - grab -> CalendarEdge.End
+                else -> null
+            }
+            onResizingEdge(edge?.let(::panelResizeEdgeOf))
+            down.consume()
+            // User rule 2026-10-02: a box is MOVED only by a double click whose second press is held
+            // and dragged; a resize on its grab strip starts at the first press.
+            val secondPress = down.uptimeMillis - lastTapUptime <= doubleTapWindowMs
+            val mayDrag = edge != null || secondPress
+            var travelled = 0f
+            var distance = 0f
+            var started = false
+            onLockScroll(true)
+            try {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    if (!event.changes.any { it.pressed }) break
+                    val change = event.changes.firstOrNull() ?: continue
+                    travelled += change.positionChange().y
+                    distance += change.positionChange().getDistance()
+                    if (!mayDrag) continue
+                    if (!started && kotlin.math.abs(travelled) < viewConfiguration.touchSlop) continue
+                    started = true
+                    onDragChange(PeriodDragState(key, travelled, edge))
+                    change.consume()
+                }
+                lastTapUptime =
+                    if (!started && !secondPress && distance <= viewConfiguration.touchSlop) down.uptimeMillis else 0L
+                if (started) {
+                    val deltaMillis =
+                        if (hourPx.value > 0f) {
+                            ((travelled / hourPx.value) * 3_600_000f).toLong()
+                        } else {
+                            0L
+                        }
+                    // Every period in force moves together; a period is free to overlap anything, so
+                    // the non-overlap snap the task panels use is deliberately bypassed.
+                    // Stored as it was drawn: what the line leaves of it, and nothing where it leaves none
+                    // (the period then stays where it was).
+                    records.value.forEach { record ->
+                        periodDragBounds(record, edge, deltaMillis)
+                            ?.let { atLine.value(record.restrictiveKind, it) }
+                            ?.let { onCommitBounds(record, it.startEpochMillis, it.endEpochMillis, true) }
+                    }
+                }
+            } finally {
+                onDragChange(null)
+                onResizingEdge(null)
+                onLockScroll(false)
+            }
+        }
+    }
+
+/**
  * PRD §8: **the press half of a period box** — an invisible full-width node under the panels that moves or
  * resizes EVERY period in force over the box at once.
  *
@@ -8771,74 +9158,12 @@ private fun PeriodSegmentGesture(
                     )
                 },
             )
-            .pointerInput(key) {
-                val doubleTapWindowMs = viewConfiguration.doubleTapTimeoutMillis
-                // The previous press that was a plain click, so the next one can be told as the second of a
-                // double click — the same rule a task block's move follows ([CalendarBlock]).
-                var lastTapUptime = 0L
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    if (down.isConsumed) return@awaitEachGesture
-                    // Right-click belongs to the column's contextual menu, and a touch press to the grid's
-                    // scroll / double-tap menu — the same two exemptions a task panel's gesture makes.
-                    if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
-                    if (down.type == PointerType.Touch) return@awaitEachGesture
-                    val grab = currentEdgePx.value
-                    val boxHeight = currentHeightPx.value
-                    val edge = when {
-                        down.position.y <= grab -> CalendarEdge.Start
-                        down.position.y >= boxHeight - grab -> CalendarEdge.End
-                        else -> null
-                    }
-                    onResizingEdge(edge?.let(::panelResizeEdgeOf))
-                    down.consume()
-                    // User rule 2026-10-02: a box is MOVED only by a double click whose second press is held
-                    // and dragged; a resize on its grab strip starts at the first press.
-                    val secondPress = down.uptimeMillis - lastTapUptime <= doubleTapWindowMs
-                    val mayDrag = edge != null || secondPress
-                    var travelled = 0f
-                    var distance = 0f
-                    var started = false
-                    onLockScroll(true)
-                    try {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (!event.changes.any { it.pressed }) break
-                            val change = event.changes.firstOrNull() ?: continue
-                            travelled += change.positionChange().y
-                            distance += change.positionChange().getDistance()
-                            if (!mayDrag) continue
-                            if (!started && kotlin.math.abs(travelled) < viewConfiguration.touchSlop) continue
-                            started = true
-                            onDragChange(PeriodDragState(key, travelled, edge))
-                            change.consume()
-                        }
-                        lastTapUptime =
-                            if (!started && !secondPress && distance <= viewConfiguration.touchSlop) down.uptimeMillis else 0L
-                        if (started) {
-                            val deltaMillis =
-                                if (currentHourPx.value > 0f) {
-                                    ((travelled / currentHourPx.value) * 3_600_000f).toLong()
-                                } else {
-                                    0L
-                                }
-                            // Every period in force moves together; a period is free to overlap anything, so
-                            // the non-overlap snap the task panels use is deliberately bypassed.
-                            // Stored as it was drawn: what the line leaves of it, and nothing where it leaves none
-                            // (the period then stays where it was).
-                            currentRecords.value.forEach { record ->
-                                periodDragBounds(record, edge, deltaMillis)
-                                    ?.let { currentAtLine.value(record.restrictiveKind, it) }
-                                    ?.let { onCommitBounds(record, it.startEpochMillis, it.endEpochMillis, true) }
-                            }
-                        }
-                    } finally {
-                        onDragChange(null)
-                        onResizingEdge(null)
-                        onLockScroll(false)
-                    }
-                }
-            },
+            .periodBoxGesture(
+                key, currentEdgePx, currentHeightPx, currentHourPx, currentRecords, currentAtLine,
+                resizable = true, enabled = { true },
+                onDragChange = onDragChange, onCommitBounds = onCommitBounds, onLockScroll = onLockScroll,
+                onResizingEdge = onResizingEdge,
+            ),
     ) {
         // PRD §8: the tiles this box owes the bubble, and the cursor shapes its two grab strips promise.
         //

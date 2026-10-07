@@ -92,6 +92,28 @@ persisted keys.
     `lineMillis` beside the front is where the line last was: an engine that starts far past it walks the line there
     in mode 2 (below). The front is written on a 20-s real-time cadence (`persistFront`), a transition at once.
   - **A banked break and recorded work never overlap**: work is recorded minus every banked break refusing its task.
+  - **A break is put by hand, behind the line or ahead of it** (anomaly 2026-10-06, user rule 2026-10-07 *"Any block
+    can be dragged, it then gets a blue outline"*; requirements' exception 1 — *"When the user … wants to rewrite
+    history"*; `SchedulerDomain.placeBreakByHand`, `SchedulerEngine.placeBreakByHand`, `MovedPastBreakTest`). ONE rule
+    for both sides, and a break stays what it is — this device's break history and the machine the line carries,
+    never a panel (a panel would sync to devices that each banked their own):
+    - **put behind the line** it was taken there: banked `byHand` (`screen_break_history.by_hand`, schema v18 /
+      `17.sqm`), whatever it was before; refused over another banked break. The work recorded under it goes
+      (`ClearWorkUnderBankedBreak`, outside Undo/Redo like every record strip); where it USED to stand, what
+      stands is chosen from the edges (`FillVacatedBreak`, `calendar.md` § *What stands where a dragged period
+      was*): the task working on both sides gets the hole back;
+    - **put ahead of the line** it is `BreakMachine.HandPlaced(label, from, to)` on the machine (`State.placed`,
+      persisted with the front): `dueOf` reads it (`handDue`) — an occurrence due in `[from, to)` waits for `to`, one
+      due in `]to, from]` is due at `to` — so the machine lays none of that role where it was picked up, and takes it
+      where it was put (`Event.Started.byHand`, banked as the user's). Spent when an occurrence of the label starts.
+      The pull, the chain rule and the modes apply to it as to any due: a line at a screen still drags a pose;
+    - **put across the line** it stays on its side, against the line. The break the line is IN or DRAGS is the line's
+      own and is never moved.
+    The engine is still the record's one writer: it persists at once, rebuilds the bars from the history that leaves
+    (`rebuildBreaksFromHistory` — a 15 min break moved an hour back is owed an hour sooner), re-arms the machine and
+    asks for a re-plan through `requestReschedule`. **The blue outline rides the panel id** (`HAND_BREAK_ID_MARK`,
+    `isHandPlacedScreenBreak`, read by `panelOutline`), for the reason the dragged mark does. Not an Undo unit: the
+    record is local-only and outside the history — drag it back.
 - **History rewritten behind the line is a trigger, never a tick** (`SchedulerEngine.absorbBreakHistory`): a pause the
   devices observed late (`noScreenEvidence`, the swept cover of a wake) raises the bars the machine carries where it
   stands — it never MOVES the machine (moving it to the clock before a journey made the journey's steps all fall

@@ -203,6 +203,8 @@ CREATE TABLE screen_break_history (
     start_ms INTEGER NOT NULL,
     label    TEXT NOT NULL,
     end_ms   INTEGER NOT NULL,
+    -- 1 where the user put the break there (dragged on the calendar): outlined in blue. Added in 17.sqm.
+    by_hand  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (start_ms, label)
 );
 
@@ -333,10 +335,10 @@ upsertNetworkMode:
 INSERT OR REPLACE INTO network_mode(id, offline) VALUES (0, ?);
 
 selectScreenBreakHistory:
-SELECT start_ms, label, end_ms FROM screen_break_history ORDER BY start_ms;
+SELECT start_ms, label, end_ms, by_hand FROM screen_break_history ORDER BY start_ms;
 
 insertScreenBreak:
-INSERT OR REPLACE INTO screen_break_history(start_ms, label, end_ms) VALUES (?, ?, ?);
+INSERT OR REPLACE INTO screen_break_history(start_ms, label, end_ms, by_hand) VALUES (?, ?, ?, ?);
 
 deleteScreenBreaksBefore:
 DELETE FROM screen_break_history WHERE end_ms <= ?;

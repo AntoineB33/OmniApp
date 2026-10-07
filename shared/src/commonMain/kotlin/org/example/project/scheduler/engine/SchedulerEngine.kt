@@ -3001,6 +3001,54 @@ class SchedulerEngine(
             } ?: Long.MAX_VALUE
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past*, its first exception (*"When the user … wants to rewrite
+     * history"*) and its mirror ahead of the line: **the screen break of the period kind [kind] standing over
+     * `[fromStartMillis, fromEndMillis)` was dragged on the calendar to start at [newStartMillis]**
+     * ([SchedulerDomain.placeBreakByHand], the one rule for a break behind the line and for one ahead of it). The
+     * record and the machine are rewritten and persisted at once; where the break now stands behind the line the work
+     * recorded there goes ([SchedulerIntent.ClearWorkUnderBankedBreak]); and — history rewritten behind the line, or a
+     * break placed ahead of it, being a trigger of its own — the bars are rebuilt from history, the machine is armed
+     * again and the rules re-planned. On the engine's scope, the record's one writer.
+     */
+    fun placeBreakByHand(kind: String, fromStartMillis: Long, fromEndMillis: Long, newStartMillis: Long) {
+        scope.launch {
+            val now = clock.nowMillis()
+            val label = SchedulerDomain.breakLabelOfKind(kind) ?: return@launch
+            val step =
+                SchedulerDomain.placeBreakByHand(_frozenBreaks.value, label, fromStartMillis, fromEndMillis, newStartMillis, now)
+                    ?: return@launch
+            _frozenBreaks.value = step.record
+            val banked = step.added.singleOrNull()
+            val placed = step.record.machine?.placed?.lastOrNull()?.takeIf { banked == null }
+            Diagnostics.log(
+                "screen-break history: $label @${Diagnostics.formatInstant(fromStartMillis)} put by hand at " +
+                    Diagnostics.formatInstant(banked?.startMillis ?: placed?.toMillis ?: newStartMillis) +
+                    if (banked != null) " (behind the line)" else " (ahead of the line)",
+            )
+            lastFrozenPersistRealMillis = SystemAppClock.nowMillis()
+            runCatching {
+                frozenBreakStore?.saveFrozenScreenBreaks(
+                    step.added, step.record.untilMillis, step.record.lineMillis,
+                    now - SchedulerDomain.SCREEN_BREAK_HISTORY_RETENTION_MILLIS, step.removed, step.record.machine,
+                )
+            }.onFailure { Diagnostics.log("screen-break history: could not persist (${it.message})") }
+            if (banked != null) {
+                vm.dispatch(SchedulerIntent.ClearWorkUnderBankedBreak(banked.label, banked.startMillis, banked.endMillis))
+            }
+            // A break taken out of the past: what stands where it was is chosen from its edges — the task working
+            // on both sides gets the hole back.
+            step.removed.forEach {
+                vm.dispatch(SchedulerIntent.FillVacatedBreak(DynamicPeriods.breakKind(it.label), it.startMillis, it.endMillis))
+            }
+            // The trigger armed for the machine as it was is void: the next step re-arms it.
+            nextBreakTriggerMillis = Long.MIN_VALUE
+            rebuildBreaksFromHistory()
+            breakMachineRearmed.update { it + 1 }
+            requestReschedule(now, local = true)
+        }
+    }
+
     /** A step of the break machine made the record: published, persisted, and its transitions queued for the cues. */
     private fun commitBreakStep(
         previous: org.example.project.scheduler.domain.FrozenScreenBreaks?,

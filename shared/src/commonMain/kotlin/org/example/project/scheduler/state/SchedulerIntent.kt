@@ -463,6 +463,49 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * User rule 2026-10-07 (*"Any block can be dragged, it then gets a blue outline"*): **a period a rule lays — a
+     * Sleep window of the sleep schedule, its hour before bed — was dragged on the calendar from
+     * `[fromStartEpochMillis, fromEndEpochMillis)` to `[startEpochMillis, endEpochMillis)`.** The occurrence leaves
+     * its rule (`SleepSchedule.skippedWakeEpochDays` / `skippedBeforeBedEpochDays`, the way a dragged ring leaves its
+     * alarm) and stands as a period of [kind] the user placed: blue, edited, dragged again and removed like any other.
+     * What appears where it was is whatever the rules give without it — never the period again.
+     */
+    data class PlaceDerivedPeriod(
+        val kind: String,
+        val fromStartEpochMillis: Long,
+        val fromEndEpochMillis: Long,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * User rule 2026-10-07: **a screen break of the period kind [kind] the user dragged away stood over
+     * `[startEpochMillis, endEpochMillis)`** — what stands there instead is chosen from what is at its edges
+     * ([org.example.project.scheduler.domain.SchedulerDomain.vacatedPastFill]): the task working on both sides gets
+     * the hole back. The break itself is the engine's (`SchedulerEngine.placeBreakByHand`); outside the Undo/Redo
+     * history, like the break's own move.
+     */
+    data class FillVacatedBreak(
+        val kind: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past* (*"When the user … wants to rewrite history"*): **a past screen
+     * break the user dragged now stands at `[startEpochMillis, endEpochMillis)`** — the work recorded there, for the
+     * tasks a break in the role [label] refuses, goes: a banked break and recorded work never overlap. The break
+     * itself is the engine's (`SchedulerEngine.placeBreakByHand`, the banked record — local-only, not in the state).
+     *
+     * Outside the Undo/Redo history, like the records a period laid over the past clears.
+     */
+    data class ClearWorkUnderBankedBreak(
+        val label: String,
+        val startEpochMillis: Long,
+        val endEpochMillis: Long,
+    ) : SchedulerIntent
+
+    /**
      * `side-dev/README.md`: **define a new kind of restrictive period.** Raised by the task edit window's
      * `+`, which is where the user meets the kinds in the first place.
      *

@@ -11,6 +11,118 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Held and released look the same, in the calendar too — 2026-10-07
+
+The user, on the audit below leaving "only task panels retract under a held period; two periods that would merge on
+release are shown as two boxes until then": *"The only difference there must be between keeping the mouse click and
+having released it is that whatever got removed when the dragged element got there is remembered if the mouse click is
+not released. If period A is dragged to period B and period B doesn't have to retract, then it doesn't. If it must
+retract, it retracts."*
+
+The drags made IN the calendar now draw the released calendar too, by the release's own code — the mechanism the
+Search window's drag got in the entry below. A day column tells `App` what it holds
+(`CalendarElementDrag.heldInCalendar`, replacing the layers-only `heldPeriod` of a few hours earlier), `App` derives the
+whole calendar from the state that release would leave (`LocalHeldCalendarRecords`), and the week view draws it in a
+second column per day under the column that holds the press, which is not seen while it does. The gesture's nodes
+never move under the press. The column's own drawing-only previews remain underneath, unseen; they are to be removed.
+
+`HeldDragPreviewTest` (a period held over a period of its kind, of another kind, and moved on: equal to the release at
+every step). Not verified on screen; the cost of the preview on a large account is not measured. Client only.
+
+### The drag specification, audited point by point — 2026-10-07
+
+The user: "Make sure the project strictly satisfies all this." Three points were not strictly met.
+
+- **The blocks held from the Search window did not behave as dragged blocks** — they were blue outlines over an
+  unchanged calendar. Now the calendar is the one a release would leave, computed by the release's own code:
+  `calendarMoveOf` says what a release does (used by `onCommitBounds`), `calendarMovePreview` runs the same moves
+  through the reducers on a copy of the stored state, and `deriveCalendarDisplay` draws that state
+  (`shownState`, `shownFrozenBreaks`). What a held block makes disappear disappears and is back when it moves on;
+  what comes with it moves alongside; a period is cut by a mode-1 line, in the preview and at the release
+  (`CalendarElementDrag.targets`). `HeldDragPreviewTest`.
+- **"A field to select which block"** was an instant. It is the check-box drop-down over the blocks the added
+  elements have on the calendar, checked by default on the ones right-clicked (`CalendarDragEditor`).
+- **The "no screen" a dragged sleep period comes with stayed where it was until the release** (the 2026-10-05 entry's
+  own "not done"). A held box tells `App` where it is (`CalendarElementDrag.heldPeriod`) and the layer records are
+  the released calendar's (`shownCalendarRecords`).
+- **The edges rule ignored the layers**, which the user's example names. `vacatedPastFill` takes `layerKindsAt`
+  (`SchedulerReducer.layerKindsAt`, injected by `App`).
+
+Checked and already met: the mode-1 retraction of a dragged sleep period and its reappearing whole on the other side
+(`PeriodAtLineTest`, now also for the schedule's Sleep band and the breaks, through the one gesture); the double click
+taking the top of the priority rank (the drawing order is the rank's; the chip was the one exception, fixed earlier
+today).
+
+Not verified on screen: every gesture here is tested through its logic only. Performance of the held preview on a
+large account (a reduce and a calendar derivation per minute of pointer travel) was not measured.
+
+Client only. `HeldDragPreviewTest`, `CalendarElementDragTest`, `VacatedPeriodFillTest`.
+
+### What stands where a dragged period was; a reminder's chip can be dragged — 2026-10-07
+
+The last two points of the user's drag specification.
+
+- **The edges rule** (*"what appears at its original place can't be period A … the program looks at what is at the
+  edges … If it is different at the start and at the end, then the simplest solution is … only 'inactivity'"*):
+  `SchedulerDomain.vacatedPastFill`, applied by the reducer where a stored period is moved, where a Sleep window or
+  hour before bed is dragged, and — through `SchedulerIntent.FillVacatedBreak` — where a screen break is. Behind the
+  line only. The same thing at both edges is what is put (its periods' kinds, its task's work); anything else is an
+  `inactivity` period; bare edges put nothing. In the move's own unit for the periods. A resize is not a drag
+  elsewhere. This replaces "the work cut out where a moved break used to stand is not brought back".
+- **The chip** (*"the block (or chip) being dragged is the one at the top of the priority rank"*): the press already
+  went to the top of the rank except on a reminder's tag, which had no move. `ReminderTag` takes
+  `clickOrDoubleClickHeldDrag`; its release saves the tag as its edit window does, pinned. **The check-off now waits
+  for the double-tap window** (a mouse click; a touch tap is immediate), so a drag does not check the tag. The Search
+  window's "Drag on the calendar" holds tags too.
+
+Client only. `VacatedPeriodFillTest`, `DraggedReminderTagTest`, `CalendarElementDragTest`.
+
+### Search: "Drag on the calendar" — 2026-10-07
+
+From the user's drag specification: *"In the action section of the Search window, add the action to drag … they click
+on the 'drag' button while keeping the click pressed, which puts focus on the calendar and the chosen blocks are
+following the mouse until the mouse click is released."*
+
+- **`AddedAction.DragOnCalendar`**, among the calendar's general actions (`CALENDAR_ACTIONS`): a "the block at" day
+  and time (`CalendarDragEditor`; it starts on the right-click the window was opened from,
+  `SearchDomain.calendarDragDefaultAt`; in memory only) and a **Drag** button that is HELD.
+- **`CalendarElementDrag`** (new, provided by `App` as `LocalCalendarElementDrag`): what the button and the calendar
+  share. The press holds the blocks the added elements have at that instant (`calendarDragBlocks`,
+  `SearchDomain.calendarDragTargets`) and brings the calendar to the front; they follow the pointer, all moved by the
+  same time; the release commits each through `onCommitBounds`.
+- Limits: only blocks on the days the calendar shows are held; the field's choice is not kept across a restart.
+  (The outline-only preview and the instant field of this first version were replaced the same day — entry above.)
+
+Client only. `CalendarElementDragTest`.
+
+### Any block can be dragged, and it then gets a blue outline — 2026-10-07
+
+Anomaly 2026-10-06: "I tried to drag a past 15min screen break but I couldn't." A first answer the same day gave the
+past break band a gesture and a commit route of its own — an exception beside the rule. The user: "Did you add an
+exception on the logic instead of changing the logic? Any block in the calendar is supposed to be draggable", then the
+rule: "Any block can be dragged, it then gets a blue outline." The blocks with no object behind them — a screen
+break, the Sleep band, the hour before bed — were an exception list; the first answer is replaced.
+
+- **One gesture, one preview, one release.** `Modifier.periodBoxGesture` (the period box's gesture, extracted) is
+  worn by the period boxes, the Sleep band and the break bands; a held band is a `PeriodSegment` of its kind, so the
+  line's cut (`periodAtLine`), the retraction of what it refuses and the release are a period box's. The ring keeps
+  its own (`doubleClickHeldDrag`, extracted from `AlarmMarker`, unchanged).
+- **A Sleep window or an hour before bed dragged** (`SchedulerIntent.PlaceDerivedPeriod`, `commitBoundsIntent`'s
+  `derivedPeriodKind`): the night leaves the schedule (`SleepSchedule.skippedWakeEpochDays`,
+  `skippedBeforeBedEpochDays` — new persisted fields with defaults) and stands as a period the user placed. Two
+  History Units in the calendar history. A recorded past Sleep window moved becomes the user's `sleep` period
+  (`reduceUpdateTaskPanel`). Restating the schedule's hours keeps the skipped nights.
+- **A screen break dragged, behind the line or ahead of it** (`SchedulerDomain.placeBreakByHand`,
+  `SchedulerEngine.placeBreakByHand`): banked `byHand` behind the line; `BreakMachine.HandPlaced` ahead of it (the
+  machine lays none of that role where it was and takes it where it was put). `BankedBreak.byHand`,
+  `screen_break_history.by_hand` (**SQLite schema v18, `17.sqm`**), `BreakMachine.State.placed` (JSON, default
+  empty). Blue through `HAND_BREAK_ID_MARK`. `SchedulerDomain.moveBankedBreak` and `SchedulerEngine.moveBankedBreak`
+  (2026-10-06) are gone.
+- Open: a dragged Sleep window has no hour before bed of its own; a break's move is not an Undo unit.
+
+Client only (no Supabase change: the sleep schedule rides the state's JSON). `MovedPastBreakTest`,
+`DraggedSleepWindowTest`, `SchedulerStoreTest` (v17 -> v18). `:shared:longTest` not run.
+
 ### A window that closes takes the windows opened from it — 2026-10-06
 
 User request: "When the user closes a window which another window originates from, then this window gets closed too."

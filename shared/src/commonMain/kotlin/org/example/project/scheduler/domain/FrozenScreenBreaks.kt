@@ -8,7 +8,16 @@ package org.example.project.scheduler.domain
  * configuration and a mode that may all be different by now, and none of those may move it any more
  * (`docs/scheduler_requirements.md` § *frozen past*).
  */
-data class BankedBreak(val label: String, val startMillis: Long, val endMillis: Long)
+data class BankedBreak(
+    val label: String,
+    val startMillis: Long,
+    val endMillis: Long,
+    /**
+     * The user put it here (requirements § *frozen past*: *"When the user … wants to rewrite history"*) — dragged on
+     * the calendar, behind the line or ahead of it and since taken. What its blue outline says.
+     */
+    val byHand: Boolean = false,
+)
 
 /**
  * `docs/scheduler_requirements.md` § *frozen past*: **the three dynamic periods behind the banked front** —

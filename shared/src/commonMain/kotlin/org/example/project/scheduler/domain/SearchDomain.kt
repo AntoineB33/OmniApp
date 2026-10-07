@@ -2218,6 +2218,11 @@ object SearchDomain {
          * ([blocksSearchConfig]).
          */
         CalendarBlocks(null, "Blocks on the calendar"),
+        /**
+         * User rule 2026-10-07: the blocks the added elements have on the calendar at an instant, held by a press on
+         * the action's button and following the pointer over the calendar until it is released ([calendarDragTargets]).
+         */
+        DragOnCalendar(null, "Drag on the calendar"),
         ClearList(null, "Remove every element from the list"),
         /**
          * An added CREATION row (user rule 2026-10-04): a Search window on every element of the kind the row makes —
@@ -2424,7 +2429,39 @@ object SearchDomain {
         }
 
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
-    val CALENDAR_ACTIONS: Set<AddedAction> = setOf(AddedAction.PlaceOnCalendar, AddedAction.CalendarBlocks)
+    val CALENDAR_ACTIONS: Set<AddedAction> =
+        setOf(AddedAction.PlaceOnCalendar, AddedAction.CalendarBlocks, AddedAction.DragOnCalendar)
+
+    /**
+     * Whose blocks the "Drag on the calendar" action holds — the added elements that can be on the calendar, by what
+     * a block of each is known by there: a task's id, a period's kind, a reminder's id, an alarm's or a timer's id.
+     */
+    data class CalendarDragTargets(
+        val taskIds: Set<TaskId> = emptySet(),
+        val periodKinds: Set<String> = emptySet(),
+        val reminderIds: Set<String> = emptySet(),
+        val ringIds: Set<String> = emptySet(),
+    ) {
+        val isEmpty: Boolean get() = taskIds.isEmpty() && periodKinds.isEmpty() && reminderIds.isEmpty() && ringIds.isEmpty()
+    }
+
+    /** The [CalendarDragTargets] of the [added] elements: the tasks, periods, reminders, alarms and timers among them. */
+    fun calendarDragTargets(state: SchedulerState, added: List<Result>): CalendarDragTargets {
+        fun ids(kind: Kind) = added.filterIsInstance<ItemResult>().filter { it.kind == kind }.mapTo(LinkedHashSet()) { it.id }
+        return CalendarDragTargets(
+            taskIds = addedTaskIds(state, added).toSet(),
+            periodKinds = ids(Kind.RestrictivePeriod),
+            reminderIds = ids(Kind.Reminder),
+            ringIds = ids(Kind.Alarm) + ids(Kind.Timer),
+        )
+    }
+
+    /**
+     * The instant the "Drag on the calendar" action picks the blocks at until the user says otherwise: the right-click
+     * the window was opened from (the calendar's "edit…" and "add…"), else the calendar filter's instant.
+     */
+    fun calendarDragDefaultAt(config: Config): Long? =
+        config.calendarClickMillis ?: config.filters.calendarAtMillis ?: config.filters.calendarAddAtMillis
 
     /** The id a default configuration wears among the added elements of its kind: no element's own. */
     const val DEFAULT_CONFIGURATION_ID: String = "(default configuration)"

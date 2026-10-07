@@ -177,6 +177,14 @@ object SchedulerReducer {
     var frozenScreenBreaks: () -> org.example.project.scheduler.domain.FrozenScreenBreaks? = { null }
 
     /**
+     * The kinds of the layer bands the calendar draws at an instant ("no computer unlocked", "not on a phone"…, with
+     * what the rules derive from them) — what stands at an edge of a span a dragged period left
+     * ([org.example.project.scheduler.domain.SchedulerDomain.vacatedPastFill]). Injected by `App`, which draws them;
+     * none where nothing draws a calendar (a headless engine, a test).
+     */
+    var layerKindsAt: (Long) -> Set<String> = { emptySet() }
+
+    /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
      * ([SchedulerDomain.scheduleHorizonEndMillis] over [SchedulerDomain.scheduleGoalEndMillis]): the latest of
      * the end of the current week, the last displayed time in the calendar, and `now + 10 min`. The engine
@@ -520,6 +528,19 @@ object SchedulerReducer {
             // A break that vanishes with it gives its hole back to the task on both sides: a record change,
             // committed as the advance commits the records it banks.
             is SchedulerIntent.RecordConductedBreak -> commitRecordChanges(state, reduceRecordConductedBreak(state, intent))
+            is SchedulerIntent.PlaceDerivedPeriod -> reducePlaceDerivedPeriod(state, intent)
+            is SchedulerIntent.FillVacatedBreak -> {
+                val filled =
+                    withVacatedPastFilled(
+                        state, state.panels, intent.kind, TaskTimeRange(intent.startEpochMillis, intent.endEpochMillis), null,
+                    )
+                filled.records.applyTo(filled.state.copy(panels = filled.panels), forward = true)
+            }
+            is SchedulerIntent.ClearWorkUnderBankedBreak ->
+                SchedulerDomain.withWorkOutOfBankedBreak(
+                    state,
+                    org.example.project.scheduler.domain.BankedBreak(intent.label, intent.startEpochMillis, intent.endEpochMillis),
+                )
             is SchedulerIntent.AddPeriodKind -> settingsUnit(state, "New period") { reduceAddPeriodKind(it, intent.kind) }
             is SchedulerIntent.RemovePeriodKind -> settingsUnit(state, "Delete period") { reduceRemovePeriodKind(it, intent.kind) }
             is SchedulerIntent.SetPeriodDrawing -> settingsUnit(state, "Period drawing") { reduceSetPeriodDrawing(it, intent.kind, intent.drawing) }
@@ -2389,6 +2410,11 @@ object SchedulerReducer {
     private fun reduceAddRestrictivePeriod(
         state: SchedulerState,
         intent: SchedulerIntent.AddRestrictivePeriod,
+        /** The id of the panel this period takes the place of, leaving in the same unit ([reducePlaceDerivedPeriod]). */
+        replacing: String? = null,
+        label: String = "Add period",
+        /** The span the period was dragged away from: what stands there is chosen from its edges, in the same unit. */
+        vacated: TaskTimeRange? = null,
     ): SchedulerState {
         val kind = PeriodKinds.normalize(intent.kind)
         if (kind.isBlank()) return state
@@ -2409,10 +2435,16 @@ object SchedulerReducer {
                 pins = PanelPins(existence = true),
                 repeat = org.example.project.scheduler.model.PanelRepeat.of(intent.repeatEveryDays, null),
             )
-        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        val (resolved, resolvedPanels) =
+            resolveScreenOverrides(allocated, allocated.panels.filterNot { it.id == replacing } + panel, panelId)
         val laid = resolvedPanels.firstOrNull { it.id == panelId } ?: panel
+        val filled =
+            vacated?.let {
+                withVacatedPastFilled(resolved, resolvedPanels, kind, it, TaskTimeRange(laid.startEpochMillis, laid.endEpochMillis))
+            }
         return stripRecordsUnderPeriod(
-            commitPanels(resolved, resolvedPanels, label = "Add period"),
+            if (filled == null) commitPanels(resolved, resolvedPanels, label = label)
+            else commitPanels(filled.state, filled.panels, label = label, records = filled.records),
             laid,
         )
     }
@@ -2728,10 +2760,45 @@ object SchedulerReducer {
                 repeat =
                     if (intent.repeatEveryDays == null) existing.repeat
                     else org.example.project.scheduler.model.PanelRepeat.of(intent.repeatEveryDays, existing.repeat?.untilMillis),
-            )
+            ).let { moved ->
+                // User rule 2026-10-07 (*"Any block can be dragged, it then gets a blue outline"*): a Sleep window the
+                // past recorded, moved by hand, is the user's period of the kind `sleep` from then on — it would
+                // otherwise stay one of the windows a fill re-lays, outlined as the schedule's.
+                if (!existing.sleep) moved
+                else moved.copy(
+                    sleep = false,
+                    taskId = null,
+                    title = PeriodKinds.periodTitle(PeriodKinds.SLEEP),
+                    noScreen = PeriodKinds.legacyNoScreenFlag(PeriodKinds.SLEEP),
+                    inactivity = PeriodKinds.legacyInactivityFlag(PeriodKinds.SLEEP),
+                    periodKind = PeriodKinds.SLEEP,
+                    pinned = false,
+                    pins = PanelPins(existence = true),
+                )
+            }
         val (resolved, resolvedPanels) =
             resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
-        val committed = commitPanels(resolved, resolvedPanels, label = "Edit panel")
+        // A period dragged elsewhere — both its ends moved; a resize is not one: what stands where it was is chosen
+        // from its edges, in the same unit.
+        val leftKind = if (existing.sleep) PeriodKinds.SLEEP else existing.restrictiveKind
+        // (A repeating period is a pattern: moving it moves every occurrence, and no one span is left.)
+        val draggedElsewhere =
+            existing.repeat == null &&
+                intent.startEpochMillis != existing.startEpochMillis && end != existing.endEpochMillis
+        val filled =
+            if (!draggedElsewhere) null
+            else if (!existing.sleep && !(existing.isRestrictivePeriod && SchedulerDomain.isUserPlaced(existing))) null
+            else {
+                val now = resolvedPanels.firstOrNull { it.id == panelId } ?: updated
+                withVacatedPastFilled(
+                    resolved, resolvedPanels, leftKind,
+                    TaskTimeRange(existing.startEpochMillis, existing.endEpochMillis),
+                    TaskTimeRange(now.startEpochMillis, now.endEpochMillis),
+                )
+            }
+        val committed =
+            if (filled == null) commitPanels(resolved, resolvedPanels, label = "Edit panel")
+            else commitPanels(filled.state, filled.panels, label = "Edit panel", records = filled.records)
         // PRD §8/§9: moving/resizing a period the user drew re-applies its rule over its NEW span, exactly as
         // laying it did — a period dragged over a past task must strip that work too. Asked through the kind
         // ([TaskPanel.isRestrictivePeriod]) so a kind with no legacy flag is one here as well, and through
@@ -3330,13 +3397,120 @@ object SchedulerReducer {
      * The panels are derived, so the immediate refill below is left off the delta — an undo reverts the
      * [sleep] field and the next schedule tick re-derives the panels to match.
      */
+    /**
+     * User rule 2026-10-07: **a Sleep window or an hour before bed dragged on the calendar** — see
+     * [SchedulerIntent.PlaceDerivedPeriod]. Two History Units, in the order one Ctrl+Z each walks them back: the
+     * night leaves the schedule ([SleepDelta]), then the period is laid where the hand put it — by the ONE way a
+     * period is laid ([reduceAddRestrictivePeriod]: the override, the unify, the record strip), the panel a fill had
+     * laid for that night leaving in the same unit. Nothing changes where the span names no occurrence of the
+     * schedule.
+     */
+    private fun reducePlaceDerivedPeriod(state: SchedulerState, intent: SchedulerIntent.PlaceDerivedPeriod): SchedulerState {
+        val sleep = state.sleep ?: return state
+        val kind = PeriodKinds.normalize(intent.kind)
+        val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+        val day = 24L * 60L * 60L * 1000L
+        fun overlap(p: TaskPanel) =
+            minOf(p.endEpochMillis, intent.fromEndEpochMillis) - maxOf(p.startEpochMillis, intent.fromStartEpochMillis)
+        val from = intent.fromStartEpochMillis - 2 * day
+        val to = intent.fromEndEpochMillis + 2 * day
+        val (origin, skipped) =
+            when (kind) {
+                PeriodKinds.SLEEP -> {
+                    val window = SchedulerDomain.sleepPanels(sleep, from, to, tz).filter { overlap(it) > 0 }.maxByOrNull(::overlap)
+                    val wakeDay = window?.id?.removePrefix(DERIVED_SLEEP_ID_PREFIX)?.toLongOrNull() ?: return state
+                    window to sleep.copy(skippedWakeEpochDays = keptSkips(sleep.skippedWakeEpochDays, wakeDay))
+                }
+                PeriodKinds.BEFORE_BED -> {
+                    val hour = SchedulerDomain.beforeBedPanels(sleep, from, to, tz).filter { overlap(it) > 0 }.maxByOrNull(::overlap)
+                    val wakeDay = hour?.id?.removePrefix(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX)?.toLongOrNull() ?: return state
+                    hour to sleep.copy(skippedBeforeBedEpochDays = keptSkips(sleep.skippedBeforeBedEpochDays, wakeDay))
+                }
+                else -> return state
+            }
+        // In the calendar's history, where the drag was made and where both units are walked back from.
+        val left = commitDelta(state, SleepDelta(state.sleep, skipped), HistoryCategory.Calendar)
+        // The panel a fill laid for that occurrence is the schedule's no more: it goes as the period arrives.
+        return reduceAddRestrictivePeriod(
+            left,
+            SchedulerIntent.AddRestrictivePeriod(kind, intent.startEpochMillis, intent.endEpochMillis),
+            replacing = origin.id,
+            label = "Move period",
+            vacated = TaskTimeRange(intent.fromStartEpochMillis, intent.fromEndEpochMillis),
+        )
+    }
+
+    /** [panels] and the record changes once what a period left is filled ([withVacatedPastFilled]), ids allocated in [state]. */
+    private class VacatedFilled(val state: SchedulerState, val panels: List<TaskPanel>, val records: RecordChanges)
+
+    /**
+     * User rule 2026-10-07: a period of [leftKind] dragged from [from] to [to] (null: gone from the state altogether) —
+     * **what stands behind the line where it was** ([SchedulerDomain.vacatedPastFill], asked of each piece of [from]
+     * the move left bare): the periods it chooses are added to [panels], the work it gives back is a record change,
+     * both for the caller's ONE unit.
+     */
+    private fun withVacatedPastFilled(
+        state: SchedulerState,
+        panels: List<TaskPanel>,
+        leftKind: String,
+        from: TaskTimeRange,
+        to: TaskTimeRange?,
+    ): VacatedFilled {
+        val now = clock.nowMillis()
+        var working = state
+        var out = panels
+        val recordsBefore = HashMap<TaskId, List<TaskTimeRange>>()
+        val recordsAfter = HashMap<TaskId, List<TaskTimeRange>>()
+        for (piece in SchedulerDomain.subtractRegions(listOf(from), listOfNotNull(to))) {
+            val tasks = working.tasks.mapValues { (id, task) -> recordsAfter[id]?.let { task.copy(record = it) } ?: task }
+            val fill =
+                SchedulerDomain.vacatedPastFill(
+                    working.copy(panels = out, tasks = tasks), piece, leftKind, now, frozenScreenBreaks(), layerKindsAt,
+                ) ?: continue
+            for ((kind, span) in fill.periods) {
+                val (id, allocated) = working.allocatePanelId()
+                working = allocated
+                out = out +
+                    TaskPanel(
+                        id = id,
+                        taskId = null,
+                        title = PeriodKinds.periodTitle(kind),
+                        startEpochMillis = span.startEpochMillis,
+                        endEpochMillis = span.endEpochMillis,
+                        noScreen = PeriodKinds.legacyNoScreenFlag(kind),
+                        inactivity = PeriodKinds.legacyInactivityFlag(kind),
+                        periodKind = kind,
+                        pins = PanelPins(existence = true),
+                    )
+            }
+            val taskId = fill.taskId
+            if (taskId != null && fill.work.isNotEmpty()) {
+                val record = tasks[taskId]?.record ?: continue
+                recordsBefore.getOrPut(taskId) { record }
+                recordsAfter[taskId] = record + fill.work
+            }
+        }
+        return VacatedFilled(working, out, RecordChanges.of(recordsBefore, recordsAfter))
+    }
+
+    /** [skips] with [wakeDay], less the days too far back to be drawn again (a year). */
+    private fun keptSkips(skips: Set<Long>, wakeDay: Long): Set<Long> =
+        skips.filterTo(mutableSetOf()) { it >= wakeDay - 366 } + wakeDay
+
     private fun reduceSetSleepSchedule(
         state: SchedulerState,
         sleep: SleepSchedule,
         todayEpochDay: Long,
     ): SchedulerState {
+        // The nights the user dragged away stay dragged away when the schedule's hours are restated.
+        val current = state.sleep
         val anchored =
-            sleep.copy(anchorEpochDay = if (sleep.goalWakeMinutes != sleep.wakeMinutes) todayEpochDay else null)
+            sleep.copy(
+                anchorEpochDay = if (sleep.goalWakeMinutes != sleep.wakeMinutes) todayEpochDay else null,
+                skippedWakeEpochDays = sleep.skippedWakeEpochDays.ifEmpty { current?.skippedWakeEpochDays.orEmpty() },
+                skippedBeforeBedEpochDays =
+                    sleep.skippedBeforeBedEpochDays.ifEmpty { current?.skippedBeforeBedEpochDays.orEmpty() },
+            )
         if (state.sleep == anchored) return state
         val committed = commitDelta(state, SleepDelta(state.sleep, anchored))
         // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).

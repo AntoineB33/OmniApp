@@ -375,7 +375,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
         val front = queries.selectScreenBreakFront().executeAsOneOrNull() ?: return null
         val breaks =
             queries.selectScreenBreakHistory().executeAsList().map {
-                org.example.project.scheduler.domain.BankedBreak(it.label, it.start_ms, it.end_ms)
+                org.example.project.scheduler.domain.BankedBreak(it.label, it.start_ms, it.end_ms, byHand = it.by_hand != 0L)
             }
         // A machine that does not decode (a row from a newer build, or damaged) is no reason to lose the record: the
         // machine then starts rested at the line, as on a row written before it was kept.
@@ -400,7 +400,11 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             machine?.let { breakMachineJson.encodeToString(org.example.project.scheduler.domain.BreakMachine.State.serializer(), it) }
         queries.transaction {
             for (b in removed) queries.deleteScreenBreak(start_ms = b.startMillis, label = b.label)
-            for (b in added) queries.insertScreenBreak(start_ms = b.startMillis, label = b.label, end_ms = b.endMillis)
+            for (b in added) {
+                queries.insertScreenBreak(
+                    start_ms = b.startMillis, label = b.label, end_ms = b.endMillis, by_hand = if (b.byHand) 1L else 0L,
+                )
+            }
             queries.deleteScreenBreaksBefore(pruneBeforeMillis)
             queries.upsertScreenBreakFront(untilMillis, lineMillis, machineJson)
         }

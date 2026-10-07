@@ -197,6 +197,8 @@ class AddedActionHandlers(
     val onEditReminderConstraint: (List<String>) -> Unit = {},
     /** "Blocks on the calendar": the Search window of these elements' (by key) blocks ([SearchDomain.blocksSearchConfig]). */
     val onOpenBlocksSearch: (List<String>) -> Unit = {},
+    /** "Drag on the calendar": the press took hold of blocks — the calendar comes to the front and takes the focus. */
+    val onDragOnCalendar: () -> Unit = {},
     /** The scheduler engine's runs, for the history units' "Information" (they are the view model's, kept in memory). */
     val schedulerRuns: () -> List<org.example.project.scheduler.state.SchedulerRunEntry> = { emptyList() },
 )
@@ -330,7 +332,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
         SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
         SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
-        SearchDomain.AddedAction.PlaceOnCalendar,
+        SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.DragOnCalendar,
     )
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
@@ -367,6 +369,7 @@ private fun AddedActionEditor(
         // The calendar's "add…": where its start and end say ([CalendarPlacementEditor]).
         SearchDomain.AddedAction.PlaceOnCalendar ->
             CalendarPlacementEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
+        SearchDomain.AddedAction.DragOnCalendar -> CalendarDragEditor(state, added, config, handlers, nowMillis)
         SearchDomain.AddedAction.CalendarBlocks -> {
             val owners = SearchDomain.blockOwners(added)
             FrameButton("Search the blocks", enabled = owners.isNotEmpty()) { handlers.onOpenBlocksSearch(owners) }

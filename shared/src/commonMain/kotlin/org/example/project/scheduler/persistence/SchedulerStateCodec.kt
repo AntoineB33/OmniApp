@@ -712,7 +712,7 @@ object SchedulerStateCodec {
             nextCategoryCounter = nextCategoryCounter,
             focusedWindow = focusedWindow.name,
             histories = if (withHistories) histories.toPersisted() else null,
-            sleep = sleep?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
+            sleep = sleep?.toPersistedSleep(),
             sleepingUntilMillis = sleepingUntilMillis,
             sleepingSinceMillis = sleepingSinceMillis,
             // PRD §7 "Switch task": the outstanding refusal, flattened to its two scalars.
@@ -906,8 +906,8 @@ object SchedulerStateCodec {
                 )
             is SleepDelta ->
                 PersistedDelta.Sleep(
-                    before?.let { PersistedSleep(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
-                    PersistedSleep(after.wakeMinutes, after.goalWakeMinutes, after.sleepDurationMinutes, after.anchorEpochDay),
+                    before?.toPersistedSleep(),
+                    after.toPersistedSleep(),
                 )
             is ShortcutBindingDelta ->
                 PersistedDelta.ShortcutBindings(before.toPersistedRows(), after.toPersistedRows())
@@ -1354,7 +1354,7 @@ object SchedulerStateCodec {
             // build does not know is the tree.
             focusedWindow = windowNamed(focusedWindow) ?: HistoryWindow.Tree,
             histories = histories?.toHistories() ?: SchedulerHistories(),
-            sleep = sleep?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
+            sleep = sleep?.toSleepSchedule(),
             sleepingUntilMillis = sleepingUntilMillis,
             sleepingSinceMillis = sleepingSinceMillis,
             // PRD §7 "Switch task": both halves are needed for a refusal to mean anything, so a payload
@@ -1479,8 +1479,8 @@ object SchedulerStateCodec {
                 )
             is PersistedDelta.Sleep ->
                 SleepDelta(
-                    before?.let { SleepSchedule(it.wakeMinutes, it.goalWakeMinutes, it.sleepDurationMinutes, it.anchorEpochDay) },
-                    SleepSchedule(after.wakeMinutes, after.goalWakeMinutes, after.sleepDurationMinutes, after.anchorEpochDay),
+                    before?.toSleepSchedule(),
+                    after.toSleepSchedule(),
                 )
             is PersistedDelta.Alarms ->
                 // Healed on the way in like the live list is: an older build's row keeps ringing the way it
@@ -2252,7 +2252,23 @@ private data class PersistedSleep(
     val goalWakeMinutes: Int = 450,
     val sleepDurationMinutes: Int = 510,
     val anchorEpochDay: Long? = null,
+    /** [SleepSchedule.skippedWakeEpochDays]. New 2026-10-07: absent from an older payload, which skips no night. */
+    val skippedWakeEpochDays: List<Long> = emptyList(),
+    /** [SleepSchedule.skippedBeforeBedEpochDays]. New 2026-10-07: absent from an older payload. */
+    val skippedBeforeBedEpochDays: List<Long> = emptyList(),
 )
+
+private fun SleepSchedule.toPersistedSleep(): PersistedSleep =
+    PersistedSleep(
+        wakeMinutes, goalWakeMinutes, sleepDurationMinutes, anchorEpochDay,
+        skippedWakeEpochDays.sorted(), skippedBeforeBedEpochDays.sorted(),
+    )
+
+private fun PersistedSleep.toSleepSchedule(): SleepSchedule =
+    SleepSchedule(
+        wakeMinutes, goalWakeMinutes, sleepDurationMinutes, anchorEpochDay,
+        skippedWakeEpochDays.toSet(), skippedBeforeBedEpochDays.toSet(),
+    )
 
 @Serializable
 private data class PersistedHistories(

@@ -2336,7 +2336,8 @@ object SchedulerDomain {
                 date.atStartOfDayIn(timeZone).toEpochMilliseconds() +
                     effectiveWakeMinutes(sleep, epochDay).toLong() * MILLIS_PER_MINUTE
             val sleepStart = wakeMillis - durationMillis
-            if (wakeMillis > fromMillis && sleepStart < toMillis) {
+            // A night whose window the user dragged away is a period of its own on the calendar, not the schedule's.
+            if (epochDay !in sleep.skippedWakeEpochDays && wakeMillis > fromMillis && sleepStart < toMillis) {
                 result.add(
                     TaskPanel(
                         id = "sleep/$epochDay",
@@ -2383,7 +2384,8 @@ object SchedulerDomain {
         return sleepPanels(sleep, fromMillis, toMillis + BEFORE_BED_MILLIS, timeZone).mapNotNull { window ->
             val start = window.startEpochMillis - BEFORE_BED_MILLIS
             val end = window.startEpochMillis
-            if (end <= fromMillis || start >= toMillis) {
+            val dragged = window.id.removePrefix("sleep/").toLongOrNull() in sleep?.skippedBeforeBedEpochDays.orEmpty()
+            if (end <= fromMillis || start >= toMillis || dragged) {
                 null
             } else {
                 TaskPanel(
@@ -3855,7 +3857,8 @@ object SchedulerDomain {
         }
         for (e in events) {
             when (e) {
-                is BreakMachine.Event.Started -> if (!e.conducted) bank(BankedBreak(e.label, e.startMillis, e.endMillis))
+                is BreakMachine.Event.Started ->
+                    if (!e.conducted) bank(BankedBreak(e.label, e.startMillis, e.endMillis, byHand = e.byHand))
                 is BreakMachine.Event.Grew -> bank(BankedBreak(e.label, e.startMillis, e.endMillis))
                 is BreakMachine.Event.Removed -> unbankAt(e.startMillis)
                 else -> Unit
@@ -3907,6 +3910,16 @@ object SchedulerDomain {
     fun isDraggedScreenBreak(panel: TaskPanel): Boolean =
         panel.screenBreak && panel.id.endsWith(DRAGGED_BREAK_ID_SUFFIX)
 
+    /**
+     * The mark a dynamic period's panel id carries when **the user put it where it stands** ([placeBreakByHand]) — in
+     * the id for the reason [DRAGGED_BREAK_ID_SUFFIX] is. Read it through [isHandPlacedScreenBreak].
+     */
+    const val HAND_BREAK_ID_MARK: String = "/hand"
+
+    /** Whether [panel] is one of the three dynamic periods standing where a hand put it: what its blue outline says. */
+    fun isHandPlacedScreenBreak(panel: TaskPanel): Boolean =
+        panel.screenBreak && panel.id.removeSuffix(DRAGGED_BREAK_ID_SUFFIX).endsWith(HAND_BREAK_ID_MARK)
+
     /** [placed] as the panels the calendar and the plan read, over `[fromMillis, toMillis]`. */
     private fun placedPanels(
         screenBreaks: List<ScreenBreak>,
@@ -3926,6 +3939,7 @@ object SchedulerDomain {
                     indexOfTitle[title] ?: 0, title, p.coveredFromMillis, p.coveredUntilMillis,
                     dragged = p.openStart,
                     kind = DynamicPeriods.breakKind(p.label),
+                    byHand = p.byHand,
                 )
             }
             .sortedBy { it.startEpochMillis }
@@ -4040,6 +4054,7 @@ object SchedulerDomain {
                 screenBreakPanel(
                     indexOfTitle[title] ?: 0, title, banked.startMillis, banked.endMillis, dragged = false,
                     kind = DynamicPeriods.breakKind(banked.label),
+                    byHand = banked.byHand,
                 )
             }
     }
@@ -4595,9 +4610,10 @@ object SchedulerDomain {
         end: Long,
         dragged: Boolean = false,
         kind: String = PeriodKinds.INACTIVITY,
+        byHand: Boolean = false,
     ): TaskPanel =
         TaskPanel(
-            id = "side/$index/$start" + if (dragged) DRAGGED_BREAK_ID_SUFFIX else "",
+            id = "side/$index/$start" + (if (byHand) HAND_BREAK_ID_MARK else "") + if (dragged) DRAGGED_BREAK_ID_SUFFIX else "",
             taskId = null,
             title = title,
             startEpochMillis = start,
@@ -4660,11 +4676,186 @@ object SchedulerDomain {
 
     /** [breakRefusedRanges] for a banked break, read off its role ([BankedBreak.label]). */
     fun breakRefusedRanges(banked: BankedBreak, task: Task?): List<TaskTimeRange> =
-        breakRefusedRanges(
-            TaskPanel("banked", null, banked.label, banked.startMillis, banked.endMillis, screenBreak = true,
-                periodKind = DynamicPeriods.breakKind(banked.label)),
-            task,
+        breakRefusedRanges(bankedBreakPanel(banked), task)
+
+    /** A banked break as the panel [breakRefusedRanges] reads — its role ([BankedBreak.label]) says its kind. */
+    private fun bankedBreakPanel(banked: BankedBreak): TaskPanel =
+        TaskPanel("banked", null, banked.label, banked.startMillis, banked.endMillis, screenBreak = true,
+            periodKind = DynamicPeriods.breakKind(banked.label))
+
+    /**
+     * [state] with the recorded work taken out of what the banked break [banked] refuses ([withWorkOutOfBreaks]) —
+     * *a banked break and recorded work never overlap*, for a break put by hand where work was already banked
+     * ([placeBreakByHand]).
+     */
+    fun withWorkOutOfBankedBreak(state: SchedulerState, banked: BankedBreak): SchedulerState =
+        withWorkOutOfBreaks(state, listOf(bankedBreakPanel(banked)))
+
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past*, its first exception — *"When the user or a program wants to
+     * rewrite history"* — and its mirror ahead of the line: **the screen break of the role [label] standing over
+     * `[fromStartMillis, fromEndMillis)` is put by hand to start at [newStartMillis]**, its length kept (*"A screen
+     * break period lasts as long as its name implies"*). The ONE rule behind a break dragged on the calendar, whichever
+     * side of the line it was on and whichever side it is put:
+     *  - **put behind the line** it is a break that was taken there: banked ([BankedBreak.byHand]), whatever it was
+     *    before (a banked break is un-banked where it stood). Refused over another banked break — two breaks are
+     *    never taken at once;
+     *  - **put ahead of the line** it is where that occurrence stands instead ([BreakMachine.HandPlaced]): the machine
+     *    lays none of that role between the place it left and the place it was given, and takes it there. A banked
+     *    break put ahead is un-banked: it has not been taken yet;
+     *  - **put across the line** it stays on the side it came from, against the line.
+     *
+     * Null — nothing changes — for the break the line is in or drags (the line's own), one this record does not know,
+     * and a move that leaves it where it was. What was banked and un-banked is told for the store; the bars are the
+     * caller's to rebuild from the history this leaves ([rebuildScreenBreaksFromHistory]).
+     */
+    fun placeBreakByHand(
+        frozen: FrozenScreenBreaks?,
+        label: String,
+        fromStartMillis: Long,
+        fromEndMillis: Long,
+        newStartMillis: Long,
+        nowMillis: Long,
+    ): BreakStep? {
+        val record = frozen ?: return null
+        val length = fromEndMillis - fromStartMillis
+        if (length <= 0L) return null
+        val banked = record.breaks.firstOrNull { it.startMillis == fromStartMillis && it.endMillis == fromEndMillis && it.label == label }
+        val wasPast = banked != null
+        // The break the line is in (banked, not ended) or drags (`]line, line + d]`, not banked) is the line's own.
+        if (banked != null && banked.endMillis > nowMillis) return null
+        if (banked == null && fromStartMillis <= nowMillis) return null
+        val start =
+            when {
+                newStartMillis + length <= nowMillis || newStartMillis >= nowMillis -> newStartMillis
+                wasPast -> nowMillis - length
+                else -> nowMillis
+            }
+        if (start == fromStartMillis) return null
+        val others = if (banked != null) record.breaks - banked else record.breaks
+        if (start + length <= nowMillis) {
+            val moved = BankedBreak(label, start, start + length, byHand = true)
+            if (others.any { it.startMillis < moved.endMillis && moved.startMillis < it.endMillis }) return null
+            return BreakStep(
+                record.copy(breaks = (others + moved).sortedBy { it.startMillis }),
+                emptyList(),
+                added = listOf(moved),
+                removed = listOfNotNull(banked),
+            )
+        }
+        // Ahead of the line: the machine's to take there. Without a machine nothing ahead is placed at all.
+        val machine = record.machine ?: return null
+        // A break put again takes the place of its own placement: it is still the occurrence the rules put at `from`.
+        val again = machine.placed.firstOrNull { it.label == label && it.toMillis == fromStartMillis }
+        val from = again?.fromMillis ?: if (wasPast) nowMillis else fromStartMillis
+        val placed = machine.placed.filterNot { it === again } + BreakMachine.HandPlaced(label, from, start)
+        return BreakStep(
+            record.copy(breaks = others, machine = machine.copy(placed = placed)),
+            emptyList(),
+            added = emptyList(),
+            removed = listOfNotNull(banked),
         )
+    }
+
+    /**
+     * What is put where a period left ([vacatedPastFill]): [periods] to lay (a kind and its span), and the work to give
+     * back to [taskId]'s record over [work].
+     */
+    data class VacatedFill(
+        val periods: List<Pair<String, TaskTimeRange>>,
+        val taskId: TaskId? = null,
+        val work: List<TaskTimeRange> = emptyList(),
+    )
+
+    /**
+     * User rule 2026-10-07: *"If the user drags a period A elsewhere, what appears at its original place can't be period
+     * A. To choose what is placed instead, the program looks at what is at the edges … If at both edges, it is 'no phone
+     * unlocked' and not ('no computer unlocked' or 'not on a computer') and task A, then it is what is chosen. If it is
+     * different at the start and at the end, then the simplest solution is the chosen one, which is only 'inactivity'."*
+     *
+     * **What stands over [vacated] — the span a period of [leftKind] was dragged away from — behind the line.** Ahead of
+     * the line nothing is chosen here: the plan is what fills it. [state] is the timeline WITHOUT the period there.
+     * What is at an edge is the kinds of the periods stated there and the task whose work is recorded (or placed)
+     * there:
+     *  - the same at both edges, and not the period again (it does not carry [leftKind], nor — for a period that is or
+     *    carries "no screen" — both layers): that is what is chosen. Each of its kinds no period already states
+     *    across the span is laid over it, and its task's work is given back over it (less the breaks banked there);
+     *  - anything else — different edges, or the period again: a period of [PeriodKinds.INACTIVITY] alone (nothing
+     *    where the period that left was itself one).
+     * Null where nothing is to be put: no part of the span is behind the line, or both edges are bare.
+     *
+     * **The layers count at an edge** ([layerKindsAt] — the kinds of the layer bands the calendar draws at an instant,
+     * the devices' own history included, with what the rules derive from them): the user's own example is *"'no phone
+     * unlocked' and not ('no computer unlocked' or 'not on a computer') and task A"*. A layer both edges carry is laid
+     * over the span as the period of that layer, where the calendar does not already draw it there; a kind the rules
+     * only DERIVE from the layers (the "no screen" both make) is never laid — it follows from them.
+     */
+    fun vacatedPastFill(
+        state: SchedulerState,
+        vacated: TaskTimeRange,
+        leftKind: String,
+        nowMillis: Long,
+        frozen: FrozenScreenBreaks? = null,
+        layerKindsAt: (Long) -> Set<String> = { emptySet() },
+    ): VacatedFill? {
+        val past = TaskTimeRange(vacated.startEpochMillis, minOf(vacated.endEpochMillis, nowMillis))
+        if (past.endEpochMillis - past.startEpochMillis < MIN_MANUAL_ENTRY_MILLIS) return null
+        val config = state.periodKindConfig
+        val periods = statedPanels(state).filter { it.isRestrictivePeriod && !it.screenBreak }
+        fun statedAt(t: Long): Set<String> =
+            periods.filter { it.startEpochMillis <= t && t < it.endEpochMillis }.mapTo(HashSet()) { it.restrictiveKind }
+        fun kindsAt(t: Long): Set<String> = statedAt(t) + layerKindsAt(t)
+        val layerKinds = ActivityLayer.entries.flatMapTo(HashSet()) { listOf(PeriodKinds.layerKind(it), PeriodKinds.fakeLayerKind(it)) }
+        fun tasksAt(t: Long): Set<TaskId> {
+            val out = HashSet<TaskId>()
+            for (task in state.tasks.values) {
+                if (task.record.any { it.startEpochMillis <= t && t < it.endEpochMillis }) out += task.id
+            }
+            for (panel in state.panels) {
+                if (!panel.isRestrictivePeriod && !panel.chore && panel.startEpochMillis <= t && t < panel.endEpochMillis) {
+                    panel.taskId?.let { out += it }
+                }
+            }
+            return out
+        }
+        val before = past.startEpochMillis - 1
+        val after = past.endEpochMillis
+        val kinds = kindsAt(before)
+        val tasks = tasksAt(before)
+        val carried = kinds.flatMapTo(HashSet()) { config.kindsOf(it) }
+        val bothLayers =
+            ActivityLayer.entries.all { layer -> PeriodKinds.layerKind(layer) in carried || PeriodKinds.fakeLayerKind(layer) in carried }
+        val again = leftKind in carried || (config.isOrImpliesNoScreen(leftKind) && bothLayers)
+        val middle = past.startEpochMillis + (past.endEpochMillis - past.startEpochMillis) / 2
+        fun covered(kind: String) =
+            periods.any { it.restrictiveKind == kind && it.startEpochMillis <= past.startEpochMillis && it.endEpochMillis >= past.endEpochMillis } ||
+                kind in layerKindsAt(middle)
+        // What can be LAID: a kind a period states at the edge, or a layer; never what the rules only derive.
+        val layable = statedAt(before) + layerKinds
+        if (kinds == kindsAt(after) && tasks == tasksAt(after) && tasks.size <= 1 && !again) {
+            val taskId = tasks.singleOrNull()
+            if (kinds.isEmpty() && taskId == null) return null
+            val task = taskId?.let { state.tasks[it] }
+            val work =
+                if (task == null) emptyList()
+                else {
+                    val banked = frozen?.breaks.orEmpty()
+                        .filter { it.startMillis < past.endEpochMillis && past.startEpochMillis < it.endMillis }
+                        .flatMap { breakRefusedRanges(it, task) }
+                    subtractRegions(subtractRegions(listOf(past), banked), mergeOccupied(task.record))
+                }
+            return VacatedFill(kinds.filter { it in layable && !covered(it) }.sorted().map { it to past }, task?.id, work)
+                .takeIf { it.periods.isNotEmpty() || it.work.isNotEmpty() }
+        }
+        val inactivity = PeriodKinds.INACTIVITY
+        if (leftKind == inactivity || covered(inactivity)) return null
+        return VacatedFill(listOf(inactivity to past))
+    }
+
+    /** The role ([DynamicPeriods] label) of the break whose period kind is [kind], or null where it is none of the three. */
+    fun breakLabelOfKind(kind: String): String? =
+        listOf(DynamicPeriods.LABEL_20S, DynamicPeriods.LABEL_5MIN, DynamicPeriods.LABEL_15MIN)
+            .firstOrNull { DynamicPeriods.breakKind(it) == kind }
 
     /** The panel whose `[start, end)` contains [nowMillis] (the "task to do now"), or null. */
     fun panelAt(panels: List<TaskPanel>, nowMillis: Long): TaskPanel? =
@@ -5182,6 +5373,7 @@ object SchedulerDomain {
      * added from the calendar's own menu).
      */
     fun panelOutline(panel: TaskPanel): PanelOutline = when {
+        isHandPlacedScreenBreak(panel) -> PanelOutline.User
         panel.screenBreak || panel.conductedBreak -> PanelOutline.Dynamic
         isUserPlaced(panel) -> PanelOutline.User
         panel.isRestrictivePeriod -> PanelOutline.Pattern
