@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: the search header is compact and narrows like the actions section — 2026-10-07
+
+User rule. The header of the search section (the bar, the kinds, Reset, "All configurations", "Select all", "Add") is
+drawn in `CompactFields` — one task cell tall, two rows instead of three and a divider — and laid out at
+`COMPACT_SECTION_MIN_WIDTH` at least, cut at the section's edge (`keepsWidthAbove`): narrowing the section hides its
+right end instead of squeezing the bar or wrapping the buttons. `SearchWindow.kt`. No test (layout only); not verified
+on screen. Client only.
+
 ### No "Open each" for a single added element — 2026-10-07
 
 User rule: "When there is only one element in the added elements list, in the action section, there should not be a

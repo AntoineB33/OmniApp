@@ -870,7 +870,10 @@ suggestions before it was ever entered.
   control beside a field reads those, never a padding of its own. The content is laid out at
   `COMPACT_SECTION_MIN_WIDTH` at least and cut at the section's edge (`keepsWidthAbove`), and a button, a chip, a
   setting's name and an explanation (`NoteText`) are ONE line — a text that wraps makes the section taller as it
-  is narrowed, which is the anomaly.
+  is narrowed, which is the anomaly. **The search section's HEADER is one of them too** (user rule 2026-10-07): the
+  bar, the kinds' drop-down and Reset on one row; "All configurations", "Select all" and "Add" on the next (the
+  divider under them is gone); the section's padding is the actions section's. The result list under it is not: its
+  rows are the tree's.
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
   `SectionSeparator` + `draggedSplit`, each section kept above a minimum), and **their joint drags both at once**

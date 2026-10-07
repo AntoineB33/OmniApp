@@ -626,17 +626,26 @@ fun SearchWindow(
             modifier = Modifier
                 .weight(leftShare)
                 .fillMaxHeight()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionArrow(collapsed = false, onToggle = { searchCollapsed = true })
                 Text("Search", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             }
+            // User rule 2026-10-07: the search header is as compact as the actions section ([CompactFields]: the bar,
+            // the drop-down and the buttons one task cell tall, two rows) and narrows the way it does
+            // ([keepsWidthAbove]): laid out at [COMPACT_SECTION_MIN_WIDTH] at least and cut at the section's edge —
+            // hidden, never squeezed or wrapped.
+            CompactFields {
+            Column(
+                modifier = Modifier.fillMaxWidth().keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+                verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
+            ) {
             // --- The configuration ------------------------------------------------------------------
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
@@ -670,24 +679,23 @@ fun SearchWindow(
                 val reset = SearchDomain.resetConfig(config, openedConfig)
                 ResetButton(enabled = reset != config) { onConfigChange(reset) }
             }
-            // Every configuration of this window, in a window of its own — the filters per kind among them. The
-            // count says how many filters are narrowing the list right now, which nothing else here shows.
-            val active = filters.activeCount
-            Text(
-                text = "⚙ All configurations" + if (active > 0) "  ·  $active filter" + (if (active == 1) "" else "s") + " on" else "",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
-                    .clickable(onClick = onOpenConfigurations)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-
-            HorizontalDivider()
-
-            // --- The check boxes' buttons -----------------------------------------------------------
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // --- The check boxes' buttons, and the way to every configuration ---------------------------
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Every configuration of this window, in a window of its own — the filters per kind among them. The
+                // count says how many filters are narrowing the list right now, which nothing else here shows.
+                val active = filters.activeCount
+                Text(
+                    text = "⚙ All configurations" + if (active > 0) "  ·  $active filter" + (if (active == 1) "" else "s") + " on" else "",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+                        .clickable(onClick = onOpenConfigurations)
+                        .padding(horizontal = 8.dp, vertical = buttonVerticalPadding(6.dp)),
+                )
                 // Driven by the boxes, not by its own last press ([SelectAllMenuItem]'s rule): it checks the
                 // rows listed now, and unchecks them.
                 FrameButton(if (allChecked) "Deselect all" else "Select all", enabled = resultKeys.isNotEmpty()) {
@@ -702,8 +710,12 @@ fun SearchWindow(
                         text = "${checkedShown.size} checked",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
+            }
+            }
             }
 
             // --- The result list --------------------------------------------------------------------
