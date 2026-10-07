@@ -162,6 +162,17 @@ internal fun TaskTreeView(
      * [org.example.project.scheduler.state.SchedulerIntent.RevealCell] primitive as the calendar panel's.
      */
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
+    /** PRD §7 Search: the cell menu's "add" and "add and remove the others" ([CellListSection]); null elsewhere. */
+    onAddTasks: ((taskIds: List<TaskId>, replacing: Boolean) -> Unit)? = null,
+    /**
+     * **This tree is drawn INSIDE a list that scrolls** (a Search row's sub-tree, user rule 2026-10-07): the window Y of
+     * that list's top, read as state. Where the list cuts this tree's top, the cut is the top the pinned parent row
+     * is reckoned from and drawn at — the row the user sees first is the list's, not this tree's own. Null: the
+     * tree's own viewport.
+     */
+    clipTopWindowY: (() -> Float?)? = null,
+    /** Told whether this tree is drawing a pinned parent row: the list that holds it then pins nothing over it. */
+    onPinnedParent: ((Boolean) -> Unit)? = null,
     /**
      * The state the task COLOURS are solved over, when that is not the state being drawn.
      *
@@ -379,7 +390,10 @@ internal fun TaskTreeView(
     val pinnedRow by remember(rowHeightPx) {
         derivedStateOf {
             val viewport = treeViewport ?: return@derivedStateOf null
-            val bandBottom = viewport.start + rowHeightPx
+            // What the user sees of this tree starts where the list holding it cuts it ([clipTopWindowY]).
+            val top = maxOf(viewport.start, clipTopWindowY?.invoke() ?: viewport.start)
+            if (top >= viewport.endInclusive) return@derivedStateOf null
+            val bandBottom = top + rowHeightPx
             val rows = currentVisibleRows
             // The row appearing RIGHT BELOW the band: the first whose bottom lies past it, so a row the band
             // half covers is still that row. Never the first FULLY visible one — when a half-covered parent
@@ -392,9 +406,14 @@ internal fun TaskTreeView(
             if (first.parent == null) return@derivedStateOf null
             val parentPath = first.path.dropLast(1)
             val parentTop = rowBounds[parentPath]?.start ?: return@derivedStateOf null
-            if (parentTop >= viewport.start - 0.5f) return@derivedStateOf null
+            if (parentTop >= top - 0.5f) return@derivedStateOf null
             rows.firstOrNull { it.path == parentPath }
         }
+    }
+    if (onPinnedParent != null) {
+        val hasPinned = pinnedRow != null
+        LaunchedEffect(hasPinned) { onPinnedParent(hasPinned) }
+        androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onPinnedParent(false) } }
     }
     // Selecting the pinned copy scrolls ITS real row into view — the one at the copy's path, not a mirrored
     // twin of it elsewhere, which the selection (a cell and a via) cannot tell apart. A press on a row that is
@@ -935,6 +954,7 @@ internal fun TaskTreeView(
                 rowLeading = rowLeading,
                 onGoToTaskTree = onGoToTaskTree,
                 namingSource = namingSource,
+                onAddTasks = onAddTasks,
                 onIntent = rowIntent,
             )
         }
@@ -951,6 +971,11 @@ internal fun TaskTreeView(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    // Down to where the list holding this tree cuts it ([clipTopWindowY]); 0 in a tree of its own.
+                    .offset {
+                        val own = treeViewport?.start ?: 0f
+                        IntOffset(0, ((clipTopWindowY?.invoke() ?: own) - own).coerceAtLeast(0f).roundToInt())
+                    }
                     .fillMaxWidth()
                     .height(TASK_ROW_MIN_HEIGHT)
                     .clipToBounds()

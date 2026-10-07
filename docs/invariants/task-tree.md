@@ -819,6 +819,22 @@ suggestions before it was ever entered.
   (`sharedAlert` shows a channel on only when all have it; `withAlertChange` writes only what was pressed), and
   **Delete** — the bin (`AddedAction.AlarmDelete`, `AddedCommand.Delete`): every added alarm off the account
   in one `SetAlarms` (a History Unit), and off the added list; the other kinds follow (above).
+- **A task element of the ADDED list expands as a result row does** (user rule 2026-10-07): its expansion arrow
+  (`TaskSheetExpandArrow`) and, expanded, the same `SearchSubtree` — the tree's own view over the task's sub-list.
+  The expansion is the list's own, Compose-only; the sub-tree's selection and edit session are the Search
+  sub-trees' shared ones (`projectSearchSubtree`).
+- **The task tree's pinned parent row applies in the result list and in the added list** (user rule 2026-10-07; § *The
+  pinned parent row*). Two halves of ONE rule, the direct parent of what shows under the top band:
+  `pinnedItemIndex` reads the list's layout and the list draws the HEAD of the expanded element whose sub-tree shows
+  there once its own row left the top (the result list's is the row's own drawing, `SearchTaskRow(headOnly)` — never
+  in Edit Mode, and a press on it scrolls its real row back); and the sub-tree, a `TaskTreeView` inside a list that
+  scrolls, reckons ITS pinned row from where the list cuts it (`clipTopWindowY`) and tells the list when it pins a
+  deeper parent (`onPinnedParent`), which then pins nothing over it.
+- **A cell of an expanded row's sub-tree has "add" and "add and remove the others" on its menu** (user rule
+  2026-10-07; `TaskTreeView.onAddTasks` -> `CellListSection`'s `TaskCellMenuActions.onAdd` / `onAddReplacing`): the
+  right-clicked cell's task, or the block's when it lands inside a multi-selection (`contextMenuCopyTargets`, as
+  "copy task id" reads it), into the window's added elements (`addKeys`); a placeholder holds none. Null in the
+  account's tree: no such entries there.
 - **The added elements are SELECTED like the result rows, and their right-click menu acts on the selection** (user
   rules 2026-10-02 / 2026-10-03): `ClickSelection` again (a click selects one row, Ctrl+click adds or takes one,
   Shift+click the range from the anchor; the last one clicked wears the thick outline), Compose-only, and a right-click

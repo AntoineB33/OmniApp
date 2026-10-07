@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: expanded task elements — arrow in the added list, pinned parent row, "add" on the children — 2026-10-07
+
+Three user rules.
+- **The added elements list**: a task element has its expansion arrow and shows its sub-tree, as a result row does
+  (`SearchSubtree`).
+- **The pinned parent row** of the task tree, in the result list and in the added list: the head of an expanded
+  element stays over the top of the list once its row has scrolled off and its sub-tree shows there
+  (`pinnedItemIndex`); a sub-tree cut by the list pins its own deeper parent at the cut (`TaskTreeView.clipTopWindowY`)
+  and the list then pins nothing over it.
+- **The children cells** of an expanded element have "add" and "add and remove the others" on their right-click menu
+  (`TaskTreeView.onAddTasks`).
+
+No test: there is no Compose UI test in the project and all three are drawing and gestures. Not verified on screen —
+the pinned row in particular relies on the rows reporting their window position again as the outer list scrolls.
+Client only.
+
 ### Search window: the search header is compact and narrows like the actions section — 2026-10-07
 
 User rule. The header of the search section (the bar, the kinds, Reset, "All configurations", "Select all", "Add") is

@@ -526,6 +526,12 @@ internal fun CellListSection(
     /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [EditModeMenus]. */
     namingSource: SchedulerState = state,
     /**
+     * PRD §7 Search (user rule 2026-10-07): the cell menu's "add" and "add and remove the others" — the tasks of the
+     * right-clicked cell, or of the whole block when it lands inside a multi-selection (as "copy task id" reads it),
+     * into the Search window's added elements; `replacing` empties them first. Null in the tree: no such entries.
+     */
+    onAddTasks: ((taskIds: List<TaskId>, replacing: Boolean) -> Unit)? = null,
+    /**
      * Draw only THIS cell of the list, as the tree's **pinned parent row** ([TaskTreeView]): a second drawing
      * of a row that is also drawn, scrolled off, in its place. Drawn by this same code so the two cannot look
      * different, but inert where two copies would fight: never in Edit Mode or in the min-time input (one field
@@ -635,10 +641,16 @@ internal fun CellListSection(
             } else {
                 remember(
                     menuTaskId, cellId, isRootRow, hasChildren, menuStartable, menuHasTemplate,
-                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent,
+                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks,
                 ) {
                     val taskId = menuTaskId
+                    val addTargets = {
+                        SchedulerDomain.contextMenuCopyTargets(currentState, currentState.selection, cellId)
+                            .mapNotNull { currentState.cells[it]?.taskId }
+                    }
                     TaskCellMenuActions(
+                        onAdd = onAddTasks?.takeUnless { isRootRow }?.let { add -> { add(addTargets(), false) } },
+                        onAddReplacing = onAddTasks?.takeUnless { isRootRow }?.let { add -> { add(addTargets(), true) } },
                         // PRD §13 "start this task now": the plan puts this task at the now-line. It names
                         // ONE task however many cells are selected — unlike "copy task id", "start *this*
                         // task" has no meaning for a block — and only a schedulable leaf can be asked for.
@@ -863,6 +875,7 @@ internal fun CellListSection(
                 rowLeading = rowLeading,
                 onGoToTaskTree = onGoToTaskTree,
                 namingSource = namingSource,
+                onAddTasks = onAddTasks,
                 rowPath = path,
             )
         }
