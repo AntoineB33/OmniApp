@@ -59,6 +59,7 @@ Two different questions, answered in two different places:
 | OS sleep / lock history ("no computer unlocked" layer) | Windows power log | None | None | None |
 | System-wide shortcuts, task picker overlay | Yes (`Ctrl+Shift+Alt+…`) | Unsupported | Unsupported | Unsupported |
 | Scheduler solver | Built-in search **+ OR-Tools MIP** | Built-in search | Built-in search | Built-in search |
+| "The app is in focus" (the unfocused-notif window) | **The OS's answer**: one of the app's windows is the active one (`LocalAppInFocus`, AWT `activeWindow`) | The window's own flag (`isWindowFocused`) | The window's own flag | The window's own flag |
 | Window placement memory, app window chrome | Yes | — | — | — |
 | Launch-script login / start offline | System properties (`account*.bat`) | Intent extras | — | — |
 | Debug time link, perf platform stats | Yes | — | — | — |
@@ -70,6 +71,10 @@ These make a touch-only device less capable than a computer, and need a product 
 1. **The selection/position history has no on-screen control** (Undo / Redo do: the window bar's ⋮ menu).
 2. **Tree editing commands that only a keyboard reaches**: paste, cut, find & replace, Tab/indent, Delete, arrow
    navigation, Ctrl+click (Shift+click has the selection's dots).
+4. **"The app is in focus" off the desktop** is still the window's own flag, which a menu or drop-down inside the
+   app turns off — so a notification firing while one is open brings the unfocused-notif window up there too
+   (anomaly 2026-10-07, fixed on the desktop by `LocalAppInFocus`). Each entry point should inject its own answer
+   (Android: the activity is resumed; the browser: the page has the focus).
 3. **Browser presence**: a browser tab reports itself inactive, so it never counts as "someone is at a screen". A
    Page Visibility signal would fix it, but adds heartbeat traffic the server-quota budget does not yet cover
    (`docs/invariants/server-quota.md`).

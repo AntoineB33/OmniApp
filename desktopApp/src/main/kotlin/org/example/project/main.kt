@@ -77,7 +77,31 @@ fun main() {
                 }
                 onDispose { DesktopAppWindow.bringToFront = {} }
             }
-            App(store = store)
+            // Whether the APP has the focus, as the OS says it — what "a notification fired while the app was not in
+            // focus" is asked of ([LocalAppInFocus]). Not the Compose window's own flag, which a menu inside the app
+            // turns off.
+            androidx.compose.runtime.CompositionLocalProvider(LocalAppInFocus provides rememberAppInFocus()) {
+                App(store = store)
+            }
         }
     }
+}
+
+/**
+ * Whether one of THIS app's windows is the active one — the main window, or one it opens beside it (the task picker's
+ * overlay). AWT's `activeWindow` is null exactly while another application has the focus. Event-driven: the focus
+ * manager tells every change; nothing is polled.
+ */
+@androidx.compose.runtime.Composable
+private fun rememberAppInFocus(): Boolean {
+    val manager = androidx.compose.runtime.remember { java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager() }
+    val inFocus = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(manager.activeWindow != null) }
+    DisposableEffect(manager) {
+        val listener = java.beans.PropertyChangeListener { inFocus.value = manager.activeWindow != null }
+        manager.addPropertyChangeListener("activeWindow", listener)
+        // The window may have become the active one between the first reading and the listener.
+        inFocus.value = manager.activeWindow != null
+        onDispose { manager.removePropertyChangeListener("activeWindow", listener) }
+    }
+    return inFocus.value
 }

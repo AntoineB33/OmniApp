@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The unfocused-notif window opened while the app was in use — 2026-10-07
+
+Anomaly: "I was on the calendar, when a notification happened and opened the unfocused notif, even though it is only
+meant for notifications when the app is not in focus." Read off the release state (a copy): the app started at
+03:01:04, the window that opened says the app lost the focus at 03:01:13.620, and the notification of 03:01:20 brought
+it up — the user was in the app throughout. "In focus" was `LocalWindowInfo.isWindowFocused`, which is the main
+content's keyboard focus, not the application's: it turns false while a menu or a drop-down inside the app holds the
+keyboard. (That a menu was open at 03:01:13 is inferred, not logged: nothing recorded focus changes.)
+
+- **`LocalAppInFocus`** (new seam, `docs/PLATFORMS.md`): the entry point says whether the app has the focus. The
+  desktop injects the OS's answer — one of the app's windows is AWT's `activeWindow` (`main.kt`,
+  `rememberAppInFocus`, event-driven). Where nothing is injected (Android, iOS, the browser) the window's own flag is
+  still read: the same anomaly is possible there, listed as an open gap.
+- The window's opening is now logged with the notification it answers and since when the app was out of focus
+  (`collect-diagnostics.bat`).
+
+Not verified on screen. Client only; no test covers an OS focus change.
+
 ### Held and released look the same, in the calendar too — 2026-10-07
 
 The user, on the audit below leaving "only task panels retract under a held period; two periods that would merge on

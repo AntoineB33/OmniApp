@@ -361,6 +361,14 @@ private val CALENDAR_RESET_CHROME: WindowChrome = WindowChrome(WindowFill.Both, 
 /** How many frames a ☆ button's click waits for the window it creates to register, to give its tab the button's name. */
 private const val TAB_TITLE_FRAMES: Int = 10
 
+/**
+ * **Whether the app has the focus**, as the PLATFORM says it — injected by the entry point (`docs/PLATFORMS.md`: a
+ * platform difference is an injected seam, never a question about which build this is). Null where the entry point
+ * injects nothing: the window's own `isWindowFocused` is then read, which also turns false while a menu or a
+ * drop-down inside the app holds the keyboard.
+ */
+val LocalAppInFocus = androidx.compose.runtime.compositionLocalOf<Boolean?> { null }
+
 private enum class FloatingWindow(val title: String) {
     Calendar("Calendar"),
     History("History"),
@@ -1527,7 +1535,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var notificationsWindowId by remember { mutableStateOf<String?>(null) }
         var unfocusedSinceMillis by remember { mutableStateOf<Long?>(clock.nowMillis()) }
         var notificationAnsweredAtMillis by remember { mutableStateOf<Long?>(null) }
-        val appFocused = LocalWindowInfo.current.isWindowFocused
+        // **Whether the APP has the focus is the platform's to say** (anomaly 2026-10-07: the window opened while the
+        // user was on the calendar). `isWindowFocused` is not that: it turns false whenever something INSIDE the app
+        // takes the keyboard off the main content — a right-click menu, a drop-down — so a menu left open made every
+        // notification "one that fired while the app was out of focus". The entry point injects the real answer
+        // ([LocalAppInFocus]: on the desktop, whether any window of the app is the active one); only where none is
+        // injected is the window's own flag read.
+        val appFocused = LocalAppInFocus.current ?: LocalWindowInfo.current.isWindowFocused
         val lastNotificationAtMillis = schedulerState.notificationLog.lastOrNull()?.timeMillis
         fun openSearchFrames(): List<String> =
             listOfNotNull(FloatingWindow.Search.name.takeIf { isWindowOpen(FloatingWindow.Search) }) +
@@ -1538,6 +1552,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val since = unfocusedSinceMillis
             if (since != null && SearchDomain.notificationsWindowOwed(lastNotificationAtMillis, since, notificationAnsweredAtMillis)) {
                 notificationAnsweredAtMillis = lastNotificationAtMillis
+                // scripts/collect-diagnostics.bat: why the window came up — the notification it answers, and since
+                // when the app says it was out of focus.
+                Diagnostics.log(
+                    "unfocused notif window: a notification at ${Diagnostics.formatInstant(lastNotificationAtMillis ?: since)} " +
+                        "fired with the app out of focus since ${Diagnostics.formatInstant(since)}",
+                )
                 val open = openSearchFrames()
                 // The window already gathering (held, or left open across a restart) is brought back in front; else a
                 // new one opens on what fired since the focus was lost. One the user CHANGED since (its search
