@@ -1408,7 +1408,7 @@ private fun MinTimeDisplayCell(
 ) {
     Box(
         modifier = modifier
-            .width(MIN_TIME_COLUMN_WIDTH)
+            .width(if (org.example.project.ui.LocalTightRowColumns.current) org.example.project.ui.TIGHT_MIN_TIME_WIDTH else MIN_TIME_COLUMN_WIDTH)
             .padding(horizontal = 2.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -3276,7 +3276,7 @@ internal fun TaskRow(
                 // "edit / copy / deep copy" one — the press is consumed here so the row never sees it.
                 Box(
                     modifier = Modifier
-                        .width(PERCENT_COLUMN_WIDTH)
+                        .width(if (org.example.project.ui.LocalTightRowColumns.current) org.example.project.ui.TIGHT_PERCENT_WIDTH else PERCENT_COLUMN_WIDTH)
                         .then(
                             if (priorityLabel != null) {
                                 Modifier

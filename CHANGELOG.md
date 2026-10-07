@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a result row's blank columns go to the path — 2026-10-07
+
+The user: a task element reads "task", then lots of space, the arrow, the title, the path, the priority, lots of
+space, the minimum time, the category, lots of space — "it is weird that there is so much space, but the paths
+section is shrinked because it lacks space". The kind section was 104 dp whatever the list held: it is now as wide as
+the widest kind listed. The percentage, the minimum time and the categories stood in the tree's column widths: in a
+result row they are as wide as what they show (`LocalTightRowColumns`). A long title still prevails over the path —
+that rule is unchanged. The tree and the sub-trees keep their columns.
+
+Seen on the headless render (800 px wide): "task" is followed at once by the arrow, and the gaps round the minimum
+time are gone. No test kept. Not verified in the live app. Client only.
+
 ### Window bar: a tab's outline is the colour of its name — 2026-10-07
 
 User rule: "In the system tray, the outline must have the color opposite to the background color of the window" —

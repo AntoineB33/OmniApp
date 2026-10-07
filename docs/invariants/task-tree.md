@@ -826,6 +826,12 @@ suggestions before it was ever entered.
   parent cell — the result row's own, an ordinary selectable cell, where the tree's is the root cell and so no via —
   and the selection and the edit session then pointed at an occurrence nothing draws: a first-level cell of an
   expanded row took the press, showed no selection and never entered Edit Mode, while every deeper cell worked.
+- **A result row gives its room to the PATH** (user rule 2026-10-07: "there is so much space, but the paths section is
+  shrinked because it lacks space"): the kind section is as wide as the widest kind the list HOLDS
+  (`rememberKindSectionWidth`, never above the old fixed 104 dp — a list of tasks alone left a hundred pixels blank
+  after "task"), and a result row's percentage, minimum time and categories are only as wide as what they show
+  (`LocalTightRowColumns`, read by the cells themselves so the row stays the tree's one drawing). The tree, and a
+  result row's own SUB-TREE, keep the full columns: there every row lines up under the one above.
 - **ONE surface of the Search window shows a selection at a time** (anomaly 2026-10-07; `SearchWindow`'s
   `selectionSurface`): a sub-tree's selection is the state's (`searchSelection`, ONE for every sub-tree) and a row's
   is the window's own, so a press on a cell and then on its row left both drawn. The window names the sub-tree the

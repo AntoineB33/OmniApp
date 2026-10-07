@@ -788,6 +788,7 @@ fun SearchWindow(
                     val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
                     val pinnedIndex by remember(listState, bandPx) { derivedStateOf { pinnedItemIndex(listState, bandPx) } }
                     val pinScope = rememberCoroutineScope()
+                    val resultKindWidth = rememberKindSectionWidth(results)
                     // A task row, for the list and for its pinned copy ([headOnly]): one drawing, so the two cannot
                     // look different. The copy is never in Edit Mode or in the min-time input — one field a session.
                     val taskRow: @Composable (Int, SearchDomain.TaskResult, Boolean) -> Unit = { index, result, headOnly ->
@@ -842,6 +843,7 @@ fun SearchWindow(
                             },
                             subtreeShowsSelection = selectionSurface == RESULT_SURFACE + result.taskId.value,
                             headOnly = headOnly,
+                            kindWidth = resultKindWidth,
                             onAddTasks = addTasks,
                             clipTop = { resultListTop },
                             scrollListBy = { px -> listState.animateScrollBy(px) },
@@ -909,6 +911,7 @@ fun SearchWindow(
                                 is SearchDomain.TaskResult -> taskRow(index, result, false)
                                 is SearchDomain.ItemResult ->
                                     ItemResultRow(
+                                        kindWidth = resultKindWidth,
                                         item = result,
                                         checked = resultKey(result) in checkedKeys,
                                         onCheckedChange = { toggleChecked(resultKey(result)) },
@@ -1111,6 +1114,7 @@ private fun AddedElementsList(
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     var listTop by remember { mutableStateOf<Float?>(null) }
     var nestedPin by remember { mutableStateOf<TaskId?>(null) }
+    val kindWidth = rememberKindSectionWidth(rows)
     // A sub-tree of this list shows the cells' selection: the rows' own is not drawn beside it.
     val rowsShowSelection = selectionSurface?.startsWith(ADDED_SURFACE) != true
     fun rowTakesSelection() {
@@ -1190,7 +1194,7 @@ private fun AddedElementsList(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        KindSection(row.kind)
+                        KindSection(row.kind, kindWidth)
                         if (row is SearchDomain.TaskResult) {
                             val taskId = row.taskId
                             // On the task's colour, as every tree row's arrow is (anomaly 2026-10-07: it had none here).
@@ -1345,17 +1349,37 @@ private fun ResultCheckBox(checked: Boolean, onCheckedChange: (Boolean) -> Unit)
     }
 }
 
-/** A row's leftmost section: which kind of thing it is. One fixed width, so every row's name starts alike. */
+/**
+ * A row's leftmost section: which kind of thing it is. One width for the whole list, so every row's name starts
+ * alike — [width], the widest label among the kinds the list HOLDS ([rememberKindSectionWidth]).
+ */
 @Composable
-private fun KindSection(kind: SearchDomain.Kind) {
+private fun KindSection(kind: SearchDomain.Kind, width: Dp = KIND_SECTION_WIDTH) {
     Text(
         text = kind.label,
         style = MaterialTheme.typography.labelSmall,
         color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.width(KIND_SECTION_WIDTH),
+        modifier = Modifier.width(width),
     )
+}
+
+/**
+ * User rule 2026-10-07: **the kind section is as wide as the widest kind LISTED**, not as the widest there is — a list
+ * of tasks alone wrote "task" and left a hundred pixels blank before the arrow, beside a path squeezed for lack of
+ * room. Measured on the labels, when the kinds listed change; never above the old fixed width.
+ */
+@Composable
+private fun rememberKindSectionWidth(rows: List<SearchDomain.Result>): Dp {
+    val kinds = rows.mapTo(LinkedHashSet()) { it.kind }
+    val measurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.labelSmall
+    val density = LocalDensity.current
+    return remember(kinds, style, density) {
+        val widest = kinds.maxOfOrNull { measurer.measure(it.label, style).size.width } ?: 0
+        (with(density) { widest.toDp() } + 8.dp).coerceAtMost(KIND_SECTION_WIDTH)
+    }
 }
 
 /**
@@ -1648,6 +1672,8 @@ private fun SearchTaskRow(
     subtreeShowsSelection: Boolean = true,
     /** The list's PINNED copy of this row ([pinnedItemIndex]): the head alone, its sub-tree is under the real one. */
     headOnly: Boolean = false,
+    /** The list's kind section's width ([rememberKindSectionWidth]). */
+    kindWidth: Dp = KIND_SECTION_WIDTH,
     /** The sub-tree cells' menu "add" / "add and remove the others" ([SearchSubtree]). */
     onAddTasks: ((taskIds: List<TaskId>, replacing: Boolean) -> Unit)? = null,
     /** The window Y of the list's top, and whether the sub-tree pins a row of its own there ([SearchSubtree]). */
@@ -1684,7 +1710,10 @@ private fun SearchTaskRow(
 
     Column(Modifier.fillMaxWidth()) {
         // The cell IS the row: it takes the list's row height itself (no slot around it, whose bare band
-        // above and below showed as a white gap between two task rows).
+        // above and below showed as a white gap between two task rows). Its minimum time and categories are only as
+        // wide as what they show ([LocalTightRowColumns]): the path has what they leave. The sub-tree under it is
+        // the tree's, columns and all.
+        androidx.compose.runtime.CompositionLocalProvider(LocalTightRowColumns provides true) {
         TaskRow(
             minHeight = RESULT_ROW_HEIGHT,
             depth = 0,
@@ -1749,7 +1778,7 @@ private fun SearchTaskRow(
             rowLeading = {
                 val key = SearchDomain.taskKey(taskId)
                 ResultCheckBox(key in checkedKeys) { onToggleChecked(key) }
-                KindSection(result.kind)
+                KindSection(result.kind, kindWidth)
             },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
             afterTitle = {
@@ -1761,6 +1790,7 @@ private fun SearchTaskRow(
             afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
             rowTrailing = { if (!result.inTaskTree) Box(Modifier.padding(start = 6.dp)) { NotInTreeLogo() } },
         )
+        }
         if (expanded && hasChildren && !headOnly) {
             SearchSubtree(
                 state = state,
@@ -2159,6 +2189,8 @@ private fun NotInTreeLogo() {
 
 @Composable
 private fun ItemResultRow(
+    /** The list's kind section's width ([rememberKindSectionWidth]). */
+    kindWidth: Dp,
     item: SearchDomain.ItemResult,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -2201,7 +2233,7 @@ private fun ItemResultRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             ResultCheckBox(checked, onCheckedChange)
-            KindSection(item.kind)
+            KindSection(item.kind, kindWidth)
             Text(
                 text = item.name,
                 style = MaterialTheme.typography.bodyMedium,

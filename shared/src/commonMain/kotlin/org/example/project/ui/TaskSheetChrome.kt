@@ -158,6 +158,21 @@ internal val PRIORITY_COLUMN_MAX = 280.dp
 internal val PERCENT_COLUMN_WIDTH = 52.dp
 
 /**
+ * User rule 2026-10-07: **a Search result row gives its room to the PATH.** A tree row's minimum time and
+ * categories stand in columns wide enough for every row of the tree to line up under one another; in a result row
+ * those widths were blank space beside a path box squeezed for lack of room. Where this is true the two are only as
+ * wide as what they show ([TIGHT_MIN_TIME_WIDTH]; the categories' own text), and the path takes what they leave.
+ * Read by the cells themselves, so the row stays the tree's one drawing.
+ */
+internal val LocalTightRowColumns = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/** The minimum time's column in a tight row: its longest usual label ("120m") and the cell's padding. */
+internal val TIGHT_MIN_TIME_WIDTH = 44.dp
+
+/** The percentage's column in a tight row: its longest label ("12.5%") and the column's padding. */
+internal val TIGHT_PERCENT_WIDTH = 44.dp
+
+/**
  * PRD §2: the guide-lines on the left that illustrate the parent-child hierarchy. One vertical line is drawn
  * in the indentation gutter under each expanded ancestor's arrow; they only appear beneath expanded cells
  * (a collapsed cell hides its rows, so there is no gutter to draw in).

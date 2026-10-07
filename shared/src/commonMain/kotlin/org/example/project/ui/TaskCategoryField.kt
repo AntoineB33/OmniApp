@@ -71,10 +71,12 @@ fun TaskCategoryCell(
     var open by remember(taskId) { mutableStateOf(false) }
     val carried = state.tasks[taskId]?.categoryIds.orEmpty().mapNotNull { state.categoryById(it) }
 
-    Box(modifier = Modifier.width(CATEGORY_COLUMN_WIDTH)) {
+    // A tight row ([LocalTightRowColumns]): as wide as what it says, never wider than the column.
+    val tight = LocalTightRowColumns.current
+    Box(modifier = if (tight) Modifier.widthIn(max = CATEGORY_COLUMN_WIDTH) else Modifier.width(CATEGORY_COLUMN_WIDTH)) {
         Text(
             modifier = Modifier
-                .fillMaxWidth()
+                .then(if (tight) Modifier else Modifier.fillMaxWidth())
                 .clip(RoundedCornerShape(4.dp))
                 .clickable { open = true }
                 .padding(horizontal = 6.dp, vertical = 2.dp),
