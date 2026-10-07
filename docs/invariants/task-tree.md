@@ -819,6 +819,21 @@ suggestions before it was ever entered.
   (`sharedAlert` shows a channel on only when all have it; `withAlertChange` writes only what was pressed), and
   **Delete** — the bin (`AddedAction.AlarmDelete`, `AddedCommand.Delete`): every added alarm off the account
   in one `SetAlarms` (a History Unit), and off the added list; the other kinds follow (above).
+- **A cell of a drawing's TOP-LEVEL list has NO render-via** (anomaly 2026-10-07;
+  `SchedulerDomain.resolveSelectionRenderVia`, `SearchWindowTest`): the first check there, before the prior
+  selection is asked, is `parentListId == state.rootListId -> null`. A Search sub-tree is the tree re-rooted at a
+  task's sub-list (`projectSearchSubtree`) and draws that list's cells under no via; the resolver named the list's
+  parent cell — the result row's own, an ordinary selectable cell, where the tree's is the root cell and so no via —
+  and the selection and the edit session then pointed at an occurrence nothing draws: a first-level cell of an
+  expanded row took the press, showed no selection and never entered Edit Mode, while every deeper cell worked.
+- **ONE surface of the Search window shows a selection at a time** (anomaly 2026-10-07; `SearchWindow`'s
+  `selectionSurface`): a sub-tree's selection is the state's (`searchSelection`, ONE for every sub-tree) and a row's
+  is the window's own, so a press on a cell and then on its row left both drawn. The window names the sub-tree the
+  last gesture went to (`"result/<task>"`, `"added/<task>"`; taken on the GESTURE — `SearchSubtree.onTakeSelection` —
+  and on the focus, since a sub-tree that already holds the keyboard gains none); only that sub-tree is given the
+  selection to draw (`showSelection`), the rows of its list draw none meanwhile, and a row selected — a press, the
+  keyboard, a new question — takes it back. Sticky: a press in another window changes nothing. Drawing only: the
+  stored selections and their history units are untouched.
 - **A task element of the ADDED list expands as a result row does** (user rule 2026-10-07): its expansion arrow
   (`TaskSheetExpandArrow`) and, expanded, the same `SearchSubtree` — the tree's own view over the task's sub-list.
   The expansion is the list's own, Compose-only; the sub-tree's selection and edit session are the Search
@@ -829,7 +844,18 @@ suggestions before it was ever entered.
   there once its own row left the top (the result list's is the row's own drawing, `SearchTaskRow(headOnly)` — never
   in Edit Mode, and a press on it scrolls its real row back); and the sub-tree, a `TaskTreeView` inside a list that
   scrolls, reckons ITS pinned row from where the list cuts it (`clipTopWindowY`) and tells the list when it pins a
-  deeper parent (`onPinnedParent`), which then pins nothing over it.
+  deeper parent (`onPinnedParent`), which then pins nothing over it. **A press on the pinned copy scrolls the list
+  UP to its real row, as in the tree** (user rule 2026-10-07): an element's own copy by `animateScrollToItem` — it is
+  at the root of the list, so it lands at the very top, with no parent to leave a band for — and a sub-tree's copy
+  through the tree's own reveal, which leaves one row's band above for the row's parent and hands the list what its
+  own scroll could not give (`TaskTreeView.scrollOuterBy`). **Where a revealed row must land depends on whose child
+  it is** (anomaly 2026-10-07): a row with a parent IN the sub-tree lands under one row's band of the tree, at the
+  top the user sees (the list's cut, else the sub-tree's own); a FIRST-LEVEL row hangs under the LIST's row, so it
+  lands under that row's band where the list pins it (`outerBandPx` — the result row is taller than a tree row, and
+  the tree's band left the cell a few pixels under the pinned copy) and right at the sub-tree's top where the list's
+  row is still in view — never under a band for a parent the sub-tree does not have. **The two scrolls run
+  together**: one after the other, the row came up in two movements.
+  **An added task element's arrow sits on its task's colour**, as every tree row's does (`taskColors`).
 - **A cell of an expanded row's sub-tree has "add" and "add and remove the others" on its menu** (user rule
   2026-10-07; `TaskTreeView.onAddTasks` -> `CellListSection`'s `TaskCellMenuActions.onAdd` / `onAddReplacing`): the
   right-clicked cell's task, or the block's when it lands inside a multi-selection (`contextMenuCopyTargets`, as

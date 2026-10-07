@@ -415,6 +415,43 @@ class SearchWindowTest {
         assertTrue(cellsWithTitle(s, "Pie").isNotEmpty(), "one undoable unit")
     }
 
+    /**
+     * Anomaly 2026-10-07: "ability to learn" expanded in the result list, a click on its first child "didn't do
+     * anything, and I can't either enter in edit mode. It works for the other task cells." The sub-tree draws its
+     * first-level cells under NO via (they are its top level), and the reducer named the result row's own cell as
+     * their via — so the selection and the edit session pointed at an occurrence nothing draws. Reproduced on the
+     * rendered window before it was fixed; pinned here on what the drawing compares.
+     */
+    @Test
+    fun a_first_level_cell_of_an_expanded_row_is_selected_and_edited_under_no_via() {
+        var s = tree()
+        val subList = s.tasks.getValue(taskWithTitle(s, "Apple")).childListId!!
+        val pieCell = cellWithTitle(s, "Pie")
+        assertEquals(subList, s.cells.getValue(pieCell).parentListId, "Pie is a first-level cell of Apple's sub-tree")
+        // The press, as the sub-tree's row sends it: drawn at its top level, so under no via.
+        s = r(
+            s,
+            SchedulerIntent.InSearchSubtree(
+                SchedulerIntent.ClickCell(pieCell, ctrl = false, shift = false, visibleOrder = emptyList()), subList, readOnly = false,
+            ),
+        )
+        assertEquals(pieCell, s.searchSelection.main)
+        assertNull(s.searchSelection.renderVia, "the row is drawn under no via: the selection names none")
+        s = r(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.BeginEdit(pieCell), subList, readOnly = false))
+        val session = assertNotNull(s.searchEditSession, "Edit Mode is entered")
+        assertEquals(pieCell, session.cellId)
+        assertNull(session.renderVia, "and it is the drawn row's")
+        // A selection an older build left with the wrong via heals at the next press.
+        val stale = s.copy(searchEditSession = null, searchSelection = s.searchSelection.copy(renderVia = s.lists.getValue(subList).parentCellId))
+        val healed = r(
+            stale,
+            SchedulerIntent.InSearchSubtree(
+                SchedulerIntent.ClickCell(pieCell, ctrl = false, shift = false, visibleOrder = emptyList()), subList, readOnly = false,
+            ),
+        )
+        assertNull(healed.searchSelection.renderVia)
+    }
+
     @Test
     fun a_cut_tasks_sub_tree_can_be_looked_through_but_not_modified() {
         val s = tree()

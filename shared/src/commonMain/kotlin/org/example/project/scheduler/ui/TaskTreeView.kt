@@ -70,6 +70,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
@@ -173,6 +174,17 @@ internal fun TaskTreeView(
     clipTopWindowY: (() -> Float?)? = null,
     /** Told whether this tree is drawing a pinned parent row: the list that holds it then pins nothing over it. */
     onPinnedParent: ((Boolean) -> Unit)? = null,
+    /**
+     * Scrolls the list holding this tree by so many pixels (negative: up). A row revealed above where that list cuts
+     * the tree — the pinned copy's real row, pressed — is beyond this tree's own scroll: the list brings it back.
+     */
+    scrollOuterBy: (suspend (Float) -> Unit)? = null,
+    /**
+     * The height of the band the list holding this tree pins ITS row in (the Search window's result row). A
+     * first-level row of this tree hangs under that row, not under one of this tree's: revealed, it lands just below
+     * that band — a taller one than this tree's own, which left the row a few pixels under the list's pinned copy.
+     */
+    outerBandPx: Float = 0f,
     /**
      * The state the task COLOURS are solved over, when that is not the state being drawn.
      *
@@ -439,12 +451,14 @@ internal fun TaskTreeView(
         val occurrence = VisibleOccurrence(selected, state.selection.renderVia)
         // The selected row's band: the pinned copy's own row when that is what was pressed, else the FIRST
         // row showing the selected occurrence (a mirrored twin is the same selection).
+        var firstLevel = false
         fun selectedBounds(): ClosedFloatingPointRange<Float>? {
             val rows = currentVisibleRows
             val path =
                 pinnedRevealPath?.takeIf { p -> rows.any { it.path == p && it.occurrence == occurrence } }
                     ?: rows.firstOrNull { it.occurrence == occurrence }?.path
                     ?: return null
+            firstLevel = path.size == 1
             return rowBounds[path]
         }
         var bounds = selectedBounds()
@@ -460,15 +474,34 @@ internal fun TaskTreeView(
         // Above, it leaves exactly one normal row height: the band the row's own parent is pinned in, so a row
         // revealed from above lands just under what it belongs to, never under the pinned copy.
         val topMargin = rowHeightPx
+        // The top the user sees: where the list holding this tree cuts it ([clipTopWindowY]), else its own.
+        val clip = clipTopWindowY?.invoke()
+        val cut = clip?.takeIf { it > viewport.start + 0.5f }
+        // Where the row's top must be at least. A row of this tree lands under the band its parent is pinned in, at
+        // the top the user sees. A FIRST-LEVEL row of a tree inside a list hangs under the LIST's row: it lands under
+        // that row's band where the list pins it ([outerBandPx]), and right at this tree's top where the list's row
+        // is still in view — never a band of this tree's below a parent it does not have (anomaly 2026-10-07: it
+        // stopped a few pixels under the list's pinned copy, which is taller than a row of the tree).
+        val upTo =
+            if (clip != null && firstLevel) maxOf(viewport.start, clip + outerBandPx)
+            else (cut ?: viewport.start) + topMargin
         val delta =
             when {
-                row.start < viewport.start + topMargin -> row.start - viewport.start - topMargin
+                row.start < upTo - 0.5f -> row.start - upTo
                 row.endInclusive > viewport.endInclusive - margin ->
                     row.endInclusive - viewport.endInclusive + margin
                 else -> 0f
             }
         if (delta != 0f) {
-            treeScroll.animateScrollTo((treeScroll.value + delta).roundToInt().coerceAtLeast(0))
+            val target = (treeScroll.value + delta).roundToInt().coerceAtLeast(0)
+            val own = (target - treeScroll.value).toFloat()
+            // What this tree's own scroll cannot give of a reveal UPWARDS is the outer list's to scroll — and the two
+            // move TOGETHER, one motion (one after the other, the row came up "in two times").
+            val rest = if (delta < 0f) delta - own else 0f
+            kotlinx.coroutines.coroutineScope {
+                if (own != 0f) launch { treeScroll.animateScrollTo(target) }
+                if (rest < -0.5f && scrollOuterBy != null) launch { scrollOuterBy(rest) }
+            }
         }
     }
 

@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -312,6 +313,12 @@ fun SearchWindow(
     // are open is a way of looking at the list, like the query itself.
     var expandedTasks by remember { mutableStateOf(emptySet<TaskId>()) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
+    // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
+    // **ONE surface of the window shows a selection of cells at a time.** A sub-tree's selection is the state's
+    // (`searchSelection`, shared by every sub-tree), a row's is the window's own; a press on either left the other
+    // drawn. This names the sub-tree the last press went to — "result/<task>" or "added/<task>" — and is null once
+    // a row took the selection back. Sticky, unlike [subtreeFocusOwner]: a press in another window changes nothing.
+    var selectionSurface by remember { mutableStateOf<String?>(null) }
     // The pinned parent row of the result list ([pinnedItemIndex]): the list's top in the window, which an expanded
     // row's sub-tree reckons its own pinned row from, and the row whose sub-tree is pinning a deeper parent there.
     var resultListTop by remember { mutableStateOf<Float?>(null) }
@@ -369,7 +376,10 @@ fun SearchWindow(
         onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, record))
     }
     // A new question starts at its best answer.
-    LaunchedEffect(kinds, query, filters, sorts) { select(0, record = false) }
+    LaunchedEffect(kinds, query, filters, sorts) {
+        select(0, record = false)
+        selectionSurface = null
+    }
     // A list read at its top stays at its top when rows arrive above it. The rows are keyed, and a keyed lazy
     // list anchors its scroll on the first VISIBLE row: a new history unit sorted first (a move of the focus,
     // newest on top) landed just above the view, so the list looked frozen while it was growing (anomaly,
@@ -439,6 +449,7 @@ fun SearchWindow(
         }
         select(index)
         subtreeFocusOwner = null
+        selectionSurface = null
         runCatching { listFocus.requestFocus() }
     }
     // Back in the search bar: a rename left open is committed, as it is when a tree cell is left.
@@ -751,7 +762,10 @@ fun SearchWindow(
                     )
                 } else {
                     // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
-                    val rowSelected = { index: Int -> index == selected && !fieldFocused && subtreeFocusOwner == null }
+                    val rowSelected = { index: Int ->
+                        index == selected && !fieldFocused && subtreeFocusOwner == null &&
+                            selectionSurface?.startsWith(RESULT_SURFACE) != true
+                    }
                     // A row of the multi-selection other than the selected one: the tree's lighter selection grey.
                     val rowInSelection = { index: Int ->
                         index != selected && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
@@ -805,12 +819,18 @@ fun SearchWindow(
                             onGoToTaskTree = { taskId -> onGoToTaskTree(taskId, null) },
                             subtreeFocused = subtreeFocusOwner == result.taskId,
                             onSubtreeFocus = { focused ->
-                                if (focused) subtreeFocusOwner = result.taskId
-                                else if (subtreeFocusOwner == result.taskId) subtreeFocusOwner = null
+                                if (focused) {
+                                    subtreeFocusOwner = result.taskId
+                                    selectionSurface = RESULT_SURFACE + result.taskId.value
+                                } else if (subtreeFocusOwner == result.taskId) {
+                                    subtreeFocusOwner = null
+                                }
                             },
+                            subtreeShowsSelection = selectionSurface == RESULT_SURFACE + result.taskId.value,
                             headOnly = headOnly,
                             onAddTasks = addTasks,
                             clipTop = { resultListTop },
+                            scrollListBy = { px -> listState.animateScrollBy(px) },
                             onNestedPin = { on ->
                                 if (on) resultNestedPin = result.taskId
                                 else if (resultNestedPin == result.taskId) resultNestedPin = null
@@ -964,6 +984,9 @@ fun SearchWindow(
                 onDeepCopyCell = onDeepCopyCell,
                 onGoToTaskTree = { taskId -> onGoToTaskTree(taskId, null) },
                 onAddTasks = addTasks,
+                taskColors = taskColors,
+                selectionSurface = selectionSurface,
+                onSelectionSurface = { selectionSurface = it },
                 onOpen = { openers.open(state, it) },
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
                 onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
@@ -1008,6 +1031,10 @@ internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
     TaskSheetExpandArrow(hasChildren = true, expanded = !collapsed, onToggle = onToggle, color = MaterialTheme.colorScheme.primary)
 }
 
+/** The window's `selectionSurface`: a sub-tree of the result list's row, or of the added elements' — then the task's id. */
+private const val RESULT_SURFACE: String = "result/"
+private const val ADDED_SURFACE: String = "added/"
+
 /** The added elements' row menu: every other element off the list (never off the account). */
 private const val REMOVE_OTHERS_LABEL: String = "remove the others"
 
@@ -1032,6 +1059,11 @@ private fun AddedElementsList(
     onDeepCopyCell: (CellId) -> Unit,
     onGoToTaskTree: (TaskId) -> Unit,
     onAddTasks: (taskIds: List<TaskId>, replacing: Boolean) -> Unit,
+    /** The tasks' colours, the tree's own: the arrow of a task element sits on its task's, as a tree row's does. */
+    taskColors: Map<TaskId, Color>,
+    /** The surface showing a selection of cells (the window's), and a press here taking it or giving it back. */
+    selectionSurface: String?,
+    onSelectionSurface: (String?) -> Unit,
     onOpen: (SearchDomain.Result) -> Unit,
     onRemove: (String) -> Unit,
     /** The row menu's "remove the others": the list holds the selected elements alone. */
@@ -1063,6 +1095,11 @@ private fun AddedElementsList(
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     var listTop by remember { mutableStateOf<Float?>(null) }
     var nestedPin by remember { mutableStateOf<TaskId?>(null) }
+    // A sub-tree of this list shows the cells' selection: the rows' own is not drawn beside it.
+    val rowsShowSelection = selectionSurface?.startsWith(ADDED_SURFACE) != true
+    fun rowTakesSelection() {
+        if (!rowsShowSelection) onSelectionSurface(null)
+    }
     fun childListOf(row: SearchDomain.Result): CellListId? =
         (row as? SearchDomain.TaskResult)?.let { state.tasks[it.taskId]?.childListId }
             ?.takeIf { state.lists[it]?.cellIds?.isNotEmpty() == true }
@@ -1087,9 +1124,11 @@ private fun AddedElementsList(
         val listState = rememberLazyListState()
         val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
         val pinnedIndex by remember(listState, bandPx) { derivedStateOf { pinnedItemIndex(listState, bandPx) } }
+        val pinScope = rememberCoroutineScope()
         Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned { listTop = it.positionInWindow().y }) {
-            // An element's row, for the list and for its pinned copy: one drawing.
-            val head: @Composable (SearchDomain.Result) -> Unit = { row ->
+            // An element's row, for the list and for its pinned copy ([pinnedAt]: the item it is the copy of — a
+            // press on the copy scrolls the list up to its real row, the tree's rule): one drawing.
+            val head: @Composable (SearchDomain.Result, Int?) -> Unit = { row, pinnedAt ->
                     val key = resultKey(row)
                     // The right-click menu, on the selection: "remove", and "remove the others" (user rule
                     // 2026-10-02) where there are others.
@@ -1099,8 +1138,8 @@ private fun AddedElementsList(
                     Box {
                     Row(
                         modifier = resultRowModifier(
-                            selected = key in selected && key == selectionMain,
-                            inSelection = key in selected && key != selectionMain,
+                            selected = rowsShowSelection && key in selected && key == selectionMain,
+                            inSelection = rowsShowSelection && key in selected && key != selectionMain,
                         )
                             .resultRowGestures(
                                 key = key,
@@ -1113,6 +1152,8 @@ private fun AddedElementsList(
                                     selection = next.selected
                                     selectionAnchor = next.anchor
                                     selectionMain = key
+                                    rowTakesSelection()
+                                    if (pinnedAt != null) pinScope.launch { listState.animateScrollToItem(pinnedAt) }
                                 },
                                 onSecondarySelect = {
                                     if (key !in currentSelected) {
@@ -1120,6 +1161,7 @@ private fun AddedElementsList(
                                         selectionAnchor = key
                                     }
                                     selectionMain = key
+                                    rowTakesSelection()
                                 },
                                 onOpen = { currentOnOpen(currentRow) },
                                 onOpenMenu = { menuOpen = true },
@@ -1130,13 +1172,16 @@ private fun AddedElementsList(
                         KindSection(row.kind)
                         if (row is SearchDomain.TaskResult) {
                             val taskId = row.taskId
+                            // On the task's colour, as every tree row's arrow is (anomaly 2026-10-07: it had none here).
+                            val taskColor = taskColors[taskId]
                             TaskSheetExpandArrow(
                                 hasChildren = childListOf(row) != null,
                                 expanded = taskId in expandedTasks,
                                 onToggle = {
                                     expandedTasks = if (taskId in expandedTasks) expandedTasks - taskId else expandedTasks + taskId
                                 },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = taskColor?.let(TaskPalette::foreground) ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                                background = taskColor,
                             )
                         }
                         Text(
@@ -1194,7 +1239,7 @@ private fun AddedElementsList(
             ) {
                 itemsIndexed(rows, key = { _, r -> resultKey(r) }) { _, row ->
                     Column(Modifier.fillMaxWidth()) {
-                        head(row)
+                        head(row, null)
                         val childListId = childListOf(row)
                         if (row is SearchDomain.TaskResult && childListId != null && row.taskId in expandedTasks) {
                             val taskId = row.taskId
@@ -1210,9 +1255,15 @@ private fun AddedElementsList(
                                 onToggleChecked = onToggleChecked,
                                 focused = subtreeFocusOwner == taskId,
                                 onFocus = { focused ->
-                                    if (focused) subtreeFocusOwner = taskId
-                                    else if (subtreeFocusOwner == taskId) subtreeFocusOwner = null
+                                    if (focused) {
+                                        subtreeFocusOwner = taskId
+                                        onSelectionSurface(ADDED_SURFACE + taskId.value)
+                                    } else if (subtreeFocusOwner == taskId) {
+                                        subtreeFocusOwner = null
+                                    }
                                 },
+                                showSelection = selectionSurface == ADDED_SURFACE + taskId.value,
+                                onTakeSelection = { onSelectionSurface(ADDED_SURFACE + taskId.value) },
                                 onIntent = onIntent,
                                 onSetWeightWindow = onSetWeightWindow,
                                 onSetRelativeWindow = onSetRelativeWindow,
@@ -1222,6 +1273,7 @@ private fun AddedElementsList(
                                 onGoToTaskTree = onGoToTaskTree,
                                 onAddTasks = onAddTasks,
                                 clipTop = { listTop },
+                                scrollListBy = { px -> listState.animateScrollBy(px) },
                                 onNestedPin = { on -> if (on) nestedPin = taskId else if (nestedPin == taskId) nestedPin = null },
                             )
                         }
@@ -1229,8 +1281,9 @@ private fun AddedElementsList(
                 }
             }
             // The pinned parent row: the element whose sub-tree shows under the top band, once its row left the top.
+            val pinnedAt = pinnedIndex
             val pinnedRow =
-                pinnedIndex?.let(rows::getOrNull)
+                pinnedAt?.let(rows::getOrNull)
                     ?.takeIf { it is SearchDomain.TaskResult && it.taskId in expandedTasks && it.taskId != nestedPin }
             if (pinnedRow != null) {
                 Box(
@@ -1242,7 +1295,7 @@ private fun AddedElementsList(
                         .clipToBounds()
                         .background(MaterialTheme.colorScheme.surface),
                 ) {
-                    head(pinnedRow)
+                    head(pinnedRow, pinnedAt)
                 }
             }
             ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
@@ -1570,6 +1623,8 @@ private fun SearchTaskRow(
     onGoToTaskTree: (TaskId) -> Unit,
     subtreeFocused: Boolean,
     onSubtreeFocus: (Boolean) -> Unit,
+    /** Whether this row's sub-tree is the surface showing the cells' selection (the window's `selectionSurface`). */
+    subtreeShowsSelection: Boolean = true,
     /** The list's PINNED copy of this row ([pinnedItemIndex]): the head alone, its sub-tree is under the real one. */
     headOnly: Boolean = false,
     /** The sub-tree cells' menu "add" / "add and remove the others" ([SearchSubtree]). */
@@ -1577,6 +1632,7 @@ private fun SearchTaskRow(
     /** The window Y of the list's top, and whether the sub-tree pins a row of its own there ([SearchSubtree]). */
     clipTop: (() -> Float?)? = null,
     onNestedPin: ((Boolean) -> Unit)? = null,
+    scrollListBy: (suspend (Float) -> Unit)? = null,
 ) {
     val taskId = result.taskId
     val live = state.tasks[taskId]
@@ -1704,6 +1760,9 @@ private fun SearchTaskRow(
                 onAddTasks = onAddTasks,
                 clipTop = clipTop,
                 onNestedPin = onNestedPin,
+                scrollListBy = scrollListBy,
+                showSelection = subtreeShowsSelection,
+                onTakeSelection = { onSubtreeFocus(true) },
             )
         }
     }
@@ -1755,10 +1814,24 @@ private fun SearchSubtree(
     clipTop: (() -> Float?)? = null,
     /** Whether this sub-tree is pinning a parent row of its own: the list then pins nothing over it. */
     onNestedPin: ((Boolean) -> Unit)? = null,
+    /** Scrolls the list (pixels, negative = up): a pinned copy pressed brings its real row back, as in the tree. */
+    scrollListBy: (suspend (Float) -> Unit)? = null,
+    /**
+     * Whether THIS sub-tree draws the cells' selection: the sub-trees share one (`searchSelection`), and the window
+     * shows it on the surface the last press went to — not here once a row, or another sub-tree, took it.
+     */
+    showSelection: Boolean = true,
+    /** A gesture went to this sub-tree: it is the surface that shows the selection from now on. */
+    onTakeSelection: () -> Unit = {},
 ) {
     val projected =
-        remember(state.cells, state.lists, state.tasks, state.searchExpanded, state.searchSelection, state.searchEditSession, listId) {
-            state.projectSearchSubtree(listId)
+        remember(
+            state.cells, state.lists, state.tasks, state.searchExpanded, state.searchSelection, state.searchEditSession, listId,
+            showSelection,
+        ) {
+            state.projectSearchSubtree(listId).let { shown ->
+                if (showSelection) shown else shown.copy(selection = org.example.project.scheduler.state.SchedulerSelection())
+            }
         }
     TaskTreeView(
         state = projected,
@@ -1771,7 +1844,11 @@ private fun SearchSubtree(
                 is SchedulerIntent.UndoPosition, is SchedulerIntent.RedoPosition,
                 is SchedulerIntent.FocusWindow,
                 -> onIntent(intent)
-                else -> onIntent(SchedulerIntent.InSearchSubtree(intent, listId, readOnly))
+                else -> {
+                    // By the gesture, not by the focus: a sub-tree that already holds the keyboard gains none.
+                    onTakeSelection()
+                    onIntent(SchedulerIntent.InSearchSubtree(intent, listId, readOnly))
+                }
             }
         },
         keyboardActive = focused,
@@ -1797,6 +1874,8 @@ private fun SearchSubtree(
         onAddTasks = onAddTasks,
         clipTopWindowY = clipTop,
         onPinnedParent = onNestedPin,
+        scrollOuterBy = scrollListBy,
+        outerBandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() },
         refocusWindow = null,
         // A task is the same colour here, in the tree and on the calendar, and a Change Task row is named from
         // the tree — both read off the LIVE state, not off the sub-tree this row re-roots it at.

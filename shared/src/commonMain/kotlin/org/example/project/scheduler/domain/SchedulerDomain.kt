@@ -420,6 +420,13 @@ object SchedulerDomain {
         prior: SchedulerSelection? = null,
     ): CellId? {
         if (explicitVia != null) return explicitVia
+        // A cell of the drawing's TOP-LEVEL list is drawn under no via, whatever that list hangs under. In the tree
+        // that is the root cell, which is no via ([renderViaOf]); in a Search sub-tree — the tree re-rooted at a
+        // task's sub-list ([org.example.project.scheduler.state.projectSearchSubtree]) — it is the result row's own
+        // cell, an ordinary one: named as the via, the selection and the edit session pointed at an occurrence
+        // nothing draws, and a first-level cell of an expanded row could be neither seen selected nor edited
+        // (anomaly 2026-10-07). Before the prior selection is asked: a via it left there is that same mistake.
+        if (state.cells[cellId]?.parentListId == state.rootListId) return null
         // A render-via must be a strict ancestor occurrence the cell is mirrored under; a cell
         // can never be rendered "via itself" (that would leave a root-viewport cell with a
         // non-null via and break shouldShowSelectionHighlight).

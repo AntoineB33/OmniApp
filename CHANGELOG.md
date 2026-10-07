@@ -11,6 +11,57 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a cell of a sub-tree and its row were both drawn selected — 2026-10-07
+
+Anomaly: "When I click on a task cell in the sub-tree, then on the root task cell (in the result list), both task cells
+are selected (even though I didn't press ctrl or shift)." Two selections, each drawn by its own rule: the sub-trees'
+(in the state) and the rows' (the window's). Visible since the same day's fix that made a first-level cell's
+selection drawn at all. Now one surface shows a selection at a time (`selectionSurface`): the sub-tree the last
+gesture went to, or the rows. The same in the added elements list. Drawing only — nothing stored changes.
+
+Seen on the Search window rendered headlessly with real mouse events (a cell pressed: it alone is grey; then its row:
+the row alone). No test kept (no Compose UI test in the project). Not verified in the live app. Client only.
+
+### Search sub-trees: a pinned first-level cell pressed stopped under the list's pinned row; the added list's arrow had no colour — 2026-10-07
+
+Two anomalies.
+- "internship" pinned and pressed, then "master everything…": "it scrolled smoothly in two times, and not fully
+  visible but a bit hidden by the top task cell 'ability to learn'". The reveal left one TREE row's band above a
+  cell whose parent is the LIST's row — a taller one — and scrolled the sub-tree, then the list, one after the other.
+  A first-level cell now lands under the list's own band (`TaskTreeView.outerBandPx`), and the two scrolls run
+  together.
+- The expansion arrow of a task in the added elements list had no background: it now sits on the task's colour, as
+  in the tree and in its own children.
+
+Both seen on the Search window rendered headlessly with real mouse events (the arrows coloured; "internship" then
+"master everything…" pressed, each landing whole under its parent) — with the list's own row still in view, NOT with
+it scrolled off and pinned, which is the user's exact case. No test kept: the project has no Compose UI test and the
+render harness is flaky (a background thread of the window races it). Not verified in the live app. Client only.
+
+### The first-level cells of an expanded result row could not be selected or edited: the real cause — 2026-10-07
+
+The user, after the entry below: "I still get the problem." The entry below was a guess read off the code, and wrong
+as a diagnosis. Reproduced this time, on the Search window rendered headlessly with real mouse events: the press
+reached the cell and the state said "selected" and "editing", and nothing was drawn. A Search sub-tree draws its
+first-level cells under no via; `SchedulerDomain.resolveSelectionRenderVia` named the result row's own cell as their
+via, so the selection and the edit session matched no drawn row. Deeper cells have a real via and worked — "it works
+for the other task cells". The rule dates from 2026-05-31, not from this week's changes; the scroll had nothing to do
+with it.
+
+Fix: a cell of the drawing's top-level list has no via. `SearchWindowTest` (the press, Edit Mode, and a stale
+selection healing). Seen fixed on the rendered window (the edit field is drawn); not verified in the live app. The
+change below — the list scrolled only where it cuts the sub-tree — stays: it is right on its own. Client only.
+
+### The first child of an expanded result row could not be selected or edited — 2026-10-07
+
+Anomaly: "ability to learn" expanded at the top of the result list, the list a few pixels down, a click on its first
+child did nothing and Edit Mode could not be entered; the other cells worked. A regression of the entry below, a few
+hours old: the sub-tree's reveal handed the outer list whatever its own scroll could not give of a reveal upwards, and
+the first row of a sub-tree is ALWAYS within one row of its top — so every press on it scrolled the list back under
+the pointer, between the press and its release. The list is now scrolled only where it really cuts the sub-tree
+(`TaskTreeView`). Diagnosed by reading the code, NOT reproduced on screen, and no test (no Compose UI test in the
+project): to be confirmed on the next build. Client only.
+
 ### Search window: expanded task elements — arrow in the added list, pinned parent row, "add" on the children — 2026-10-07
 
 Three user rules.
@@ -22,6 +73,10 @@ Three user rules.
   and the list then pins nothing over it.
 - **The children cells** of an expanded element have "add" and "add and remove the others" on their right-click menu
   (`TaskTreeView.onAddTasks`).
+
+**A press on the pinned copy scrolls the list up to its real row**, as in the task tree (user, the same day): an
+element's own copy in either list, and a sub-tree's copy too — the list scrolls for what the sub-tree's own scroll
+cannot give (`TaskTreeView.scrollOuterBy`).
 
 No test: there is no Compose UI test in the project and all three are drawing and gestures. Not verified on screen —
 the pinned row in particular relies on the rows reporting their window position again as the outer list scrolls.
