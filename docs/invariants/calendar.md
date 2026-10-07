@@ -841,8 +841,9 @@ Global rules that always apply: `CLAUDE.md`.
   It no longer opens the element window below ("edit…" still does). The Search
   window's **calendar filter** — a GLOBAL setting of the Search configurations window (`Setting.CalendarAdd`: a switch,
   a `YYYY-MM-DD HH:MM` position, and "Set to the right-click", offered only while `Config.calendarClickMillis` says the
-  window came from the calendar) — keeps only `SearchDomain.calendarAddable` rows: a placeable task whose resilience to
-  the periods covering that instant (`calendarKindsAt`, the panels' kinds with what each carries) is above 0; any kind
+  window came from the calendar) — keeps only `SearchDomain.calendarAddable` rows: a placeable task, WHATEVER
+  PERIOD STANDS THERE (anomaly 2026-10-07: what the periods refuse is the "without removing anything" state's
+  question, `task-tree.md` § the three states); any kind
   of period; a reminder; an **alarm** and a **timer** (user rule 2026-10-01 — a timer only while the instant is ahead
   of the clock and within its longest run); a "creation" row of a kind the calendar lays. Its action **"Add to the
   calendar"** lays the added ones at its START (`Config.placement`, user rule 2026-10-05: a day and a time, the

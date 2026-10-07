@@ -83,8 +83,13 @@ class SearchCalendarFilterTest {
     fun the_filter_keeps_only_what_can_be_added_at_that_instant() {
         val s = account()
         val shown = names(s, SearchDomain.calendarAddConfig(at))
-        assertTrue("Read" in shown, "Read may work through the deep-work period")
-        assertFalse("Walk" in shown, "Walk's resilience to it is 0: it cannot be put there")
+        // "Can be added" (what "add…" opens on): every schedulable task, whatever period stands there (anomaly
+        // 2026-10-07). What the period refuses is the "without removing anything" state's question.
+        assertTrue("Read" in shown && "Walk" in shown, "every schedulable task can be added")
+        val keeping = SearchDomain.calendarAddConfig(at).let {
+            it.copy(filters = it.filters.withCalendarAddFilter(SearchDomain.CalendarAddFilter.KeepingEverything))
+        }
+        assertFalse("Walk" in names(s, keeping), "Walk's resilience to the period is 0: it could only stand there with the period gone")
         assertTrue("RestrictivePeriod:deep work" in shown && "RestrictivePeriod:" + PeriodKinds.SLEEP in shown, "any kind of period")
         assertTrue("Reminder:reminder-0" in shown, "a tag of a reminder")
         assertTrue("Alarm:alarm-0" in shown, "an alarm: it then rings there (user rule 2026-10-01)")
@@ -127,11 +132,14 @@ class SearchCalendarFilterTest {
         val tz = kotlinx.datetime.TimeZone.UTC
         val drafts = SearchDomain.calendarDrafts(s, added, at, tz)
         assertEquals(
-            listOf(CalendarElements.Kind.TaskPanel, CalendarElements.Kind.RestrictivePeriod, CalendarElements.Kind.Reminder, CalendarElements.Kind.Alarm),
+            listOf(
+                CalendarElements.Kind.TaskPanel, CalendarElements.Kind.TaskPanel, CalendarElements.Kind.RestrictivePeriod,
+                CalendarElements.Kind.Reminder, CalendarElements.Kind.Alarm,
+            ),
             drafts.map { it.kind },
-            "Walk cannot go there; a timer is not a draft (it is put on the clock)",
+            "Walk can be added there too, whatever the period refuses; a timer is not a draft (it is put on the clock)",
         )
-        val alarm = drafts[3]
+        val alarm = drafts[4]
         assertEquals("alarm-0", alarm.existingId, "the alarm itself, edited, not a new one")
         assertEquals(at, alarm.startMillis)
         assertTrue(alarm.alarmArmed)
@@ -147,9 +155,10 @@ class SearchCalendarFilterTest {
         assertEquals(read, panel.taskId)
         assertEquals(at, panel.startMillis)
         assertEquals(at + s.tasks[read]!!.minimumMinutes * 60_000L, panel.endMillis, "its task's minimum time")
-        assertEquals(at + hour, drafts[1].endMillis, "a period an hour")
-        assertEquals(at, drafts[2].endMillis, "a tag has no duration")
-        assertEquals("reminder-0", drafts[2].reminderId)
+        assertEquals(taskWithTitle(s, "Walk"), drafts[1].taskId)
+        assertEquals(at + hour, drafts[2].endMillis, "a period an hour")
+        assertEquals(at, drafts[3].endMillis, "a tag has no duration")
+        assertEquals("reminder-0", drafts[3].reminderId)
         val newAlarm = SearchDomain.calendarAlarmDraft(s, at)
         assertEquals(CalendarElements.Kind.Alarm, newAlarm.kind)
         assertEquals(at + s.newAlarmDefaults.soundSeconds * 1000L, newAlarm.endMillis)

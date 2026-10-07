@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "add…" on a Sleep period: "Can be added" listed no task — 2026-10-07
+
+Anomaly (account 3): right-click on a Sleep period, "add…", only tasks checked, the filter on "Can be added" — the list
+held the task creation row alone. The user: "all the schedulable tasks (those without children, except the root) must
+appear in the result list. If the filter was 'can be added without removing anything', then the result list would only
+show the task creation element, since the current configurations don't allow any task during a sleep period."
+
+"Can be added" (`SearchDomain.calendarAddable`) also asked that the task's resilience let it run in the periods at the
+instant — the stricter state's question. It now asks only that the task is schedulable; the resilience test moved to
+"without removing anything" (`calendarTaskStandsIn`). The entry "'add…' at night listed no task" below fixed another
+cause (the stored window read instead of the drawn one) and its test pinned the wrong rule ("where it still stands,
+they cannot"): rewritten. Consequence: "Add to the calendar" now lays a task over a period that refuses it, since it
+lays what "can be added" lists — what the reducer then does with the two was not examined.
+
+`CalendarAddFilterTest`, `SearchCalendarFilterTest`. Not verified on screen. Client only.
+
 ### The input changes, the scheduler runs from scratch: one rule instead of three special cases — 2026-10-07
 
 The user, on the entry below: "My previous prompt was only a use case … If each movement of the mouse when dragging a

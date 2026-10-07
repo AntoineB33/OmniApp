@@ -1701,13 +1701,17 @@ object SearchDomain {
                 .let { rows ->
                     // The calendar filter: about every kind, so asked of every row, once the instant's kinds are read.
                     val at = filters.calendarAddAt ?: return@let rows
-                    val kindsAt = calendarKindsAt(state, at)
-                    val addable = rows.filter { calendarAddable(state, it, kindsAt, at, nowMillis) }
+                    val addable = rows.filter { calendarAddable(state, it, at, nowMillis) }
                     if (!filters.calendarAddKeeping) return@let addable
-                    // The stricter state: what the add itself would leave in place, asked of the add's own reducer.
+                    // The stricter state: a task the periods there refuse could only stand by removing them
+                    // ([calendarTaskStandsIn]), and what the add itself would leave in place is asked of the add's
+                    // own reducer.
+                    val kindsAt = calendarKindsAt(state, at)
                     val end = placementEnd(placement ?: Placement(), at)
                     val around = calendarAddSurroundings(state, at, end)
-                    addable.filter { calendarAddKeepsEverything(around, it, at, end, timeZone) }
+                    addable.filter {
+                        calendarTaskStandsIn(state, it, kindsAt) && calendarAddKeepsEverything(around, it, at, end, timeZone)
+                    }
                 }
                 .let { rows ->
                     // The "is on the calendar at" filter: the keys of what is there, read once.
@@ -2922,20 +2926,19 @@ object SearchDomain {
     var drawnPeriodKindsAt: (Long) -> Set<String>? = { null }
 
     /**
-     * Whether [result] can be added to the calendar at [atMillis], whose period kinds are [kindsAt] — what the calendar
-     * can show there: a task the scheduler may place (a leaf in the tree) whose resilience lets it run in those periods
-     * (their product above 0, [PeriodKinds.multiplier]); any kind of restrictive period; a reminder (a tag of it); an
+     * Whether [result] can be added to the calendar at [atMillis] — what the calendar can show there: a task the
+     * scheduler may place (a leaf in the tree), WHATEVER PERIOD STANDS THERE (anomaly 2026-10-07: "add…" on a Sleep
+     * period listed no task under "Can be added" — the user: *"all the schedulable tasks … must appear in the result
+     * list. If the filter was 'can be added without removing anything', then the result list would only show the task
+     * creation element, since the current configurations don't allow any task during a sleep period"*; what the
+     * periods there refuse is the stricter state's question, [calendarTaskStandsIn]); any kind of restrictive period; a reminder (a tag of it); an
      * alarm (user rule 2026-10-01: it then rings at that time of day, on that weekday too — [calendarDrafts]); a timer
      * the instant is still ahead of and within its longest run (it then ends there — [calendarTimerIntents]); and the
      * "creation" rows of the kinds the calendar lays a new one of. Nothing else is.
      */
-    fun calendarAddable(state: SchedulerState, result: Result, kindsAt: Set<String>, atMillis: Long, nowMillis: Long): Boolean =
+    fun calendarAddable(state: SchedulerState, result: Result, atMillis: Long, nowMillis: Long): Boolean =
         when (result) {
-            is TaskResult -> {
-                val task = state.tasks[result.taskId]
-                task != null && SchedulerDomain.isPlaceableTask(state, result.taskId) &&
-                    PeriodKinds.multiplier(task.resilience, kindsAt) > 0.0
-            }
+            is TaskResult -> state.tasks[result.taskId] != null && SchedulerDomain.isPlaceableTask(state, result.taskId)
             is ItemResult -> when (result.kind) {
                 Kind.RestrictivePeriod -> result.id in state.allPeriodKinds
                 Kind.Reminder -> true
@@ -2945,6 +2948,15 @@ object SearchDomain {
                 else -> false
             }
         }
+
+    /**
+     * **"Without removing anything"**, for a task: whether its resilience lets it run in the periods [kindsAt] standing
+     * where it would be added (their product above 0, [PeriodKinds.multiplier]). One that cannot could only stand
+     * there with the period gone — and the periods the calendar derives (the schedule's Sleep window, a break) are in
+     * no panel the add's reducer could be seen to remove. Every other row passes.
+     */
+    fun calendarTaskStandsIn(state: SchedulerState, result: Result, kindsAt: Set<String>): Boolean =
+        result !is TaskResult || state.tasks[result.taskId]?.let { PeriodKinds.multiplier(it.resilience, kindsAt) > 0.0 } != false
 
     /** Whether a timer started now can end at [atMillis]: ahead of the clock, and no further than its longest run. */
     private fun timerCanEndAt(atMillis: Long, nowMillis: Long): Boolean =
@@ -3040,8 +3052,7 @@ object SearchDomain {
          */
         endMillis: Long? = null,
     ): List<CalendarElements.Draft> {
-        val kindsAt = calendarKindsAt(state, atMillis)
-        return added.filter { calendarAddable(state, it, kindsAt, atMillis, nowMillis = atMillis - 1) }.mapNotNull { row ->
+        return added.filter { calendarAddable(state, it, atMillis, nowMillis = atMillis - 1) }.mapNotNull { row ->
             val pick = when {
                 row is TaskResult -> CalendarElements.Draft(
                     kind = CalendarElements.Kind.TaskPanel,

@@ -959,14 +959,24 @@ suggestions before it was ever entered.
   second reading of what refuses what. Asked of every row of the list, so on the state cut down to what the span can
   touch (`calendarAddSurroundings`: the panels within a day of it, no history, no re-plan). A row that lays no panel
   (a ring, a timer, a "creation" row) removes nothing.
-- **"What can be added there" reads the periods AS THE CALENDAR DRAWS THEM** (anomaly 2026-10-07;
+- **"Can be added" lists EVERY schedulable task, in a Sleep period as anywhere; a period that refuses a task keeps it
+  out of "without removing anything" ONLY** (anomaly 2026-10-07; `calendarAddable`, `calendarTaskStandsIn`,
+  `CalendarAddFilterTest`, `SearchCalendarFilterTest`). The user, on "add…" over a Sleep period listing the creation
+  row alone: *"all the schedulable tasks (those without children, except the root) must appear in the result list.
+  If the filter was 'can be added without removing anything', then the result list would only show the task
+  creation element, since the current configurations don't allow any task during a sleep period."* The resilience
+  test (`PeriodKinds.multiplier` over `calendarKindsAt` above 0) had been part of "can be added"; it is the stricter
+  state's, beside the reducer's answer — the ONE reading of "what refuses what" that state does make, because the
+  periods the calendar derives (the schedule's Sleep window, a break) are in no panel the add's reducer could be
+  seen to remove. "Add to the calendar" lays what "can be added" lists (`calendarDrafts` asks the same
+  `calendarAddable`), the task over the period included.
+- **The "without removing anything" state reads the periods AS THE CALENDAR DRAWS THEM** (anomaly 2026-10-07;
   `SearchDomain.calendarKindsAt`, `SearchDomain.drawnPeriodKindsAt` injected by `App` off `CalendarLayersHolder.periods`,
   `CalendarAddFilterTest`). The stored panels cannot say it alone: the schedule's Sleep window is stored over its
   whole night, and the rules cut it where the line crossed it at a screen from what the devices observed, which is
-  not in the state — read stored, a right-click at 03:14 at the screen found no task that could be added. One
-  reading for the filter, for its "without removing anything" state and for "Add to the calendar" itself
-  (`calendarDrafts`), since all three ask `calendarKindsAt`. Outside the span the calendar shows, the stored panels
-  answer. A window still standing AHEAD of the line goes on refusing the tasks it refuses.
+  not in the state — read stored, a right-click at 03:14 at the screen found no task that could be added. Outside
+  the span the calendar shows, the stored panels answer. A window still standing AHEAD of the line goes on refusing
+  the tasks it refuses — in that state only (the bullet above).
 - **The calendar filters** (tasks and restrictive-period kinds): on the calendar at all, every box from a day,
   every box until the end of a day. A day bound needs a box: an element with none fails it. A task's boxes are
   `SchedulerDomain.calendarBoxesOfTask` (its records and every panel placed for it — the scheduler's past reads the

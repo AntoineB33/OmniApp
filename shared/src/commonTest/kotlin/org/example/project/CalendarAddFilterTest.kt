@@ -81,24 +81,35 @@ class CalendarAddFilterTest {
     }
 
     /**
-     * Anomaly 2026-10-07: right-click at 03:14, at the screen, inside the schedule's Sleep window — "add…" listed no
-     * task at all. The stored window covers the whole night; the calendar draws it cut where the line crossed it at a
-     * screen, and that drawn reading is the one "what can be added there" must take.
+     * Anomaly 2026-10-07 (the second): "add…" on a Sleep period, only tasks checked, the filter on "Can be added" —
+     * the list held the creation row alone. The user: *"all the schedulable tasks (those without children, except the
+     * root) must appear in the result list. If the filter was 'can be added without removing anything', then the
+     * result list would only show the task creation element, since the current configurations don't allow any task
+     * during a sleep period."*
+     *
+     * And the first, 03:14 at the screen inside the schedule's Sleep window: the stored window covers the whole night,
+     * the calendar draws it cut where the line crossed it at a screen, and that drawn reading is the one the stricter
+     * state takes.
      */
     @Test
-    fun what_can_be_added_is_asked_of_the_periods_as_the_calendar_draws_them() {
-        val (s0, _, read) = state()
+    fun a_period_that_refuses_a_task_keeps_it_out_of_the_stricter_state_only() {
+        val (s0, work, read) = state()
         val night = org.example.project.scheduler.model.TaskPanel("sleep/1", null, "Sleep", at(0.0), at(7.5), sleep = true)
         val s = s0.copy(panels = s0.panels + night)
+        val tasks = setOf(SearchDomain.taskKey(work), SearchDomain.taskKey(read))
+        fun tasksOf(filter: SearchDomain.CalendarAddFilter, hour: Double) = keys(s, filter, hour).filterTo(HashSet()) { it in tasks }
         try {
-            assertFalse(SearchDomain.taskKey(read) in keys(s, SearchDomain.CalendarAddFilter.Addable, 3.0), "the stored window refuses every task")
+            // "Can be added": every schedulable task, in the Sleep period as anywhere.
+            assertEquals(tasks, tasksOf(SearchDomain.CalendarAddFilter.Addable, 3.0))
+            assertEquals(tasksOf(SearchDomain.CalendarAddFilter.Addable, 14.0), tasksOf(SearchDomain.CalendarAddFilter.Addable, 3.0))
+            // "Without removing anything": none — no task runs during sleep.
+            assertEquals(emptySet(), tasksOf(SearchDomain.CalendarAddFilter.KeepingEverything, 3.0))
+
             // The calendar draws the window from 04:00 on: the line crossed the rest at a screen.
             SearchDomain.drawnPeriodKindsAt = { t -> if (t >= at(4.0) && t < at(7.5)) setOf(PeriodKinds.SLEEP) else emptySet() }
-            assertTrue(SearchDomain.taskKey(read) in keys(s, SearchDomain.CalendarAddFilter.Addable, 3.0), "where it gave way, tasks can be added")
-            assertFalse(SearchDomain.taskKey(read) in keys(s, SearchDomain.CalendarAddFilter.Addable, 5.0), "where it still stands, they cannot")
-            // Outside what the calendar shows, the stored panels answer.
-            SearchDomain.drawnPeriodKindsAt = { null }
-            assertFalse(SearchDomain.taskKey(read) in keys(s, SearchDomain.CalendarAddFilter.Addable, 3.0))
+            assertEquals(tasks, tasksOf(SearchDomain.CalendarAddFilter.Addable, 5.0))
+            assertTrue(SearchDomain.taskKey(read) in keys(s, SearchDomain.CalendarAddFilter.KeepingEverything, 3.0), "where it gave way, a task removes nothing")
+            assertEquals(emptySet(), tasksOf(SearchDomain.CalendarAddFilter.KeepingEverything, 5.0), "where it still stands, it would")
         } finally {
             SearchDomain.drawnPeriodKindsAt = { null }
         }
