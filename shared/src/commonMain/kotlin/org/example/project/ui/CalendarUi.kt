@@ -1694,8 +1694,6 @@ fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
     onToggleCalendar: () -> Unit,
-    /** Sleep schedule window: open one. */
-    onToggleSleep: () -> Unit = {},
     /** PRD §5 Categories: open a window on the account's list of categories. */
     onToggleCategories: () -> Unit = {},
     /**
@@ -1866,12 +1864,8 @@ fun LateralMenu(
             chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.ToggleAway),
         )
 
-        // Sleep schedule: toggles the floating window for the nightly sleep window the scheduler avoids.
-        MenuButton(
-            label = "Sleep schedule",
-            active = false,
-            onClick = onToggleSleep,
-        )
+        // The sleep schedule is not here any more (user rule 2026-10-07): it is a section of the calendar window's
+        // configuration ([SleepScheduleFields]).
 
         // PRD §7 Search: find a task, a category, a restrictive-period kind, an alarm, a timer or a reminder by
         // name — including a task no task tree holds any more, which nothing else in the menu can reach.
@@ -3871,6 +3865,9 @@ fun CalendarFloatingWindow(
     /** The balance of the score's two criteria (`SchedulerState.minimumTimeWeight`) and its edit. */
     minimumTimeWeight: Double = org.example.project.scheduler.state.DEFAULT_MINIMUM_TIME_WEIGHT,
     onMinimumTimeWeightChange: (Double) -> Unit = {},
+    /** The account's sleep schedule and its edit — the configuration section's "Sleep" (user rule 2026-10-07). */
+    sleepSchedule: org.example.project.scheduler.model.SleepSchedule? = null,
+    onSleepScheduleChange: (org.example.project.scheduler.model.SleepSchedule) -> Unit = {},
     /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
     showReminders: Boolean = true,
     /** PRD §14: flip the "Reminders" display switch. */
@@ -4022,8 +4019,28 @@ fun CalendarFloatingWindow(
             }
         },
     ) {
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
+        // User rule 2026-10-07: as in the Search window, each of the two sections is retracted to its arrow and
+        // expanded again by it ([SectionArrow]), and the line between them is dragged — up to the edges. Compose-only,
+        // a way of looking at the window. The grid stays COMPOSED while it is retracted or squeezed (laid out at
+        // [CALENDAR_GRID_MIN_WIDTH] at least and cut): its scroll and its zoom are its own, and a week laid out in
+        // no width at all is a case nothing else asks of it.
+        var gridCollapsed by remember { mutableStateOf(false) }
+        var configurationCollapsed by remember { mutableStateOf(false) }
+        var configurationWidth by remember { mutableStateOf(CALENDAR_CONFIGURATION_WIDTH) }
+        var sectionsWidthPx by remember { mutableStateOf(0) }
+        val sectionsDensity = LocalDensity.current
+        Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { sectionsWidthPx = it.width }) {
+            if (gridCollapsed) {
+                Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
+                    SectionArrow(collapsed = true, onToggle = { gridCollapsed = false })
+                }
+            }
+            Box(
+                Modifier
+                    .then(if (gridCollapsed) Modifier.width(0.dp) else Modifier.weight(1f))
+                    .fillMaxHeight()
+                    .keepsWidthAbove(CALENDAR_GRID_MIN_WIDTH),
+            ) {
                 WeekView(
                     selectedDate = selectedDate,
                     today = today,
@@ -4051,12 +4068,39 @@ fun CalendarFloatingWindow(
                     onReleaseTaskLock = { onLockOnTaskChange(false) },
                     displayMode = displayMode,
                 )
+                // The grid's arrow, in its top left corner (the hours' gutter, above the first hour).
+                if (!gridCollapsed) {
+                    Box(Modifier.align(Alignment.TopStart).padding(2.dp)) {
+                        SectionArrow(collapsed = false, onToggle = { gridCollapsed = true })
+                    }
+                }
             }
-            VerticalDivider()
+            if (!gridCollapsed && !configurationCollapsed) {
+                SectionSeparator(
+                    vertical = true,
+                    onDrag = { delta ->
+                        val room = with(sectionsDensity) { sectionsWidthPx.toDp() } - SECTION_SEPARATOR_THICKNESS
+                        configurationWidth =
+                            (configurationWidth - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room.coerceAtLeast(0.dp))
+                    },
+                )
+            } else {
+                VerticalDivider()
+            }
             // The configuration section: the day selector, then the view switches. Beside the grid rather
             // than above it, so it costs the week none of its height — and on its right, like the task tree
             // window's.
+            if (configurationCollapsed) {
+                Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
+                    SectionArrow(collapsed = true, onToggle = { configurationCollapsed = false })
+                }
+            } else
             CalendarConfigurationSection(
+                // The whole window while the grid is retracted; else the width the line was dragged to.
+                modifier = if (gridCollapsed) Modifier.weight(1f) else Modifier.width(configurationWidth),
+                onCollapse = { configurationCollapsed = true },
+                sleepSchedule = sleepSchedule,
+                onSleepScheduleChange = onSleepScheduleChange,
                 monthAnchor = monthAnchor,
                 onMonthAnchorChange = onMonthAnchorChange,
                 selectedDate = selectedDate,
@@ -4120,11 +4164,19 @@ private fun CalendarConfigurationSection(
     onPlanCalculationLimitChange: (Int) -> Unit,
     minimumTimeWeight: Double,
     onMinimumTimeWeightChange: (Double) -> Unit,
+    /** The section's place in the window's row: its dragged width, or the whole of it while the grid is retracted. */
+    modifier: Modifier = Modifier,
+    /** The section's arrow ([SectionArrow]): retract it to its arrow. */
+    onCollapse: () -> Unit = {},
+    /** The account's sleep schedule and its edit, or null where no one is given (a preview): no "Sleep" then. */
+    sleepSchedule: org.example.project.scheduler.model.SleepSchedule? = null,
+    onSleepScheduleChange: (org.example.project.scheduler.model.SleepSchedule) -> Unit = {},
 ) {
     // A vertical scrollbar on its right (user rule 2026-10-04), the one the Search window's lists have: the section
     // already scrolled when the window was shorter than it, with nothing saying so.
     val scroll = rememberScrollState()
-    Box(Modifier.width(CALENDAR_CONFIGURATION_WIDTH).fillMaxHeight()) {
+    // Narrowed by the dragged line, it is cut — laid out at its own width at least, never squeezed.
+    Box(modifier.fillMaxHeight().keepsWidthAbove(CALENDAR_CONFIGURATION_WIDTH)) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -4132,6 +4184,16 @@ private fun CalendarConfigurationSection(
             .padding(start = 10.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionArrow(collapsed = false, onToggle = onCollapse)
+            Text(
+                "Configuration",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
         MiniMonth(
             monthAnchor = monthAnchor,
             onMonthAnchorChange = onMonthAnchorChange,
@@ -4172,6 +4234,13 @@ private fun CalendarConfigurationSection(
         Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
         PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange)
         MinimumTimeWeightField(minimumTimeWeight, onMinimumTimeWeightChange)
+        // User rule 2026-10-07: the sleep schedule, from the lateral menu — the nightly window the scheduler avoids
+        // is drawn on this calendar, and set here. The Sleep window's own fields ([SleepScheduleFields]).
+        if (sleepSchedule != null) {
+            HorizontalDivider()
+            Text("Sleep", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
+            SleepScheduleFields(sleepSchedule, onSleepScheduleChange, fieldModifier = Modifier.leaveFocusOnOutsidePress())
+        }
     }
     ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
     }
@@ -4286,6 +4355,9 @@ private fun Modifier.leavesKeyboardToCalendar(): Modifier = focusProperties { ca
 
 /** How wide the calendar window's configuration section is — room for the month grid's seven columns. */
 private val CALENDAR_CONFIGURATION_WIDTH = 220.dp
+
+/** The least width the week grid is LAID OUT at: narrower (the line dragged over it, or retracted), it is cut. */
+private val CALENDAR_GRID_MIN_WIDTH = 240.dp
 
 /** One switch of the calendar's configuration section: the label, then the switch; a press on the row flips it. */
 @Composable

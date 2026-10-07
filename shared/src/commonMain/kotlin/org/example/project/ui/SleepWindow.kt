@@ -41,7 +41,6 @@ fun SleepWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState("Sleep", initialOffset, initialSize)
-    val bedMinutes = ((sleep.wakeMinutes - sleep.sleepDurationMinutes) % (24 * 60) + 24 * 60) % (24 * 60)
 
     AppWindowFrame(
         title = "Sleep",
@@ -63,18 +62,31 @@ fun SleepWindow(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            TimeField("Wake time", sleep.wakeMinutes) { onSave(sleep.copy(wakeMinutes = it)) }
-            TimeField("Goal wake time", sleep.goalWakeMinutes) { onSave(sleep.copy(goalWakeMinutes = it)) }
-            TimeField("Total sleep time", sleep.sleepDurationMinutes, allowOver24 = true) {
-                onSave(sleep.copy(sleepDurationMinutes = it))
-            }
-            Text(
-                text = "Bedtime ${formatHourMinute(bedMinutes)} → wake ${formatHourMinute(sleep.wakeMinutes % (24 * 60))}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            SleepScheduleFields(sleep, onSave)
         }
     }
+}
+
+/**
+ * **The sleep schedule's fields** — the wake time, the goal wake time (the wake time drifts 15 min toward it every 2
+ * days), the total sleep time, and the bedtime they make. Each edit is saved at once through [onSave]. ONE drawing:
+ * the calendar's configuration section shows it (user rule 2026-10-07 — it left the lateral menu for there), and so
+ * does the Sleep window the calendar's "edit… → sleep schedule" still opens. [fieldModifier] is the caller's word on
+ * each field (the calendar's hand the keyboard back at a press outside).
+ */
+@Composable
+internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -> Unit, fieldModifier: Modifier = Modifier) {
+    val bedMinutes = ((sleep.wakeMinutes - sleep.sleepDurationMinutes) % (24 * 60) + 24 * 60) % (24 * 60)
+    TimeField("Wake time", sleep.wakeMinutes, fieldModifier = fieldModifier) { onSave(sleep.copy(wakeMinutes = it)) }
+    TimeField("Goal wake time", sleep.goalWakeMinutes, fieldModifier = fieldModifier) { onSave(sleep.copy(goalWakeMinutes = it)) }
+    TimeField("Total sleep time", sleep.sleepDurationMinutes, allowOver24 = true, fieldModifier = fieldModifier) {
+        onSave(sleep.copy(sleepDurationMinutes = it))
+    }
+    Text(
+        text = "Bedtime ${formatHourMinute(bedMinutes)} → wake ${formatHourMinute(sleep.wakeMinutes % (24 * 60))}",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /**
@@ -86,11 +98,25 @@ private fun TimeField(
     label: String,
     minutes: Int,
     allowOver24: Boolean = false,
+    fieldModifier: Modifier = Modifier,
     onMinutes: (Int) -> Unit,
 ) {
     var text by remember { mutableStateOf(formatHourMinute(minutes)) }
+    // Written from elsewhere — the other place that shows these fields, or another device: read it again, never under
+    // the hand typing it (a text that already says this value is left as typed).
+    var seen by remember { mutableStateOf(minutes) }
+    if (seen != minutes) {
+        seen = minutes
+        if (parseHourMinute(text, allowOver24) != minutes) text = formatHourMinute(minutes)
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         // A time of day steps round the clock; a duration stops at nothing and at a day.
         TimeNudgeMenu(
             onNudge = { delta ->
@@ -108,7 +134,7 @@ private fun TimeField(
                 },
                 singleLine = true,
                 isError = parseHourMinute(text, allowOver24) == null,
-                modifier = Modifier.width(96.dp),
+                modifier = Modifier.width(96.dp).then(fieldModifier),
             )
         }
     }

@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar: the sleep schedule in its configuration; the two sections retract and their line is dragged — 2026-10-07
+
+Two user rules.
+- **"Move the sleep configuration from the left-side menu of the app to being a section in the configuration section
+  in the calendar."** The wake time, the goal wake time, the total sleep time and the bedtime they make are the last
+  section of the calendar window's configuration (`SleepScheduleFields`). The lateral menu's "Sleep schedule" button
+  is removed. NOT removed: the Sleep window itself — the calendar's "edit… → sleep schedule" on a Sleep band still
+  opens it, with the same fields; removing it means retiring a window the placements, the history units and the
+  user's own menu buttons can name, which was not asked.
+- **"In the calendar, like in the Search window, add expansion arrows to hide for the two sections, and the ability
+  to move the vertical line separating them."** `SectionArrow` on the grid (top left corner) and on the
+  configuration (before a new "Configuration" title); `SectionSeparator` between the two, dragged up to the edges.
+  The grid stays composed while hidden or squeezed, so its scroll and zoom are kept.
+
+Seen on the calendar window rendered headlessly with real mouse events: the Sleep section under "Scheduler engine";
+the line dragged to the middle, to the left edge and back to the right edge; each arrow retracting and restoring its
+section. Not verified in the live app; the grid's arrow is small and sits just above the month's name. No test kept
+(no Compose UI test in the project). Client only.
+
 ### Search window: a result row's blank columns go to the path — 2026-10-07
 
 The user: a task element reads "task", then lots of space, the arrow, the title, the path, the priority, lots of

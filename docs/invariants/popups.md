@@ -100,6 +100,18 @@ means.
   only the click test above, never a threshold before moving. That is affordable because the head holds
   nothing interactive but its own buttons (which consume their press); a window's toggles belong
   inside the window (the calendar's configuration section), not in the head.
+- **The calendar window's two sections — the grid and the configuration — are the Search window's** (user rule
+  2026-10-07; `CalendarFloatingWindow`): each is retracted to its arrow and expanded again by it (`SectionArrow`; the
+  grid's is in its top left corner, the configuration's before its title), and the line between them is dragged
+  (`SectionSeparator`), up to the edges. Compose-only, like the Search window's splits. **The grid stays composed**
+  while it is retracted or squeezed — laid out at `CALENDAR_GRID_MIN_WIDTH` at least and cut (`keepsWidthAbove`): its
+  scroll and its zoom are its own, and a week laid out in no width is a case nothing else asks of it. The
+  configuration is cut the same way below its own width, and takes the whole window while the grid is retracted.
+- **The sleep schedule is a section of the calendar's configuration** (user rule 2026-10-07; `SleepScheduleFields`):
+  it left the lateral menu, whose "Sleep schedule" button is gone. ONE drawing of the fields, for that section and
+  for the Sleep window — which the calendar's "edit… → sleep schedule" on a Sleep band still opens, and which a
+  window kept from before, or a button the user made for it, still brings back. A field re-reads a value written
+  from the other place, never under the hand typing it.
 - **Dragging a MAXIMIZED window's head un-maximizes it under the pointer** (user rule 2026-10-01;
   `WindowFrameState.unmaximizeUnder`): the window takes back its normal size — its default one if it never had
   one — with the pointer at the same fraction along the head and the head under it, and the drag carries it on.

@@ -3096,7 +3096,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // at whatever chord the ACCOUNT has it bound to (the same map installGlobalHotkeys above
                     // is claiming).
                     shortcutBindings = schedulerState.shortcutBindings,
-                    onToggleSleep = { openNewWindow(FloatingWindow.Sleep) },
                     onToggleCategories = { openNewWindow(FloatingWindow.Categories) },
                     onToggleSearch = { openNewWindow(FloatingWindow.Search) },
                     sleeping = schedulerState.isSleeping(nowMillis),
@@ -3543,6 +3542,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             planCalculationLimitSeconds = schedulerState.planCalculationLimitSeconds,
                             minimumTimeWeight = schedulerState.minimumTimeWeight,
                             onMinimumTimeWeightChange = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
+                            sleepSchedule = schedulerState.sleep,
+                            onSleepScheduleChange = {
+                                vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong()))
+                            },
                             onPlanCalculationLimitChange = { vm.dispatch(SchedulerIntent.SetPlanCalculationLimit(it)) },
                             automaticSchedule = schedulerState.automaticSchedule,
                             onToggleAutomaticSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
