@@ -898,6 +898,9 @@ suggestions before it was ever entered.
   the reducer answers "no change" against the live state. The added list is `Config.added` — result KEYS (`SearchDomain.keyOf`), each
   once, local-only with the rest of the configuration — and its rows are rebuilt by `SearchDomain.resolve` the way
   the result list builds them; a key whose element is gone lists nothing.
+- **"Open each" is not listed for ONE added element** (user rule 2026-10-07; `SearchDomain.actionsFor`,
+  `CalendarBlocksSearchTest`): the Search window's actions section drops it while the list holds exactly one — that
+  element's own row opens it. The Added elements configurations window, which lists every action there is, keeps it.
 - **Opening a row is `SearchRowOpeners.open`**, for the result list and for the added elements' "Open each" in both
   windows that offer it — the one mapping from a row to its window, never a second copy.
 - **The actions act through the app's own intents** (`SearchDomain.addedIntents`): a tree edit over several tasks

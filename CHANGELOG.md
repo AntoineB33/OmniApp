@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### No "Open each" for a single added element — 2026-10-07
+
+User rule: "When there is only one element in the added elements list, in the action section, there should not be a
+section 'Open each'." `SearchDomain.actionsFor` drops it while the list holds exactly one. The Added elements
+configurations window lists every action whatever is added, and still shows it. `CalendarBlocksSearchTest`. Not
+verified on screen. Client only.
+
+### "Add to the calendar" offered "New alarm here" beside a lone task — 2026-10-07
+
+Anomaly: with only a task among the added elements, the action still showed a "New alarm here" button. It had been
+added (2026-10-01) when "add…" stopped opening the element window, as the one way left to lay a NEW alarm — an alarm
+row of the list is that alarm, edited — and it was drawn whatever the list held. Removed: the alarms' "creation" row,
+once added, is what lays a new alarm (`SearchDomain.calendarDrafts`), counted by "Add" with the rest. The other
+"creation" rows still lay nothing there. `SearchCalendarFilterTest`. Not verified on screen. Client only.
+
 ### "Add to the calendar": "Right-click time", and both buttons on a dated end — 2026-10-07
 
 User rule: beside "Now", a "Right-click time" button sets the time to the position of the right-click on the calendar,

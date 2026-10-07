@@ -159,7 +159,14 @@ class SearchCalendarFilterTest {
         assertEquals(at + hour, drafts[2].endMillis, "a period an hour")
         assertEquals(at, drafts[3].endMillis, "a tag has no duration")
         assertEquals("reminder-0", drafts[3].reminderId)
-        val newAlarm = SearchDomain.calendarAlarmDraft(s, at)
+        // A new alarm is laid by the alarms' "creation" row, and only by it (anomaly 2026-10-07: a button offered one
+        // beside a lone task).
+        val creation = SearchDomain.resolve(s, listOf("Task/" + read.value, "Creation/" + SearchDomain.Kind.Alarm.name))
+        assertEquals(2, creation.size, "the creation row resolves")
+        val newAlarm = SearchDomain.calendarDrafts(s, creation, at, tz).single { it.kind == CalendarElements.Kind.Alarm }
+        assertEquals(null, newAlarm.existingId, "a new one")
+        assertEquals(SearchDomain.calendarAlarmDraft(s, at), newAlarm)
+        assertTrue(SearchDomain.calendarDrafts(s, creation.take(1), at, tz).none { it.kind == CalendarElements.Kind.Alarm })
         assertEquals(CalendarElements.Kind.Alarm, newAlarm.kind)
         assertEquals(at + s.newAlarmDefaults.soundSeconds * 1000L, newAlarm.endMillis)
     }

@@ -853,7 +853,9 @@ Global rules that always apply: `CLAUDE.md`.
   own seeding (`CalendarElements.seeded`) and Save (`saveCalendarElementIntents`); an alarm is the window's edit of that
   alarm (`existingId`): it rings at that time of day, that weekday added to its days, switched on — and a timer is put
   on the clock to END there (`calendarTimerIntents`: reset, time left = instant − now, started; one `SetTimers`).
-  "New alarm here" makes a new alarm. ONE such window: a later "add…" moves it to the
+  A NEW alarm is laid by the alarms' "creation" row once it is among the added elements (`calendarDrafts` ->
+  `calendarAlarmDraft`), like every other thing the action lays — never by a button of its own: "New alarm here" stood
+  there whatever was added, beside a lone task too (anomaly 2026-10-07). ONE such window: a later "add…" moves it to the
   new right-click, keeping what it holds.
 - **The blue and the orange outlines are above every other outline** (user rule 2026-10-05; `outlineOnTop`, the day
   column's **outline pass**). The column's LAST drawing before the labels and the two markers is every `User` and

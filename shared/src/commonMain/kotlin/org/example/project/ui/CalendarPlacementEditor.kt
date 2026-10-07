@@ -119,8 +119,6 @@ internal fun CalendarPlacementEditor(
                 if (drafts.isNotEmpty()) handlers.onPlaceOnCalendar(drafts)
                 timers.forEach { run(SearchDomain.AddedCommand.Raw(it)) }
             }
-            // An alarm is added as a new one (an existing one's occurrences are its weekdays').
-            FrameButton("New alarm here") { handlers.onPlaceOnCalendar(listOf(SearchDomain.calendarAlarmDraft(state, start))) }
         }
         Text(
             if (refused) "NOT ADDED — the end has to be after the start."

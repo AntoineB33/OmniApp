@@ -2456,7 +2456,10 @@ object SearchDomain {
             if (kind == null) {
                 // The calendar's actions are those of an element that can be on the calendar (user rule 2026-10-05).
                 val onCalendar = added.any { it.kind in CALENDAR_ADD_KINDS }
-                actions.filter { onCalendar || it !in CALENDAR_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
+                // "Open each" is about SEVERAL elements (user rule 2026-10-07): a lone one is opened by its own row.
+                val lone = added.size == 1
+                actions.filter { (onCalendar || it !in CALENDAR_ACTIONS) && !(lone && it == AddedAction.OpenEach) }
+                    .takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
                 kind to actions
             } else {
@@ -3085,6 +3088,10 @@ object SearchDomain {
                         alarmArmed = true,
                     )
                 }
+                // The alarms' "creation" row: a NEW alarm there (anomaly 2026-10-07 — it was a "New alarm here" button
+                // shown whatever was added, beside a lone task too). What is laid is what the list holds.
+                row is ItemResult && row.kind == Kind.Creation && row.id == Kind.Alarm.name ->
+                    return@mapNotNull calendarAlarmDraft(state, atMillis)
                 else -> null
             } ?: return@mapNotNull null
             CalendarElements.seeded(
@@ -3198,7 +3205,7 @@ object SearchDomain {
             sorts = listOf(SortMethod(Kind.CalendarBlock, SortKey.BlockStart)),
         )
 
-    /** "New alarm here": the element window's fresh alarm at [atMillis], the account's default configuration. */
+    /** A new alarm on the calendar: the element window's fresh alarm at [atMillis], the account's default configuration. */
     fun calendarAlarmDraft(state: SchedulerState, atMillis: Long): CalendarElements.Draft =
         CalendarElements.seeded(
             CalendarElements.Draft(kind = CalendarElements.Kind.Alarm),
