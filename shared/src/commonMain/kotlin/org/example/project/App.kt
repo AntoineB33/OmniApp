@@ -2144,7 +2144,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // hold the press ([org.example.project.ui.LocalHeldCalendarRecords]) — their nodes must not move under it.
         val heldCalendarPreview =
             remember(schedulerState, frozenBreaks, heldInCalendar) { heldInCalendar?.let { previewOf(listOf(it)) } }
-        val shownState = elementDragPreview?.first ?: schedulerState
+        // `docs/scheduler_requirements.md` § *Rule state input evolution*: the pre-placed tasks and periods are part of
+        // the input that makes the scheduler run from scratch each time it changes — and a held block changes them.
+        // So the state its release would leave is handed to the engine WHEN IT CHANGES ([SchedulerEngine.planHeld]),
+        // and what the engine has found for it so far is what is drawn. The stored state is untouched: it remembers.
+        val heldPreview = elementDragPreview ?: heldCalendarPreview
+        androidx.compose.runtime.DisposableEffect(heldPreview) {
+            engine.planHeld(heldPreview?.first)
+            onDispose { }
+        }
+        val heldPlan by engine.heldPlan.collectAsState()
+        fun plannedOf(preview: Pair<SchedulerState, org.example.project.scheduler.domain.FrozenScreenBreaks?>): SchedulerState =
+            heldPlan?.takeIf { it.source === preview.first }?.planned ?: preview.first
+        val shownState = elementDragPreview?.let(::plannedOf) ?: schedulerState
         val shownFrozenBreaks = if (elementDragPreview != null) elementDragPreview.second else frozenBreaks
 
         // ---- The calendar's derivation, as a function of the now-line -----------------------------------
@@ -2845,8 +2857,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // as the edges choose. Asked of the STORED state at every minute the hand moves it by, so what it removed is
         // back as soon as it moves on.
         val heldCalendarRecords =
-            remember(heldCalendarPreview, nowMillis) {
-                heldCalendarPreview?.let { deriveCalendarDisplay(nowMillis, it.first, it.second).records }
+            remember(heldCalendarPreview, heldPlan, nowMillis) {
+                heldCalendarPreview?.let { deriveCalendarDisplay(nowMillis, plannedOf(it), it.second).records }
             }
         // Diagnostics timeline: the bands the calendar is about to render, logged once per change of their
         // interior-edge signature (see where [CalendarDisplay.bandSignature] is built).
@@ -4656,6 +4668,7 @@ internal fun calendarMovePreview(
             }
         }
     }
+    // Nothing is PLANNED here: this state is an input, and the scheduler runs on it ([SchedulerEngine.planHeld]).
     return shown.copy(automaticSchedule = state.automaticSchedule) to breaks
 }
 

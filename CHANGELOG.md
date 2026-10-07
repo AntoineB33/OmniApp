@@ -11,6 +11,128 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The input changes, the scheduler runs from scratch: one rule instead of three special cases — 2026-10-07
+
+The user, on the entry below: "My previous prompt was only a use case … If each movement of the mouse when dragging a
+task panel triggers a rerun of the scheduler from scratch repeatedly, it is only because each change of the input
+triggers a new run of the scheduler engine, and not because the logic literally says each movement of the mouse
+triggers a rerun. Make sure that docs\scheduler_requirements.md is strictly satisfied."
+
+**Withdrawn** (the three entries below describe them): the reducer laying ten seconds for three calendar intents
+(`withFirstSecondsLaid`), the restart of the held plan at every pointer movement (`onMotion`, `restartHeldPlan`), the
+quiet wait before a held plan, the second loop of stages that planned a held state.
+
+**In their place**, requirements § *Rule state input evolution* and § *Progressive Calculation* as written:
+- **One loop of stages** (`runProgressiveStages` over a `PlanInput`) for the stored state and for a held block's
+  state alike: the ten definitive seconds first where the line is bare, then the pace.
+- **A change of the stored rules made on this device**: the ten-second check is made at the change. Where ten seconds
+  are owed the run starts at once, on this device; the devices agree on who plans a second later and the run is not
+  restarted for it (`runSignature`, `runLead`).
+- **A held block's state is an input**: `App` hands it to the engine when it changes (`planHeld`), each change
+  abandons the run before it and starts one from scratch, immediately; nothing is saved.
+- **Limits**, both the server traffic budget's (`ServerQuotaTest`, measured: a run at every change on every
+  device was over the 512 MB egress budget; as shipped 507.75, before these changes 496): a change that leaves the next ten seconds covered waits a second and is
+  planned by ONE device; a change pulled from another device is the elected device's.
+- **The held state is not rounded to the minute any more** (user, the same day: "If the user is dragging a task
+  panel, pauses seeing the schedule updating, then moves a pixel, they will see the schedule update again"): a
+  release never rounded, so the rounding made a held block that had moved an input that had not. The released
+  calendar is therefore derived at every pixel of travel on the composition thread — cost not measured.
+- **Found on the way**: a run of one task was banked (a server write) once per STAGE of the rules — now once, when the
+  run ends (`advanceSchedule`); the breaks' dues were published each time the plan's panels were rewritten — now when
+  what places the breaks changed (`breakInputsAt`).
+
+**Only § *Rule state input evolution*'s definition and § *Progressive Calculation* were audited here.** The rest of
+the requirements (the rule structure, the score, the breaks, the modes) was last audited on 2026-10-06 and was not
+re-read. Not verified on screen. `:shared:longTest` not run. Client only.
+
+### The drag and the scheduler, clause by clause — 2026-10-07
+
+The user restated the rule and asked that it be strictly satisfied: *"When dragging a task panel, it modifies the
+scheduler … the scheduler engine doesn't do anything because restarted repeatedly while I move the mouse and doesn't
+have time to do anything. When I don't move the mouse, or when I release the mouse click, the scheduler engine stops
+being restarted repeatedly and can run normally. At first, it does the extremely fast computing to secure the first 10
+seconds … Then, 10 seconds later, at least the 10 next minutes of the scheduler are definitive as well."* Three
+clauses were not met by the two entries below.
+
+- **"While I move the mouse … doesn't have time to do anything"**: the held calendar laid ten seconds itself at every
+  step, moving or not, and the engine was restarted only when the block crossed a minute. `calendarMovePreview` plans
+  nothing any more, and every movement of the pointer restarts the engine's held plan
+  (`CalendarElementDrag.onMotion` → `SchedulerEngine.restartHeldPlan`); it finds something only once the hand has
+  rested 100 ms.
+- **"When I release … can run normally"** and **"10 seconds later, at least the 10 next minutes"**: after the ten
+  seconds the reducer lays at the drop, the engine still waited its 1 s debounce and — with a peer online — the
+  election. With those ten seconds laid, the plan now goes on at once and locally
+  (`requestReschedule(local = true)`), so the pace runs from the release.
+
+`FirstTenSecondsTest`: movements restart it and nothing is found; at rest the ten seconds come first, then ten more
+minutes within ten seconds; at a release the plan is past the ten minutes without any wait; the stored state is not
+written while holding. Not verified on screen; the cost of planning at every rest of the hand is not measured.
+Client only. `:shared:longTest` not run.
+
+### A held block modifies the scheduler — 2026-10-07
+
+The user, on "nothing is saved during a hold … the held calendar shows only the first ten seconds" in the entry below:
+"Did you fix this?" It had been reported as a limit instead of fixed. The rule: *"When dragging this task panel, it
+modifies the scheduler … the scheduler engine doesn't do anything because restarted repeatedly while I move the mouse.
+When I don't move the mouse, or when I release the mouse click, the scheduler engine stops being restarted repeatedly
+and can run normally."*
+
+`SchedulerEngine.planHeld` runs the scheduler on the state the held block's release would leave: restarted at every
+step of the hand, and once it rests (`HELD_PLAN_QUIET_MILLIS`, 150 ms) the ten definitive seconds first and then the
+stages of the pace, through the reducer's own plan intents on a copy. `App` draws what it has found so far
+(`engine.heldPlan`), for the blocks held in the calendar and for those held from the Search window. The stored state is
+not written — it is what remembers what the held block removed — and a held plan elects nobody, publishes nothing and
+records no run. The release plans the stored state afresh (its ten seconds laid in the reducer, entry below).
+
+Cost, not measured on a large account: a full progressive plan starts each time the hand rests while holding.
+`FirstTenSecondsTest`. Client only. `:shared:longTest` not run.
+
+### First 10 s: a block dragged off the line is answered as it is dropped — 2026-10-07
+
+The user, after building the fix below: "it still takes time. The moment I dragged the task panel out, a new task panel
+should appear almost instantly … At first, it does the extremely fast computing to secure the first 10 seconds of the
+schedule and make it definitive. Then, 10 seconds later, at least the 10 next minutes of the scheduler are definitive
+as well."
+
+The check was right after the fix below, but the ten-second stage itself ran inside the engine's re-plan: after the
+1 s rule-change debounce, and — with another device of the account online — after the election of who plans (a 1 s
+probe window, then up to 5 s for the elected device's rules).
+
+- **The reducer answers the press** (`SchedulerReducer.withFirstSecondsLaid`): a block moved, pinned or removed by
+  hand that leaves the next ten seconds with a fillable gap gets them filled in the same reduction, no search. The
+  engine is told (`firstSecondsLaid`) and its re-plan extends them instead of planning the line again — they are
+  definitive, as the requirement says.
+- **The held calendar shows them too** (`calendarMovePreview`): while the block is held away from the line, the
+  preview lays the same ten seconds, since a release would.
+- A first attempt moved the engine's ten-second stage ahead of the debounce for EVERY rule change. It was withdrawn:
+  it re-planned inside every burst, changed the plans `PlanOffTheFrameLoopTest` pins, and put the realtime messages
+  and egress over the quota (`ServerQuotaTest`: 217 800 of 200 000 messages a month).
+
+Not changed: a rule change made anywhere else (the tree, a priority, a setting) still gets its ten seconds from the
+engine after the debounce. `FirstTenSecondsTest` (the drag, end to end: the line has a panel as the drag is reduced,
+ten more minutes within ten seconds, the head not rewritten).
+
+**Open, found on the way**: `ManualLookAwayTest` is intermittent on this machine — it failed for some twenty minutes,
+at the last commit too and with or without these changes, and passed before and after. Not investigated.
+
+Client only. `:shared:longTest` not run.
+
+### First 10 s: a bare line inside a Sleep window waited for the whole first stage — 2026-10-07
+
+Anomaly: "As the now line retracts the sleep period, it creates in its way a task panel that was growing. I dragged it
+to the past, then observed the now line that moved forward without creating a new task panel. It only did after some
+times. This violates the **first 10s** part in docs\scheduler_requirements.md."
+
+The mechanism was there (`dispatchProgressivePlan` → `SchedulerDomain.firstSecondsGapFillable` → a ten-second
+`RefreshSchedule` with no search), but its check asked whether a task could run in the gap against the periods AS
+STORED: inside the schedule's Sleep window every task's resilience is 0, so it answered "nothing to schedule" and the
+quick stage was skipped. At a screen that window gives way to the line — which is why there was a panel to drag in the
+first place. `firstSecondsGapFillable` now takes the line's mode and leaves out the periods that give way to a mode-1
+line (`retractsAtLine`, the fill's own predicate); the engine passes `tpModeNow()`.
+
+Not changed: the 1 s rule-change debounce still comes before the ten-second stage. `FirstTenSecondsTest`. Client
+only. `:shared:longTest` not run (the fill, the score and the search are untouched).
+
 ### A power cut made the computer "away" from the next boot on — 2026-10-07
 
 Anomaly: "there is a sleep period right before the now line, even though I've been on the screen. Does it mean the

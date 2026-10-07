@@ -642,9 +642,48 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   rules derived for a task no longer schedulable covering none — where some schedulable task's resilience is not 0?
   If so it publishes a `RefreshSchedule` capped at now + 10 s with no search, at once; every stage after it is an
   `ExtendSchedule`, so those 10 s are definitive, and the seeds compete in the first of those instead. Where the
-  next 10 s are covered (the usual priority edit), nothing extra runs. The 1 s rule-change debounce still comes
-  first. Extensions (`replan = false`) and the reducer's in-line re-plans (already synchronous) do not take it.
+  next 10 s are covered (the usual priority edit), nothing extra runs. When the run starts is the next
+  bullet's. Extensions (`replan = false`) and the reducer's in-line re-plans (already synchronous) do not take it.
   `FirstTenSecondsTest` (the stages are read through `SchedulerEngine.stageSink`).
+  **The check reads the periods as the rules give them at the line in the line's mode** (anomaly 2026-10-07): a
+  period that gives way to a mode-1 line (`retractsAtLine`: it is or carries "no screen" — the schedule's Sleep
+  window) restricts nothing over those ten seconds, exactly as the fill holds a task at such a line. Read as stored
+  the window refused every task, "nothing can be scheduled" was the answer, and a line left bare inside a Sleep
+  window waited for the whole first stage. The engine passes `tpModeNow()`.
+- **THE INPUT CHANGES, THE SCHEDULER RUNS FROM SCRATCH — ONE RULE, ONE LOOP** (requirements § *Rule state input
+  evolution*: the rule state input *"forms with the pre-placed tasks, pre-placed periods and history the input that
+  makes the scheduler engine run from scratch each time it changes"*; user, 2026-10-07: a dragged panel restarting
+  the engine *"is only because each change of the input triggers a new run … not because the logic literally says
+  each movement of the mouse triggers a rerun"*). Never write a rule about a gesture, a press or a kind of edit
+  here: three were (a reducer that laid ten seconds for three intents, a restart per pointer movement, a quiet wait
+  before a held plan) and all three are gone.
+  - **One loop** (`SchedulerEngine.runProgressiveStages`) plans whatever input it is given (`PlanInput`): the ten
+    definitive seconds first where the line is bare, then the stages of the pace, each extending the last.
+  - **The stored state** (`StoredPlan`). At a change of the rules (`launchRuleChangeReschedule`) the run in flight
+    is abandoned and the ten-second CHECK is made at once. **Where ten seconds are owed** (a gap a task can fill) and
+    the change was made on THIS device, the run starts now, here: no wait and no election, either of which would
+    spend the ten seconds the next ten minutes are owed in. The devices agree on who plans a second later, and the
+    run is NOT started again for it (`runSignature`, `runLead`): it goes on and its stages are published from there.
+  - **A held block is another input** (`HeldInput`, `planHeld`, `heldPlan`): the state its release would leave, as
+    `App` makes it (`calendarMovePreview`, which plans nothing). `App` hands it over WHEN IT CHANGES; each change
+    abandons the held run in flight (a negative `generation`) and starts one from scratch, at once. Its sets of
+    rules go to a COPY through the reducer's own plan intents; nothing is saved — the stored state is what
+    remembers what the held block removed. Local: no election, nothing published, no run recorded.
+  - **The limits, and whose they are** (§ *Strict Requirements*, exception 2). They are the SERVER's
+    (`server-quota.md`; `ServerQuotaTest` measured each: a run at every change on every device put the month's egress over
+    its 512 MB budget; as shipped 507.75, before these changes 496): (1) where the next ten seconds are COVERED nothing is owed "almost instantly" — *"the calendar stays
+    with the previous set of rules, until the scheduler finds one"* — and the run waits `RESCHEDULE_DEBOUNCE_MILLIS`
+    for the changes to stop, then ONE device of the account runs it (§ *One device plans*); (2) a change that
+    ARRIVED from another device (`TaskSchedulerViewModel.remoteApplies`) is the elected device's to answer, never
+    every device's. **The held state is NOT rounded**
+    (it was, to the minute; user, 2026-10-07: *"pauses seeing the schedule updating, then moves a pixel, they will
+    see the schedule update again"*): the block stands where the hand has it, as a release would put it, so a pixel
+    of travel is another input and another run.
+  - **A run of one task is banked once, when the RUN ends** (`advanceSchedule`'s `carried`): the rules come in
+    stages, so one uninterrupted run is several plan panels end to end, and banking each as it elapsed wrote the
+    task's record ten seconds after every run from scratch. **The breaks' dues are published when what places the
+    breaks changed** (`breakInputsAt`), not each time the plan's panels were rewritten.
+  - `FirstTenSecondsTest` (a tree edit, a dragged panel at night, a held block), `PlanOffTheFrameLoopTest`.
 - **Doubling, CAPPED BY THE PACE** (`progressiveStageCapMillis`, `ProgressivePaceTest`). The pace binds every
   stage, not the average: with the front at `t1` when a stage is published, the next must be published within 10 s
   and reach `t1 + 10 min`. A stage costs in proportion to its length, so pure doubling broke it at the long stages

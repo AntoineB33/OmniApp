@@ -149,10 +149,19 @@ class PlanOffTheFrameLoopTest {
         // depended on where the line was: a period the line has RETRACTED gives up exactly `[now, its end)`
         // (`docs/scheduler_requirements.md` § *mode 1*), so inside a §17 window the run starts at the line and
         // the second's difference between the two instants became a second's difference in the plan.
-        for (now in listOf(T0, T0 + DEBOUNCE_MILLIS)) {
+        // ONE run, at the instant the input changed (`docs/scheduler_requirements.md` § *Rule state input evolution*:
+        // the engine runs from scratch each time its input changes — the two re-plans a second apart that the
+        // paragraphs above describe were the debounce's, which delays no run any more, 2026-10-07): the ten definitive
+        // seconds first where the line is bare (§ *Progressive Calculation*, **first 10s**), then the stages, each
+        // extending the last.
+        for (now in listOf(T0)) {
             val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null, TimeZone.UTC)
             var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
             var first = true
+            if (SchedulerDomain.firstSecondsGapFillable(direct, now)) {
+                direct = SchedulerReducer.reduce(direct, SchedulerIntent.RefreshSchedule(now, now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS))
+                first = false
+            }
             while (true) {
                 val cap = (now + stage).takeIf { it < goal }
                 direct = SchedulerReducer.reduce(

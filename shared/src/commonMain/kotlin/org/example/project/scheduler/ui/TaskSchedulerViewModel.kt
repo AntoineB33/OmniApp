@@ -534,7 +534,17 @@ class TaskSchedulerViewModel(
     }
 
     /** Decodes a pulled remote snapshot, prepares it like a fresh load, swaps it in, and mirrors it locally. */
+    /**
+     * How many snapshots pulled from another device have been applied ([applyRemoteSnapshot]) — what lets the engine
+     * tell a change of the rules MADE HERE from one that arrived: the first is answered on this device at once, the
+     * second by the one device the account elects (`docs/invariants/scheduler.md` § *One device plans*).
+     */
+    @kotlin.concurrent.Volatile
+    var remoteApplies: Long = 0L
+        private set
+
     private fun applyRemoteSnapshot(snapshot: PersistedSnapshot) {
+        remoteApplies++
         val decoded =
             (SchedulerStateCodec.decodeSnapshot(snapshot) ?: return)
                 // The account's rows carry no history: it syncs unit by unit, so this device's own stays as it is.

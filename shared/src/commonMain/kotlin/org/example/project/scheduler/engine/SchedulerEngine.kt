@@ -110,11 +110,11 @@ private const val LOOK_AWAY_SWEEP_CAP_MILLIS: Long = 10L * 60 * 1_000
 // trigger is a function of the timeline, not of how the sweep wake-ups align with the calendar.
 private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 
-// PRD §9: the debounce on the ONE thing that re-plans the schedule — a change to the scheduling rules
-// ([SchedulerDomain.schedulingSignature]), made here or pulled from another device. One second: long enough
-// that typing a task title, dragging a panel or a burst of pulled changes costs a single fill, short enough
-// that the calendar visibly answers the edit. Sim time, like every other engine delay: an accelerated clock
-// is meant to reach the next fill sooner, not to change how many fills a burst produces.
+// How long the scheduling rules ([SchedulerDomain.schedulingSignature]) must have stopped changing before the OTHER
+// DEVICES are told — the election of who plans (`docs/invariants/scheduler.md` § *One device plans*). One second: a
+// typed value, a dragged panel or a burst of pulled changes costs one election, not one per change. It delays no
+// run: the scheduler runs from scratch on this device at every change (`docs/scheduler_requirements.md` § *Rule state
+// input evolution*). Sim time, like every other engine delay.
 private const val RESCHEDULE_DEBOUNCE_MILLIS: Long = 1_000
 
 // `docs/scheduler_requirements.md` § *Progressive Calculation*: the first stage of a progressive fill
@@ -931,7 +931,10 @@ class SchedulerEngine(
         SchedulerReducer.planSearchSink = { report, _ -> lastPlanSearch = report }
         // …and whether the fill running right now is still the one this engine wants (see [planGeneration]).
         // Generation 0 is the in-reducer re-plans answering a press: never abandoned.
-        SchedulerReducer.planAbandoned = { generation -> generation != 0L && generation != planGeneration }
+        // A NEGATIVE generation is a plan of a held state ([planHeld]): superseded by the next one of its own kind.
+        SchedulerReducer.planAbandoned = { generation ->
+            if (generation < 0L) generation != heldGeneration else generation != 0L && generation != planGeneration
+        }
         // Nothing that can bank is launched before the line is where the clock is: a stretch the app did not run in is
         // walked first, and the walk needs the OS's answer about that stretch (a process launch, so off this thread).
         // The voice switch's mute holds from the first instant, the catch-up of a stretch the app did not run in
@@ -2361,8 +2364,41 @@ class SchedulerEngine(
             // data"). Abandoning at the EDGE and re-planning after the pause is what stops a typed title
             // from leaving a fill per keystroke grinding in the background, each one already stale.
             abandonRunningPlan()
+            // § *Rule state input evolution*: *"the input that makes the scheduler engine run from scratch EACH TIME
+            // IT CHANGES"*, and § *Progressive Calculation*, **first 10s**: *"it must FIRSTLY check if in the next 10
+            // seconds there are gaps with no task and if there are tasks that can be scheduled in those gaps. If so,
+            // then almost instantly, a new set of rules is returned"*. So the check is made NOW, at the change — and
+            // where it finds such a gap the run starts now, on this device, its first act those ten seconds and the
+            // pace running from them (no wait, no election: either would spend the ten seconds the next ten minutes
+            // are owed in).
+            //
+            // Where the next ten seconds are covered, nothing is owed "almost instantly": *"the calendar stays with
+            // the previous set of rules, until the scheduler finds one"* (§ *Use of the set of rules output*). There
+            // the run waits [RESCHEDULE_DEBOUNCE_MILLIS] for the changes to stop — the one limit (§ *Strict
+            // Requirements*, exception 2), and it is the server's: every run that is applied banks the work done up
+            // to it, a write the account's traffic budget counts (`docs/invariants/server-quota.md`,
+            // `ServerQuotaTest`: a run at every change put the projected egress at 531 MB of 512).
+            // A change that ARRIVED from another device is the elected device's to answer, here as there: answered on
+            // every device at once, each banked the same work and sent it (`ServerQuotaTest`: 524 MB of 512).
+            val pulled = vm.remoteApplies != remoteAppliesSeen
+            remoteAppliesSeen = vm.remoteApplies
+            val owedNow =
+                !pulled && vm.state.value.automaticSchedule &&
+                    SchedulerDomain.firstSecondsGapFillable(vm.state.value, clock.nowMillis(), tpModeNow())
+            if (!owedNow) {
+                // …and then ONE device of the account runs it (`docs/invariants/scheduler.md` § *One device plans*):
+                // a run on every device banks the same work on every device, and each banking is sent.
+                delay(RESCHEDULE_DEBOUNCE_MILLIS)
+                requestReschedule()
+                return@collectLatest
+            }
+            runSignature = SchedulerDomain.schedulingSignature(vm.state.value)
+            requestReschedule(local = true)
+            // Telling the other devices waits for the changes to stop: one election per burst. The run above is not
+            // started again for it ([startCoordinator]'s `planLocally`): it goes on, and its stages are published
+            // from there.
             delay(RESCHEDULE_DEBOUNCE_MILLIS)
-            requestReschedule()
+            if (vm.state.value.automaticSchedule) coordinator?.requestPlan()
         }
     }
 
@@ -2404,6 +2440,71 @@ class SchedulerEngine(
     private fun replan() {
         val coordinator = coordinator
         if (coordinator == null) dispatchProgressivePlan(replan = true) else coordinator.requestPlan()
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *Rule state input evolution*: the pre-placed tasks and periods are part of
+     * *"the input that makes the scheduler engine run from scratch each time it changes"* — and a block HELD on the
+     * calendar changes them: what is planned while it is held is the state its release would leave (user rule
+     * 2026-10-07: holding and releasing differ only in that what the held block removed is remembered).
+     *
+     * [source] is that state as `App` made it of the stored one (the release's own moves on a copy); [planned] is
+     * [source] with the sets of rules found for it so far. Nothing of it is saved. Null while nothing is held.
+     */
+    class HeldPlan(val source: SchedulerState, val planned: SchedulerState)
+
+    private val _heldPlan = MutableStateFlow<HeldPlan?>(null)
+    val heldPlan: StateFlow<HeldPlan?> = _heldPlan.asStateFlow()
+    private var heldPlanJob: Job? = null
+
+    /** The held input this engine currently plans, counted DOWN from -1: a fill of an older one stops at its next check. */
+    @Volatile
+    private var heldGeneration: Long = 0L
+
+    /** Told the horizon of every stage found for the held input, in order — a test's view of them. */
+    internal var heldStageSink: (horizonEndMillis: Long) -> Unit = {}
+
+    /** The held input: its sets of rules go to a COPY ([HeldPlan]) through the reducer's own plan intents. */
+    private inner class HeldInput(val source: SchedulerState, generation: Long) : PlanInput(generation) {
+        private var planned: SchedulerState = source
+        override val state: SchedulerState get() = planned
+
+        override suspend fun run(intent: SchedulerIntent) {
+            val next =
+                runCatching {
+                    val dispatcher = planDispatcher
+                    if (dispatcher == null) SchedulerReducer.reduce(planned, intent)
+                    else withContext(dispatcher) { SchedulerReducer.reduce(planned, intent) }
+                }.getOrNull()
+            // Superseded (the input changed again, or the hold ended): this run is nobody's any more.
+            if (next == null || generation != heldGeneration) throw kotlinx.coroutines.CancellationException("held input changed")
+            planned = next
+            _heldPlan.value = HeldPlan(source, planned)
+        }
+
+        override fun stage(horizonEndMillis: Long) = heldStageSink(horizonEndMillis)
+    }
+
+    /**
+     * **The input changed to [held]** — the state the release of the block now held would leave — or to nothing held
+     * (null). As for any change of the input, the run in flight for the previous one is abandoned and the scheduler
+     * runs from scratch on the new one ([runProgressiveStages]: the ten seconds first, then the pace). Called when
+     * that state CHANGES; a hand that moves a block changes it again and again, which is why nothing is found while
+     * it moves fast and something is as soon as it rests — a consequence, not a rule of its own.
+     *
+     * Local to this device and to the press: it elects nobody, publishes nothing to the peers, and records no run.
+     */
+    fun planHeld(held: SchedulerState?) {
+        heldGeneration--
+        val generation = heldGeneration
+        heldPlanJob?.cancel()
+        heldPlanJob = null
+        if (held == null) {
+            _heldPlan.value = null
+            return
+        }
+        if (!held.automaticSchedule) return
+        heldPlanJob = scope.launch { runProgressiveStages(HeldInput(held, generation), replan = true) }
     }
 
     /** Told the horizon of every stage [dispatchProgressivePlan] publishes, in order — a test's view of the stages. */
@@ -2460,72 +2561,128 @@ class SchedulerEngine(
         val generation = planGeneration
         // A re-plan is a rule change, which is one of the two things that void a stand-down.
         if (replan) calculationLimitStop = null
-        progressivePlan = scope.launch {
-            var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
-            var first = true
-            var index = 0
-            var reached = clock.nowMillis()
-            // § *Progressive Calculation*, the calculation time limit: REAL time, not the clock the fill plans
-            // against — a debug leap must not spend the budget, and a device asleep mid-fill has not computed.
-            val calculationMark = TimeSource.Monotonic.markNow()
-            // Read as the fill starts: a limit changed mid-fill governs the next one.
-            val limitMillis = calculationLimitMillis ?: (vm.state.value.planCalculationLimitSeconds * 1_000L)
-            // A stage whose search ran out of time without certifying the best (and without the solver finding
-            // anything) tells the bigger stages after it that they cannot either: they stop paying for it.
-            var searchUseful = planSearch
-            // The seeds compete in the first stage that searches a continuation, which the ten seconds are not.
-            var seedsPending = true
-            // § *Progressive Calculation*, **first 10s**: a re-plan from scratch first asks whether the next ten
-            // seconds of the schedule on screen hold a gap a task could fill — the edit removed the task the line
-            // was on, or gave an idle line something to do — and if so publishes a ten-second set of rules at once,
-            // no search, before the first stage. Its ten seconds are definitive: every stage after it extends it.
-            if (first && replan && SchedulerDomain.firstSecondsGapFillable(vm.state.value, reached)) {
-                val now = clock.nowMillis()
-                val cap = now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS
-                runPlan(SchedulerIntent.RefreshSchedule(now, cap, 0L, seeds, generation))
-                stageSink(cap)
-                if (lead != null) coordinator?.publish(rulesMessage(lead.election, index))
-                reached = cap
-                first = false
-                index++
+        runLead = lead
+        progressivePlan = scope.launch { runProgressiveStages(StoredPlan(generation), replan, seeds) }
+    }
+
+    /**
+     * The election this device's run in flight publishes its stages for (`docs/invariants/scheduler.md` § *One device
+     * plans*), or null while it tells nobody. Set when the run starts, or later — the devices agree on who plans
+     * AFTER the run of a change has started ([launchRuleChangeReschedule]), and the run is not started again for it.
+     */
+    @Volatile
+    private var runLead: ScheduleCoordinator.Lead? = null
+
+    /** [TaskSchedulerViewModel.remoteApplies] as the last change of the rules found it ([launchRuleChangeReschedule]). */
+    private var remoteAppliesSeen: Long = 0L
+
+    /** The rules ([SchedulerDomain.schedulingSignature]) the run from scratch in flight, or last made, was started for. */
+    private var runSignature: Int? = null
+
+    /**
+     * **What a run of the scheduler plans, and where its sets of rules go** — `docs/scheduler_requirements.md` § *Rule
+     * state input evolution*: *"the input that makes the scheduler engine run from scratch each time it changes"*.
+     * The input is the stored state ([StoredPlan]) or, while a block is held on the calendar, the state its release
+     * would leave ([HeldInput]). ONE loop of stages runs either ([runProgressiveStages]): a held block is not a second
+     * scheduler, it is another input.
+     */
+    private abstract inner class PlanInput(val generation: Long) {
+        abstract val state: SchedulerState
+        abstract suspend fun run(intent: SchedulerIntent)
+        abstract fun stage(horizonEndMillis: Long)
+
+        /** A stage is found: the elected device tells the others. */
+        open fun published(index: Int) {}
+
+        /** The calculation time limit stopped the run short of [goal]. */
+        open fun stoodDown(goal: Long) {}
+    }
+
+    /** The stored state: its sets of rules are applied to it ([runPlan]) and, where this device leads, published. */
+    private inner class StoredPlan(generation: Long) : PlanInput(generation) {
+        override val state: SchedulerState get() = vm.state.value
+        override suspend fun run(intent: SchedulerIntent) = runPlan(intent)
+        override fun stage(horizonEndMillis: Long) = stageSink(horizonEndMillis)
+        override fun published(index: Int) {
+            runLead?.let { coordinator?.publish(rulesMessage(it.election, index)) }
+        }
+        override fun stoodDown(goal: Long) {
+            calculationLimitStop = SchedulerDomain.schedulingSignature(vm.state.value) to goal
+        }
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: one run of the scheduler on [target] — from scratch
+     * ([replan]) or extending what is materialized — as a sequence of sets of rules, each extending the last, at the
+     * required pace. See [dispatchProgressivePlan].
+     */
+    private suspend fun runProgressiveStages(target: PlanInput, replan: Boolean, seeds: List<List<RulePlacement>> = emptyList()) {
+        val generation = target.generation
+        var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
+        var first = true
+        var index = 0
+        var reached = clock.nowMillis()
+        // § *Progressive Calculation*, the calculation time limit: REAL time, not the clock the fill plans
+        // against — a debug leap must not spend the budget, and a device asleep mid-fill has not computed.
+        val calculationMark = TimeSource.Monotonic.markNow()
+        // Read as the fill starts: a limit changed mid-fill governs the next one.
+        val limitMillis = calculationLimitMillis ?: (target.state.planCalculationLimitSeconds * 1_000L)
+        // A stage whose search ran out of time without certifying the best (and without the solver finding
+        // anything) tells the bigger stages after it that they cannot either: they stop paying for it.
+        var searchUseful = planSearch
+        // The seeds compete in the first stage that searches a continuation, which the ten seconds are not.
+        var seedsPending = true
+        // § *Progressive Calculation*, **first 10s**: *"When there is a change that will make the scheduler engine
+        // run from scratch, it must firstly check if in the next 10 seconds there are gaps with no task and if
+        // there are tasks that can be scheduled in those gaps. If so, then almost instantly, a new set of rules
+        // is returned and the first 10 seconds are definitive."* — the FIRST act of every run from scratch: ten
+        // seconds of rules, no search. Every stage after it extends it.
+        if (first && replan && SchedulerDomain.firstSecondsGapFillable(target.state, reached, tpModeNow())) {
+            val now = clock.nowMillis()
+            val cap = now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS
+            target.run(SchedulerIntent.RefreshSchedule(now, cap, 0L, seeds, generation))
+            target.stage(cap)
+            target.published(index)
+            reached = cap
+            first = false
+            index++
+        }
+        while (true) {
+            val now = clock.nowMillis()
+            val goal = scheduleHorizonEndMillis(now)
+            val cap = progressiveStageCapMillis(now, reached, stage, first, planHoursPerSecond)
+            stage = cap - now
+            val capOrNull = cap.takeIf { it < goal }
+            val span = (capOrNull ?: goal) - if (first) now else reached
+            val remaining = limitMillis - calculationMark.elapsedNow().inWholeMilliseconds
+            val searchMillis = if (searchUseful) stageSearchMillis(span, remaining) else 0L
+            val intent =
+                if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds, generation)
+                else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation, if (seedsPending) seeds else emptyList())
+            lastPlanSearch = null
+            val mark = TimeSource.Monotonic.markNow()
+            target.run(intent)
+            target.stage(capOrNull ?: goal)
+            val search = lastPlanSearch
+            if (search != null && search.exhausted && !search.solverImproved) searchUseful = false
+            // The device's speed is what its OWN passes cost: the search spends whatever it was granted.
+            notePlanRate(span, mark.elapsedNow().inWholeMilliseconds - (search?.searchMillis ?: 0L))
+            reached = capOrNull ?: goal
+            seedsPending = false
+            // `docs/invariants/scheduler.md` § *One device plans*: every stage the elected device publishes is a
+            // set of rules the others take in — each one containing the last.
+            target.published(index)
+            first = false
+            index++
+            if (capOrNull == null || !target.state.automaticSchedule) break
+            // § *Progressive Calculation*: the calculation time limit is reached, so the scheduler STOPS —
+            // the front stays where this stage left it, and [extensionStoodDown] keeps it there until the
+            // rules change or $t_{goal}$ grows past what was given up on.
+            if (calculationMark.elapsedNow().inWholeMilliseconds >= limitMillis) {
+                target.stoodDown(goal)
+                break
             }
-            while (true) {
-                val now = clock.nowMillis()
-                val goal = scheduleHorizonEndMillis(now)
-                val cap = progressiveStageCapMillis(now, reached, stage, first, planHoursPerSecond)
-                stage = cap - now
-                val capOrNull = cap.takeIf { it < goal }
-                val span = (capOrNull ?: goal) - if (first) now else reached
-                val remaining = limitMillis - calculationMark.elapsedNow().inWholeMilliseconds
-                val searchMillis = if (searchUseful) stageSearchMillis(span, remaining) else 0L
-                val intent =
-                    if (first && replan) SchedulerIntent.RefreshSchedule(now, capOrNull, searchMillis, seeds, generation)
-                    else SchedulerIntent.ExtendSchedule(now, capOrNull, searchMillis, generation, if (seedsPending) seeds else emptyList())
-                lastPlanSearch = null
-                val mark = TimeSource.Monotonic.markNow()
-                runPlan(intent)
-                stageSink(capOrNull ?: goal)
-                val search = lastPlanSearch
-                if (search != null && search.exhausted && !search.solverImproved) searchUseful = false
-                // The device's speed is what its OWN passes cost: the search spends whatever it was granted.
-                notePlanRate(span, mark.elapsedNow().inWholeMilliseconds - (search?.searchMillis ?: 0L))
-                reached = capOrNull ?: goal
-                seedsPending = false
-                // `docs/invariants/scheduler.md` § *One device plans*: every stage the elected device publishes is a
-                // set of rules the others take in — each one containing the last.
-                if (lead != null) coordinator?.publish(rulesMessage(lead.election, index))
-                first = false
-                index++
-                if (capOrNull == null || !vm.state.value.automaticSchedule) break
-                // § *Progressive Calculation*: the calculation time limit is reached, so the scheduler STOPS —
-                // the front stays where this stage left it, and [extensionStoodDown] keeps it there until the
-                // rules change or $t_{goal}$ grows past what was given up on.
-                if (calculationMark.elapsedNow().inWholeMilliseconds >= limitMillis) {
-                    calculationLimitStop = SchedulerDomain.schedulingSignature(vm.state.value) to goal
-                    break
-                }
-                stage *= 2
-            }
+            stage *= 2
         }
     }
 
@@ -2602,7 +2759,16 @@ class SchedulerEngine(
                 signature = signature,
                 planLocally = { lead ->
                     peerDisplayedEndMillis = lead?.displayedEndMillis
-                    dispatchProgressivePlan(replan = true, lead = lead)
+                    // The run of these rules started when they changed ([launchRuleChangeReschedule]): it is not
+                    // started again because the devices have now agreed that this one plans — it goes on, and from
+                    // here on its stages are published (what it has found so far, at once).
+                    if (runSignature == signature.value && progressivePlan != null) {
+                        runLead = lead
+                        if (lead != null) coordinator?.publish(rulesMessage(lead.election, 0))
+                    } else {
+                        runSignature = signature.value
+                        dispatchProgressivePlan(replan = true, lead = lead)
+                    }
                     if (lead == null) coordinator?.notePlannedLocally(signature.value, clock.nowMillis())
                 },
                 adopt = { rules, keepHead -> adoptRules(rules, keepHead) },
@@ -2936,7 +3102,14 @@ class SchedulerEngine(
                 now + BREAK_INPUTS_REACH_MILLIS / 2,
             )
         breakInputs = inputs
-        presenceDirty = true
+        // The server is owed the breaks' dues when what the breaks are PLACED BY changed (the periods, the breaks'
+        // own configuration, what the devices observed) — not each time the plan's own task panels were rewritten:
+        // the break machine reads no task, and the scheduler runs from scratch at every change of its input
+        // (`docs/scheduler_requirements.md` § *Rule state input evolution*), which must not be a request per run
+        // (`docs/invariants/server-quota.md`).
+        if (held == null || held.periods != inputs.periods || held.specs != inputs.specs || held.evidence !== evidence) {
+            presenceDirty = true
+        }
         nextBreakTriggerMillis = Long.MIN_VALUE
         if (held == null || held.evidence !== evidence) absorbBreakHistory(inputs.chains)
         return inputs

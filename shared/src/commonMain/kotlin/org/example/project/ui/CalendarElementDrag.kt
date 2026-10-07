@@ -55,7 +55,7 @@ class CalendarElementDrag {
     var deltaMillis: Long by mutableStateOf(0L)
         private set
 
-    /** A block a day column holds by its own gesture: where the hand has it (to the minute), as its release would put it. */
+    /** A block a day column holds by its own gesture: exactly where the hand has it, as its release would put it. */
     data class Held(val block: PlacedRecord, val range: TaskTimeRange, val allowOverlap: Boolean)
 
     /** The block a day column holds by its own gesture, or null. */

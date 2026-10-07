@@ -6147,16 +6147,16 @@ private fun DayColumn(
     val currentColumnCoords = rememberUpdatedState(columnCoords)
     val currentAllRecords = rememberUpdatedState(records)
     val currentMillisAt = rememberUpdatedState(::millisAt)
-    // …and it tells `App` the block IT holds — a period box or band, a task panel being moved or resized — where the
-    // hand has it (to the minute), as its release would put it. The calendar is then drawn as that release would
-    // leave it ([LocalHeldCalendarRecords]): held and released look the same.
-    fun toTheMinute(range: TaskTimeRange) =
-        TaskTimeRange(range.startEpochMillis / 60_000L * 60_000L, range.endEpochMillis / 60_000L * 60_000L)
+    // …and it tells `App` the block IT holds — a period box or band, a task panel being moved or resized — EXACTLY
+    // where the hand has it, which is where its release would put it. The calendar is then drawn as that release
+    // would leave it ([LocalHeldCalendarRecords]): held and released look the same. Never rounded (it was, to the
+    // minute, until 2026-10-07): where the block stands is part of the scheduler's input, so a block moved by a
+    // pixel is another input and the scheduler runs on it again — and a release does not round either.
     val heldByThisColumn =
-        movedPeriods.singleOrNull()?.let { (period, at) -> CalendarElementDrag.Held(period, toTheMinute(at), allowOverlap = true) }
+        movedPeriods.singleOrNull()?.let { (period, at) -> CalendarElementDrag.Held(period, at, allowOverlap = true) }
             ?: dragPreview?.let { preview ->
                 effRecords.firstOrNull { calendarBlockKey(it) == preview.key }
-                    ?.let { CalendarElementDrag.Held(it, toTheMinute(preview.range), preview.shareWidth) }
+                    ?.let { CalendarElementDrag.Held(it, preview.range, preview.shareWidth) }
             }
     var toldHeld by remember { mutableStateOf(false) }
     SideEffect {

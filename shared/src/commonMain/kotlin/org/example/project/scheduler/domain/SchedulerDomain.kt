@@ -1914,8 +1914,19 @@ object SchedulerDomain {
      * is schedulable and its resilience to the restrictive periods there is not 0 — the multiplier the score reads
      * ([taskResilienceIn]), asked at the gap's start and at every period edge inside it. Called once per re-plan, so
      * the scan of the panels is not a per-tick one.
+     *
+     * **The periods are read as the rules give them at the line in [tpMode]** (anomaly 2026-10-07): a period that gives
+     * way to a mode-1 line ([retractsAtLine] — one that is or carries "no screen", the schedule's Sleep window among
+     * them) restricts nothing there, which is the very reason the plan holds a task at a line at a screen through the
+     * night. Read as stored, the window refused every task, the answer was "nothing can be scheduled", and a line left
+     * bare inside a Sleep window (the user dragged its panel away) waited for the whole first stage instead of ten
+     * seconds of rules at once.
      */
-    fun firstSecondsGapFillable(state: SchedulerState, nowMillis: Long): Boolean {
+    fun firstSecondsGapFillable(
+        state: SchedulerState,
+        nowMillis: Long,
+        tpMode: Int = DynamicPeriods.MODE_AT_SCREEN,
+    ): Boolean {
         val end = nowMillis + FIRST_DEFINITIVE_MILLIS
         val leaves = schedulableLeaves(state)
         if (leaves.isEmpty()) return false
@@ -1926,10 +1937,27 @@ object SchedulerDomain {
         val work = near.filter { isWorkPanel(it) && !(it.auto && it.taskId !in schedulable) }.sortedBy { it.startEpochMillis }
         val edges = near.filter { it.isRestrictivePeriod }.flatMap { listOf(it.startEpochMillis, it.endEpochMillis) }
 
+        val config = state.periodKindConfig
+        // The periods a line at a screen makes give way: they restrict nothing over these ten seconds.
+        val retracted =
+            if (tpMode != DynamicPeriods.MODE_AT_SCREEN) emptySet()
+            else near.filter {
+                it.isRestrictivePeriod &&
+                    retractsAtLine(RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind), nowMillis, config)
+            }.mapTo(HashSet()) { it.id }
+
+        fun kindsAt(at: Long): Set<String> =
+            near.asSequence()
+                .filter { it.startEpochMillis <= at && at < it.endEpochMillis }
+                .filterNot { isDraggedScreenBreak(it) || it.id in retracted }
+                .map { it.restrictiveKind }
+                .filter { it.isNotEmpty() }
+                .toSet()
+
         fun fillable(from: Long, to: Long): Boolean {
             val probes = listOf(from) + edges.filter { it > from && it < to }
             return probes.any { at ->
-                val kinds = restrictiveKindsAt(state, at)
+                val kinds = kindsAt(at)
                 leaves.any { taskResilienceIn(state, it, kinds) > 0.0 }
             }
         }

@@ -2970,7 +2970,8 @@ object SchedulerReducer {
             )
         val planned = withPlan(advanced, filled, cycle, idle, nowMillis)
         val result = withOtherModePlan(planned, nowMillis, mode, horizon, horizon) { abandoned(generation) }
-        recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules, search, score)
+        // A run on a HELD input (a negative generation, `SchedulerEngine.planHeld`) is nobody's set of rules yet.
+        if (generation >= 0L) recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
 
@@ -3385,7 +3386,7 @@ object SchedulerReducer {
             else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
         val result =
             withOtherModePlan(extended, nowMillis, mode, horizon, maxOf(horizon, materializedUntil)) { abandoned(generation) }
-        recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules, search, score)
+        if (generation >= 0L) recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
 
@@ -4682,10 +4683,32 @@ private fun advanceSchedule(
     }
     val remaining = ArrayList<TaskPanel>(state.panels.size)
     var changed = false
+    // **A run of one task is banked once, when the RUN has ended — not once per set of rules it was laid by.** The
+    // scheduler returns its rules in stages (`docs/scheduler_requirements.md` § *Progressive Calculation*: the ten
+    // definitive seconds, then each extension), so one uninterrupted run of a task is several plan panels end to end;
+    // banking each as it elapsed wrote the task's record — a row the server is sent — ten seconds after every run
+    // from scratch. An elapsed plan panel the same task's next panel continues exactly is carried by that one instead.
+    val carried = HashMap<String, Long>()
+    val startsAt = HashMap<Pair<TaskId, Long>, TaskPanel>()
     for (panel in state.panels) {
+        val task = panel.taskId
+        if (task != null && panel.auto && !panel.pinned) startsAt[task to panel.startEpochMillis] = panel
+    }
+    for (source in state.panels) {
+        val panel = carried.remove(source.id)?.let { source.copy(startEpochMillis = it) } ?: source
         if (panel.pinned || !panel.auto) {
             remaining += panel
             continue
+        }
+        if (panel !== source) changed = true
+        if (panel.endEpochMillis <= nowMillis) {
+            val next = panel.taskId?.let { startsAt[it to panel.endEpochMillis] }
+            // Only forward in the list: the one that carries it is reduced after it.
+            if (next != null && next !== source && state.panels.indexOf(next) > state.panels.indexOf(source)) {
+                carried[next.id] = panel.startEpochMillis
+                changed = true
+                continue
+            }
         }
         // A panel's task is schedulable only while it is still a leaf task present in the tree — or one its set of
         // tasks keeps worth time with no path (2026-10-03); a task deleted from the tree (or one that gained a
