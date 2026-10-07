@@ -918,7 +918,14 @@ suggestions before it was ever entered.
   rows are the tree's.
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
-  `SectionSeparator` + `draggedSplit`, each section kept above a minimum), and **their joint drags both at once**
+  `SectionSeparator` + `draggedSplit`) — **up to the edges of the window** (user rule 2026-10-07: no least width or
+  height any more; they were 220 dp and 90 dp). A section squeezed to an edge is CUT (`clipToBounds` on each section:
+  unclipped, its text wrapped letter by letter and drew over its neighbour) and keeps a share above 0
+  (`LEAST_SECTION_SHARE`: Compose refuses a weight of 0). **Narrowed, a section is cut, never squeezed** — its title
+  too (user, the same day: "the titles … are still getting squished"): the three titles are ONE line that does not
+  wrap (`softWrap = false`), and the result list and the added elements list are laid out at
+  `COMPACT_SECTION_MIN_WIDTH` at least and cut at the section's edge (`keepsWidthAbove`), as the header and the
+  actions already were — squeezed, their rows stacked their text letter by letter. And **their joint drags both at once**
   (`SectionJoint`, under the four-way arrow); the splits are Compose-only view state,
   starting at half, never persisted. **Each section is retracted to its head and expanded again by a little arrow in
   it** (`SectionArrow`, the tree's own expansion arrow; user rule 2026-10-04; Compose-only like the splits): the search

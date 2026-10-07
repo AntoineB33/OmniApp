@@ -111,11 +111,12 @@ private val RESULT_ROW_HEIGHT: Dp = 34.dp
 /** Every row's kind section is this one width, so the names line up whatever the kinds (fits "restrictive period"). */
 private val KIND_SECTION_WIDTH: Dp = 104.dp
 
-/** The narrowest a dragged separator may leave the left (search) or the right sections. */
-private val MIN_SEARCH_SECTION_WIDTH: Dp = 220.dp
-
-/** The shortest a dragged separator may leave either right section: its title and a row or two. */
-private val MIN_SEARCH_SECTION_HEIGHT: Dp = 90.dp
+/**
+ * User rule 2026-10-07: **each section can be resized up to the edges of the window** — a dragged separator stops at
+ * the edge, not at a least width or height of the section it squeezes (they were 220 dp and 90 dp). A section given
+ * no room at all is still a weighted child: Compose refuses a weight of 0, so this is the least share one keeps.
+ */
+private const val LEAST_SECTION_SHARE: Float = 0.0001f
 
 /** The narrowest the path box may be squeezed to by a long title — room for its arrow and a sliver of text. */
 private val MIN_PATH_BOX_WIDTH: Dp = 34.dp
@@ -634,12 +635,12 @@ fun SearchWindow(
       var rightHeightPx by remember { mutableStateOf(0f) }
       val dragLeftShare = { delta: Float ->
           leftShare = draggedSplit(
-              leftShare, delta, rowWidthPx - separatorPx, with(density) { MIN_SEARCH_SECTION_WIDTH.toPx() },
+              leftShare, delta, rowWidthPx - separatorPx, minPx = 0f,
           )
       }
       val dragTopRightShare = { delta: Float ->
           topRightShare = draggedSplit(
-              topRightShare, delta, rightHeightPx - separatorPx, with(density) { MIN_SEARCH_SECTION_HEIGHT.toPx() },
+              topRightShare, delta, rightHeightPx - separatorPx, minPx = 0f,
           )
       }
       Box(Modifier.fillMaxWidth().weight(1f)) {
@@ -652,14 +653,23 @@ fun SearchWindow(
         } else
         Column(
             modifier = Modifier
-                .weight(leftShare)
+                .weight(leftShare.coerceAtLeast(LEAST_SECTION_SHARE))
                 .fillMaxHeight()
+                // A section squeezed to an edge shows nothing: cut, never spilled over its neighbour.
+                .clipToBounds()
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionArrow(collapsed = false, onToggle = { searchCollapsed = true })
-                Text("Search", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                // One line, never wrapped: a section narrowed to an edge cuts its title, it does not squeeze it.
+                Text(
+                    "Search",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
             // User rule 2026-10-07: the search header is as compact as the actions section ([CompactFields]: the bar,
             // the drop-down and the buttons one task cell tall, two rows) and narrows the way it does
@@ -747,7 +757,11 @@ fun SearchWindow(
             }
 
             // --- The result list --------------------------------------------------------------------
-            Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned { resultListTop = it.positionInWindow().y }) {
+            // Narrowed, the list is cut — laid out at the sections' least width, never squeezed row by row.
+            Box(
+                Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH)
+                    .onGloballyPositioned { resultListTop = it.positionInWindow().y },
+            ) {
                 if (count == 0) {
                     Text(
                         text =
@@ -946,7 +960,7 @@ fun SearchWindow(
         if (!searchCollapsed) SectionSeparator(vertical = true, onDrag = dragLeftShare)
 
         Column(
-            Modifier.weight(if (searchCollapsed) 1f else 1f - leftShare).fillMaxHeight().onSizeChanged { rightHeightPx = it.height.toFloat() },
+            Modifier.weight(if (searchCollapsed) 1f else (1f - leftShare).coerceAtLeast(LEAST_SECTION_SHARE)).fillMaxHeight().clipToBounds().onSizeChanged { rightHeightPx = it.height.toFloat() },
         ) {
             // A retracted section is as tall as its head; the other takes the room, or — both retracted — neither.
             val bothOpen = !actionsCollapsed && !addedCollapsed
@@ -965,7 +979,8 @@ fun SearchWindow(
                 onToggleCollapsed = { actionsCollapsed = !actionsCollapsed },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (actionsCollapsed) Modifier else Modifier.weight(if (bothOpen) topRightShare else 1f))
+                    .then(if (actionsCollapsed) Modifier else Modifier.weight(if (bothOpen) topRightShare.coerceAtLeast(LEAST_SECTION_SHARE) else 1f))
+                    .clipToBounds()
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
             if (bothOpen) SectionSeparator(vertical = false, onDrag = dragTopRightShare) else HorizontalDivider()
@@ -995,7 +1010,8 @@ fun SearchWindow(
                 onToggleCollapsed = { addedCollapsed = !addedCollapsed },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (addedCollapsed) Modifier else Modifier.weight(if (bothOpen) 1f - topRightShare else 1f))
+                    .then(if (addedCollapsed) Modifier else Modifier.weight(if (bothOpen) (1f - topRightShare).coerceAtLeast(LEAST_SECTION_SHARE) else 1f))
+                    .clipToBounds()
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
@@ -1110,6 +1126,8 @@ private fun AddedElementsList(
                 text = "Added elements" + if (rows.isEmpty()) "" else "  ·  ${rows.size}",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                softWrap = false,
             )
         }
         if (collapsed) return@Column
@@ -1125,7 +1143,10 @@ private fun AddedElementsList(
         val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
         val pinnedIndex by remember(listState, bandPx) { derivedStateOf { pinnedItemIndex(listState, bandPx) } }
         val pinScope = rememberCoroutineScope()
-        Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned { listTop = it.positionInWindow().y }) {
+        Box(
+            Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH)
+                .onGloballyPositioned { listTop = it.positionInWindow().y },
+        ) {
             // An element's row, for the list and for its pinned copy ([pinnedAt]: the item it is the copy of — a
             // press on the copy scrolls the list up to its real row, the tree's rule): one drawing.
             val head: @Composable (SearchDomain.Result, Int?) -> Unit = { row, pinnedAt ->

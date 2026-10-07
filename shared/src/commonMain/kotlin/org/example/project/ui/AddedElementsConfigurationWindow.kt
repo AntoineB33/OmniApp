@@ -233,6 +233,8 @@ internal fun AddedActionsSection(
                 text = "Actions on the added elements",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.weight(1f),
             )
         }

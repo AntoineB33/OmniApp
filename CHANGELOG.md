@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: a narrowed section is cut, its title and its lists included — 2026-10-07
+
+The user, on the entry below: "The title of the three sections of the Search window are still getting squished when
+moving the vertical line to the edge." The three titles wrapped as their section narrowed; they are one line now, cut
+at the edge. The render showed the same of the result list and of the added elements list — their rows stacked their
+text letter by letter — so both are laid out at the sections' least width and cut (`keepsWidthAbove`), like the
+header and the actions.
+
+Seen on the headless render with the vertical separator 48 px from each edge: every part of the narrow section is cut,
+none is squeezed. No test kept. Not verified in the live app. Client only.
+
+### Search window: each section can be resized up to the edges of the window — 2026-10-07
+
+User rule. The separators stopped 220 dp (sideways) and 90 dp (up and down) short of the edges; they now go all the
+way. Each section is clipped, so one given no room shows nothing instead of spilling over its neighbour — which the
+first headless render showed it doing.
+
+Seen on the Search window rendered headlessly with a real mouse drag: the vertical separator to the left edge, taken
+back from there to the right edge, then to the middle; the horizontal one to the top, then to the bottom. No test kept
+(no Compose UI test in the project). Not verified in the live app — in particular, a separator lying on the window's
+edge sits beside the window's own resize border; in the render it could be taken back 8 px in. Client only.
+
 ### Search window: a cell of a sub-tree and its row were both drawn selected — 2026-10-07
 
 Anomaly: "When I click on a task cell in the sub-tree, then on the root task cell (in the result list), both task cells
