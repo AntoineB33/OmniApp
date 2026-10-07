@@ -23,8 +23,18 @@ internal data class PowerTransition(val millis: Long, val down: Boolean)
  * boot (`12`, `6005`) beside the wake.
  *
  * `6008` (power loss) is stamped at the **next boot**, not at the crash. The real instant is in the record's
- * own properties and [script] substitutes it — otherwise a power cut would read as a down transition a second
- * before the boot that ended it, and the whole outage would look like time spent at the machine.
+ * own properties — otherwise a power cut would read as a down transition a second before the boot that ended it,
+ * and the whole outage would look like time spent at the machine.
+ *
+ * **That instant is read from the record's BINARY time, in Kotlin** ([powerLossMillis]; anomaly 2026-10-07). It
+ * was parsed in the script from the record's date and time STRINGS, which are written in the machine's locale —
+ * and the date carries invisible left-to-right marks (U+200E) there (`fr-FR`: "‎06/‎10/‎2026"), so the parse
+ * failed, silently, and the power cut of 21:07 kept the stamp of the boot (21:09:53) — AFTER the boot's own `12`
+ * (21:09:42). The log then read: up, then down, and nothing since — the computer "away" from the boot until the
+ * next sleep, however long the user sat at it: the Sleep band behind the line was not retracted, and no on-screen
+ * work was banked. The binary time (`SYSTEMTIME`, local, the record's last property) has no locale. A `6008`
+ * whose instant cannot be read is put a millisecond BEFORE its own stamp, never after: at the boot it is then a
+ * flip the debouncer cancels, instead of an absence nothing closes.
  *
  * ## An event id means nothing without its provider
  *
@@ -122,18 +132,34 @@ internal object WindowsPowerLog {
                     if (${'$'}x.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { ${'$'}global:ok = ${'$'}false }
                 }
                 foreach (${'$'}e in ${'$'}ev) {
-                    ${'$'}t = ${'$'}e.TimeCreated
+                    ${'$'}line = '' + [long]([DateTimeOffset]${'$'}e.TimeCreated).ToUnixTimeMilliseconds() + ',' + ${'$'}e.Id
                     if (${'$'}e.Id -eq 6008) {
+                        # The real instant of the power loss: the record's binary SYSTEMTIME, read in Kotlin.
                         try {
-                            ${'$'}p = ${'$'}e.Properties
-                            if (${'$'}p.Count -ge 2) { ${'$'}t = [datetime]::Parse('' + ${'$'}p[1].Value + ' ' + ${'$'}p[0].Value) }
+                            ${'$'}b = ${'$'}e.Properties[${'$'}e.Properties.Count - 1].Value
+                            if (${'$'}b -is [byte[]] -and ${'$'}b.Length -ge 16) { ${'$'}line = ${'$'}line + ',' + ((${'$'}b[0..15]) -join ' ') }
                         } catch { }
                     }
-                    [void]${'$'}global:out.Add('' + [long]([DateTimeOffset]${'$'}t).ToUnixTimeMilliseconds() + ',' + ${'$'}e.Id)
+                    [void]${'$'}global:out.Add(${'$'}line)
                 }
             }
         """.trimIndent()
         return "$body\n$reads\nif (${'$'}global:ok) { 'OK' }\n${'$'}global:out"
+    }
+
+    /**
+     * The instant a power loss (`6008`) really happened: the first 16 bytes of the record's binary data, a Windows
+     * `SYSTEMTIME` in LOCAL time (year, month, day of week, day, hour, minute, second, millisecond — each a
+     * little-endian 16-bit word), as the script prints them ("234 7 10 0 2 0 6 0 21 0 7 0 11 0 171 3"). Null where
+     * they are missing or name no date.
+     */
+    fun powerLossMillis(systemTimeBytes: String?, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): Long? {
+        val bytes = systemTimeBytes?.trim()?.split(' ')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size >= 16 } ?: return null
+        fun word(index: Int) = bytes[2 * index] + 256 * bytes[2 * index + 1]
+        return runCatching {
+            java.time.LocalDateTime.of(word(0), word(1), word(3), word(4), word(5), word(6), word(7) * 1_000_000)
+                .atZone(zone).toInstant().toEpochMilli()
+        }.getOrNull()
     }
 
     /** How long the drain thread is given to finish once the process itself has exited. */
@@ -186,9 +212,12 @@ internal object WindowsPowerLog {
             lines
                 .mapNotNull { line ->
                     val parts = line.split(',')
-                    if (parts.size != 2) return@mapNotNull null
-                    val millis = parts[0].toLongOrNull() ?: return@mapNotNull null
+                    if (parts.size !in 2..3) return@mapNotNull null
+                    val stamped = parts[0].toLongOrNull() ?: return@mapNotNull null
                     val id = parts[1].toIntOrNull() ?: return@mapNotNull null
+                    // A power loss is stamped at the NEXT boot: its real instant is the record's own, and where
+                    // that cannot be read it is put just before its stamp — never after the boot that wrote it.
+                    val millis = if (id == 6008) powerLossMillis(parts.getOrNull(2)) ?: (stamped - 1) else stamped
                     when (id) {
                         in DOWN_IDS -> PowerTransition(millis, down = true)
                         in UP_IDS -> PowerTransition(millis, down = false)

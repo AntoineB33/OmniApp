@@ -249,14 +249,26 @@ private fun SettingEditor(
             val reset = SearchDomain.resetConfig(config, openedConfig)
             ResetButton(enabled = reset != config) { onChange(reset) }
         }
-        // The calendar filter: its switch, the instant, and — only for a window the calendar's "add…" opened — the
-        // button that puts the instant back on that right-click.
+        // The calendar filter: its three states (user rule 2026-10-07 — what can be added without removing anything
+        // where the user right-clicked, what can be added, or no filter), the instant, and — only for a window the
+        // calendar's "add…" opened — the button that puts the instant back on that right-click.
         SearchDomain.Setting.CalendarAdd ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.Switch(
-                    checked = f.calendarAddOn,
-                    onCheckedChange = { filters(f.copy(calendarAddOn = it)) },
-                )
+                var statesOpen by remember { mutableStateOf(false) }
+                androidx.compose.foundation.layout.Box {
+                    FrameButton(f.calendarAddFilter.label + " ▾") { statesOpen = true }
+                    androidx.compose.material3.DropdownMenu(expanded = statesOpen, onDismissRequest = { statesOpen = false }) {
+                        SearchDomain.CalendarAddFilter.entries.forEach { choice ->
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { androidx.compose.material3.Text((if (choice == f.calendarAddFilter) "● " else "○ ") + choice.label) },
+                                onClick = {
+                                    statesOpen = false
+                                    filters(f.withCalendarAddFilter(choice))
+                                },
+                            )
+                        }
+                    }
+                }
                 CalendarInstantField(f.calendarAddAtMillis) { filters(f.copy(calendarAddAtMillis = it)) }
                 config.calendarClickMillis?.let { click ->
                     FrameButton("Set to the right-click", enabled = f.calendarAddAtMillis != click) {

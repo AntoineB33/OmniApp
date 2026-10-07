@@ -949,6 +949,24 @@ suggestions before it was ever entered.
   "start this task now" asks — so a parent, a task only a stored tree holds and a cut one are "no".
 - **The restrictive periods' "Default periods" filter** (yes / no / any; it was "Origin": built-in / yours, and
   the stored names `BuiltIn`/`Yours` are kept) keeps the kinds the app ships or the account's own.
+- **The "can be added to the calendar at" filter has THREE states** (user rule 2026-10-07; `SearchDomain.CalendarAddFilter`,
+  `Filters.calendarAddOn` + `calendarAddKeeping`, `CalendarAddFilterTest`): *what can be added without removing
+  anything where the user right-clicked*, *what can be added* (what the calendar's "add…" opens on), *no filter* — a
+  drop-down in the Search configurations window, beside the instant it has always had. **"Without removing anything"
+  is asked of the ADD ITSELF** (`calendarAddKeepsEverything`): the drafts "Add to the calendar" would lay
+  (`calendarDrafts`, over the action's own start and end, `Config.placement`) are put through the reducer that lays
+  them, and every panel that was there must still stand over all it stood over, every record be as it was. Never a
+  second reading of what refuses what. Asked of every row of the list, so on the state cut down to what the span can
+  touch (`calendarAddSurroundings`: the panels within a day of it, no history, no re-plan). A row that lays no panel
+  (a ring, a timer, a "creation" row) removes nothing.
+- **"What can be added there" reads the periods AS THE CALENDAR DRAWS THEM** (anomaly 2026-10-07;
+  `SearchDomain.calendarKindsAt`, `SearchDomain.drawnPeriodKindsAt` injected by `App` off `CalendarLayersHolder.periods`,
+  `CalendarAddFilterTest`). The stored panels cannot say it alone: the schedule's Sleep window is stored over its
+  whole night, and the rules cut it where the line crossed it at a screen from what the devices observed, which is
+  not in the state — read stored, a right-click at 03:14 at the screen found no task that could be added. One
+  reading for the filter, for its "without removing anything" state and for "Add to the calendar" itself
+  (`calendarDrafts`), since all three ask `calendarKindsAt`. Outside the span the calendar shows, the stored panels
+  answer. A window still standing AHEAD of the line goes on refusing the tasks it refuses.
 - **The calendar filters** (tasks and restrictive-period kinds): on the calendar at all, every box from a day,
   every box until the end of a day. A day bound needs a box: an element with none fails it. A task's boxes are
   `SchedulerDomain.calendarBoxesOfTask` (its records and every panel placed for it — the scheduler's past reads the

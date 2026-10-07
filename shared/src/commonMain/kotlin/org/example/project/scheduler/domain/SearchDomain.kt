@@ -446,6 +446,7 @@ object SearchDomain {
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
+                    calendarAddKeeping = filters.calendarAddKeeping,
                     calendarAtOn = filters.calendarAtOn,
                     calendarAtMillis = filters.calendarAtMillis,
                     notificationsSinceMillis = filters.notificationsSinceMillis,
@@ -510,6 +511,7 @@ object SearchDomain {
                         periodBoxesUntil = dateNamed(stored.periodBoxesUntil),
                         calendarAddOn = stored.calendarAddOn,
                         calendarAddAtMillis = stored.calendarAddAtMillis,
+                        calendarAddKeeping = stored.calendarAddKeeping,
                         calendarAtOn = stored.calendarAtOn,
                         calendarAtMillis = stored.calendarAtMillis,
                         notificationsSinceMillis = stored.notificationsSinceMillis,
@@ -709,6 +711,12 @@ object SearchDomain {
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
         /**
+         * User rule 2026-10-07: the calendar filter's stricter state — while it is on ([calendarAddOn]), keep only what
+         * can be added there **without removing anything** ([calendarAddKeepsEverything]). The three states of the
+         * filter are [CalendarAddFilter]: this and the switch read as one choice.
+         */
+        val calendarAddKeeping: Boolean = false,
+        /**
          * **The "is on the calendar at" filter** (user rule 2026-10-01, the calendar's "edit…"): GLOBAL like the one
          * above — keeps only what is on the timeline at [calendarAtMillis] ([calendarElementsAt]). [calendarAtOn] is
          * its switch; the position is kept while it is off.
@@ -749,6 +757,18 @@ object SearchDomain {
         /** The instant the calendar filter keeps rows for, while it is on and has one; else null. */
         val calendarAddAt: Long?
             get() = calendarAddAtMillis.takeIf { calendarAddOn }
+
+        /** Which of its three states the calendar filter is in ([CalendarAddFilter]). */
+        val calendarAddFilter: CalendarAddFilter
+            get() = when {
+                !calendarAddOn -> CalendarAddFilter.None
+                calendarAddKeeping -> CalendarAddFilter.KeepingEverything
+                else -> CalendarAddFilter.Addable
+            }
+
+        /** These filters with the calendar filter in [state]; its instant is kept whichever it is. */
+        fun withCalendarAddFilter(state: CalendarAddFilter): Filters =
+            copy(calendarAddOn = state != CalendarAddFilter.None, calendarAddKeeping = state == CalendarAddFilter.KeepingEverything)
 
         /** The instant the "is on the calendar at" filter keeps rows for, while it is on and has one; else null. */
         val calendarAt: Long?
@@ -1048,6 +1068,8 @@ object SearchDomain {
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
+        /** New 2026-10-07 (the calendar filter's third state): absent = the filter keeps whatever can be added. */
+        val calendarAddKeeping: Boolean = false,
         val calendarClickMillis: Long? = null,
         /** New 2026-10-01 (the calendar's "edit…"): absent = off, no position. */
         val calendarAtOn: Boolean = false,
@@ -1648,6 +1670,11 @@ object SearchDomain {
         layerKindsAt: (Long) -> Set<String> = { emptySet() },
         /** The scheduler engine's runs, read only when [Kind.HistoryUnit] is checked ([itemResults]). */
         schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+        /**
+         * Where "Add to the calendar" would end what it lays ([Config.placement]) — what the calendar filter's
+         * "without removing anything" state lays to see what it removes ([calendarAddKeepsEverything]). Null: an hour.
+         */
+        placement: Placement? = null,
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
@@ -1675,7 +1702,12 @@ object SearchDomain {
                     // The calendar filter: about every kind, so asked of every row, once the instant's kinds are read.
                     val at = filters.calendarAddAt ?: return@let rows
                     val kindsAt = calendarKindsAt(state, at)
-                    rows.filter { calendarAddable(state, it, kindsAt, at, nowMillis) }
+                    val addable = rows.filter { calendarAddable(state, it, kindsAt, at, nowMillis) }
+                    if (!filters.calendarAddKeeping) return@let addable
+                    // The stricter state: what the add itself would leave in place, asked of the add's own reducer.
+                    val end = placementEnd(placement ?: Placement(), at)
+                    val around = calendarAddSurroundings(state, at, end)
+                    addable.filter { calendarAddKeepsEverything(around, it, at, end, timeZone) }
                 }
                 .let { rows ->
                     // The "is on the calendar at" filter: the keys of what is there, read once.
@@ -2685,6 +2717,67 @@ object SearchDomain {
     // ----- The calendar filter (user rule 2026-10-01) ----------------------------------------------------
 
     /**
+     * User rule 2026-10-07: the three states of the calendar filter of the Search window the calendar's "add…" opens —
+     * *"what can be added without removing anything where the user right-clicked, what can be added, or no filter"*.
+     */
+    enum class CalendarAddFilter(val label: String) {
+        KeepingEverything("Can be added without removing anything"),
+        Addable("Can be added"),
+        None("No filter"),
+    }
+
+    /**
+     * [state] cut down to what laying something over `[atMillis, endMillis)` can touch — the panels within a day of
+     * the span, no history, no re-plan — so [calendarAddKeepsEverything] can be asked of every row of a list.
+     */
+    fun calendarAddSurroundings(state: SchedulerState, atMillis: Long, endMillis: Long): SchedulerState {
+        val day = 24L * 60L * 60L * 1000L
+        return state.copy(
+            panels = state.panels.filter { it.endEpochMillis > atMillis - day && it.startEpochMillis < endMillis + day },
+            histories = org.example.project.scheduler.state.SchedulerHistories(),
+            automaticSchedule = false,
+        )
+    }
+
+    /**
+     * User rule 2026-10-07: **whether adding [result] to the calendar over `[atMillis, endMillis)` removes nothing** —
+     * every panel there (a task's, a period's, whoever laid it) still stands over all it stood over, and no recorded
+     * work is gone. Asked of the ADD ITSELF: the drafts "Add to the calendar" lays ([calendarDrafts]) are put through
+     * the reducer that lays them, on [around] ([calendarAddSurroundings]), and what was there is looked for in what
+     * is left — never a second reading of what a period refuses or what gives way to what. A row that lays no panel
+     * (an alarm's ring, a timer, a "creation" row) removes nothing.
+     */
+    fun calendarAddKeepsEverything(
+        around: SchedulerState,
+        result: Result,
+        atMillis: Long,
+        endMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): Boolean {
+        val drafts =
+            calendarDrafts(around, listOf(result), atMillis, timeZone, endMillis)
+                .filter { it.kind != CalendarElements.Kind.Alarm }
+                .map { draft ->
+                    // Seeded as the element window seeds a task's panel: the task's own answer to "no screen".
+                    if (draft.kind != CalendarElements.Kind.TaskPanel) draft
+                    else draft.copy(noScreenResilience = draft.taskId?.let { around.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN) } ?: 0.0)
+                }
+        if (drafts.isEmpty()) return true
+        val after =
+            org.example.project.scheduler.state.SchedulerReducer.reduce(
+                around, org.example.project.scheduler.state.SchedulerIntent.AddCalendarElements(drafts),
+            )
+        val panelsKept =
+            around.panels.all { was ->
+                after.panels.any {
+                    it.taskId == was.taskId && it.restrictiveKind == was.restrictiveKind && it.chore == was.chore &&
+                        it.startEpochMillis <= was.startEpochMillis && it.endEpochMillis >= was.endEpochMillis
+                }
+            }
+        return panelsKept && around.tasks.all { (id, task) -> after.tasks[id]?.record == task.record }
+    }
+
+    /**
      * The kinds of what the calendar's "add…" can lay — what its Search window lists. Not "creation": its rows make an
      * element NOW, not at the right-click (the filter still keeps them when the user checks that kind).
      */
@@ -2808,11 +2901,25 @@ object SearchDomain {
      */
     fun calendarKindsAt(state: SchedulerState, atMillis: Long): Set<String> {
         val config = state.periodKindConfig
-        return SchedulerDomain.statedPanels(state)
-            .filter { it.startEpochMillis <= atMillis && atMillis < it.endEpochMillis }
-            .mapNotNull { it.restrictiveKind.takeIf(String::isNotEmpty) }
-            .flatMapTo(HashSet()) { config.kindsOf(it) }
+        // As the calendar draws them where it shows the instant: a period that gave way to a line at a screen is not
+        // there (anomaly 2026-10-07 — at 03:14, at the screen inside the schedule's Sleep window, the stored window
+        // still covered the whole night and no task could be "added": the list held the creation row alone).
+        val drawn = drawnPeriodKindsAt(atMillis)
+        val kinds =
+            drawn ?: SchedulerDomain.statedPanels(state)
+                .filter { it.startEpochMillis <= atMillis && atMillis < it.endEpochMillis }
+                .mapNotNull { it.restrictiveKind.takeIf(String::isNotEmpty) }
+        return kinds.flatMapTo(HashSet()) { config.kindsOf(it) }
     }
+
+    /**
+     * **The kinds of the periods the calendar DRAWS at an instant**, or null where it shows nothing of it — injected by
+     * `App`, which derives them. The stored panels cannot say it alone: a Sleep window the schedule lays is stored
+     * over its whole night, and the rules cut it where the line crossed it at a screen (`scheduler.md` § *A mode-1 line
+     * retracts*) from what the devices observed, which is not in the state. None where nothing draws a calendar (a
+     * test, a headless engine): the stored panels are then the answer.
+     */
+    var drawnPeriodKindsAt: (Long) -> Set<String>? = { null }
 
     /**
      * Whether [result] can be added to the calendar at [atMillis], whose period kinds are [kindsAt] — what the calendar

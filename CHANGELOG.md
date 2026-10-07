@@ -11,6 +11,70 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A power cut made the computer "away" from the next boot on — 2026-10-07
+
+Anomaly: "there is a sleep period right before the now line, even though I've been on the screen. Does it mean the
+tests didn't catch such anomaly?" Measured, not read for: the engine's no-screen evidence grew by exactly the time
+elapsed between four launches (877, 886, 901, 919 min); the app's own reading of the Windows power log on the release
+machine (`deviceLockedIntervals`) ended on a span **21:09:53 → now**; and Windows itself said the machine had been up
+since its boot at 21:09:42.
+
+The computer lost power at 21:07 on 2026-10-06. Windows records that as event `6008`, written at the NEXT boot with
+the real instant inside it. `WindowsPowerLog` parsed that instant in the PowerShell script from the record's date and
+time STRINGS, which are locale text — and on this machine (`fr-FR`) the date carries invisible left-to-right marks
+(U+200E), so `[datetime]::Parse` threw, the `catch` swallowed it, and the power cut kept the boot's stamp (21:09:53),
+eleven seconds AFTER the boot's own event. The log then read "up, then down, and nothing since": the computer away for
+as long as the user sat at it. Hence the Sleep band not retracted behind a line at a screen (the stretch was not
+"known unlocked"), the same stretch counted as no-screen evidence (on-screen work not banked over it), and the
+"add…" anomaly below reading a Sleep window where the calendar should have cut it.
+
+- The instant is now read in Kotlin from the record's BINARY time (`WindowsPowerLog.powerLossMillis`, a local
+  `SYSTEMTIME`, no locale); the script only prints the bytes.
+- A `6008` whose instant cannot be read is put a millisecond BEFORE its stamp, never after: at the boot it is a flip
+  the debouncer cancels, not an absence nothing closes.
+- Verified against the release machine's real log: the open span is gone, and an earlier power cut the same day
+  (16:45) is now read where it happened.
+
+**Why no test caught it**: the tests fed `transitions` synthetic `<millis>,<id>` lines — the Kotlin half. The half
+that failed was the PowerShell parse of a real Windows record, which no test ran, and its failure was swallowed by an
+empty `catch`. The decoding is now in Kotlin, where `WindowsPowerLogTest` holds this machine's own record. It predates
+today's changes; last night's power cut was what exposed it.
+
+Not repaired: work done at the screen between the boot (21:09) and the fix was treated as away time and may not have
+been recorded. Client only.
+
+### "add…" at night listed no task — 2026-10-07
+
+Anomaly: "right-click > add... > type selector > only task: there is only the task creation element in the result
+list … It means that there is no schedulable tasks, which is not true." Read off a copy of the release state: the
+right-click was at 03:14, inside the schedule's Sleep window (23:14 → 07:45), with the user at the screen. The filter
+read the periods off the STORED panels, where that window covers the whole night — `kindsAt = [sleep, no screen]`, and
+none of the 123 schedulable tasks is resilient to it — while the rules, and the calendar, cut the window where the line
+crosses it at a screen (the plan itself had a task panel over that instant).
+
+`SearchDomain.calendarKindsAt` now takes the periods as the calendar draws them where it shows the instant
+(`SearchDomain.drawnPeriodKindsAt`, injected by `App` from the display derivation: `CalendarLayersHolder.periods`), and
+the stored panels only outside that. The filter, its "without removing anything" state and "Add to the calendar"
+all read it. Not changed: an instant AHEAD of the line inside a window that still stands there keeps refusing the
+tasks that window refuses.
+
+Client only. `CalendarAddFilterTest`. Not verified on screen.
+
+### Search: the calendar filter has three states — 2026-10-07
+
+User request: "When the user right-clicks on the calendar, clicks 'add...', opens the Search configurations window,
+there must be a filter for three states: what can be added without removing anything where the user right-clicked,
+what can be added, or no filter." The filter was a switch (what can be added / nothing).
+
+- **`SearchDomain.CalendarAddFilter`**: `KeepingEverything`, `Addable`, `None` — the switch `Filters.calendarAddOn`
+  and the new `calendarAddKeeping` (a stored field with a default: a configuration written before it keeps whatever
+  can be added, as it did). The Search configurations window shows the three in a drop-down; "add…" still opens on
+  "can be added".
+- **`calendarAddKeepsEverything`**: the add simulated by the reducer that performs it, over the span "Add to the
+  calendar" would lay (`Config.placement`), on the state cut down to the span's surroundings.
+
+Client only. `CalendarAddFilterTest`.
+
 ### The unfocused-notif window opened while the app was in use — 2026-10-07
 
 Anomaly: "I was on the calendar, when a notification happened and opened the unfocused notif, even though it is only

@@ -43,7 +43,49 @@ class WindowsPowerLogTest {
     @Test
     fun a_power_loss_is_a_down_transition() {
         val read = WindowsPowerLog.transitions(lines(t0 to 6008, (t0 + 2 * hour) to 6005))!!
-        assertEquals(listOf(DeviceSleepGap(t0, t0 + 2 * hour)), WindowsPowerLog.intervals(read))
+        // Its own instant is not in the line: it is put a millisecond before its stamp, never after it.
+        assertEquals(listOf(DeviceSleepGap(t0 - 1, t0 + 2 * hour)), WindowsPowerLog.intervals(read))
+    }
+
+    /**
+     * Anomaly 2026-10-07, the release machine's own log of 2026-10-06: sleep 21:00:18, wake 21:07:12, a power cut at
+     * 21:07:11.939 that Windows stamped at the boot (21:09:53) — eleven seconds AFTER the boot's own `12` (21:09:42).
+     * Read at its stamp the power cut was a down that nothing closed: the computer "away" from the boot on, for as
+     * long as the user sat at it. Its real instant is the record's binary time.
+     */
+    @Test
+    fun a_power_loss_is_read_at_the_instant_it_happened_not_at_the_boot_that_recorded_it() {
+        val zone = java.time.ZoneId.of("Europe/Paris")
+        fun at(h: Int, m: Int, s: Int) =
+            java.time.LocalDateTime.of(2026, 10, 6, h, m, s).atZone(zone).toInstant().toEpochMilli()
+        // The record's own bytes, as the script prints them: 2026-10-06 (a Tuesday) 21:07:11.939, local.
+        val recorded = "234 7 10 0 2 0 6 0 21 0 7 0 11 0 171 3"
+        assertEquals(at(21, 7, 11) + 939, WindowsPowerLog.powerLossMillis(recorded, zone))
+        assertEquals(null, WindowsPowerLog.powerLossMillis(null))
+        assertEquals(null, WindowsPowerLog.powerLossMillis("1 2 3"))
+        assertEquals(null, WindowsPowerLog.powerLossMillis("0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"), "no such date")
+
+        // The stream of that evening, the power loss carrying its bytes — and without them, the worst case.
+        val boot = at(21, 9, 53)
+        fun evening(powerLoss: String) =
+            listOf("OK", "${at(21, 0, 18)},506", "${at(21, 7, 12)},507", "${at(21, 9, 42)},12", powerLoss, "$boot,6005")
+        val local = java.time.ZoneId.systemDefault()
+        val cut = WindowsPowerLog.powerLossMillis(recorded, local)!!
+        for (powerLoss in listOf("$boot,6008,$recorded", "$boot,6008")) {
+            val away = WindowsPowerLog.intervals(WindowsPowerLog.transitions(evening(powerLoss))!!, openEndMillis = boot + 6 * hour)
+            assertTrue(away.none { it.endMillis > boot }, "nothing is away after the boot: $away")
+        }
+        // With its instant known, the outage is not time at the machine either: at the desk until the cut, away
+        // from the cut to the boot.
+        val day = java.time.LocalDateTime.of(2026, 3, 4, 10, 0, 0)
+        fun millis(t: java.time.LocalDateTime) = t.atZone(local).toInstant().toEpochMilli()
+        val lost = day.plusHours(2)
+        val bytes =
+            listOf(lost.year, lost.monthValue, 0, lost.dayOfMonth, lost.hour, lost.minute, lost.second, 0)
+                .joinToString(" ") { "${it % 256} ${it / 256}" }
+        val back = millis(day.plusHours(5))
+        val read = WindowsPowerLog.transitions(listOf("OK", "${millis(day)},507", "$back,12", "${back + 11_000},6008,$bytes", "${back + 11_000},6005"))!!
+        assertEquals(listOf(DeviceSleepGap(millis(lost), back)), WindowsPowerLog.intervals(read))
     }
 
     @Test

@@ -322,13 +322,15 @@ fun SearchWindow(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations,
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
+            // The calendar filter's "without removing anything" lays what "Add to the calendar" would, as long as it would.
+            config.placement.takeIf { filters.calendarAddKeeping },
         ) {
             // One kind checked and nothing of it found: its "creation" row stands in the list.
             SearchDomain.withCreationWhenEmpty(
                 state,
                 SearchDomain.results(
                     state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
-                    schedulerRuns = schedulerRuns,
+                    schedulerRuns = schedulerRuns, placement = config.placement,
                 ),
                 kinds,
             )

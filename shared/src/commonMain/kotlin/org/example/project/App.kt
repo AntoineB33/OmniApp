@@ -232,6 +232,24 @@ private class CalendarLayersHolder {
     var breaks: List<Pair<TaskTimeRange, String>> = emptyList()
 
     /**
+     * Every PERIOD the calendar draws — the Sleep bands, the hours before bed, the period boxes, the breaks — each
+     * over the span it is DRAWN over: a period that gave way to a line at a screen is cut where it gave way, behind
+     * the line and at it. [span] is what the calendar shows; outside it nothing was derived.
+     */
+    var periods: List<Pair<TaskTimeRange, String>> = emptyList()
+    var span: TaskTimeRange? = null
+
+    /**
+     * The kinds of the periods the calendar draws at [atMillis] — or null outside what it shows, where only the stored
+     * panels can answer ([SearchDomain.calendarKindsAt]).
+     */
+    fun periodKindsAt(atMillis: Long): Set<String>? {
+        val shown = span ?: return null
+        if (atMillis < shown.startEpochMillis || atMillis >= shown.endEpochMillis) return null
+        return periods.filter { it.first.startEpochMillis <= atMillis && atMillis < it.first.endEpochMillis }.mapTo(HashSet()) { it.second }
+    }
+
+    /**
      * The layer kinds at [atMillis] with what the rules derive from them ("no screen" under both layers) — or none
      * where a task panel placed by hand lies that a derived kind refuses: the layers give way to it there
      * ([SchedulerDomain.layerRetractionCuts], asked at the one instant).
@@ -2755,6 +2773,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         outline = SchedulerDomain.ringOutline(occurrence.entry.calendarPlaced),
                     )
                 }
+            // The periods as drawn, for "what can be added there" ([SearchDomain.calendarKindsAt]).
+            layersHolder.periods =
+                calendarRecords.mapNotNull { record ->
+                    val kind =
+                        when {
+                            record.layer != null || record.alarm || record.reminder -> null
+                            record.sleep -> PeriodKinds.SLEEP
+                            record.screenBreak -> record.breakKind.ifBlank { PeriodKinds.INACTIVITY }
+                            else -> record.restrictiveKind.takeIf { it.isNotBlank() }
+                        }
+                    kind?.let { record.range to it }
+                }
+            layersHolder.span = TaskTimeRange(visibleSpanStartMillis, visibleSpanEndMillis)
             return CalendarDisplay(
                 records = calendarRecords,
                 displayFloorMillis = displayFloorMillis,
@@ -2982,6 +3013,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // What stands where a dragged period was is chosen from its edges — the layers the calendar draws there
             // included ([SchedulerDomain.vacatedPastFill]).
             SchedulerReducer.layerKindsAt = { calendarLayers.kindsAt(it) }
+            // "What can be added there" is asked of the periods as the calendar DRAWS them (anomaly 2026-10-07).
+            SearchDomain.drawnPeriodKindsAt = { calendarLayers.periodKindsAt(it) }
         }
         // User rule 2026-10-03: every id suggestion list's task row is the Search window's task result row, configured
         // ([TaskIdentityRow]). Its paths are one walk of every tree, measured when the trees change — never per row.
