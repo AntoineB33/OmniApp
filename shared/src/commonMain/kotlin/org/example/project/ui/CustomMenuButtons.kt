@@ -62,7 +62,40 @@ data class CustomMenuButton(
      * 2026-09-26, which is given its window's configuration once, at load ([CustomMenuButtons.withConfigsFrozen]).
      */
     val config: String? = null,
+    /**
+     * User rule 2026-10-07: where the window stood and how its sections were shared when the button was made or last
+     * UPDATED ([WindowLayout], [CustomMenuButtons.encodeLayout]) — the window the button opens is put back so. Null on
+     * a button made before, which opens its window wherever a window of its kind opens.
+     */
+    val layout: String? = null,
 )
+
+/**
+ * **A window's place and the lines between its sections**, as a button keeps them: its offset and size in the app
+ * ([WindowFrameState]), [splits] — the Search window's two shares (left, top right), the calendar's
+ * configuration width in dp, nothing for a window with one section — and [hidden], which of its sections are
+ * retracted to their arrow (anomaly 2026-10-08: a section hidden was no change, and "Update" was not offered), in
+ * the window's own order: the Search window's search, actions, added elements; the calendar's grid, configuration.
+ */
+@Serializable
+data class WindowLayout(
+    val x: Float,
+    val y: Float,
+    val width: Float = 0f,
+    val height: Float = 0f,
+    val splits: List<Float> = emptyList(),
+    val hidden: List<Boolean> = emptyList(),
+) {
+    /** The same layout to the eye: a pixel, and a thousandth of a share, are no change. */
+    fun sameAs(other: WindowLayout?): Boolean =
+        other != null &&
+            kotlin.math.abs(x - other.x) < 1f && kotlin.math.abs(y - other.y) < 1f &&
+            kotlin.math.abs(width - other.width) < 1f && kotlin.math.abs(height - other.height) < 1f &&
+            // A layout kept before the hidden sections were (none listed) hid none.
+            hidden.any { it } == other.hidden.any { it } && (hidden.none { it } || hidden == other.hidden) &&
+            splits.size == other.splits.size &&
+            splits.indices.all { kotlin.math.abs(splits[it] - other.splits[it]) < if (splits[it] <= 1f && other.splits[it] <= 1f) 0.002f else 1f }
+}
 
 /** The list of [CustomMenuButton]s, in menu order, and the few things done to it. Pure. */
 object CustomMenuButtons {
@@ -130,6 +163,31 @@ object CustomMenuButtons {
 
     fun removed(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> = buttons.filterNot { it.id == id }
 
+    fun encodeLayout(layout: WindowLayout): String = json.encodeToString(WindowLayout.serializer(), layout)
+
+    /** [encodeLayout]'s reverse; nothing stored, or nothing readable, is no layout. */
+    fun decodeLayout(text: String?): WindowLayout? =
+        text?.let { runCatching { json.decodeFromString(WindowLayout.serializer(), it) }.getOrNull() }
+
+    /**
+     * User rule 2026-10-07, the button menu's **"Update"**: whether the window the button opened is no longer what
+     * the button holds — its configuration ([config], as the window holds it now, against [savedConfig], the
+     * button's read the same way) or its layout ([layout] against the button's own, or — for a button that never
+     * kept one — against [opened], the layout its window had when the button opened it). No window: nothing to say.
+     */
+    fun needsUpdate(button: CustomMenuButton, savedConfig: String?, config: String?, layout: WindowLayout?, opened: WindowLayout?): Boolean {
+        if (layout == null) return false
+        if (config != savedConfig) return true
+        // A button that never kept a layout, about a window it is not known to have opened so (one that came back
+        // at a restart): there is a state to save, and saving it is what ends the question.
+        val reference = decodeLayout(button.layout) ?: opened ?: return true
+        return !layout.sameAs(reference)
+    }
+
+    /** [buttons] with [id] holding its window's state as it stands: [config] and [layout]. */
+    fun updated(buttons: List<CustomMenuButton>, id: String, config: String?, layout: WindowLayout?): List<CustomMenuButton> =
+        buttons.map { if (it.id != id) it else it.copy(config = config ?: it.config, layout = layout?.let(::encodeLayout) ?: it.layout) }
+
     /**
      * [buttons] with every button that has no [CustomMenuButton.config] given [configOf] its window — once, when the
      * list is loaded: a button made before the snapshot existed then keeps ONE configuration, instead of following
@@ -143,7 +201,9 @@ object CustomMenuButtons {
  * The lateral menu's bottom section: the buttons the user made ([CustomMenuButton]), drawn like the menu's own.
  * [editingId]'s title is an edit field instead, opened with the whole title selected — so typing replaces it and
  * Enter keeps it. Enter or leaving the field commits ([onRename]; a blank title keeps the old one), Escape keeps
- * the title it had. A right-click offers Rename (the same field) and Remove.
+ * the title it had. A right-click offers Rename (the same field) and Remove — and **Update** (user rule 2026-10-07)
+ * while the window the button opened is open and is no longer what the button holds ([canUpdate], asked when the menu
+ * opens): the button then keeps that window's state as it stands ([onUpdate]).
  */
 @Composable
 internal fun CustomMenuSection(
@@ -154,6 +214,8 @@ internal fun CustomMenuSection(
     onRename: (id: String, title: String) -> Unit,
     onEditDone: () -> Unit,
     onRemove: (id: String) -> Unit,
+    canUpdate: (CustomMenuButton) -> Boolean = { false },
+    onUpdate: (CustomMenuButton) -> Unit = {},
 ) {
     if (buttons.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -176,6 +238,9 @@ internal fun CustomMenuSection(
                         onDismissRequest = { menuOpen = false },
                         properties = PopupProperties(focusable = false),
                     ) {
+                        if (canUpdate(button)) {
+                            DropdownMenuItem(text = { Text("Update") }, onClick = { menuOpen = false; onUpdate(button) })
+                        }
                         DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
                         DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove(button.id) })
                     }

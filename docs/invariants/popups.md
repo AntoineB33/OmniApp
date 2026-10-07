@@ -83,6 +83,20 @@ means.
   the frame on `WindowInstance.menuKey`). One host for every frame, so no window is wired for it one by one.
   A window about something transient (a calendar edit draft, the elements at a spot, the constraint picker, a
   companion, a notice) has no ☆: a saved button would have nothing to come back to.
+  - **A button's right-click "Update" saves its window's state as it stands** (user rule 2026-10-07;
+    `CustomMenuButtons.needsUpdate` / `updated`, `CustomMenuButtonsTest`): offered only while the window THE BUTTON
+    opened or brought back is open (`App`'s `menuButtonWindows`, Compose-only — forgotten when that window closes;
+    after a restart, `menuButtonWindowOf` finds it again as the open window of the button's kind that still carries
+    the button's name on its tab, `WindowFrameHost.tabTitles`) and is no longer what the button holds. The state is the configuration (`config`: for a Search
+    window its query, kinds, filters, sorts AND added elements) and the **layout** (`CustomMenuButton.layout`, a
+    `WindowLayout`: the window's offset and size, and the lines between its sections — the Search window's two
+    shares, `SearchSplits`; the calendar's configuration width — **and which sections are retracted to their arrow**,
+    `WindowLayout.hidden`, anomaly 2026-10-08). A button that never kept a layout is read against
+    the one its window had when the button opened it, so nothing is offered for a window left as it opened; where
+    that is not known either (the window came back at a restart), "Update" IS offered — there is a state to save. A NEW
+    window a button opens is put back as its layout says (its lines at once, its place once it has a frame); one
+    only brought back is left where it is. The button's click still asks for "that exact window" by its
+    CONFIGURATION alone (`openNewWindow`): the layout never decides which window is found.
   - **The key follows what the window shows**: the alarm, timer and reminder windows move on to the element their
     "+ New …" made (`ObjectWindows.Window.retarget`), and the registration's `menuKey` is kept current
     (`WindowFrameHost.rekey`), so a ☆ pressed after a "+ New …" saves the element shown now.

@@ -3868,6 +3868,12 @@ fun CalendarFloatingWindow(
     /** The account's sleep schedule and its edit — the configuration section's "Sleep" (user rule 2026-10-07). */
     sleepSchedule: org.example.project.scheduler.model.SleepSchedule? = null,
     onSleepScheduleChange: (org.example.project.scheduler.model.SleepSchedule) -> Unit = {},
+    /** The configuration section's width in dp where the caller has a word on it (a menu button's), and each drag told back. */
+    configurationWidthDp: Float? = null,
+    onConfigurationWidthChange: (Float) -> Unit = {},
+    /** Which of the two sections (the grid, the configuration) are retracted, the same way. */
+    sectionsHidden: List<Boolean>? = null,
+    onSectionsHiddenChange: (List<Boolean>) -> Unit = {},
     /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
     showReminders: Boolean = true,
     /** PRD §14: flip the "Reminders" display switch. */
@@ -4024,9 +4030,18 @@ fun CalendarFloatingWindow(
         // a way of looking at the window. The grid stays COMPOSED while it is retracted or squeezed (laid out at
         // [CALENDAR_GRID_MIN_WIDTH] at least and cut): its scroll and its zoom are its own, and a week laid out in
         // no width at all is a case nothing else asks of it.
-        var gridCollapsed by remember { mutableStateOf(false) }
-        var configurationCollapsed by remember { mutableStateOf(false) }
-        var configurationWidth by remember { mutableStateOf(CALENDAR_CONFIGURATION_WIDTH) }
+        var gridCollapsed by remember { mutableStateOf(sectionsHidden?.getOrNull(0) ?: false) }
+        var configurationCollapsed by remember { mutableStateOf(sectionsHidden?.getOrNull(1) ?: false) }
+        LaunchedEffect(sectionsHidden) {
+            sectionsHidden?.let {
+                gridCollapsed = it.getOrNull(0) ?: false
+                configurationCollapsed = it.getOrNull(1) ?: false
+            }
+        }
+        LaunchedEffect(gridCollapsed, configurationCollapsed) { onSectionsHiddenChange(listOf(gridCollapsed, configurationCollapsed)) }
+        var configurationWidth by remember { mutableStateOf(configurationWidthDp?.dp ?: CALENDAR_CONFIGURATION_WIDTH) }
+        // Given from outside (a menu button putting its window back): taken; a drag tells it back.
+        LaunchedEffect(configurationWidthDp) { configurationWidthDp?.let { configurationWidth = it.dp } }
         var sectionsWidthPx by remember { mutableStateOf(0) }
         val sectionsDensity = LocalDensity.current
         Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { sectionsWidthPx = it.width }) {
@@ -4082,6 +4097,7 @@ fun CalendarFloatingWindow(
                         val room = with(sectionsDensity) { sectionsWidthPx.toDp() } - SECTION_SEPARATOR_THICKNESS
                         configurationWidth =
                             (configurationWidth - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room.coerceAtLeast(0.dp))
+                        onConfigurationWidthChange(configurationWidth.value)
                     },
                 )
             } else {

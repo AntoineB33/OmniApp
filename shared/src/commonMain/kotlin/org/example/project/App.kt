@@ -541,6 +541,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Until the start-up has put the windows back, none of them claims the focus by opening (below).
         val windowFrames = remember { WindowFrameHost().also { it.claimOnOpen = false } }
         // Keyed by the window's FRAME id: the lateral-menu window's name, or a copy's (`Search#2`).
+        // User rule 2026-10-07, a menu button's "Update": the window each button (by id) last opened or brought back
+        // (by frame id), the layout that window had then — the reference for a button that kept none — and the lines
+        // between the sections of the windows that have some, which those windows tell here. Compose-only.
+        val menuButtonWindows = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+        val menuButtonOpenedLayouts = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowLayout>() }
+        val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
+        var calendarConfigurationWidth by remember { mutableStateOf<Float?>(null) }
+        var calendarSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
             val next = change(previous)
@@ -550,6 +558,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // A window that closes takes the windows opened from it with it (user rule 2026-10-06) — here, the one
             // write every close makes, and before the close hands the focus on (`onLayout`).
             if (previous.visible && !next.visible && id !in VIEW_ROWS) windowFrames.closeOpenedFrom(id)
+            // A closed window is no button's any more: its frame id may be another window's tomorrow.
+            if (previous.visible && !next.visible) {
+                menuButtonWindows.entries.filter { it.value == id }.forEach {
+                    menuButtonWindows.remove(it.key)
+                    menuButtonOpenedLayouts.remove(it.key)
+                }
+            }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
         }
         fun updatePlacement(id: FloatingWindow, change: (WindowPlacement) -> WindowPlacement) =
@@ -1458,6 +1473,43 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 else -> null
             }
         // Bring the open window [id] of [kind] back: out of the window bar, to the front, into the focus.
+        // User rule 2026-10-07: **the state a menu button keeps of its window** — where the window stands and the
+        // lines between its sections ([org.example.project.ui.WindowLayout]); its configuration is [windowConfigOf].
+        // Read off the open window; null for one that is not open.
+        fun windowLayoutOf(frameId: String): org.example.project.ui.WindowLayout? {
+            val frame = windowFrames.registrations.firstOrNull { it.id == frameId }?.state ?: return null
+            val search = searchSplits[frameId] ?: org.example.project.ui.SearchSplits()
+            val (splits, hidden) =
+                when (lateralWindowOf(frameId)) {
+                    FloatingWindow.Search ->
+                        listOf(search.left, search.topRight) to listOf(search.searchHidden, search.actionsHidden, search.addedHidden)
+                    FloatingWindow.Calendar -> listOfNotNull(calendarConfigurationWidth) to calendarSectionsHidden.orEmpty()
+                    else -> emptyList<Float>() to emptyList()
+                }
+            return org.example.project.ui.WindowLayout(frame.offset.x, frame.offset.y, frame.size.width, frame.size.height, splits, hidden)
+        }
+        // The window a button is about: the one it opened or brought back this session, else — a window that came back
+        // at a restart — the open one of its kind that still carries the button's name on its tab
+        // ([WindowFrameHost.tabTitles], kept across restarts), which is the window that button created.
+        fun menuButtonWindowOf(button: CustomMenuButton): String? =
+            menuButtonWindows[button.id]
+                ?: windowFrames.registrations.firstOrNull { window ->
+                    windowFrames.tabTitles[window.id] == button.title &&
+                        (ObjectWindowKey.decode(button.windowId)?.let { window.menuKey == button.windowId }
+                            ?: (lateralWindowOf(window.id) != null && lateralWindowOf(window.id) == lateralWindowOf(button.windowId)))
+                }?.id
+        // The button's "Update" is offered while the window it opened is open and is no longer what the button holds.
+        fun menuButtonCanUpdate(button: CustomMenuButton): Boolean {
+            val frameId = menuButtonWindowOf(button) ?: return false
+            val kind = lateralWindowOf(frameId)
+            return CustomMenuButtons.needsUpdate(
+                button,
+                savedConfig = kind?.let { normalizedWindowConfig(it, button.config) },
+                config = kind?.let { windowConfigOf(frameId) },
+                layout = windowLayoutOf(frameId),
+                opened = menuButtonOpenedLayouts[button.id],
+            )
+        }
         fun presentWindow(kind: FloatingWindow, id: String) {
             if (id == kind.name) focusWindow(kind)
             else historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
@@ -1676,11 +1728,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // back keeps its tab as it was.
         fun onMenuButtonClicked(button: CustomMenuButton) {
             val before = windowFrames.registrations.mapTo(HashSet()) { it.id }
+            val saved = CustomMenuButtons.decodeLayout(button.layout)
+            var asked: String? = null
             ObjectWindowKey.decode(button.windowId)?.let { key ->
                 openObjectWindow(key)
             } ?: run {
                 val kind = lateralWindowOf(button.windowId) ?: return
-                openNewWindow(kind, button.config)
+                val id = openNewWindow(kind, button.config)
+                asked = id
+                menuButtonWindows[button.id] = id
+                if (id in before) {
+                    // Brought back as it stands: what it looks like now is this button's reference, where it kept none.
+                    if (saved == null && button.id !in menuButtonOpenedLayouts) windowLayoutOf(id)?.let { menuButtonOpenedLayouts[button.id] = it }
+                } else if (saved != null) {
+                    // A new window, put back as the button kept it: its lines now, its place once it has a frame.
+                    when (kind) {
+                        FloatingWindow.Search ->
+                            if (saved.splits.size == 2) {
+                                searchSplits[id] =
+                                    org.example.project.ui.SearchSplits(
+                                        saved.splits[0], saved.splits[1],
+                                        saved.hidden.getOrNull(0) ?: false, saved.hidden.getOrNull(1) ?: false, saved.hidden.getOrNull(2) ?: false,
+                                    )
+                            }
+                        FloatingWindow.Calendar -> {
+                            saved.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
+                            if (saved.hidden.isNotEmpty()) calendarSectionsHidden = saved.hidden
+                        }
+                        else -> Unit
+                    }
+                    updatePlacementById(id) { it.copy(x = saved.x, y = saved.y, width = saved.width, height = saved.height) }
+                }
             }
             engineScope.launch {
                 // A new window registers as it is first composed: within a frame or two of the click.
@@ -1690,6 +1768,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     if (created.isNotEmpty()) {
                         created.forEach { windowFrames.tabTitles[it] = button.title }
                         saveTabTitles()
+                        val id = asked?.takeIf { it in created } ?: created.first()
+                        menuButtonWindows[button.id] = id
+                        if (saved != null) {
+                            windowFrames.registrations.firstOrNull { it.id == id }?.state?.let { frame ->
+                                frame.applyLayout(
+                                    Offset(saved.x, saved.y),
+                                    if (saved.width > 0f && saved.height > 0f) Size(saved.width, saved.height) else frame.size,
+                                    frame.fill,
+                                    frame.minimized,
+                                )
+                            }
+                        }
+                        withFrameNanos { }
+                        windowLayoutOf(id)?.let { menuButtonOpenedLayouts[button.id] = it }
                         return@launch
                     }
                 }
@@ -3123,6 +3215,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRename = { id, title -> setMenuButtons(CustomMenuButtons.renamed(menuButtons, id, title)) },
                             onEditDone = { editingMenuButton = null },
                             onRemove = { setMenuButtons(CustomMenuButtons.removed(menuButtons, it)) },
+                            canUpdate = { menuButtonCanUpdate(it) },
+                            onUpdate = { button ->
+                                menuButtonWindowOf(button)?.let { frameId ->
+                                    val layout = windowLayoutOf(frameId)
+                                    val config = lateralWindowOf(frameId)?.let { windowConfigOf(frameId) }
+                                    setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout))
+                                }
+                            },
                         )
                     },
                 )
@@ -3543,6 +3643,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             minimumTimeWeight = schedulerState.minimumTimeWeight,
                             onMinimumTimeWeightChange = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
                             sleepSchedule = schedulerState.sleep,
+                            configurationWidthDp = calendarConfigurationWidth,
+                            onConfigurationWidthChange = { calendarConfigurationWidth = it },
+                            sectionsHidden = calendarSectionsHidden,
+                            onSectionsHiddenChange = { calendarSectionsHidden = it },
                             onSleepScheduleChange = {
                                 vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong()))
                             },
@@ -4239,6 +4343,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenConfigurations = { openConfigurationsOf(FloatingWindow.ConfigSearch, searchId) },
                             // The same, for the actions on the added elements.
                             onOpenAddedConfigurations = { openConfigurationsOf(FloatingWindow.AddedConfig, searchId) },
+                            splits = searchSplits[searchId],
+                            onSplitsChange = { searchSplits[searchId] = it },
                             initialOffset = searchOffset,
                             initialSize = searchSize,
                             onGeometryChange = { windowOffset, windowSize ->

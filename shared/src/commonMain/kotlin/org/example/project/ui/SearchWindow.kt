@@ -160,6 +160,18 @@ private const val NOT_IN_TREE_HINT: String =
  * state except through the gestures' own intents.
  */
 /**
+ * The Search window's sections as a way of looking at it: its two lines — the search section's share of the width,
+ * the actions' share of the right side's height — and which of the three are retracted to their arrow.
+ */
+data class SearchSplits(
+    val left: Float = 0.5f,
+    val topRight: Float = 0.5f,
+    val searchHidden: Boolean = false,
+    val actionsHidden: Boolean = false,
+    val addedHidden: Boolean = false,
+)
+
+/**
  * How a row of the Search window is OPENED, whatever its kind — the one mapping from a row to the handler the
  * rest of the app already has for it (a task's "edit task" window, a category's or a period kind's own window,
  * the one element's window of an alarm, a timer, a chrono, a reminder or a history unit, the lateral-menu window that
@@ -286,6 +298,12 @@ fun SearchWindow(
     onOpenConfigurations: () -> Unit,
     /** Opens the Added elements configurations window, which lists every action on the added elements. */
     onOpenAddedConfigurations: () -> Unit = {},
+    /**
+     * Where the two lines between the three sections stand ([SearchSplits]), when the caller has a word on it (a
+     * menu button's window, put back as the button kept it), and each drag of one told back. Null: half and half.
+     */
+    splits: SearchSplits? = null,
+    onSplitsChange: (SearchSplits) -> Unit = {},
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -623,25 +641,41 @@ fun SearchWindow(
       // each split starts at half and neither section shrinks below its minimum. Their joint moves both at once.
       val density = LocalDensity.current
       val separatorPx = with(density) { SECTION_SEPARATOR_THICKNESS.toPx() }
-      var leftShare by remember { mutableStateOf(0.5f) }
-      var topRightShare by remember { mutableStateOf(0.5f) }
+      var leftShare by remember { mutableStateOf(splits?.left ?: 0.5f) }
+      var topRightShare by remember { mutableStateOf(splits?.topRight ?: 0.5f) }
+      // Given from outside (a menu button putting its window back, user rule 2026-10-07): taken; a drag tells it back.
       // User rule 2026-10-04: each of the three sections is retracted to its head and expanded again by the little
       // arrow in it ([SectionArrow]). Compose-only, like the splits: a way of looking at the window. A retracted
       // section gives its room to its neighbour, and the separator between the two is gone with it.
-      var searchCollapsed by remember { mutableStateOf(false) }
-      var actionsCollapsed by remember { mutableStateOf(false) }
-      var addedCollapsed by remember { mutableStateOf(false) }
+      var searchCollapsed by remember { mutableStateOf(splits?.searchHidden ?: false) }
+      var actionsCollapsed by remember { mutableStateOf(splits?.actionsHidden ?: false) }
+      var addedCollapsed by remember { mutableStateOf(splits?.addedHidden ?: false) }
+      LaunchedEffect(splits) {
+          splits?.let {
+              leftShare = it.left
+              topRightShare = it.topRight
+              searchCollapsed = it.searchHidden
+              actionsCollapsed = it.actionsHidden
+              addedCollapsed = it.addedHidden
+          }
+      }
+      // A section retracted or brought back is told as a dragged line is.
+      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed) {
+          onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
+      }
       var rowWidthPx by remember { mutableStateOf(0f) }
       var rightHeightPx by remember { mutableStateOf(0f) }
       val dragLeftShare = { delta: Float ->
           leftShare = draggedSplit(
               leftShare, delta, rowWidthPx - separatorPx, minPx = 0f,
           )
+          onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
       }
       val dragTopRightShare = { delta: Float ->
           topRightShare = draggedSplit(
               topRightShare, delta, rightHeightPx - separatorPx, minPx = 0f,
           )
+          onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
       }
       Box(Modifier.fillMaxWidth().weight(1f)) {
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {

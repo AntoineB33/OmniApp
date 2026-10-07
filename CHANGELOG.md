@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Update" was not offered after hiding a section, nor for a window that came back at a restart — 2026-10-08
+
+Anomaly: "I hide one section in the 'Claude quota' Search window in account3, but the option 'update' doesn't appear.
+It worked for 'Gemini quota'." Two holes in the entry below, both stated there as limits:
+- **A hidden section was not part of the state.** It is now (`WindowLayout.hidden`; the Search window's three
+  sections, the calendar's two), saved by "Update" and put back when the button opens a new window.
+- **Which window a button opened was forgotten at a restart** — so after a deploy the option could not appear for a
+  window that had simply come back, until its button was pressed again; the likely difference between the two
+  buttons. The window is now found again by the button's name on its tab (`menuButtonWindowOf`), and a button that
+  never kept a layout offers "Update" for such a window.
+
+`CustomMenuButtonsTest`. Which of the two holes the user hit was not established, and none of it is verified on screen.
+Client only.
+
+### The menu's own buttons: "Update" — 2026-10-07
+
+User rule: "In the custom buttons in the left-side menu of the app, add the right-click option 'update', that will save
+the current state of the window that the user opened by clicking this button. The option doesn't appear when the state
+hasn't changed or the window is closed. The state includes the search configurations and the added elements list for
+the Search window, the position of the window and its lines that separate the sections."
+
+- A button now keeps a **layout** beside its configuration (`CustomMenuButton.layout`, a new field with a default: a
+  button written before reads with none): the window's offset and size, and the lines between its sections — the
+  Search window's two, the calendar's one. Those lines were each window's own; they are told to `App` now
+  (`SearchSplits`, the calendar's `configurationWidthDp`), still Compose-only.
+- **"Update"** is in the button's menu while the window that button opened or brought back is open and its
+  configuration or layout is no longer the button's. It then saves both.
+- A new window a button opens is put back where, and shared as, the button kept it.
+
+Limits: which window a button opened is remembered for the session only — after a restart, press the button again
+before "Update" can be offered; a window's retracted sections (the arrows) are not part of the state; and a click
+still finds "the same window" by its configuration alone, so an updated button brings back the window it was updated
+from. `CustomMenuButtonsTest` (the rule and the old stored shape). The menu entry, the window put back in place and the
+lines restored are NOT verified on screen. Client only.
+
 ### Calendar: the sleep schedule in its configuration; the two sections retract and their line is dragged — 2026-10-07
 
 Two user rules.
