@@ -129,7 +129,12 @@ means.
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. **A tab's fill is its window's colour** (§ *Window colours*), so no state is said by a fill:
-  **the focused window's tab has the thick outline** (3 dp), **a selected tab a less thick one** (1.5 dp), a reduced
+  **the focused window's tab has the thick outline** (3 dp), **a selected tab a less thick one** (1.5 dp) — **in the
+  colour of the tab's NAME**, the text colour on its fill (`TaskPalette.foreground`, as on a task panel and a task
+  cell; user rule 2026-10-07 — it was the theme's text colour whatever the window's was, so the name and the outline
+  could be two colours), **with a very thin line of the window's colour outside it** (`TAB_OUTER_LINE`, 1 dp, user
+  rule 2026-10-07: an outline the colour of the bar must not vanish into it; always drawn, so a tab keeps its size as
+  it takes the focus) — a reduced
   one oblique type (user rule 2026-10-06; it was a primary-container fill, a 2 dp border and a semi-bold title). The
   focus is read straight off `WindowFrameHost.focusedId` — no tab stands out while nothing
   framed has the focus (a press on the background), and a reduced tab never does. **A tab a button made is named

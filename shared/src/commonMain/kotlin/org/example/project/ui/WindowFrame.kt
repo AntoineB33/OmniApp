@@ -2,6 +2,7 @@ package org.example.project.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -1074,6 +1075,9 @@ private val HEAD_BUTTON_SIZE: Dp = 24.dp
 private val TAB_FOCUSED_OUTLINE: Dp = 3.dp
 private val TAB_SELECTED_OUTLINE: Dp = 1.5.dp
 
+/** The very thin line of the window's colour outside a tab's outline ([MinimizedChip]). */
+private val TAB_OUTER_LINE: Dp = 1.dp
+
 /** The lines under the tabs of windows opened one from another: their weight, the gap under a tab, and a level's step. */
 private val TAB_LINE_WIDTH: Dp = 1.5.dp
 private val TAB_LINE_GAP: Dp = 2.dp
@@ -1749,6 +1753,9 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
     // User rule 2026-10-06: the tab's fill is its WINDOW'S COLOUR, whatever its state, with the name and the ✕ in the
     // colour of highest contrast on it — so no state is said by a fill any more. The focused tab has the thick
     // outline, a selected one a less thick outline; a reduced one is in oblique type, as it was.
+    // User rule 2026-10-07: the outline is the colour of the TEXT on the tab's fill ([TaskPalette.foreground], the
+    // one a task panel and a task cell write in on their colour) — the tab's name and its outline are one colour.
+    // It was the theme's text colour whatever the window's colour was.
     val reduced = row.state.minimized
     val focused = !reduced && host.focusedId == row.id
     val selected = row.id in host.selectedTabs
@@ -1756,13 +1763,18 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
     val fill = host.colors[row.id]?.let(::windowColor) ?: colors.surface
     val onFill = TaskPalette.foreground(fill)
     Surface(
-        modifier = modifier,
+        // User rule 2026-10-07: a very thin line of the WINDOW's colour outside the outline, so an outline the colour
+        // of the bar does not vanish into it. Always there (it is the fill's colour: unseen round a tab with no
+        // outline), so a tab does not change size as it takes the focus.
+        modifier = modifier
+            .border(TAB_OUTER_LINE, fill, RoundedCornerShape(8.dp + TAB_OUTER_LINE))
+            .padding(TAB_OUTER_LINE),
         shape = RoundedCornerShape(8.dp),
         color = fill,
         contentColor = onFill,
         border = when {
-            focused -> BorderStroke(TAB_FOCUSED_OUTLINE, colors.onSurface)
-            selected -> BorderStroke(TAB_SELECTED_OUTLINE, colors.onSurface)
+            focused -> BorderStroke(TAB_FOCUSED_OUTLINE, onFill)
+            selected -> BorderStroke(TAB_SELECTED_OUTLINE, onFill)
             else -> null
         },
     ) {

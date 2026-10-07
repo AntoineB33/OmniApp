@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Window bar: a tab's outline is the colour of its name — 2026-10-07
+
+User rule: "In the system tray, the outline must have the color opposite to the background color of the window" —
+meaning, as the user then put it, "the color chosen for the text on the background color, just like the task panels
+and task cells … the outline of the tab is not the same color as the window title". The focused tab's and a selected
+tab's outlines were the theme's text colour; they are now the tab's own text colour on its fill
+(`TaskPalette.foreground`), so the name and the outline are one colour. A first reading took "opposite" for the
+inverted colour and was withdrawn the same day. **Outside the outline, a very thin line (1 dp) of the window's
+colour** (user, the same day: "so it doesn't disappear on the system tray color"). Not verified on screen. Client
+only.
+
 ### Search window: a narrowed section is cut, its title and its lists included — 2026-10-07
 
 The user, on the entry below: "The title of the three sections of the Search window are still getting squished when
