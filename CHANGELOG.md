@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Lateral menu: the "Search" and "Categories" buttons are gone from its fixed part — 2026-10-08
+
+User rule. The two `MenuButton`s and their parameters are removed (`LateralMenu`, `App`). The windows themselves are
+untouched: the user's own buttons (☆) open them, the calendar's "add…" / "edit…" opens a Search window, and the
+Categories window is a "window" row of a Search window. Not verified on screen. Client only.
+
 ### "Update" was not offered after hiding a section, nor for a window that came back at a restart — 2026-10-08
 
 Anomaly: "I hide one section in the 'Claude quota' Search window in account3, but the option 'update' doesn't appear.

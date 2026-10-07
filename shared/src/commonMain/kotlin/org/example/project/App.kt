@@ -3188,8 +3188,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // at whatever chord the ACCOUNT has it bound to (the same map installGlobalHotkeys above
                     // is claiming).
                     shortcutBindings = schedulerState.shortcutBindings,
-                    onToggleCategories = { openNewWindow(FloatingWindow.Categories) },
-                    onToggleSearch = { openNewWindow(FloatingWindow.Search) },
                     sleeping = schedulerState.isSleeping(nowMillis),
                     onToggleSleepWork = {
                         if (schedulerState.isSleeping(clock.nowMillis())) {

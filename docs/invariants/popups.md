@@ -121,6 +121,11 @@ means.
   while it is retracted or squeezed — laid out at `CALENDAR_GRID_MIN_WIDTH` at least and cut (`keepsWidthAbove`): its
   scroll and its zoom are its own, and a week laid out in no width is a case nothing else asks of it. The
   configuration is cut the same way below its own width, and takes the whole window while the grid is retracted.
+- **The lateral menu's fixed part has no "Search" and no "Categories" button** (user rule 2026-10-08). The two windows
+  are opened by the buttons the user made (☆) and from the windows that lead to them: a Search window from the
+  calendar's "add…" / "edit…", from an element's row and from the actions that open one; the Categories window from
+  a Search window's "window" rows. With no button of the user's own, a plain Search window has no way in from the
+  menu — which is what was asked.
 - **The sleep schedule is a section of the calendar's configuration** (user rule 2026-10-07; `SleepScheduleFields`):
   it left the lateral menu, whose "Sleep schedule" button is gone. ONE drawing of the fields, for that section and
   for the Sleep window — which the calendar's "edit… → sleep schedule" on a Sleep band still opens, and which a

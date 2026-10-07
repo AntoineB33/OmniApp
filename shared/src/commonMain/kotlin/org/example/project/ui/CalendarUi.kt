@@ -1694,16 +1694,12 @@ fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
     onToggleCalendar: () -> Unit,
-    /** PRD §5 Categories: open a window on the account's list of categories. */
-    onToggleCategories: () -> Unit = {},
     /**
      * PRD §5: the Online window (status, work offline, account) — it replaced the top-right chip and offline
      * button, so its button carries the status they showed ([onlineStatus], e.g. "☁ Synced", "✈ Offline").
      */
     onToggleOnline: () -> Unit = {},
     onlineStatus: String? = null,
-    /** PRD §7 Search: open a search window. */
-    onToggleSearch: () -> Unit = {},
     /**
      * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
      * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
@@ -1867,22 +1863,8 @@ fun LateralMenu(
         // The sleep schedule is not here any more (user rule 2026-10-07): it is a section of the calendar window's
         // configuration ([SleepScheduleFields]).
 
-        // PRD §7 Search: find a task, a category, a restrictive-period kind, an alarm, a timer or a reminder by
-        // name — including a task no task tree holds any more, which nothing else in the menu can reach.
-        MenuButton(
-            label = "Search",
-            active = false,
-            onClick = onToggleSearch,
-        )
-
-        // PRD §5 Categories: every category the account holds, in title order, each saying what carries it
-        // and what its rules ask. It is also the second place a category is created — the first being a task
-        // cell's own categories field, which can only ever reach the ones a task already carries.
-        MenuButton(
-            label = "Categories",
-            active = false,
-            onClick = onToggleCategories,
-        )
+        // User rule 2026-10-08: no "Search" and no "Categories" button in this fixed part of the menu any more. Both
+        // windows are still opened by the buttons the user made (☆), below, and from the windows that lead to them.
 
         // PRD §5: status, the device's "work offline" switch and the account, in one window.
         MenuButton(
