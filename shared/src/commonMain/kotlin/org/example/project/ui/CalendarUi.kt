@@ -610,11 +610,11 @@ fun recordsByDay(
 val LocalPeriodRefusal = compositionLocalOf<(TaskId?, String) -> Boolean> { { _, _ -> false } }
 
 /**
- * PRD §8 (user rule 2026-10-05): **where a period of a kind being put at a span stands, the now-line being where it
- * is and in the mode it is in** ([SchedulerDomain.periodAtLine]: a period that is or carries "no screen" is
- * ]line; its end] over a mode-1 line; null = nothing of it is left). Asked at each step of a period's drag and at its
- * release, so the box is drawn as the release would leave it. Provided by `App`, which knows the line; the default
- * leaves a period where it is put.
+ * PRD §8: **where a period of a kind being put at a span stands, the now-line being where it is** (null = nowhere).
+ * Asked at each step of a period's drag and at its release, so the box is drawn as the release would leave it.
+ * Since 2026-10-08 the answer is the span itself — a held block remembers its length, and the line takes only its own
+ * instant out of it (until then a period that is or carries "no screen" was ]line; its end] over a mode-1 line).
+ * Provided by `App`; the default leaves a period where it is put.
  */
 val LocalPeriodAtLine = compositionLocalOf<(kind: String, range: TaskTimeRange) -> TaskTimeRange?> { { _, range -> range } }
 
@@ -844,6 +844,22 @@ internal fun layoutWithBreakHoles(
 }
 
 /**
+ * Where the task panel [block] may not appear among [breaks] — the screen breaks that [refuses] its task, the one
+ * question [layoutWithBreakHoles] asks — as [draggedBlockBounds] takes them. None for a block that is not a task panel.
+ */
+internal fun refusingBreaks(
+    block: PlacedRecord,
+    breaks: List<PlacedRecord>,
+    refuses: (TaskId?, String) -> Boolean,
+): List<TaskTimeRange> =
+    if (!isTaskPanelRecord(block) || block.inactivity) {
+        emptyList()
+    } else {
+        breaks.filter { it.screenBreak && refuses(block.taskId, it.breakKind.ifBlank { PeriodKinds.INACTIVITY }) }
+            .map { TaskTimeRange(it.fullStartMillis, it.fullEndMillis) }
+    }
+
+/**
  * PRD §8 (user rule 2026-10-02): **the blocks as a drag of period boxes to [moved] would leave them** — the
  * same rule from the other side: a period laid by hand takes the task panels it refuses, and a period the
  * USER drew also takes the banked work (a block with no panel behind it) of the tasks it refuses.
@@ -871,6 +887,11 @@ internal fun blocksForPeriodDrag(
  * A MOVE keeps the block's length whatever it is carried over (user rule 2026-10-02) — it shares the width
  * with the task panels there and the periods that refuse it retract. A RESIZE still stops at its neighbours
  * ([others]) unless Overlap Mode is [armed], where it is only kept from collapsing below the minimum length.
+ *
+ * **And it keeps it across what it cannot stand in** (user rule 2026-10-08, [SchedulerDomain.spanKeepingLength]):
+ * [refused] is where the block may not appear — the screen breaks that refuse its task ([refusingBreaks]). Carried
+ * into one, the block is retracted there and comes out on the other side by as much, so what is drawn of it is always
+ * the length it had standing at rest. A resize is the hand saying where an edge is: it is not lengthened.
  */
 internal fun draggedBlockBounds(
     record: PlacedRecord,
@@ -878,11 +899,21 @@ internal fun draggedBlockBounds(
     deltaMillis: Long,
     armed: Boolean,
     others: List<TaskTimeRange>,
+    refused: List<TaskTimeRange> = emptyList(),
 ): TaskTimeRange {
     val entry = TaskTimeRange(record.fullStartMillis, record.fullEndMillis)
     val minLen = SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS
     return when (edge) {
-        null -> TaskTimeRange(entry.startEpochMillis + deltaMillis, entry.endEpochMillis + deltaMillis)
+        null -> {
+            val length = entry.endEpochMillis - entry.startEpochMillis
+            if (refused.isEmpty()) {
+                TaskTimeRange(entry.startEpochMillis + deltaMillis, entry.endEpochMillis + deltaMillis)
+            } else {
+                // The length it remembers is what stands of it at rest: a block left across a break is not longer for it.
+                val standing = SchedulerDomain.standingLength(entry, refused).takeIf { it > 0L } ?: length
+                SchedulerDomain.spanKeepingLength(entry.startEpochMillis + deltaMillis, standing, refused)
+            }
+        }
         CalendarEdge.Start -> {
             val target = entry.startEpochMillis + deltaMillis
             if (armed) entry.copy(startEpochMillis = minOf(target, entry.endEpochMillis - minLen))
@@ -6041,6 +6072,9 @@ private fun DayColumn(
     val currentRingHeightPx by rememberUpdatedState(with(density) { ALARM_MARKER_HEIGHT.toPx() })
     // Read by the phone's menu-armed "move" drag, for the same reason [currentRecords] is.
     val currentAllBlocks by rememberUpdatedState(allBlocks)
+    // Where a held task panel may not appear ([refusingBreaks]), read live: a break the line carries moves under a hold.
+    val currentBreakMarkers by rememberUpdatedState(screenBreakMarkers)
+    val currentRefuses by rememberUpdatedState(refuses)
     // PRD §8: the sleep bands are menu targets too (their row opens the §17 sleep-schedule window), as are
     // the restrictive periods — which no longer pass through the block pipeline at all — and the two
     // zero-duration marker families. Same staleness guard as [currentRecords] on every one of them.
@@ -6311,6 +6345,7 @@ private fun DayColumn(
                                 if (scale <= 0f) 0L else ((carried.dragPx / scale) * 3_600_000f).toLong(),
                                 carried.armed,
                                 currentAllBlocks.filter { it.first != key }.map { it.second },
+                                refusingBreaks(carried.record, currentBreakMarkers, currentRefuses),
                             )
                         val overlaps = blockGestureOverlaps(carried.edge, carried.armed)
                         if (carried.pressed && event.type == PointerEventType.Release) {
@@ -6377,6 +6412,7 @@ private fun DayColumn(
                                             (((touch.position.y - moveStartY) / hourHeightPx) * 3_600_000f).toLong(),
                                             armed = false,
                                             others = emptyList(),
+                                            refused = refusingBreaks(moving, currentBreakMarkers, currentRefuses),
                                         )
                                     movePlaced = placed
                                     dragPreview = BlockDragPreview(calendarBlockKey(moving), placed, shareWidth = true)
@@ -6845,6 +6881,7 @@ private fun DayColumn(
                 decor = panelDecor,
                 // Every other block — everything but itself — so a non-overlap resize stops at them.
                 others = allBlocks.filter { it.first != key }.map { it.second },
+                refused = refusingBreaks(record, screenBreakMarkers, refuses),
                 taskColor = record.taskId?.let { taskColors[it] },
                 contextOverlays = contextOverlays,
                 overlapArmed = overlapArmed,
@@ -8676,6 +8713,8 @@ private fun CalendarBlock(
     slices: List<PanelSlice>,
     hourHeight: Dp,
     others: List<TaskTimeRange>,
+    /** Where this block may not appear while it is moved ([refusingBreaks]): it keeps its length across them. */
+    refused: List<TaskTimeRange> = emptyList(),
     /** PRD §8: this block's task's own colour, or null for a panel that keeps the default event blue. */
     taskColor: Color?,
     /**
@@ -8733,6 +8772,7 @@ private fun CalendarBlock(
     // zoom (`millisDelta` IS the conversion), and stale neighbours snap it around blocks that have moved.
     val currentHourHeightPx = rememberUpdatedState(hourHeightPx)
     val currentOthers = rememberUpdatedState(others)
+    val currentRefused = rememberUpdatedState(refused)
 
     fun millisDelta(px: Float): Long =
         currentHourHeightPx.value.let { if (it <= 0f) 0L else ((px / it) * 3_600_000f).toLong() }
@@ -8741,7 +8781,7 @@ private fun CalendarBlock(
     // move keeps the block's length and what it is carried over retracts; a resize stops at its neighbours
     // unless Overlap Mode is armed (PRD §8).
     fun gestureBounds(edge: CalendarEdge?): TaskTimeRange =
-        draggedBlockBounds(record, edge, millisDelta(dragPx), armed.value, currentOthers.value)
+        draggedBlockBounds(record, edge, millisDelta(dragPx), armed.value, currentOthers.value, currentRefused.value)
 
     // PRD §8 Overlap Mode: a transparent full-column layer (no pointer handler of its own, so it never
     // steals clicks) that positions this block's horizontal slices absolutely. A non-overlapping block

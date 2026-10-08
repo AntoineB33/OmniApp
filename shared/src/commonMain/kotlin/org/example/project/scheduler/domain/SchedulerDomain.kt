@@ -1406,6 +1406,36 @@ object SchedulerDomain {
      * labelled Sleep, so the pause underneath it is not also drawn as Inactivity. Zero-length remnants are
      * dropped.
      */
+    /**
+     * The user, 2026-10-08: *"when held the block always remembers its length while avoiding appearing where it would
+     * break the requirements … If the user drags a task panel into a 15min screen break that is in the future, then
+     * the 15min break retracts the held task panel, which comes out on the other side to keep its length."*
+     *
+     * **The span a held block of [lengthMillis] put at [startMillis] takes**: from the first instant at or after the
+     * start that is not [refused], on until it has stood for its whole length outside the refused stretches. With
+     * nothing refused in the way it is `[start, start + length]`; begun inside a refused stretch it starts where that
+     * one ends; crossing one it ends that much later. One span, with the refused stretches inside it — the drawing
+     * cuts those out, the block stays one object.
+     */
+    fun spanKeepingLength(startMillis: Long, lengthMillis: Long, refused: List<TaskTimeRange>): TaskTimeRange {
+        var cursor = startMillis
+        var remaining = lengthMillis
+        var first: Long? = null
+        for (hole in mergeOccupied(refused)) {
+            if (hole.endEpochMillis <= cursor) continue
+            if (hole.startEpochMillis >= cursor + remaining) break
+            val before = maxOf(0L, hole.startEpochMillis - cursor)
+            if (before > 0L && first == null) first = cursor
+            remaining -= before
+            cursor = hole.endEpochMillis
+        }
+        return TaskTimeRange(first ?: cursor, cursor + remaining)
+    }
+
+    /** How long [range] stands outside the [refused] stretches — the length a held block remembers ([spanKeepingLength]). */
+    fun standingLength(range: TaskTimeRange, refused: List<TaskTimeRange>): Long =
+        subtractRegions(listOf(range), refused).sumOf { it.endEpochMillis - it.startEpochMillis }
+
     fun subtractRegions(ranges: List<TaskTimeRange>, regions: List<TaskTimeRange>): List<TaskTimeRange> {
         if (regions.isEmpty()) return ranges.filter { it.endEpochMillis > it.startEpochMillis }
         val cuts = mergeOccupied(regions)
@@ -2718,35 +2748,6 @@ object SchedulerDomain {
     fun nextStatedNoScreenEndAfter(state: SchedulerState, atMillis: Long): Long =
         state.panels.filter { it.endEpochMillis > atMillis && retractsAtScreen(it, state.periodKindConfig) }
             .minOfOrNull { it.endEpochMillis } ?: Long.MAX_VALUE
-
-    /**
-     * **Where a period the user is putting at [range] stands, the line being where it is** — what a drag of it draws
-     * and what its release stores (user rule 2026-10-05).
-     *
-     * `docs/scheduler_requirements.md`: *"When the $now line$ is in mode 1 and reaches a 'no screen' period that
-     * extends to [t1;t2], I want the 'no screen' period to become ]$now line$;t2] when $now line$ is in [t1;t2["* — and
-     * a period that CARRIES "no screen" (`when sleep then no screen`) cannot stand where its "no screen" cannot, the
-     * companion being laid where the period is and nowhere else. So a `sleep` period carried onto a mode-1 line is
-     * ]line; its end]: it shortens as it is carried further across, is gone as its end reaches the line (null: under a
-     * minute is left, [MIN_MANUAL_ENTRY_MILLIS]), and stands whole again once it is wholly on the other side. Nothing
-     * here is about dragging: it is [retractedAtLineSpans] — the one predicate of "gives way to a mode-1 line" —
-     * asked of the period at the place it is being put. Any other period, and any period in modes 2 and 3 (where the
-     * line must BE covered), is [range].
-     */
-    fun periodAtLine(
-        range: TaskTimeRange,
-        kind: String,
-        nowMillis: Long,
-        tpMode: Int,
-        config: PeriodKindConfig,
-    ): TaskTimeRange? {
-        if (nowMillis < range.startEpochMillis || nowMillis >= range.endEpochMillis) return range
-        val left =
-            retractedAtLineSpans(
-                listOf(RestrictivePeriod(range.startEpochMillis, range.endEpochMillis, kind)), nowMillis, tpMode, config,
-            ).firstOrNull() ?: return range
-        return left.takeIf { it.endEpochMillis - it.startEpochMillis >= MIN_MANUAL_ENTRY_MILLIS }
-    }
 
     /**
      * [retractedAtLineSpans] applied: the periods that **give their remainder up** ([retractsAtLine], where

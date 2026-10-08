@@ -610,13 +610,24 @@ Global rules that always apply: `CLAUDE.md`.
   for panels genuinely competing for the same hours, which periods never are. Each box is labelled with its
   period's title at the top left (`calendarLabelSlots` keeps two labels apart). The box is a DRAWING: each period
   stays its own object with its own bounds, kind, editor and bin, which is what the "edit…" chooser reaches.
-- **A period dragged onto a mode-1 line is cut by it** (user rule 2026-10-05; `SchedulerDomain.periodAtLine`,
-  `LocalPeriodAtLine`, `HeldPeriodCut`, `PeriodAtLineTest`). A held box that is or carries "no screen" (a `sleep`
-  period) is drawn ]line; its end] while the line is in it, not at all once under a minute is left, and whole again
-  wholly on the other side; the release stores what was drawn (nothing left: the period stays where it was). It is
-  not a drag rule: it is `retractedAtLineSpans` asked of the period where it is being put — *the line in mode 1 is
-  not in "no screen"*, and the "no screen" a rule lays with a period is where the period is. Never clamp a drag at
-  the line or special-case `sleep` here.
+- **A HELD BLOCK REMEMBERS ITS LENGTH** (user rule 2026-10-08: *"when held the block always remembers its length
+  while avoiding appearing where it would break the requirements"*; `HeldBlockKeepsLengthTest`). Two cases, one rule:
+  - **On the line, where the line cannot be on it** (a task panel under a mode-3 line, a "no screen" period under a
+    mode-1 one): the block is `[…, line[ ∪ ]line, …]` — the line takes its own instant and nothing more, so the block
+    stands where the hand has it and the release stores that span. `LocalPeriodAtLine` hands a period back as it is.
+    (2026-10-05 → 10-08 a period that is or carries "no screen" was cut to `]line; its end]` under a mode-1 line,
+    shortened as it was carried across and was gone as its end reached it: `SchedulerDomain.periodAtLine`, deleted.
+    `HeldPeriodCut` no longer has a cut to draw.) What the line then CROSSES of the stored period gives way as it is
+    crossed — `scheduler.md` § *A period the user stated gives way to a mode-1 line*.
+  - **In a screen break that refuses its task** (*"the 15min break retracts the held task panel, which comes out on
+    the other side to keep its length"*): a MOVE takes the span `SchedulerDomain.spanKeepingLength` gives — from the
+    first instant the break does not hold, on until the panel has stood for its length outside the breaks
+    (`draggedBlockBounds`'s `refused`, from `refusingBreaks`: the question `layoutWithBreakHoles` asks). The panel
+    stays ONE object whose span holds the break; the drawing cuts the hole. The length it remembers is what STANDS of
+    it at rest (`standingLength`), so a panel left across a break and picked up again is not longer for it. A resize
+    is not lengthened: the hand is saying where the edge is. The Search window's "Drag on the calendar"
+    (`CalendarElementDrag.targets`) goes through the same function.
+  Never clamp a drag at the line or at a break, and never shorten a held block to make it fit.
 - **A BOX IS ONE PERIOD, AND MOVES THAT PERIOD.** `PeriodSegmentGesture` drags or resizes the period its box is
   (it moved every period in force over a shared box while boxes were cut). Where two boxes overlap, the
   later-starting one is on top and takes the press; the other is reached from the part of it that sticks out.
@@ -665,8 +676,8 @@ Global rules that always apply: `CLAUDE.md`.
     emitted with them under the panels) and by `ScreenBreakBand` (on the band, which is drawn on top; no resize — a
     break lasts as long as its name implies). Never a second copy of it.
   - **One preview**: the held block is a `PeriodSegment` of its kind (`sleepSegments`, `breakSegments`,
-    `heldPeriods`), so the column draws it where the hand has it, cut where a mode-1 line leaves it
-    (`periodAtLine`), with the task panels it refuses retracted under it and growing back as it leaves — exactly a
+    `heldPeriods`), so the column draws it where the hand has it — whole, on the line too (a held block remembers
+    its length) — with the task panels it refuses retracted under it and growing back as it leaves — exactly a
     period box's. The band's own drawing stands aside while it is held.
   - **One release**: `onCommitBounds`. `commitBoundsIntent` answers `PlaceDerivedPeriod` for an occurrence a RULE
     lays (`derivedPeriodKind`: the schedule's Sleep window `sleep/{wake day}`, its hour before bed): the night
@@ -693,7 +704,7 @@ Global rules that always apply: `CLAUDE.md`.
   they follow**: every block by the same time — the instant under the pointer less the instant they were chosen at
   (the right-click's; the earliest block's start for blocks picked by hand) — so each keeps its place under the
   pointer; off every column they stay. **The release** is each block through `onCommitBounds`, at `targets()`: a
-  period over what a mode-1 line leaves of it (`periodAtLine`), and not at all where the line leaves nothing.
+  period where the hand has it, a task panel over the span that keeps its length across the breaks refusing it.
 - **HELD AND RELEASED LOOK THE SAME; THE ONE DIFFERENCE IS THAT WHAT THE HELD BLOCK REMOVED IS REMEMBERED** (user
   rule 2026-10-07: *"The only difference there must be between keeping the mouse click and having released it is that
   whatever got removed when the dragged element got there is remembered if the mouse click is not released. If period A

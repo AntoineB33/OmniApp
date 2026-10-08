@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A held block remembers its length: across the line, and out of the far side of a break — 2026-10-08
+
+The user: "When dragging a block on the $now line$ but the $now line$ can't be on this block (e.g., a task panel when
+$now line$ is in mode 3, or a 'no screen' block when $now line$ is in mode 1…), then the block being held is in …,
+$now line$[ U ]$now line$, … This is because when held the block always remembers its length while avoiding appearing
+where it would break the requirements … If the user drags a task panel into a 15min screen break that is in the future,
+then the 15min break retracts the held task panel, which comes out on the other side to keep its length."
+
+- **The line.** A period that is or carries "no screen", held across a mode-1 line, was cut to `]line; its end]`,
+  shortened as it was carried across and was gone as its end reached the line (user rule 2026-10-05,
+  `SchedulerDomain.periodAtLine`, `PeriodAtLineTest`). REPLACED: the function and its test are deleted,
+  `LocalPeriodAtLine` hands the period back whole, and the release stores the span the hand chose.
+- **A break.** A task panel moved into a screen break that refuses its task was holed there and lost that much; carried
+  wholly inside it was drawn with no height (the entry of this morning). A move now takes
+  `SchedulerDomain.spanKeepingLength(start, standing length, the breaks refusing the task)`: the panel comes out on
+  the other side by what the break holds. `draggedBlockBounds` gained `refused`; all three move gestures and
+  `CalendarElementDrag.targets` pass `refusingBreaks`. The zero-height slice stays for a block a break covers at rest.
+- **Not done, and why.** The user's text says a block surrounding the line changes the scheduler's input continuously,
+  so the engine re-runs without end and the timeline stays on the previous set of rules output. The block is stored
+  as ONE span that holds the line's instant, so in the app the input does not change as the line moves and no such
+  loop starts; nothing was added to produce one. And only screen breaks are counted as "where it would break the
+  requirements" for a task panel: a held panel is not lengthened across a period laid by hand that refuses its task
+  (there the PERIOD gives way, user rule 2026-10-02).
+
+`HeldBlockKeepsLengthTest`. `docs/scheduler_requirements.md` itself changed only in wording (commit 2c2c1a8: "set of
+rules output", "the future part of the timeline"). Client only. NOT seen on screen.
+
 ### A window's section lines did not survive a restart, so a button's "Update" kept the middle — 2026-10-08
 
 The user: "clicking on the button 'Claude quota' opens the window but the positions of the lines that separate the

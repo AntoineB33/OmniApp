@@ -47,6 +47,9 @@ class CalendarElementDrag {
     /** Where the line leaves a period put at a span (`LocalPeriodAtLine`); null = nowhere. Given by `App`. */
     var atLine: (kind: String, range: TaskTimeRange) -> TaskTimeRange? = { _, range -> range }
 
+    /** Does a period of this kind refuse this task (`LocalPeriodRefusal`)? Given by `App`. */
+    var refuses: (org.example.project.scheduler.model.TaskId?, String) -> Boolean = { _, _ -> true }
+
     /** The blocks held, as they stood when the press began. Empty while nothing is dragged. */
     var blocks: List<PlacedRecord> by mutableStateOf(emptyList())
         private set
@@ -89,9 +92,11 @@ class CalendarElementDrag {
     fun targets(): List<Pair<PlacedRecord, TaskTimeRange>> {
         val delta = deltaMillis
         if (delta == 0L) return emptyList()
+        val breaks = columns.values.flatMap { it.records() }.filter { it.screenBreak }
         return blocks.mapNotNull { block ->
-            val moved = TaskTimeRange(block.fullStartMillis + delta, block.fullEndMillis + delta)
             val kind = calendarPeriodKindOf(block)
+            // A task panel keeps its length across the breaks that refuse it, as under the column's own gesture.
+            val moved = draggedBlockBounds(block, edge = null, delta, armed = false, others = emptyList(), refusingBreaks(block, breaks, refuses))
             val at = if (kind == null) moved else atLine(kind, moved)
             at?.let { block to it }
         }

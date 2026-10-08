@@ -3177,16 +3177,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val periodRefusal = remember(periodRefusalTasks) {
             { taskId: TaskId?, kind: String -> SchedulerDomain.periodRefuses(periodRefusalTasks, taskId, kind) }
         }
-        // PRD §8 (user rule 2026-10-05): where a period being dragged stands at the line — asked of the live clock and
-        // of the mode the engine reads the line in, at each step of the drag and at its release.
-        val periodAtLineConfig = schedulerState.periodKindConfig
-        val periodAtLine = remember(periodAtLineConfig, engine) {
-            { kind: String, range: TaskTimeRange ->
-                SchedulerDomain.periodAtLine(range, kind, clock.nowMillis(), engine.tpModeNow(), periodAtLineConfig)
-            }
-        }
+        // User rule 2026-10-08: **a held block remembers its length** — a period put across the line, in whatever
+        // mode, is `[…, line[ ∪ ]line, …]`: the line takes its own instant and no more, so the period stands where the
+        // hand has it. (2026-10-05 → 10-08 a period that is or carries "no screen" was cut to `]line; its end]` under a
+        // mode-1 line and shortened as it was carried across.) What the line then crosses of it gives way as it is
+        // crossed, which is the stated period's own rule (`scheduler.md` § *A period the user stated gives way*).
+        val periodAtLine = remember { { _: String, range: TaskTimeRange -> range as TaskTimeRange? } }
         SideEffect {
             calendarElementDrag.atLine = periodAtLine
+            calendarElementDrag.refuses = periodRefusal
             // What stands where a dragged period was is chosen from its edges — the layers the calendar draws there
             // included ([SchedulerDomain.vacatedPastFill]).
             SchedulerReducer.layerKindsAt = { calendarLayers.kindsAt(it) }
