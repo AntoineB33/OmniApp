@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
@@ -4255,11 +4256,17 @@ private fun CalendarConfigurationSection(
     // already scrolled when the window was shorter than it, with nothing saying so.
     val scroll = rememberScrollState()
     // Narrowed by the dragged line, it is cut — laid out at its own width at least, never squeezed.
+    // Widened (the grid reduced or retracted, user rule 2026-10-08), its controls keep that same width and stand on
+    // its left: the day selector is not stretched across the room, nor a switch pushed away from its label.
     Box(modifier.fillMaxHeight().keepsWidthAbove(CALENDAR_CONFIGURATION_WIDTH)) {
     Column(
         modifier = Modifier
+            // The whole section scrolls (the wheel over the room beside the controls too); the controls are laid
+            // out at the section's own width, at its start.
             .fillMaxSize()
             .verticalScroll(scroll)
+            .wrapContentWidth(Alignment.Start)
+            .width(CALENDAR_CONFIGURATION_WIDTH)
             .padding(start = 10.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

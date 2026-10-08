@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar's configuration keeps its width and stands on the left of its section — 2026-10-08
+
+The user: "In the calendar, when the calendar section gets reduced, the day selector should keep its length and all
+configurations would stick to the left side of the configuration section." The section's column filled whatever
+width the dragged line (or a retracted grid) gave it, so the month grid's seven columns and every switch stretched
+across it. It is now laid out at `CALENDAR_CONFIGURATION_WIDTH` whatever the room, on the section's left; the
+scrollbar stays on the section's right edge. Client only. Not seen on screen.
+
 ### A history unit's long text is one line, with an arrow to expand it — 2026-10-08
 
 The user: "In the action section of a history unit, if a text element stored in the history unit is long it must still
