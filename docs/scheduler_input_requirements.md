@@ -1,0 +1,8 @@
+Switching to $now line$ mode 3 doesn't change the input in itself. However, if the $now line$ was in a task panel with 0 resilience to "no screen", it means the $now line$ cuts this task panel in half and continously retracts the lower half by moving forward. This continuously change the input, so the scheduler engine is infinitely triggered to run from scratch, so the scheduler engine doesn't calculate anything (this is the theoretical consequence of docs\scheduler_requirements.md, in reality the scheduler engine is simply not triggered at all which amounts to the same result). The previous set of rules output is therefore still applied and the schedule in the future doesn't change.
+
+
+
+When dragging a block on the $now line$ but the $now line$ can’t be on this block (e.g., a task panel when $now line$ is in mode 3, or a “no screen” block when $now line$ is in mode 1…), then the block being held is in …, $now line$[ U ]$now line$, …
+This is because when held the block always remembers its length while avoiding appearing where it would break the requirements in docs\scheduler_requirements.md.
+It means that when this block is on the $now line$ (or rather surrounding it), then the input to the scheduler engine changes continuously, which triggers non stop rerun of the scheduler engine, which makes the timeline stuck to the previous set of rules output.
+If the user drags a task panel into a 15min screen break that is in the future, then the 15min break retracts the held task panel, which comes out on the other side to keep its length.
