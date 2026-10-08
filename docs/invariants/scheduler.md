@@ -566,6 +566,18 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   and an adoption all end there. The classes are two, not three — modes 2 and 3 place everything identically and
   differ in the cue alone (`DynamicPeriods.breaksAreNotifiedAt`), so **a 2↔3 flip changes nothing**
   (`SchedulerDomain.tpModeFlipChangesPlan`; the engine does not even dispatch).
+- **A SWITCH TO MODE 3 CHANGES NOTHING** (user rule 2026-10-08: *"Switching to $now line$ mode 3 doesn't change the
+  input in itself … The previous set of rules output is therefore still applied and the schedule in the future doesn't
+  change"*; `SchedulerDomain.planModeAfter`, `SchedulerEngine.heldPlanMode`, `PlanModeTest`,
+  `AwayVersusLockedCueTest`). The mode a plan is FOR is one of modes 1 and 2; mode 3 keeps whichever was in force. So
+  "I'm away" pressed at a screen lays nothing and re-plans nothing — until then it was a class flip that laid the
+  covered plan and rewrote the future — and the line then crosses the plan as it stands: a panel whose task has no
+  resilience to "no screen" is retracted as the line moves through it, by the readings that already apply the mode
+  where the question is asked (`currentPanel` with the mode for the cue, the display's clip, the bank's refusal),
+  never by a fill. A plan of the other class is laid only where the line ARRIVES in mode 1 or 2 under the other's plan
+  (1 → 3 → 1: nothing; 2 → 3 → 1: at the last step; 1 → 3 → 2: at the last step). `planTpModeNow` — the mode every
+  fill is given (`SchedulerReducer.tpMode`) — is therefore never 3, in a journey as live. The break machine is NOT
+  under this: it walks in the line's real mode (`machineMode`). A launch into mode 3 keeps the at-screen plan.
 - **It is extended exactly as the plan is**: the runs held for these rules (same class, same `schedulingSignature`)
   are kept and only the tail past them is filled. Under other rules nothing held is kept.
 - **No dynamic period obstructs it** (`fillSchedule(breaksObstruct = false)`): where the three fall depends on when

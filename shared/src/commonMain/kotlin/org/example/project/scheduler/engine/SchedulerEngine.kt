@@ -1854,7 +1854,10 @@ class SchedulerEngine(
             if (mode != null) {
                 val planMode = planTpModeNow(cursor)
                 sweepMode = modeAt(cursor, mode)
-                layHeldModePlan(cursor, planMode, sweepMode ?: mode)
+                // A stretch of the journey in mode 3 goes on under the plan in force ([SchedulerDomain.planModeAfter]).
+                val target = SchedulerDomain.planModeAfter(planMode, sweepMode ?: mode)
+                layHeldModePlan(cursor, planMode, target)
+                heldPlanMode = target
                 plannedUntil = unrollJourney(cursor, toMillis)
             }
             while (cursor < toMillis) {
@@ -1869,9 +1872,13 @@ class SchedulerEngine(
                 if (stepMode != null && _frozenBreaks.value?.machine?.let { it.baseMode != stepMode && it.atMillis <= cursor } == true) {
                     advanceBreaks(cursor, stepMode)
                 }
-                if (was != null && stepMode != null && SchedulerDomain.tpModeFlipChangesPlan(was, stepMode)) {
-                    layHeldModePlan(cursor, was, stepMode)
-                    plannedUntil = unrollJourney(cursor, toMillis)
+                if (was != null && stepMode != null) {
+                    val target = SchedulerDomain.planModeAfter(heldPlanMode, stepMode)
+                    if (SchedulerDomain.tpModeFlipChangesPlan(heldPlanMode, target)) {
+                        layHeldModePlan(cursor, heldPlanMode, target)
+                        plannedUntil = unrollJourney(cursor, toMillis)
+                    }
+                    heldPlanMode = target
                 }
                 // The rules at the line, so a journey crossing a task-tree keyframe steps by the minimum in
                 // force there rather than the one it set out with (ADR 0008).
@@ -3449,7 +3456,17 @@ class SchedulerEngine(
      * laying the away class's plan for twenty seconds every twenty minutes would be the rules answering a question
      * they already answered.
      */
-    fun planTpModeNow(nowMillis: Long = clock.nowMillis()): Int = sweepMode ?: baseTpMode(nowMillis)
+    fun planTpModeNow(nowMillis: Long = clock.nowMillis()): Int =
+        // …and without mode 3 at all (user rule 2026-10-08, [SchedulerDomain.planModeAfter]): a line in mode 3 goes on
+        // under the plan in force, so the plan's mode is the last of modes 1 and 2 the line was in.
+        SchedulerDomain.planModeAfter(heldPlanMode, sweepMode ?: baseTpMode(nowMillis))
+
+    // The mode the plan in force is for — modes 1 and 2 only ([SchedulerDomain.planModeAfter]): written where the line
+    // changes mode (the live flow below, each step of a journey), never read off the clock. At a screen until the
+    // first mode is known, which is what a launch into mode 3 keeps.
+    private var heldPlanMode: Int = DynamicPeriods.MODE_AT_SCREEN
+    private var planModeKnown = false
+    private var planFlipPending = false
 
     /**
      * A **mode flip re-plans**, because the mode is part of the environment the three dynamic periods are
@@ -3476,6 +3493,11 @@ class SchedulerEngine(
             // The first emission is the mode the app started in, which the start-up fill already used — but it
             // still has to be RECORDED, or an app that starts up already in mode 3 opens no span for it.
             .onEach {
+                // The plan's own mode, and whether this change is a flip of its class: mode 3 is neither.
+                val after = SchedulerDomain.planModeAfter(heldPlanMode, it)
+                planFlipPending = planModeKnown && SchedulerDomain.tpModeFlipChangesPlan(heldPlanMode, after)
+                heldPlanMode = after
+                planModeKnown = true
                 noteTpMode(it)
                 // `docs/scheduler_requirements.md` § *Rule Structure*: a mode switch is a trigger of its own — the break
                 // machine switches at the edge, not at the next tick.
@@ -3486,8 +3508,9 @@ class SchedulerEngine(
             .drop(1)
             .collect { (from, mode) ->
                 Diagnostics.log("t_p mode is now $mode (${tpModeReason(mode)})")
-                // Modes 2 and 3 place everything identically: a flip between them changes the cue, not the plan.
-                if (from == null || !SchedulerDomain.tpModeFlipChangesPlan(from, mode)) return@collect
+                // Only an arrival in mode 1 or 2 under the other's plan changes it: a switch to mode 3 changes nothing
+                // (user rule 2026-10-08), and so does coming back from it into the mode the plan is for.
+                if (from == null || !planFlipPending) return@collect
                 switchTpModePlan()
             }
     }
@@ -3505,7 +3528,7 @@ class SchedulerEngine(
     private fun switchTpModePlan() {
         val now = clock.nowMillis()
         val state = vm.state.value
-        if (!state.automaticSchedule || SchedulerDomain.otherModePlanFor(state, tpModeNow(now), now) == null) {
+        if (!state.automaticSchedule || SchedulerDomain.otherModePlanFor(state, planTpModeNow(now), now) == null) {
             requestReschedule(now, local = true)
             return
         }

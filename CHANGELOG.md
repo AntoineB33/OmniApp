@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A switch to mode 3 no longer changes the schedule — 2026-10-08
+
+The user: "Switching to $now line$ mode 3 doesn't change the input in itself. However, if the $now line$ was in a task
+panel with 0 resilience to 'no screen', it means the $now line$ cuts this task panel in half and continuously retracts
+the lower half by moving forward … The previous set of rules output is therefore still applied and the schedule in the
+future doesn't change." Until now modes 2 and 3 were ONE plan class (2026-09-28): "I'm away" pressed at a screen was a
+class flip, which laid the covered plan (or re-planned where none was held) and so rewrote every run ahead.
+`SchedulerDomain.planModeAfter` + `SchedulerEngine.heldPlanMode`: mode 3 keeps the plan in force, live and inside a
+journey; a plan of the other class is laid only on an arrival in mode 1 or 2 under the other's plan.
+`AwayVersusLockedCueTest.an_away_device_is_not_told_to_start_an_on_screen_task` asserted "the plan holds no on-screen
+task at an away line": REWRITTEN to the rule (the plan is unchanged by the press; what the line holds in its mode is
+no on-screen task). `PlanModeTest`. Known gap: the History row of a run made while the line is in mode 3 states the
+plan's mode (1 or 2) in its head, not 3. Client only.
+
 ### The set of rules output read as four violations of the requirements: its wording — 2026-10-08
 
 The user pasted the output into Gemini, which found: overlapping intervals (a run `+0:59:54 → +1:30:41` engulfing the

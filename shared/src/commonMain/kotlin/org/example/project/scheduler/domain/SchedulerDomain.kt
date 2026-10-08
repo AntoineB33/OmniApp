@@ -5828,6 +5828,19 @@ object SchedulerDomain {
         DynamicPeriods.lineIsCoveredAt(from) != DynamicPeriods.lineIsCoveredAt(to)
 
     /**
+     * The user, 2026-10-08: *"Switching to $now line$ mode 3 doesn't change the input in itself … The previous set of
+     * rules output is therefore still applied and the schedule in the future doesn't change."*
+     *
+     * **The mode the PLAN is for, the line having moved into [mode]**, [held] being the one it was for: mode 3 keeps
+     * it — whatever plan is in force goes on, and the line crossing a panel whose task has no resilience to "no
+     * screen" only retracts that panel as it moves (the display clips it, the bank refuses it). Modes 1 and 2 are
+     * their own. So a plan is laid or made for another class only where the line arrives in mode 1 or in mode 2 and
+     * the plan in force is the other's ([tpModeFlipChangesPlan] of the two plan modes): 1 → 3 → 1 changes nothing,
+     * 2 → 3 → 1 lays the at-screen plan at the last step. Never mode 3: no fill is asked for that mode.
+     */
+    fun planModeAfter(held: Int, mode: Int): Int = if (mode == DynamicPeriods.MODE_ON_BREAK) held else mode
+
+    /**
      * PRD §6: one line of the **rule state**, spelled for a human — `docs/scheduler_requirements.md` § *Rule
      * State Definition*: *"the set of tasks and their associated priority percentages, minimum execution time
      * and resilience values"*. A task with no resilience override is spelled "on screen only", which is what

@@ -158,26 +158,33 @@ class AwayVersusLockedCueTest {
         advanceTimeBy(2_000)
         runCurrent()
         val beforeAway = taskNotifications(vm).size
+        fun runsAhead() = vm.state.value.panels.filter { it.auto && it.taskId != null }.map { Triple(it.taskId, it.startEpochMillis, it.endEpochMillis) }
+        val planBefore = runsAhead()
+        assertTrue(planBefore.isNotEmpty(), "nothing was planned before the press")
 
         engine.setUserAway(true)
         runCurrent()
         assertTrue(engine.userAway.value)
+        // User rule 2026-10-08: "Switching to now line mode 3 doesn't change the input in itself … The previous set of
+        // rules output is therefore still applied and the schedule in the future doesn't change."
+        assertEquals(DynamicPeriods.MODE_ON_BREAK, engine.tpModeNow(), "the press did not reach mode 3")
+        assertEquals(planBefore, runsAhead(), "the switch to mode 3 changed the schedule")
 
-        // Walk well past any pose the bars owe at the origin, sampling what the PLAN put at the line as we go.
-        // The mode flip re-plans at the flip, and the plan for a covered line holds no on-screen task at all — the
-        // rule the cue's own reading ([SchedulerDomain.currentPanel] with the mode) used to be the only place of.
+        // Walk well past any pose the bars owe at the origin, sampling what the rules hold at the line IN ITS MODE as
+        // we go ([SchedulerDomain.currentPanel] with the mode — the one reading the cue, the display's clip and the
+        // bank share): the plan still names its on-screen task there, and a line in mode 3 is not on it.
         var planPlacedAnOnScreenTask = false
         repeat(80) {
             advanceTimeBy(30_000)
             runCurrent()
             val st = vm.state.value
-            val planned = SchedulerDomain.currentPanel(st, start + scheduler.currentTime)
+            val planned = SchedulerDomain.currentPanel(st, start + scheduler.currentTime, engine.tpModeNow())
             val task = planned?.taskId?.let { st.tasks[it] }
             if (task != null && task.onScreen) planPlacedAnOnScreenTask = true
         }
 
         assertEquals(DynamicPeriods.MODE_ON_BREAK, engine.tpModeNow(), "the account never reached mode 3")
-        assertTrue(!planPlacedAnOnScreenTask, "the plan put an on-screen task at a line the away mode covers")
+        assertTrue(!planPlacedAnOnScreenTask, "an on-screen task was held at a line the away mode covers")
         assertEquals(
             beforeAway,
             taskNotifications(vm).size,
