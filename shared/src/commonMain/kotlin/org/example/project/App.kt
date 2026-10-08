@@ -659,7 +659,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The ones drawn. A button whose window this build no longer has ("All tasks" and the list of reminders,
         // removed 2026-09-25) or whose object is gone is not shown — but kept, so an undo brings it back.
         fun menuButtonShown(button: CustomMenuButton): Boolean =
-            ObjectWindowKey.decode(button.windowId)?.exists(schedulerState) ?: (lateralWindowOf(button.windowId) != null)
+            if (button.control != null) org.example.project.ui.MenuControl.of(button.control) != null
+            else ObjectWindowKey.decode(button.windowId)?.exists(schedulerState) ?: (lateralWindowOf(button.windowId) != null)
+        // User rule 2026-10-08, the menu's "Customize": while on, a right-click on a control of the app that can stand
+        // in the menu adds it there ([org.example.project.ui.MenuAddable]). Compose-only.
+        val menuCustomizer = remember { org.example.project.ui.MenuCustomizer() }
         // The one whose title is being typed: a new button opens so, and so does "Rename". Compose-only.
         var editingMenuButton by remember { mutableStateOf<String?>(null) }
         // The menu's scroll, held here so a new button can be brought into view: the menu is scrolled to its
@@ -1710,6 +1714,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             setMenuButtons(list)
             editingMenuButton = id
             // The field has to be seen to be typed in: the menu opens, scrolled to its end.
+            menuCollapsed = false
+            menuButtonAdded++
+        }
+        // "add in the left-side menu", for a control: at the bottom, the menu open and scrolled to it. One that is
+        // there already is only shown.
+        menuCustomizer.add = { control ->
+            val (list, _) = CustomMenuButtons.addedControl(menuButtons, control)
+            if (list != menuButtons) setMenuButtons(list)
             menuCollapsed = false
             menuButtonAdded++
         }
@@ -3140,6 +3152,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
             LocalMenuButtonHost provides menuButtonHost,
+            org.example.project.ui.LocalMenuCustomizer provides menuCustomizer,
             // PRD §8: a task cell's "go to calendar", for every surface that draws the cell's menu.
             LocalCalendarGoTo provides calendarGoTo,
             // The period edit window's companions + drawings, for everything that draws a period.
@@ -3168,45 +3181,56 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // the windows live — the content area below.
             val minimizedInset = if (windowFrames.registrations.isNotEmpty()) MINIMIZED_BAR_HEIGHT else 0.dp
             Row(modifier = Modifier.fillMaxSize()) {
+                // User rule 2026-10-08: the whole menu under the page button is the user's list — windows' buttons and
+                // controls of the app ([MenuControl]), drawn by the one code each has ([MenuControlItem]).
+                val menuControlHost =
+                    org.example.project.ui.MenuControlHost(
+                        state = schedulerState,
+                        sleeping = schedulerState.isSleeping(nowMillis),
+                        away = userAway,
+                        onlineStatus = if (vm.syncState == null) null else syncStatusLabel(syncStateValue, accountValue),
+                        displayMode = calendarDisplayMode,
+                        onSetVoice = { vm.dispatch(SchedulerIntent.SetNotificationVoice(it)) },
+                        // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the reducer,
+                        // because switching off also withdraws the notifications the OS is already showing — see
+                        // [SchedulerEngine.setNotificationsEnabled].
+                        onSetNotifications = { engine.setNotificationsEnabled(it) },
+                        onLookAwayNow = { engine.restartLookAway() },
+                        onSwitchTask = { engine.forceTaskSwitch() },
+                        onToggleSleepWork = {
+                            if (schedulerState.isSleeping(clock.nowMillis())) {
+                                vm.setSleepMode(null)
+                            } else {
+                                vm.setSleepMode(
+                                    SchedulerDomain.nextWakeInstantMillis(schedulerState.sleep, clock.nowMillis(), tz),
+                                )
+                            }
+                        },
+                        onToggleAway = { engine.setUserAway(!userAway) },
+                        onOpenOnline = { openNewWindow(FloatingWindow.Online) },
+                        onSetAutoSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
+                        onSetReminders = { vm.dispatch(SchedulerIntent.SetShowReminders(it)) },
+                        onSetScreenBreaks = { vm.dispatch(SchedulerIntent.SetShowScreenBreaks(it)) },
+                        onSetDisplayMode = {
+                            vm.dispatch(SchedulerIntent.SetCalendarDayMode(it == org.example.project.ui.CalendarDisplayMode.Day))
+                        },
+                        onSetPlanTimeLimit = { vm.dispatch(SchedulerIntent.SetPlanCalculationLimit(it)) },
+                        onSetMinimumTimeWeight = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
+                        onSetSleepSchedule = { vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong())) },
+                        onSetSoundVolume = { vm.dispatch(SchedulerIntent.SetSoundVolume(it)) },
+                    )
                 // The lateral menu is omitted entirely while collapsed, so the content takes the full width
                 // ("completely disappear to the left"). The collapse toggle lives outside it (see below).
                 if (!menuCollapsed) LateralMenu(
                     page = page,
                     onPageSelected = { page = it },
-                    // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
-                    onToggleCalendar = { openNewWindow(FloatingWindow.Calendar) },
-                    notificationVoiceEnabled = schedulerState.notificationVoiceEnabled,
-                    onToggleNotificationVoice = { vm.dispatch(SchedulerIntent.SetNotificationVoice(it)) },
-                    // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the
-                    // reducer like the display switches above it, because switching off also withdraws the
-                    // notifications the OS is already showing — see [SchedulerEngine.setNotificationsEnabled].
-                    notificationsEnabled = schedulerState.notificationsEnabled,
-                    onToggleNotifications = { engine.setNotificationsEnabled(it) },
-                    onLookAwayNow = { engine.restartLookAway() },
-                    onSwitchTask = { engine.forceTaskSwitch() },
-                    // PRD §7: so the four controls that duplicate a system-wide chord can name it on hover,
-                    // at whatever chord the ACCOUNT has it bound to (the same map installGlobalHotkeys above
-                    // is claiming).
-                    shortcutBindings = schedulerState.shortcutBindings,
-                    sleeping = schedulerState.isSleeping(nowMillis),
-                    onToggleSleepWork = {
-                        if (schedulerState.isSleeping(clock.nowMillis())) {
-                            vm.setSleepMode(null)
-                        } else {
-                            vm.setSleepMode(
-                                SchedulerDomain.nextWakeInstantMillis(schedulerState.sleep, clock.nowMillis(), tz),
-                            )
-                        }
-                    },
-                    away = userAway,
-                    onToggleAway = { engine.setUserAway(!userAway) },
-                    onToggleOnline = { openNewWindow(FloatingWindow.Online) },
-                    onlineStatus = if (vm.syncState == null) null else syncStatusLabel(syncStateValue, accountValue),
-                    onToggleTaskTree = { openNewWindow(FloatingWindow.TaskTree) },
                     scrollState = menuScroll,
-                    customSection = {
+                    customizing = menuCustomizer.active,
+                    onCustomize = { menuCustomizer.active = it },
+                    items = {
                         CustomMenuSection(
                             buttons = menuButtons.filter(::menuButtonShown),
+                            // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
                             onClick = { onMenuButtonClicked(it) },
                             editingId = editingMenuButton,
                             onStartRename = { editingMenuButton = it },
@@ -3221,6 +3245,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout))
                                 }
                             },
+                            customizing = menuCustomizer.active,
+                            onCustomize = { menuCustomizer.active = it },
+                            controlContent = { control, title -> org.example.project.ui.MenuControlItem(control, title, menuControlHost) },
+                            onMove = { id, beforeId -> setMenuButtons(CustomMenuButtons.moved(menuButtons, id, beforeId)) },
                         )
                     },
                 )
@@ -4260,6 +4288,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             schedulerRuns = { schedulerRuns },
                             onDragOnCalendar = { presentWindow(FloatingWindow.Calendar, FloatingWindow.Calendar.name) },
+                            onSetNotificationsEnabled = { engine.setNotificationsEnabled(it) },
                             onOpenBlocksSearch = { owners ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.blocksSearchConfig(owners).encode())
                             },

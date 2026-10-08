@@ -199,6 +199,11 @@ class AddedActionHandlers(
     val onOpenBlocksSearch: (List<String>) -> Unit = {},
     /** "Drag on the calendar": the press took hold of blocks — the calendar comes to the front and takes the focus. */
     val onDragOnCalendar: () -> Unit = {},
+    /**
+     * The Notifications switch's write ([SearchDomain.AddedAction.NotificationsSwitch]): through the ENGINE, which
+     * also withdraws what the OS is still showing — never a plain intent (`SchedulerEngine.setNotificationsEnabled`).
+     */
+    val onSetNotificationsEnabled: (Boolean) -> Unit = {},
     /** The scheduler engine's runs, for the history units' "Information" (they are the view model's, kept in memory). */
     val schedulerRuns: () -> List<org.example.project.scheduler.state.SchedulerRunEntry> = { emptyList() },
 )
@@ -494,7 +499,25 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.ChronoTitle, SearchDomain.AddedAction.ReminderTitle, SearchDomain.AddedAction.QuotaTitle ->
             SharedTitleField(state, added, SearchDomain.TITLED_KINDS.getValue(action), run)
         // The sound setting's control: the app's global volume. Written on release, so a drag is one write.
-        SearchDomain.AddedAction.SoundVolume -> {
+        // User rule 2026-10-08: the voice's and the notifications' switches, the lateral menu's own by default — here
+        // too, so a menu emptied of them can be given them back ([MenuAddable], while the menu is being customized).
+        SearchDomain.AddedAction.VoiceSwitch ->
+            MenuAddable(MenuControl.Voice) {
+                androidx.compose.material3.Switch(
+                    checked = state.notificationVoiceEnabled,
+                    onCheckedChange = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetNotificationVoice(it))) },
+                    enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Voice),
+                )
+            }
+        SearchDomain.AddedAction.NotificationsSwitch ->
+            MenuAddable(MenuControl.Notifications) {
+                androidx.compose.material3.Switch(
+                    checked = state.notificationsEnabled,
+                    onCheckedChange = handlers.onSetNotificationsEnabled,
+                    enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Notifications),
+                )
+            }
+        SearchDomain.AddedAction.SoundVolume -> MenuAddable(MenuControl.SoundVolume) {
             val enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound)
             var draft by remember(state.soundVolume) { mutableStateOf(state.soundVolume.toFloat()) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

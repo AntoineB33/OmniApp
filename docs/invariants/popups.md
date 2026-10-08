@@ -121,6 +121,36 @@ means.
   while it is retracted or squeezed — laid out at `CALENDAR_GRID_MIN_WIDTH` at least and cut (`keepsWidthAbove`): its
   scroll and its zoom are its own, and a week laid out in no width is a case nothing else asks of it. The
   configuration is cut the same way below its own width, and takes the whole window while the grid is retracted.
+- **The whole lateral menu is the user's, except the page button** (user rule 2026-10-08; `ui/CustomMenuButtons.kt`,
+  `LateralMenu`, `CustomMenuButtonsTest`). Under the page button there is ONE list of items (`CustomMenuButton`), and
+  an item is a **window's button** (☆, as before) or a **control of the app** (`CustomMenuButton.control`, a
+  `MenuControl` by name): a switch, a field, a button that acts.
+  - **A control is drawn in the menu by the code that draws it where it lives** (`MenuControlItem`, fed by `App`'s
+    `MenuControlHost`): never a second look for the menu. A new control is one entry of `MenuControl`, one branch
+    there, and a `MenuAddable` round it where it lives.
+  - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: Task tree, Calendar, then Voice,
+    Notifications, Look away now, Switch task, Sleep / Work, I'm away, Online). A list stored before is given those
+    ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
+  - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Remove,
+    Customize. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of its own); a
+    right-click beside the items offers Customize too, so an empty menu can be filled.
+  - **"Customize"** (`MenuCustomizer`, `LocalMenuCustomizer`, Compose-only — off at every start): while on, a line at
+    the top of the menu says so and ends it, every control that can stand in the menu is OUTLINED where it lives, and
+    a right-click on one offers exactly "add in the left-side menu" (`MenuAddable`). **The menu's own items do nothing at
+    a press meanwhile** (anomaly 2026-10-08: a switch was still flipped): a press HOLDS the item, and moved, DRAGS it
+    to another place of the menu (user rule 2026-10-08; `heldDrag`, `CustomMenuButtons.moved` / `dropBefore`) — the
+    item follows the hand, a line says where a release would put it, and it lands before the item under it. The page
+    button is not an item and does not move. Only their right-click menu answers otherwise; the controls outlined
+    elsewhere in the app still work. It lands at the bottom; a control
+    stands in the menu once (`addedControl`).
+  - **What can be added today**: the menu's own seven; the calendar's configuration — Display, Auto schedule,
+    Reminders, Screen breaks, the time limit, the minimum time weight, the sleep schedule; and an app setting's
+    actions — Voice, Notifications, Global volume. NOT yet: "Lock to now" (the calendar window's own state, not the
+    app's), and the controls of the other windows. A window is added by its ☆, as before.
+  - **Voice and Notifications are app-setting elements** (`SearchDomain.AppSettingEntry`, beside Sound; each row says
+    on / off, each has its switch among the actions): the menu can be emptied of them, so they must be findable — and
+    addable back — somewhere else. The Notifications switch there writes through the ENGINE as the menu's does
+    (`AddedActionHandlers.onSetNotificationsEnabled`).
 - **The lateral menu's fixed part has no "Search" and no "Categories" button** (user rule 2026-10-08). The two windows
   are opened by the buttons the user made (☆) and from the windows that lead to them: a Search window from the
   calendar's "add…" / "edit…", from an element's row and from the actions that open one; the Categories window from

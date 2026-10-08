@@ -349,20 +349,35 @@ class SearchAddedElementsTest {
     fun the_sound_setting_is_an_app_setting_element_whose_action_is_the_global_volume() {
         var s = account()
         val rows = SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "")
-        assertEquals(listOf("Sound setting" to "volume 100 %"), rows.map { it.name to it.detail })
+        // User rule 2026-10-08: the default voice and notification switches "must then be present in an app setting
+        // element" — beside the sound setting, each saying where it stands.
+        assertEquals(
+            listOf("Notifications" to "on", "Sound setting" to "volume 100 %", "Voice" to "on"),
+            rows.map { it.name to it.detail },
+        )
+        val muted = s.copy(notificationsEnabled = false, notificationVoiceEnabled = false)
+        assertEquals(
+            listOf("off", "off"),
+            SearchDomain.itemResults(muted, SearchDomain.Kind.AppSetting, "").filter { it.name != "Sound setting" }.map { it.detail },
+        )
         // Found by name like any row, added and resolved like any element.
         assertEquals(1, SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound").size)
-        val added = SearchDomain.resolve(s, listOf(SearchDomain.keyOf(rows.single())))
+        val sound = rows.single { it.name == "Sound setting" }
+        val added = SearchDomain.resolve(s, listOf(SearchDomain.keyOf(sound)))
         assertTrue(SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound))
+        assertTrue(!SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Voice), "each switch answers to its own element")
+        assertTrue(
+            SearchDomain.appSettingAdded(SearchDomain.resolve(s, rows.map { SearchDomain.keyOf(it) }), SearchDomain.AppSettingEntry.Notifications),
+        )
         assertEquals(
-            listOf(SearchDomain.AddedAction.SoundVolume),
+            listOf(SearchDomain.AddedAction.SoundVolume, SearchDomain.AddedAction.VoiceSwitch, SearchDomain.AddedAction.NotificationsSwitch),
             SearchDomain.addedActions("", setOf(SearchDomain.Kind.AppSetting)).single { it.first == SearchDomain.Kind.AppSetting }.second,
         )
         // The slider's write: clamped, and a setting — no Undo/Redo unit.
         val before = units(s)
         s = r(s, SchedulerIntent.SetSoundVolume(0.4))
         assertEquals(0.4, s.soundVolume)
-        assertEquals("volume 40 %", SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "").single().detail)
+        assertEquals("volume 40 %", SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound").single().detail)
         assertEquals(1.0, r(s, SchedulerIntent.SetSoundVolume(7.0)).soundVolume)
         assertEquals(0.0, r(s, SchedulerIntent.SetSoundVolume(-1.0)).soundVolume)
         assertEquals(before, units(s))

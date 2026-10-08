@@ -11,6 +11,51 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Customize mode: the menu's items are dragged to another place — 2026-10-08
+
+User rule: "in customization mode, the user can drag the buttons or fields in the left-side menu, except for the top
+button that switch between pages." A press on an item holds it; moved, the item follows the hand and a line shows
+where it would land; released, it stands before the item under it (`heldDrag`, `CustomMenuButtons.moved`). The order
+is the stored list's, one Undo unit like any change of the menu. `CustomMenuButtonsTest` (the order). Seen on the menu
+rendered headlessly with a real mouse drag: a plain click on a switch and on a button did nothing; "Voice" held and
+moved followed the hand with the line under "Sleep", and was dropped there. Not verified in the live app. Client only.
+
+### Customize mode: the menu's items still acted at a click — 2026-10-08
+
+Anomaly: "In the customize mode, I can still click the switch button in the left-side menu of the app." While the menu
+is being customized its items now do nothing at a press — a switch is not flipped, a button opens nothing — and only
+their right-click menu answers (`inertToPrimaryPress`). The controls outlined in the rest of the app still work: only
+the menu was reported. No test (a gesture); not verified on screen. Client only.
+
+### The whole lateral menu is customizable — 2026-10-08
+
+User rule: "Make the entire left-side menu of the app customizable, except for the top button that allows the user to
+switch between pages. There can be any kind of button in it, like switch buttons or fields, and they all have the same
+right-click menu. When the user selects the customize option from this right-click menu, the user can right-click on
+any configuration field or button in the app and the right-click menu will have one option: add in the left-side menu,
+just like the star button in the header of a window. The default voice and notification switch button must then be
+present in an 'app setting' element."
+
+- **One list under the page button.** What the menu's fixed part held (Task tree, Calendar, Voice, Notifications, Look
+  away now, Switch task, Sleep / Work, I'm away, Online) are now items of the user's list, above the buttons they had
+  made; a stored list is given them once (`CustomMenuButtons.DEFAULTS`, `seeded`). `CustomMenuButton.control` is a new
+  field with a default: a list written before still reads.
+- **An item is a window's button or a control** (`MenuControl`): a switch, a field, a button. Drawn by the code that
+  draws it where it lives (`MenuControlItem`).
+- **One right-click menu for all**: Update (where it applies), Rename, Remove, Customize.
+- **Customize**: outlines what can be added, and a right-click on one offers "add in the left-side menu"
+  (`MenuAddable`). Ended by "Done" at the top of the menu, or the same menu entry.
+- **Voice and Notifications are app-setting elements** in the Search window, each with its switch.
+
+**NOT "any field or button in the app" yet.** What can be added: the menu's own seven controls, the calendar's
+configuration (Display, Auto schedule, Reminders, Screen breaks, time limit, minimum time weight, sleep schedule), and
+the app settings' Voice, Notifications and Global volume. The other windows' controls are not wired — each needs its
+state reachable from the menu — and "Lock to now" is the calendar window's own state. Items cannot be reordered.
+
+Seen on the menu rendered headlessly beside the calendar, with real mouse events: an item's menu; Customize (the line,
+the outlines); "add in the left-side menu" on a switch and on a text field, each then in the menu; Done.
+`CustomMenuButtonsTest`, `SearchAddedElementsTest`. Not verified in the live app. Client only.
+
 ### Lateral menu: the "Search" and "Categories" buttons are gone from its fixed part — 2026-10-08
 
 User rule. The two `MenuButton`s and their parameters are removed (`LateralMenu`, `App`). The windows themselves are

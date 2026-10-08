@@ -14,6 +14,74 @@ import org.example.project.ui.CustomMenuButtons
  */
 class CustomMenuButtonsTest {
 
+    /** A list read from a payload written BEFORE the whole menu was the user's, less the items it is then given. */
+    private fun own(list: List<CustomMenuButton>): List<CustomMenuButton> = list.filterNot { it in CustomMenuButtons.DEFAULTS }
+
+    /**
+     * User rule 2026-10-08: "Make the entire left-side menu of the app customizable, except for the top button … There
+     * can be any kind of button in it, like switch buttons or fields."
+     */
+    @Test
+    fun the_whole_menu_is_the_users_list_and_starts_as_what_the_menu_held() {
+        val defaults = CustomMenuButtons.DEFAULTS
+        assertEquals(listOf("TaskTree", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
+        assertEquals(
+            listOf("Voice", "Notifications", "LookAwayNow", "SwitchTask", "SleepWork", "Away", "Online"),
+            defaults.mapNotNull { it.control },
+            "the controls the fixed part held, in its order",
+        )
+        assertTrue(defaults.mapNotNull { it.control }.all { org.example.project.ui.MenuControl.of(it) != null })
+        assertEquals(defaults.size, defaults.map { it.id }.toSet().size)
+        // A menu never stored is that list; one written before is given it ON TOP, once…
+        assertEquals(defaults, CustomMenuButtons.decode(null))
+        val before = """{"buttons":[{"id":"b1","window":"Search","title":"Mine","config":"c1"}]}"""
+        val seeded = CustomMenuButtons.decode(before)
+        assertEquals(defaults + CustomMenuButton("b1", "Search", "Mine", "c1"), seeded)
+        // …so what the user then removes stays removed: nothing is given twice.
+        val emptied = CustomMenuButtons.removed(CustomMenuButtons.removed(seeded, "d-Voice"), "d-calendar")
+        assertEquals(emptied, CustomMenuButtons.decode(CustomMenuButtons.encode(emptied)))
+        assertEquals(emptyList(), CustomMenuButtons.decode(CustomMenuButtons.encode(emptyList())), "an emptied menu stays empty")
+    }
+
+    /** User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu". */
+    @Test
+    fun an_item_dragged_in_the_menu_lands_before_the_item_under_it() {
+        val list = listOf("a", "b", "c", "d").map { CustomMenuButton(it, "Search", it) }
+        fun ids(l: List<CustomMenuButton>) = l.joinToString("") { it.id }
+        assertEquals("bcad", ids(CustomMenuButtons.moved(list, "a", "d")))
+        assertEquals("dabc", ids(CustomMenuButtons.moved(list, "d", "a")))
+        assertEquals("abdc", ids(CustomMenuButtons.moved(list, "c", null)), "no item under it: at the end")
+        assertEquals("abcd", ids(CustomMenuButtons.moved(list, "b", "c")), "dropped where it stood")
+        assertEquals(list, CustomMenuButtons.moved(list, "b", "b"))
+        assertEquals(list, CustomMenuButtons.moved(list, "zz", "a"), "no such item")
+        // Said by the item it lands before: an item the menu does not draw (its window is gone) keeps its place.
+        assertEquals("bacd", ids(CustomMenuButtons.moved(list, "a", "c")))
+        // Where a dragged row lands, by the middles of the other rows: 10, 50, 90.
+        val others = listOf("b" to 10f, "c" to 50f, "d" to 90f)
+        assertEquals("b", CustomMenuButtons.dropBefore(others, 0f))
+        assertEquals("c", CustomMenuButtons.dropBefore(others, 30f))
+        assertEquals("d", CustomMenuButtons.dropBefore(others, 60f))
+        assertEquals(null, CustomMenuButtons.dropBefore(others, 120f))
+    }
+
+    /** "…the right-click menu will have one option: add in the left-side menu." */
+    @Test
+    fun a_control_added_to_the_menu_lands_at_the_bottom_and_stands_there_once() {
+        val (list, id) = CustomMenuButtons.addedControl(CustomMenuButtons.DEFAULTS, org.example.project.ui.MenuControl.AutoSchedule)
+        assertEquals("AutoSchedule", list.last().control)
+        assertEquals(id, list.last().id)
+        assertEquals(list.size, list.map { it.id }.toSet().size)
+        // Already there: the same item, nothing added.
+        assertEquals(list to id, CustomMenuButtons.addedControl(list, org.example.project.ui.MenuControl.AutoSchedule))
+        assertEquals("d-Voice", CustomMenuButtons.addedControl(list, org.example.project.ui.MenuControl.Voice).second)
+        // Removed, it can be added back; renamed, it keeps the name it was given; and it survives its encoding.
+        val back = CustomMenuButtons.addedControl(CustomMenuButtons.removed(list, "d-Voice"), org.example.project.ui.MenuControl.Voice).first
+        assertEquals("Voice", back.last().control)
+        val renamed = CustomMenuButtons.renamed(back, back.last().id, "Speak")
+        assertEquals("Speak", renamed.last().title)
+        assertEquals(renamed, CustomMenuButtons.decode(CustomMenuButtons.encode(renamed)))
+    }
+
     @Test
     fun a_new_button_lands_at_the_bottom_with_an_id_of_its_own() {
         val (one, first) = CustomMenuButtons.added(emptyList(), "Search", "Search")
@@ -42,13 +110,13 @@ class CustomMenuButtonsTest {
     fun the_buttons_survive_their_local_encoding() {
         val buttons = listOf(CustomMenuButton("b1", "Search#2", "Findings"), CustomMenuButton("b2", "TaskTree", "Tree"))
         assertEquals(buttons, CustomMenuButtons.decode(CustomMenuButtons.encode(buttons)))
-        // Nothing stored, or nothing readable, is no button — never a failed start.
-        assertEquals(emptyList(), CustomMenuButtons.decode(null))
-        assertEquals(emptyList(), CustomMenuButtons.decode("{not json"))
+        // Nothing stored, or nothing readable, is the menu's own items — never a failed start.
+        assertEquals(CustomMenuButtons.DEFAULTS, CustomMenuButtons.decode(null))
+        assertEquals(CustomMenuButtons.DEFAULTS, CustomMenuButtons.decode("{not json"))
         // A field a later build adds is ignored.
         assertEquals(
             listOf(CustomMenuButton("b1", "Search", "S")),
-            CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S","icon":"star"}],"v":2}"""),
+            own(CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S","icon":"star"}],"v":2}""")),
         )
     }
 
@@ -57,8 +125,8 @@ class CustomMenuButtonsTest {
         // The anomaly (2026-09-26): a "timers" button made before the snapshot existed read its Search window's
         // configuration at every click, so after the types were changed in the window it opened, the button still
         // "found" that window. It now keeps ONE configuration, taken at load.
-        val old = CustomMenuButtons.decode("""{"buttons":[{"id":"b4","window":"Search","title":"timers"},""" +
-            """{"id":"b1","window":"object:Timer:live:timer-3","title":"job offers"}]}""")
+        val old = own(CustomMenuButtons.decode("""{"buttons":[{"id":"b4","window":"Search","title":"timers"},""" +
+            """{"id":"b1","window":"object:Timer:live:timer-3","title":"job offers"}]}"""))
         val atLoad = """{"kinds":["Timer"]}"""
         val frozen = CustomMenuButtons.withConfigsFrozen(old) { if (it == "Search") atLoad else null }
         assertEquals(atLoad, frozen.first().config)
@@ -76,7 +144,7 @@ class CustomMenuButtonsTest {
         val decoded = CustomMenuButtons.decode(CustomMenuButtons.encode(list)).single()
         assertEquals(saved, decoded.config)
         // A button stored before the snapshot existed.
-        val old = CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"Search"}]}""").single()
+        val old = own(CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"Search"}]}""")).single()
         assertEquals(CustomMenuButton("b1", "Search", "Search"), old)
         assertEquals(null, old.config)
     }
@@ -125,7 +193,7 @@ class CustomMenuButtonsTest {
     @Test
     fun a_button_written_before_the_layout_still_reads_and_the_layout_round_trips() {
         val before = """{"buttons":[{"id":"b1","window":"Search","title":"Mine","config":"c1"}]}"""
-        val read = CustomMenuButtons.decode(before).single()
+        val read = own(CustomMenuButtons.decode(before)).single()
         assertEquals(CustomMenuButton("b1", "Search", "Mine", "c1"), read)
         assertEquals(null, read.layout)
         val layout = org.example.project.ui.WindowLayout(1f, 2f, 3f, 4f, listOf(0.25f, 0.75f))

@@ -1939,12 +1939,21 @@ object SearchDomain {
     enum class AppSettingEntry(val title: String) {
         /** How loud the app's own sounds are: [SchedulerState.soundVolume], the "Global volume" action's slider. */
         Sound("Sound setting"),
+        /**
+         * User rule 2026-10-08: the app's voice and its notifications, each a switch — the two the lateral menu holds
+         * by default. The menu is the user's to empty, so they are elements too: found here, switched here, and put
+         * back in the menu from here ([SchedulerState.notificationVoiceEnabled], [SchedulerState.notificationsEnabled]).
+         */
+        Voice("Voice"),
+        Notifications("Notifications"),
     }
 
     /** What an [AppSettingEntry]'s row says beside its name: where the setting stands. */
     private fun appSettingDetail(state: SchedulerState, setting: AppSettingEntry): String =
         when (setting) {
             AppSettingEntry.Sound -> "volume " + volumePercent(state.soundVolume) + " %"
+            AppSettingEntry.Voice -> if (state.notificationVoiceEnabled) "on" else "off"
+            AppSettingEntry.Notifications -> if (state.notificationsEnabled) "on" else "off"
         }
 
     /** A volume in `0..1` as a whole percentage. */
@@ -2374,6 +2383,9 @@ object SearchDomain {
         ReminderTimeNow(Kind.Reminder, "Set to the current time"),
         /** The sound setting's slider ([AppSettingEntry.Sound], [SchedulerIntent.SetSoundVolume]). */
         SoundVolume(Kind.AppSetting, "Global volume"),
+        /** The voice's and the notifications' switches ([AppSettingEntry.Voice], [AppSettingEntry.Notifications]). */
+        VoiceSwitch(Kind.AppSetting, "Voice"),
+        NotificationsSwitch(Kind.AppSetting, "Notifications"),
         TimerRun(Kind.Timer, "Run"),
         ChronoRun(Kind.Chrono, "Run"),
         // The period edit window's sections (removed 2026-10-01), over every added period.

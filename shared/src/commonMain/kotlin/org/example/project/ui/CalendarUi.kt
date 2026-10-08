@@ -1684,76 +1684,37 @@ private fun hourLabel(hour: Int): String {
 }
 
 /**
- * PRD §7 Lateral menu: a persistent left rail. Its first element is the page-navigation button
- * (present on every feature page). **A window's button opens a NEW window at every click** — never closes one,
- * and is never drawn as "open" (the window bar says what is open). The day selector is the calendar window's
- * own, in its configuration section ([CalendarFloatingWindow]) — and so is the "Auto schedule" switch.
+ * PRD §7 Lateral menu: a persistent left rail. Its first element is the page-navigation button (present on every
+ * feature page) — the ONE thing of it that is not the user's (user rule 2026-10-08: *"Make the entire left-side menu
+ * of the app customizable, except for the top button that allows the user to switch between pages"*). Everything
+ * under it is [items]: the user's list ([CustomMenuSection]) of windows' buttons and controls of the app
+ * ([MenuControl], [MenuControlItem]), which starts as what the menu used to hold ([CustomMenuButtons.DEFAULTS]).
+ * **A window's button opens a NEW window at every click** — never closes one, and is never drawn as "open" (the
+ * window bar says what is open). A right-click beside the items offers [onCustomize] too, so an emptied menu can
+ * still be filled.
  */
 @Composable
 fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
-    onToggleCalendar: () -> Unit,
-    /**
-     * PRD §5: the Online window (status, work offline, account) — it replaced the top-right chip and offline
-     * button, so its button carries the status they showed ([onlineStatus], e.g. "☁ Synced", "✈ Offline").
-     */
-    onToggleOnline: () -> Unit = {},
-    onlineStatus: String? = null,
-    /**
-     * Sleep/Work toggle: whether the user is currently in "sleeping" mode (pressed **Sleep**). The button reads
-     * **Work** while sleeping and **Sleep** while working; pressing it flips the mode ([onToggleSleepWork]) and
-     * tells the server so the pause-end cue is suppressed while the user is deliberately away.
-     */
-    sleeping: Boolean = false,
-    onToggleSleepWork: () -> Unit = {},
-    /**
-     * PRD §15 "I'm away" toggle: whether the user declared they are away from **this device**. Pressing it closes
-     * this device's heartbeat (the server sees the device stop working); pressing it again ("I'm back")
-     * resumes it. Distinct from Sleep/Work, which is the account-wide sleep mode.
-     */
-    away: Boolean = false,
-    onToggleAway: () -> Unit = {},
-    /** PRD §15 (20s look-away): whether the spoken voice cue is enabled + toggle callback. */
-    notificationVoiceEnabled: Boolean = true,
-    onToggleNotificationVoice: (Boolean) -> Unit = {},
-    /**
-     * PRD §11 Notifications: whether the app posts system notifications at all. Off silences every one of
-     * them — a break's start and end, "task to do now", the wind-down, an alarm, a chord's own receipt — and
-     * clears the ones the OS is still showing; the History window's Notifications column keeps the record
-     * either way. The same lever as the system-wide `Ctrl+Shift+Alt+N` chord, which is why this switch names
-     * that chord on hover like the buttons below.
-     */
-    notificationsEnabled: Boolean = true,
-    onToggleNotifications: (Boolean) -> Unit = {},
-    /**
-     * PRD §15 (20s look-away): re-runs the 20s pause now (superseding any look-away still sounding/pending).
-     * The button is **always** in the menu — a look-away is something the user may decide to take at any
-     * moment, so its availability must not depend on what the last past screen break happened to be.
-     */
-    onLookAwayNow: () -> Unit = {},
-    onSwitchTask: () -> Unit = {},
-    /**
-     * PRD §7: the account's system-wide chord **overrides** (`SchedulerState.shortcutBindings`). Three of the
-     * buttons below duplicate a chord, and each shows it in an info bubble on hover — resolved through
-     * [GlobalShortcutBindings.chordOf], so a rebound chord reaches the button with no second lookup and the
-     * bubble can never advertise a chord the app is not listening for.
-     */
-    shortcutBindings: Map<GlobalShortcut, ShortcutBinding> = emptyMap(),
-    /** PRD §4: the task tree is a window like the others, opened from here. */
-    onToggleTaskTree: () -> Unit = {},
-    /** The buttons the user made for one window each ([CustomMenuSection]), at the very bottom. */
-    customSection: @Composable () -> Unit = {},
-    /** Held by the caller, which scrolls the menu to its end when it adds a button there. */
+    /** Everything under the page button: the user's items ([CustomMenuSection]). */
+    items: @Composable () -> Unit = {},
+    /** Whether the menu is being customized, and a right-click on its empty part starting or ending it. */
+    customizing: Boolean = false,
+    onCustomize: (Boolean) -> Unit = {},
+    /** Held by the caller, which scrolls the menu to its end when it adds an item there. */
     scrollState: ScrollState = rememberScrollState(),
     modifier: Modifier = Modifier,
 ) {
+    var backgroundMenu by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
             .fillMaxHeight()
             .width(188.dp)
             .background(CalColors.menuBackground)
             .border(1.dp, CalColors.grid)
+            // A right-click no item answered (they consume theirs): the menu's own, on its empty part.
+            .then(contextMenuModifier(enabled = true, key = "menu-background") { backgroundMenu = true })
             // Scroll when the buttons exceed the available height (e.g. short windows / calendar
             // expanded) so nothing is clipped off the bottom.
             .verticalScroll(scrollState)
@@ -1768,113 +1729,130 @@ fun LateralMenu(
         // The collapse toggle is NOT here — it's a bookmark on this menu's right border (in App), so it stays
         // visible after the whole menu (this button included) slides off-screen.
         PageNavButton(page = page, onPageSelected = onPageSelected)
-
-        // Closing every window at once is the window bar's "Reset" now (WindowBar), where the windows are.
-        MenuButton(
-            label = "Task tree",
-            active = false,
-            onClick = onToggleTaskTree,
-        )
-
-        MenuButton(
-            label = "Calendar",
-            active = false,
-            onClick = onToggleCalendar,
-        )
-
-        // PRD §11/§15: the app's VOICE on/off — every notification it posts is also spoken, so this one
-        // switch governs all of them (it used to be the 20 s look-away cue's alone, which is still the name
-        // the setting is persisted under). The notifications themselves keep posting when it is off.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Voice",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = notificationVoiceEnabled,
-                onCheckedChange = onToggleNotificationVoice,
+        transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
+        DropdownMenu(expanded = backgroundMenu, onDismissRequest = { backgroundMenu = false }, properties = PopupProperties(focusable = false)) {
+            DropdownMenuItem(
+                text = { Text(if (customizing) "Stop customizing" else "Customize") },
+                onClick = { backgroundMenu = false; onCustomize(!customizing) },
             )
         }
+        items()
+    }
+}
 
-        // PRD §11 Notifications: silence every notification the app posts (and clear what the OS is still
-        // showing). The one switch here that duplicates a system-wide chord, so — like the buttons that do —
-        // it names it on hover, read live off the account's own bindings.
-        ShortcutHint(
-            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.ToggleNotifications),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Notifications",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f),
+/**
+ * What the controls of the app that can stand in the lateral menu ([MenuControl]) read and do — `App`'s, handed to
+ * [MenuControlItem]. One holder, so a new control is one more field here and not one more parameter down three
+ * composables.
+ */
+class MenuControlHost(
+    val state: org.example.project.scheduler.state.SchedulerState,
+    /** Whether the user is in "sleeping" mode, and this device declared away. */
+    val sleeping: Boolean,
+    val away: Boolean,
+    /** What the Online window's button says after its name ("☁ Synced", "✈ Offline"), or null. */
+    val onlineStatus: String?,
+    val displayMode: CalendarDisplayMode,
+    val onSetVoice: (Boolean) -> Unit,
+    val onSetNotifications: (Boolean) -> Unit,
+    val onLookAwayNow: () -> Unit,
+    val onSwitchTask: () -> Unit,
+    val onToggleSleepWork: () -> Unit,
+    val onToggleAway: () -> Unit,
+    val onOpenOnline: () -> Unit,
+    val onSetAutoSchedule: (Boolean) -> Unit,
+    val onSetReminders: (Boolean) -> Unit,
+    val onSetScreenBreaks: (Boolean) -> Unit,
+    val onSetDisplayMode: (CalendarDisplayMode) -> Unit,
+    val onSetPlanTimeLimit: (Int) -> Unit,
+    val onSetMinimumTimeWeight: (Double) -> Unit,
+    val onSetSleepSchedule: (org.example.project.scheduler.model.SleepSchedule) -> Unit,
+    val onSetSoundVolume: (Double) -> Unit,
+)
+
+/**
+ * User rule 2026-10-08: **a control of the app, drawn as an item of the lateral menu** — a switch, a field, a button
+ * that acts. Each branch is the drawing that control has where it lives (the menu's own rows, the calendar's
+ * configuration's fields, the Sleep fields, the volume's slider): never a second look for the menu. [title] is the
+ * name the user gave the item, or null for the control's own — which some change with what they would do ("Sleep" /
+ * "Work", "I'm away" / "I'm back").
+ */
+@Composable
+internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuControlHost) {
+    val bindings = host.state.shortcutBindings
+    @Composable
+    fun switchRow(label: String, checked: Boolean, chord: String? = null, onChange: (Boolean) -> Unit) {
+        ShortcutHint(chord = chord, modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = checked, onCheckedChange = onChange)
+            }
+        }
+    }
+    when (control) {
+        // PRD §11/§15: the app's VOICE on/off — every notification it posts is also spoken, so this one switch
+        // governs all of them. The notifications themselves keep posting when it is off.
+        MenuControl.Voice -> switchRow(title ?: control.title, host.state.notificationVoiceEnabled, onChange = host.onSetVoice)
+        // PRD §11 Notifications: silence every notification the app posts (and clear what the OS is still showing).
+        // It duplicates a system-wide chord, so it names it on hover, read live off the account's own bindings.
+        MenuControl.Notifications ->
+            switchRow(
+                title ?: control.title, host.state.notificationsEnabled,
+                chord = GlobalShortcutBindings.chordOf(bindings, GlobalShortcut.ToggleNotifications), onChange = host.onSetNotifications,
+            )
+        // PRD §15 (20s look-away): take the 20s pause now. Never gated on the cadence's current state.
+        MenuControl.LookAwayNow ->
+            MenuButton(
+                label = title ?: control.title, active = false, onClick = host.onLookAwayNow,
+                chord = GlobalShortcutBindings.chordOf(bindings, GlobalShortcut.LookAwayNow),
+            )
+        // PRD §7 "Switch task": refuse the task the now-line is on, so a DIFFERENT one starts from now.
+        MenuControl.SwitchTask ->
+            MenuButton(
+                label = title ?: control.title, active = false, onClick = host.onSwitchTask,
+                chord = GlobalShortcutBindings.chordOf(bindings, GlobalShortcut.SwitchTask),
+            )
+        // Sleep/Work toggle: "Sleep" when working (press it when going away), "Work" when sleeping.
+        MenuControl.SleepWork ->
+            MenuButton(label = title ?: if (host.sleeping) "Work" else "Sleep", active = host.sleeping, onClick = host.onToggleSleepWork)
+        // PRD §15 "I'm away" toggle: declares this DEVICE idle. Per-device, unlike Sleep/Work.
+        MenuControl.Away ->
+            MenuButton(
+                label = title ?: if (host.away) "I'm back" else "I'm away", active = host.away, onClick = host.onToggleAway,
+                chord = GlobalShortcutBindings.chordOf(bindings, GlobalShortcut.ToggleAway),
+            )
+        // PRD §5: status, the device's "work offline" switch and the account, in one window.
+        MenuControl.Online ->
+            MenuButton(label = (title ?: control.title) + (host.onlineStatus?.let { "  $it" } ?: ""), active = false, onClick = host.onOpenOnline)
+        MenuControl.AutoSchedule -> switchRow(title ?: control.title, host.state.automaticSchedule, onChange = host.onSetAutoSchedule)
+        MenuControl.Reminders -> switchRow(title ?: control.title, host.state.showReminders, onChange = host.onSetReminders)
+        MenuControl.ScreenBreaks -> switchRow(title ?: control.title, host.state.showScreenBreaks, onChange = host.onSetScreenBreaks)
+        MenuControl.CalendarDisplay -> CalendarDisplayModeField(host.displayMode, host.onSetDisplayMode, label = title ?: control.title)
+        MenuControl.PlanTimeLimit -> PlanCalculationLimitField(host.state.planCalculationLimitSeconds, host.onSetPlanTimeLimit, label = title ?: control.title)
+        MenuControl.MinimumTimeWeight -> MinimumTimeWeightField(host.state.minimumTimeWeight, host.onSetMinimumTimeWeight, label = title ?: control.title)
+        MenuControl.SleepSchedule ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title ?: control.title, style = MaterialTheme.typography.labelMedium)
+                SleepScheduleFields(
+                    host.state.sleep ?: org.example.project.scheduler.model.SleepSchedule(), host.onSetSleepSchedule,
+                    fieldModifier = Modifier.leaveFocusOnOutsidePress(),
                 )
-                Switch(
-                    checked = notificationsEnabled,
-                    onCheckedChange = onToggleNotifications,
+            }
+        // The app's global volume. Written on release, so a drag is one write.
+        MenuControl.SoundVolume -> {
+            var draft by remember(host.state.soundVolume) { mutableStateOf(host.state.soundVolume.toFloat()) }
+            Column {
+                Text(
+                    (title ?: control.title) + "  " + org.example.project.scheduler.domain.SearchDomain.volumePercent(draft.toDouble()) + " %",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                androidx.compose.material3.Slider(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    onValueChangeFinished = { host.onSetSoundVolume(draft.toDouble()) },
                 )
             }
         }
-
-        // PRD §15 (20s look-away): take the 20s pause now. ALWAYS present — the user may choose to look away
-        // at any moment, so this is never gated on the cadence's current state.
-        MenuButton(
-            label = "Look away now",
-            active = false,
-            onClick = onLookAwayNow,
-            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.LookAwayNow),
-        )
-
-        // PRD §7 "Switch task": refuse the task the now-line is on, so a DIFFERENT one starts from now. Like
-        // "Look away now" it is always present — wanting off the current task is a thing the user may decide
-        // at any moment — and it is the same action the system-wide Ctrl+Shift+Alt+Z chord fires, since it is
-        // usually wanted with some other application in front.
-        MenuButton(
-            label = "Switch task",
-            active = false,
-            onClick = onSwitchTask,
-            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.SwitchTask),
-        )
-
-        // Sleep/Work toggle: "Sleep" when working (press it when going away), "Work" when sleeping (press it
-        // when resuming). Tells the server so the phone's pause-end cue is suppressed while deliberately away.
-        MenuButton(
-            label = if (sleeping) "Work" else "Sleep",
-            active = sleeping,
-            onClick = onToggleSleepWork,
-        )
-
-        // PRD §15 "I'm away" toggle: declares this DEVICE idle. Pressing "I'm away" drops this device's presence
-        // WebSocket (the server sees it stop working); "I'm back" reopens it. Per-device, unlike Sleep/Work.
-        MenuButton(
-            label = if (away) "I'm back" else "I'm away",
-            active = away,
-            onClick = onToggleAway,
-            chord = GlobalShortcutBindings.chordOf(shortcutBindings, GlobalShortcut.ToggleAway),
-        )
-
-        // The sleep schedule is not here any more (user rule 2026-10-07): it is a section of the calendar window's
-        // configuration ([SleepScheduleFields]).
-
-        // User rule 2026-10-08: no "Search" and no "Categories" button in this fixed part of the menu any more. Both
-        // windows are still opened by the buttons the user made (☆), below, and from the windows that lead to them.
-
-        // PRD §5: status, the device's "work offline" switch and the account, in one window.
-        MenuButton(
-            label = "Online" + (onlineStatus?.let { "  $it" } ?: ""),
-            active = false,
-            onClick = onToggleOnline,
-        )
-
-        // PRD §7: the user's own buttons, one per window they asked for from its head's ☆.
-        customSection()
     }
 }
 
@@ -4200,10 +4178,12 @@ private fun CalendarConfigurationSection(
             onSelectDate = onSelectDate,
         )
         HorizontalDivider()
-        CalendarDisplayModeField(displayMode, onDisplayModeChange)
+        // Each control that can also stand in the lateral menu is a [MenuAddable]: nothing of it changes until the
+        // menu is being customized (user rule 2026-10-08).
+        MenuAddable(MenuControl.CalendarDisplay) { CalendarDisplayModeField(displayMode, onDisplayModeChange) }
         // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait. Here since 2026-10-02 (it was
         // in the lateral menu): it is about what this window shows.
-        CalendarConfigurationSwitch("Auto schedule", automaticSchedule, onToggleAutomaticSchedule)
+        MenuAddable(MenuControl.AutoSchedule) { CalendarConfigurationSwitch("Auto schedule", automaticSchedule, onToggleAutomaticSchedule) }
         CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
         // PRD §8 "locked on task": there once a task cell's "go to calendar" named a task. Held on the middle of
         // its panel closest to the now-line — or, while none exists yet, on the definitive-schedule front, which
@@ -4225,19 +4205,23 @@ private fun CalendarConfigurationSection(
                 }
             }
         }
-        CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders)
-        CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks)
+        MenuAddable(MenuControl.Reminders) { CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders) }
+        MenuAddable(MenuControl.ScreenBreaks) { CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks) }
         HorizontalDivider()
         // User rule 2026-10-04: the resources the scheduler engine may use, on THIS device.
         Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
-        PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange)
-        MinimumTimeWeightField(minimumTimeWeight, onMinimumTimeWeightChange)
+        MenuAddable(MenuControl.PlanTimeLimit) { PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange) }
+        MenuAddable(MenuControl.MinimumTimeWeight) { MinimumTimeWeightField(minimumTimeWeight, onMinimumTimeWeightChange) }
         // User rule 2026-10-07: the sleep schedule, from the lateral menu — the nightly window the scheduler avoids
         // is drawn on this calendar, and set here. The Sleep window's own fields ([SleepScheduleFields]).
         if (sleepSchedule != null) {
             HorizontalDivider()
-            Text("Sleep", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
-            SleepScheduleFields(sleepSchedule, onSleepScheduleChange, fieldModifier = Modifier.leaveFocusOnOutsidePress())
+            MenuAddable(MenuControl.SleepSchedule) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Sleep", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
+                    SleepScheduleFields(sleepSchedule, onSleepScheduleChange, fieldModifier = Modifier.leaveFocusOnOutsidePress())
+                }
+            }
         }
     }
     ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
@@ -4252,7 +4236,7 @@ private fun CalendarConfigurationSection(
  * error state and writes nothing. The limit governs the NEXT calculation, never one already running.
  */
 @Composable
-private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit) {
+private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit, label: String = "Time limit after a change") {
     var draft by remember(seconds) { mutableStateOf(seconds.toString()) }
     val bounds =
         org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS..org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS
@@ -4265,7 +4249,7 @@ private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit) {
         },
         singleLine = true,
         isError = parsed == null,
-        label = { Text("Time limit after a change") },
+        label = { Text(label) },
         suffix = { Text("s") },
         // A text field has to take the focus to be typed in (unlike the switches above, which must not); a press
         // anywhere else gives the keyboard back to the calendar.
@@ -4281,7 +4265,7 @@ private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit) {
  * in its bounds, and the plan is then made again under it.
  */
 @Composable
-private fun MinimumTimeWeightField(weight: Double, onChange: (Double) -> Unit) {
+private fun MinimumTimeWeightField(weight: Double, onChange: (Double) -> Unit, label: String = "Minimum time weight") {
     fun text(value: Double) = if (value == kotlin.math.floor(value)) value.toLong().toString() else value.toString()
     val bounds = org.example.project.scheduler.state.MIN_MINIMUM_TIME_WEIGHT..org.example.project.scheduler.state.MAX_MINIMUM_TIME_WEIGHT
     fun parse(typed: String): Double? = typed.trim().replace(',', '.').toDoubleOrNull()?.takeIf { !it.isNaN() && it in bounds }
@@ -4301,7 +4285,7 @@ private fun MinimumTimeWeightField(weight: Double, onChange: (Double) -> Unit) {
             },
             singleLine = true,
             isError = parse(draft) == null,
-            label = { Text("Minimum time weight") },
+            label = { Text(label) },
             modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
         )
         Text(
@@ -4318,12 +4302,12 @@ private fun MinimumTimeWeightField(weight: Double, onChange: (Double) -> Unit) {
  * the two modes side by side; the one in force is filled.
  */
 @Composable
-private fun CalendarDisplayModeField(mode: CalendarDisplayMode, onModeChange: (CalendarDisplayMode) -> Unit) {
+private fun CalendarDisplayModeField(mode: CalendarDisplayMode, onModeChange: (CalendarDisplayMode) -> Unit, label: String = "Display") {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Display", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
         Row(Modifier.clip(RoundedCornerShape(6.dp)).border(1.dp, CalColors.muted, RoundedCornerShape(6.dp))) {
             listOf(CalendarDisplayMode.Day to "Day", CalendarDisplayMode.Week to "Week").forEach { (option, label) ->
                 val selected = option == mode
