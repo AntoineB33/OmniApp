@@ -2,7 +2,7 @@
 
 ### System Overview
 
-The scheduler returns a set of rules defining the timeline task schedule to satisfy constraints and two optimization criteria. 
+The scheduler returns a set of rules output defining the timeline task schedule to satisfy constraints and two optimization criteria. 
 
 #### Rule Structure:
 * **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger boundaries (e.g., active `if...then...else...` clauses for the current interval, paired with an alarm/trigger for the next transition at $t$, at $now line$ mode switch, at history being rewritten by a program etc...).
@@ -38,7 +38,7 @@ Each task has a defined minimum execution time. Another optimization goal is to 
 
 ### Default restrictive periods
 * **existing periods:** By default, there are already defined periods with automatic placement rules. For example, the "no screen" periods, the "sleep" period that is always accompanied by the "no screen" period, is placed at the same times every day, and allows no task (a task has a 0 resilience to it by default). The "before bed" period that is always placed on the hour before a "sleep" period. There are also the three "screen breaks" periods.
-* **screen breaks:** There are the 20s, 5min and 15min screen break periods, always accompanied by the "no screen" period. The 20s screen break allows no task. The 5min break is accompanied by two periods: the first minute that allow no tasks and the 4 next minutes. The three screen breaks are placed everywhere in the timeline as earliest as possible where it doesn't violate the frozen past rule and the rules below.
+* **screen breaks:** There are the 20s, 5min and 15min screen break periods, always accompanied by the "no screen" period. The 20s screen break allows no task. The 5min break is accompanied by two periods: the first minute that allow no tasks and the 4 next minutes. The three screen breaks are placed everywhere in the future part of the timeline as earliest as possible where it doesn't violate the frozen past rule and the rules below.
     * A screen break period lasts as long as its name implies.
     * The $now line$ must be in mode 1 or 3 before entering the 20s break.
     * After the end of a 20s break, no 20s break in the next **20 minutes**.
@@ -70,7 +70,7 @@ The returned set of rules output must also give for every $now line$ the task th
 ### Progressive Calculation:
 The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for any t < $t_1$, then 10 seconds later the definitive schedule must be found for any t < $t_1$ + 10 minutes. When the schedule is definitive for any t < $t_1$, it means that for all the next set of rules output the scheduler will return until it is done, they will all indicate the same schedule rules for any t < $t_1$ (task panel scheduling parameterized by $now line$ and $now line$ mode as well as the "alternative schedule"). As time passes, the scheduler returns one set of rule output after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used.
 The scheduler can have a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop. It will also stop if the set of rules output became too heavy, or if it calculated for too long.
-* **first 10s:** When the scheduler engine starts, it must firstly check if in the next 10 seconds there are gaps with no task and if there are tasks that can be scheduled in those gaps. If so, then almost instantly, a new set of rules is returned and the first 10 seconds are definitive.
+* **first 10s:** When the scheduler engine starts, it must firstly check if in the next 10 seconds there are gaps with no task and if there are tasks that can be scheduled in those gaps. If so, then almost instantly, a new set of rules output is returned and the first 10 seconds are definitive.
 * **direct consequence:** If the device bearing the running process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon time) in mode 2 to the current date. If the current date is beyond the definitive schedule, then it is similar to a case where no CPU were available during this period and the current set of rules output, parameterized by $now line$ and $now line$ mode, is used to define the schedule as the $now line$ does its fast move, while no better set of rules output was found.
 
 ### Strict Requirements
@@ -84,7 +84,7 @@ Even if the optimization score is not perfect for all infinite paths, the schedu
 
 ### Use of the set of rules output
 
-* A re-run of the scheduler engine would make it take a screenshot of the schedule without what is deduced from the current set of rules but not saved in history, and find a good schedule from the current rule state inputs. The calendar stays with the previous set of rules, until the scheduler finds one. Then, it removes everything deduced from the previous set of rules but not saved in history, and apply the set of rules input. It will do it again when a better set of rules input is found.
+* A re-run of the scheduler engine would make it take a screenshot of the schedule without what is deduced from the current set of rules output but not saved in history, and find a good schedule from the current rule state inputs. The calendar stays with the previous set of rules output, until the scheduler finds one. Then, it removes everything deduced from the previous set of rules output but not saved in history, and apply the set of rules output. It will do it again when a better set of rules output is found.
 
 
 
