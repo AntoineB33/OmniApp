@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window's section lines did not survive a restart, so a button's "Update" kept the middle — 2026-10-08
+
+The user: "clicking on the button 'Claude quota' opens the window but the positions of the lines that separate the
+sections are not restored from when I clicked on 'update'". The release DB's button holds `splits: [0.5, 0.5]` with
+two sections hidden (the "Gemini quota" one holds real shares), so the click restored what the button kept. The lines
+and the retracted sections of an open window lived in memory only (`searchSplits`, `calendarConfigurationWidth`,
+`calendarSectionsHidden`): each restart put them back at their defaults, and the window that came back was then
+updated from. They are now local view state on a `WindowSections` placement row, written at every change, read at
+startup for the windows that come back, dropped when a window closes. No schema change (a placement row, like
+`TabTitles`); a database without the row reads as before. Test: `WindowFrameHostTest`. NOT reproduced on screen: the
+diagnosis rests on the stored button. Client only; the "Claude quota" button must be updated once more after its lines
+are set.
+
 ### A task panel carried wholly into a break came back entire — 2026-10-08
 
 The user: "When I drag the task panel past the $now line$ when it gets completely retracted, it suddenly appear wholy

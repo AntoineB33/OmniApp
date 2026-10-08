@@ -280,6 +280,13 @@ data class WindowLayout(
             splits.indices.all { kotlin.math.abs(splits[it] - other.splits[it]) < if (splits[it] <= 1f && other.splits[it] <= 1f) 0.002f else 1f }
 }
 
+/**
+ * One window's sections as it is looked at, in [WindowLayout]'s own terms: [splits] (the Search window's two shares,
+ * the calendar's configuration width) and [hidden] (which sections are retracted).
+ */
+@Serializable
+data class WindowSections(val splits: List<Float> = emptyList(), val hidden: List<Boolean> = emptyList())
+
 /** The list of [CustomMenuButton]s, in menu order, and the few things done to it. Pure. */
 object CustomMenuButtons {
     /** The placement row the list is kept on — no window has this frame id. */
@@ -342,6 +349,24 @@ object CustomMenuButtons {
     /** [encodeWindowColors]' reverse; nothing stored, or nothing readable, is no colour. */
     fun decodeWindowColors(text: String?): Map<String, Int> =
         text?.let { runCatching { json.decodeFromString(StoredWindowColors.serializer(), it).colors }.getOrNull() }.orEmpty()
+
+    /**
+     * The placement row the open windows' SECTIONS are kept on ([WindowSections]) — frame id → the lines between its
+     * sections and which are retracted — so a window that comes back after a restart comes back as it was looked at
+     * (anomaly 2026-10-08: they lived in memory only, a restart put every line back in the middle, and a button's
+     * "Update" then kept the middle). No window has this frame id.
+     */
+    const val WINDOW_SECTIONS_PLACEMENT_ID: String = "WindowSections"
+
+    @Serializable
+    private data class StoredWindowSections(val sections: Map<String, WindowSections> = emptyMap())
+
+    fun encodeWindowSections(sections: Map<String, WindowSections>): String =
+        json.encodeToString(StoredWindowSections.serializer(), StoredWindowSections(sections))
+
+    /** [encodeWindowSections]' reverse; nothing stored, or nothing readable, is every window as it opens. */
+    fun decodeWindowSections(text: String?): Map<String, WindowSections> =
+        text?.let { runCatching { json.decodeFromString(StoredWindowSections.serializer(), it).sections }.getOrNull() }.orEmpty()
 
     /**
      * [encode]'s reverse. Nothing stored, or nothing readable, is the menu's own items ([DEFAULTS]); a list written

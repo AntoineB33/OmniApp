@@ -97,6 +97,11 @@ means.
     window a button opens is put back as its layout says (its lines at once, its place once it has a frame); one
     only brought back is left where it is. The button's click still asks for "that exact window" by its
     CONFIGURATION alone (`openNewWindow`): the layout never decides which window is found.
+    **The sections of an OPEN window survive a restart** (anomaly 2026-10-08): the lines and the retracted sections
+    are local view state kept on the `WindowSections` placement row (`CustomMenuButtons.encodeWindowSections`,
+    frame id -> `WindowSections`), written at every change and read back at startup for the windows that come
+    back. They used to live in memory only: a restart put every line back in the middle, and an "Update" after it
+    kept the middle. A window that closes drops its entry, so the next window under that id opens as new.
   - **The key follows what the window shows**: the alarm, timer and reminder windows move on to the element their
     "+ New …" made (`ObjectWindows.Window.retarget`), and the registration's `menuKey` is kept current
     (`WindowFrameHost.rekey`), so a ☆ pressed after a "+ New …" saves the element shown now.

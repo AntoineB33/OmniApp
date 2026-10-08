@@ -287,7 +287,10 @@ private class CalendarLayersHolder {
 
 /** The placement rows that are not a window's layout: they are recorded by what they hold, or not at all. */
 private val VIEW_ROWS: Set<String> =
-    setOf(CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID, "AppWindow")
+    setOf(
+        CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID,
+        CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, "AppWindow",
+    )
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
 private const val SEARCH_KEY: String = org.example.project.scheduler.state.ExternalKeys.SEARCH
@@ -564,6 +567,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     menuButtonWindows.remove(it.key)
                     menuButtonOpenedLayouts.remove(it.key)
                 }
+                // …and its lines are not the next window's under that id.
+                searchSplits.remove(id)
             }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
         }
@@ -943,6 +948,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             true
         }
+        // The windows' sections (anomaly 2026-10-08; [org.example.project.ui.WindowSections]): the lines between them
+        // and which are retracted, loaded once for the windows that come back and written whenever one is changed.
+        remember(placementStore) {
+            CustomMenuButtons.decodeWindowSections(placements[CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID]?.config)
+                .forEach { (id, kept) ->
+                    if (id == FloatingWindow.Calendar.name) {
+                        kept.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
+                        if (kept.hidden.isNotEmpty()) calendarSectionsHidden = kept.hidden
+                    } else if (placements[id]?.visible == true && kept.splits.size == 2) {
+                        searchSplits[id] =
+                            org.example.project.ui.SearchSplits(
+                                kept.splits[0], kept.splits[1],
+                                kept.hidden.getOrNull(0) ?: false, kept.hidden.getOrNull(1) ?: false, kept.hidden.getOrNull(2) ?: false,
+                            )
+                    }
+                }
+            true
+        }
+        fun saveWindowSections() =
+            updatePlacementById(CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID) {
+                val search =
+                    searchSplits.mapValues { (_, s) ->
+                        org.example.project.ui.WindowSections(listOf(s.left, s.topRight), listOf(s.searchHidden, s.actionsHidden, s.addedHidden))
+                    }
+                val calendar =
+                    org.example.project.ui.WindowSections(listOfNotNull(calendarConfigurationWidth), calendarSectionsHidden.orEmpty())
+                        .takeIf { it.splits.isNotEmpty() || it.hidden.isNotEmpty() }
+                it.copy(
+                    config = CustomMenuButtons.encodeWindowSections(search + listOfNotNull(calendar?.let { c -> FloatingWindow.Calendar.name to c })),
+                )
+            }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
         // windows ([ObjectWindows]) — opening one on another object opens a second window, and the first stays.
         // All are hoisted here so they draw on the top layer, above whichever window stands over the tree. The
@@ -1780,6 +1816,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                         else -> Unit
                     }
+                    saveWindowSections()
                     updatePlacementById(id) { it.copy(x = saved.x, y = saved.y, width = saved.width, height = saved.height) }
                 }
             }
@@ -3712,9 +3749,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onMinimumTimeWeightChange = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
                             sleepSchedule = schedulerState.sleep,
                             configurationWidthDp = calendarConfigurationWidth,
-                            onConfigurationWidthChange = { calendarConfigurationWidth = it },
+                            onConfigurationWidthChange = { calendarConfigurationWidth = it; saveWindowSections() },
                             sectionsHidden = calendarSectionsHidden,
-                            onSectionsHiddenChange = { calendarSectionsHidden = it },
+                            onSectionsHiddenChange = { calendarSectionsHidden = it; saveWindowSections() },
                             onSleepScheduleChange = {
                                 vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong()))
                             },
@@ -4416,7 +4453,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // The same, for the actions on the added elements.
                             onOpenAddedConfigurations = { openConfigurationsOf(FloatingWindow.AddedConfig, searchId) },
                             splits = searchSplits[searchId],
-                            onSplitsChange = { searchSplits[searchId] = it },
+                            onSplitsChange = {
+                                if (searchSplits[searchId] != it) {
+                                    searchSplits[searchId] = it
+                                    saveWindowSections()
+                                }
+                            },
                             initialOffset = searchOffset,
                             initialSize = searchSize,
                             onGeometryChange = { windowOffset, windowSize ->

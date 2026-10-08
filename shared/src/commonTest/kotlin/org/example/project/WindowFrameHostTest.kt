@@ -44,6 +44,28 @@ class WindowFrameHostTest {
         assertEquals(emptyMap(), org.example.project.ui.CustomMenuButtons.decodeTabTitles("not json"))
     }
 
+    /**
+     * Anomaly 2026-10-08: "the positions of the lines that separate the sections are not restored". They lived in
+     * memory only, so a restart put them back in the middle. The stored form, on its own placement row.
+     */
+    @Test
+    fun `the lines between a window's sections are kept on their own placement row`() {
+        val buttons = org.example.project.ui.CustomMenuButtons
+        val sections =
+            mapOf(
+                "Search#4" to org.example.project.ui.WindowSections(listOf(0.3151421f, 0.60504806f), listOf(true, false, true)),
+                "Calendar" to org.example.project.ui.WindowSections(listOf(312f), listOf(false, true)),
+            )
+        assertEquals(sections, buttons.decodeWindowSections(buttons.encodeWindowSections(sections)))
+        // A database written before the row existed, an unreadable row, and one of a shape with fewer fields.
+        assertEquals(emptyMap(), buttons.decodeWindowSections(null))
+        assertEquals(emptyMap(), buttons.decodeWindowSections("not json"))
+        assertEquals(
+            mapOf("Search" to org.example.project.ui.WindowSections(listOf(0.25f, 0.5f))),
+            buttons.decodeWindowSections("""{"sections":{"Search":{"splits":[0.25,0.5]}}}"""),
+        )
+    }
+
     @Test
     fun `only reduced windows are in the bar, in the order they were opened`() {
         val host = WindowFrameHost()
