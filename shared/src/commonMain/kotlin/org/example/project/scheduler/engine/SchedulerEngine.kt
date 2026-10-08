@@ -588,6 +588,29 @@ class SchedulerEngine(
     // and what the now-line SWEPT in mode 2 ([sweepNowLineTo], an edge — a wake from device sleep). Only the
     // union is ever published, by [publishNoScreenEvidence]; nothing else writes the flow.
     private var scannedNoScreen: List<TaskTimeRange> = emptyList()
+
+    /**
+     * This device's own lock history as the last scan that SUCCEEDED read it ([readNoScreenEvidence]): the window
+     * asked and the locked spans in it. Null until one succeeds, and after one that fails — a history nobody could
+     * read vouches for nothing ([atScreenEvidenceNow]).
+     */
+    private var ownLockScan: Triple<Long, Long, List<TaskTimeRange>>? = null
+
+    /**
+     * [SchedulerReducer.atScreenEvidence]: where the line is KNOWN to have been at a screen — this device unlocked by
+     * its own OS log, less what the user declared away and what was observed or swept as "no screen". Read up to the
+     * line itself: a scan runs at every screen edge, so from the last one to now the device is in the state that
+     * scan ended in — an absence still open at its end is open still.
+     */
+    private fun atScreenEvidenceNow(): List<TaskTimeRange> {
+        val (since, until, locked) = ownLockScan ?: return emptyList()
+        val now = clock.nowMillis()
+        if (now <= since) return emptyList()
+        val open = locked.map { if (it.endEpochMillis >= until) TaskTimeRange(it.startEpochMillis, maxOf(now, it.endEpochMillis)) else it }
+        val unlocked = SchedulerDomain.knownUnlockedRegions(open, since, now)
+        val away = SchedulerDomain.declaredAwayRegions(_declaredAwaySpans.value, _declaredAwaySince.value, now)
+        return SchedulerDomain.subtractRegions(unlocked, SchedulerDomain.mergeOccupied(away + _noScreenEvidence.value))
+    }
     private var sweptNoScreen: List<TaskTimeRange> = emptyList()
 
     // `side-dev/README.md` § *$now line$ 3 modes*: the mode the JOURNEY is being walked in, held for as long as
@@ -909,6 +932,7 @@ class SchedulerEngine(
         // nothing happened" rule. Cached, because reading it is a process launch; refreshed at every screen edge
         // by [launchNoScreenEvidenceScan] below and read here synchronously by every banking reducer path.
         SchedulerReducer.noScreenEvidence = { _noScreenEvidence.value }
+        SchedulerReducer.atScreenEvidence = { atScreenEvidenceNow() }
         SchedulerReducer.liveRestGap = {
             SchedulerDomain.liveRestGap(_inactiveSince.value, _activeSince.value, clock.nowMillis())
         }
@@ -3674,6 +3698,7 @@ class SchedulerEngine(
         // A failed scan still says nothing (`emptyList()` on the own side ⇒ an empty intersection), but it no
         // longer silences the DECLARATION beside it: the button is the user's own statement, not a query that
         // may time out, so it holds whether or not the log could be read.
+        ownLockScan = locked?.let { Triple(since, until, it) }
         if (locked == null && away.isEmpty()) return emptyList()
         val ownLocked = locked ?: emptyList()
         val isComputer = own == SchedulerDomain.ActivityLayer.NoComputerUnlocked

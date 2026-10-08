@@ -799,8 +799,11 @@ internal fun periodsForBlockDrag(
  * break's own kind ([PlacedRecord.breakKind]): nobody is resilient to the 20-second look-away, and a task
  * given a resilience to a 5- or 15-minute break is drawn straight through it.
  *
- * A block that a break covers end to end keeps its slices: with nothing left to draw there would be nothing
- * left to grab.
+ * A block that a break covers end to end is retracted WHOLE: one slice of no height at its start (anomaly
+ * 2026-10-08: *"when it gets completely retracted, it suddenly appear wholy on the other side, but in the 15min
+ * break"* — it used to keep its slices, so a panel dragged into the break that had just eaten it came back entire).
+ * The slice is kept, not dropped, because it is what the hand holds: at rest it is grabbed at the least height a
+ * slice is given, and it grows back the moment the break lets go of any of it.
  */
 internal fun layoutWithBreakHoles(
     layout: Map<String, List<PanelSlice>>,
@@ -832,8 +835,9 @@ internal fun layoutWithBreakHoles(
                 if (cursor < slice.bottomHour) add(slice.copy(topHour = cursor))
             }
         }
-        if (cut.isNotEmpty() && cut != slices) {
-            (out ?: layout.toMutableMap().also { out = it })[key] = cut
+        val drawn = cut.ifEmpty { listOfNotNull(slices.firstOrNull()?.let { it.copy(bottomHour = it.topHour) }) }
+        if (drawn.isNotEmpty() && drawn != slices) {
+            (out ?: layout.toMutableMap().also { out = it })[key] = drawn
         }
     }
     return out ?: layout
@@ -1405,19 +1409,35 @@ internal fun layerKindRegions(layerBands: List<PlacedRecord>): Map<String, List<
  * [SchedulerDomain.layerRetractionCuts] asks for them — each with its task and its span. [dragged] is the block a
  * drag holds and where the drag has it: it counts whoever placed it (the release makes it the user's), at the
  * bounds of the preview.
+ *
+ * **Each panel where it STANDS** (anomaly 2026-10-08: *"the held task panel retracts to $now line$, but strangely
+ * both "no computer unlocked" and "no phone unlocked" are retracted in the 15min break right after"*): a screen
+ * break among [breaks] that [refuses] the panel's task cuts a hole in its drawing ([layoutWithBreakHoles], the same
+ * question asked of the same kind), and where the panel does not stand it takes nothing from the layers — a panel a
+ * break covers end to end takes nothing at all.
  */
 internal fun placedPanelSpans(
     blocks: List<PlacedRecord>,
     dragged: Pair<String, TaskTimeRange>? = null,
+    breaks: List<PlacedRecord> = emptyList(),
+    refuses: (TaskId?, String) -> Boolean = { _, _ -> true },
 ): List<Pair<TaskId?, TaskTimeRange>> =
-    blocks.mapNotNull { block ->
-        if (!isTaskPanelRecord(block) || block.inactivity) return@mapNotNull null
+    blocks.flatMap { block ->
+        if (!isTaskPanelRecord(block) || block.inactivity) return@flatMap emptyList()
         val held = dragged?.takeIf { calendarBlockKey(block) == it.first }
-        when {
-            held != null -> block.taskId to held.second
-            block.entryId != null && block.outline == SchedulerDomain.PanelOutline.User -> block.taskId to fullRange(block)
-            else -> null
-        }
+        val span =
+            when {
+                held != null -> held.second
+                block.entryId != null && block.outline == SchedulerDomain.PanelOutline.User -> fullRange(block)
+                else -> return@flatMap emptyList()
+            }
+        val holes =
+            breaks.filter {
+                it.fullEndMillis > span.startEpochMillis && it.fullStartMillis < span.endEpochMillis &&
+                    refuses(block.taskId, it.breakKind.ifBlank { PeriodKinds.INACTIVITY })
+            }.map(::fullRange)
+        val standing = if (holes.isEmpty()) listOf(span) else SchedulerDomain.subtractRegions(listOf(span), holes)
+        standing.map { block.taskId to it }
     }
 
 /**
@@ -5804,8 +5824,11 @@ private fun DayColumn(
     val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
         .toInstant(tz).toEpochMilliseconds()
     val layerBands =
-        remember(restLayerBands, blockRecords, periodKindConfig, refuses, midnightMillis) {
-            layerBandsAroundPlaced(restLayerBands, placedPanelSpans(blockRecords), periodKindConfig, refuses, midnightMillis)
+        remember(restLayerBands, blockRecords, screenBreakMarkers, periodKindConfig, refuses, midnightMillis) {
+            layerBandsAroundPlaced(
+                restLayerBands, placedPanelSpans(blockRecords, breaks = screenBreakMarkers, refuses = refuses),
+                periodKindConfig, refuses, midnightMillis,
+            )
         }
     // What the account's rules derive from them ("No screen" under both): named in the hover bubble.
     val derivedLayerPeriods =
@@ -6136,8 +6159,9 @@ private fun DayColumn(
     val shownLayerBands =
         dragPreview?.let { preview ->
             layerBandsAroundPlaced(
-                restLayerBands, placedPanelSpans(effRecords, preview.key to preview.range), periodKindConfig, refuses,
-                midnightMillis,
+                restLayerBands,
+                placedPanelSpans(effRecords, preview.key to preview.range, screenBreakMarkers, refuses),
+                periodKindConfig, refuses, midnightMillis,
             )
         } ?: layerBands
 

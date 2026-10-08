@@ -126,4 +126,45 @@ class NoScreenEvidenceTest {
         assertEquals(NOW - 3 * HOUR to NOW, record[0].startEpochMillis to record[0].endEpochMillis)
         assertTrue(advanced.panels.none { it.inactivity }, "nothing observed means nothing to materialize")
     }
+
+    /**
+     * Anomaly 2026-10-08: "why in the calendar there are hours of inactivity before the now line?" — on the release
+     * account no record had been banked since the hour before bed, four evenings running, though the user was at the
+     * screen: the stored Sleep window was read whole as "no screen". Where the line crossed it AT A SCREEN the window
+     * gave way, and the work done there is work.
+     */
+    @Test
+    fun work_done_at_a_screen_inside_the_schedules_sleep_window_is_banked() {
+        val (s0, solo) = oneTask()
+        // The schedule's window over the whole three hours, as it is stored: a period a rule laid.
+        val night = TaskPanel("sleep/1", null, "Sleep", NOW - 4 * HOUR, NOW + 4 * HOUR, sleep = true)
+        val s = elapsedPanel(s0, solo).let { it.copy(panels = it.panels + night) }
+        try {
+            // Nothing known of the screen: the window is "no screen", nothing is banked — the rule before.
+            assertEquals(emptyList(), sortedRecord(SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW)), solo))
+
+            // The device is known unlocked over the last two hours: those are banked, the hour before is not.
+            SchedulerReducer.atScreenEvidence = { listOf(TaskTimeRange(NOW - 2 * HOUR, NOW)) }
+            val worked = sortedRecord(SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW)), solo)
+            assertEquals(listOf(NOW - 2 * HOUR to NOW), worked.map { it.startEpochMillis to it.endEpochMillis })
+
+            // What the devices OBSERVED as no screen still holds inside it.
+            withEvidence(TaskTimeRange(NOW - HOUR, NOW - HOUR / 2))
+            val cut = sortedRecord(SchedulerReducer.reduce(s, SchedulerIntent.AdvanceSchedule(NOW)), solo)
+            assertEquals(
+                listOf(NOW - 2 * HOUR to NOW - HOUR, NOW - HOUR / 2 to NOW),
+                cut.map { it.startEpochMillis to it.endEpochMillis },
+            )
+
+            // A period the USER drew is their word: it does not give way to the evidence.
+            SchedulerReducer.noScreenEvidence = { emptyList() }
+            val drawn = SchedulerReducer.reduce(
+                elapsedPanel(s0, solo), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 4 * HOUR, NOW + 4 * HOUR),
+            )
+            val kept = sortedRecord(SchedulerReducer.reduce(drawn, SchedulerIntent.AdvanceSchedule(NOW)), solo)
+            assertEquals(emptyList(), kept, "a drawn \"no screen\" period banks nothing, whatever the device says")
+        } finally {
+            SchedulerReducer.atScreenEvidence = { emptyList() }
+        }
+    }
 }

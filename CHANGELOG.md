@@ -11,6 +11,104 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A task panel carried wholly into a break came back entire — 2026-10-08
+
+The user: "When I drag the task panel past the $now line$ when it gets completely retracted, it suddenly appear wholy
+on the other side, but in the 15min break, the same 15min break that was supposed to be the cause of the
+retractation". `layoutWithBreakHoles` kept the slices of a block a break covered end to end ("nothing left to
+grab"), so the retraction stopped exactly where it became total. Such a block is now one slice of no height at its
+start (still the hand's: a resting slice has a least grab height), and `placedPanelSpans` counts it nowhere. Tests in
+`CalendarDragPreviewTest`. Client only.
+
+### The layers were cut under a break the held task panel was retracted from — 2026-10-08
+
+The user: "the held task panel retracts to $now line$, but strangely both "no computer unlocked" and "no phone
+unlocked" are retracted in the 15min break right after the $now line$". The layers give way to a task panel placed by
+hand that "no screen" refuses (2026-10-02), and the cut was taken over the panel's WHOLE span — the drag preview's
+bounds — while the drawing of the panel is holed by the break. So over the pose the panel was not drawn and the two
+hatches were not either. `placedPanelSpans` now takes the screen breaks and returns each panel where it stands (its
+span less the breaks that refuse its task: the question `layoutWithBreakHoles` asks); the column's resting bands, the
+drag's `shownLayerBands` and the Search filter's `CalendarLayersHolder.placed` (through
+`SchedulerDomain.placedTasksOutsideBreaks`) all read it so. Test: `CalendarDragPreviewTest
+.the_layers_stay_under_a_break_that_holes_the_held_panel`. The `placedTasks` argument given to `statedKindRegions`
+earlier the same day was NOT the cause (a probe showed the break already laid its layers there); it is kept, as it
+makes the stated Sleep window follow the same rule. Client only.
+
+### A break retracts a placed task panel: the exemption of the entry below is withdrawn — 2026-10-08
+
+The user, on the entry below: "If it is a 15min screen break, then it is my task panel that must get retracted,
+otherwise docs\scheduler_requirements.md would be violated. So the problem I had was simply the 15min break not
+showing." The entry below found the right cause (the owed pose riding the line) and drew the wrong conclusion from
+it: it stopped the break cutting a placed panel. **That change is reverted** — a break cuts every task block it
+refuses, placed or not, as since 2026-10-02.
+
+What was left wrong is the user's "strange" half: the Sleep band gave way over the panel's whole STORED span, the
+part under the break included, where the panel is not — so the hole stood empty of everything but the break's thin
+grey outline. The band now gives way only where the panel stands (`SchedulerDomain.placedTasksOutsideBreaks`); behind
+the break it is drawn as it is anywhere else. `PlacedTaskAtTheLineTest`.
+
+**Not changed, and the user's remaining point**: how the break itself is drawn. On the first frame of the headless
+app it IS there at the line — an empty box with a one-pixel grey outline and no name (fifteen minutes is 12 dp at
+that zoom, the name needs 16) — which over the Sleep hatching is very hard to see. Whether it should be made more
+visible, and how, is asked of the user. Not verified on screen. Client only.
+
+### A task panel dragged onto the line was cut at the line: the real cause, an owed pose riding the line — 2026-10-08
+
+The user, after the entry below: "It still gets retracted by the now line, and strangely the sleep block retracts even
+though it is not replaced by the task panel I am dragging." The entry below was read off the code and its first
+cause was NOT what the user was seeing.
+
+Established this time on a copy of the release database (the whole app run headless and offline on it, and the drop's
+own edit applied): the dropped panel is STORED whole, and the re-plan keeps it whole. The cut is in the drawing. An
+owed 15-minute pose was riding the now-line — `]line; line + 15 min]` — and `layoutWithBreakHoles` cuts a hole in
+every task block under a break. So anything put on the line by hand was drawn up to the line and holed for the next
+fifteen minutes; and since the entry below made the Sleep band give way to the (whole) panel, the band drew back from
+a panel that looked cut — the "strange" half.
+
+Fix: a block the USER placed is holed only by breaks the line has passed (`aheadFromHour`); a run the rules laid gives
+way to every break, as before. `CalendarDragPreviewTest`.
+
+The headless app shows its first frame only (its display does not follow later edits there) and does not take the
+calendar's drag gesture, so the corrected DRAWING was not seen — only the stored state was. Not verified on screen.
+The two changes of the entry below stay: both are right on their own. Client only.
+
+### A task panel dragged onto the line was cut at the line; the Sleep band did not give way to it — 2026-10-08
+
+Anomaly: "when dragging a task panel from the past to the now line, it gets retracted by the now line. The now line is
+in mode 1, so it has no reason to retract the task panel, and the sleep block right after the now line must retract to
+the task panel."
+
+- **The cut.** A run the fill lays at the line inside the schedule's Sleep window carries the stretches it holds only
+  there (`heldAtLine`). Dragged by hand it kept them, so on the line it was drawn up to the line and no further. A
+  panel placed by hand holds none now (`reduceUpdateTaskPanel`), and `atLine` leaves every placed panel whole — which
+  also heals the ones already stored.
+- **The band.** A rule-laid period that carries "no screen" gave way to the past the line crossed at a screen, never
+  to a task panel the user placed. It does now (`retractOverAtScreenPast`): the Sleep band starts where that panel
+  ends, on the calendar, in its layers and for the record bank.
+
+Found by reading the code — the first cause fits the report exactly, but it was NOT reproduced on the release
+account, and neither is verified on screen. `PlacedTaskAtTheLineTest`. `:shared:longTest` not run. Client only.
+
+### Work done past bedtime was never recorded: the past stood empty behind the line — 2026-10-08
+
+Anomaly: "why in the calendar there are hours of inactivity before the now line?" Read off the release account
+(its diagnostics, the Windows power log through the app's own reader, a copy of its database): the machine was
+unlocked and the app's sessions continuous, the plan had a task panel on the line — and NO task record had been
+banked since 22:14 the evening before, the start of the hour before bed. The same on each of the four evenings the
+database still showed.
+
+The record bank refuses an on-screen task's work over a "no screen" stretch, and read the schedule's stored Sleep
+window (and the hour before bed) WHOLE as one — while the fill and the calendar both treat that window as given up
+where the line crosses it at a screen. So the work was planned, shown on the line, then dropped as it elapsed.
+
+Fix: the bank reads those rule-laid periods as the line left them, off the same evidence the calendar cuts the Sleep
+band by — where this device is known unlocked (`SchedulerReducer.atScreenEvidence`,
+`SchedulerEngine.atScreenEvidenceNow`). A period the user drew still holds; a failed scan changes nothing.
+
+Not a regression of this week: the gap is older than the four days checked. **The records already lost are not
+restored** — nothing kept them. `NoScreenEvidenceTest`. This changes what the advance banks: `:shared:longTest` NOT
+run. Not verified in the live app. Client only.
+
 ### Customize mode: a Search window's actions can be added to the menu — 2026-10-08
 
 The user: "I set in customize mode, went to a Search window and right-clicked on an action configuration, but it didn't

@@ -3371,6 +3371,13 @@ object SchedulerDomain {
          * 20 s break crossed in mode 3). Display only: the scheduler never reads a materialized break.
          */
         breaks: List<TaskTimeRange> = emptyList(),
+        /**
+         * The task panels the user placed WHERE THEY STAND ([placedTasksOutsideBreaks]) — what a rule-laid period gives
+         * way to ([retractOverAtScreenPast]). Null: the placed panels among [panels], less the [breaks] (every one
+         * taken as refusing them). Anomaly 2026-10-08: read over the panels' stored spans, the Sleep window's layers
+         * were cut under the break a held panel had been retracted from, while the Sleep band itself still stood there.
+         */
+        placedTasks: List<TaskPanel>? = null,
     ): Map<String, List<TaskTimeRange>> {
         val own = LinkedHashMap<String, MutableList<TaskTimeRange>>()
         val manual = LinkedHashMap<String, MutableList<TaskTimeRange>>()
@@ -3379,7 +3386,13 @@ object SchedulerDomain {
             own.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += span
             manual.getOrPut(PeriodKinds.NO_SCREEN) { ArrayList() } += span
         }
-        for (panel in retractOverAtScreenPast(panels, atScreenPast, config)) {
+        val standing =
+            placedTasks ?: panels.filter { it.taskId != null && !it.isRestrictivePeriod && isUserPlaced(it) }.flatMap { panel ->
+                if (breaks.isEmpty()) listOf(panel)
+                else subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), mergeOccupied(breaks))
+                    .map { panel.copy(startEpochMillis = it.startEpochMillis, endEpochMillis = it.endEpochMillis) }
+            }
+        for (panel in retractOverAtScreenPast(panels, atScreenPast, config, placedTasks = standing)) {
             val kind = panel.restrictiveKind
             if (kind.isEmpty() || panel.endEpochMillis <= panel.startEpochMillis) continue
             val span = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
@@ -3405,18 +3418,59 @@ object SchedulerDomain {
      * Every other panel is returned untouched. The one reading the Sleep band, the wind-down hour and the layers
      * they lay ([statedKindRegions]) share, so the band and its hatch cannot disagree.
      */
+    /**
+     * **The task panels the user placed, where they actually STAND** — each less the screen breaks that refuse its
+     * task ([periodRefuses] of the break's own kind): `docs/scheduler_requirements.md` gives a break no task, so a
+     * panel put across one is retracted there (the calendar draws the hole, `layoutWithBreakHoles`). What a
+     * rule-laid period gives way to ([retractOverAtScreenPast]) is this, not the panel's stored span — or the Sleep
+     * band drew back from a stretch where the panel is not (user, 2026-10-08: *"strangely the sleep block retracts
+     * even though it is not replaced by the task panel"*).
+     */
+    fun placedTasksOutsideBreaks(panels: List<TaskPanel>, breaks: List<TaskPanel>, tasks: Map<TaskId, Task>): List<TaskPanel> {
+        val placed = panels.filter { it.taskId != null && !it.isRestrictivePeriod && isUserPlaced(it) }
+        if (placed.isEmpty() || breaks.isEmpty()) return placed
+        return placed.flatMap { panel ->
+            val refusing =
+                breaks.filter {
+                    it.endEpochMillis > panel.startEpochMillis && it.startEpochMillis < panel.endEpochMillis &&
+                        periodRefuses(tasks, panel.taskId, it.restrictiveKind.ifEmpty { PeriodKinds.INACTIVITY })
+                }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+            if (refusing.isEmpty()) listOf(panel)
+            else subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), refusing)
+                .map { panel.copy(startEpochMillis = it.startEpochMillis, endEpochMillis = it.endEpochMillis) }
+        }
+    }
+
     fun retractOverAtScreenPast(
         panels: List<TaskPanel>,
         atScreenPast: List<TaskTimeRange>,
         config: PeriodKindConfig,
+        /**
+         * Anomaly 2026-10-08 (*"the sleep block right after the $now line$ must retract to the task panel"*): **the
+         * task panels the USER placed** ([isUserPlaced]) — a period a rule laid gives way to one it refuses, as it
+         * does to the past the line crossed at a screen: the panel is the user's word, the window is a rule's. So the
+         * Sleep band starts where a task panel dragged onto the line ends. By default the ones among [panels];
+         * a caller that hands in the rule's periods alone names them.
+         */
+        placedTasks: List<TaskPanel> = panels,
+        /** The tasks, for what a period refuses ([periodRefuses]); with none, every task is refused — the default. */
+        tasks: Map<TaskId, Task> = emptyMap(),
     ): List<TaskPanel> {
-        if (atScreenPast.isEmpty()) return panels
+        val placed = placedTasks.filter { it.taskId != null && !it.isRestrictivePeriod && isUserPlaced(it) }
+        if (atScreenPast.isEmpty() && placed.isEmpty()) return panels
         return panels.flatMap { panel ->
             if (panelOutline(panel) != PanelOutline.Pattern || !config.isOrImpliesNoScreen(panel.restrictiveKind)) {
                 listOf(panel)
             } else {
-                subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), atScreenPast)
-                    .map { panel.copy(startEpochMillis = it.startEpochMillis, endEpochMillis = it.endEpochMillis) }
+                val given =
+                    atScreenPast + placed.filter { periodRefuses(tasks, it.taskId, panel.restrictiveKind) }
+                        .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+                if (given.none { it.startEpochMillis < panel.endEpochMillis && panel.startEpochMillis < it.endEpochMillis }) {
+                    listOf(panel)
+                } else {
+                    subtractRegions(listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)), given)
+                        .map { panel.copy(startEpochMillis = it.startEpochMillis, endEpochMillis = it.endEpochMillis) }
+                }
             }
         }
     }
@@ -4275,6 +4329,10 @@ object SchedulerDomain {
     fun atLine(panels: List<TaskPanel>, nowMillis: Long): List<TaskPanel> {
         if (panels.none { it.lineBound }) return panels
         return panels.flatMap { panel ->
+            // A block the user placed is a pre-placed block no period moves: it is whole wherever it stands. (Anomaly
+            // 2026-10-08: a run laid at the line, dragged by hand, kept the stretches it held there — and dragged
+            // back onto a mode-1 line it was cut at the line. The reducer drops them now; one stored before is read so.)
+            if (!isRegeneratedPanel(panel)) return@flatMap listOf(panel)
             // What of each held stretch the line has not reached yet: the rules give nothing there before it does.
             val ahead = panel.heldAtLine.mapNotNull { span ->
                 TaskTimeRange(maxOf(span.startEpochMillis, nowMillis), span.endEpochMillis)

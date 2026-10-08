@@ -650,6 +650,29 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   window) restricts nothing over those ten seconds, exactly as the fill holds a task at such a line. Read as stored
   the window refused every task, "nothing can be scheduled" was the answer, and a line left bare inside a Sleep
   window waited for the whole first stage. The engine passes `tpModeNow()`.
+- **A task panel the USER placed is whole on a mode-1 line, and a rule-laid period gives way to it** (anomaly
+  2026-10-08; `PlacedTaskAtTheLineTest`). Two halves:
+  - **Only a run the rules laid is held at the line.** `TaskPanel.heldAtLine` is a fill's; `reduceUpdateTaskPanel`
+    drops it from a panel placed by hand, and `atLine` reads no placed panel by it (one stored before is healed
+    there). A run laid at the line inside the Sleep window and dragged by hand kept those stretches — dragged back
+    onto the line, it was cut at the line.
+  - **The Sleep band (and every rule-laid period carrying "no screen") starts where a placed task panel it refuses
+    ends** (`retractOverAtScreenPast`'s `placedTasks`): the panel is the user's word, the window is a rule's. A task
+    given a resilience to the kind stands IN the band; a run the rules laid takes nothing from it. **It gives way
+    where the panel STANDS, not over its stored span** (`placedTasksOutsideBreaks`): a screen break admits no task
+    (the requirements), so a placed panel is retracted under one it has no resilience to — the calendar draws the
+    hole — and behind that break the band still stands. Never exempt a placed panel from a break: tried
+    2026-10-08, it contradicted the requirements and was withdrawn the same day.
+- **The record bank reads a rule-laid "no screen" period AS THE LINE LEFT IT** (anomaly 2026-10-08;
+  `SchedulerReducer.atScreenEvidence`, `noScreenRangesFor`, `NoScreenEvidenceTest`). A period a rule laid that is or
+  carries "no screen" — the sleep schedule's window, the hour before bed — gives way to a mode-1 line (§ *A mode-1
+  line retracts*): the fill lays task panels there and the calendar draws the band cut back
+  (`retractOverAtScreenPast`). The bank must read it the same way, off the same evidence — where this device's OS
+  log KNOWS it was unlocked, less the declared-away and the observed "no screen" stretches
+  (`SchedulerEngine.atScreenEvidenceNow`, read up to the line: the device is in the state the last scan ended in).
+  Read whole, the stored window refused every record: on the release account nothing was banked after the hour
+  before bed for four evenings running, and the worked past stood empty behind the line. A period the USER drew
+  does not give way; a scan that failed vouches for nothing (the window then holds whole, the rule before).
 - **THE INPUT CHANGES, THE SCHEDULER RUNS FROM SCRATCH — ONE RULE, ONE LOOP** (requirements § *Rule state input
   evolution*: the rule state input *"forms with the pre-placed tasks, pre-placed periods and history the input that
   makes the scheduler engine run from scratch each time it changes"*; user, 2026-10-07: a dragged panel restarting

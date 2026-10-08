@@ -93,6 +93,40 @@ class CalendarDragPreviewTest {
         assertEquals(spans(live), spans(layerBandsAroundPlaced(bands, placedPanelSpans(listOf(placed)), PeriodKindConfig.DEFAULT, onScreen, 0L)))
     }
 
+    /**
+     * Anomaly 2026-10-08: "the held task panel retracts to the now line, but strangely both 'no computer unlocked' and
+     * 'no phone unlocked' are retracted in the 15min break right after the now line". The layers give way where the
+     * panel STANDS: under a break that holes it, they are still there.
+     */
+    @Test
+    fun the_layers_stay_under_a_break_that_holes_the_held_panel() {
+        val bands = listOf(layer(computer, 0, 6 * HOUR), layer(phone, 0, 6 * HOUR))
+        val panel = block("p", HOUR, 2 * HOUR)
+        fun spans(live: List<PlacedRecord>) =
+            live.map { it.layer to range(it.fullStartMillis, it.fullEndMillis) }
+                .sortedWith(compareBy({ it.second.startEpochMillis }, { it.first.toString() }))
+        // Held over 2:30–3:30; the pose the line carries stands over 3:00–3:15.
+        val over = range(5 * HOUR / 2, 7 * HOUR / 2)
+        val pose = PlacedRecord(
+            title = "Pose", startHour = 3f, endHour = 3.25f, scheduled = false, screenBreak = true,
+            breakKind = PeriodKinds.INACTIVITY, fullStartMillis = 3 * HOUR, fullEndMillis = 13 * HOUR / 4,
+        )
+        val standing = placedPanelSpans(listOf(panel), "p" to over, listOf(pose)) { _, _ -> true }
+        assertEquals(listOf(range(5 * HOUR / 2, 3 * HOUR), range(13 * HOUR / 4, 7 * HOUR / 2)), standing.map { it.second })
+        val live = layerBandsAroundPlaced(bands, standing, PeriodKindConfig.DEFAULT, onScreen, 0L)
+        assertEquals(
+            listOf(range(0, 5 * HOUR / 2), range(3 * HOUR, 13 * HOUR / 4), range(7 * HOUR / 2, 6 * HOUR)).flatMap {
+                listOf(computer to it, phone to it)
+            }.sortedWith(compareBy({ it.second.startEpochMillis }, { it.first.toString() })),
+            spans(live),
+        )
+        // A task resilient to the break is drawn through it, and takes the layers there as anywhere.
+        assertEquals(listOf(over), placedPanelSpans(listOf(panel), "p" to over, listOf(pose)) { _, _ -> false }.map { it.second })
+        // A panel the break covers end to end stands nowhere: it takes nothing from the layers.
+        val inside = range(3 * HOUR, 13 * HOUR / 4)
+        assertEquals(emptyList(), placedPanelSpans(listOf(panel), "p" to inside, listOf(pose)) { _, _ -> true })
+    }
+
     @Test
     fun the_stretch_a_moved_block_leaves_is_idle_and_the_idle_stretch_it_enters_gives_way() {
         val bands = listOf(range(0, HOUR), range(3 * HOUR, 5 * HOUR))
@@ -151,5 +185,9 @@ class CalendarDragPreviewTest {
         assertEquals(listOf(PanelSlice(2.5f, 4f, 0f, 1f)), movedLayout["p"])
         // A task resilient to the break's kind is drawn straight through it.
         assertSame(rest, layoutWithBreakHoles(rest, listOf(panel), listOf(lookAway)) { _, _ -> false })
+        // Anomaly 2026-10-08: carried wholly INTO the break, it is retracted whole — not drawn entire again.
+        val inside = panel.copy(startHour = 2.1f, endHour = 2.4f)
+        val insideLayout = layoutWithBreakHoles(mapOf("p" to listOf(PanelSlice(2.1f, 2.4f, 0f, 1f))), listOf(inside), listOf(lookAway)) { _, _ -> true }
+        assertEquals(listOf(PanelSlice(2.1f, 2.1f, 0f, 1f)), insideLayout["p"])
     }
 }

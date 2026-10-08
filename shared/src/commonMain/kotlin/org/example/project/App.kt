@@ -2596,10 +2596,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val ownKnownUnlocked =
                 SchedulerDomain.knownUnlockedRegions(ownScannedLocked, displayFloorMillis, nowMillis)
             val atScreenPast = SchedulerDomain.subtractRegions(ownKnownUnlocked, declaredAwayRegions)
+            val placedStanding =
+                SchedulerDomain.placedTasksOutsideBreaks(displayState.panels, displaySidePanels, displayState.tasks)
             // The live band of the Sleep toggle is the user's own word, like a drawn period: it stays whole.
             val retractedSleepPanels =
                 SchedulerDomain.retractOverAtScreenPast(
                     displaySleepPanels.filterNot { it.id == "sleep-live" }, atScreenPast, displayState.periodKindConfig,
+                    // …and to a task panel the user placed, where it stands: not under a break that refuses it — the
+                    // panel is retracted there, and the band is what shows behind the break.
+                    placedTasks = placedStanding, tasks = displayState.tasks,
                 ) + liveSleepBand
             val observedNoScreenRegions =
                 if (ownScannedLocked == null && declaredAwayRegions.isEmpty()) {
@@ -2654,6 +2659,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         ),
                         atScreenPast,
                         displayState.periodKindConfig,
+                        placedTasks = placedStanding, tasks = displayState.tasks,
                     ),
                     displayReminderPanels, displaySidePanels, retractedSleepPanels,
                     displayState.showScreenBreaks, displayState.showReminders,
@@ -2753,6 +2759,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         away = mapOf(PeriodKinds.fakeLayerKind(ownLayer) to declaredAwayRegions),
                         knownAbsent = mapOf(PeriodKinds.layerKind(ownLayer) to ownKnownUnlocked),
                         atScreenPast = atScreenPast,
+                        // What the Sleep window gives way to is the placed panels where they STAND — as for its band.
+                        placedTasks = placedStanding,
                         // The breaks drawn: each carries a "no screen" period, which lays the layers like a drawn one.
                         breaks =
                             if (displayState.showScreenBreaks) {
@@ -2852,8 +2860,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             layersHolder.records = layerRecords
             layersHolder.config = periodKindConfig
+            // Where each stands: under a break that refuses it a placed panel is not there, and takes no layer.
             layersHolder.placed =
-                shownPlanPanels.filter { SchedulerDomain.isUserPlaced(it) && !it.isRestrictivePeriod }
+                SchedulerDomain.placedTasksOutsideBreaks(
+                    shownPlanPanels.filter { SchedulerDomain.isUserPlaced(it) && !it.isRestrictivePeriod },
+                    if (displayState.showScreenBreaks) displaySidePanels else emptyList(),
+                    displayState.tasks,
+                )
             layersHolder.tasks = displayState.tasks
             layersHolder.breaks =
                 if (displayState.showScreenBreaks) {

@@ -1038,7 +1038,12 @@ Global rules that always apply: `CLAUDE.md`.
   retract" (`SchedulerDomain.layerRetractionCuts`, `layerBandsAroundPlaced`, `placedPanelSpans`). One layer
   alone refuses nobody and is not cut. At rest the column cuts by its blocks outlined as the user's; during a
   block drag `shownLayerBands` cuts by the dragged block at the preview's bounds, from the bands AT REST, so
-  they give way as the block arrives and grow back as it leaves. `App` still hands the column the UNCUT bands;
+  they give way as the block arrives and grow back as it leaves. **The cut is taken where the panel STANDS**
+  (anomaly 2026-10-08): a screen break that refuses the panel's task holes its drawing (`layoutWithBreakHoles`),
+  and `placedPanelSpans` leaves the same holes out, asking the same question of the same break kind — so under
+  the 15-minute pose the line carries, where a held panel is retracted, both layers are still drawn. A panel a
+  break covers end to end is retracted WHOLE — one slice of no height at its start, kept so the hand still has
+  something to hold — and takes nothing from the layers; it is never drawn entire inside the break. `App` still hands the column the UNCUT bands;
   its Search filter (`CalendarLayersHolder.kindsAt`) asks the same two functions at the one instant.
 - **AN EMPTY PERIOD IS NEVER MANUFACTURED FROM EVIDENCE.** The calendar says "nothing is placed here" for
   exactly three reasons: a covering period every task has 0 resilience to, a period the **user** drew, or past

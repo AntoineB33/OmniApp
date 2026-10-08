@@ -154,6 +154,21 @@ object SchedulerReducer {
     var noScreenEvidence: () -> List<TaskTimeRange> = { emptyList() }
 
     /**
+     * Anomaly 2026-10-08 ("why in the calendar there are hours of inactivity before the now line?"): **the past the
+     * line crossed AT A SCREEN** — where this device's OS log knows it was unlocked, less the stretches the user
+     * declared themselves away for. A period a RULE laid that is or carries "no screen" (the sleep schedule's window,
+     * the hour before bed) gave way to the line there (`scheduler.md` § *A mode-1 line retracts*), so it is no
+     * "no screen" stretch for the record bank either ([noScreenRangesFor], through
+     * [SchedulerDomain.retractOverAtScreenPast] — the reading the calendar draws the Sleep band by).
+     *
+     * Without it the bank read the stored window whole: every evening the user worked past bedtime, the plan laid
+     * task panels at the line (the fill knows the window retracts), the calendar drew the Sleep band cut back — and
+     * the bank refused all of that work, so nothing was recorded and the past stood empty behind the line. Injected
+     * for the reason [noScreenEvidence] is; empty (no engine, tests, a scan that failed) is the behaviour before.
+     */
+    var atScreenEvidence: () -> List<TaskTimeRange> = { emptyList() }
+
+    /**
      * `side-dev/README.md` § *$t_p$ 3 modes*: **which mode the now-line is in** — mode 1 while any device of
      * the account is unlocked, mode 2 otherwise. Read by every [SchedulerDomain.fillSchedule] call site here,
      * and by nothing else: it decides where the three dynamic periods sit relative to the line.
@@ -2756,6 +2771,8 @@ object SchedulerReducer {
                 pinned = derivePinned(intent.pins, existing),
                 pins = intent.pins,
                 auto = false,
+                // Placed by hand, it holds nowhere "only at the line" any more ([TaskPanel.heldAtLine] is a fill's).
+                heldAtLine = emptyList(),
                 layoutWeight = weight,
                 repeat =
                     if (intent.repeatEveryDays == null) existing.repeat
@@ -4645,7 +4662,11 @@ private fun noScreenRangesFor(
     state: SchedulerState,
     noScreenEvidence: List<TaskTimeRange>,
 ): List<TaskTimeRange> {
-    val drawn = SchedulerDomain.assertedNoScreenRanges(state.panels, state.periodKindConfig)
+    // The periods a rule laid are read as the line left them: given up where it crossed them at a screen
+    // ([SchedulerReducer.atScreenEvidence]). The user's own drawn periods, and the evidence, hold as they are.
+    val panels =
+        SchedulerDomain.retractOverAtScreenPast(state.panels, SchedulerReducer.atScreenEvidence(), state.periodKindConfig)
+    val drawn = SchedulerDomain.assertedNoScreenRanges(panels, state.periodKindConfig)
     if (drawn.isEmpty() && noScreenEvidence.isEmpty()) return emptyList()
     return SchedulerDomain.mergeOccupied(drawn + noScreenEvidence)
 }
