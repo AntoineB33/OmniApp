@@ -683,10 +683,8 @@ private fun AddedActionEditor(
                     continue
                 }
                 val text = found.rules.joinToString("\n").ifBlank { "(the scheduler placed nothing)" }
-                androidx.compose.foundation.text.selection.SelectionContainer {
-                    Text(text, style = MaterialTheme.typography.bodySmall, softWrap = false)
-                }
-                HistoryCopyButton(label = "Copy the set of rules", value = text)
+                // A text the unit stores: one line, its arrow and its copy button ([HistoryTextLine]).
+                HistoryTextLine(value = text, copyLabel = "Copy the set of rules")
             }
         }
         SearchDomain.AddedAction.HistoryInformation -> {

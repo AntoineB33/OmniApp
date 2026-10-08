@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A history unit's long text is one line, with an arrow to expand it — 2026-10-08
+
+The user: "In the action section of a history unit, if a text element stored in the history unit is long it must still
+be shown in a single line, with an arrow button to expand the text and a button to copy it. When expanded, the expand
+button is always visible on the right even if the user scrolls on the action section to read the whole text."
+`HistoryTextLine` (`ui/CalendarUi.kt`) replaces the body of `HistoryInfoLine` and the "Set of rules" block's own
+text: one line with an ellipsis, `▸` / `▾` where something is cut, "copy"; expanded, the buttons are offset by what is
+scrolled away above the line (`stickyOffsetPx`, `HistoryTextLineTest`). The History window's information lines are
+the same function, so they read the same way. Client only. The drawing itself was NOT seen on screen: only the offset
+rule is tested.
+
 ### A quota's progression at other times — 2026-10-08
 
 The user: "In the action section of the quota element, add the action to define other times to look at the

@@ -746,7 +746,12 @@ suggestions before it was ever entered.
   (`AddedAction.HistoryInformation`) shows every fact the History window showed of it — the row's (category,
   position, current / applied / undone, window, time) and its information window's (label, chrono id, debug clock,
   every detail line), each with "copy", and "Copy all" — read through the History window's own `historyEntryInfos` /
-  `historyUnitEntry`, never a second list. A "creation" row's right-click opens that same menu too (anomaly
+  `historyUnitEntry`, never a second list. **Each of those texts is ONE line however long** (user rule 2026-10-08;
+  `HistoryTextLine`, the one drawing — `HistoryInfoLine` and the "Set of rules" block both go through it): cut with
+  an ellipsis, an arrow to expand it shown only where something is cut, and its copy button. Expanded, the two
+  buttons stay on screen while the section scrolls: they are moved down the line by what its clipping ancestors hide
+  of it above (`stickyOffsetPx`, read off the line's own place on screen — never a scroll state threaded down to it),
+  and stop at the line's end. A "creation" row's right-click opens that same menu too (anomaly
   2026-10-03: it made its element straight away, so the row could not be added — which is how a default configuration
   is edited); its third entry, "create", is what the right-click used to do. A tree cell's
   "edit task" opens the Search window holding that task (`openElementSearch`).

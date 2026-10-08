@@ -119,6 +119,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -3379,25 +3381,75 @@ private fun formatHistoryTime(millis: Long): String {
     return "${dt.year}-${p2(dt.monthNumber)}-${p2(dt.dayOfMonth)} ${p2(dt.hour)}:${p2(dt.minute)}:${p2(dt.second)}"
 }
 
-/** PRD §6: one stored info of a history row — its label, its value, and its own copy button. */
+/** PRD §6: one stored info of a history row — its label, its value ([HistoryTextLine]) and its own copy button. */
 @Composable
 internal fun HistoryInfoLine(info: HistoryInfo) {
+    HistoryTextLine(value = info.value, label = info.label)
+}
+
+/**
+ * User rule 2026-10-08: **a text a history unit stores, on ONE line however long it is** — *"if a text element stored
+ * in the history unit is long it must still be shown in a single line, with an arrow button to expand the text and a
+ * button to copy it. When expanded, the expand button is always visible on the right even if the user scrolls on the
+ * action section to read the whole text."*
+ *
+ * Retracted, the text is its first line, cut with an ellipsis; the arrow is there only when something IS cut (the
+ * text does not fit, or has more than one line). Expanded, it is the whole text, and the two buttons follow the part
+ * of it on screen: they are moved down by what the scrolling section hides of this line above ([stickyOffsetPx]) —
+ * read off the line's own place on screen, so it needs no word from whatever scrolls it.
+ */
+@Composable
+internal fun HistoryTextLine(value: String, label: String? = null, copyLabel: String = "copy") {
+    var expanded by remember(value) { mutableStateOf(false) }
+    // Whether the one line cuts anything: known once it is laid out, and kept while the text is expanded.
+    var cut by remember(value) { mutableStateOf(value.contains('\n')) }
+    var hiddenAbovePx by remember { mutableStateOf(0f) }
+    var lineHeightPx by remember { mutableStateOf(0) }
+    var buttonsHeightPx by remember { mutableStateOf(0) }
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
+        modifier = Modifier.onGloballyPositioned { at ->
+            lineHeightPx = at.size.height
+            // What its clipping ancestors leave of it starts lower than it does by exactly what is scrolled away.
+            hiddenAbovePx = (at.boundsInWindow().top - at.positionInWindow().y).coerceAtLeast(0f)
+        },
     ) {
-        Text(
-            text = "${info.label}:",
-            style = MaterialTheme.typography.labelSmall,
-            color = CalColors.muted,
-            modifier = Modifier.width(76.dp),
-        )
-        SelectionContainer(modifier = Modifier.weight(1f)) {
-            Text(text = info.value, style = MaterialTheme.typography.bodySmall)
+        if (label != null) {
+            Text(
+                text = "$label:",
+                style = MaterialTheme.typography.labelSmall,
+                color = CalColors.muted,
+                modifier = Modifier.width(76.dp),
+            )
         }
-        HistoryCopyButton(label = "copy", value = info.value)
+        SelectionContainer(modifier = Modifier.weight(1f)) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = if (expanded) Int.MAX_VALUE else 1,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { if (!expanded) cut = it.hasVisualOverflow || value.contains('\n') },
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .onSizeChanged { buttonsHeightPx = it.height }
+                .offset { IntOffset(0, if (expanded) stickyOffsetPx(hiddenAbovePx, lineHeightPx, buttonsHeightPx) else 0) },
+        ) {
+            if (cut) HistorySmallButton(label = if (expanded) "▾" else "▸", onClick = { expanded = !expanded })
+            HistoryCopyButton(label = copyLabel, value = value)
+        }
     }
 }
+
+/**
+ * How far down its line a control is moved to stay on screen while [hiddenAbovePx] of the line is scrolled away above:
+ * by that much, and never past the line's own end ([lineHeightPx] less the control's [controlHeightPx]).
+ */
+internal fun stickyOffsetPx(hiddenAbovePx: Float, lineHeightPx: Int, controlHeightPx: Int): Int =
+    hiddenAbovePx.roundToInt().coerceIn(0, (lineHeightPx - controlHeightPx).coerceAtLeast(0))
 
 /** One editable chores row: title, recurrence text + unit, and time-of-day text (raw strings while typing). */
 private data class ChoreRow(
