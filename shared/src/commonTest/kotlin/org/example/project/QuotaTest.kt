@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.math.abs
 import kotlin.test.Test
+import kotlinx.datetime.toInstant
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -179,7 +180,8 @@ class QuotaTest {
         assertTrue("40 pages" in row.detail && "repeats" in row.detail, row.detail)
         val actions = SearchDomain.addedActions("", setOf(SearchDomain.Kind.Quota)).single { it.first == SearchDomain.Kind.Quota }.second
         for (action in listOf(
-            SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop,
+            SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLookTimes,
+            SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop,
             SearchDomain.AddedAction.QuotaResilience, SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaTitle,
             SearchDomain.AddedAction.QuotaDelete,
         )) assertTrue(action in actions, "the actions lack $action")
@@ -573,5 +575,81 @@ class QuotaTest {
         // A real quota added — alone or beside the row — has its whole section.
         assertTrue(SearchDomain.AddedAction.QuotaDelete in quotaActions(listOf(quotaRow)))
         assertTrue(SearchDomain.AddedAction.QuotaDelete in quotaActions(listOf(creation, quotaRow)))
+    }
+
+    // ----- the other times a quota is looked at (user rule 2026-10-08) --------------------------------------------
+
+    private fun look(dateEpochDay: Long? = null, daysFromToday: Int = 0, minuteOfDay: Int? = null) =
+        org.example.project.scheduler.model.QuotaLookTime(dateEpochDay, daysFromToday, minuteOfDay)
+
+    /**
+     * "They can be defined in absolute date/time, or relative to today, or both (e.g. tomorrow at 10AM)": a day (a date,
+     * or days from today) and a time (a time of day, or the time it is now), each on its own.
+     */
+    @Test
+    fun a_look_time_is_a_day_and_a_time_each_absolute_or_relative_to_the_present() {
+        val tz = kotlinx.datetime.TimeZone.UTC
+        fun at(year: Int, month: Int, day: Int, hour: Int, minute: Int) =
+            kotlinx.datetime.LocalDateTime(year, month, day, hour, minute).toInstant(tz).toEpochMilliseconds()
+        val now = at(2026, 10, 8, 14, 30) + 42_000L
+        val date = kotlinx.datetime.LocalDate(2026, 12, 24).toEpochDays()
+        // Absolute: a date and a time.
+        assertEquals(at(2026, 12, 24, 9, 0), QuotaDomain.lookInstant(look(dateEpochDay = date, minuteOfDay = 9 * 60), now, tz))
+        // Relative to today: so many days from today, at the time it is now (to the minute).
+        assertEquals(at(2026, 10, 10, 14, 30), QuotaDomain.lookInstant(look(daysFromToday = 2), now, tz))
+        assertEquals(at(2026, 10, 7, 14, 30), QuotaDomain.lookInstant(look(daysFromToday = -1), now, tz))
+        // Both: tomorrow at 10AM — and it is the day after once a day has passed.
+        val tomorrowAtTen = look(daysFromToday = 1, minuteOfDay = 10 * 60)
+        assertEquals(at(2026, 10, 9, 10, 0), QuotaDomain.lookInstant(tomorrowAtTen, now, tz))
+        assertEquals(at(2026, 10, 10, 10, 0), QuotaDomain.lookInstant(tomorrowAtTen, now + 24 * HOUR, tz))
+        // A date, at the time it is now.
+        assertEquals(at(2026, 12, 24, 14, 30), QuotaDomain.lookInstant(look(dateEpochDay = date), now, tz))
+        // Said the other way, the instant is the same.
+        for (one in listOf(tomorrowAtTen, look(dateEpochDay = date, minuteOfDay = 540), look(daysFromToday = 2))) {
+            val dayFlipped = QuotaDomain.withDayRelative(one, relative = one.dateEpochDay != null, now, tz)
+            assertEquals(QuotaDomain.lookInstant(one, now, tz), QuotaDomain.lookInstant(dayFlipped, now, tz), "$one")
+            assertTrue((dayFlipped.dateEpochDay == null) != (one.dateEpochDay == null))
+        }
+        assertEquals(look(daysFromToday = 1, minuteOfDay = 14 * 60 + 30), QuotaDomain.withTimeRelative(look(daysFromToday = 1), relative = false, now, tz))
+        assertEquals(look(daysFromToday = 1), QuotaDomain.withTimeRelative(tomorrowAtTen, relative = true, now, tz))
+        assertEquals(listOf("today", "tomorrow", "yesterday", "in 3 days", "2 days ago", "2026-12-24"),
+            listOf(look(), look(daysFromToday = 1), look(daysFromToday = -1), look(daysFromToday = 3), look(daysFromToday = -2), look(dateEpochDay = date)).map { QuotaDomain.lookDayText(it) })
+    }
+
+    @Test
+    fun the_progression_at_a_look_time_is_the_pace_line_read_at_that_instant() {
+        val quota = weekly()
+        val tz = kotlinx.datetime.TimeZone.UTC
+        val now = quota.startMillis + (quota.endMillis - quota.startMillis) / 4
+        val inTwoDays = QuotaDomain.lookInstant(org.example.project.scheduler.model.QuotaLookTime(daysFromToday = 2), now, tz)
+        val then = QuotaDomain.progressAt(quota, emptyList(), inTwoDays)
+        // The instant is to the minute: two days on, less the seconds of the minute it is now.
+        assertTrue(now + 2 * DAY - inTwoDays in 0 until 60_000L, "two days from now, to the minute")
+        assertNear((inTwoDays - quota.startMillis).toDouble() / WEEK, then.fraction, "a quarter of the week, and two days more")
+        assertTrue(kotlin.math.abs(then.fraction - (0.25 + 2.0 / 7.0)) < 0.001, "" + then.fraction)
+        // Past the end of the loop it is the next loop's line.
+        val nextWeek = QuotaDomain.lookInstant(org.example.project.scheduler.model.QuotaLookTime(daysFromToday = 7), now, tz)
+        assertEquals(1, QuotaDomain.loopAt(quota, nextWeek).index)
+        assertTrue(kotlin.math.abs(QuotaDomain.progressAt(quota, emptyList(), nextWeek).fraction - 0.25) < 0.001, "the same place in the next loop")
+    }
+
+    @Test
+    fun the_look_times_are_stored_healed_and_absent_from_a_payload_written_before_them() {
+        val times = listOf(look(daysFromToday = 1, minuteOfDay = 600), look(dateEpochDay = 20_800L, minuteOfDay = 0), look(daysFromToday = -3))
+        val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetQuotas(listOf(weekly().copy(lookTimes = times))))
+        assertEquals(times, assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))).quotas.single().lookTimes)
+        assertEquals(times, assertNotNull(SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(s))).quotas.single().lookTimes)
+        // The shape before 2026-10-08: a quota with no such field (one equal to its default is not encoded) has none.
+        val before = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetQuotas(listOf(weekly())))
+        val payload = SchedulerStateCodec.encode(before)
+        assertTrue("lookTimes" !in payload, "an untouched quota writes nothing new")
+        assertEquals(emptyList(), assertNotNull(SchedulerStateCodec.decode(payload)).quotas.single().lookTimes)
+        // Healed: a time that is no time of day reads the time it is now, a day out of reach is no date, the list is capped.
+        val bad = weekly().copy(lookTimes = listOf(look(minuteOfDay = 5000), look(dateEpochDay = 9_000_000L)) + List(40) { look(daysFromToday = it) })
+        val healed = QuotaDomain.healed(bad)
+        assertEquals(QuotaDomain.MAX_LOOK_TIMES, healed.lookTimes.size)
+        assertEquals(listOf(look(), look()), healed.lookTimes.take(2))
+        val fine = weekly().copy(lookTimes = times)
+        assertTrue(QuotaDomain.healed(fine) === fine, "a quota already in shape is the same instance")
     }
 }

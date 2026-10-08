@@ -43,6 +43,7 @@ import org.example.project.scheduler.domain.QuotaDomain
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.model.QuotaEntry
+import org.example.project.scheduler.model.QuotaLookTime
 import org.example.project.scheduler.model.QuotaLoop
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
@@ -165,6 +166,125 @@ internal fun QuotaProgressEditor(state: SchedulerState, quotas: List<QuotaEntry>
                 )
             }
         }
+    }
+}
+
+/**
+ * User rule 2026-10-08: **the other times each added quota is looked at** — *"define other times to look at the
+ * progression of the quota at those times. They can be defined in absolute date/time, or relative to today, or both
+ * (e.g. tomorrow at 10AM)"*. A list per quota, kept on the quota ([QuotaEntry.lookTimes]); each element says its day
+ * (a date, or so many days from today) and its time (a time of day, or the time it is now), and reads the progression
+ * the quota is due to have reached then — the same pace line "Target progression" reads now, asked of that instant.
+ * A time said relative to the present moves with it: re-read each minute, a display resample and never a request.
+ */
+@Composable
+internal fun QuotaLookTimesEditor(state: SchedulerState, quotas: List<QuotaEntry>, run: (SchedulerIntent) -> Unit, nowMillis: () -> Long) {
+    if (quotas.isEmpty()) {
+        Text("No quota is added.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    val tz = TimeZone.currentSystemDefault()
+    var now by remember { mutableStateOf(nowMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L)
+            now = nowMillis()
+        }
+    }
+    val today = localOf(now, tz).date
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (quota in quotas) {
+            if (quota.isDefault) {
+                Text("A default configuration is looked at at no other time: a new quota starts with none.", style = MaterialTheme.typography.bodySmall)
+                continue
+            }
+            if (quotas.size > 1) Text(nameOf(quota), style = MaterialTheme.typography.labelMedium)
+            if (quota.lookTimes.isEmpty()) {
+                Text("No other time.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            quota.lookTimes.forEachIndexed { index, look ->
+                LookTimeRow(
+                    state = state, quota = quota, index = index, look = look, now = now, today = today, tz = tz,
+                    onChange = { changed ->
+                        write(state, listOf(quota), run) { q ->
+                            QuotaDomain.healed(q.copy(lookTimes = q.lookTimes.mapIndexed { i, old -> if (i == index) changed else old }))
+                        }
+                    },
+                    onRemove = { write(state, listOf(quota), run) { q -> q.copy(lookTimes = q.lookTimes.filterIndexed { i, _ -> i != index }) } },
+                )
+            }
+            FrameButton("+ Add a time", enabled = quota.lookTimes.size < QuotaDomain.MAX_LOOK_TIMES) {
+                // Tomorrow at the time it is now, then the day after: each new one a day further than the last relative one.
+                val next = (quota.lookTimes.filter { it.dateEpochDay == null }.maxOfOrNull { it.daysFromToday } ?: 0) + 1
+                write(state, listOf(quota), run) { q -> QuotaDomain.healed(q.copy(lookTimes = q.lookTimes + QuotaLookTime(daysFromToday = next))) }
+            }
+        }
+    }
+}
+
+/** One element of [QuotaLookTimesEditor]: the time [look] says, how it says it, and where [quota] is due to stand then. */
+@Composable
+private fun LookTimeRow(
+    state: SchedulerState,
+    quota: QuotaEntry,
+    index: Int,
+    look: QuotaLookTime,
+    now: Long,
+    today: LocalDate,
+    tz: TimeZone,
+    onChange: (QuotaLookTime) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val instant = QuotaDomain.lookInstant(look, now, tz)
+    val loop = QuotaDomain.loopAt(quota, instant)
+    val periods = remember(state.panels, state.sleep, loop.startMillis, loop.endMillis) {
+        SchedulerDomain.quotaPeriods(state, loop.startMillis, loop.endMillis, tz)
+    }
+    val profile = remember(quota, loop, periods) { QuotaDomain.profile(quota, loop, periods) }
+    val progress = QuotaDomain.progress(quota, profile, instant)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // The day: a date of its own, or so many days from today. The button says which, and turns it into the other.
+            val dated = look.dateEpochDay != null
+            FrameButton(if (dated) "on the date" else "days from today") { onChange(QuotaDomain.withDayRelative(look, dated, now, tz)) }
+            if (dated) {
+                DayField(LocalDate.fromEpochDays(look.dateEpochDay ?: today.toEpochDays()), "day", today, enabled = true) { date ->
+                    onChange(look.copy(dateEpochDay = date.toEpochDays()))
+                }
+            } else {
+                var days by remember(quota.id, index, look.daysFromToday) { mutableStateOf(look.daysFromToday.toString()) }
+                fun parse(text: String): Int? =
+                    text.trim().removePrefix("+").toIntOrNull()?.takeIf { kotlin.math.abs(it.toLong()) <= QuotaDomain.MAX_LOOK_DAYS }
+                OutlinedTextField(
+                    value = days,
+                    onValueChange = { text ->
+                        days = text
+                        parse(text)?.takeIf { it != look.daysFromToday }?.let { onChange(look.copy(daysFromToday = it)) }
+                    },
+                    singleLine = true,
+                    isError = parse(days) == null,
+                    modifier = Modifier.width(84.dp).endsEditOnOutsidePress { days = look.daysFromToday.toString() },
+                )
+            }
+            // The time: a time of day of its own, or the time it is now.
+            val timed = look.minuteOfDay != null
+            FrameButton(if (timed) "at" else "at the time it is now") { onChange(QuotaDomain.withTimeRelative(look, timed, now, tz)) }
+            if (timed) TimeOfDayField(look.minuteOfDay, enabled = true) { minutes -> onChange(look.copy(minuteOfDay = minutes)) }
+            FrameButton("✕", onClick = onRemove)
+        }
+        val unit = if (quota.unit.isBlank()) "" else " " + quota.unit
+        Text(
+            QuotaDomain.lookDayText(look) + " at " + localOf(instant, tz).let { timeOfDayText(it.hour * 60 + it.minute) } + ": " +
+                percent(progress.fraction) + " · " + SearchDomain.formatQuotaNumber(progress.targetAmount) + " of " +
+                SearchDomain.formatQuotaNumber(progress.amount) + unit + " due by then",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            formatInstant(instant, tz) + " · loop " + (loop.index + 1) +
+                (if (loop.renewals > 1) " · renewal ${progress.renewal} of ${loop.renewals}" else ""),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

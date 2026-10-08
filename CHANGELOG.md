@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A quota's progression at other times — 2026-10-08
+
+The user: "In the action section of the quota element, add the action to define other times to look at the
+progression of the quota at those times. They can be defined in absolute date/time, or relative to today, or both
+(e.g. tomorrow at 10AM)." New action **"Progression at other times"** (`AddedAction.QuotaLookTimes`,
+`QuotaLookTimesEditor`), under "Target progression": a list per added quota with "+ Add a time"; each element has a
+day (a date, or days from today — a button turns one into the other, the instant kept) and a time (a time of day, or
+the time it is now), and reads the percentage and the amount due by then. Kept on the quota
+(`QuotaEntry.lookTimes: List<QuotaLookTime>`), so it is authoritative, synced with the quota's row and undone with
+it. **Persisted shape**: `PersistedQuota.lookTimes` (default empty; a quota with none writes nothing new) —
+`QuotaTest.the_look_times_are_stored_healed_and_absent_from_a_payload_written_before_them`. No SQLite or Supabase
+migration: the quota is stored as one JSON object. Client only. Not checked: what an older build on another device does to
+the list when it rewrites that quota (it does not know the field). The editor was not seen on screen.
+
 ### A held block remembers its length: across the line, and out of the far side of a break — 2026-10-08
 
 The user: "When dragging a block on the $now line$ but the $now line$ can't be on this block (e.g., a task panel when

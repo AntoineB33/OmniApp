@@ -308,6 +308,16 @@ actions being its editor.
   keyed on `state.panels` in `QuotaProgressEditor`); an instant is then read off it. The action re-reads the clock each
   time the percentage shown can have changed (a thousandth of a renewal, between 1 s and 60 s) — a display resample,
   never a request.
+- **The other times a quota is looked at are the QUOTA's** (user rule 2026-10-08; `QuotaEntry.lookTimes`,
+  `QuotaLookTime`, the action "Progression at other times", `QuotaLookTimesEditor`). Each is a DAY and a TIME, each
+  absolute or relative to the present: the day a date (`dateEpochDay`) else today moved by `daysFromToday`; the time a
+  time of day (`minuteOfDay`) else the time it is now, to the minute. So "2026-12-24 at 09:00", "in 2 days" and
+  "tomorrow at 10:00" are one shape, read by ONE function (`QuotaDomain.lookInstant`). What it shows is the same pace
+  line asked of that instant (`loopAt` + `profile` + `progress`) — never a second derivation — so a time past the
+  loop's end reads the next loop. Authoritative and synced with the quota (whole object); healed (a time that is no
+  time of day, a day out of reach, more than `MAX_LOOK_TIMES`); a payload written before them has none. The list is
+  the user's, in their order: never sorted, never de-duplicated. A relative time moves with the present: re-read
+  each minute, a display resample, never a request.
 - **A list like the chronos'**: `SetQuotas` writes the whole list as one History Unit (`QuotasDelta`), ids are minted
   `quota-{n}`, `QuotaDomain.healed` is applied on decode, on merge and in the reducer, the sync splits it one row per
   quota (`EntityRows`) and merges a quota whole.

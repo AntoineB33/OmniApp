@@ -341,7 +341,8 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
         SearchDomain.AddedAction.HistoryRules,
         SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
-        SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
+        SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLookTimes,
+        SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
         SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
         SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.DragOnCalendar,
     )
@@ -716,6 +717,7 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.TaskFulfilledBy -> FulfilledByEditor(state, taskIds, run, handlers.onEdit)
         // --- The quotas (user rule 2026-10-03): where each stands, and its settings ([QuotaEditors]) -------------
         SearchDomain.AddedAction.QuotaProgress -> QuotaProgressEditor(state, addedQuotas(state, added), nowMillis)
+        SearchDomain.AddedAction.QuotaLookTimes -> QuotaLookTimesEditor(state, addedQuotas(state, added), run.asIntentSink(), nowMillis)
         SearchDomain.AddedAction.QuotaAmount -> QuotaAmountEditor(state, addedQuotas(state, added), run.asIntentSink())
         SearchDomain.AddedAction.QuotaLoop -> QuotaLoopEditor(state, addedQuotas(state, added), run.asIntentSink())
         SearchDomain.AddedAction.QuotaRestarts -> QuotaRestartsEditor(state, addedQuotas(state, added), run.asIntentSink())

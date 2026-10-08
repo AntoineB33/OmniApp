@@ -2155,6 +2155,16 @@ private data class PersistedQuota(
     val repeatCount: Int? = null,
     // New 2026-10-04: absent = the percentage runs once over a period.
     val renewals: Int = 1,
+    // New 2026-10-08: absent = it is looked at now and at no other time.
+    val lookTimes: List<PersistedQuotaLookTime> = emptyList(),
+)
+
+/** [org.example.project.scheduler.model.QuotaLookTime], as stored. */
+@Serializable
+private data class PersistedQuotaLookTime(
+    val dateEpochDay: Long? = null,
+    val daysFromToday: Int = 0,
+    val minuteOfDay: Int? = null,
 )
 
 /** What is particular to one loop of a quota, as stored. */
@@ -2185,6 +2195,7 @@ private fun QuotaEntry.toPersisted(): PersistedQuota =
         endByDelta = endByDelta,
         repeatCount = repeatCount,
         renewals = renewals,
+        lookTimes = lookTimes.map { PersistedQuotaLookTime(it.dateEpochDay, it.daysFromToday, it.minuteOfDay) },
     )
 
 /** The inverse of [QuotaEntry.toPersisted]. The caller heals it ([QuotaDomain.healed]). */
@@ -2198,6 +2209,7 @@ private fun PersistedQuota.toQuotaEntry(): QuotaEntry =
         endByDelta = endByDelta,
         repeatCount = repeatCount,
         renewals = renewals,
+        lookTimes = lookTimes.map { org.example.project.scheduler.model.QuotaLookTime(it.dateEpochDay, it.daysFromToday, it.minuteOfDay) },
     )
 
 /** PRD §18 Chronos: one persisted chrono. Every field defaulted, so a later build's shape decodes cleanly. */

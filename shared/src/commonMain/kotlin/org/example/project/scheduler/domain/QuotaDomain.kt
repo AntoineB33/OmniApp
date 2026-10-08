@@ -1,6 +1,12 @@
 package org.example.project.scheduler.domain
 
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.QuotaEntry
+import org.example.project.scheduler.model.QuotaLookTime
 import org.example.project.scheduler.model.QuotaLoop
 import org.example.project.scheduler.model.TaskPanel
 
@@ -76,9 +82,22 @@ object QuotaDomain {
                 }
                 .filterNot { it == QuotaLoop(it.index) }
                 .sortedBy { it.index }
+        // A list the user reads: its order is theirs. A day too far to be a date, a time that is no time of day and
+        // whatever is past the cap are what an edit or another build could leave.
+        val lookTimes =
+            entry.lookTimes.take(MAX_LOOK_TIMES).map { look ->
+                val fixed =
+                    look.copy(
+                        dateEpochDay = look.dateEpochDay?.takeIf { it in -MAX_LOOK_DAYS..MAX_LOOK_DAYS },
+                        daysFromToday = look.daysFromToday.coerceIn(-MAX_LOOK_DAYS.toInt(), MAX_LOOK_DAYS.toInt()),
+                        minuteOfDay = look.minuteOfDay?.takeIf { it in 0 until 24 * 60 },
+                    )
+                if (fixed == look) look else fixed
+            }
         val healed = entry.copy(
             amount = amount, endMillis = end, resilience = resilience, loops = loops, repeats = repeats, repeatCount = repeatCount,
             renewals = entry.renewals.coerceIn(1, MAX_RENEWALS),
+            lookTimes = if (lookTimes == entry.lookTimes) entry.lookTimes else lookTimes,
         )
         return if (healed == entry) entry else healed
     }
@@ -237,6 +256,56 @@ object QuotaDomain {
         }
         return (minutes * 60_000L).takeIf { it > 0L }
     }
+
+    // ---- The other times a quota is looked at (user rule 2026-10-08) ----------------------------------------------
+
+    /** The most times one quota is looked at: a list to read, not a table. */
+    const val MAX_LOOK_TIMES: Int = 24
+
+    /** How far from 1970 a look's date may be, and from today its relative day: a little over three centuries. */
+    const val MAX_LOOK_DAYS: Long = 120_000L
+
+    /**
+     * **The instant [look] stands for**, the present being [nowMillis] on [tz]'s clock: its day — a date of its own,
+     * else today moved by its days — at its time — a time of day of its own, else the time it is now (to the minute).
+     * A time the clock skips that day (a change of hour) is the first instant after it.
+     */
+    fun lookInstant(look: QuotaLookTime, nowMillis: Long, tz: TimeZone): Long {
+        val now = kotlin.time.Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz)
+        val date = LocalDate.fromEpochDays(look.dateEpochDay ?: (now.date.toEpochDays() + look.daysFromToday))
+        val minutes = look.minuteOfDay ?: (now.hour * 60 + now.minute)
+        return LocalDateTime(date.year, date.month, date.day, minutes / 60, minutes % 60).toInstant(tz).toEpochMilliseconds()
+    }
+
+    /** [look]'s day said the other way — a date become "N days from today" or the reverse — the instant unchanged. */
+    fun withDayRelative(look: QuotaLookTime, relative: Boolean, nowMillis: Long, tz: TimeZone): QuotaLookTime {
+        val today = kotlin.time.Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz).date.toEpochDays()
+        return when {
+            relative && look.dateEpochDay != null -> look.copy(dateEpochDay = null, daysFromToday = (look.dateEpochDay - today).toInt())
+            !relative && look.dateEpochDay == null -> look.copy(dateEpochDay = today + look.daysFromToday, daysFromToday = 0)
+            else -> look
+        }
+    }
+
+    /** [look]'s time said the other way — a time of day become "the time it is now" or the reverse (now's own). */
+    fun withTimeRelative(look: QuotaLookTime, relative: Boolean, nowMillis: Long, tz: TimeZone): QuotaLookTime {
+        val now = kotlin.time.Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(tz)
+        return when {
+            relative -> look.copy(minuteOfDay = null)
+            look.minuteOfDay == null -> look.copy(minuteOfDay = now.hour * 60 + now.minute)
+            else -> look
+        }
+    }
+
+    /** How [look]'s day reads: its date, or "today", "tomorrow", "yesterday", "in 3 days", "3 days ago". */
+    fun lookDayText(look: QuotaLookTime): String =
+        look.dateEpochDay?.let { LocalDate.fromEpochDays(it).toString() }
+            ?: when (val days = look.daysFromToday) {
+                0 -> "today"
+                1 -> "tomorrow"
+                -1 -> "yesterday"
+                else -> if (days > 0) "in $days days" else "${-days} days ago"
+            }
 
     /** The most renewals one loop may have — past this the percentage is a blur, not a pace. */
     const val MAX_RENEWALS: Int = 1000

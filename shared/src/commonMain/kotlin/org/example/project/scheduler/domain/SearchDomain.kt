@@ -2363,6 +2363,8 @@ object SearchDomain {
         // User rule 2026-10-03: a quota's settings, one control over every added quota, and where each one stands.
         /** Each added quota's target progression now: the percentage, the amount due, the loop and its renewal. */
         QuotaProgress(Kind.Quota, "Target progression"),
+        /** User rule 2026-10-08: the other times each added quota is looked at, and its progression at each. */
+        QuotaLookTimes(Kind.Quota, "Progression at other times"),
         QuotaAmount(Kind.Quota, "Amount"),
         /** The first loop's start and end, and whether it repeats. */
         QuotaLoop(Kind.Quota, "Loop"),

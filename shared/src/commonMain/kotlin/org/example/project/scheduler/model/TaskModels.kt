@@ -548,6 +548,25 @@ data class QuotaEntry(
      * reaches 100 % again at the end. The quota's own number; a particular period may say another ([QuotaLoop.renewals]).
      */
     val renewals: Int = 1,
+    /**
+     * User rule 2026-10-08: **the other times its progression is looked at** — beside now, which is always shown. A
+     * setting of the quota like its loop: authoritative and synced. What each one reads is derived, never stored.
+     */
+    val lookTimes: List<QuotaLookTime> = emptyList(),
+)
+
+/**
+ * User rule 2026-10-08: **a time a quota's progression is looked at**, said as a DAY and a TIME, each either absolute
+ * or relative to the present — *"in absolute date/time, or relative to today, or both (e.g. tomorrow at 10AM)"*:
+ *  - the day is [dateEpochDay] (a date) when it has one, else today moved by [daysFromToday] (`1` is tomorrow);
+ *  - the time is [minuteOfDay] (a time of day) when it has one, else the time it is now.
+ * So a date and a time is an absolute instant; neither is "N days from now"; a relative day with a time is "tomorrow at
+ * 10:00". Read by [org.example.project.scheduler.domain.QuotaDomain.lookInstant].
+ */
+data class QuotaLookTime(
+    val dateEpochDay: Long? = null,
+    val daysFromToday: Int = 0,
+    val minuteOfDay: Int? = null,
 )
 
 /**
