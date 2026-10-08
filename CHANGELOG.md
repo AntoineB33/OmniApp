@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Customize mode: a Search window's actions can be added to the menu — 2026-10-08
+
+The user: "I set in customize mode, went to a Search window and right-clicked on an action configuration, but it didn't
+do anything. It must open a menu to add the button or field to the left-side menu of the app. If then the button or
+field can't do anything, for example it is the button 'duplicate' for a task that doesn't exist anymore, then the
+button is grayed in the left-side menu." The actions were not wired (the limit stated two entries below).
+
+- Every row of "Actions on the added elements" is outlined in customize mode and offers "add in the left-side menu".
+- The item keeps the action AND the elements it acted on there (`CustomMenuButton.action`, a new field with a default,
+  with that window's configuration), is drawn by the action's own editor, and is named "<action> · <element>".
+- It is greyed, and does nothing at a press, while none of those elements is left (`SearchDomain.actionCanAct`).
+
+Seen on the Search window rendered headlessly beside the menu, with real mouse events: the menu entry on an action;
+"Remove all" and "Add a category" added for the task "Apple"; both greyed once that task was deleted. An editor made
+for the wide actions section is cut at the menu's width — the larger ones ("Add to the calendar") will not fit.
+`SearchAddedElementsTest`, `CustomMenuButtonsTest`. Not verified in the live app. Client only.
+
 ### Customize mode: the menu's items are dragged to another place — 2026-10-08
 
 User rule: "in customization mode, the user can drag the buttons or fields in the left-side menu, except for the top

@@ -658,8 +658,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // The ones drawn. A button whose window this build no longer has ("All tasks" and the list of reminders,
         // removed 2026-09-25) or whose object is gone is not shown — but kept, so an undo brings it back.
+        // What an item that is a Search action needs to be drawn ([org.example.project.ui.MenuActionItem]): the
+        // actions' handlers and the rows' openers, which are made further down, where the windows they embed are —
+        // told here once made, at every pass (they close over the state of that pass).
+        val menuActionContext =
+            remember { mutableStateOf<Pair<AddedActionHandlers, (SearchDomain.Result) -> Unit>?>(null) }
         fun menuButtonShown(button: CustomMenuButton): Boolean =
-            if (button.control != null) org.example.project.ui.MenuControl.of(button.control) != null
+            if (button.action != null) SearchDomain.AddedAction.entries.any { it.name == button.action }
+            else if (button.control != null) org.example.project.ui.MenuControl.of(button.control) != null
             else ObjectWindowKey.decode(button.windowId)?.exists(schedulerState) ?: (lateralWindowOf(button.windowId) != null)
         // User rule 2026-10-08, the menu's "Customize": while on, a right-click on a control of the app that can stand
         // in the menu adds it there ([org.example.project.ui.MenuAddable]). Compose-only.
@@ -1719,6 +1725,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // "add in the left-side menu", for a control: at the bottom, the menu open and scrolled to it. One that is
         // there already is only shown.
+        menuCustomizer.addAction = { action, title, config ->
+            setMenuButtons(CustomMenuButtons.addedAction(menuButtons, action, title, config).first)
+            menuCollapsed = false
+            menuButtonAdded++
+        }
         menuCustomizer.add = { control ->
             val (list, _) = CustomMenuButtons.addedControl(menuButtons, control)
             if (list != menuButtons) setMenuButtons(list)
@@ -3249,6 +3260,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onCustomize = { menuCustomizer.active = it },
                             controlContent = { control, title -> org.example.project.ui.MenuControlItem(control, title, menuControlHost) },
                             onMove = { id, beforeId -> setMenuButtons(CustomMenuButtons.moved(menuButtons, id, beforeId)) },
+                            actionContent = { button ->
+                                menuActionContext.value?.let { (handlers, open) ->
+                                    org.example.project.ui.MenuActionItem(
+                                        state = schedulerState,
+                                        actionName = button.action.orEmpty(),
+                                        title = button.title,
+                                        configText = button.config,
+                                        // What the item's editor keeps of its own (a start, an end): the item's.
+                                        onConfigChange = { text ->
+                                            setMenuButtons(menuButtons.map { if (it.id == button.id) it.copy(config = text) else it })
+                                        },
+                                        handlers = handlers,
+                                        onIntent = { vm.dispatch(it) },
+                                        nowMillis = clock::nowMillis,
+                                        onOpen = open,
+                                    )
+                                }
+                            },
                         )
                     },
                 )
@@ -4336,6 +4365,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 )
                             },
                         )
+                    androidx.compose.runtime.SideEffect {
+                        menuActionContext.value = addedActionHandlers to { row -> searchRowOpeners.open(schedulerState, row) }
+                    }
                     LateralWindow(FloatingWindow.Search, searchWindowOpen) {
                         val searchId = windowInstanceId(FloatingWindow.Search.name)
                         val searchConfig = searchConfigOf(searchId)

@@ -2429,6 +2429,14 @@ object SearchDomain {
         sections.sortedByDescending { reachOf(it.first, added) }
 
     /** How many of [added] the actions of the group [kind] apply to: all of them for the general group (null). */
+    /**
+     * User rule 2026-10-08, an action kept as an item of the lateral menu: **whether [action] still has something to
+     * act on** among the elements it was added with ([addedKeys]) as the account stands — one that is gone (a task
+     * deleted, a timer removed) resolves to nothing, and the item is then greyed.
+     */
+    fun actionCanAct(state: SchedulerState, action: AddedAction, addedKeys: List<String>): Boolean =
+        reachOf(action.section, resolve(state, addedKeys)) > 0
+
     fun reachOf(kind: Kind?, added: List<Result>): Int =
         added.count { kind == null || actionKindOf(it) == kind || it.kind == kind }
 

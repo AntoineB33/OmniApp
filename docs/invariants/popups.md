@@ -143,7 +143,15 @@ means.
     button is not an item and does not move. Only their right-click menu answers otherwise; the controls outlined
     elsewhere in the app still work. It lands at the bottom; a control
     stands in the menu once (`addedControl`).
-  - **What can be added today**: the menu's own seven; the calendar's configuration — Display, Auto schedule,
+  - **An action of the Search window is an item too** (user rule 2026-10-08; `CustomMenuButton.action`,
+    `AddableAction`, `MenuActionItem`): every row of "Actions on the added elements" is addable, WITH that window's
+    configuration as it stands — its added elements included — so the item acts on those elements. It is drawn in the
+    menu by the action's own editor, named after the action and its element ("Duplicate · Apple"), and **greyed and
+    deaf to a press while none of its elements is left** (`SearchDomain.actionCanAct`: a deleted task resolves to
+    nothing). The three actions that ARE a control (Voice, Notifications, Global volume) are added as that control.
+    What `MenuActionItem` needs of `App` is made further down the composition than the menu
+    (`menuActionContext`, told at every pass): never copy the handlers up, they embed windows declared there.
+  - **What can be added today**: the menu's own seven; every action of a Search window; the calendar's configuration — Display, Auto schedule,
     Reminders, Screen breaks, the time limit, the minimum time weight, the sleep schedule; and an app setting's
     actions — Voice, Notifications, Global volume. NOT yet: "Lock to now" (the calendar window's own state, not the
     app's), and the controls of the other windows. A window is added by its ☆, as before.

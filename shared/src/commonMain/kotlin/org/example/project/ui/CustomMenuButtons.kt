@@ -43,6 +43,7 @@ import org.example.project.scheduler.ui.contextMenuModifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -83,6 +84,13 @@ data class CustomMenuButton(
      * for the control's own. Null: a window's button, as every item was before.
      */
     val control: String? = null,
+    /**
+     * User rule 2026-10-08: set, this item is **an action of the Search window on the elements it was added with** —
+     * a `SearchDomain.AddedAction` by name (Duplicate, Start, a field of theirs…), [config] being that Search
+     * window's configuration then, its added elements included. Drawn by the action's own editor; greyed while none
+     * of those elements is left for it to act on. [windowId] is then empty.
+     */
+    val action: String? = null,
 )
 
 /**
@@ -123,6 +131,9 @@ enum class MenuControl(val title: String) {
 class MenuCustomizer {
     var active: Boolean by mutableStateOf(false)
     var add: (MenuControl) -> Unit = {}
+
+    /** "add in the left-side menu", for an action of a Search window: its name, a title, that window's configuration. */
+    var addAction: (action: String, title: String, config: String) -> Unit = { _, _, _ -> }
 }
 
 val LocalMenuCustomizer = androidx.compose.runtime.staticCompositionLocalOf<MenuCustomizer?> { null }
@@ -133,17 +144,25 @@ val LocalMenuCustomizer = androidx.compose.runtime.staticCompositionLocalOf<Menu
  * control itself, a text field's own menu included — opens the one-entry menu that adds it to the lateral menu.
  */
 @Composable
-fun MenuAddable(control: MenuControl, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+fun MenuAddable(control: MenuControl, modifier: Modifier = Modifier, content: @Composable () -> Unit) =
+    MenuAddableBox(control, { it.add(control) }, modifier, content)
+
+/**
+ * [MenuAddable] for anything the menu can hold: [onAdd] says what "add in the left-side menu" adds (a control, or an
+ * action of a Search window with the elements it acts on).
+ */
+@Composable
+fun MenuAddableBox(key: Any?, onAdd: (MenuCustomizer) -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val customizer = LocalMenuCustomizer.current
     val active = customizer?.active == true
-    var menuOpen by remember(control) { mutableStateOf(false) }
+    var menuOpen by remember(key) { mutableStateOf(false) }
     Box(
         modifier
             .then(
                 if (!active) Modifier
                 else Modifier
                     .border(1.dp, CalColors.accent, RoundedCornerShape(6.dp))
-                    .secondaryPressFirst(control) { menuOpen = true },
+                    .secondaryPressFirst(key) { menuOpen = true },
             ),
     ) {
         content()
@@ -154,13 +173,34 @@ fun MenuAddable(control: MenuControl, modifier: Modifier = Modifier, content: @C
                     text = { Text("add in the left-side menu") },
                     onClick = {
                         menuOpen = false
-                        customizer?.add?.invoke(control)
+                        customizer?.let(onAdd)
                     },
                 )
             }
         }
     }
 }
+
+/**
+ * A menu item that can do nothing (user rule 2026-10-08: "the button is grayed"): drawn faint, and every press and
+ * release of the left button swallowed before what is under it. The right button is left alone — its menu still opens.
+ */
+internal fun Modifier.greyedAndDeaf(disabled: Boolean): Modifier =
+    if (!disabled) this
+    else graphicsLayer { alpha = 0.38f }.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                val pressOrRelease =
+                    event.type == androidx.compose.ui.input.pointer.PointerEventType.Press ||
+                        event.type == androidx.compose.ui.input.pointer.PointerEventType.Release
+                if (pressOrRelease && !event.buttons.isSecondaryPressed) event.changes.forEach { it.consume() }
+            }
+        }
+    }
+
+/** Cut at its own bounds — an editor made for a wide section, shown in the narrow menu. */
+internal fun Modifier.cutAtBounds(): Modifier = clipToBounds()
 
 /**
  * A press of the left button HOLDS what is under it instead of pressing it: the press, its moves and its release are
@@ -335,6 +375,13 @@ object CustomMenuButtons {
         return buttons + CustomMenuButton(id, windowId, title, config) to id
     }
 
+    /** [buttons] with an item for the Search action [action] on the elements [config] holds, at the bottom, and its id. */
+    fun addedAction(buttons: List<CustomMenuButton>, action: String, title: String, config: String): Pair<List<CustomMenuButton>, String> {
+        val used = buttons.map { it.id }.toSet()
+        val id = generateSequence(1) { it + 1 }.map { "a$it" }.first { it !in used }
+        return buttons + CustomMenuButton(id, "", title, config, action = action) to id
+    }
+
     /**
      * User rule 2026-10-08, the customization mode's drag: [buttons] with [id] moved to stand just before [beforeId] —
      * at the very end when that is null or names no item. Said by the item it lands before, never by an index: the
@@ -428,6 +475,8 @@ internal fun CustomMenuSection(
     controlContent: @Composable (control: MenuControl, title: String?) -> Unit = { _, _ -> },
     /** The customization mode's drag: the item [id] dropped just before [beforeId] (null: at the end). */
     onMove: (id: String, beforeId: String?) -> Unit = { _, _ -> },
+    /** Draws an item that is a Search action on its elements ([CustomMenuButton.action]). */
+    actionContent: @Composable (CustomMenuButton) -> Unit = {},
 ) {
     // User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu".
     // Each drawn item's row (its top and height in this column), the one held and how far the hand has it. The held
@@ -507,7 +556,10 @@ internal fun CustomMenuSection(
                         )
                         // A control answers a right-click itself (a field's own menu, a switch): the item's menu is
                         // asked first. A window's button keeps the app's one right-click gesture.
-                        .then(if (control != null) Modifier.secondaryPressFirst(button.id) { menuOpen = true } else Modifier),
+                        .then(
+                            if (control != null || button.action != null) Modifier.secondaryPressFirst(button.id) { menuOpen = true }
+                            else Modifier,
+                        ),
                 ) {
                     Box(
                         Modifier
@@ -517,7 +569,9 @@ internal fun CustomMenuSection(
                                 alpha = if (draggedId == button.id) 0.85f else 1f
                             },
                     ) {
-                    if (control != null) {
+                    if (button.action != null) {
+                        actionContent(button)
+                    } else if (control != null) {
                         controlContent(control, button.title.takeIf { it.isNotBlank() })
                     } else {
                         MenuButton(

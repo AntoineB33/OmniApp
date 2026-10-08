@@ -307,6 +307,9 @@ private fun AddedActionSections(
         val count = SearchDomain.reachOf(kind, added)
         SectionTitle((kind?.label?.replaceFirstChar { it.uppercase() } ?: "Every element") + "  ·  $count")
         for (action in actions) {
+            // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
+            // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
+            AddableAction(action, added, config) {
             if (action in STACKED_ACTIONS) {
                 // An editor too tall for the label's row: under its label, at the section's width.
                 Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
@@ -322,6 +325,7 @@ private fun AddedActionSections(
                 SettingRow(action.label) {
                     AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear)
                 }
+            }
             }
         }
     }
@@ -341,6 +345,95 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
         SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.DragOnCalendar,
     )
+
+/** The actions that ARE a control of the app the menu already knows ([MenuControl]): added as that control. */
+private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
+    mapOf(
+        SearchDomain.AddedAction.VoiceSwitch to MenuControl.Voice,
+        SearchDomain.AddedAction.NotificationsSwitch to MenuControl.Notifications,
+        SearchDomain.AddedAction.SoundVolume to MenuControl.SoundVolume,
+    )
+
+/**
+ * User rule 2026-10-08 (anomaly: a right-click on an action in customize mode did nothing): **an action of the Search
+ * window can be added to the lateral menu** — with this window's configuration as it stands, its added elements
+ * included, so the item acts on THOSE elements. Named after the action, and after the element when there is one.
+ */
+@Composable
+private fun AddableAction(
+    action: SearchDomain.AddedAction,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    content: @Composable () -> Unit,
+) {
+    MenuAddableBox(
+        key = action,
+        onAdd = { customizer ->
+            val control = ACTION_MENU_CONTROLS[action]
+            if (control != null) {
+                customizer.add(control)
+            } else {
+                val reached = added.filter { action.section == null || SearchDomain.actionKindOf(it) == action.section || it.kind == action.section }
+                val title = action.label + (reached.singleOrNull()?.let { "  ·  " + it.name } ?: "")
+                customizer.addAction(action.name, title, config.encode())
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        content = content,
+    )
+}
+
+/**
+ * User rule 2026-10-08: **an action of the Search window, as an item of the lateral menu** ([CustomMenuButton.action])
+ * — its own editor ([AddedActionEditor]) over the elements the item was added with ([configText], that window's
+ * configuration then), read against the account as it is NOW. *"If then the button or field can't do anything, for
+ * example it is the button 'duplicate' for a task that doesn't exist anymore, then the button is grayed"*:
+ * [SearchDomain.actionCanAct] — greyed, and deaf to a press.
+ */
+@Composable
+internal fun MenuActionItem(
+    state: SchedulerState,
+    actionName: String,
+    title: String,
+    configText: String?,
+    onConfigChange: (String) -> Unit,
+    handlers: AddedActionHandlers,
+    onIntent: (SchedulerIntent) -> Unit,
+    nowMillis: () -> Long,
+    onOpen: (SearchDomain.Result) -> Unit,
+) {
+    val action = SearchDomain.AddedAction.entries.firstOrNull { it.name == actionName } ?: return
+    val config = remember(configText) { SearchDomain.Config.decode(configText) ?: SearchDomain.Config() }
+    // Walked when the account changes, as the Search window's own added list is.
+    val added =
+        remember(state.tasks, state.cells, state.lists, state.alarms, state.timers, state.chores, state.categories, config.added) {
+            SearchDomain.resolve(state, config.added)
+        }
+    val can = SearchDomain.reachOf(action.section, added) > 0
+    val run = { command: SearchDomain.AddedCommand ->
+        SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().greyedAndDeaf(!can),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            title.ifBlank { action.label },
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        // The editor is the Search window's: compact, and cut at the menu's width rather than squeezed.
+        Box(Modifier.fillMaxWidth().cutAtBounds()) {
+            CompactFields {
+                AddedActionEditor(
+                    state, action, added, config, { onConfigChange(it.encode()) }, handlers, run, nowMillis,
+                    onOpenEach = { added.forEach(onOpen) }, onClear = {},
+                )
+            }
+        }
+    }
+}
 
 /** The control of one action — every one of them acts on the added elements of its kind. */
 @Composable
@@ -502,22 +595,18 @@ private fun AddedActionEditor(
         // User rule 2026-10-08: the voice's and the notifications' switches, the lateral menu's own by default — here
         // too, so a menu emptied of them can be given them back ([MenuAddable], while the menu is being customized).
         SearchDomain.AddedAction.VoiceSwitch ->
-            MenuAddable(MenuControl.Voice) {
-                androidx.compose.material3.Switch(
-                    checked = state.notificationVoiceEnabled,
-                    onCheckedChange = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetNotificationVoice(it))) },
-                    enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Voice),
-                )
-            }
+            androidx.compose.material3.Switch(
+                checked = state.notificationVoiceEnabled,
+                onCheckedChange = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetNotificationVoice(it))) },
+                enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Voice),
+            )
         SearchDomain.AddedAction.NotificationsSwitch ->
-            MenuAddable(MenuControl.Notifications) {
-                androidx.compose.material3.Switch(
-                    checked = state.notificationsEnabled,
-                    onCheckedChange = handlers.onSetNotificationsEnabled,
-                    enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Notifications),
-                )
-            }
-        SearchDomain.AddedAction.SoundVolume -> MenuAddable(MenuControl.SoundVolume) {
+            androidx.compose.material3.Switch(
+                checked = state.notificationsEnabled,
+                onCheckedChange = handlers.onSetNotificationsEnabled,
+                enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Notifications),
+            )
+        SearchDomain.AddedAction.SoundVolume -> run {
             val enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound)
             var draft by remember(state.soundVolume) { mutableStateOf(state.soundVolume.toFloat()) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

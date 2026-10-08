@@ -202,4 +202,19 @@ class CustomMenuButtonsTest {
         assertEquals(layout, CustomMenuButtons.decodeLayout(kept.single().layout))
         assertEquals(null, CustomMenuButtons.decodeLayout("not json"))
     }
+
+    /** User rule 2026-10-08: an action of a Search window, added to the menu with that window's elements. */
+    @Test
+    fun an_action_added_to_the_menu_keeps_its_elements_and_survives_its_encoding() {
+        val config = """{"kinds":["Task"],"added":["Task/task/user/3"]}"""
+        val (list, id) = CustomMenuButtons.addedAction(CustomMenuButtons.DEFAULTS, "TaskDuplicate", "Duplicate  ·  Apple", config)
+        val item = list.last()
+        assertEquals(CustomMenuButton(id, "", "Duplicate  ·  Apple", config, action = "TaskDuplicate"), item)
+        // The same action on other elements is another item: nothing says two are one.
+        val (two, second) = CustomMenuButtons.addedAction(list, "TaskDuplicate", "Duplicate  ·  Banana", config)
+        assertTrue(second != id && two.size == list.size + 1)
+        assertEquals(two, CustomMenuButtons.decode(CustomMenuButtons.encode(two)))
+        // A list written before items could be actions reads with none.
+        assertTrue(CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S"}],"seeded":true}""").single().action == null)
+    }
 }

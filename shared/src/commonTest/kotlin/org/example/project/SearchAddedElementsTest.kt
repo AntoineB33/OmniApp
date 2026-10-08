@@ -475,4 +475,26 @@ class SearchAddedElementsTest {
     private companion object {
         const val HOUR: Long = 3_600_000L
     }
+
+    /**
+     * User rule 2026-10-08: an action of the Search window kept in the lateral menu acts on the elements it was added
+     * with — and "if then the button or field can't do anything, for example it is the button 'duplicate' for a task
+     * that doesn't exist anymore, then the button is grayed in the left-side menu."
+     */
+    @Test
+    fun an_action_kept_in_the_menu_can_act_while_one_of_its_elements_is_left() {
+        var s = account()
+        val apple = s.tasks.values.single { it.title == "Apple" }
+        val keys = listOf(SearchDomain.taskKey(apple.id))
+        assertTrue(SearchDomain.actionCanAct(s, SearchDomain.AddedAction.TaskDuplicate, keys))
+        assertTrue(SearchDomain.actionCanAct(s, SearchDomain.AddedAction.OpenEach, keys), "an action on every element")
+        assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.AlarmDuplicate, keys), "no alarm among them")
+        assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.TaskDuplicate, emptyList()))
+        // The task is deleted: nothing is left for the action to act on.
+        val cell = s.cells.values.single { it.taskId == apple.id }.id
+        s = r(s, SchedulerIntent.SetCellTitle(cell, ""))
+        assertTrue(s.tasks[apple.id] == null || SearchDomain.resolve(s, keys).isEmpty(), "the task is gone from the account")
+        assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.TaskDuplicate, keys))
+        assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.OpenEach, keys))
+    }
 }
