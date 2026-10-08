@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The set of rules output read as four violations of the requirements: its wording — 2026-10-08
+
+The user pasted the output into Gemini, which found: overlapping intervals (a run `+0:59:54 → +1:30:41` engulfing the
+break `+1:00:01 → +1:05:01`), a mode-1 line inside a 20s break, a 20s break 19 s long, and "if planning is refused,
+run planning". All four are `describeScheduleRules`' wording, rewritten:
+- a run is one panel across its breaks and was listed whole; the output is now cut into sequential pieces (the
+  runtime already reads it so: `RuleProgram` for the tasks, `BreakMachine` for the breaks);
+- the head named the mode CLASS the plan was found for (at a screen); it now names the line's mode, 3 inside a 20s
+  break;
+- offsets were truncated toward zero on each side of the line (−18.5 s → `-0:00:18`, +1.5 s → `+0:00:01`); floored;
+- the release account has 91 tasks titled "planning": a title shared by two named tasks now carries the id.
+NOT established: that no run ever names ITS OWN task as its alternative — the persisted state holds no rule-laid run
+to check, and the optimizer was not read for it. With ids in the output the next paste shows it either way.
+`ScheduleRulesOutputTest`. Client only; nothing the scheduler answers changed.
+
 ### The calendar's configuration keeps its width and stands on the left of its section — 2026-10-08
 
 The user: "In the calendar, when the calendar section gets reduced, the day selector should keep its length and all

@@ -112,6 +112,13 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   Compiling is the scheduler's side, done when the rules change, never on a tick. **Do not add a per-tick reading of
   `state.panels`, of the pause history or of the environment to the runtime**; a question the line asks goes to the
   cursor or the machine.
+- **The set of rules output is WRITTEN the way it is read** (`SchedulerDomain.describeScheduleRules`,
+  `ScheduleRulesOutputTest`; 2026-10-08, after an outside reader took the first wording for four violations of the
+  requirements). The pieces are **sequential and never overlap** — the timeline cut at every edge of a run, of a
+  break and of a change of alternative, the cuts the two cursors make; inside a break that refuses the run's task the
+  piece is the break alone. The head states the **line's** mode: mode 3 while it stands in a 20-second break, whichever
+  at-screen mode the class is named by. Offsets are **floored on both sides** of the line, so twenty seconds read
+  twenty. A title two named tasks share carries the task's id. It is a rendering: nothing the runtime reads.
 - **What ran is banked once a plan panel has ENDED or the tree changed** (the cursor's armed trigger, acted on by the
   advance tick: `elapsePending`), never by an `AdvanceSchedule` at every tick. A tree edit is a trigger too: a task
   that left the tree may not go on holding a panel (PRD §9). Banking stays on the tick's cadence: banked at the cue

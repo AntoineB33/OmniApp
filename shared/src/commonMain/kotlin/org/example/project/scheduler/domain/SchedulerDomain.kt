@@ -5682,7 +5682,7 @@ object SchedulerDomain {
         rulesSink?.invoke(
             SchedulerRunRules(
                 ruleState = ruleState,
-                rules = describeScheduleRules(panels, nowMillis, tpMode),
+                rules = describeScheduleRules(panels, nowMillis, tpMode, state.tasks),
             ),
         )
         return panels
@@ -5902,75 +5902,124 @@ object SchedulerDomain {
             panelCount = state.panels.size,
             // The rule state input the kept plan answers: the same reading a fill makes of the state.
             ruleState = planTasksOf(state, nowMillis).map { describePlanRule(it, state.tasks[it.id]?.title.orEmpty()) },
-            rules = describeScheduleRules(state.panels, nowMillis, tpMode),
+            rules = describeScheduleRules(state.panels, nowMillis, tpMode, state.tasks),
             nowMillis = nowMillis,
             tpMode = tpMode,
         )
     }
 
-    fun describeScheduleRules(panels: List<TaskPanel>, nowMillis: Long, tpMode: Int): List<String> {
+    /**
+     * **The set of rules output, written as it is READ** (`docs/scheduler_requirements.md` § *Rule Structure*:
+     * *"sequential local branches and trigger boundaries"*). Four things an outside reader got wrong off the first
+     * wording (2026-10-08), each of them the wording's fault and none the plan's:
+     *  - **The pieces are sequential and never overlap.** A run is ONE panel across the breaks inside it, and a break
+     *    is another: listed whole, the run `+0:59 → +1:30` engulfed the break `+1:00 → +1:05`, and a cursor reading
+     *    "until the second offset" skipped the break. The timeline is cut here at every edge of a run, of a break and
+     *    of a change of alternative — the cuts the runtime's own two cursors make ([RuleProgram], [BreakMachine]) —
+     *    and each piece says the one thing in force over it. Inside a break that refuses the run's task ([tasks],
+     *    [periodRefuses]) the piece is the break alone; inside one that admits it, the break AND the run.
+     *  - **The mode stated is the line's.** The rules are found for a mode CLASS (at a screen: modes 1 and 3), and
+     *    [tpMode] names the class. A line standing in a 20-second break is in mode 3 — the requirements send it there
+     *    — so the head says so rather than "mode 1" over a break only mode 3 may cross.
+     *  - **Offsets are floored, both of them.** Truncated toward zero, a break from −18.5 s to +1.5 s read
+     *    `-0:00:18 → +0:00:01`: nineteen seconds for a period that lasts twenty.
+     *  - **A task is named so that it cannot be taken for another.** Titles are not unique (an account has dozens of
+     *    tasks called "planning"): where two tasks named in the list share a title, each carries its id, or "if
+     *    planning is refused, run planning" reads as the refused task being scheduled again.
+     */
+    fun describeScheduleRules(
+        panels: List<TaskPanel>,
+        nowMillis: Long,
+        tpMode: Int,
+        tasks: Map<TaskId, Task> = emptyMap(),
+    ): List<String> {
         val instructions =
             panels.asSequence()
                 .filter { it.endEpochMillis > nowMillis }
-                .filter { (it.auto && !it.chore) || it.screenBreak }
+                .filter { (it.auto && !it.chore && it.taskId != null) || it.screenBreak }
                 .sortedWith(compareBy({ it.startEpochMillis }, { it.endEpochMillis }))
                 .toList()
+        val runs = instructions.filter { !it.screenBreak }
+        val breaks = instructions.filter { it.screenBreak }
+        // The line standing in a 20-second break is in mode 3, whichever of the two at-screen modes the class is named by.
+        val inLookAway = breaks.any { it.restrictiveKind == PeriodKinds.BREAK_20S && it.startEpochMillis <= nowMillis }
+        val lineMode = if (tpMode == DynamicPeriods.MODE_AT_SCREEN && inLookAway) DynamicPeriods.MODE_ON_BREAK else tpMode
+        val modeNote =
+            if (lineMode == tpMode) ""
+            else " (it entered a 20s screen break in mode $tpMode and goes back to it when it leaves the break; the rules below are the ones found for both)"
         // § *Rule Structure*: the rules are sequential local branches and the triggers they change at. The head says
         // what every rule below is read against, and the triggers that are not an instant of the timeline.
         val head =
-            "now-line mode $tpMode — ${DynamicPeriods.modeLabel(tpMode)}; offsets are from the now-line\n" +
-                "    each rule below holds from its first offset until its second: that instant is the trigger for the next one\n" +
+            "now-line mode $lineMode — ${DynamicPeriods.modeLabel(lineMode)}$modeNote; offsets are from the now-line\n" +
+                "    the rules below are sequential and do not overlap: each holds from its first offset until its second, and that instant is the trigger for the next one\n" +
                 "    if the now-line changes mode, then the rules found for that mode take over from the now-line\n" +
                 "    if the history is rewritten or the rule state input changes, then the scheduler runs again"
         // The alternative is named by id; the titles are on the panels, so they are collected once rather
-        // than searched for per rule.
+        // than searched for per rule. A title two of the named tasks share is told apart by the id.
         val titles = panels.mapNotNull { p -> p.taskId?.let { it to p.title } }.filter { it.second.isNotBlank() }.toMap()
-        fun nameOf(id: TaskId) = titles[id] ?: id.value
+        val shared = titles.values.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        fun nameOf(id: TaskId): String {
+            val title = titles[id] ?: return id.value
+            return if (title in shared) "$title [${id.value}]" else title
+        }
         val alternativeLength = formatRuleOffset(ALTERNATIVE_SCHEDULE_MILLIS).removePrefix("+")
-        val body =
-            instructions.take(MAX_DESCRIBED_RULES).map { panel ->
-                val from = formatRuleOffset(panel.startEpochMillis - nowMillis)
-                val until = formatRuleOffset(panel.endEpochMillis - nowMillis)
-                val span = "$from → $until"
-                if (panel.screenBreak) {
-                    "$span\n    restrict [${panel.restrictiveKind}] ${panel.title.ifBlank { "period" }}: " +
-                        "only a task this kind of period admits may run"
-                } else {
-                    val name = panel.title.ifBlank { panel.taskId?.value ?: "(nobody)" }
-                    // § *Alternative Schedules*: what is set at the line if the scheduled task is refused — one
-                    // answer for the run, or one per stretch of it where the answer changes inside the run.
-                    val answers =
-                        listOf(panel.startEpochMillis to panel.alternativeTaskId) +
-                            panel.alternativeSpans.filter { it.fromMillis > panel.startEpochMillis }.map { it.fromMillis to it.taskId }
-                    val otherwise =
-                        answers.mapIndexed { i, (at, task) ->
-                            val prefix = if (i == 0) "    else " else "    else, from ${formatRuleOffset(at - nowMillis)}, "
-                            if (task == null) {
-                                prefix + "nothing: no other task may run here"
-                            } else {
-                                prefix + "run ${nameOf(task)} on [now-line; now-line + $alternativeLength], then the scheduler runs again"
-                            }
-                        }
-                    val held =
-                        if (panel.lineBound) listOf("    if the now-line is in mode 1, then this run is held at the now-line where a period gives way to it")
-                        else emptyList()
-                    (listOf(span, "    if $name is accepted, then run $name until $until") + otherwise + held).joinToString("\n")
+        // Every instant the answer changes at: the edges of the runs and of the breaks, and where a run's alternative does.
+        val cuts =
+            buildSet {
+                for (p in instructions) {
+                    add(p.startEpochMillis)
+                    add(p.endEpochMillis)
                 }
+                for (r in runs) for (span in r.alternativeSpans) if (span.fromMillis > r.startEpochMillis && span.fromMillis < r.endEpochMillis) add(span.fromMillis)
+            }.sorted()
+        val pieces = ArrayList<String>()
+        var listed = 0
+        var overflow = 0
+        for (k in 0 until cuts.size - 1) {
+            val from = cuts[k]
+            val to = cuts[k + 1]
+            val restricting = breaks.filter { it.startEpochMillis <= from && from < it.endEpochMillis }
+            val run = runs.firstOrNull { it.startEpochMillis <= from && from < it.endEpochMillis }
+            if (restricting.isEmpty() && run == null) continue
+            if (listed >= MAX_DESCRIBED_RULES) {
+                overflow++
+                continue
             }
-        val overflow = instructions.size - body.size
-        return listOf(head) + body + if (overflow > 0) listOf("… $overflow more rules") else emptyList()
+            listed++
+            val until = formatRuleOffset(to - nowMillis)
+            val lines = ArrayList<String>()
+            lines += formatRuleOffset(from - nowMillis) + " → " + until
+            for (period in restricting) {
+                lines += "    restrict [${period.restrictiveKind}] ${period.title.ifBlank { "period" }}: only a task this kind of period admits may run"
+            }
+            // The run holds here unless a break over this piece refuses its task: then the break is the whole rule.
+            val holds = run != null && restricting.none { periodRefuses(tasks, run.taskId, it.restrictiveKind) }
+            if (run != null && holds) {
+                val name = run.taskId?.let(::nameOf) ?: "(nobody)"
+                lines += "    if $name is accepted, then run $name until $until"
+                // § *Alternative Schedules*: what is set at the line if the scheduled task is refused.
+                val alternative = run.alternativeAt(from)
+                lines +=
+                    if (alternative == null) "    else nothing: no other task may run here"
+                    else "    else run ${nameOf(alternative)} on [now-line; now-line + $alternativeLength], then the scheduler runs again"
+                if (run.lineBound) lines += "    if the now-line is in mode 1, then this run is held at the now-line where a period gives way to it"
+            }
+            pieces += lines.joinToString("\n")
+        }
+        return listOf(head) + pieces + if (overflow > 0) listOf("… $overflow more rules") else emptyList()
     }
 
     /**
      * An offset from the now-line, `±h:mm:ss`. Seconds are shown because one of the three dynamic periods is
-     * twenty seconds long, and a rule list that rounded it away would say the period was empty.
+     * twenty seconds long, and a rule list that rounded it away would say the period was empty. FLOORED, behind the
+     * line as ahead of it: two offsets a whole number of seconds apart then read that many seconds apart.
      */
     private fun formatRuleOffset(millis: Long): String {
-        val sign = if (millis < 0) "-" else "+"
-        val total = abs(millis) / 1000
+        val seconds = millis.floorDiv(1000L)
+        val sign = if (seconds < 0) "-" else "+"
+        val total = abs(seconds)
         val minutes = (total % 3600) / 60
-        val seconds = total % 60
-        return "$sign${total / 3600}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
+        return "$sign${total / 3600}:${minutes.toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}"
     }
 
     /**
