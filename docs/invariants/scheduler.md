@@ -291,6 +291,22 @@ model exists to prevent.
     retracted spans, so the no-screen period a wind-down hour carries, or the one two declared layers make (neither
     has a band), holds no laid task ahead either. A test that "a no-screen period keeps an on-screen task out" asks
     what the rules give at the line (`drawnAt`, commonTest); one about what the line will be on asks the rules.
+- **The period before bed is as long as the schedule says, and is TITLED "No screen before bed"** (user rule
+  2026-10-09; `SleepSchedule.beforeBedMinutes`, `SchedulerDomain.beforeBedMillis`, `SleepScheduleEditTest`). An hour
+  by default, `0` lays none, half a day at most. The KIND keeps its name, `before bed`: resilience values, drawings
+  and combination rules are stored under it, so only `PeriodKinds.periodTitle` changed — the places that show a
+  kind's own name (a period's edit row, the resilience lists, the set of rules output) still read `before bed`.
+  `BEFORE_BED_MILLIS` is the default length and nothing reads it as THE length any more.
+- **The night's three times are ONE night said three ways** (user rule 2026-10-09; `SchedulerDomain.NightTime`,
+  `minutesBeforeWake`, `SleepScheduleEditTest`): wake up, go to bed, stop screens — each the wake time less what
+  precedes it. Stating any of them (`withNightTime`) moves the whole night; none changes the sleep time or the length
+  of the period before bed, which have fields of their own. The goal the wake time drifts toward is said as the same
+  time (`withGoalNightTime`). Stored still as `wakeMinutes` / `goalWakeMinutes` and the two lengths: nothing new.
+- **Editing the sleep schedule runs no fill in the reducer** (anomaly 2026-10-09: the fields froze under the hand).
+  `reduceSetSleepSchedule` commits the edit and returns; the schedule is in `schedulingSignature`, so the engine runs
+  from scratch for it off the UI thread after its debounce. It refilled in line until then — a fill with its search,
+  once per text that read as a time — and the engine re-planned for the same change anyway. Do not put it back to make
+  the night "take effect right away": the calendar keeps the previous set of rules until the scheduler has one.
 - **PRD §17's wind-down is a KIND, not a rule: `before bed` (`PeriodKinds.BEFORE_BED`).** The hour before
   each §17 bedtime is covered by a period of it (`SchedulerDomain.beforeBedPanels`, derived from
   `sleepPanels` so the hour drifts with the wake time it is measured back from). The hour is empty for the

@@ -3528,28 +3528,15 @@ object SchedulerReducer {
                 skippedWakeEpochDays = sleep.skippedWakeEpochDays.ifEmpty { current?.skippedWakeEpochDays.orEmpty() },
                 skippedBeforeBedEpochDays =
                     sleep.skippedBeforeBedEpochDays.ifEmpty { current?.skippedBeforeBedEpochDays.orEmpty() },
+                beforeBedMinutes = sleep.beforeBedMinutes.coerceIn(0, SchedulerDomain.MAX_BEFORE_BED_MINUTES),
             )
         if (state.sleep == anchored) return state
-        val committed = commitDelta(state, SleepDelta(state.sleep, anchored))
-        // Refill so the nightly sleep window takes effect right away (when auto-scheduling is on).
-        if (!committed.automaticSchedule) return committed
-        val now = clock.nowMillis()
-        var cycle: ScheduleCycle? = null
-        var idle: List<TaskTimeRange> = emptyList()
-        val filled =
-            SchedulerDomain.fillSchedule(
-                committed,
-                now,
-                liveRest = liveRestGap(),
-                noScreenEvidence = noScreenEvidence(),
-                frozenBreaks = frozenScreenBreaks(),
-                tpMode = tpMode(),
-                horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
-                cycleSink = { cycle = it },
-                idleSink = { idle = it },
-                searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
-            )
-        return committed.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
+        // Anomaly 2026-10-09 (*"when editing the fields, it freezes a lot. The scheduler engine should not freeze what
+        // the user does"*): the edit is the edit and nothing else. It refilled right here — a fill with its search, on
+        // the thread the keystroke came in on, once for every text that read as a time ("07:3" on the way to "07:30").
+        // The schedule is in [SchedulerDomain.schedulingSignature]: the engine runs from scratch for it, off this
+        // thread, after its debounce, and the calendar keeps the previous set of rules until it has one.
+        return commitDelta(state, SleepDelta(state.sleep, anchored))
     }
 
     /**

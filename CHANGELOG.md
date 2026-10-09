@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The sleep fields froze under the hand; one time field with a drop-down; the period before bed has a length — 2026-10-09
+
+The user: "In the sleep configurations in the calendar, when editing the fields, it freezes a lot. The scheduler engine
+should not freeze what the user does. Also, add a drop-down list to select which field to edit between wake up, go to
+bed or stop screens. Add a field for the duration of the no screen before bed period. Rename the hour before bed
+period that way."
+- **The freeze.** `reduceSetSleepSchedule` ran `fillSchedule` with its search on the dispatching thread, once per text
+  that read as a time. Removed: the engine re-plans for the schedule anyway (it is in `schedulingSignature`), off the
+  UI thread. Read in the code, NOT measured: no profile was taken before or after.
+- **The fields** (`SleepScheduleFields`): a drop-down — Wake up / Go to bed / Stop screens — says which time of the
+  night the two time fields are about: that time now, and the one it drifts toward ("Goal stop screens time" while
+  "Stop screens" is chosen). Stating either moves the WHOLE night and changes neither length
+  (`SchedulerDomain.NightTime`, `withNightTime`, `withGoalNightTime`). Then Total sleep time and the new **No screen
+  before bed** length. (As first written the same day, "Go to bed" changed the sleep time and "Stop screens" the
+  period's length, and the goal was always the wake time's; the user: "When modifying the time to wake up, it should
+  update the time to go to sleep and stops screens. Right now, it updates the total sleep time… if stop screens is
+  selected, then it must not be goal wake time but goal stop screens time".)
+- **The length**: `SleepSchedule.beforeBedMinutes` (60 by default, 0 = none, 12 h at most). **Persisted shape**:
+  `PersistedSleep.beforeBedMinutes`, default 60, absent from an older payload — `SleepScheduleEditTest`. Synced with
+  the schedule; an older build on another device does not know the field.
+- **The name**: the period's title is "No screen before bed" (it was "Before bed"), and a break's follow-on reads
+  "followed by no screen before bed". The KIND id stays `before bed` (stored keys), so a period's edit row, the
+  resilience lists and the rules output still show `before bed`; the spoken cue is a recorded file and still says
+  "the hour before bed".
+Client only.
+
 ### A switch to mode 3 no longer changes the schedule — 2026-10-08
 
 The user: "Switching to $now line$ mode 3 doesn't change the input in itself. However, if the $now line$ was in a task

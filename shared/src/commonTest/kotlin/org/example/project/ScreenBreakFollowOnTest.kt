@@ -28,7 +28,7 @@ class ScreenBreakFollowOnTest {
         TaskPanel(
             SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX + "2026-09-05",
             null,
-            "Before bed",
+            "No screen before bed",
             start,
             end,
             periodKind = PeriodKinds.BEFORE_BED,
@@ -66,7 +66,7 @@ class ScreenBreakFollowOnTest {
             SchedulerDomain.screenBreakFollowOn(panels, NOW, NOW + 5 * MIN),
         )
         assertEquals(
-            "15 min pose — followed by the hour before bed",
+            "15 min pose — followed by no screen before bed",
             SchedulerDomain.screenBreakStartNotificationMessage(panels, "15 min pose", NOW, NOW + 5 * MIN),
         )
     }

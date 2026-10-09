@@ -304,7 +304,9 @@ class CalendarEditChoicesTest {
             "deep work",
         ).forEach { kind ->
             assertEquals(listOf(kind), calendarEditChoices(listOf(period("p", kind))).map { it.label }, kind)
-            assertTrue(PeriodKinds.periodTitle(kind).equals(kind, ignoreCase = true), kind)
+            // The schedule's period before bed is TITLED for what it is since 2026-10-09 ("No screen before bed"); its
+            // kind — what resilience values and drawings are stored under — kept its name, so the two differ there.
+            if (kind != PeriodKinds.BEFORE_BED) assertTrue(PeriodKinds.periodTitle(kind).equals(kind, ignoreCase = true), kind)
         }
         // The one row that is not a period one-for-one names the kind it stands for, by the same rule.
         assertEquals(

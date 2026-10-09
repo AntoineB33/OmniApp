@@ -138,7 +138,7 @@ class RestrictivePeriodKindTest {
         )
         val panel = s.panels.single { it.isRestrictivePeriod }
         assertEquals(PeriodKinds.BEFORE_BED, panel.restrictiveKind)
-        assertEquals("Before bed", panel.title)
+        assertEquals("No screen before bed", panel.title)
         // The §17 wind-down hours the fill lays are `before-bed/{wake day}` and are regenerated wholesale;
         // this one is the user's, so it must NOT be one of those or the next fill would wipe it.
         assertFalse(panel.id.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX))
@@ -419,7 +419,7 @@ class RestrictivePeriodKindTest {
     fun a_kinds_title_and_legacy_flags_come_from_one_place() {
         assertEquals("No screen", PeriodKinds.periodTitle(PeriodKinds.NO_SCREEN))
         assertEquals("Inactivity", PeriodKinds.periodTitle(PeriodKinds.INACTIVITY))
-        assertEquals("Before bed", PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED))
+        assertEquals("No screen before bed", PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED))
         assertEquals(SchedulerDomain.BEFORE_BED_PANEL_TITLE, PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED))
         assertEquals(DEEP, PeriodKinds.periodTitle(DEEP))
 

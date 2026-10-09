@@ -491,7 +491,7 @@ object PeriodKinds {
             NO_SCREEN -> "No screen"
             INACTIVITY -> "Inactivity"
             SLEEP -> "Sleep"
-            BEFORE_BED -> "Before bed"
+            BEFORE_BED -> "No screen before bed"
             NO_COMPUTER_UNLOCKED -> SchedulerDomain.ActivityLayer.NoComputerUnlocked.calendarLabel
             NO_PHONE_UNLOCKED -> SchedulerDomain.ActivityLayer.NoPhoneUnlocked.calendarLabel
             NOT_ON_A_COMPUTER -> "Not on a computer"

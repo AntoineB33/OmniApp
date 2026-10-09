@@ -2326,6 +2326,62 @@ object SchedulerDomain {
      */
     const val BEFORE_BED_MILLIS: Long = 60L * MILLIS_PER_MINUTE
 
+    /** The longest the "no screen before bed" period may be: half a day. */
+    const val MAX_BEFORE_BED_MINUTES: Int = 12 * 60
+
+    /**
+     * User rule 2026-10-09: **the length of [sleep]'s "no screen before bed" period** — the schedule's own
+     * ([SleepSchedule.beforeBedMinutes]), kept between nothing and [MAX_BEFORE_BED_MINUTES]; [BEFORE_BED_MILLIS], the
+     * hour it always was, for a schedule that says nothing.
+     */
+    fun beforeBedMillis(sleep: SleepSchedule?): Long =
+        if (sleep == null) BEFORE_BED_MILLIS else sleep.beforeBedMinutes.coerceIn(0, MAX_BEFORE_BED_MINUTES) * MILLIS_PER_MINUTE
+
+    private fun onTheClock(minutes: Int): Int = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60)
+
+    /**
+     * User rule 2026-10-09: **the three times of a night** — when one wakes up, goes to bed, stops screens. They are
+     * ONE night said three ways: each is the wake time less [minutesBeforeWake], so stating any of them places the
+     * whole night (*"when modifying the time to wake up, it should update the time to go to sleep and stop screens"*)
+     * and changes neither length — the sleep time and the "no screen before bed" period have fields of their own.
+     * The GOAL the wake time drifts toward is said the same way (*"if stop screens is selected, then it must not be
+     * goal wake time but goal stop screens time"*).
+     */
+    enum class NightTime(val label: String) {
+        WakeUp("Wake up"),
+        GoToBed("Go to bed"),
+        StopScreens("Stop screens"),
+    }
+
+    /** How long before the wake time [time] falls in [sleep]'s night. */
+    fun minutesBeforeWake(sleep: SleepSchedule, time: NightTime): Int =
+        when (time) {
+            NightTime.WakeUp -> 0
+            NightTime.GoToBed -> sleep.sleepDurationMinutes
+            NightTime.StopScreens -> sleep.sleepDurationMinutes + (beforeBedMillis(sleep) / MILLIS_PER_MINUTE).toInt()
+        }
+
+    /** [time] of [sleep]'s night, as a time of day. */
+    fun nightTimeMinutes(sleep: SleepSchedule, time: NightTime): Int = onTheClock(sleep.wakeMinutes - minutesBeforeWake(sleep, time))
+
+    /** The same of the night [sleep] drifts toward: its goal wake time, said as [time]. */
+    fun goalNightTimeMinutes(sleep: SleepSchedule, time: NightTime): Int =
+        onTheClock(sleep.goalWakeMinutes - minutesBeforeWake(sleep, time))
+
+    /** [sleep] with [time] at [minutes] of the day: the whole night moves, both lengths as they were. */
+    fun withNightTime(sleep: SleepSchedule, time: NightTime, minutes: Int): SleepSchedule =
+        sleep.copy(wakeMinutes = onTheClock(minutes + minutesBeforeWake(sleep, time)))
+
+    /** [sleep] drifting toward a night whose [time] is at [minutes] of the day. */
+    fun withGoalNightTime(sleep: SleepSchedule, time: NightTime, minutes: Int): SleepSchedule =
+        sleep.copy(goalWakeMinutes = onTheClock(minutes + minutesBeforeWake(sleep, time)))
+
+    /** When [sleep] goes to bed, as a time of day: its wake time less its sleep time. */
+    fun bedtimeMinutes(sleep: SleepSchedule): Int = nightTimeMinutes(sleep, NightTime.GoToBed)
+
+    /** When [sleep] stops screens, as a time of day: its bedtime less its "no screen before bed" period. */
+    fun screensStopMinutes(sleep: SleepSchedule): Int = nightTimeMinutes(sleep, NightTime.StopScreens)
+
     /** The title the §17 wind-down periods carry, so a caller can build the same period the fill builds. */
     /** The §17 wind-down band's title — [PeriodKinds.periodTitle]'s answer for the kind, never a second one. */
     val BEFORE_BED_PANEL_TITLE: String = PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED)
@@ -2445,9 +2501,11 @@ object SchedulerDomain {
         toMillis: Long,
         timeZone: TimeZone,
     ): List<TaskPanel> {
-        if (toMillis <= fromMillis) return emptyList()
-        return sleepPanels(sleep, fromMillis, toMillis + BEFORE_BED_MILLIS, timeZone).mapNotNull { window ->
-            val start = window.startEpochMillis - BEFORE_BED_MILLIS
+        // Its length is the schedule's ([beforeBedMillis], user rule 2026-10-09); a schedule that asks for none has none.
+        val length = beforeBedMillis(sleep)
+        if (toMillis <= fromMillis || length <= 0L) return emptyList()
+        return sleepPanels(sleep, fromMillis, toMillis + length, timeZone).mapNotNull { window ->
+            val start = window.startEpochMillis - length
             val end = window.startEpochMillis
             val dragged = window.id.removePrefix("sleep/").toLongOrNull() in sleep?.skippedBeforeBedEpochDays.orEmpty()
             if (end <= fromMillis || start >= toMillis || dragged) {
@@ -4620,7 +4678,7 @@ object SchedulerDomain {
         endMillis: Long,
     ): String = when (screenBreakFollowOn(panels, startMillis, endMillis)) {
         ScreenBreakFollowOn.UserPeriod -> "$title — followed by a no screen period"
-        ScreenBreakFollowOn.BeforeBed -> "$title — followed by the hour before bed"
+        ScreenBreakFollowOn.BeforeBed -> "$title — followed by no screen before bed"
         null -> title
     }
 

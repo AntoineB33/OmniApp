@@ -644,6 +644,11 @@ data class SleepSchedule(
     val skippedWakeEpochDays: Set<Long> = emptySet(),
     /** The same for the hour before bed alone, dragged away from a window that stays. */
     val skippedBeforeBedEpochDays: Set<Long> = emptySet(),
+    /**
+     * User rule 2026-10-09: **how long the "no screen before bed" period is** — it ends at bedtime and starts this
+     * long before it. An hour until then, which is the default; `0` lays none.
+     */
+    val beforeBedMinutes: Int = 60,
 )
 
 /**

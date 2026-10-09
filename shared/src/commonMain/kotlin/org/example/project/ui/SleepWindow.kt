@@ -1,6 +1,15 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.key
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
+import org.example.project.scheduler.domain.SchedulerDomain
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,26 +77,101 @@ fun SleepWindow(
 }
 
 /**
- * **The sleep schedule's fields** — the wake time, the goal wake time (the wake time drifts 15 min toward it every 2
- * days), the total sleep time, and the bedtime they make. Each edit is saved at once through [onSave]. ONE drawing:
- * the calendar's configuration section shows it (user rule 2026-10-07 — it left the lateral menu for there), and so
- * does the Sleep window the calendar's "edit… → sleep schedule" still opens. [fieldModifier] is the caller's word on
- * each field (the calendar's hand the keyboard back at a press outside).
+ * **The sleep schedule's fields**. Each edit is saved at once through [onSave]. ONE drawing: the calendar's
+ * configuration section shows it (user rule 2026-10-07 — it left the lateral menu for there), and so does the Sleep
+ * window the calendar's "edit… → sleep schedule" still opens. [fieldModifier] is the caller's word on each field (the
+ * calendar's hand the keyboard back at a press outside).
+ *
+ * User rule 2026-10-09: **a drop-down says which time of the night the two time fields are about** — wake up, go to
+ * bed or stop screens ([SchedulerDomain.NightTime]). The first is that time now, the second the one it drifts toward
+ * (15 min every 2 days): "Goal stop screens time" while "Stop screens" is chosen. Stating either places the whole
+ * night and changes neither length — the two lengths are the fields under them.
  */
 @Composable
 internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -> Unit, fieldModifier: Modifier = Modifier) {
-    val bedMinutes = ((sleep.wakeMinutes - sleep.sleepDurationMinutes) % (24 * 60) + 24 * 60) % (24 * 60)
-    TimeField("Wake time", sleep.wakeMinutes, fieldModifier = fieldModifier) { onSave(sleep.copy(wakeMinutes = it)) }
-    TimeField("Goal wake time", sleep.goalWakeMinutes, fieldModifier = fieldModifier) { onSave(sleep.copy(goalWakeMinutes = it)) }
+    var which by remember { mutableStateOf(SchedulerDomain.NightTime.WakeUp) }
+    // Keyed on the choice: a field's text is the chosen time's, never the one typed for another.
+    key(which) {
+        TimeField(
+            label = { SleepTimeChoice(which, onChoose = { which = it }, modifier = Modifier.weight(1f)) },
+            minutes = SchedulerDomain.nightTimeMinutes(sleep, which),
+            fieldModifier = fieldModifier,
+        ) { onSave(SchedulerDomain.withNightTime(sleep, which, it)) }
+        TimeField("Goal ${which.label.lowercase()} time", SchedulerDomain.goalNightTimeMinutes(sleep, which), fieldModifier = fieldModifier) {
+            onSave(SchedulerDomain.withGoalNightTime(sleep, which, it))
+        }
+    }
     TimeField("Total sleep time", sleep.sleepDurationMinutes, allowOver24 = true, fieldModifier = fieldModifier) {
         onSave(sleep.copy(sleepDurationMinutes = it))
     }
+    // How long before bed screens stop: the length of the period the calendar draws there.
+    TimeField("No screen before bed", sleep.beforeBedMinutes, allowOver24 = true, fieldModifier = fieldModifier) {
+        if (it <= SchedulerDomain.MAX_BEFORE_BED_MINUTES) onSave(sleep.copy(beforeBedMinutes = it))
+    }
     Text(
-        text = "Bedtime ${formatHourMinute(bedMinutes)} → wake ${formatHourMinute(sleep.wakeMinutes % (24 * 60))}",
+        text = "Stop screens ${formatHourMinute(SchedulerDomain.screensStopMinutes(sleep))} → bed " +
+            "${formatHourMinute(SchedulerDomain.bedtimeMinutes(sleep))} → wake ${formatHourMinute(sleep.wakeMinutes % (24 * 60))}",
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+/** The drop-down that says which time the field beside it edits. It never takes the keyboard: the calendar's is the calendar's. */
+@Composable
+private fun SleepTimeChoice(
+    which: SchedulerDomain.NightTime,
+    onChoose: (SchedulerDomain.NightTime) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .focusProperties { canFocus = false }
+                .clickable { open = true }
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(which.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
+            Text("▾", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            SchedulerDomain.NightTime.entries.forEach { entry ->
+                DropdownMenuItem(
+                    text = { Text(entry.label) },
+                    onClick = {
+                        onChoose(entry)
+                        open = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** [TimeField] under a plain text label. */
+@Composable
+private fun TimeField(
+    label: String,
+    minutes: Int,
+    allowOver24: Boolean = false,
+    fieldModifier: Modifier = Modifier,
+    onMinutes: (Int) -> Unit,
+) =
+    TimeField(
+        label = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        },
+        minutes = minutes, allowOver24 = allowOver24, fieldModifier = fieldModifier, onMinutes = onMinutes,
+    )
 
 /**
  * A labeled `HH:MM` text field bound to a minutes value. Keeps local edit text so typing isn't disrupted;
@@ -95,7 +179,7 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
  */
 @Composable
 private fun TimeField(
-    label: String,
+    label: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     minutes: Int,
     allowOver24: Boolean = false,
     fieldModifier: Modifier = Modifier,
@@ -110,13 +194,7 @@ private fun TimeField(
         if (parseHourMinute(text, allowOver24) != minutes) text = formatHourMinute(minutes)
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        label()
         // A time of day steps round the clock; a duration stops at nothing and at a day.
         TimeNudgeMenu(
             onNudge = { delta ->
