@@ -69,11 +69,11 @@ class SearchAddedElementsTest {
             SearchDomain.Config(
                 filters = SearchDomain.Filters(
                     taskOnCalendar = SearchDomain.Tri.Yes,
-                    taskBoxesFrom = LocalDate(2026, 9, 1),
-                    taskBoxesUntil = LocalDate(2026, 9, 30),
+                    taskBoxesFrom = millis("2026-09-01") + 9 * HOUR,
+                    taskBoxesUntil = millis("2026-09-30") + 17 * HOUR,
                     periodOnCalendar = SearchDomain.Tri.No,
-                    periodBoxesFrom = LocalDate(2026, 1, 2),
-                    periodBoxesUntil = LocalDate(2026, 12, 31),
+                    periodBoxesFrom = millis("2026-01-02"),
+                    periodBoxesUntil = millis("2026-12-31") + HOUR / 2,
                 ),
                 added = listOf("Task/t1", "Alarm/alarm-1"),
             )
@@ -91,6 +91,15 @@ class SearchAddedElementsTest {
         assertEquals(0, config.filters.activeCount - 1, "only the stored filter is on")
         // A day that does not parse is "any", not a failed configuration.
         assertEquals(null, SearchDomain.Config.decode("""{"taskBoxesFrom":"someday"}""")!!.filters.taskBoxesFrom)
+        // What the build before 2026-10-11 wrote — a DAY per bound: "from" is that day's first instant, "until" its
+        // last, which is the window those two days named.
+        val days = SearchDomain.Config.decode("""{"taskBoxesFrom":"2026-09-10","taskBoxesUntil":"2026-09-20","periodBoxesUntil":"2026-09-20"}""")!!.filters
+        // (On this device's clock, as the day was typed.)
+        fun here(day: String) = LocalDate.parse(day).atStartOfDayIn(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+        assertEquals(here("2026-09-10"), days.taskBoxesFrom)
+        assertEquals(here("2026-09-21"), days.taskBoxesUntil)
+        assertEquals(here("2026-09-21"), days.periodBoxesUntil)
+        assertEquals(null, days.periodBoxesFrom)
     }
 
     // ----- The calendar filters ---------------------------------------------------------------------
@@ -112,8 +121,13 @@ class SearchAddedElementsTest {
         assertEquals(listOf("Apple", "Banana"), taskRows(s, on))
     }
 
+    /**
+     * User rule 2026-10-11: the two bounds are INSTANTS — the calendar's "edit…" sets both to the right-click — and
+     * a task is kept when it has a box touching the window they make. (Until then two days, and "every box of the
+     * task lies within them" — under which both bounds at one instant could keep nothing.)
+     */
     @Test
-    fun a_day_bound_keeps_a_task_only_when_every_one_of_its_boxes_is_within_it() {
+    fun the_boxes_window_keeps_a_task_that_has_a_box_touching_it() {
         var s = account()
         val apple = taskWithTitle(s, "Apple")
         val banana = taskWithTitle(s, "Banana")
@@ -125,17 +139,52 @@ class SearchAddedElementsTest {
                 panel("b2", banana, "2026-09-25"),
             ),
         )
-        assertEquals(listOf("Apple"), taskRows(s, SearchDomain.Filters(taskBoxesFrom = LocalDate(2026, 9, 10))))
-        assertEquals(emptyList(), taskRows(s, SearchDomain.Filters(taskBoxesFrom = LocalDate(2026, 9, 11))))
-        // "Until" includes the whole of its day.
-        assertEquals(listOf("Apple"), taskRows(s, SearchDomain.Filters(taskBoxesUntil = LocalDate(2026, 9, 20))))
-        assertEquals(
-            listOf("Apple", "Banana"),
-            taskRows(s, SearchDomain.Filters(taskBoxesFrom = LocalDate(2026, 9, 1), taskBoxesUntil = LocalDate(2026, 9, 30))),
-        )
-        // A task with no box at all is not "every box after that day".
+        fun rows(from: Long?, until: Long?) = taskRows(s, SearchDomain.Filters(taskBoxesFrom = from, taskBoxesUntil = until))
+        val a1 = s.panels.first { it.id == "a1" }
+        val inside = a1.startEpochMillis + (a1.endEpochMillis - a1.startEpochMillis) / 2
+        // Both bounds at one instant — the right-click: the task whose box that instant is in.
+        assertEquals(listOf("Apple"), rows(inside, inside))
+        assertEquals(emptyList(), rows(a1.endEpochMillis, a1.endEpochMillis), "a box ends before its end instant")
+        assertEquals(listOf("Apple"), rows(a1.startEpochMillis, a1.startEpochMillis))
+        // A window: every task with a box in it, wherever its other boxes are.
+        assertEquals(listOf("Apple", "Banana"), rows(millis("2026-09-01"), millis("2026-09-30")))
+        assertEquals(listOf("Apple"), rows(millis("2026-09-08"), millis("2026-09-22")))
+        assertEquals(listOf("Banana"), rows(millis("2026-09-22"), millis("2026-09-30")))
+        // One bound alone: a box still running at "from"; a box started by "until".
+        assertEquals(listOf("Banana"), rows(millis("2026-09-22"), null))
+        assertEquals(listOf("Banana"), rows(null, millis("2026-09-06")))
+        assertEquals(emptyList(), rows(millis("2026-10-01"), null))
+        // A task with no box at all has none in any window.
         s = s.copy(panels = s.panels.filter { it.taskId == apple })
-        assertEquals(listOf("Apple"), taskRows(s, SearchDomain.Filters(taskBoxesFrom = LocalDate(2026, 1, 1))))
+        assertEquals(listOf("Apple"), taskRows(s, SearchDomain.Filters(taskBoxesFrom = millis("2026-01-01"))))
+        // The pieces of the rule, said once.
+        assertTrue(SearchDomain.boxInWindow(TaskTimeRange(10, 20), 15, 15))
+        assertTrue(!SearchDomain.boxInWindow(TaskTimeRange(10, 20), 20, 30) && SearchDomain.boxInWindow(TaskTimeRange(10, 20), 0, 10))
+        assertEquals(
+            SearchDomain.Filters(taskBoxesFrom = 5, taskBoxesUntil = 5, periodBoxesFrom = 5, periodBoxesUntil = 5),
+            SearchDomain.withBoxesAt(SearchDomain.Filters(), 5),
+        )
+        assertEquals(SearchDomain.Filters(periodBoxesUntil = 9), SearchDomain.withBoxBound(SearchDomain.Filters(), SearchDomain.BoxBound.PeriodUntil, 9))
+    }
+
+    /**
+     * The calendar's "edit…" sets both bounds to the right-click AND keeps what is on the timeline there: a row that
+     * filter keeps is in the window, whether or not the state holds a panel for it.
+     */
+    @Test
+    fun what_edit_opens_at_the_right_click_has_both_bounds_there_and_still_lists_what_is_there() {
+        var s = account()
+        val apple = taskWithTitle(s, "Apple")
+        s = s.copy(panels = listOf(panel("a1", apple, "2026-09-10")))
+        val a1 = s.panels.single()
+        val click = a1.startEpochMillis + (a1.endEpochMillis - a1.startEpochMillis) / 2
+        val config = SearchDomain.calendarAtConfig(click)
+        assertEquals(listOf(click, click, click, click), config.filters.let { listOf(it.taskBoxesFrom, it.taskBoxesUntil, it.periodBoxesFrom, it.periodBoxesUntil) })
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        val listed = SearchDomain.results(s, config.kinds, "", filters = config.filters, nowMillis = click).map { it.name }
+        val before = SearchDomain.results(s, config.kinds, "", filters = SearchDomain.Filters(calendarAtOn = true, calendarAtMillis = click), nowMillis = click).map { it.name }
+        assertTrue("Apple" in listed)
+        assertEquals(before, listed, "the two bounds at the right-click drop nothing the calendar filter lists there")
     }
 
     @Test
@@ -147,8 +196,8 @@ class SearchAddedElementsTest {
         val on = rows(SearchDomain.Filters(periodOnCalendar = SearchDomain.Tri.Yes))
         assertEquals(listOf(PeriodKinds.NO_SCREEN), on)
         assertTrue(PeriodKinds.NO_SCREEN !in rows(SearchDomain.Filters(periodOnCalendar = SearchDomain.Tri.No)))
-        assertEquals(on, rows(SearchDomain.Filters(periodBoxesFrom = LocalDate(2026, 9, 10))))
-        assertEquals(emptyList(), rows(SearchDomain.Filters(periodBoxesUntil = LocalDate(2026, 9, 9))))
+        assertEquals(on, rows(SearchDomain.Filters(periodBoxesFrom = millis("2026-09-10"))))
+        assertEquals(emptyList(), rows(SearchDomain.Filters(periodBoxesUntil = millis("2026-09-09"))))
     }
 
     // ----- The actions on the added elements -------------------------------------------------------
@@ -313,6 +362,114 @@ class SearchAddedElementsTest {
         // Nothing added (the window of every configuration): one group per kind, as before.
         val sections = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet())
         assertEquals(sections, SearchDomain.actionGroups(sections, emptyList()).map { it.kind to it.actions })
+    }
+
+    /**
+     * User rule 2026-10-11, the Search configurations window: *"the first group gather all the configurations that can
+     * be applied to every element in a set of n element, where n is as big as possible, followed by other groups with
+     * n decreasing"*; one button *"shows only the search configurations that can be applied to at least one element
+     * in the result list"*, and a switch *"to stop hiding or showing new search configurations as the result list
+     * changes"*.
+     */
+    @Test
+    fun the_search_configurations_are_grouped_by_how_many_rows_of_the_results_they_apply_to() {
+        val s = account().copy(
+            alarms = listOf(AlarmEntry(id = "a", label = "Wake"), AlarmEntry(id = "b", label = "Nap"), AlarmEntry(id = "c", label = "Tea")),
+        )
+        val every = SearchDomain.Kind.entries.toSet()
+        val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm))
+        val counts = SearchDomain.kindCountsInResults(s, config)
+        val tasks = counts.getValue(SearchDomain.Kind.Task)
+        assertEquals(3, counts[SearchDomain.Kind.Alarm])
+        assertTrue(tasks > 0 && SearchDomain.Kind.Timer !in counts)
+
+        // Every element first (the configurations about the whole search), then the kinds by their rows.
+        val all = SearchDomain.configurationGroups("", every, counts)
+        assertEquals(null, all.first().kind)
+        assertEquals(tasks + 3, all.first().reach)
+        assertEquals("Every element  ·  ${tasks + 3}", all.first().title)
+        val byReach = all.drop(1).map { it.reach }
+        assertEquals(byReach.sortedDescending(), byReach, "n decreasing")
+        assertTrue(all.indexOfFirst { it.kind == SearchDomain.Kind.Task } < all.indexOfFirst { it.kind == SearchDomain.Kind.Timer })
+        assertTrue(all.indexOfFirst { it.kind == SearchDomain.Kind.Alarm } < all.indexOfFirst { it.kind == SearchDomain.Kind.Timer })
+        // Nothing is lost by the ordering: the same configurations as the plain listing.
+        assertEquals(SearchDomain.configurations("", every).flatMap { it.second }.toSet(), all.flatMap { it.settings }.toSet())
+
+        // The button: only what applies to at least one row.
+        val only = SearchDomain.configurationGroups("", every, counts, onlyApplicable = true)
+        assertEquals(setOf(null, SearchDomain.Kind.Task, SearchDomain.Kind.Alarm), only.map { it.kind }.toSet())
+        assertTrue(only.all { it.kind == null || it.reach > 0 })
+
+        // A filter that empties the alarms out of the results: following the results, their group goes — and the
+        // filter that did it with it. With the switch set before, the list stays as it was, the reach said live.
+        val filtered = config.copy(filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
+        val after = SearchDomain.kindCountsInResults(s, filtered)
+        assertTrue(SearchDomain.Kind.Alarm !in after)
+        assertTrue(SearchDomain.configurationGroups("", every, after, onlyApplicable = true).none { it.kind == SearchDomain.Kind.Alarm })
+        val frozen = SearchDomain.applicableKinds(every, counts, onlyApplicable = true)
+        val kept = SearchDomain.configurationGroups("", every, after, onlyApplicable = true, frozen = frozen)
+        assertEquals(only.map { it.kind }, kept.map { it.kind }, "the same groups, in the same order")
+        assertEquals(0, kept.single { it.kind == SearchDomain.Kind.Alarm }.reach)
+        // Anomaly 2026-10-11: "I don't see 'Every box from' in the 'Every element' group" — a task and a restrictive
+        // period have it under one name, so where every row is one or the other it applies to every element.
+        val boxes = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.RestrictivePeriod))
+        val boxCounts = SearchDomain.kindCountsInResults(s, boxes)
+        assertEquals(setOf(SearchDomain.Kind.Task, SearchDomain.Kind.RestrictivePeriod), boxCounts.keys)
+        val everyElement = SearchDomain.configurationGroups("", every, boxCounts, onlyApplicable = true).first()
+        assertEquals("all", everyElement.id)
+        assertEquals(
+            listOf("On the calendar", "Every box from", "Every box until"),
+            everyElement.shared.map { family -> family.map { it.label }.distinct().single() },
+        )
+        assertEquals(
+            listOf(SearchDomain.Setting.TaskBoxesFrom, SearchDomain.Setting.PeriodBoxesFrom),
+            everyElement.shared.single { it.first() == SearchDomain.Setting.TaskBoxesFrom },
+        )
+        // Each kind still lists its own, to set one kind's alone.
+        val ownTask = SearchDomain.configurationGroups("", every, boxCounts, onlyApplicable = true).single { it.kind == SearchDomain.Kind.Task }
+        assertTrue(SearchDomain.Setting.TaskBoxesFrom in ownTask.settings && ownTask.shared.isEmpty())
+        // With an alarm among the rows it no longer applies to every element: a group of the two kinds it does
+        // apply to, wider than either of them, between "Every element" and the kinds.
+        val mixedCounts = SearchDomain.kindCountsInResults(s, boxes.copy(kinds = boxes.kinds + SearchDomain.Kind.Alarm))
+        val mixedGroups = SearchDomain.configurationGroups("", every, mixedCounts, onlyApplicable = true)
+        assertTrue(mixedGroups.first().shared.isEmpty())
+        val both = mixedGroups.single { it.kinds.size == 2 }
+        assertEquals("Task + Restrictive period  ·  ${boxCounts.values.sum()}", both.title)
+        assertEquals("kinds/Task+RestrictivePeriod", both.id)
+        assertEquals(3, both.shared.size)
+        assertTrue(both.settings.isEmpty() && mixedGroups.indexOf(both) < mixedGroups.indexOfFirst { it.kind == SearchDomain.Kind.Task })
+        // One field writes both, and so does a pick on the calendar.
+        assertEquals(
+            SearchDomain.Filters(taskBoxesFrom = 7, periodBoxesFrom = 7),
+            SearchDomain.withBoxBound(SearchDomain.Filters(), SearchDomain.BoxBound.BothFrom, 7),
+        )
+        // Each group has its expansion arrow; what is retracted is the window's own, and survives its encoding.
+        val own = SearchDomain.withSettingGroupToggled(SearchDomain.ConfigurationSearch(), both.id, mixedGroups.mapTo(HashSet()) { it.id })
+        assertEquals(setOf(both.id), own.collapsedGroups)
+        assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
+        assertEquals(emptySet(), SearchDomain.withSettingGroupToggled(own, "all", setOf("all")).collapsedGroups - "all")
+        assertEquals(emptySet(), SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.collapsedGroups)
+        // Anomaly 2026-10-11 (after a rebuild: "still no 'Every box from' … even though the result list only has a
+        // task and a period. Also, there is no period group"): the period under the right-click was a LAYER band —
+        // on the timeline off the lock history, with no panel in the state — and the count did not read the bands
+        // the result list reads. Counted with them, the period has its row, its group, and the shared ones are
+        // every element's.
+        val apple = taskWithTitle(s, "Apple")
+        val at = s.copy(panels = listOf(panel("a1", apple, "2026-09-10")))
+        val click = at.panels.single().let { it.startEpochMillis + (it.endEpochMillis - it.startEpochMillis) / 2 }
+        val edit = SearchDomain.calendarAtConfig(click)
+        val band: (Long) -> Set<String> = { setOf(PeriodKinds.NO_COMPUTER_UNLOCKED) }
+        val onScreen = SearchDomain.results(at, edit.kinds, edit.query, filters = edit.filters, nowMillis = click, layerKindsAt = band)
+        assertEquals(setOf(SearchDomain.Kind.Task, SearchDomain.Kind.RestrictivePeriod), onScreen.mapTo(HashSet()) { it.kind })
+        val counted = SearchDomain.kindCountsInResults(at, edit, nowMillis = click, layerKindsAt = band)
+        assertEquals(onScreen.groupingBy { it.kind }.eachCount(), counted, "the count is the list on screen")
+        assertTrue(SearchDomain.Kind.RestrictivePeriod !in SearchDomain.kindCountsInResults(at, edit, nowMillis = click), "without the bands the period is not seen")
+        val editGroups = SearchDomain.configurationGroups("", every, counted, onlyApplicable = true)
+        assertEquals(listOf("all", "kinds/Task", "kinds/RestrictivePeriod").toSet(), editGroups.mapTo(HashSet()) { it.id })
+        assertTrue(editGroups.first().shared.any { it.first() == SearchDomain.Setting.TaskBoxesFrom }, "'Every box from' is every element's")
+        assertTrue(editGroups.single { it.kind == SearchDomain.Kind.RestrictivePeriod }.settings.isNotEmpty(), "the period's own configurations have their group")
+        // The switch says nothing while the button is off: every kind is listed.
+        assertEquals(all.map { it.kinds }.toSet(), SearchDomain.configurationGroups("", every, counts, frozen = frozen).map { it.kinds }.toSet())
     }
 
     @Test

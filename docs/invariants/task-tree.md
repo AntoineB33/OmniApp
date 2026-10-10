@@ -791,6 +791,55 @@ suggestions before it was ever entered.
   `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's
   `timeOfDayMinutes` becomes the clock's, to the minute, as ONE list edit through the list's own intent (`SetAlarms`,
   `SetChores`) — an alarm's days, and an isolated ring's date, are left alone; none to change is no intent.
+- **"Every box from" / "Every box until" are INSTANTS, and a row is kept when it has a box TOUCHING the window they
+  make** (user rule 2026-10-11: *"the fields 'Every box from' and 'Every box until' should be both set to the date
+  and time of the right-click"*; `Filters.taskBoxesFrom` … `periodBoxesUntil`, `SearchDomain.boxInWindow`,
+  `withBoxesAt`, `SearchAddedElementsTest`). A box touches `[from, until]` when it is still running at `from` and has
+  started by `until`; both at one instant is the box that instant is in. The calendar's "edit…" sets the four of them
+  to the right-click (`calendarAtConfig`, and `App.openCalendarSearch` where the window is already open); "add…"
+  does not. Until then they were two DAYS and meant "every box of the element lies within them" — under which two
+  bounds at one instant could keep nothing.
+  - **A row the "is on the calendar at" filter keeps is in the window where that instant is** (`CalendarBoxes.passes`'
+    `vouchedAt`): it IS on the timeline there, also where its box is one the calendar derives and the state holds no
+    panel for (a layer band, the idle time, a screen break). Without it "edit…" would drop exactly those rows.
+  - **Each field has "Pick on the calendar"** (*"a button … that brings focus to the calendar and allows the user to
+    click somewhere, which brings focus back to the Search configurations window and set the field to the date and
+    time of the click"*; `BoxBoundField`, `CalendarElementDrag.instantPick`, `SearchDomain.withBoxBound`): the
+    calendar takes the focus, the next press on a day column is the instant — on the Initial pass and consumed, so no
+    block is grabbed and no menu opens — and the focus comes back. A right-click on the calendar gives the pick up.
+  - **Persisted shape** (local view state): `taskBoxesFromMillis` … `periodBoxesUntilMillis`; the day strings an older
+    build stored are still read — "from" as that day's first instant, "until" as its last, on this device's clock.
+- **THE SEARCH CONFIGURATIONS ARE GROUPED BY HOW MANY ROWS OF THE RESULTS THEY APPLY TO** (user rule 2026-10-11:
+  *"with the same logic as in the action section of the Search window, the first group gather all the configurations
+  that can be applied to every element in a set of n element, where n is as big as possible, followed by other groups
+  with n decreasing"*; `SearchDomain.configurationGroups`, `SettingGroup`, `kindCountsInResults`,
+  `SearchAddedElementsTest`). The configurations about the whole search apply to every row ("Every element · n"),
+  then one group per kind, the kind with the most rows first; each heading says its n. A configuration is a filter or
+  a sort of a KIND, so — unlike the actions — there is no group narrower than a kind.
+  - **A configuration several kinds have under one name is listed where it applies to all of them**
+    (`SearchDomain.SHARED_SETTINGS`: a task's and a restrictive period's "On the calendar", "Every box from",
+    "Every box until"; anomaly 2026-10-11: *"I don't see 'Every box from' in the 'Every element' group"*). Where
+    every row of the results is of those kinds it is in "Every element"; where other kinds have rows too, in a group
+    of its kinds ("Task + Restrictive period · n"), wider than either. There it is ONE control
+    (`SharedSettingEditor`): it shows the value the kinds have in common, nothing where they differ, and what is set
+    — typed, or picked on the calendar (`BoxBound.BothFrom` / `BothUntil`) — is set for all of them. Each kind's own
+    group keeps its own, to set one kind's alone. The other labels kinds share ("State", "Category", "Repeats") are
+    different questions per kind and are not merged.
+  - **The rows are counted off the list the Search window SHOWS** (`kindCountsInResults`, given the clock, the
+    calendar's layer bands and the engine's runs exactly as `SearchWindow` gives them to `results`; anomaly
+    2026-10-11: counted without the layer bands, a period on the timeline only as a band — the usual period under a
+    right-click — had no row, so with "Only what applies" its group was hidden and no shared configuration was
+    "every element"'s). A new input of `results` the Search window passes must be passed here too.
+  - **Each group has its expansion arrow**, as in the actions section (`SettingGroup.id`,
+    `ConfigurationSearch.collapsedGroups`, `withSettingGroupToggled`; local view state, absent = all open).
+  - **One button and its switch replace "Only the types in the Search results" and "Show the filters that are on"**:
+    **"Only what applies to the results"** keeps the groups with at least one row (`ConfigurationSearch.
+    onlyResultKinds`), and **"Keep this list as the results change"** stops the list from following them
+    (`frozenKinds`: the kinds shown and their order as the switch was set; the reach in the headings stays live).
+    That is what keeps a filter that empties its own kind out of the results in view, to be set off again — the old
+    second button's job. The switch says nothing while the button is off, and setting the button resets it.
+  - The Added elements configurations window keeps its own "Only the types in the added elements" (the same stored
+    field); `showFiltersOn` is still read past in a stored configuration and no longer used.
 - **THE ACTIONS ARE GROUPED FROM EVERY ELEMENT DOWN TO EACH ONE** (user rule 2026-10-10: *"there should be the action
   groups that include all the actions that can be applied to all the elements, then a group for less elements and so
   on… when there are only two quota elements, there must be three groups: the one for both quota (remove them from the

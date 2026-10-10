@@ -1719,7 +1719,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         calendarAddAtMillis = if (add) atMillis else config.filters.calendarAddAtMillis,
                         calendarAtOn = !add,
                         calendarAtMillis = if (add) config.filters.calendarAtMillis else atMillis,
-                    ),
+                    ).let { moved ->
+                        // "edit…": the boxes' window is the right-click too (user rule 2026-10-11).
+                        if (add) moved else SearchDomain.withBoxesAt(moved, atMillis)
+                    },
                     calendarClickMillis = atMillis,
                 )
             setSearchConfig(existing, moved)
@@ -4519,7 +4522,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             own = own,
                             onOwnChange = { setConfigSearch(configId, it) },
                             onDismiss = { configSearchWindowOpen = false },
-                            windows = if (own.onlyResultKinds) searchWindowEntries() else emptyList(),
+                            // User rule 2026-10-11: a bound of the boxes' window picked by a click on the calendar —
+                            // the calendar takes the focus, the click is the instant, and the focus comes back here.
+                            onPickOnCalendar = { which ->
+                                calendarElementDrag.instantPick = { millis ->
+                                    val current = searchConfigOf(target)
+                                    setSearchConfig(target, current.copy(filters = SearchDomain.withBoxBound(current.filters, which, millis)))
+                                    presentWindow(FloatingWindow.ConfigSearch, configId)
+                                }
+                                if (!calendarOpen) calendarOpen = true
+                                focusWindow(FloatingWindow.Calendar)
+                            },
+                            // Always: the groups are ordered by the rows of the result list, the windows' included —
+                            // read with what the Search window reads its own list with.
+                            windows = searchWindowEntries(),
+                            nowMillis = clock::nowMillis,
+                            calendarLayerKindsAt = calendarLayers::kindsAt,
+                            schedulerRuns = schedulerRuns,
                             initialOffset = configSearchOffset,
                             initialSize = configSearchSize,
                             onGeometryChange = { windowOffset, windowSize ->

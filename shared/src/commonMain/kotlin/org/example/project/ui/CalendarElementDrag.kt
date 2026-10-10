@@ -64,6 +64,15 @@ class CalendarElementDrag {
     /** The block a day column holds by its own gesture, or null. */
     var heldInCalendar: Held? by mutableStateOf(null)
 
+    /**
+     * User rule 2026-10-11: **a field of another window waiting for an instant picked on the calendar** — *"a button
+     * … that brings focus to the calendar and allows the user to click somewhere, which brings focus back to the
+     * Search configurations window and set the field to the date and time of the click"*. While it is set, the next
+     * press on a day column is that instant and nothing else (no block is grabbed, no menu opens); a right-click
+     * gives the pick up. The column takes it off before calling it.
+     */
+    var instantPick: ((Long) -> Unit)? by mutableStateOf(null)
+
     private var anchorMillis: Long = 0L
 
     /** Every block the elements [targets] have on the columns on screen — what the action's field lists. */

@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search configurations are grouped by reach; one button and a switch replace two — 2026-10-11
+
+The user: "In the Search configurations window, with the same logic as in the action section of the Search window, the
+first group gather all the configurations that can be applied to every element in a set of n element, where n is as
+big as possible, followed by other groups with n decreasing. Also, remove the 'Only the types in the search resul' and
+'Show the filters that are on' buttons. Replace them by a button that shows only the search configurations that can be
+applied to at least one element in the result list, and a switch button to stop hiding or showing new search
+configurations as the result list changes."
+- `SearchDomain.configurationGroups`: "Every element · n" first, then the kinds by their rows in the results.
+- "Only what applies to the results" + "Keep this list as the results change" (`ConfigurationSearch.frozenKinds`).
+- Anomaly the same day ("I don't see 'Every box from' in the 'Every element' group"): a configuration a task and a
+  restrictive period share is now listed once where it applies to all the rows — "Every element", or a group of the
+  two kinds — as one field writing both (`SHARED_SETTINGS`). And each group has an expansion arrow.
+- Anomaly after the rebuild ("still no 'Every box from' … there is no period group"): the window counted the result
+  rows without the calendar's layer bands, so a period that is on the timeline only as one had no row. It now reads
+  the list with what the Search window reads it with.
+- **Persisted shape** (local view state): `frozenKinds` and `collapsedGroups` added (absent = follows the results,
+  all open); `showFiltersOn` is read past and unused.
+Client only. Not looked at on screen.
+
+### "Every box from / until" are the right-click's instant, and can be picked on the calendar — 2026-10-11
+
+The user: "In Calendar > right-click > edit… > All configurations: the fields 'Every box from' and 'Every box until'
+should be both set to the date and time of the right-click. Add a button for both fields that brings focus to the
+calendar and allows the user to click somewhere, which brings focus back to the Search configurations window and set
+the field to the date and time of the click."
+- The four fields (a task's, a period's) hold a date AND a time (they held a day); "edit…" sets them to the
+  right-click.
+- **Their meaning changed with it**: a row is kept when it has a box TOUCHING the window, where it was "every box of
+  the element lies within the two days" — two bounds at one instant would otherwise keep nothing. A row the "is on the
+  calendar at" filter keeps counts as in the window where that instant is.
+- "Pick on the calendar" beside each field (`CalendarElementDrag.instantPick`).
+- **Persisted shape** (local view state): four `…Millis` fields; an older build's day strings are still read.
+Client only. Not looked at on screen.
+
 ### The calendar's right-click menu loses "edit task" and "go to task tree" — 2026-10-10
 
 The user: "Remove the 'edit task' and 'go to task tree' options from the calendar right-click menu." Both are gone

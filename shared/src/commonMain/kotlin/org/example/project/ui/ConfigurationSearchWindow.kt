@@ -88,6 +88,19 @@ fun ConfigurationSearchWindow(
     own: SearchDomain.ConfigurationSearch,
     onOwnChange: (SearchDomain.ConfigurationSearch) -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * User rule 2026-10-11: a bound of the boxes' window is to be picked by a click on the calendar — `App` gives the
+     * calendar the focus, writes the click's instant to that bound and brings the focus back here.
+     */
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
+    /**
+     * What the Search window reads its result list with besides its configuration — the clock, the calendar's layer
+     * bands at an instant, the scheduler engine's runs: the groups here are counted off THAT list
+     * ([SearchDomain.kindCountsInResults]), so they are given the same.
+     */
+    nowMillis: () -> Long = { 0L },
+    calendarLayerKindsAt: (Long) -> Set<String> = { emptySet() },
+    schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     /** The app's windows, for the window rows of the Search results ([SearchDomain.WindowEntry]). */
     windows: List<SearchDomain.WindowEntry> = emptyList(),
     modifier: Modifier = Modifier,
@@ -97,17 +110,15 @@ fun ConfigurationSearchWindow(
     onRaise: () -> Unit = {},
 ) {
     val frame = rememberWindowFrameState(CONFIGURATION_SEARCH_FRAME_ID, initialOffset, initialSize)
-    // Only read when the button is on: it is a pass over the Search window's results (paths skipped).
-    val resultKinds =
-        if (!own.onlyResultKinds) {
-            null
-        } else {
-            remember(
-                config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
-                state.alarms, state.timers, state.chronos, state.quotas, state.chores, windows,
-            ) { SearchDomain.kindsInResults(state, config, windows) }
-        }
-    val sections = SearchDomain.configurations(own.query, own.kinds, resultKinds, config.filters.takeIf { own.showFiltersOn })
+    // How many rows of each kind the Search window lists: what orders the groups (user rule 2026-10-11) and what the
+    // "only what applies" button keeps. One pass over that window's results (paths skipped), when they can change.
+    val counts =
+        remember(
+            config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
+            state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.panels, windows,
+            calendarLayerKindsAt, schedulerRuns,
+        ) { SearchDomain.kindCountsInResults(state, config, windows, nowMillis(), calendarLayerKindsAt, schedulerRuns) }
+    val groups = SearchDomain.configurationGroups(own.query, own.kinds, counts, own.onlyResultKinds, own.frozenKinds)
 
     AppWindowFrame(
         title = "Search configurations",
@@ -149,19 +160,25 @@ fun ConfigurationSearchWindow(
                     onOwnChange(own.copy(query = "", kinds = emptySet()))
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // User rule 2026-10-11: one button — only the configurations that apply to at least one row of the
+            // result list — and its switch, which stops the list from following the results: a filter that empties
+            // its own type out of them then stays in view, where it can be set off again.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 ToggleChip(
-                    text = "Only the types in the Search results",
+                    text = "Only what applies to the results",
                     on = own.onlyResultKinds,
-                    onToggle = { onOwnChange(own.copy(onlyResultKinds = it)) },
+                    onToggle = { onOwnChange(own.copy(onlyResultKinds = it, frozenKinds = null)) },
                 )
-                // A filter that empties its own type out of the results would vanish with it under the button
-                // beside; this keeps every filter that is on in view, so it can be set off right after.
-                ToggleChip(
-                    text = "Show the filters that are on",
-                    on = own.showFiltersOn,
-                    onToggle = { onOwnChange(own.copy(showFiltersOn = it)) },
+                androidx.compose.material3.Switch(
+                    checked = own.frozenKinds != null,
+                    enabled = own.onlyResultKinds,
+                    onCheckedChange = { keep ->
+                        onOwnChange(
+                            own.copy(frozenKinds = if (keep) SearchDomain.applicableKinds(own.kinds, counts, onlyApplicable = true) else null),
+                        )
+                    },
                 )
+                NoteText("Keep this list as the results change")
             }
 
             HorizontalDivider()
@@ -172,16 +189,62 @@ fun ConfigurationSearchWindow(
                 modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
-                if (sections.isEmpty()) NoteText("No configuration matches.")
-                for ((kind, settings) in sections) {
-                    SectionTitle(kind?.label?.replaceFirstChar { it.uppercase() } ?: "General")
-                    for (setting in settings) {
-                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows) }
+                if (groups.isEmpty()) NoteText("No configuration matches.")
+                // The groups whose configurations reach the most rows of the result list first, each with its
+                // expansion arrow (user rule 2026-10-11: "just like in the action section").
+                val listed = groups.mapTo(HashSet()) { it.id }
+                for (group in groups) {
+                    val collapsed = group.id in own.collapsedGroups
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        SectionArrow(collapsed) { onOwnChange(SearchDomain.withSettingGroupToggled(own, group.id, listed)) }
+                        SectionTitle(group.title)
+                    }
+                    if (collapsed) continue
+                    // What every kind of the group has under one name: one field, written to all of them.
+                    for (family in group.shared) {
+                        SettingRow(family.first().label) { SharedSettingEditor(family, config, onConfigChange, onPickOnCalendar) }
+                    }
+                    for (setting in group.settings) {
+                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows, onPickOnCalendar) }
                     }
                 }
             }
         }
         }
+    }
+}
+
+/**
+ * A configuration several kinds share ([SearchDomain.SHARED_SETTINGS]), as ONE control: it shows the value the kinds
+ * have in common — nothing where they differ — and what is set is set for all of them.
+ */
+@Composable
+private fun SharedSettingEditor(
+    family: List<SearchDomain.Setting>,
+    config: SearchDomain.Config,
+    onChange: (SearchDomain.Config) -> Unit,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
+) {
+    val f = config.filters
+    fun filters(next: SearchDomain.Filters) = onChange(config.copy(filters = next))
+    when (family.first()) {
+        SearchDomain.Setting.TaskOnCalendar -> {
+            val common: SearchDomain.Tri? = f.taskOnCalendar.takeIf { it == f.periodOnCalendar }
+            Choices<SearchDomain.Tri?>(SearchDomain.Tri.entries, common, { it?.label.orEmpty() }) { picked ->
+                if (picked != null) filters(f.copy(taskOnCalendar = picked, periodOnCalendar = picked))
+            }
+        }
+        SearchDomain.Setting.TaskBoxesFrom ->
+            BoxBoundField(
+                f.taskBoxesFrom.takeIf { it == f.periodBoxesFrom },
+                { filters(SearchDomain.withBoxBound(f, SearchDomain.BoxBound.BothFrom, it)) },
+            ) { onPickOnCalendar(SearchDomain.BoxBound.BothFrom) }
+        SearchDomain.Setting.TaskBoxesUntil ->
+            BoxBoundField(
+                f.taskBoxesUntil.takeIf { it == f.periodBoxesUntil },
+                { filters(SearchDomain.withBoxBound(f, SearchDomain.BoxBound.BothUntil, it)) },
+            ) { onPickOnCalendar(SearchDomain.BoxBound.BothUntil) }
+        else -> Unit
     }
 }
 
@@ -229,6 +292,8 @@ private fun SettingEditor(
     onChange: (SearchDomain.Config) -> Unit,
     /** The app's windows: the "Changed element" field names a window by them. */
     windows: List<SearchDomain.WindowEntry> = emptyList(),
+    /** A bound of the boxes' window is to be picked by a click on the calendar ([BoxBoundField]). */
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
 ) {
     val f = config.filters
     fun filters(next: SearchDomain.Filters) = onChange(config.copy(filters = next))
@@ -302,12 +367,16 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.TaskOnCalendar ->
             Choices(SearchDomain.Tri.entries, f.taskOnCalendar, { it.label }) { filters(f.copy(taskOnCalendar = it)) }
-        SearchDomain.Setting.TaskBoxesFrom -> DayFilterField(f.taskBoxesFrom) { filters(f.copy(taskBoxesFrom = it)) }
-        SearchDomain.Setting.TaskBoxesUntil -> DayFilterField(f.taskBoxesUntil) { filters(f.copy(taskBoxesUntil = it)) }
+        SearchDomain.Setting.TaskBoxesFrom ->
+            BoxBoundField(f.taskBoxesFrom, { filters(f.copy(taskBoxesFrom = it)) }) { onPickOnCalendar(SearchDomain.BoxBound.TaskFrom) }
+        SearchDomain.Setting.TaskBoxesUntil ->
+            BoxBoundField(f.taskBoxesUntil, { filters(f.copy(taskBoxesUntil = it)) }) { onPickOnCalendar(SearchDomain.BoxBound.TaskUntil) }
         SearchDomain.Setting.PeriodOnCalendar ->
             Choices(SearchDomain.Tri.entries, f.periodOnCalendar, { it.label }) { filters(f.copy(periodOnCalendar = it)) }
-        SearchDomain.Setting.PeriodBoxesFrom -> DayFilterField(f.periodBoxesFrom) { filters(f.copy(periodBoxesFrom = it)) }
-        SearchDomain.Setting.PeriodBoxesUntil -> DayFilterField(f.periodBoxesUntil) { filters(f.copy(periodBoxesUntil = it)) }
+        SearchDomain.Setting.PeriodBoxesFrom ->
+            BoxBoundField(f.periodBoxesFrom, { filters(f.copy(periodBoxesFrom = it)) }) { onPickOnCalendar(SearchDomain.BoxBound.PeriodFrom) }
+        SearchDomain.Setting.PeriodBoxesUntil ->
+            BoxBoundField(f.periodBoxesUntil, { filters(f.copy(periodBoxesUntil = it)) }) { onPickOnCalendar(SearchDomain.BoxBound.PeriodUntil) }
         // Set by "Blocks on the calendar": said here, with its way off (every block of the calendar).
         SearchDomain.Setting.BlockElements ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -685,30 +754,38 @@ private fun ChangedElementField(
 private val CHANGED_ELEMENT_CELL = org.example.project.scheduler.model.CellId("search/history-changed-element")
 
 /**
- * A calendar filter's day, typed as `YYYY-MM-DD`: empty is "any". The filter changes only when what is typed is a
- * day (or is cleared) — a half-typed date leaves it as it was, and the field says so.
+ * User rule 2026-10-11: **one bound of the boxes' window** — a date and a time, `YYYY-MM-DD HH:MM` on this device's
+ * clock; empty is "no bound". The bound changes only when what is typed is an instant (or is cleared) — a half-typed
+ * one leaves it as it was, and the field says so. Its button hands the pick to the calendar ([onPick]): the next click
+ * there is the instant, and the focus comes back. While the calendar is waiting, the button says so.
  */
 @Composable
-private fun DayFilterField(day: LocalDate?, onChange: (LocalDate?) -> Unit) {
-    var draft by remember(day) { mutableStateOf(day?.toString().orEmpty()) }
-    val parsed = runCatching { LocalDate.parse(draft.trim()) }.getOrNull()
-    val invalid = draft.isNotBlank() && parsed == null
+private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: () -> Unit) {
+    val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+    fun format(at: Long): String {
+        val t = kotlin.time.Instant.fromEpochMilliseconds(at).toLocalDateTime(tz)
+        return t.date.toString() + " " + t.hour.toString().padStart(2, '0') + ":" + t.minute.toString().padStart(2, '0')
+    }
+    fun parse(text: String): Long? =
+        runCatching {
+            kotlinx.datetime.LocalDateTime.parse(text.trim().replace(' ', 'T')).toInstant(tz).toEpochMilliseconds()
+        }.getOrNull()
+    var draft by remember(millis) { mutableStateOf(millis?.let(::format).orEmpty()) }
+    val picking = LocalCalendarElementDrag.current.instantPick != null
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = draft,
             onValueChange = { typed ->
                 draft = typed
-                when {
-                    typed.isBlank() -> onChange(null)
-                    else -> runCatching { LocalDate.parse(typed.trim()) }.getOrNull()?.let(onChange)
-                }
+                if (typed.isBlank()) onChange(null) else parse(typed)?.let(onChange)
             },
             singleLine = true,
-            isError = invalid,
-            placeholder = { Text("any — YYYY-MM-DD") },
+            isError = draft.isNotBlank() && parse(draft) == null,
+            placeholder = { Text("any — YYYY-MM-DD HH:MM") },
             modifier = Modifier.width(190.dp),
         )
-        if (day != null) {
+        FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
+        if (millis != null) {
             Text(
                 text = "✕",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

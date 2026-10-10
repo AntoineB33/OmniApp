@@ -6380,6 +6380,24 @@ private fun DayColumn(
             // commits, as the original drag's would have) and another right-click opens the menu again. It
             // runs on the INITIAL pass and consumes, so that while a block is being carried no block, period
             // or marker under the pointer takes the click that is meant to drop it.
+            // User rule 2026-10-11: while a field of another window waits for an instant ([CalendarElementDrag.
+            // instantPick]), a press on the column IS that instant — on the INITIAL pass and consumed, so no block,
+            // period or marker under the pointer takes it. A right-click gives the pick up.
+            .pointerInput(day) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pick = elementDrag.instantPick ?: continue
+                        if (event.type == PointerEventType.Scroll) continue
+                        event.changes.forEach { it.consume() }
+                        if (event.type != PointerEventType.Press) continue
+                        elementDrag.instantPick = null
+                        if (event.buttons.isSecondaryPressed) continue
+                        val change = event.changes.firstOrNull() ?: continue
+                        pick(currentMillisAt.value(change.position.y))
+                    }
+                }
+            }
             .pointerInput(day) {
                 awaitPointerEventScope {
                     while (true) {

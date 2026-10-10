@@ -441,11 +441,11 @@ object SearchDomain {
                     windowDuplicates = filters.windowDuplicates.name,
                     sortMethods = sorts.map { StoredSortMethod(it.kind?.name, it.key.name, it.descending) },
                     taskOnCalendar = filters.taskOnCalendar.name,
-                    taskBoxesFrom = filters.taskBoxesFrom?.toString(),
-                    taskBoxesUntil = filters.taskBoxesUntil?.toString(),
+                    taskBoxesFromMillis = filters.taskBoxesFrom,
+                    taskBoxesUntilMillis = filters.taskBoxesUntil,
                     periodOnCalendar = filters.periodOnCalendar.name,
-                    periodBoxesFrom = filters.periodBoxesFrom?.toString(),
-                    periodBoxesUntil = filters.periodBoxesUntil?.toString(),
+                    periodBoxesFromMillis = filters.periodBoxesFrom,
+                    periodBoxesUntilMillis = filters.periodBoxesUntil,
                     added = added,
                     actionQuery = actionQuery,
                     collapsedActionGroups = collapsedActionGroups.sorted(),
@@ -510,11 +510,12 @@ object SearchDomain {
                         windowStatus = WindowStatus.entries.firstOrNull { it.name == stored.windowStatus },
                         windowDuplicates = enumNamed(stored.windowDuplicates, WindowDuplicates.Shown),
                         taskOnCalendar = enumNamed(stored.taskOnCalendar, Tri.Any),
-                        taskBoxesFrom = dateNamed(stored.taskBoxesFrom),
-                        taskBoxesUntil = dateNamed(stored.taskBoxesUntil),
+                        // A day an older build stored is that day's first instant ("from") or its last ("until").
+                        taskBoxesFrom = stored.taskBoxesFromMillis ?: dayStart(stored.taskBoxesFrom),
+                        taskBoxesUntil = stored.taskBoxesUntilMillis ?: dayEnd(stored.taskBoxesUntil),
                         periodOnCalendar = enumNamed(stored.periodOnCalendar, Tri.Any),
-                        periodBoxesFrom = dateNamed(stored.periodBoxesFrom),
-                        periodBoxesUntil = dateNamed(stored.periodBoxesUntil),
+                        periodBoxesFrom = stored.periodBoxesFromMillis ?: dayStart(stored.periodBoxesFrom),
+                        periodBoxesUntil = stored.periodBoxesUntilMillis ?: dayEnd(stored.periodBoxesUntil),
                         calendarAddOn = stored.calendarAddOn,
                         calendarAddAtMillis = stored.calendarAddAtMillis,
                         calendarAddKeeping = stored.calendarAddKeeping,
@@ -575,6 +576,12 @@ object SearchDomain {
 
             /** An ISO date (2026-09-27), or null: for nothing stored and for what does not parse alike. */
             private fun dateNamed(text: String?): LocalDate? = text?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+            private fun dayStart(text: String?): Long? =
+                dateNamed(text)?.atStartOfDayIn(TimeZone.currentSystemDefault())?.toEpochMilliseconds()
+
+            private fun dayEnd(text: String?): Long? =
+                dateNamed(text)?.plus(1, DateTimeUnit.DAY)?.atStartOfDayIn(TimeZone.currentSystemDefault())?.toEpochMilliseconds()
         }
     }
 
@@ -593,17 +600,23 @@ object SearchDomain {
          */
         val target: String = "Search",
         /**
-         * Keep the filters that are ON listed even where [onlyResultKinds] would drop their type: a filter that
-         * empties its own type out of the results would otherwise vanish the moment it is set, taking with it
-         * the one control that turns it back off.
+         * User rule 2026-10-11, the Search configurations window's switch: **the list no longer follows the result
+         * list** — the kinds whose configurations are shown while [onlyResultKinds] is on, in the order they stood in
+         * when the switch was set; null = the list follows the results (a kind is hidden as its last row leaves, shown
+         * as its first arrives). What keeps a filter that empties its own type out of the results in view, so it can
+         * be set off again — the job the "Show the filters that are on" button had until then.
          */
-        val showFiltersOn: Boolean = false,
+        val frozenKinds: List<Kind>? = null,
+        /** The groups retracted to their heading, by [SettingGroup.id] — each has its expansion arrow (2026-10-11). */
+        val collapsedGroups: Set<String> = emptySet(),
     ) {
         fun encode(): String =
             configJson.encodeToString(
                 StoredConfigurationSearch.serializer(),
                 StoredConfigurationSearch(
-                    query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target, showFiltersOn,
+                    query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target,
+                    frozenKinds = frozenKinds?.map { it.name },
+                    collapsedGroups = collapsedGroups.sorted(),
                 ),
             )
 
@@ -618,7 +631,8 @@ object SearchDomain {
                     stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet(),
                     stored.onlyResultKinds,
                     stored.target,
-                    stored.showFiltersOn,
+                    stored.frozenKinds?.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } },
+                    stored.collapsedGroups.toSet(),
                 )
             }
         }
@@ -700,16 +714,20 @@ object SearchDomain {
         val windowDuplicates: WindowDuplicates = WindowDuplicates.Shown,
         /** Yes = the task has at least one box on the calendar ([SchedulerDomain.calendarBoxesOfTask]). */
         val taskOnCalendar: Tri = Tri.Any,
-        /** Every box of the task starts on this day or later (and it has one). Null = any. */
-        val taskBoxesFrom: LocalDate? = null,
-        /** Every box of the task ends by the end of this day (and it has one). Null = any. */
-        val taskBoxesUntil: LocalDate? = null,
+        /**
+         * User rule 2026-10-11: **the window of the calendar the task's boxes are asked about**, as two instants (a
+         * date and a time — the calendar's "edit…" sets both to the right-click). The task is kept when it has a box
+         * touching the window: one still running at [taskBoxesFrom], or starting by [taskBoxesUntil] — with both, one
+         * box doing both; with both the same instant, a box the instant is in. Null = no bound on that side.
+         * (Until then two DAYS, and "every box of the task lies within them".)
+         */
+        val taskBoxesFrom: Long? = null,
+        val taskBoxesUntil: Long? = null,
         /** Yes = at least one period of this kind is on the calendar. */
         val periodOnCalendar: Tri = Tri.Any,
-        /** Every period of this kind on the calendar starts on this day or later (and there is one). Null = any. */
-        val periodBoxesFrom: LocalDate? = null,
-        /** Every period of this kind on the calendar ends by the end of this day (and there is one). Null = any. */
-        val periodBoxesUntil: LocalDate? = null,
+        /** The same window ([taskBoxesFrom]) for the periods of the kind on the calendar. */
+        val periodBoxesFrom: Long? = null,
+        val periodBoxesUntil: Long? = null,
         /**
          * **The calendar filter** (user rule 2026-10-01): a GLOBAL filter — about every row, whatever its kind — that
          * keeps only what can be put on the calendar at [calendarAddAtMillis] ([calendarAddable]). Its switch is
@@ -1013,6 +1031,131 @@ object SearchDomain {
             if (settings.isEmpty()) null else section to settings
         }
 
+    /**
+     * One group of the Search configurations window (user rule 2026-10-11): the configurations that apply to the rows
+     * of [kinds] — empty for every row of the result list — and how many rows that is ([reach]). [settings] are one
+     * kind's own; [shared] are the configurations SEVERAL kinds have under one name ([SHARED_SETTINGS]), each listed
+     * once and written to all of its members at a time.
+     */
+    data class SettingGroup(
+        val kinds: List<Kind>,
+        val reach: Int,
+        val settings: List<Setting>,
+        val shared: List<List<Setting>> = emptyList(),
+    ) {
+        /** The one kind the group is about, or null (every element, or several kinds). */
+        val kind: Kind? get() = kinds.singleOrNull()
+
+        val title: String
+            get() =
+                (if (kinds.isEmpty()) "Every element" else kinds.joinToString(" + ") { it.label.replaceFirstChar { c -> c.uppercase() } }) +
+                    "  ·  " + reach
+
+        /** What the group's expansion arrow is remembered under ([ConfigurationSearch.collapsedGroups]). */
+        val id: String get() = if (kinds.isEmpty()) "all" else "kinds/" + kinds.joinToString("+") { it.name }
+    }
+
+    /**
+     * The configurations several kinds have under ONE name and with one meaning: a task's and a restrictive period's
+     * place on the calendar. Where every row of the result list is of those kinds, the configuration applies to every
+     * element and is listed with them (anomaly 2026-10-11: *"I don't see 'Every box from' in the 'Every element'
+     * group"* — it was listed once per kind and never there). The others that share a label ("State", "Category",
+     * "Repeats") are different questions per kind, with different answers, and stay each kind's own.
+     */
+    val SHARED_SETTINGS: List<List<Setting>> =
+        listOf(
+            listOf(Setting.TaskOnCalendar, Setting.PeriodOnCalendar),
+            listOf(Setting.TaskBoxesFrom, Setting.PeriodBoxesFrom),
+            listOf(Setting.TaskBoxesUntil, Setting.PeriodBoxesUntil),
+        )
+
+    /**
+     * User rule 2026-10-11: **the Search configurations window's groups, by how many elements of the result list
+     * their configurations apply to** — *"with the same logic as in the action section of the Search window, the
+     * first group gather all the configurations that can be applied to every element in a set of n element, where n is
+     * as big as possible, followed by other groups with n decreasing"*.
+     *  - **Every element**: the configurations about the search as a whole, and those every kind with a row shares
+     *    ([SHARED_SETTINGS]) — one field for all of them;
+     *  - **several kinds** that share configurations without holding every row ("Task + Restrictive period"): those;
+     *  - **each kind**: its own, the shared ones among them (to set one kind's alone).
+     * The widest first ([counts], [kindCountsInResults]; groups of as many rows keep the drop-down's order).
+     *
+     * [onlyApplicable] is the window's button — *"shows only the search configurations that can be applied to at least
+     * one element in the result list"*: a kind with no row has no group. [frozen] is its switch — *"to stop hiding or
+     * showing new search configurations as the result list changes"*: while given, the kinds shown, and their order,
+     * are those and no longer the results' ([ConfigurationSearch.frozenKinds]); the reach written is still the live
+     * one. Within [kinds] (the window's own types) and the names [query] finds, as [configurations].
+     */
+    fun configurationGroups(
+        query: String,
+        kinds: Set<Kind>,
+        counts: Map<Kind, Int>,
+        onlyApplicable: Boolean = false,
+        frozen: List<Kind>? = null,
+    ): List<SettingGroup> {
+        val listed = applicableKinds(kinds, counts, onlyApplicable, frozen)
+        val sections = configurations(query, listed.toSet()).toMap()
+        val total = counts.values.sum()
+        fun rows(of: List<Kind>) = of.sumOf { counts[it] ?: 0 }
+        // A family is shared where at least two of its kinds are listed (and its name is among what [query] finds).
+        val families =
+            SHARED_SETTINGS.mapNotNull { family ->
+                family.filter { it.section in listed && sections[it.section]?.contains(it) == true }.takeIf { it.size >= 2 }
+            }
+        val (whole, partial) = families.partition { family -> total > 0 && rows(family.mapNotNull { it.section }) == total }
+        val out = ArrayList<SettingGroup>()
+        val general = sections[null].orEmpty()
+        if (general.isNotEmpty() || whole.isNotEmpty()) out += SettingGroup(emptyList(), total, general, whole)
+        val several =
+            // Named in the drop-down's order whatever their rows, so the group is one group as the results change.
+            partial.groupBy { family -> Kind.entries.filter { kind -> kind in listed && family.any { it.section == kind } } }
+                .map { (of, shared) -> SettingGroup(of, rows(of), emptyList(), shared) }
+        val single = listed.mapNotNull { kind -> sections[kind]?.let { SettingGroup(listOf(kind), counts[kind] ?: 0, it) } }
+        // Frozen, the order is the one the switch kept; else the widest first (stable: several kinds before their own).
+        out += if (onlyApplicable && frozen != null) several + single else (several + single).sortedByDescending { it.reach }
+        return out
+    }
+
+    /** [own] once the arrow of the group [id] is pressed; the ids of groups no longer [listed] are dropped on the way. */
+    fun withSettingGroupToggled(own: ConfigurationSearch, id: String, listed: Set<String>): ConfigurationSearch {
+        val kept = own.collapsedGroups.filterTo(HashSet()) { it in listed }
+        return own.copy(collapsedGroups = if (id in kept) kept - id else kept + id)
+    }
+
+    /**
+     * The kinds whose configurations the window shows, in its order ([configurationGroups]) — also what the switch
+     * keeps when it is set ([ConfigurationSearch.frozenKinds]).
+     */
+    fun applicableKinds(kinds: Set<Kind>, counts: Map<Kind, Int>, onlyApplicable: Boolean, frozen: List<Kind>? = null): List<Kind> =
+        when {
+            onlyApplicable && frozen != null -> frozen.filter { it in kinds }
+            else ->
+                Kind.entries.filter { it in kinds && (!onlyApplicable || (counts[it] ?: 0) > 0) }
+                    .sortedByDescending { counts[it] ?: 0 }
+        }
+
+    /** How many rows of each kind the Search window's results hold for [config] — a kind with none is absent. */
+    /**
+     * **Read with everything the Search window's own list is read with** ([results]' [nowMillis], [layerKindsAt],
+     * [schedulerRuns], the configuration's placement) — anomaly 2026-10-11: counted without the calendar's layer
+     * bands, a period that is on the timeline only as one ("no computer unlocked" off the lock history, the usual
+     * period under a right-click) had no row here though the window listed it, so its group was hidden and nothing
+     * was "every element"'s. A caller that leaves one out counts another list than the one on screen.
+     */
+    fun kindCountsInResults(
+        state: SchedulerState,
+        config: Config,
+        windows: List<WindowEntry> = emptyList(),
+        nowMillis: Long = 0L,
+        layerKindsAt: (Long) -> Set<String> = { emptySet() },
+        schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+    ): Map<Kind, Int> =
+        // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
+        results(
+            state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, nowMillis = nowMillis,
+            layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement,
+        ).groupingBy { it.kind }.eachCount()
+
     /** The kinds that have at least one row in the Search window's results for [config]. */
     fun kindsInResults(state: SchedulerState, config: Config, windows: List<WindowEntry> = emptyList()): Set<Kind> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
@@ -1063,11 +1206,17 @@ object SearchDomain {
         val kindSorts: Map<String, StoredLegacySort> = emptyMap(),
         /** New 2026-09-27 (the calendar filters, the added elements): absent from an older build's = any / none. */
         val taskOnCalendar: String? = null,
+        /** A DAY (`YYYY-MM-DD`), as builds before 2026-10-11 stored the bound: read, never written any more. */
         val taskBoxesFrom: String? = null,
         val taskBoxesUntil: String? = null,
+        /** New 2026-10-11: the bound as an instant. Absent from an older build's (which has the day above, or none). */
+        val taskBoxesFromMillis: Long? = null,
+        val taskBoxesUntilMillis: Long? = null,
         val periodOnCalendar: String? = null,
         val periodBoxesFrom: String? = null,
         val periodBoxesUntil: String? = null,
+        val periodBoxesFromMillis: Long? = null,
+        val periodBoxesUntilMillis: Long? = null,
         val added: List<String> = emptyList(),
         /** New 2026-10-01: absent from an older build's = no filter, the first period. */
         val actionQuery: String = "",
@@ -1107,8 +1256,12 @@ object SearchDomain {
         val kinds: List<String> = Kind.entries.map { it.name },
         val onlyResultKinds: Boolean = false,
         val target: String = "Search",
-        /** New 2026-09-25: absent from what an older build stored, which reads as off. */
+        /** 2026-09-25 → 2026-10-11, the "Show the filters that are on" button: still read past, never used. */
         val showFiltersOn: Boolean = false,
+        /** New 2026-10-11: absent from what an older build stored = the list follows the results. */
+        val frozenKinds: List<String>? = null,
+        /** New 2026-10-11: absent = every group open. */
+        val collapsedGroups: List<String> = emptyList(),
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }
@@ -1852,6 +2005,7 @@ object SearchDomain {
                     (calendar == null ||
                         calendar.passes(
                             calendar.ofTask(result.taskId), filters.taskOnCalendar, filters.taskBoxesFrom, filters.taskBoxesUntil,
+                            filters.calendarAt,
                         ))
             }
             is ItemResult -> when (result.kind) {
@@ -1865,6 +2019,7 @@ object SearchDomain {
                 } && (calendar == null ||
                     calendar.passes(
                         calendar.ofPeriodKind(result.id), filters.periodOnCalendar, filters.periodBoxesFrom, filters.periodBoxesUntil,
+                        filters.calendarAt,
                     ))
                 Kind.Alarm -> {
                     val alarm = state.alarms.firstOrNull { it.id == result.id } ?: return true
@@ -1977,6 +2132,14 @@ object SearchDomain {
      * [SchedulerDomain.calendarBoxesOfTask]'s, a restrictive period kind's are the panels of that kind
      * ([TaskPanel.restrictiveKind], the one reading of a panel's kind).
      */
+    /**
+     * Whether [box] touches the window `[from, until]` of the calendar: it is still running at [from] (ends after it)
+     * and has started by [until] — a null bound asks nothing on its side. With both bounds the same instant: the box
+     * that instant is in.
+     */
+    fun boxInWindow(box: TaskTimeRange, from: Long?, until: Long?): Boolean =
+        (from == null || box.endEpochMillis > from) && (until == null || box.startEpochMillis <= until)
+
     private class CalendarBoxes(private val state: SchedulerState, private val timeZone: TimeZone) {
         private val byTask by lazy { SchedulerDomain.calendarBoxesByTask(state) }
         private val byPeriodKind by lazy {
@@ -1989,21 +2152,20 @@ object SearchDomain {
         fun ofPeriodKind(kind: String): List<TaskTimeRange> = byPeriodKind[kind].orEmpty()
 
         /**
-         * Whether [boxes] pass the three calendar filters: on the calendar at all, every box starting on [from]
-         * or later, every box ending by the end of [until]. A day bound needs a box to hold: with none, there is
-         * nothing "every box after that day" is about, and the user asking for one is asking about boxes.
+         * Whether [boxes] pass the three calendar filters: on the calendar at all, and — user rule 2026-10-11 —
+         * **a box touching the window `[from, until]`** ([boxInWindow]).
+         *
+         * [vouchedAt] is the instant the "is on the calendar at" filter keeps rows for, when it is on: a row it has
+         * kept IS on the timeline there, so where that instant lies in the window the row has a box in it — also
+         * where the box is one the calendar derives and the state holds no panel for (a layer band, the idle time, a
+         * screen break), which [boxes] cannot show. Without this the calendar's "edit…", which sets both bounds to the
+         * right-click, would drop exactly those rows.
          */
-        fun passes(boxes: List<TaskTimeRange>, onCalendar: Tri, from: LocalDate?, until: LocalDate?): Boolean {
+        fun passes(boxes: List<TaskTimeRange>, onCalendar: Tri, from: Long?, until: Long?, vouchedAt: Long? = null): Boolean {
             if (onCalendar != Tri.Any && (onCalendar == Tri.Yes) != boxes.isNotEmpty()) return false
-            if (from != null) {
-                val start = from.atStartOfDayIn(timeZone).toEpochMilliseconds()
-                if (boxes.isEmpty() || boxes.any { it.startEpochMillis < start }) return false
-            }
-            if (until != null) {
-                val end = until.plus(1, DateTimeUnit.DAY).atStartOfDayIn(timeZone).toEpochMilliseconds()
-                if (boxes.isEmpty() || boxes.any { it.endEpochMillis > end }) return false
-            }
-            return true
+            if (from == null && until == null) return true
+            if (vouchedAt != null && (from == null || from <= vouchedAt) && (until == null || vouchedAt <= until)) return true
+            return boxes.any { boxInWindow(it, from, until) }
         }
     }
 
@@ -3021,10 +3183,33 @@ object SearchDomain {
     fun calendarAtConfig(atMillis: Long): Config =
         Config(
             kinds = CALENDAR_AT_KINDS,
-            filters = Filters(calendarAtOn = true, calendarAtMillis = atMillis),
+            filters = withBoxesAt(Filters(calendarAtOn = true, calendarAtMillis = atMillis), atMillis),
             sorts = withCalendarBubbleSort(DEFAULT_SORTS),
             calendarClickMillis = atMillis,
         )
+
+    /**
+     * User rule 2026-10-11: *"the fields 'Every box from' and 'Every box until' should be both set to the date and
+     * time of the right-click"* — [filters] with the four of them (a task's, a period's) at [atMillis]. What the
+     * calendar's "edit…" opens with, and moves an open window to.
+     */
+    fun withBoxesAt(filters: Filters, atMillis: Long): Filters =
+        filters.copy(taskBoxesFrom = atMillis, taskBoxesUntil = atMillis, periodBoxesFrom = atMillis, periodBoxesUntil = atMillis)
+
+    /** The four "Every box from / until" fields, as what a pick on the calendar writes ([withBoxBound]). */
+    enum class BoxBound { TaskFrom, TaskUntil, PeriodFrom, PeriodUntil, BothFrom, BothUntil }
+
+    /** [filters] with the bound [which] at [atMillis] (null: no bound on that side). */
+    fun withBoxBound(filters: Filters, which: BoxBound, atMillis: Long?): Filters =
+        when (which) {
+            BoxBound.TaskFrom -> filters.copy(taskBoxesFrom = atMillis)
+            BoxBound.TaskUntil -> filters.copy(taskBoxesUntil = atMillis)
+            BoxBound.PeriodFrom -> filters.copy(periodBoxesFrom = atMillis)
+            BoxBound.PeriodUntil -> filters.copy(periodBoxesUntil = atMillis)
+            // The shared field of the group every element (or both kinds) is in: a task's and a period's at once.
+            BoxBound.BothFrom -> filters.copy(taskBoxesFrom = atMillis, periodBoxesFrom = atMillis)
+            BoxBound.BothUntil -> filters.copy(taskBoxesUntil = atMillis, periodBoxesUntil = atMillis)
+        }
 
     /**
      * How far past the right-click a screen break may START and still be "there": the calendar's "edit…" names its

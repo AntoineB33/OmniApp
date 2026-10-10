@@ -882,11 +882,12 @@ class SearchWindowTest {
         assertNull(SearchDomain.Config.decode("{not json"))
 
         val own = SearchDomain.ConfigurationSearch(
-            "rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2", showFiltersOn = true,
+            "rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2",
+            frozenKinds = listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Task),
         )
         assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
-        // Stored before the "filters that are on" button: it is off.
-        assertFalse(SearchDomain.ConfigurationSearch.decode("""{"query":"x","onlyResultKinds":true}""")!!.showFiltersOn)
+        // Stored before the switch (and with the "filters that are on" button it replaced): the list follows the results.
+        assertNull(SearchDomain.ConfigurationSearch.decode("""{"query":"x","onlyResultKinds":true,"showFiltersOn":true}""")!!.frozenKinds)
         // Stored before copies existed: it edits the original Search window.
         assertEquals("Search", SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.target)
     }
