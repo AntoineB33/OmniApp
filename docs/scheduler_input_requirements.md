@@ -9,3 +9,10 @@ This splitting occurs because the held block must be preserved as much as possib
 Because the held block surrounds the continuously moving $now\ line$, its boundaries change continuously. Just as with the mode 3 bisection, this mathematically triggers the engine at every infinitesimal moment. With zero calculation time available per run, no computation occurs. This effectively locks the timeline into the previous set of rules output until the block is either placed or moved away from the present moment.
 
 Similarly, if the user drags a task panel with 0 resilience to "no screen" over a scheduled screen break in the future, the strict screen break acts as an exclusion operator. It dynamically creates a hole in the held task panel exactly where they overlap, updating continuously as the block is moved by the mouse.
+
+
+When a block is being dragged, what is being hidden by the held block is remembered until the mouse click is released.
+Any block can be dragged except "inactivity", the held block then gets a blue outline. Several blocks can be dragged at the same times with the right-click option "edit...".
+When a period is held and that period must be accompanied by other periods, then those other periods are being held as well. Example: dragging "no screen" drags the ("no computer unlocked" or "not on a computer") and ("no phone unlocked" or "not on a phone") as well.
+When a period is held and that its presence was inducing the presence of another period, then this period disappear from the time period the held period originates from. Example: dragging "no computer unlocked" removes "no screen".
+If the time period where a held block originates is touched on both edges from outside by something that couldn't be present because of this held block, then this thing replaces the held block in this time period (where the held block is not). Example, the user drags "no computer unlocked" from 10h-13h and "no screen" from 11h-12h, and task A with 0 resilience to "no screen" is present in [9h-11h]U[12h-14h]. When dragging this completely away, task A is present in [9h-14h].
