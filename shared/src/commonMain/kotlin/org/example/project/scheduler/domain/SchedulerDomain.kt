@@ -3638,6 +3638,18 @@ object SchedulerDomain {
      * Sub-minute remnants are dropped ([MIN_INACTIVITY_BAND_MILLIS]): the seam between two adjacent panels is
      * not a pause, and drawing it would litter the day with slivers.
      */
+    /**
+     * Anomaly 2026-10-10 (*"there is an Inactivity period stopping at 16:28:48 and another starting at this exact
+     * time"*): **whether [panel] is Inactivity the hole rule laid** ([TaskPanel.tmFill], [vacatedPastFill]) — which the
+     * calendar draws as the derived Inactivity it is part of, never as a box of its own. Where a dragged block left a
+     * hole next to an idle stretch, the stored fill and the derived band beside it are ONE statement ("nothing here"),
+     * and two boxes said it twice. So such a panel is left out of what covers the timeline
+     * ([derivedInactivityBands]' `coveredRegions`) and out of the drawn records: the band runs through it. It stays
+     * stored — the plan still reads it — and a hand that edits it makes it a period of the user's, drawn as one.
+     */
+    fun isDerivedInactivityFill(panel: TaskPanel): Boolean =
+        panel.tmFill && panel.restrictiveKind == PeriodKinds.INACTIVITY
+
     fun derivedInactivityBands(
         coveredRegions: List<TaskTimeRange>,
         sinceMillis: Long,

@@ -68,6 +68,10 @@ findings, and what is still open, are in `docs/invariants/calendar.md` § *tm_le
 - **Anomaly, the same day**: a past 15-minute break dragged away left a BLUE "Inactivity" block where it had been.
   The fill is the hole rule's (`vacatedPastFill`), stored as a period with `auto = false`, so it read as hand-placed.
   It now carries `TaskPanel.tmFill` (`PersistedPanel.tmFill`, default false) and wears no outline until edited.
+- **Anomaly, the same day**: "there is an Inactivity period stopping at 16:28:48 and another starting at this exact
+  time". Read off a copy of the release DB: `panel/330`, the fill of a dragged 15-minute break (16:13:48 → 16:28:48),
+  next to the DERIVED Inactivity of the idle stretch after it. An Inactivity fill is now drawn as part of the derived
+  band (`isDerivedInactivityFill`). Display only.
 - Also: replacing a merged block (`ReplaceTaskPanels`) recorded its unit from the panels AFTER the removal, so Ctrl+Z
   did not give the replaced panels back; the unit now starts from the panels as they were.
 Client only. An older build on another device ignores the new fields and writes panels without them: a block it

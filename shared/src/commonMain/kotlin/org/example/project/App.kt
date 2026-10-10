@@ -2729,8 +2729,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // Display-only: no `entryId`, so the period is neither removable nor separately draggable — until the
             // user EDITS it, which is what lays the real panel (the period editor's Save). ADR 0002: an
             // observation stays derived, a statement is stored.
+            // The Inactivity the hole rule laid where a dragged block stood is drawn as part of the derived band, not as a
+            // box beside it ([SchedulerDomain.isDerivedInactivityFill], anomaly 2026-10-10).
+            val inactivityFillIds =
+                displayState.panels.filter(SchedulerDomain::isDerivedInactivityFill).mapTo(HashSet()) { it.id }
+            val drawnBaseRecords =
+                if (inactivityFillIds.isEmpty()) baseCalendarRecords
+                else baseCalendarRecords.filterNot { it.entryId != null && it.entryId in inactivityFillIds }
             val pastCoveredRegions =
-                baseCalendarRecords
+                drawnBaseRecords
                     .filterNot { it.reminder || it.alarm || it.screenBreak || it.noScreen }
                     .map { it.range }
             val inactivityUntilMillis =
@@ -2911,7 +2918,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 } else {
                     emptyList()
                 }
-            val calendarRecords = baseCalendarRecords + pastInactivityRecords + layerRecords +
+            val calendarRecords = drawnBaseRecords + pastInactivityRecords + layerRecords +
                 displayAlarmOccurrences.map { occurrence ->
                     // PRD §18: a zero-duration marker at the ring instant. Named by the alarm's label, falling
                     // back to its time of day so a nameless alarm still reads as something on the calendar.

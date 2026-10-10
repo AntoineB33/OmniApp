@@ -97,6 +97,16 @@ class VacatedPeriodFillTest {
         val fill = inactivity(s2).single()
         assertEquals(at(10.0) to at(10.25), fill.startEpochMillis to fill.endEpochMillis)
         assertEquals(SchedulerDomain.PanelOutline.None, SchedulerDomain.panelOutline(fill))
+        // Anomaly 2026-10-10: "there is an Inactivity period stopping at 16:28:48 and another starting at this exact
+        // time" — the fill, and the derived Inactivity of the idle stretch after it. The fill is drawn as part of the
+        // band: left out of what covers the timeline, the band runs from the work's end through it and on.
+        assertTrue(SchedulerDomain.isDerivedInactivityFill(fill))
+        val covered = s2.tasks.getValue(work).record + s2.panels.filterNot(SchedulerDomain::isDerivedInactivityFill).map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        assertEquals(listOf(TaskTimeRange(at(10.0), at(12.0))), SchedulerDomain.derivedInactivityBands(covered, at(8.0), at(12.0)))
+        // A period of the user's is a box of its own, as ever; so is the fill once a hand has edited it.
+        val drawn = SchedulerReducer.reduce(s2, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.INACTIVITY, at(11.0), at(11.5)))
+        assertEquals(1, drawn.panels.count(SchedulerDomain::isDerivedInactivityFill))
+        assertTrue(move(s2, fill, 10.0, 10.5).panels.none(SchedulerDomain::isDerivedInactivityFill))
     }
 
     @Test

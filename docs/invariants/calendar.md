@@ -693,6 +693,12 @@ Global rules that always apply: `CLAUDE.md`.
     since nothing else remembers the choice (`PersistedPanel.tmFill`, default false), but nobody's statement, so
     neither blue nor user-stated — until a hand edits it. A fill an older build laid is stored as a hand-placed
     period and stays blue.
+  - **…and where it is Inactivity it is drawn as the DERIVED band it is part of, never as a box beside it** (anomaly
+    2026-10-10: *"there is an Inactivity period stopping at 16:28:48 and another starting at this exact time"* — the
+    stored fill of a dragged 15-minute break, and the derived Inactivity of the idle stretch after it;
+    `SchedulerDomain.isDerivedInactivityFill`, read in `App` beside `derivedInactivityBands`). The fill is left out of
+    what covers the timeline and out of the drawn records, so the band runs through it: one statement, one box. It
+    stays stored (the plan reads it); edited by hand it is a period of the user's again, with its own box.
   - **A level is an ORDER here, not a row**: the document puts a block that hides nothing on the bottom level, and
     this raises every positioned block above what it overlaps. Nothing observable differs, and the order is what its
     first example needs (of two compatible periods, the one dragged later is the one that stays under a task).
