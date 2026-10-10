@@ -791,7 +791,36 @@ suggestions before it was ever entered.
   `AddedAction.AlarmTimeNow` / `ReminderTimeNow`, `AddedCommand.AlarmsTimeNow` / `RemindersTimeNow`): every added one's
   `timeOfDayMinutes` becomes the clock's, to the minute, as ONE list edit through the list's own intent (`SetAlarms`,
   `SetChores`) — an alarm's days, and an isolated ring's date, are left alone; none to change is no intent.
-- **The groups of actions are listed by REACH, and a group has ONE title field** (user rule 2026-10-02). A group is
+- **THE ACTIONS ARE GROUPED FROM EVERY ELEMENT DOWN TO EACH ONE** (user rule 2026-10-10: *"there should be the action
+  groups that include all the actions that can be applied to all the elements, then a group for less elements and so
+  on… when there are only two quota elements, there must be three groups: the one for both quota (remove them from the
+  list, default configurations for a quota element etc…), the one for the first quota in the list (progression, title
+  etc…) and the one for the second quota"*; `SearchDomain.actionGroups`, `ActionGroup`, `SearchAddedElementsTest`).
+  - **A group is a set of added elements and the actions drawn over THAT set** — the editors are the same ones, handed
+    the group's members as their added elements, so nothing is drawn by a second implementation. "Open each" and
+    "Remove all" act on the group's elements (`onOpenEach` / `onClear` take them), and an action added to the lateral
+    menu from a group carries that group's elements.
+  - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
+    Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
+    it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each
+    element's group.
+  - **The groups**: every element (the general actions, and the set actions of a kind every element is); each kind
+    holding several but not all (its set actions, with "Open each" and "Remove all" for those); then each element in
+    the list's order — its own configuration, **what says where it stands first** (`LEADING_ACTIONS`: a quota's target
+    progression, a timer's or chrono's run, an alarm's state), then its title and the rest — with its kind's set
+    actions when it is the only one of its kind.
+  - **One added element is ONE group**: its own configuration, then its kind's buttons ("New"…), then the general
+    actions — **without "Remove all"** (*"it can be done by clicking on the cross"*) and without "Open each".
+  - **The group of several elements of a kind also holds ONE FIELD FOR ALL OF THEM, and the kind's DEFAULT
+    CONFIGURATION** (user, the same day: *"the first group should have the configurations for the default
+    configurations of the quota elements. There must also be a title field to rename every added quota elements at
+    the same time, among other things"*): after its set actions, every own action that is one field over the elements
+    it is given (all but `PER_ELEMENT_ACTIONS` — what is drawn a block per element, or names one); then, under a
+    smaller heading inside the group, the editors of what a new element starts with (`ActionGroup.inner`, drawn over
+    the kind's creation row, which is what they read the default through) — unless that creation row is added, which
+    then has its own group. A field stands once per group it is in; typing sessions are named after the elements
+    they write, so two fields typed one after the other are two History Units.
+- **A group's title field** (user rule 2026-10-02; it was "the groups are listed by REACH, and a group has ONE title field"). A group is
   the set of added elements its actions apply to ("Every element", then one per kind); the top right section and the
   window of them all list them by how many that is, the most first (`SearchDomain.sortedByReach`, stable — ties keep
   `addedActions`' order). "Title" (`AddedAction.AlarmTitle` / `TimerTitle` / `ChronoTitle` / `ReminderTitle`,

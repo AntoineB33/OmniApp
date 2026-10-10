@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section is grouped from every element down to each one — 2026-10-10
+
+The user: "Rethink the placement of the configurations in the action section. For example, when the added elements
+list only has one quota element, the first displayed thing should be the progression percentage, then the title and
+maybe after the 'new' button… When there is only one added element, there shouldn't be the 'Remove all' button… when
+there are several added elements, there should be the action groups that include all the actions that can be applied to
+all the elements, then a group for less elements and so on…"
+- `SearchDomain.actionGroups` replaces the one-group-per-kind listing (`sortedByReach` over `actionsFor`): every
+  element, each kind holding several, then each element; one element alone is one group, its progression (or run, or
+  state) first, then its title, its settings, and the buttons last, with no "Remove all" and no "Open each".
+- The editors are unchanged: each is drawn over its group's elements. "Remove all" in a kind's group removes that
+  kind's elements from the list.
+- The group of several elements of a kind keeps one field writing to all of them at once (title, amount, time…),
+  beside each element's own, and holds the kind's default configuration under a heading of its own (the user, after
+  the first version dropped the shared fields: "the first group should have the configurations for the default
+  configurations of the quota elements. There must also be a title field to rename every added quota elements at the
+  same time, among other things...").
+Client only. No persisted shape changed. Not looked at on screen: the grouping is tested, the drawing is not.
+
 ### `docs/scheduler_input_requirements.md`: the hidden timeline levels, and a dragged occurrence is an exception — 2026-10-10
 
 The user asked that the project strictly satisfy `docs/scheduler_input_requirements.md` and

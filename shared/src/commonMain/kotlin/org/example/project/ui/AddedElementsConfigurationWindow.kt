@@ -88,8 +88,8 @@ fun AddedElementsConfigurationWindow(
     onIntent: (SchedulerIntent) -> Unit,
     nowMillis: () -> Long,
     handlers: AddedActionHandlers,
-    onOpenEach: () -> Unit,
-    onClear: () -> Unit,
+    onOpenEach: (List<SearchDomain.Result>) -> Unit,
+    onClear: (List<SearchDomain.Result>) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
@@ -222,8 +222,8 @@ internal fun AddedActionsSection(
     handlers: AddedActionHandlers,
     onIntent: (SchedulerIntent) -> Unit,
     nowMillis: () -> Long,
-    onOpenEach: () -> Unit,
-    onClear: () -> Unit,
+    onOpenEach: (List<SearchDomain.Result>) -> Unit,
+    onClear: (List<SearchDomain.Result>) -> Unit,
     /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
     collapsed: Boolean = false,
     onToggleCollapsed: () -> Unit = {},
@@ -295,18 +295,26 @@ private fun AddedActionSections(
     handlers: AddedActionHandlers,
     onIntent: (SchedulerIntent) -> Unit,
     nowMillis: () -> Long,
-    onOpenEach: () -> Unit,
-    onClear: () -> Unit,
+    onOpenEach: (List<SearchDomain.Result>) -> Unit,
+    onClear: (List<SearchDomain.Result>) -> Unit,
 ) {
-    // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
-    val run = { command: SearchDomain.AddedCommand ->
-        SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
-    }
-    // User rule 2026-10-02: the group whose actions reach the most added elements first.
-    for ((kind, actions) in SearchDomain.sortedByReach(sections, added)) {
-        val count = SearchDomain.reachOf(kind, added)
-        SectionTitle((kind?.label?.replaceFirstChar { it.uppercase() } ?: "Every element") + "  ·  $count")
-        for (action in actions) {
+    // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
+    // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
+    // A group's inner groups (the default configuration of its kind) are drawn inside it, under a smaller heading.
+    for (group in SearchDomain.actionGroups(sections, added).flatMap { listOf(it) + it.inner }) {
+        @Suppress("NAME_SHADOWING")
+        val added = group.members
+        // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
+        val run = { command: SearchDomain.AddedCommand ->
+            SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
+        }
+        val onOpenEach = { onOpenEach(added) }
+        val onClear = { onClear(added) }
+        if (group.heading == null) SectionTitle(group.title)
+        else Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
+        androidx.compose.runtime.key(group.kind, group.element, group.heading, added.map(SearchDomain::keyOf)) {
+        for (action in group.actions) {
             // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
             // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
             AddableAction(action, added, config) {
@@ -327,6 +335,7 @@ private fun AddedActionSections(
                 }
             }
             }
+        }
         }
     }
 }
@@ -376,7 +385,8 @@ private fun AddableAction(
             } else {
                 val reached = added.filter { action.section == null || SearchDomain.actionKindOf(it) == action.section || it.kind == action.section }
                 val title = action.label + (reached.singleOrNull()?.let { "  ·  " + it.name } ?: "")
-                customizer.addAction(action.name, title, config.encode())
+                // The item acts on the elements of the group it was taken from, not on the whole list.
+                customizer.addAction(action.name, title, config.copy(added = added.map(SearchDomain::keyOf)).encode())
             }
         },
         modifier = Modifier.fillMaxWidth(),
@@ -1057,7 +1067,9 @@ private fun SharedTitleField(
     var before by remember(kind) { mutableStateOf<Map<String, String>?>(null) }
     var draft by remember(kind) { mutableStateOf("") }
     var session by remember(kind) { mutableStateOf(0) }
-    val editKey = "added/${kind.name}/title@$session"
+    // Named after the elements it writes too (user rule 2026-10-10: each element has a group of its own, so the same
+    // field stands once per element — two of them typed one after the other are two History Units).
+    val editKey = "added/${kind.name}/title/${titles.keys.sorted().joinToString(",")}@$session"
     OutlinedTextField(
         value = if (before != null) draft else SearchDomain.sharedTitle(titles),
         onValueChange = { text ->
@@ -1119,7 +1131,7 @@ private fun <T> SharedTextField(
     var before by remember(field) { mutableStateOf<Map<String, T>?>(null) }
     var draft by remember(field) { mutableStateOf("") }
     var session by remember(field) { mutableStateOf(0) }
-    val editKey = "added/$field@$session"
+    val editKey = "added/$field/${items.map(idOf).sorted().joinToString(",")}@$session"
     val textField: @Composable () -> Unit = {
     OutlinedTextField(
         value = if (before != null) draft else SearchDomain.sharedValue(items, read).orEmpty(),
@@ -1450,7 +1462,7 @@ private fun ScheduleUnitActionEditor(state: SchedulerState, added: List<SearchDo
 private fun AddUnderEditor(state: SchedulerState, taskIds: List<TaskId>, run: (SearchDomain.AddedCommand) -> Unit) {
     if (taskIds.isEmpty()) return
     AddUnderField(
-        cellId = org.example.project.scheduler.model.CellId("search/add-under"),
+        cellId = org.example.project.scheduler.model.CellId("search/add-under/" + taskIds.joinToString(",") { it.value }),
         candidates = { query -> TaskPathsDomain.candidatesForAll(state, taskIds, query) },
         titleSuggestions = { draft -> SchedulerDomain.titleSuggestions(state, draft) },
         onAdd = { run(SearchDomain.AddedCommand.AddUnder(it)) },

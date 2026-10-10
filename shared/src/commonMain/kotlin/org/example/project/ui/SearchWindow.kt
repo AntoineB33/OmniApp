@@ -1010,8 +1010,12 @@ fun SearchWindow(
                 handlers = actionHandlers,
                 onIntent = onIntent,
                 nowMillis = nowMillis,
-                onOpenEach = { addedRows.forEach { openers.open(state, it) } },
-                onClear = { onConfigChange(config.copy(added = emptyList())) },
+                onOpenEach = { elements -> elements.forEach { openers.open(state, it) } },
+                // The elements of the group the button is in: all of them, or the ones of a kind.
+                onClear = { elements ->
+                    val gone = elements.mapTo(HashSet(), SearchDomain::keyOf)
+                    onConfigChange(config.copy(added = config.added.filterNot { it in gone }))
+                },
                 collapsed = actionsCollapsed,
                 onToggleCollapsed = { actionsCollapsed = !actionsCollapsed },
                 modifier = Modifier

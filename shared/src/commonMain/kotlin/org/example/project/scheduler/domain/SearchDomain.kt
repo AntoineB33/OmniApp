@@ -2489,6 +2489,152 @@ object SearchDomain {
             }
         }
 
+    /**
+     * **One group of the actions section** (user rule 2026-10-10): the added elements its actions act on ([members])
+     * and those actions, in the order they are listed. [kind] is the kind the group is about, null for the group of
+     * every element; [element] says the group is ONE element's own.
+     */
+    data class ActionGroup(
+        val kind: Kind?,
+        val members: List<Result>,
+        val actions: List<AddedAction>,
+        val element: Boolean = false,
+        /**
+         * What the group holds besides its own actions, under a heading of its own inside it: the DEFAULT
+         * CONFIGURATION of the kind — what a new element starts with — in the group of several elements of a kind
+         * that has one (user rule 2026-10-10). Its members are the kind's creation row, which is what those editors
+         * read the default through.
+         */
+        val inner: List<ActionGroup> = emptyList(),
+        /** The heading of an [inner] group, which is not named after its members. */
+        val heading: String? = null,
+    ) {
+        /** The heading the section writes over the group. */
+        val title: String
+            get() {
+                val label = kind?.label?.replaceFirstChar { it.uppercase() }
+                return when {
+                    heading != null -> heading
+                    element -> listOfNotNull(label, members.singleOrNull()?.name?.takeIf { it.isNotBlank() }).joinToString(": ")
+                    else -> (label ?: "Every element") + "  ·  " + members.size
+                }
+            }
+    }
+
+    /**
+     * An element's own actions that stay ITS OWN where several elements are added: what is drawn one block per element
+     * (where a quota stands, a timer's run, a history unit's facts, a task's paths) or names one element (a category's
+     * name is unique; "Start now" starts one task). Every other own action is ONE field over the elements it is given,
+     * so the group of several elements of a kind lists it too — to write to all of them at once.
+     */
+    val PER_ELEMENT_ACTIONS: Set<AddedAction> =
+        setOf(
+            AddedAction.QuotaProgress, AddedAction.QuotaLookTimes, AddedAction.QuotaLoops, AddedAction.TimerRun,
+            AddedAction.ChronoRun, AddedAction.HistoryRules, AddedAction.HistoryInformation, AddedAction.TaskPaths,
+            AddedAction.TaskCellCategories, AddedAction.TaskFulfilment, AddedAction.TaskFulfilledBy,
+            AddedAction.TaskStartNow, AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar,
+            AddedAction.CategoryName,
+        )
+
+    /**
+     * The actions about a SET of elements as such — a command every member takes alike (make one, copy them, delete
+     * them, take them off the list) — as opposed to an element's OWN configuration (its title, where it stands, its
+     * settings), which differs from one element to the next. The general actions and an app setting's are all of the
+     * first sort ([isSetAction]).
+     */
+    val SET_ACTIONS: Set<AddedAction> by lazy {
+        AddedAction.entries.filterTo(HashSet()) { it.label == "New" || it.label == "Duplicate" || it.label == "Delete" } +
+            setOf(
+                AddedAction.CreationSearchAll, AddedAction.TaskAddCategory, AddedAction.TaskRemoveCategory,
+                AddedAction.TaskCopyIds, AddedAction.TaskDeepCopy, AddedAction.TaskCollapseSubtrees,
+                AddedAction.TaskAddDefaultSubtree, AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow,
+                AddedAction.PeriodReset,
+            )
+    }
+
+    fun isSetAction(action: AddedAction): Boolean =
+        action.section == null || action.section == Kind.AppSetting || action in SET_ACTIONS
+
+    /** What an element's own group shows FIRST: where it stands now, before what it is called (user rule 2026-10-10). */
+    private val LEADING_ACTIONS: List<AddedAction> =
+        listOf(AddedAction.QuotaProgress, AddedAction.TimerRun, AddedAction.ChronoRun, AddedAction.AlarmOnOff)
+
+    /**
+     * User rule 2026-10-10: **the groups of the actions section, from the widest reach to the narrowest** — *"there
+     * should be the action groups that include all the actions that can be applied to all the elements, then a group
+     * for less elements and so on… when there are only two quota elements, there must be three groups: the one for both
+     * quota (remove them from the list, default configurations for a quota element etc…), the one for the first quota
+     * in the list (progression, title etc…) and the one for the second quota"*.
+     *
+     * [sections] is what [actionsFor] lists for [added]. Out of it:
+     *  - **every added element**: the general actions, and what is said just below of a kind every element is;
+     *  - **each kind holding several of them** (in a group of its own where they are not all of them, with "Open
+     *    each" and "Remove every element from the list" acting on the kind's elements): that kind's set actions
+     *    ([isSetAction]); then **one field for all of them at once** — *"a title field to rename every added quota
+     *    elements at the same time, among other things"*: every own action that is one field over the elements it is
+     *    given (all but [PER_ELEMENT_ACTIONS]); then, inside the group, **the default configuration of the kind**
+     *    ([ActionGroup.inner], user rule 2026-10-10: *"the first group should have the configurations for the default
+     *    configurations of the quota elements"*) — unless its creation row is added, which then has its own group;
+     *  - **each element**, in the list's order: its own configuration, what says where it stands first
+     *    ([LEADING_ACTIONS]) — and the set actions of its kind when it is the only one of it.
+     * **One element alone is one group**: its own configuration, then its kind's set actions, then the general ones —
+     * without "Remove every element from the list" (*"it can be done by clicking on the cross"*) nor "Open each".
+     * A kind no added element is (the window of every configuration lists them all) keeps a group of its own, last.
+     */
+    fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> {
+        if (added.isEmpty()) return sections.map { (kind, actions) -> ActionGroup(kind, emptyList(), actions) }
+        fun membersOf(kind: Kind?) = added.filter { kind == null || actionKindOf(it) == kind || it.kind == kind }
+        // A creation row acted on as its kind ("New quota") has that kind's default configuration, nothing else of it.
+        fun of(element: Result, kind: Kind?, actions: List<AddedAction>) =
+            if (element.kind == Kind.Creation && kind != Kind.Creation) actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS } else actions
+        fun own(actions: List<AddedAction>) =
+            actions.filterNot(::isSetAction).let { mine -> LEADING_ACTIONS.filter { it in mine } + mine.filterNot { it in LEADING_ACTIONS } }
+        fun set(actions: List<AddedAction>) = actions.filter(::isSetAction)
+        // The fields that write to every element of the group at once.
+        fun bulk(actions: List<AddedAction>) = actions.filter { !isSetAction(it) && it !in PER_ELEMENT_ACTIONS }
+        // The default configuration of [kind], as a group inside the group of several of its elements.
+        fun defaults(kind: Kind?, actions: List<AddedAction>): List<ActionGroup> {
+            if (kind == null || defaultConfigurationAdded(added, kind)) return emptyList()
+            val editing = actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS && !isSetAction(it) }
+            if (editing.isEmpty()) return emptyList()
+            val row = ItemResult(Kind.Creation, kind.name, "New " + kind.label, "")
+            return listOf(ActionGroup(kind, listOf(row), editing, heading = "Default configuration of a new " + kind.label))
+        }
+        val general = sections.firstOrNull { it.first == null }?.second.orEmpty()
+        val kinds = sortedByReach(sections.filter { it.first != null }, added)
+        val reached = kinds.filter { membersOf(it.first).isNotEmpty() }
+        val out = ArrayList<ActionGroup>()
+        val lone = added.singleOrNull()
+        if (lone != null) {
+            val mine = reached.map { (kind, actions) -> of(lone, kind, actions) }
+            val actions =
+                mine.flatMap(::own) + mine.flatMap(::set) + general.filter { it != AddedAction.ClearList && it != AddedAction.OpenEach }
+            if (actions.isNotEmpty()) out += ActionGroup(actionKindOf(lone), added, actions.distinct(), element = true)
+        } else {
+            val whole = reached.filter { membersOf(it.first).size == added.size }
+            val wide = general + whole.flatMap { set(it.second) } + whole.flatMap { bulk(it.second) }
+            if (wide.isNotEmpty()) {
+                out += ActionGroup(whole.singleOrNull()?.first, added, wide.distinct(), inner = whole.flatMap { defaults(it.first, it.second) })
+            }
+            val listWide = general.filter { it == AddedAction.OpenEach || it == AddedAction.ClearList }
+            for ((kind, actions) in reached) {
+                val members = membersOf(kind)
+                if (members.size < 2 || members.size == added.size) continue
+                val about = listWide + set(actions) + bulk(actions)
+                if (about.isNotEmpty()) out += ActionGroup(kind, members, about, inner = defaults(kind, actions))
+            }
+            for (element in added) {
+                val mine = reached.filter { element in membersOf(it.first) }
+                val actions =
+                    mine.flatMap { own(of(element, it.first, it.second)) } +
+                        mine.filter { membersOf(it.first).size == 1 }.flatMap { set(of(element, it.first, it.second)) }
+                if (actions.isNotEmpty()) out += ActionGroup(actionKindOf(element), listOf(element), actions.distinct(), element = true)
+            }
+        }
+        kinds.filter { membersOf(it.first).isEmpty() }.forEach { (kind, actions) -> out += ActionGroup(kind, emptyList(), actions) }
+        return out
+    }
+
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
     val CALENDAR_ACTIONS: Set<AddedAction> =
         setOf(AddedAction.PlaceOnCalendar, AddedAction.CalendarBlocks, AddedAction.DragOnCalendar)

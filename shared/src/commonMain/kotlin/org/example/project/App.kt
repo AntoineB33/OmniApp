@@ -4560,8 +4560,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 )
                             },
                             nowMillis = clock::nowMillis,
-                            onOpenEach = { added.forEach { searchRowOpeners.open(schedulerState, it) } },
-                            onClear = { setSearchConfig(target, targetConfig.copy(added = emptyList())) },
+                            onOpenEach = { elements -> elements.forEach { searchRowOpeners.open(schedulerState, it) } },
+                            onClear = { elements ->
+                                val gone = elements.mapTo(HashSet(), SearchDomain::keyOf)
+                                setSearchConfig(target, targetConfig.copy(added = targetConfig.added.filterNot { it in gone }))
+                            },
                             onDismiss = { addedConfigWindowOpen = false },
                             initialOffset = addedConfigOffset,
                             initialSize = addedConfigSize,

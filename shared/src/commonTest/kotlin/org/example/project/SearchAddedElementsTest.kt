@@ -212,6 +212,94 @@ class SearchAddedElementsTest {
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.RemindersTimeNow, now, TimeZone.UTC))
     }
 
+    /**
+     * User rule 2026-10-10: *"when there are several added elements, there should be the action groups that include
+     * all the actions that can be applied to all the elements, then a group for less elements and so on… when there are
+     * only two quota elements, there must be three groups: the one for both quota (remove them from the list, default
+     * configurations for a quota element etc…), the one for the first quota in the list (progression, title etc…) and
+     * the one for the second quota"* — and one element alone: *"the first displayed thing should be the progression
+     * percentage, then the title and maybe after the 'new' button… there shouldn't be the 'Remove all' button"*.
+     */
+    @Test
+    fun the_actions_are_grouped_from_every_element_down_to_each_one() {
+        fun quota(id: String, title: String) = SearchDomain.ItemResult(SearchDomain.Kind.Quota, id, title, "")
+        fun alarm(id: String) = SearchDomain.ItemResult(SearchDomain.Kind.Alarm, id, "Wake", "")
+        fun groups(added: List<SearchDomain.Result>) =
+            SearchDomain.actionGroups(
+                SearchDomain.actionsFor(
+                    SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added,
+                ),
+                added,
+            )
+        val a = quota("q1", "Sport")
+        val b = quota("q2", "Reading")
+
+        // Two quotas: both, then each.
+        val two = groups(listOf(a, b))
+        assertEquals(listOf(listOf(a, b), listOf(a), listOf(b)), two.map { it.members })
+        assertEquals(listOf(false, true, true), two.map { it.element })
+        assertEquals(listOf("Quota  ·  2", "Quota: Sport", "Quota: Reading"), two.map { it.title })
+        assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.ClearList, SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.QuotaDuplicate, SearchDomain.AddedAction.QuotaDelete)))
+        // "There must also be a title field to rename every added quota elements at the same time, among other
+        // things": the fields that write to both — but not where each one stands, which is each one's.
+        assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
+        assertTrue(two[0].actions.none { it in SearchDomain.PER_ELEMENT_ACTIONS })
+        assertTrue(two[0].actions.indexOf(SearchDomain.AddedAction.QuotaTitle) > two[0].actions.indexOf(SearchDomain.AddedAction.QuotaDelete))
+        // "The first group should have the configurations for the default configurations of the quota elements".
+        val defaults = two[0].inner.single()
+        assertEquals("Default configuration of a new quota", defaults.title)
+        assertEquals(SearchDomain.Kind.Creation to SearchDomain.Kind.Quota.name, (defaults.members.single() as SearchDomain.ItemResult).let { it.kind to it.id })
+        assertEquals(
+            listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaRestarts, SearchDomain.AddedAction.QuotaResilience),
+            defaults.actions,
+        )
+        assertTrue(two.drop(1).all { it.inner.isEmpty() })
+        for (own in two.drop(1)) {
+            assertEquals(listOf(SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), own.actions.take(2), "where it stands, then what it is called")
+            assertTrue(SearchDomain.AddedAction.QuotaAmount in own.actions && SearchDomain.AddedAction.QuotaLoop in own.actions)
+            assertTrue(own.actions.none(SearchDomain::isSetAction), "what is about both is said once, in their group")
+        }
+        // Nothing is lost.
+        val listed =
+            SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), setOf(SearchDomain.Kind.Quota)), listOf(a, b))
+                .flatMap { it.second }
+        assertEquals(listed.toSet(), (two[0].actions + two[1].actions).toSet())
+
+        // One quota: one group — its progression, its title, its other settings, then "New" and the rest; no
+        // "Remove all" (the cross of its row does it) and no "Open each".
+        val one = groups(listOf(a)).single()
+        assertTrue(one.element)
+        assertEquals("Quota: Sport", one.title)
+        assertEquals(listOf(SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), one.actions.take(2))
+        assertTrue(one.actions.indexOf(SearchDomain.AddedAction.QuotaNew) > one.actions.indexOf(SearchDomain.AddedAction.QuotaLoops), "its own configuration before the buttons about quotas")
+        assertTrue(SearchDomain.AddedAction.ClearList !in one.actions && SearchDomain.AddedAction.OpenEach !in one.actions)
+        assertTrue(SearchDomain.AddedAction.QuotaDelete in one.actions)
+
+        // Mixed: every element, then the kind holding several of them, then each element — the lone alarm's group
+        // holding the alarms' own buttons too.
+        val x = alarm("x")
+        val mixed = groups(listOf(a, x, b))
+        assertEquals(listOf(listOf(a, x, b), listOf(a, b), listOf(a), listOf(x), listOf(b)), mixed.map { it.members })
+        assertEquals(listOf("Every element  ·  3", "Quota  ·  2", "Quota: Sport", "Alarm: Wake", "Quota: Reading"), mixed.map { it.title })
+        assertTrue(mixed[0].actions.all { it.section == null })
+        assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.ClearList), mixed[1].actions.take(2), "the quotas alone can be opened, or taken off the list")
+        assertTrue(SearchDomain.AddedAction.QuotaNew in mixed[1].actions && SearchDomain.AddedAction.QuotaNew !in mixed[2].actions)
+        assertTrue(SearchDomain.AddedAction.QuotaTitle in mixed[1].actions && mixed[1].inner.size == 1 && mixed[0].inner.isEmpty())
+        assertEquals(SearchDomain.AddedAction.AlarmOnOff, mixed[3].actions.first())
+        assertTrue(SearchDomain.AddedAction.AlarmNew in mixed[3].actions && SearchDomain.AddedAction.AlarmDelete in mixed[3].actions)
+
+        // A "New quota" creation row beside a quota: its own group edits the default configuration, nothing else.
+        val creation = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Quota.name, "New quota", "")
+        assertTrue(groups(listOf(a, b, creation)).all { it.inner.isEmpty() }, "its creation row is added: the default has its own group")
+        val default = groups(listOf(a, creation)).single { it.members == listOf(creation) }
+        assertTrue(default.actions.containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
+        assertTrue(SearchDomain.AddedAction.QuotaProgress !in default.actions && SearchDomain.AddedAction.QuotaLoops !in default.actions)
+
+        // Nothing added (the window of every configuration): one group per kind, as before.
+        val sections = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet())
+        assertEquals(sections, SearchDomain.actionGroups(sections, emptyList()).map { it.kind to it.actions })
+    }
+
     @Test
     fun the_groups_of_actions_are_listed_by_how_many_added_elements_they_reach() {
         val s = account().copy(
