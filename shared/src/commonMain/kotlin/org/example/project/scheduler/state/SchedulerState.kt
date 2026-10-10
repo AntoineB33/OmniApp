@@ -746,6 +746,14 @@ data class SchedulerState(
      */
     val panels: List<TaskPanel> = emptyList(),
     /**
+     * `docs/scheduler_input_requirements.md`: **the hidden tm_levels** — the parts of the blocks the user placed
+     * that a block of a higher level stands over ([org.example.project.scheduler.model.HiddenPanel]). On no timeline:
+     * [panels] is the overlap of the levels as it stands, and only
+     * [org.example.project.scheduler.domain.TimelineLevels.settle] moves a piece between the two, at a calendar edit.
+     * Authoritative: persisted, synced by rows, undone with the edit that hid them.
+     */
+    val hiddenPanels: List<org.example.project.scheduler.model.HiddenPanel> = emptyList(),
+    /**
      * `docs/scheduler_score.md` § *The rules repeat*: **the repeating part of the set of rules** the last fill
      * returned, when its continuation settled into a repeating run sequence — the rules past the materialized
      * [panels] are this cycle, unrolled on the schedulable clock over the environment

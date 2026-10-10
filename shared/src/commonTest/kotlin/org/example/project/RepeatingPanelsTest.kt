@@ -118,7 +118,76 @@ class RepeatingPanelsTest {
     }
 
     @Test
-    fun editing_or_removing_an_occurrence_edits_or_removes_the_pattern() {
+    fun an_occurrence_dragged_by_hand_leaves_its_pattern_as_an_exception() {
+        // docs/scheduler_input_requirements.md: "When an orange outlined block/chip becomes blue outlined, that means
+        // that the configuration that created this orange outlined block/chip gets an 'exception' info (e.g., timer
+        // every day at 10h, with an exception for the occurrence of tomorrow that got dragged 1h later)."
+        val zone = TimeZone.currentSystemDefault()
+        val s = twoTasks().copy(
+            panels = listOf(
+                TaskPanel(
+                    "panel/0", null, "No screen", NOW, NOW + HOUR, noScreen = true, periodKind = PeriodKinds.NO_SCREEN,
+                    pins = PanelPins(existence = true), repeat = PanelRepeat(1),
+                ),
+            ),
+            nextPanelCounter = 1,
+        )
+        val base = s.panels.single()
+        val tomorrow = assertNotNull(PanelRepeats.occurrence(base, 1, zone))
+        val after =
+            SchedulerReducer.reduce(
+                s,
+                SchedulerIntent.UpdateTaskPanel(
+                    tomorrow.id, null, "No screen", tomorrow.startEpochMillis + HOUR, tomorrow.endEpochMillis + HOUR,
+                    PanelPins(existence = true),
+                ),
+            )
+        // The pattern stands where it was, with one exception.
+        val pattern = after.panels.single { it.id == "panel/0" }
+        assertEquals(NOW, pattern.startEpochMillis)
+        assertEquals(NOW + HOUR, pattern.endEpochMillis)
+        assertEquals(PanelRepeat(1, skipped = setOf(1L)), pattern.repeat)
+        // The dragged occurrence is a panel of its own, the user's (blue), an hour later, and repeats nothing.
+        // (Behind the line, what stands where it was is chosen from its edges — another panel of the same unit.)
+        val own = after.panels.single { it.id != "panel/0" && it.restrictiveKind == PeriodKinds.NO_SCREEN }
+        assertEquals(tomorrow.startEpochMillis + HOUR, own.startEpochMillis)
+        assertEquals(tomorrow.endEpochMillis + HOUR, own.endEpochMillis)
+        assertNull(own.repeat)
+        assertTrue(SchedulerDomain.isUserPlaced(own))
+        assertEquals(PeriodKinds.NO_SCREEN, own.restrictiveKind)
+        // Every other occurrence is where it was; tomorrow's is laid by the pattern no more.
+        val later = PanelRepeats.occurrences(pattern, NOW, NOW + 4 * DAY, zone)
+        assertEquals(listOf(2L, 3L), later.mapNotNull { PanelRepeats.indexOf(it.id) })
+        assertNull(PanelRepeats.occurrence(pattern, 1, zone))
+        assertEquals(
+            PanelRepeats.occurrence(base, 2, zone)?.startEpochMillis,
+            PanelRepeats.occurrence(pattern, 2, zone)?.startEpochMillis,
+        )
+        // The exception is a rule (the plan depends on it), persisted, and one unit: one Ctrl+Z gives the day back.
+        assertTrue(SchedulerDomain.schedulingSignature(s) != SchedulerDomain.schedulingSignature(after))
+        assertEquals(pattern.repeat, assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(after))).panels.single { it.id == "panel/0" }.repeat)
+        val undone = SchedulerReducer.reduce(after.copy(focusedWindow = org.example.project.scheduler.state.HistoryWindow.Calendar), SchedulerIntent.Undo)
+        assertEquals(s.panels, undone.panels)
+        // A second drag of the same block moves that block alone.
+        val again =
+            SchedulerReducer.reduce(
+                after,
+                SchedulerIntent.UpdateTaskPanel(own.id, null, "No screen", own.startEpochMillis + HOUR, own.endEpochMillis + HOUR, PanelPins(existence = true)),
+            )
+        assertEquals(pattern, again.panels.single { it.id == "panel/0" })
+        // A payload written before the exceptions existed decodes as a pattern with none.
+        val older =
+            """
+            {"rootListId":"L","lists":[{"id":"L","parentCellId":null,"cellIds":["c0"]}],
+             "cells":[{"id":"c0","parentListId":"L","taskId":null}],
+             "tasks":[],
+             "panels":[{"id":"panel/0","title":"No screen","start":0,"end":3600000,"noScreen":true,"repeatEveryDays":1}]}
+            """.trimIndent()
+        assertEquals(PanelRepeat(1), assertNotNull(SchedulerStateCodec.decode(older)).panels.single().repeat)
+    }
+
+    @Test
+    fun a_new_cadence_said_on_an_occurrence_is_about_the_pattern_and_a_removal_is_an_exception() {
         val s = twoTasks().copy(
             panels = listOf(
                 TaskPanel(
@@ -128,18 +197,19 @@ class RepeatingPanelsTest {
             ),
         )
         val third = assertNotNull(PanelRepeats.occurrence(s.panels.single(), 3, TimeZone.currentSystemDefault()))
-        // Dragged thirty minutes later and made an hour and a half long: the whole pattern moves and stretches.
+        // Saved from the edit window with another cadence, thirty minutes later and an hour and a half long: the
+        // whole pattern moves, stretches and takes the cadence.
         val moved =
             SchedulerReducer.reduce(
                 s,
                 SchedulerIntent.UpdateTaskPanel(
                     third.id, null, "No screen", third.startEpochMillis + 30 * MIN, third.startEpochMillis + 120 * MIN,
-                    PanelPins(existence = true),
+                    PanelPins(existence = true), repeatEveryDays = 2,
                 ),
             ).panels.single { it.id == "panel/0" }
         assertEquals(NOW + 30 * MIN, moved.startEpochMillis)
         assertEquals(NOW + 120 * MIN, moved.endEpochMillis)
-        assertEquals(PanelRepeat(1), moved.repeat, "a drag keeps the pattern")
+        assertEquals(PanelRepeat(2), moved.repeat)
         // Setting the pattern from the edit window: 0 stops it.
         val once =
             SchedulerReducer.reduce(
@@ -147,9 +217,20 @@ class RepeatingPanelsTest {
                 SchedulerIntent.UpdateTaskPanel("panel/0", null, "No screen", NOW, NOW + HOUR, PanelPins(existence = true), repeatEveryDays = 0),
             ).panels.single { it.id == "panel/0" }
         assertNull(once.repeat)
-        // Deleting an occurrence deletes the pattern.
+        // Deleting an occurrence is a removal exception: that one is gone, the pattern and every other one stay
+        // (user rule 2026-10-10). Deleting the panel that carries the pattern deletes the pattern.
         val removed = SchedulerReducer.reduce(s, SchedulerIntent.RemoveTaskPanel(third.id))
-        assertTrue(removed.panels.none { it.id == "panel/0" })
+        val kept = removed.panels.single { it.id == "panel/0" }
+        assertEquals(PanelRepeat(1, skipped = setOf(3L)), kept.repeat)
+        assertEquals(NOW, kept.startEpochMillis)
+        assertNull(PanelRepeats.occurrence(kept, 3, TimeZone.currentSystemDefault()))
+        assertNotNull(PanelRepeats.occurrence(kept, 2, TimeZone.currentSystemDefault()))
+        assertNotNull(PanelRepeats.occurrence(kept, 4, TimeZone.currentSystemDefault()))
+        assertEquals(
+            setOf(3L, 5L),
+            SchedulerReducer.reduce(removed, SchedulerIntent.RemoveTaskPanels(listOf("repeat/panel/0/5"))).panels.single().repeat?.skipped,
+        )
+        assertTrue(SchedulerReducer.reduce(removed, SchedulerIntent.RemoveTaskPanel("panel/0")).panels.isEmpty())
         // A period laid with a pattern carries it.
         val laid = SchedulerReducer.reduce(twoTasks(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR, 7))
         assertEquals(PanelRepeat(7), laid.panels.single { it.isRestrictivePeriod }.repeat)

@@ -15,7 +15,9 @@ import org.example.project.scheduler.model.TaskPanel
  *
  * A panel carrying a [org.example.project.scheduler.model.PanelRepeat] is the first occurrence of a pattern; every
  * later one is DERIVED here, for whatever window is asked about — the fill's, the recurrence bars', the calendar's —
- * and never stored or synced. They are the one funnel for "where does this pattern put its occurrences", so the plan,
+ * and never stored or synced — less the pattern's exceptions (`docs/scheduler_input_requirements.md`: an occurrence
+ * dragged or edited by hand leaves the pattern, [org.example.project.scheduler.model.PanelRepeat.skipped]). They are
+ * the one funnel for "where does this pattern put its occurrences", so the plan,
  * the breaks and the calendar cannot disagree about it.
  */
 object PanelRepeats {
@@ -52,7 +54,8 @@ object PanelRepeats {
             val start = LocalDateTime(date, first.time).toInstant(timeZone).toEpochMilliseconds()
             if (rule.untilMillis != null && start >= rule.untilMillis) break
             val end = start + duration
-            if (end > fromMillis && start < toMillis) {
+            // An occurrence the user took out of the pattern by hand ([PanelRepeat.skipped]) is a panel of its own.
+            if (k !in rule.skipped && end > fromMillis && start < toMillis) {
                 out +=
                     base.copy(
                         id = "$OCCURRENCE_ID_PREFIX${base.id}/$k",

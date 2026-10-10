@@ -19,18 +19,16 @@ import org.example.project.ui.PlacedRecord
 import org.example.project.ui.overlapLayout
 
 /**
- * PRD §8: **two overlapping "No screen" periods are ONE period — their union.**
+ * PRD §8, as `docs/scheduler_input_requirements.md` now states it (2026-10-10): **two overlapping "No screen"
+ * periods never share a stretch of the timeline — the one positioned last stands above the other, which shows only
+ * where it sticks out** (*"the included block loses its blue/orange outlines"*). Together they still cover their
+ * union, so everything that reads "no screen was in use here" reads what it always did, and they never come out as
+ * two blocks splitting the day column's width (Overlap Mode's `overlapLayout`).
  *
- * A no-screen period does not own a slice of the timeline the way a task panel does; it is the statement
- * *no screen was in use here*, and two overlapping statements of it say one thing. So they must never come
- * out as two blocks splitting the day column's width between them (Overlap Mode's `overlapLayout`) — that
- * shape is for panels genuinely competing for the same hours. The scheduler has always read them merged
- * (`mergeOccupied`); this pins the same reading into the state the calendar draws.
- *
- * The rule has one funnel, [SchedulerDomain.unifyNoScreenPeriods], reached from two places: the reducer's
- * `resolveScreenOverrides` (every point a period is laid, moved or resized) and
- * [SchedulerStateCodec]'s decode, which heals a payload an older build wrote (CLAUDE.md
- * § *Persisted-DB compatibility*).
+ * Until then the two were FUSED into one period ([SchedulerDomain.unifyNoScreenPeriods]), which lost the period
+ * underneath for good. The fusion is still what [SchedulerStateCodec]'s decode heals an older build's overlapping
+ * periods with (CLAUDE.md § *Persisted-DB compatibility*); the reducer hides instead
+ * ([org.example.project.scheduler.domain.TimelineLevels]).
  */
 class NoScreenPeriodUnifyTest {
 
@@ -75,31 +73,44 @@ class NoScreenPeriodUnifyTest {
     // ----- laying one over another ------------------------------------------------------------
 
     @Test
-    fun a_no_screen_period_added_over_another_unifies_into_the_union() {
+    fun a_no_screen_period_added_over_another_takes_the_stretch_they_share() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 3 * HOUR))
-        val period = noScreenPeriods(s).single()
-        assertEquals(NOW to NOW + 3 * HOUR, span(period))
-        // Still a period in every other respect — the fuse only moves the bounds.
-        assertEquals("No screen", period.title)
-        assertEquals(PeriodKinds.NO_SCREEN, period.restrictiveKind)
-        assertTrue(period.pins.existence)
+        // The one just laid is whole; the other shows up to it. Their union is covered, nothing twice.
+        assertEquals(listOf(NOW to NOW + HOUR, NOW + HOUR to NOW + 3 * HOUR), noScreenPeriods(s).map(::span))
+        for (period in noScreenPeriods(s)) {
+            assertEquals("No screen", period.title)
+            assertEquals(PeriodKinds.NO_SCREEN, period.restrictiveKind)
+            assertTrue(period.pins.existence)
+        }
     }
 
     @Test
-    fun a_period_added_inside_another_leaves_the_wider_one_alone() {
+    fun a_period_added_inside_another_stands_in_it_and_the_wider_one_is_whole_again_without_it() = withClock {
+        // (At the reducer's clock: a hidden piece more than 90 days behind the line is not kept.)
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 4 * HOUR))
+        val wide = noScreenPeriods(s).single()
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 2 * HOUR))
+        assertEquals(
+            listOf(NOW to NOW + HOUR, NOW + HOUR to NOW + 2 * HOUR, NOW + 2 * HOUR to NOW + 4 * HOUR),
+            noScreenPeriods(s).map(::span),
+        )
+        val inner = noScreenPeriods(s).single { span(it) == (NOW + HOUR to NOW + 2 * HOUR) && it.tmBlockId != wide.id }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.RemoveTaskPanel(inner.id))
         assertEquals(NOW to NOW + 4 * HOUR, span(noScreenPeriods(s).single()))
+        assertEquals(wide.id, noScreenPeriods(s).single().id)
     }
 
     @Test
-    fun a_period_laid_across_two_others_swallows_both() {
-        // Transitive: the newcomer overlaps A and B, which do not overlap each other.
+    fun a_period_laid_across_two_others_stands_over_both() {
+        // The newcomer overlaps A and B, which do not overlap each other: each shows where it sticks out.
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 4 * HOUR, NOW + 5 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 30 * 60_000, NOW + 4 * HOUR + 30 * 60_000))
-        assertEquals(NOW to NOW + 5 * HOUR, span(noScreenPeriods(s).single()))
+        assertEquals(
+            listOf(NOW to NOW + 30 * 60_000, NOW + 30 * 60_000 to NOW + 4 * HOUR + 30 * 60_000, NOW + 4 * HOUR + 30 * 60_000 to NOW + 5 * HOUR),
+            noScreenPeriods(s).map(::span),
+        )
     }
 
     @Test
@@ -146,7 +157,7 @@ class NoScreenPeriodUnifyTest {
     // ----- dragging one onto another ----------------------------------------------------------
 
     @Test
-    fun a_period_dragged_onto_another_unifies_with_it() {
+    fun a_period_dragged_onto_another_stands_over_it() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + 6 * HOUR, NOW + 7 * HOUR))
         val dragged = noScreenPeriods(s).last()
@@ -161,10 +172,9 @@ class NoScreenPeriodUnifyTest {
                 pins = dragged.pins,
             ),
         )
-        val period = noScreenPeriods(s).single()
-        assertEquals(NOW to NOW + 3 * HOUR, span(period))
-        // The panel the user was holding is the one that survives — the drag must not vanish under them.
-        assertEquals(dragged.id, period.id)
+        assertEquals(listOf(NOW to NOW + HOUR, NOW + HOUR to NOW + 3 * HOUR), noScreenPeriods(s).map(::span))
+        // The panel the user was holding is whole where they put it — the drag must not vanish under them.
+        assertEquals(dragged.id, noScreenPeriods(s).last().id)
     }
 
     // ----- the union is what the other §8 rules then apply to -----------------------------------
@@ -182,10 +192,13 @@ class NoScreenPeriodUnifyTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 6 * HOUR, NOW - 4 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW - 5 * HOUR, NOW - 2 * HOUR))
 
-        assertEquals(NOW - 6 * HOUR to NOW - 2 * HOUR, span(noScreenPeriods(s).single()))
+        assertEquals(
+            listOf(NOW - 6 * HOUR to NOW - 5 * HOUR, NOW - 5 * HOUR to NOW - 2 * HOUR),
+            noScreenPeriods(s).map(::span),
+        )
         assertTrue(
             s.tasks.getValue(solo).record.isEmpty(),
-            "the work under the fused span must go the way it would under a period drawn that wide",
+            "the work under the union must go the way it would under a period drawn that wide",
         )
         assertTrue(
             s.panels.none { it.taskId == solo && !it.auto },
@@ -196,7 +209,7 @@ class NoScreenPeriodUnifyTest {
     // ----- what the user actually sees ---------------------------------------------------------
 
     @Test
-    fun the_unified_period_takes_the_whole_day_column_width() {
+    fun overlapping_periods_each_take_the_whole_day_column_width() {
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW, NOW + 2 * HOUR))
         s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, NOW + HOUR, NOW + 3 * HOUR))
         // The blocks the calendar would slice: one per no-screen panel, laid out over the same hours.
@@ -213,9 +226,11 @@ class NoScreenPeriodUnifyTest {
                 )
             }
         val slices = overlapLayout(blocks).values.flatten()
-        assertEquals(1, slices.size, "one period, one slice — not a stepped, shared-width shape")
-        assertEquals(0f, slices.single().xFraction, 1e-3f)
-        assertEquals(1f, slices.single().widthFraction, 1e-3f)
+        assertEquals(2, slices.size, "two periods end to end — not a stepped, shared-width shape")
+        for (slice in slices) {
+            assertEquals(0f, slice.xFraction, 1e-3f)
+            assertEquals(1f, slice.widthFraction, 1e-3f)
+        }
     }
 
     // ----- healing what an older build wrote ----------------------------------------------------

@@ -82,6 +82,10 @@ object SnapshotMerge {
             mergeKeyed(base.lists, local.lists, remote.lists) { b, l, r -> mergeList(b, l, r) }
         val panels =
             mergeKeyedList(base.panels, local.panels, remote.panels, TaskPanel::id) { b, l, r -> pick(b, l, r) }
+        // `docs/scheduler_input_requirements.md`: the hidden tm_levels, one piece at a time like the panels they
+        // are parts of.
+        val hiddenPanels =
+            mergeKeyedList(base.hiddenPanels, local.hiddenPanels, remote.hiddenPanels, { it.id }) { b, l, r -> pick(b, l, r) }
         val chores =
             mergeKeyedList(base.chores, local.chores, remote.chores, ChoreEntry::id) { b, l, r -> pick(b, l, r) }
         val alarms =
@@ -144,6 +148,7 @@ object SnapshotMerge {
                 activeTaskTreeId =
                     pickNullable(base.activeTaskTreeId, local.activeTaskTreeId, remote.activeTaskTreeId),
                 panels = panels,
+                hiddenPanels = hiddenPanels,
                 chores = chores,
                 alarms = alarms,
                 timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),

@@ -5527,6 +5527,9 @@ object SchedulerDomain {
     fun panelOutline(panel: TaskPanel): PanelOutline = when {
         isHandPlacedScreenBreak(panel) -> PanelOutline.User
         panel.screenBreak || panel.conductedBreak -> PanelOutline.Dynamic
+        // What the hole rule laid where a dragged block had stood is nobody's statement: no outline (anomaly
+        // 2026-10-10, *"an 'Inactivity' blue outlined block filling the vacated time interval"*).
+        panel.tmFill -> PanelOutline.None
         isUserPlaced(panel) -> PanelOutline.User
         panel.isRestrictivePeriod -> PanelOutline.Pattern
         else -> PanelOutline.None

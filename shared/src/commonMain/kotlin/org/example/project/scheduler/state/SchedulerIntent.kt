@@ -1533,7 +1533,8 @@ sealed interface SchedulerIntent {
         /**
          * `docs/scheduler_requirements.md`: how often the panel recurs, in days ([PanelRepeat]) — 0 to stop it
          * recurring, null to keep whatever it does (a drag never changes a pattern). An [id] of a derived
-         * occurrence edits the whole pattern, moved by as much as the occurrence was.
+         * occurrence takes that occurrence OUT of its pattern (`docs/scheduler_input_requirements.md`: the pattern
+         * gets an exception and the occurrence is a panel of the user's); with another cadence it edits the pattern.
          */
         val repeatEveryDays: Int? = null,
     ) : SchedulerIntent

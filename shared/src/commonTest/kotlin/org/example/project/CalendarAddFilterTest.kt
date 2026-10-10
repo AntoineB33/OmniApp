@@ -59,7 +59,10 @@ class CalendarAddFilterTest {
         assertTrue(everything.containsAll(addable) && addable.containsAll(keeping), "each state keeps a part of the one before")
         assertTrue(noScreen in addable, "a \"no screen\" period can be added over the task's panel…")
         assertFalse(noScreen in keeping, "…but it removes that panel: the task is on screen")
-        assertTrue(SearchDomain.taskKey(read) in keeping, "another task's panel beside it removes nothing")
+        // docs/scheduler_input_requirements.md (2026-10-10): a task's panel positioned over another task's hides it
+        // (until then the two shared the width, so adding one removed nothing).
+        assertFalse(SearchDomain.taskKey(read) in keeping, "another task's panel put over it takes it off the timeline")
+        assertTrue(SearchDomain.taskKey(read) in addable)
         // Where nothing stands, everything that can be added removes nothing.
         assertEquals(keys(s, SearchDomain.CalendarAddFilter.Addable, 14.0), keys(s, SearchDomain.CalendarAddFilter.KeepingEverything, 14.0))
     }

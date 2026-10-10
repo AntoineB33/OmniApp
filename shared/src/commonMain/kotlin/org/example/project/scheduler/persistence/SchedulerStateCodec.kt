@@ -553,9 +553,15 @@ object SchedulerStateCodec {
                         periodKind = it.periodKind,
                         repeatEveryDays = it.repeat?.everyDays ?: 0,
                         repeatUntil = it.repeat?.untilMillis,
+                        repeatSkipped = it.repeat?.skipped.orEmpty().sorted(),
                         heldAtLine = it.heldAtLine.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
+                        tmLevel = it.tmLevel,
+                        tmOrigin = it.tmOrigin,
+                        tmShare = it.tmShare,
+                        tmFill = it.tmFill,
                     )
                 },
+            hiddenPanels = hiddenPanels.map { it.toPersistedHidden() },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             soundVolume = soundVolume,
@@ -882,6 +888,8 @@ object SchedulerStateCodec {
                     label,
                     recordRemoved = records.removed.toPersistedRanges(),
                     recordAdded = records.added.toPersistedRanges(),
+                    hiddenBefore = hidden.before.values.map { it.toPersistedHidden() }.takeIf { it.isNotEmpty() },
+                    hiddenAfter = hidden.after.values.map { it.toPersistedHidden() }.takeIf { it.isNotEmpty() },
                 )
             is ToggleExpandDelta -> PersistedDelta.ToggleExpand(cellId.value)
             // A set change is written as (removed, added): `SetChanges.of(removed, added)` gives it back.
@@ -963,8 +971,19 @@ object SchedulerStateCodec {
             periodKind = periodKind,
             repeatEveryDays = repeat?.everyDays ?: 0,
             repeatUntil = repeat?.untilMillis,
+            repeatSkipped = repeat?.skipped.orEmpty().sorted(),
             heldAtLine = heldAtLine.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) },
+            tmLevel = tmLevel,
+            tmOrigin = tmOrigin,
+            tmShare = tmShare,
+            tmFill = tmFill,
         )
+
+    private fun org.example.project.scheduler.model.HiddenPanel.toPersistedHidden(): PersistedHiddenPanel =
+        PersistedHiddenPanel(id = id, panel = panel.toPersistedPanel(), record = record)
+
+    private fun PersistedHiddenPanel.toHidden(): org.example.project.scheduler.model.HiddenPanel =
+        org.example.project.scheduler.model.HiddenPanel(panel.toPanel(), record)
 
     private fun SchedulerEditSession.toPersisted(): PersistedEditSession =
         PersistedEditSession(
@@ -1211,10 +1230,15 @@ object SchedulerStateCodec {
                         inactivity = it.inactivity,
                         conductedBreak = it.conductedBreak,
                         periodKind = it.periodKind,
-                        repeat = PanelRepeat.of(it.repeatEveryDays, it.repeatUntil),
+                        repeat = PanelRepeat.of(it.repeatEveryDays, it.repeatUntil, it.repeatSkipped.toSet()),
                         heldAtLine = it.heldAtLine.map { r -> TaskTimeRange(r.start, r.end) },
+                        tmLevel = it.tmLevel,
+                        tmOrigin = it.tmOrigin,
+                        tmShare = it.tmShare,
+                        tmFill = it.tmFill,
                     )
                 },
+            hiddenPanels = hiddenPanels.map { it.toHidden() },
             nextPanelCounter = nextPanelCounter,
             automaticSchedule = automaticSchedule,
             soundVolume = soundVolume,
@@ -1448,6 +1472,10 @@ object SchedulerStateCodec {
                     after.map { it.toPanel() },
                     label,
                     RecordChanges(added = recordAdded.toRecordRanges(), removed = recordRemoved.toRecordRanges()),
+                    EntryChanges(
+                        hiddenBefore.orEmpty().associate { it.id to it.toHidden() },
+                        hiddenAfter.orEmpty().associate { it.id to it.toHidden() },
+                    ),
                 )
             is PersistedDelta.ToggleExpand -> ToggleExpandDelta(CellId(cellId))
             is PersistedDelta.SetExpanded ->
@@ -1558,8 +1586,12 @@ object SchedulerStateCodec {
             // than re-deriving it at every read: the two legacy names, and `sleep` telling apart the two
             // kinds the README's one grey kind became ([PeriodKinds.migrateStoredKind]).
             periodKind = PeriodKinds.migrateStoredKind(periodKind, sleep),
-            repeat = PanelRepeat.of(repeatEveryDays, repeatUntil),
+            repeat = PanelRepeat.of(repeatEveryDays, repeatUntil, repeatSkipped.toSet()),
             heldAtLine = heldAtLine.map { TaskTimeRange(it.start, it.end) },
+            tmLevel = tmLevel,
+            tmOrigin = tmOrigin,
+            tmShare = tmShare,
+            tmFill = tmFill,
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -1671,6 +1703,8 @@ private data class PersistedState(
     // PRD §8/§9: defaults keep payloads written before task panels existed loadable. (A pre-1.2.0
     // payload's `scheduled`/`manualEntries` fields are ignored on load; the next refresh refills.)
     val panels: List<PersistedPanel> = emptyList(),
+    /** `docs/scheduler_input_requirements.md`: the hidden `tm_levels`; a payload that predates them holds none. */
+    val hiddenPanels: List<PersistedHiddenPanel> = emptyList(),
     val nextPanelCounter: Int = 0,
     // PRD §7: default on keeps auto-scheduling running for payloads written before the switch existed.
     val automaticSchedule: Boolean = true,
@@ -2383,6 +2417,12 @@ private sealed interface PersistedDelta {
          */
         val recordRemoved: Map<String, List<PersistedTimeRange>>? = null,
         val recordAdded: Map<String, List<PersistedTimeRange>>? = null,
+        /**
+         * The pieces the same edit hid in a `tm_level` or brought back out of one ([PanelDelta.hidden]). Absent
+         * (null) in every unit written before the levels, and in every edit that hid nothing.
+         */
+        val hiddenBefore: List<PersistedHiddenPanel>? = null,
+        val hiddenAfter: List<PersistedHiddenPanel>? = null,
     ) : PersistedDelta
 
     @Serializable
@@ -2638,8 +2678,33 @@ private data class PersistedPanel(
     val repeatEveryDays: Int = 0,
     /** The instant a repeating panel stops starting new occurrences; null repeats for ever. */
     val repeatUntil: Long? = null,
+    /**
+     * [org.example.project.scheduler.model.PanelRepeat.skipped]: the occurrences taken out of the pattern by hand.
+     * A payload that predates the field has none.
+     */
+    val repeatSkipped: List<Long> = emptyList(),
     /** [org.example.project.scheduler.model.TaskPanel.heldAtLine]; a payload that predates it holds none. */
     val heldAtLine: List<PersistedTimeRange> = emptyList(),
+    /** [org.example.project.scheduler.model.TaskPanel.tmLevel]; a payload that predates the levels stands on 0. */
+    val tmLevel: Int = 0,
+    /** [org.example.project.scheduler.model.TaskPanel.tmOrigin]; blank (and absent before) on a block of its own. */
+    val tmOrigin: String = "",
+    /** [org.example.project.scheduler.model.TaskPanel.tmShare]; false (and absent before) hides what it stands over. */
+    val tmShare: Boolean = false,
+    /** [org.example.project.scheduler.model.TaskPanel.tmFill]; false (and absent before) is a block a hand placed. */
+    val tmFill: Boolean = false,
+)
+
+/**
+ * [org.example.project.scheduler.model.HiddenPanel]: one piece a hidden `tm_level` holds. Its [id] is the piece's
+ * own, at the top of the object, so the row sync writes one row per piece (`EntityRows`).
+ */
+@Serializable
+private data class PersistedHiddenPanel(
+    val id: String,
+    val panel: PersistedPanel,
+    /** [org.example.project.scheduler.model.HiddenPanel.record]: completed work, not a block. */
+    val record: Boolean = false,
 )
 
 @Serializable

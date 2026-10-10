@@ -4845,7 +4845,10 @@ internal fun calendarMoveOf(
                     ),
                 )
             }
-        block.screenBreak -> CalendarMove.Break(block.breakKind, block.fullStartMillis, block.fullEndMillis, newStart)
+        // `docs/scheduler_input_requirements.md`: *"All blocks can be dragged, except screen breaks at t > now line"*.
+        block.screenBreak ->
+            if (block.fullEndMillis > nowMillis) null
+            else CalendarMove.Break(block.breakKind, block.fullStartMillis, block.fullEndMillis, newStart)
         else ->
             commitBoundsIntent(
                 block, block.taskId, block.title, newStart, newEnd, SchedulerDomain.pinsAfterHandPlacement(block.pins), allowOverlap,

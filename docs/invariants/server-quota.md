@@ -43,6 +43,9 @@ block every 20, a minimum-time change every 10. The account is the release accou
 - **Nothing the app stores grows with editing, except through a bound.** Entity rows are rewritten in place (one row
   per entity); a tombstone lives a week; history is 1000 units per category; the pg_cron log a day. A new table that
   accumulates rows needs its bound, and the bound needs to be in the projection.
+- **The calendar's hidden levels are rows like the panels they are pieces of, and bounded on the client**
+  (`TimelineLevels.purged`: 90 days behind the line, 500 pieces; `calendar.md` § *tm_levels*). A piece is one small
+  row, written when a block is placed over another and deleted when it is given back.
 - **Never rewrite a large row to change a small part of it.** That is the outage. A value that changes with editing
   goes in its own row, sized by what changed (`sync-and-accounts.md` § *Sync by rows*).
 - **A History Unit is a diff of what changed**, never a copy of the tree (`persistence.md` § *A History Unit is what

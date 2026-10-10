@@ -136,8 +136,14 @@ kept head on an extension) and **restrictive periods**. Nothing else, by any oth
   `PanelRepeats.expand`, wherever they are asked for — the fill (over the lags' replay window and past its search
   horizon, keeping in its answer only the occurrences around the line), the break funnel (over the walk), the
   calendar (over the visible span). Occurrences (`repeat/{base}/{k}`) are `isRegeneratedPanel`: never synced, never in
-  the signature — the pattern is, on its panel. Editing or dragging an occurrence moves the pattern by as much;
-  deleting one deletes the pattern. Set from both editors ("Repeat every (days)").
+  the signature — the pattern is, on its panel. **An occurrence dragged or edited by hand LEAVES the pattern**
+  (`docs/scheduler_input_requirements.md`: the configuration *"gets an exception"*; `PanelRepeat.skipped`,
+  2026-10-10): the pattern skips that occurrence and keeps every other where it was, and the occurrence is a panel
+  of its own, the user's — an alarm's `skippedEpochDays`, for a repeating panel. Only another cadence said in the
+  edit window is a statement about the pattern (it moves by as much, and its exceptions are dropped: they numbered
+  the old occurrences). Moving the FIRST occurrence — the panel that carries the pattern — still moves the pattern.
+  **Deleting an occurrence is a removal exception** (user rule 2026-10-10; `SchedulerReducer.withoutPanels`): that
+  one is skipped and every other stays; deleting the panel that carries the pattern deletes the pattern. Set from both editors ("Repeat every (days)"). `RepeatingPanelsTest`.
 
 - **A pre-placed block is a block OWNED BY A TASK, and a period reaches the walk by its KIND** — the two
   slots are not interchangeable, and a panel must never take both. `isSchedulerFixed` (= `TaskPanel.pinned`)

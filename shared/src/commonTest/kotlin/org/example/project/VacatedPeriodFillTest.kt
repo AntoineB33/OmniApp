@@ -78,6 +78,25 @@ class VacatedPeriodFillTest {
         val s2 = move(s1, period, 14.0, 15.0)
         assertEquals(listOf(at(10.0) to at(11.0)), inactivity(s2).map { it.startEpochMillis to it.endEpochMillis })
         assertEquals(listOf(span(8.0, 10.0)), s2.tasks.getValue(work).record)
+        // Anomaly 2026-10-10 (*"an 'Inactivity' blue outlined block filling the vacated time interval"*): what the
+        // hole rule lays is the bottom level's, not a block a hand placed — no outline, until a hand edits it.
+        val fill = inactivity(s2).single()
+        assertEquals(SchedulerDomain.PanelOutline.None, SchedulerDomain.panelOutline(fill))
+        assertEquals(SchedulerDomain.PanelOutline.User, SchedulerDomain.panelOutline(s2.panels.single { it.restrictiveKind == PeriodKinds.NO_SCREEN }))
+        val kept = org.example.project.scheduler.persistence.SchedulerStateCodec.decode(org.example.project.scheduler.persistence.SchedulerStateCodec.encode(s2))!!
+        assertEquals(SchedulerDomain.PanelOutline.None, SchedulerDomain.panelOutline(kept.panels.single { it.restrictiveKind == PeriodKinds.INACTIVITY }))
+        val edited = move(s2, fill, 10.0, 10.5)
+        assertEquals(SchedulerDomain.PanelOutline.User, SchedulerDomain.panelOutline(inactivity(edited).single()))
+    }
+
+    @Test
+    fun the_hole_a_dragged_break_leaves_between_different_edges_is_filled_with_no_outline() {
+        val (s0, work) = oneTask()
+        val s1 = withRecord(s0, work, span(8.0, 10.0))
+        val s2 = SchedulerReducer.reduce(s1, SchedulerIntent.FillVacatedBreak(PeriodKinds.BREAK_15MIN, at(10.0), at(10.25)))
+        val fill = inactivity(s2).single()
+        assertEquals(at(10.0) to at(10.25), fill.startEpochMillis to fill.endEpochMillis)
+        assertEquals(SchedulerDomain.PanelOutline.None, SchedulerDomain.panelOutline(fill))
     }
 
     @Test

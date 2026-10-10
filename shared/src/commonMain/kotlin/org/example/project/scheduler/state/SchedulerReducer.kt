@@ -14,6 +14,8 @@ import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.PanelRepeats
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.TimelineLevels
+import org.example.project.scheduler.model.HiddenPanel
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SchedulerRunRules
 import org.example.project.scheduler.domain.PlanAbandoned
@@ -2353,13 +2355,183 @@ object SchedulerReducer {
         label: String = "Calendar edit",
         /** Record periods the same gesture moves: one unit, one Ctrl+Z ([PanelDelta.records]). */
         records: RecordChanges = RecordChanges(emptyMap(), emptyMap()),
+        /**
+         * The panels the unit starts from, where [state] already holds a step of the same gesture (an occurrence
+         * taken out of its pattern, then moved): one unit, one Ctrl+Z.
+         */
+        historyBefore: List<TaskPanel>? = null,
+        /**
+         * The state the unit starts from, where [state] already holds what [resolveScreenOverrides] hid or gave back:
+         * its hidden levels and its tasks' records are the unit's "before".
+         */
+        levelsBefore: SchedulerState? = null,
     ): SchedulerState {
-        val before = state.panels
+        val before = historyBefore ?: state.panels
+        val start = levelsBefore ?: state
+        val hidBefore = start.hiddenPanels
         // PRD §8: same-task panels auto-merge (unless their pin state differs) the moment an add / edit
         // / move / resize / pin makes them touch or overlap.
-        val normalized = SchedulerDomain.mergeSameTaskPanels(after)
-        if (before == normalized && records.tasks.isEmpty()) return state
-        return commitDelta(state, PanelDelta(before, normalized, label, records), HistoryCategory.Calendar)
+        val merged = SchedulerDomain.mergeSameTaskPanels(after)
+        // `docs/scheduler_input_requirements.md`: the timeline is the overlap of the tm_levels — settled here for
+        // every calendar edit, so a block removed or moved away gives back what it stood over.
+        val (settled, normalized) = settleLevels(state.copy(panels = before, hiddenPanels = hidBefore), state, merged, positionedId = null)
+        val hidAfter = TimelineLevels.purged(settled.hiddenPanels, clock.nowMillis())
+        // The work the levels hid under a period, or gave back: in the unit too, so one Ctrl+Z walks all of it.
+        val moved = settled.tasks.keys.filter { id -> start.tasks[id]?.let { it.record != settled.tasks.getValue(id).record } == true }
+        val levelRecords =
+            RecordChanges.of(moved.associateWith { start.tasks.getValue(it).record }, moved.associateWith { settled.tasks.getValue(it).record })
+        val allRecords =
+            if (moved.isEmpty()) records
+            else RecordChanges(
+                (levelRecords.added.keys + records.added.keys).associateWith { levelRecords.added[it].orEmpty() + records.added[it].orEmpty() },
+                (levelRecords.removed.keys + records.removed.keys).associateWith { levelRecords.removed[it].orEmpty() + records.removed[it].orEmpty() },
+            )
+        val from =
+            if (before === state.panels && hidBefore == state.hiddenPanels && settled === state) state
+            else settled.copy(
+                panels = before,
+                hiddenPanels = hidBefore,
+                tasks = if (moved.isEmpty()) settled.tasks else settled.tasks + moved.associateWith { settled.tasks.getValue(it).copy(record = start.tasks.getValue(it).record) },
+            )
+        if (before == normalized && allRecords.tasks.isEmpty() && hidBefore == hidAfter) return from
+        val hidden = EntryChanges.ofList(hidBefore, hidAfter) { it.id }
+        val committed = commitDelta(from, PanelDelta(before, normalized, label, allRecords, hidden), HistoryCategory.Calendar)
+        // Records are not in the scheduling signature: work that left or came back re-plans here, as a strip did.
+        return if (moved.isEmpty()) committed else refilledAfterRecordChange(committed)
+    }
+
+    /**
+     * `docs/scheduler_input_requirements.md` § tm_levels, for one calendar edit: [panels] — what the edit makes of
+     * [origin]'s — once the levels are applied from top to bottom over the stretches the edit touched
+     * ([TimelineLevels.settle]). The block the hand positioned ([positionedId]) is first raised above what it now
+     * stands over ([TimelineLevels.raised]). The answer's state carries the hidden levels and the ids it allocated; its
+     * panels are still the caller's to commit.
+     */
+    private fun settleLevels(
+        origin: SchedulerState,
+        working: SchedulerState,
+        panels: List<TaskPanel>,
+        positionedId: String?,
+    ): Pair<SchedulerState, List<TaskPanel>> {
+        if (panels === origin.panels && working.hiddenPanels === origin.hiddenPanels) return working to panels
+        val was = origin.panels.associateBy { it.id }
+        val now = panels.associateBy { it.id }
+        val windows = ArrayList<TaskTimeRange>()
+        for (p in panels) {
+            if (!TimelineLevels.participates(p)) continue
+            val old = was[p.id]
+            if (old != null && old.startEpochMillis == p.startEpochMillis && old.endEpochMillis == p.endEpochMillis &&
+                old.taskId == p.taskId && old.restrictiveKind == p.restrictiveKind && old.tmLevel == p.tmLevel &&
+                TimelineLevels.participates(old)
+            ) continue
+            windows += TaskTimeRange(p.startEpochMillis, p.endEpochMillis)
+            if (old != null) windows += TaskTimeRange(old.startEpochMillis, old.endEpochMillis)
+        }
+        for (old in origin.panels) {
+            if (old.id !in now && TimelineLevels.participates(old)) windows += TaskTimeRange(old.startEpochMillis, old.endEpochMillis)
+        }
+        if (windows.isEmpty()) return working to panels
+        val raised = if (positionedId == null) panels else TimelineLevels.raised(panels, working.hiddenPanels, positionedId)
+        var allocating = working
+        val settled =
+            TimelineLevels.settle(raised, working.hiddenPanels, working.tasks, working.periodKindConfig, windows, allocate = {
+                val (id, next) = allocating.allocatePanelId()
+                allocating = next
+                id
+            })
+        val blocks =
+            if (settled.panels === panels && settled.hidden === working.hiddenPanels) working
+            else allocating.copy(hiddenPanels = settled.hidden)
+        return settleRecords(blocks, settled.panels, windows) to settled.panels
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *frozen past* (*"The schedule at t < now line never changes"*) with
+     * `docs/scheduler_input_requirements.md` § tm_levels: **the work banked under a period the user laid over the
+     * past is HIDDEN, never stripped.** A record is a claim that the task ran there and the period is the statement
+     * that it could not have ([periodRefuses], the override rule's one question) — so while the period stands the
+     * work is on the level under it ([HiddenPanel.record]) and out of the task's record, and it is back in the record,
+     * as it was, wherever the period no longer stands. Over [windows], the stretches a calendar edit touched.
+     *
+     * The periods are read as the line left them ([SchedulerDomain.afterCrossings]): what a mode-1 line crossed of a
+     * period is not the period's any more, so work banked there is not under it.
+     */
+    private fun settleRecords(state: SchedulerState, panels: List<TaskPanel>, windows: List<TaskTimeRange>): SchedulerState {
+        val reach = SchedulerDomain.mergeOccupied(windows)
+        fun inReach(start: Long, end: Long) = reach.any { start < it.endEpochMillis && it.startEpochMillis < end }
+        val periods =
+            SchedulerDomain.afterCrossings(
+                panels.filter { it.isRestrictivePeriod && SchedulerDomain.isUserPlaced(it) && it.endEpochMillis > it.startEpochMillis },
+                state.periodCrossings, state.periodKindConfig,
+            )
+        val works = state.hiddenPanels.filter { it.record && inReach(it.panel.startEpochMillis, it.panel.endEpochMillis) }
+        val laid = periods.filter { inReach(it.startEpochMillis, it.endEpochMillis) }
+        if (works.isEmpty() && laid.isEmpty()) return state
+        var working = state
+        var tasks = state.tasks
+        fun freshId(): String {
+            val (id, next) = working.allocatePanelId()
+            working = next
+            return id
+        }
+        // Given back: the part of a hidden stretch no period refusing its task stands over any more.
+        var hidden = state.hiddenPanels
+        if (works.isNotEmpty()) {
+            val kept = ArrayList<HiddenPanel>(hidden.size)
+            for (h in hidden) {
+                val task = h.panel.taskId?.let { tasks[it] }
+                if (!h.record || task == null || !inReach(h.panel.startEpochMillis, h.panel.endEpochMillis)) {
+                    kept += h
+                    continue
+                }
+                val span = listOf(TaskTimeRange(h.panel.startEpochMillis, h.panel.endEpochMillis))
+                val covering =
+                    periods.filter { task.resilienceFor(it.restrictiveKind) <= 0.0 }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+                val free = SchedulerDomain.subtractRegions(span, covering)
+                if (free.isEmpty()) {
+                    kept += h
+                    continue
+                }
+                var record = task.record
+                for (range in free) {
+                    // Joined back to what it was cut from, and to nothing else.
+                    val touching = record.filter { it.endEpochMillis == range.startEpochMillis || it.startEpochMillis == range.endEpochMillis }
+                    val whole =
+                        TaskTimeRange(
+                            minOf(range.startEpochMillis, touching.minOfOrNull { it.startEpochMillis } ?: range.startEpochMillis),
+                            maxOf(range.endEpochMillis, touching.maxOfOrNull { it.endEpochMillis } ?: range.endEpochMillis),
+                        )
+                    record = (SchedulerDomain.subtractRegions(record, listOf(whole)) + whole).sortedBy { it.startEpochMillis }
+                }
+                tasks = tasks + (task.id to task.copy(record = record))
+                SchedulerDomain.intersectRegions(span, covering).forEachIndexed { i, still ->
+                    kept += HiddenPanel(
+                        h.panel.copy(id = if (i == 0) h.id else freshId(), startEpochMillis = still.startEpochMillis, endEpochMillis = still.endEpochMillis),
+                        record = true,
+                    )
+                }
+            }
+            hidden = kept
+        }
+        // Hidden: the work a period in reach stands over and refuses.
+        for (period in laid) {
+            val over = listOf(TaskTimeRange(period.startEpochMillis, period.endEpochMillis))
+            for ((id, task) in tasks) {
+                if (task.record.none { it.startEpochMillis < period.endEpochMillis && period.startEpochMillis < it.endEpochMillis }) continue
+                if (task.resilienceFor(period.restrictiveKind) > 0.0) continue
+                val cut = SchedulerDomain.intersectRegions(task.record, over)
+                if (cut.isEmpty()) continue
+                tasks = tasks + (id to task.copy(record = SchedulerDomain.subtractRegions(task.record, over)))
+                for (range in cut) {
+                    hidden = hidden +
+                        HiddenPanel(
+                            TaskPanel(id = freshId(), taskId = id, title = task.title, startEpochMillis = range.startEpochMillis, endEpochMillis = range.endEpochMillis),
+                            record = true,
+                        )
+                }
+            }
+        }
+        return if (tasks === state.tasks && hidden === state.hiddenPanels) state else working.copy(tasks = tasks, hiddenPanels = hidden)
     }
 
     /**
@@ -2404,7 +2576,7 @@ object SchedulerReducer {
                 auto = false,
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
-        return commitPanels(resolved, resolvedPanels, label = "Add panel")
+        return commitPanels(resolved, resolvedPanels, label = "Add panel", levelsBefore = state)
     }
 
     /**
@@ -2458,8 +2630,8 @@ object SchedulerReducer {
                 withVacatedPastFilled(resolved, resolvedPanels, kind, it, TaskTimeRange(laid.startEpochMillis, laid.endEpochMillis))
             }
         return stripRecordsUnderPeriod(
-            if (filled == null) commitPanels(resolved, resolvedPanels, label = label)
-            else commitPanels(filled.state, filled.panels, label = label, records = filled.records),
+            if (filled == null) commitPanels(resolved, resolvedPanels, label = label, levelsBefore = state)
+            else commitPanels(filled.state, filled.panels, label = label, records = filled.records, levelsBefore = state),
             laid,
         )
     }
@@ -2526,7 +2698,7 @@ object SchedulerReducer {
                 laidPeriods += resolvedPanels.firstOrNull { it.id == panelId } ?: panel
             }
         }
-        var committed = commitPanels(working, panels, label = "Add to calendar")
+        var committed = commitPanels(working, panels, label = "Add to calendar", levelsBefore = state)
         laidPeriods.forEach { committed = stripRecordsUnderPeriod(committed, it) }
         return committed
     }
@@ -2590,6 +2762,7 @@ object SchedulerReducer {
                     // `pinned` itself stays false ([derivePinned]'s overload says why).
                     pins = PanelPins(existence = true),
                     auto = false,
+                    tmFill = false,
                 )
             }
             CalendarElements.Kind.Reminder ->
@@ -2669,7 +2842,9 @@ object SchedulerReducer {
         rawPanels: List<TaskPanel>,
         changedId: String,
     ): Pair<SchedulerState, List<TaskPanel>> {
-        val panels = SchedulerDomain.unifyNoScreenPeriods(rawPanels, keepId = changedId)
+        // (Two overlapping periods of one kind used to be fused here; the lower one is now hidden under the higher by
+        // the levels, so it is whole again when the other leaves — [TimelineLevels].)
+        val panels = rawPanels
         val changed = panels.firstOrNull { it.id == changedId } ?: return state to panels
         // The user has just STATED this period (drawn, moved or resized it): what a mode-1 line crossed of it before
         // is about a period that is no longer this one, and only what the line crosses from now on is taken from it
@@ -2681,18 +2856,20 @@ object SchedulerReducer {
             } else {
                 state
             }
+        // `docs/scheduler_input_requirements.md` § tm_levels: between two blocks a hand placed nothing is cut away —
+        // the positioned block is raised above what it stands over and the levels hide what cannot share the stretch
+        // with it ([settleLevels], below). What is still TRIMMED here is what the scheduler itself laid: the bottom
+        // level, which the next fill lays again around the timeline this leaves.
         val trimTarget: (TaskPanel) -> Boolean =
             when {
                 // A period the user just laid or dragged: it takes the task panels it refuses.
                 changed.isRestrictivePeriod -> { p ->
-                    isTaskPanel(p) && periodRefuses(state, p, changed.restrictiveKind)
+                    isTaskPanel(p) && !TimelineLevels.participates(p) && periodRefuses(state, p, changed.restrictiveKind)
                 }
                 !isTaskPanel(changed) -> return state to panels
-                // A task panel the user just laid or dragged: it takes the hand-drawn periods that refuse it.
-                else -> { p ->
-                    p.isRestrictivePeriod && SchedulerDomain.isUserPlaced(p) &&
-                        periodRefuses(state, changed, p.restrictiveKind)
-                }
+                // A task panel the user just laid or dragged: the hand-drawn periods that refuse it are hidden under
+                // it by the levels, never trimmed.
+                else -> { _ -> false }
             }
         val over = TaskTimeRange(changed.startEpochMillis, changed.endEpochMillis)
         var working = state
@@ -2718,21 +2895,43 @@ object SchedulerReducer {
                     out += p.copy(id = id, startEpochMillis = piece.startEpochMillis, endEpochMillis = piece.endEpochMillis)
                 }
         }
-        return working to out
+        return settleLevels(state, working, out, positionedId = changedId)
     }
 
     private fun reduceUpdateTaskPanel(
         state: SchedulerState,
         intent: SchedulerIntent.UpdateTaskPanel,
+        /** The state the gesture started from, where [state] already holds a step of it (an occurrence taken out). */
+        gestureOrigin: SchedulerState? = null,
     ): SchedulerState {
-        // `docs/scheduler_requirements.md`: an occurrence of a repeating panel is derived, so editing one edits the
-        // PATTERN — its first occurrence moved by as much as this one was, and resized like it.
         PanelRepeats.baseIdOf(intent.id)?.let { baseId ->
             val base = state.panels.firstOrNull { it.id == baseId } ?: return state
+            val rule = base.repeat ?: return state
+            val k = PanelRepeats.indexOf(intent.id) ?: return state
             val occurrence =
                 state.panels.firstOrNull { it.id == intent.id }
-                    ?: PanelRepeats.indexOf(intent.id)?.let { PanelRepeats.occurrence(base, it, kotlinx.datetime.TimeZone.currentSystemDefault()) }
+                    ?: PanelRepeats.occurrence(base, k, kotlinx.datetime.TimeZone.currentSystemDefault())
                     ?: return state
+            // `docs/scheduler_input_requirements.md`: *"When an orange outlined block/chip becomes blue outlined, that
+            // means that the configuration that created this orange outlined block/chip gets an 'exception'"*. An
+            // occurrence dragged or edited by hand LEAVES its pattern — the pattern skips it and keeps every other
+            // occurrence where it was — and is a panel of its own from there, the user's. Only a new cadence said in
+            // the edit window is a statement about the pattern itself (below).
+            if (intent.repeatEveryDays == null || intent.repeatEveryDays == rule.everyDays) {
+                val (ownId, allocated) = state.allocatePanelId()
+                val own = occurrence.copy(id = ownId, repeat = null, auto = false)
+                val taken =
+                    allocated.panels.filterNot { it.id == intent.id }.map {
+                        if (it.id == baseId) it.copy(repeat = rule.copy(skipped = rule.skipped + k)) else it
+                    } + own
+                return reduceUpdateTaskPanel(
+                    allocated.copy(panels = taken),
+                    intent.copy(id = ownId, repeatEveryDays = null),
+                    gestureOrigin = gestureOrigin ?: state,
+                )
+            }
+            // A new cadence edits the PATTERN — its first occurrence moved by as much as this one was, and resized
+            // like it.
             val shift = intent.startEpochMillis - occurrence.startEpochMillis
             val length = intent.endEpochMillis - intent.startEpochMillis
             return reduceUpdateTaskPanel(
@@ -2774,8 +2973,13 @@ object SchedulerReducer {
                 // Placed by hand, it holds nowhere "only at the line" any more ([TaskPanel.heldAtLine] is a fill's).
                 heldAtLine = emptyList(),
                 layoutWeight = weight,
+                // Shift held (Overlap Mode): it shares the width with the task panels it is put on, hiding none.
+                tmShare = intent.allowOverlap && !existing.isRestrictivePeriod,
+                // Edited by hand, a period the hole rule laid is the user's from here on.
+                tmFill = false,
                 repeat =
-                    if (intent.repeatEveryDays == null) existing.repeat
+                    if (intent.repeatEveryDays == null || intent.repeatEveryDays == existing.repeat?.everyDays) existing.repeat
+                    // Another cadence numbers the occurrences anew, so the old exceptions name nothing any more.
                     else org.example.project.scheduler.model.PanelRepeat.of(intent.repeatEveryDays, existing.repeat?.untilMillis),
             ).let { moved ->
                 // User rule 2026-10-07 (*"Any block can be dragged, it then gets a blue outline"*): a Sleep window the
@@ -2814,8 +3018,17 @@ object SchedulerReducer {
                 )
             }
         val committed =
-            if (filled == null) commitPanels(resolved, resolvedPanels, label = "Edit panel")
-            else commitPanels(filled.state, filled.panels, label = "Edit panel", records = filled.records)
+            if (filled == null) {
+                commitPanels(
+                    resolved, resolvedPanels, label = "Edit panel",
+                    historyBefore = gestureOrigin?.panels, levelsBefore = gestureOrigin ?: state,
+                )
+            } else {
+                commitPanels(
+                    filled.state, filled.panels, label = "Edit panel", records = filled.records,
+                    historyBefore = gestureOrigin?.panels, levelsBefore = gestureOrigin ?: state,
+                )
+            }
         // PRD §8/§9: moving/resizing a period the user drew re-applies its rule over its NEW span, exactly as
         // laying it did — a period dragged over a past task must strip that work too. Asked through the kind
         // ([TaskPanel.isRestrictivePeriod]) so a kind with no legacy flag is one here as well, and through
@@ -2863,17 +3076,42 @@ object SchedulerReducer {
                 pins = intent.pins,
                 auto = false,
                 layoutWeight = weight,
+                tmShare = intent.allowOverlap,
             )
-        return commitPanels(allocated, allocated.panels + panel, label = "Pin record", records = records)
+        // The block is positioned where the hand put it: above whatever it now stands over ([TimelineLevels]).
+        val placed = TimelineLevels.raised(allocated.panels + panel, allocated.hiddenPanels, panelId)
+        return commitPanels(allocated, placed, label = "Pin record", records = records)
     }
 
     /** PRD §8 "Remove": delete a panel (undoable calendar delta). */
-    private fun reduceRemoveTaskPanel(state: SchedulerState, idIn: String): SchedulerState {
-        // An occurrence of a repeating panel is derived: removing one removes the pattern it belongs to.
-        val id = PanelRepeats.baseIdOf(idIn) ?: idIn
-        val panels = state.panels
-        if (panels.none { it.id == id }) return state
-        return commitPanels(state, panels.filterNot { it.id == id }, label = "Remove panel")
+    private fun reduceRemoveTaskPanel(state: SchedulerState, id: String): SchedulerState {
+        val panels = withoutPanels(state.panels, setOf(id))
+        return if (panels === state.panels) state else commitPanels(state, panels, label = "Remove panel")
+    }
+
+    /**
+     * [panels] without the panels [ids] name. An id of a repeating panel's derived occurrence removes THAT occurrence
+     * alone: the pattern gets an exception for it ([org.example.project.scheduler.model.PanelRepeat.skipped]) and
+     * keeps every other one (user rule 2026-10-10: *"Deleting an occurrence should create an 'exception' … for that
+     * specific instance, leaving the rest of the pattern intact"*). Removing the panel that carries the pattern — its
+     * first occurrence — removes the pattern. The same list where [ids] name nothing.
+     */
+    private fun withoutPanels(panels: List<TaskPanel>, ids: Set<String>): List<TaskPanel> {
+        val skips = HashMap<String, MutableSet<Long>>()
+        for (id in ids) {
+            val base = PanelRepeats.baseIdOf(id) ?: continue
+            val k = PanelRepeats.indexOf(id) ?: continue
+            if (base !in ids) skips.getOrPut(base) { HashSet() } += k
+        }
+        if (panels.none { it.id in ids || it.id in skips }) return panels
+        return panels.mapNotNull { panel ->
+            val rule = panel.repeat
+            when {
+                panel.id in ids -> null
+                rule != null && panel.id in skips -> panel.copy(repeat = rule.copy(skipped = rule.skipped + skips.getValue(panel.id)))
+                else -> panel
+            }
+        }
     }
 
     /** PRD §8 Overlap Mode: re-divide shared width by setting the [layoutWeight] of the given panels. */
@@ -2897,9 +3135,8 @@ object SchedulerReducer {
 
     /** PRD §8 "Remove" on a merged block: delete all its backing panels in one delta. */
     private fun reduceRemoveTaskPanels(state: SchedulerState, ids: List<String>): SchedulerState {
-        val idSet = ids.toSet()
-        if (state.panels.none { it.id in idSet }) return state
-        return commitPanels(state, state.panels.filterNot { it.id in idSet }, label = "Remove block")
+        val panels = withoutPanels(state.panels, ids.toSet())
+        return if (panels === state.panels) state else commitPanels(state, panels, label = "Remove block")
     }
 
     /**
@@ -2931,9 +3168,11 @@ object SchedulerReducer {
                 pins = intent.pins,
                 auto = false,
                 layoutWeight = weight,
+                tmShare = intent.allowOverlap,
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
-        return commitPanels(resolved, resolvedPanels, label = "Edit panel")
+        // (The unit starts from the panels the block replaces, so one Ctrl+Z gives them back.)
+        return commitPanels(resolved, resolvedPanels, label = "Edit panel", historyBefore = state.panels, levelsBefore = state)
     }
 
     /**
@@ -3314,7 +3553,7 @@ object SchedulerReducer {
                 auto = false,
             )
         val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
-        return commitPanels(resolved, resolvedPanels, label = "Switch task")
+        return commitPanels(resolved, resolvedPanels, label = "Switch task", levelsBefore = state)
     }
 
     /**
@@ -3499,6 +3738,8 @@ object SchedulerReducer {
                         inactivity = PeriodKinds.legacyInactivityFlag(kind),
                         periodKind = kind,
                         pins = PanelPins(existence = true),
+                        // The hole rule's, not the hand's: no outline ([SchedulerDomain.panelOutline]).
+                        tmFill = true,
                     )
             }
             val taskId = fill.taskId
@@ -3624,7 +3865,11 @@ object SchedulerReducer {
             tasks = tasks + (id to task.copy(record = kept))
         }
         if (removed.isEmpty()) return state
-        val stripped = state.copy(tasks = tasks)
+        return refilledAfterRecordChange(state.copy(tasks = tasks))
+    }
+
+    /** [stripped] re-planned on the spot: the records are outside `schedulingSignature`, so nothing else would. */
+    private fun refilledAfterRecordChange(stripped: SchedulerState): SchedulerState {
         if (!stripped.automaticSchedule) return stripped
         val now = clock.nowMillis()
         var cycle: ScheduleCycle? = null
@@ -6516,6 +6761,11 @@ internal data class PanelDelta(
      * the panel made the block vanish (2026-10-04). Empty for every other panel edit.
      */
     val records: RecordChanges = RecordChanges(emptyMap(), emptyMap()),
+    /**
+     * `docs/scheduler_input_requirements.md`: the pieces the same edit hid in a `tm_level`, or brought back out of
+     * one ([SchedulerState.hiddenPanels]) — one unit, so one Ctrl+Z puts both the block and what it covered back.
+     */
+    val hidden: EntryChanges<String, org.example.project.scheduler.model.HiddenPanel> = EntryChanges(emptyMap(), emptyMap()),
 ) : Delta {
     /** Built from the whole panel list before and after; only the panels that differ are kept. */
     constructor(
@@ -6523,7 +6773,12 @@ internal data class PanelDelta(
         after: List<TaskPanel>,
         label: String = "Calendar edit",
         records: RecordChanges = RecordChanges(emptyMap(), emptyMap()),
-    ) : this(EntryChanges.ofList(before, after) { it.id }, label, records)
+        hidden: EntryChanges<String, org.example.project.scheduler.model.HiddenPanel> = EntryChanges(emptyMap(), emptyMap()),
+    ) : this(EntryChanges.ofList(before, after) { it.id }, label, records, hidden)
+
+    private fun withHidden(state: SchedulerState, forward: Boolean): SchedulerState =
+        if (hidden.before.isEmpty() && hidden.after.isEmpty()) state
+        else state.copy(hiddenPanels = hidden.applyToList(state.hiddenPanels, forward = forward) { it.id })
 
     override val details: List<String>
         get() = panelDiffLines(changes) + records.tasks.map { id ->
@@ -6531,14 +6786,14 @@ internal data class PanelDelta(
         }
 
     override fun undo(state: SchedulerState): SchedulerState =
-        records.applyTo(state.copy(panels = changes.applyToList(state.panels, forward = false) { it.id }), forward = false)
+        records.applyTo(withHidden(state.copy(panels = changes.applyToList(state.panels, forward = false) { it.id }), false), forward = false)
 
     override fun redo(state: SchedulerState): SchedulerState =
-        records.applyTo(state.copy(panels = changes.applyToList(state.panels, forward = true) { it.id }), forward = true)
+        records.applyTo(withHidden(state.copy(panels = changes.applyToList(state.panels, forward = true) { it.id }), true), forward = true)
 
     override fun commit(state: SchedulerState): SchedulerState =
         records.applyTo(
-            state.copy(panels = changes.applyToList(state.panels, forward = true, exact = true) { it.id }),
+            withHidden(state.copy(panels = changes.applyToList(state.panels, forward = true, exact = true) { it.id }), true),
             forward = true,
         )
 }

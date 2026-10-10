@@ -59,15 +59,16 @@ class HeldDragPreviewTest {
                 assertEquals(spans(released(from, to), kind), spans(held(from, to), kind), "held at $from is the release at $from ($kind)")
             }
         }
-        // Onto a period of its own kind: the two are one — B "retracts" into the union. Onto another kind: B stays.
-        assertEquals(listOf(at(10.0) to at(11.5)), spans(held(10.5, 11.5), PeriodKinds.NO_SCREEN))
+        // Onto a period of its own kind: B gives the stretch they share to the held one, which stands above it
+        // (`docs/scheduler_input_requirements.md`: the included block loses its outline). Onto another kind: B stays.
+        assertEquals(listOf(at(10.0) to at(10.5), at(10.5) to at(11.5)), spans(held(10.5, 11.5), PeriodKinds.NO_SCREEN))
         assertEquals(listOf(at(18.0) to at(19.0)), spans(held(18.5, 19.5), PeriodKinds.INACTIVITY))
         // And moved on, B is back as it was: the next step is asked of the stored state.
         assertEquals(listOf(at(10.0) to at(11.0), at(16.0) to at(17.0)), spans(held(16.0, 17.0), PeriodKinds.NO_SCREEN))
     }
 
     @Test
-    fun what_a_held_period_makes_disappear_is_back_when_it_moves_on_and_gone_for_good_once_released() {
+    fun what_a_held_period_makes_disappear_is_back_when_it_moves_on_held_or_released() {
         var s = SchedulerState.empty()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds[0], "Work"))
         s = s.copy(sleep = SleepSchedule(sleepDurationMinutes = 0), automaticSchedule = false)
@@ -92,11 +93,13 @@ class HeldDragPreviewTest {
         // Half over it: C is cut, not gone.
         assertEquals(listOf(at(10.0) to at(10.5)), cOf(held(10.5, 11.5)))
 
-        // Released over C, then dragged away again: C does not come back.
+        // Released over C, then dragged away again: C comes back too — what a placed block covers is kept on a hidden
+        // tm_level (`docs/scheduler_input_requirements.md`, 2026-10-10; until then it was gone for good).
         val released = SchedulerReducer.reduce(s, (calendarMoveOf(s, drawn(period), at(10.0), at(11.0), true, at(0.0), tz) as CalendarMove.Dispatch).intent)
         assertTrue(cOf(released).isEmpty())
         val moved = released.panels.single { it.restrictiveKind == PeriodKinds.NO_SCREEN }
         val away = SchedulerReducer.reduce(released, (calendarMoveOf(released, drawn(moved), at(16.0), at(17.0), true, at(0.0), tz) as CalendarMove.Dispatch).intent)
-        assertTrue(cOf(away).isEmpty(), "released, C won't reappear even if A is made to leave")
+        assertEquals(listOf(at(10.0) to at(11.0)), cOf(away), "released, C is back once A is made to leave")
+        assertTrue(away.hiddenPanels.isEmpty())
     }
 }

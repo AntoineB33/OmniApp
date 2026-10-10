@@ -112,6 +112,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed as pointerCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed as pointerMetaPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerType
@@ -659,11 +660,12 @@ internal const val RELEASED_DRAG_WAIT_MILLIS: Long = 1_000L
 internal data class HeldPeriodCut(val key: String, val hours: Pair<Float, Float>?)
 
 /**
- * PRD §8 (user rule 2026-10-02): **whether a block gesture keeps raw, overlapping bounds** — a MOVE always
- * does (the block keeps its length and shares the width with the task panels it is carried onto), a resize
- * only under Overlap Mode. The `allowOverlap` the release commits with.
+ * PRD §8, as `docs/scheduler_input_requirements.md` states it (2026-10-10): **whether a block gesture SHARES the
+ * width with the task panels it is carried onto** — *"Dragging task A into task B hides task B, unless shift is
+ * pressed, which makes the two task panels share the width"*. Shift held at the release, or Overlap Mode armed (`O`).
+ * The `allowOverlap` the release commits with. (2026-10-02 → 10-10 a move always shared.)
  */
-internal fun blockGestureOverlaps(edge: CalendarEdge?, armed: Boolean): Boolean = armed || edge == null
+internal fun blockGestureOverlaps(armed: Boolean, shift: Boolean = false): Boolean = armed || shift
 
 /**
  * PRD §8: the bounds a held period box has reached — [record] moved (no [edge]) or resized at [edge] by
@@ -6406,7 +6408,7 @@ private fun DayColumn(
                                 currentAllBlocks.filter { it.first != key }.map { it.second },
                                 refusingBreaks(carried.record, currentBreakMarkers, currentRefuses),
                             )
-                        val overlaps = blockGestureOverlaps(carried.edge, carried.armed)
+                        val overlaps = blockGestureOverlaps(carried.armed)
                         if (carried.pressed && event.type == PointerEventType.Release) {
                             heldDrag = null
                             dragPreview = null
@@ -7292,9 +7294,11 @@ private fun DayColumn(
                             held = breakSegments.firstOrNull { it.records.singleOrNull()?.let(::calendarBlockKey) == key },
                             drag = periodDrag,
                             onDragChange = { periodDrag = it },
+                            // `docs/scheduler_input_requirements.md`: *"All blocks can be dragged, except screen breaks
+                            // at t > now line"* — only a break the line has left behind is the hand's to move.
                             movable = {
                                 val now = compositionNowMillis.value
-                                (marker.fullEndMillis <= now || marker.fullStartMillis > now) &&
+                                marker.fullEndMillis <= now &&
                                     marker.entryId?.endsWith(SchedulerDomain.DRAGGED_BREAK_ID_SUFFIX) != true
                             },
                             atLine = periodAtLine,
@@ -8931,11 +8935,14 @@ private fun CalendarBlock(
                             var traveled = 0f
                             // A right-click suspended the drag: the column holds it now ([onHoldDrag]).
                             var held = false
+                            // Shift held: the block shares the width with the task panels it is put on.
+                            var shift = false
                             // Lock the grid scroll for the whole press so a held drag can't scroll it.
                             onLockScroll(true)
                             try {
                                 while (true) {
                                     val event = awaitPointerEvent()
+                                    shift = event.keyboardModifiers.isShiftPressed
                                     // User rule 2026-10-02: a right-click during the drag opens the column's
                                     // "cancel" / "resume drag" menu. The gesture ends here WITHOUT committing
                                     // and without clearing the preview — the buttons' releases that follow
@@ -8951,7 +8958,7 @@ private fun CalendarBlock(
                                             val b = gestureBounds(edge)
                                             onCommitBounds(
                                                 record, b.startEpochMillis, b.endEpochMillis,
-                                                blockGestureOverlaps(edge, armed.value),
+                                                blockGestureOverlaps(armed.value, shift),
                                             )
                                         } else if (secondPress) {
                                             // Second quick tap with no drag → open this block's own
@@ -8979,7 +8986,7 @@ private fun CalendarBlock(
                                     if (mayDrag) dragPx += delta.y
                                     if (started) {
                                         // Report the live bounds so the column draws the shared preview overlay.
-                                        onPreviewChange(gestureBounds(edge), blockGestureOverlaps(edge, armed.value))
+                                        onPreviewChange(gestureBounds(edge), blockGestureOverlaps(armed.value, shift))
                                     }
                                 }
                             } finally {

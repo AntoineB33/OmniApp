@@ -4,9 +4,12 @@ Example 1: the user drags a "no phone unlocked" period to a "no computer unlocke
 
 Example 2: suppose the timeline is only task A, then the user manually adds a task B at 10h-12h. There are now two $tm_levels$: the bottom one with task A all along, and the top one with task B at 10h-12h. Next, the user selects task B at 11h-12h and task A at 12h-13h and drags it 4h further in the future. Now, the bottom $tm_level$ has an "Inactivity" period at 12h-13h, and the top $tm_level$ has task B at 15h-16h and task A at 16h-17h.
 
-Additional rule: if the element $e$ that is getting dragged is going to make a hole in the bottom $tm_level$ , then if there is another element $e2$ present at both edges of the hole (when completely dragged away) that is incompatible with $e$, then the hole is getting filled with $e2$.
+Additional rule: if the element $e$ that is getting dragged is going to make a hole in the bottom $tm_level$ , then if there is another element $e2$ present at both edges of the hole (when completely dragged away) that is incompatible with $e$, then the hole is getting filled with $e2$. "Incompatible" here means incompatible of presence (task with 0 resilience to "no screen" incompatible with "no screen"), but also of task share (task A 50% task B 50% incompatible with task A 100% or task A 40% task B 60%).
 
 If it still makes a hole after dragging out an "Inactivity" period, then the hole is getting filled with an "Inactivity" period.
+
+If a user drags a block that doesn't hide anything, then the blue outlined block is in the bottom $tm_level$. Example: dragging "no computer unlocked" where there is only "no phone unlocked" and "Inactivity". Before there was only the bottom $tm_level$ with "Inactivity" and "no phone unlocked". Now there is only the bottom $tm_level$ with "Inactivity", "no phone unlocked", "no computer unlocked" (part of a blue outlined block) and "no sleep" (part of a blue outlined block).
+Dragging task A into task B hides task B, unless shift is pressed, which makes the two task panels share the width, and task A doesn't go to a higher $tm_level$.
 
 
 
@@ -26,7 +29,7 @@ Similarly, if the user drags a task panel with 0 resilience to "no screen" over 
 
 
 
-All blocks can be dragged. When held, a block receives a blue outline. Multiple blocks can be dragged simultaneously using the right-click "edit..." option.
+All blocks can be dragged, except screen breaks at t > $now line$. When held, a block receives a blue outline. Multiple blocks can be dragged simultaneously using the right-click "edit..." option.
 
 If a dragged period has required accompanying periods, those accompanying periods are dragged alongside it. For example: dragging a "no screen" period will simultaneously drag the associated ("no computer unlocked" or "not on a computer") and ("no phone unlocked" or "not on a phone") periods.
 

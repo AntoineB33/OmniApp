@@ -635,19 +635,63 @@ Global rules that always apply: `CLAUDE.md`.
   them — a full-width interactive box drawn on top would be a lid over every task panel inside the period
   (the "a cursor shape is never a lid over the tile" rule, read for a press), while a marking drawn
   underneath would be hidden by the very task the period admits.
-- **Two overlapping periods of ONE layer-asserting kind are ONE period — their union — in the STATE.**
-  A period is not an object owning a slice of the timeline the way a task panel is; it is
-  the statement *no screen was in use here*, and two overlapping statements of it say one thing. Splitting
-  the scheduler has always read them merged (`mergeOccupied` in `noScreenRangesFor`) and so has the layer
-  assertion. `SchedulerDomain.unifyNoScreenPeriods`
-  is the whole rule and it runs **before the trim** in `resolveScreenOverrides` — so the override and the
-  record strip above act on the fused span, not on the span the user typed — with no exception list: it
-  runs whatever panel changed, and `decode` runs it too so a state an older build wrote is healed rather
-  than surfaced. Two periods that only **abut** are left alone (they already draw full-width, and each is
-  still an object the menu can remove), and periods of different KINDS never fuse — a no-screen period and an
-  inactivity one, or a "no computer unlocked" one and a "no phone unlocked" one, are different statements (the
-  last pair's overlap is a no-screen stretch, which is a reading, not a fusion). Within a fused run the survivor is the panel the user is
-  holding — it keeps its id, its pins and its weight, and only its bounds grow.
+- **THE TIMELINE IS THE OVERLAP OF THE `tm_levels`; PLACING A BLOCK DESTROYS NOTHING** (`docs/scheduler_input_requirements.md`,
+  2026-10-10; `TimelineLevels`, `SchedulerReducer.settleLevels`, `TimelineLevelsTest`). *"When a blue/orange outlined
+  block is positioned at t_r, then what was there before is added at t_r to the lowest tm_level where nothing is at
+  t_r. What is in the timeline is the result of the overlap of those tm_levels, applying them from top to bottom,
+  ignoring those that are incompatible with the higher tm_levels."*
+  - **Every block a hand placed stands on a level** (`TaskPanel.tmLevel`). The block being positioned — laid, dragged,
+    resized, edited — is raised above every block its span overlaps (`TimelineLevels.raised`).
+  - **`state.panels` is the overlap as it stands; `state.hiddenPanels` is what the levels hide.** A block is shown
+    where it can share the stretch with the levels above it and HIDDEN where it cannot (`HiddenPanel`: the piece, its
+    level, the block it is a piece of — `TaskPanel.tmOrigin`). Hidden pieces are on no timeline: the scheduler, the
+    cues, the layers and the drawing read `state.panels` and nothing else, as before.
+  - **Incompatible is the override rule's one question** (`SchedulerDomain.periodRefuses`), asked of the periods in
+    force above — the combination rules' included (`PeriodKindConfig.closeRegions`: "no computer unlocked" under a
+    task standing with "no phone unlocked" is the level ignored, the document's first example) — plus: under a period
+    of ITS OWN kind a period says nothing new, so that part is hidden (*"the included block loses its blue/orange
+    outlines"*: 9h–12h and 12h–13h, where the two used to be fused into one 9h–13h period by
+    `unifyNoScreenPeriods`; that fusion now only heals payloads on decode).
+  - **A task panel positioned over another task's panel HIDES it, unless Shift is held** (*"Dragging task A into task
+    B hides task B, unless shift is pressed, which makes the two task panels share the width"*; `TaskPanel.tmShare`,
+    said at every positioning from the intent's `allowOverlap`; `blockGestureOverlaps` = Shift at the release, or
+    Overlap Mode armed with `O`). Until 2026-10-10 a move always shared the width. Two panels on ONE level — everything
+    an older build left overlapping — go on sharing it. The Search window's "add, keeping everything" filter follows:
+    a task added over another task's panel takes it off the timeline.
+  - **One funnel, every calendar commit** (`commitPanels` → `settleLevels` → `TimelineLevels.settle`, over the
+    stretches the edit touched and every block reaching into them): a block moved away, resized or REMOVED gives back
+    what it stood over, as the object it was (its own id where it is whole again). `resolveScreenOverrides` settles
+    once before, so what stands behind the line where a period was is chosen from a timeline that already has the
+    pieces back; what it still TRIMS is the scheduler's own panels — the bottom level, laid again by the next fill.
+  - **Authoritative**: persisted (`PersistedState.hiddenPanels`, `PersistedPanel.tmLevel` / `tmOrigin`; absent from an
+    older payload = level 0, nothing hidden), synced one row per piece, merged piece by piece, and in the edit's own
+    history unit (`PanelDelta.hidden`), so one Ctrl+Z puts the block and what it covered back.
+  - **WORK banked under a period the user lays over the past is HIDDEN, never stripped** (user rule 2026-10-10, the
+    requirements' *frozen past*: *"According to the 'frozen past' rules, the schedule at t < now line never changes
+    unless explicitly rewritten. Stripping it violates this rule; it must be preserved."*; `settleRecords`,
+    `HiddenPanel.record`). While the period stands, the stretch is out of the task's record and on the level under it;
+    wherever the period no longer stands — moved, shrunk, removed, undone — it is back in the record as it was, joined
+    to what it was cut from. In the edit's own history unit (`PanelDelta.records`), so Ctrl+Z walks it; the plan is
+    asked again on the spot (records are outside `schedulingSignature`). The periods are read as the line left them
+    (`afterCrossings`). `stripRecordsUnderPeriod` still runs after the commit and now finds nothing under a period of
+    the user's; the engine-start strip of what the OS log says was no screen time is unchanged.
+  - **Bounded** (`TimelineLevels.purged`, at every calendar commit): a hidden BLOCK piece wholly more than 90 days
+    behind the line is dropped, and never more than 500 are kept (`server-quota.md`). Hidden WORK is never dropped: it
+    is the record itself, moved, and no larger than it was there.
+  - **Not levels**: a repeating panel (a pattern — neither cut nor cutting), what a rule lays (sleep windows, the hour
+    before bed, the screen breaks: derived at every fill, a placed panel is placed through them), reminder tags.
+  - **What the hole rule lays where a dragged block stood wears NO outline** (anomaly 2026-10-10: a past 15-minute
+    break dragged away left *"an 'Inactivity' blue outlined block filling the vacated time interval"*;
+    `TaskPanel.tmFill`, `SchedulerDomain.panelOutline`, `VacatedPeriodFillTest`). It is the bottom level's — stored,
+    since nothing else remembers the choice (`PersistedPanel.tmFill`, default false), but nobody's statement, so
+    neither blue nor user-stated — until a hand edits it. A fill an older build laid is stored as a hand-placed
+    period and stays blue.
+  - **A level is an ORDER here, not a row**: the document puts a block that hides nothing on the bottom level, and
+    this raises every positioned block above what it overlaps. Nothing observable differs, and the order is what its
+    first example needs (of two compatible periods, the one dragged later is the one that stays under a task).
+  - **Open**: where a block includes a block of ANOTHER kind, the included block still wears its whole outline; the
+    hole rule's wider "incompatible" (*"but also of task share"*) is not checked against `vacatedPastFill`; a part of
+    a block cannot be selected and dragged on its own (the document's second example).
 - **EVERY PERIOD IS DRAWN AS A BOX BUT THE SLEEP BAND** (`isDrawnPeriodRecord`), which draws itself (§17's
   own orange box, its own label, its own carving) and would otherwise be one statement drawn twice. The
   `no screen` kind was the second exception until 2026-09-12 — it then asserted both layers, so the two slopes
@@ -668,7 +712,9 @@ Global rules that always apply: `CLAUDE.md`.
   flag), applied at once rather than at the next engine start; outside Undo/Redo (an open gap: undoing the
   period does not bring the stripped work back). A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
   sleep band moving is not the user saying they were not working.
-- **ANY BLOCK CAN BE DRAGGED, AND IT THEN GETS A BLUE OUTLINE** (user rule 2026-10-07; anomaly 2026-10-06 *"I
+- **ANY BLOCK CAN BE DRAGGED — EXCEPT A SCREEN BREAK AHEAD OF THE LINE — AND IT THEN GETS A BLUE OUTLINE**
+  (`docs/scheduler_input_requirements.md`, 2026-10-10: *"All blocks can be dragged, except screen breaks at t > now
+  line"*: the band's `movable` and `calendarMoveOf` both refuse a break that has not wholly elapsed; user rule 2026-10-07; anomaly 2026-10-06 *"I
   tried to drag a past 15min screen break but I couldn't"*). The blocks that had no object behind them — a screen
   break, the Sleep band, the hour before bed — were the exception list; there is none now:
   - **One gesture**: `Modifier.periodBoxGesture`, the period box's own (a double click whose second press is held and
@@ -716,7 +762,9 @@ Global rules that always apply: `CLAUDE.md`.
   So a period over a period fuses or not exactly as the reducer says, a task under a period gives way, the "no
   screen" a sleep period carries (its layers) stands where the period is held, the place it left shows what the
   edges choose — and **"remembered" is the stored state itself**: every step of the drag is asked of it again, so
-  what was removed is back the moment the block moves on; released, it is gone for good.
+  what was removed is back the moment the block moves on. (Released, it is no longer gone for good either: what a
+  placed block covers of another placed block is kept on a hidden level — *THE TIMELINE IS THE OVERLAP OF THE
+  `tm_levels`*, above.)
   - **From the Search window** the held state is what the calendar is given (`shownState`, `shownFrozenBreaks`).
   - **In the calendar** the column tells `App` what it holds (`CalendarElementDrag.heldInCalendar`: a period box or
     band from `movedPeriods`, a task panel from `dragPreview`, where the hand has it, to the minute) and the week

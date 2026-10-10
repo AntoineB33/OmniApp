@@ -763,6 +763,32 @@ data class OtherModePlan(
 )
 
 /**
+ * `docs/scheduler_input_requirements.md`: **what a hidden tm_level holds** — *"When a blue/orange outlined block is
+ * positioned at t_r, then what was there before is added at t_r to the lowest tm_level where nothing is at t_r. What
+ * is in the timeline is the result of the overlap of those tm_levels, applying them from top to bottom, ignoring
+ * those that are incompatible with the higher tm_levels."*
+ *
+ * [panel] is the part of a block the user placed that a block of a higher level stands over and cannot share the
+ * stretch with: its span is the hidden stretch, its [TaskPanel.tmLevel] its level, its [TaskPanel.tmBlockId] the
+ * block it is a piece of. It is on no timeline — the scheduler, the calendar and the cues never see it — and it is
+ * back, whole, the moment what hid it has moved away ([org.example.project.scheduler.domain.TimelineLevels.settle]).
+ *
+ * Authoritative (nothing else remembers what the user placed there): persisted, synced as one row per piece, and part
+ * of the calendar's history unit that hid or restored it.
+ */
+data class HiddenPanel(
+    val panel: TaskPanel,
+    /**
+     * Whether the piece is completed WORK rather than a block: a stretch of [TaskPanel.taskId]'s record that a period
+     * the user laid over the past refuses. `docs/scheduler_requirements.md` § *frozen past*: the past is never
+     * destroyed — the work is on the bottom level under the period, and back in the record when the period leaves.
+     */
+    val record: Boolean = false,
+) {
+    val id: String get() = panel.id
+}
+
+/**
  * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
  * and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns."* — a pre-placed block
  * or a restrictive period that **recurs every [everyDays] days** at the same local time of day, from its own start
@@ -772,11 +798,21 @@ data class OtherModePlan(
  * (`SchedulerDomain.withRepeats`), never stored. Authoritative — the user set it — so persisted and synced with the
  * panel.
  */
-data class PanelRepeat(val everyDays: Int, val untilMillis: Long? = null) {
+data class PanelRepeat(
+    val everyDays: Int,
+    val untilMillis: Long? = null,
+    /**
+     * `docs/scheduler_input_requirements.md`: the pattern's **exceptions** — the occurrence numbers (`k >= 1`, the
+     * panel itself being 0) the user dragged or edited by hand. Each left the pattern and is a panel of its own, so
+     * the pattern lays nothing there; every other occurrence stands where it did. An alarm's `skippedEpochDays`, for
+     * a repeating panel.
+     */
+    val skipped: Set<Long> = emptySet(),
+) {
     companion object {
-        /** The persisted pair back to a rule; null where it does not repeat. */
-        fun of(everyDays: Int, untilMillis: Long?): PanelRepeat? =
-            if (everyDays <= 0) null else PanelRepeat(everyDays, untilMillis)
+        /** The persisted fields back to a rule; null where it does not repeat. */
+        fun of(everyDays: Int, untilMillis: Long?, skipped: Set<Long> = emptySet()): PanelRepeat? =
+            if (everyDays <= 0) null else PanelRepeat(everyDays, untilMillis, skipped)
     }
 }
 
@@ -930,7 +966,36 @@ data class TaskPanel(
      * rules returned. Derived: only a fill lays these.
      */
     val heldAtLine: List<TaskTimeRange> = emptyList(),
+    /**
+     * `docs/scheduler_input_requirements.md`: the **tm_level** a block the user placed stands on — the timeline is
+     * the overlap of the levels applied from top to bottom, so a block positioned over others is given a level above
+     * all of them ([org.example.project.scheduler.domain.TimelineLevels]). `0` on everything a hand did not place,
+     * and on a block placed before the levels existed. Authoritative: persisted and synced with the panel.
+     */
+    val tmLevel: Int = 0,
+    /**
+     * The id of the block this panel is a PIECE of, where a block of a higher level cut it in two or hid a part of it
+     * ([HiddenPanel]); blank on a block that is its own. What lets the pieces be one block again once nothing stands
+     * over them.
+     */
+    val tmOrigin: String = "",
+    /**
+     * `docs/scheduler_input_requirements.md`: *"Dragging task A into task B hides task B, unless shift is pressed,
+     * which makes the two task panels share the width"* — whether this task panel was positioned to SHARE: it hides no
+     * task panel under it (PRD §8 Overlap Mode). Said again at every positioning; false on everything else.
+     */
+    val tmShare: Boolean = false,
+    /**
+     * `docs/scheduler_input_requirements.md`: *"If it still makes a hole after dragging out … then the hole is getting
+     * filled with an 'Inactivity' period"* — whether this period was laid by that rule, where a block the user dragged
+     * away had stood (`SchedulerDomain.vacatedPastFill`). It is the BOTTOM level's, not a block a hand placed: stored
+     * like one (nothing else remembers the choice) but drawn with no outline, until a hand edits it.
+     */
+    val tmFill: Boolean = false,
 ) {
+    /** The block this panel is, or is a piece of ([tmOrigin]). */
+    val tmBlockId: String get() = tmOrigin.ifBlank { id }
+
     /** Whether any stretch of this run holds only at the line ([heldAtLine]). */
     val lineBound: Boolean get() = heldAtLine.isNotEmpty()
 

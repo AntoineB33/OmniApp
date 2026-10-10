@@ -11,6 +11,40 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### `docs/scheduler_input_requirements.md`: the hidden timeline levels, and a dragged occurrence is an exception — 2026-10-10
+
+The user asked that the project strictly satisfy `docs/scheduler_input_requirements.md` and
+`docs/scheduler_requirements.md`; an audit found two clauses the code contradicted or did not have. (The audit's other
+findings, and what is still open, are in `docs/invariants/calendar.md` § *tm_levels* — "Open".)
+- **A dragged occurrence leaves its pattern** (*"the configuration that created this orange outlined block/chip gets
+  an 'exception' info"*). Dragging or editing one occurrence of a repeating panel used to move the WHOLE pattern
+  (`reduceUpdateTaskPanel`); it now skips that occurrence (`PanelRepeat.skipped`) and lays the moved block as a panel
+  of its own, in one history unit. Another cadence said from an occurrence still edits the pattern. **Persisted shape**: `PersistedPanel.repeatSkipped`, default empty —
+  `RepeatingPanelsTest`. It is in `schedulingSignature` through the pattern.
+- **The `tm_levels`** (*"what was there before is added at t_r to the lowest tm_level where nothing is at t_r"*). A
+  block placed over another block of the user's used to TRIM it for good (`resolveScreenOverrides`), and two
+  overlapping periods of one kind were fused. Now every placed block stands on a level (`TaskPanel.tmLevel`), the
+  positioned one above what it overlaps, and what cannot share the stretch is HIDDEN (`SchedulerState.hiddenPanels`)
+  and given back when the block above moves, shrinks or is removed (`TimelineLevels`, settled at every calendar
+  commit). **Persisted shape**: `PersistedState.hiddenPanels`, `PersistedPanel.tmLevel` / `tmOrigin`,
+  `PersistedDelta.Panels.hiddenBefore` / `hiddenAfter`, all defaulted — `TimelineLevelsTest`. Synced by rows (a new
+  entity kind, `hiddenPanels`: no migration, the row tables are generic), merged piece by piece, bounded at 90 days
+  and 500 pieces.
+- **The same day, after the user's answers and their edit of the document:**
+  - *Deleting an occurrence* is a removal exception (it deleted the whole pattern).
+  - *Work under a period laid over the past* is hidden with the levels and given back, never stripped
+    (`HiddenPanel.record`, `PersistedHiddenPanel.record`, default false).
+  - *"Dragging task A into task B hides task B, unless shift is pressed"*: a move no longer always shares the width
+    (`TaskPanel.tmShare`, `PersistedPanel.tmShare`, default false; `blockGestureOverlaps`).
+  - *"All blocks can be dragged, except screen breaks at t > now line"*: a break ahead of the line is no longer held.
+- **Anomaly, the same day**: a past 15-minute break dragged away left a BLUE "Inactivity" block where it had been.
+  The fill is the hole rule's (`vacatedPastFill`), stored as a period with `auto = false`, so it read as hand-placed.
+  It now carries `TaskPanel.tmFill` (`PersistedPanel.tmFill`, default false) and wears no outline until edited.
+- Also: replacing a merged block (`ReplaceTaskPanels`) recorded its unit from the panels AFTER the removal, so Ctrl+Z
+  did not give the replaced panels back; the unit now starts from the panels as they were.
+Client only. An older build on another device ignores the new fields and writes panels without them: a block it
+edits comes back on level 0, and it trims where this build hides.
+
 ### The sleep fields froze under the hand; one time field with a drop-down; the period before bed has a length — 2026-10-09
 
 The user: "In the sleep configurations in the calendar, when editing the fields, it freezes a lot. The scheduler engine
