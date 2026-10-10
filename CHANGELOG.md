@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A task's title is not written again after a 20-second cut — 2026-10-10
+
+The user: "In the calendar, if a panel is cut somewhere by only 20 seconds, then the title isn't shown again right
+after the cut." Two blocks of one task separated by at most 20 s (the work on either side of a look-away) each wrote
+their title; the second no longer does (`blocksContinuingAfterShortCut`). Display only. Client only.
+
 ### The actions section is grouped from every element down to each one — 2026-10-10
 
 The user: "Rethink the placement of the configurations in the action section. For example, when the added elements

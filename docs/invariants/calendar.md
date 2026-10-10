@@ -540,6 +540,13 @@ Global rules that always apply: `CLAUDE.md`.
   read `shownPeriods`. A **resize** still stops at its neighbours (`clampResize`) unless Overlap Mode is armed.
   Not previewed: the re-plan the release triggers (scheduler-laid panels under the block are redrawn by it),
   the same-task merge, and the fusion of two overlapping no-screen periods.
+- **A TASK'S TITLE IS NOT WRITTEN AGAIN RIGHT AFTER A CUT OF ONLY 20 SECONDS** (user rule 2026-10-10: *"if a panel is
+  cut somewhere by only 20 seconds, then the title isn't shown again right after the cut"*;
+  `blocksContinuingAfterShortCut`, `SHORT_CUT_MILLIS`, `CalendarShortCutTitleTest`). A block that starts at most 20 s
+  after a block of the same task ends — the work banked on either side of a look-away, two panels of one run — asks
+  `calendarLabelSlots` for no title; the hover bubble names it as ever. Judged on the blocks' true times, per task
+  (per title where a block has no task). After a longer cut the title is written again. Inside ONE block cut by a
+  break the title was already on its topmost piece only (below).
 - **A SCREEN BREAK CUTS A HOLE IN THE DRAWING OF EVERY TASK BLOCK IT REFUSES — AND THE HOLE IS NEVER
   STORED** (2026-10-02; `layoutWithBreakHoles`, applied to `overlapLayout`'s answer at rest and in the
   preview). *"When there is a break, there can't be a task"* was only true of the fill's own panels, which it
