@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar's right-click menu loses "edit task" and "go to task tree" — 2026-10-10
+
+The user: "Remove the 'edit task' and 'go to task tree' options from the calendar right-click menu." Both are gone
+from the menu (`CALENDAR_SIDE_EDIT_LABELS` no longer holds the task row; the "go to task tree" item is removed). The
+task's edit window and "Go to task tree" are still actions of the Search window "edit…" opens on the task; a
+double-click on a block is unchanged. Client only.
+
 ### A task's title is not written again after a 20-second cut — 2026-10-10
 
 The user: "In the calendar, if a panel is cut somewhere by only 20 seconds, then the title isn't shown again right

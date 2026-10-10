@@ -886,12 +886,13 @@ Global rules that always apply: `CLAUDE.md`.
     window for `task`, §17's schedule for `sleep`, §18's window for `alarm`/`timer`, the one period editor
     for every kind, §14's for a reminder, the calendar edit window for a task panel. The menu never names a
     window;
-  - **the three rows that are NOT elements stay entries of their own** (`CALENDAR_SIDE_EDIT_LABELS`):
-    `task`, `sleep schedule` and `timer`. Each names an object the calendar does not LAY — the §13 task, the
-    §17 recurring rule, the §18 countdown — so none of them can be a row of a window whose whole subject is
-    what is drawn at a point, and folding their fields in would be a second editor for a thing that already
-    has one. They sit beside "go to task tree", which has always been an entry outside the chooser for the
-    same reason. One list of what the window holds, one of what it does not, and no row in both;
+  - **the two rows that are NOT elements stay entries of their own** (`CALENDAR_SIDE_EDIT_LABELS`):
+    `sleep schedule` and `timer`. Each names an object the calendar does not LAY — the §17 recurring rule, the §18
+    countdown — so neither can be a row of a window whose whole subject is what is drawn at a point, and folding
+    their fields in would be a second editor for a thing that already has one. (**The `task` row — "edit task" —
+    and "go to task tree" were entries here until 2026-10-10**, when the user had both removed from the calendar's
+    right-click menu: a task is reached through "edit…", whose Search window lists "Edit task" and "Go to task
+    tree" among its actions.) One list of what the window holds, one of what it does not, and no row in both;
   - **the double-click goes through the same table, minus the `task` row** (`calendarBlockEditChoice`): one
     block is the one-row case, so a double-click and a chooser row can never open two different windows for
     one thing — but the gesture is ON the block, and the task behind a panel is not what was double-clicked.
@@ -905,11 +906,10 @@ Global rules that always apply: `CLAUDE.md`.
   chooser, and one funnel for "get rid of this" is the point: a thing is binned from the window that names
   it. In the element window that means **one bin PER ROW of the list**, never one for the window: the window
   names several things, so a single bin could not say which of them it was about.
-- **A task panel's menu reaches the TASK as well as the panel** — the `task` row opens the §13 window, and
-  **"go to task tree"** selects the task's first cell. Both are offered on a task panel only: a period, a
-  reminder, an alarm, a sleep band, a screen break and a layer region are not tasks. **"go to task tree" is
-  the one entry left beside the chooser that concerns a task, and it is there because it is not an EDIT** — it
-  navigates, as "move" (phone) is a gesture and "add…" creates. Two things they must not become: **the §13
+- **A task panel's menu no longer reaches the TASK directly** (user rule 2026-10-10: *"Remove the 'edit task' and
+  'go to task tree' options from the calendar right-click menu"*). Both are actions of the Search window "edit…"
+  opens on the task (`AddedAction.TaskEdit`, `TaskGoToTree`), which go through the same two handlers. What those
+  handlers must not become is unchanged: **the §13
   window is the tree cell menu's own, under its own name** — one window for the task, so the tree's entry was
   renamed "edit" → "edit task" rather than the calendar growing a second way in (`App.kt` opens `taskEditWindows`
   from the `task` row and from nowhere else); and **"go to task tree" goes through `RevealCell`**, the find

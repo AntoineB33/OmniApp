@@ -1119,7 +1119,9 @@ private val CALENDAR_EDIT_ROW_ORDER: List<String> =
  * it does not, and no row in both.
  */
 internal val CALENDAR_SIDE_EDIT_LABELS: Set<String> =
-    setOf(EDIT_LABEL_TASK, EDIT_LABEL_SLEEP_SCHEDULE, EDIT_LABEL_TIMER)
+    // User rule 2026-10-10: no "edit task" entry in the calendar's menu any more (nor "go to task tree"): a task is
+    // edited from the Search window "edit…" opens on it, where both are actions.
+    setOf(EDIT_LABEL_SLEEP_SCHEDULE, EDIT_LABEL_TIMER)
 
 /**
  * Where [choice] sits in [CALENDAR_EDIT_ROW_ORDER] — **asked of the ROW, because a period row wears its
@@ -6687,27 +6689,16 @@ private fun DayColumn(
                     )
                 }
                 // PRD §8: **the rows that name something the calendar does not LAY** stay entries of their
-                // own, beside "go to task tree" and for its reason — they are not elements of the window
-                // above, so collapsing them into it would be a second editor for an object that has one.
-                // The §13 task window, PRD §17's sleep schedule and §18's timer, in the user's own order.
+                // own — they are not elements of the window above, so collapsing them into it would be a second
+                // editor for an object that has one. PRD §17's sleep schedule and §18's timer.
                 choices.filter { it.label in CALENDAR_SIDE_EDIT_LABELS }.forEach { side ->
                     DropdownMenuItem(
                         text = { Text("edit ${side.label}") },
                         onClick = { pickChoice(side) },
                     )
                 }
-                // PRD §8: the one entry a TASK panel gets beside the chooser. It is not an edit — the §13
-                // window the calendar opens on the task is the chooser's own "task" row — it NAVIGATES: it
-                // selects the task's first cell in the tree and gives the tree the focus. Offered even where
-                // the panel names no task ("it is not in the task tree" is the answer either way, and the
-                // handler is the one place that says so), and on a task panel only: a period, a reminder tag,
-                // an alarm marker, a sleep band, a screen break and a layer region are not tasks.
-                hits.lastOrNull(::isTaskPanelRecord)?.let { panel ->
-                    DropdownMenuItem(
-                        text = { Text("go to task tree") },
-                        onClick = { closeMenu(); onGoToTaskTree(panel.taskId, panel.title) },
-                    )
-                }
+                // (User rule 2026-10-10: "go to task tree" is no entry of this menu any more — it is an action of the
+                // Search window "edit…" opens on the task.)
                 // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this menu
                 // option and then dragging — the release commits (see the column's gesture handler). The
                 // generated sleep band is not a movable entity (no panel behind it).
