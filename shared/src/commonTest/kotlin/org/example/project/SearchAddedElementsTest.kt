@@ -295,6 +295,21 @@ class SearchAddedElementsTest {
         assertTrue(default.actions.containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
         assertTrue(SearchDomain.AddedAction.QuotaProgress !in default.actions && SearchDomain.AddedAction.QuotaLoops !in default.actions)
 
+        // User rule 2026-10-10: each group has its expansion arrow. What is retracted is remembered by what the group
+        // IS — an element, a kind, every element, a kind's default configuration — and kept with the window.
+        assertEquals(listOf("kind/Quota", "element/Quota/q1", "element/Quota/q2"), two.map { it.id })
+        assertEquals("default/Quota", defaults.id)
+        assertEquals(listOf("all", "kind/Quota", "element/Quota/q1", "element/Alarm/x", "element/Quota/q2"), mixed.map { it.id })
+        val ids = two.mapTo(HashSet()) { it.id }
+        val retracted = SearchDomain.withActionGroupToggled(SearchDomain.Config(), "element/Quota/q1", ids)
+        assertEquals(setOf("element/Quota/q1"), retracted.collapsedActionGroups)
+        assertEquals(retracted, SearchDomain.Config.decode(retracted.encode()))
+        // A second press opens it again; a group the section no longer lists is forgotten on the way.
+        assertEquals(emptySet(), SearchDomain.withActionGroupToggled(retracted, "element/Quota/q1", ids).collapsedActionGroups)
+        assertEquals(setOf("kind/Quota"), SearchDomain.withActionGroupToggled(retracted, "kind/Quota", ids - "element/Quota/q1").collapsedActionGroups)
+        // A configuration stored before the arrows: every group open.
+        assertEquals(emptySet(), SearchDomain.Config.decode(SearchDomain.Config().encode().replace("\"collapsedActionGroups\":[],", ""))?.collapsedActionGroups)
+
         // Nothing added (the window of every configuration): one group per kind, as before.
         val sections = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet())
         assertEquals(sections, SearchDomain.actionGroups(sections, emptyList()).map { it.kind to it.actions })

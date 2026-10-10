@@ -28,7 +28,10 @@ all the elements, then a group for less elements and so on…"
   the first version dropped the shared fields: "the first group should have the configurations for the default
   configurations of the quota elements. There must also be a title field to rename every added quota elements at the
   same time, among other things...").
-Client only. No persisted shape changed. Not looked at on screen: the grouping is tested, the drawing is not.
+- Each group has an expansion arrow (the user: "In the action section, add an expansion arrow button to each
+  group"). **Persisted shape**: the Search window's stored configuration gains `collapsedActionGroups` (default
+  empty; local view state, never synced) — `SearchAddedElementsTest`.
+Client only. Not looked at on screen: the grouping is tested, the drawing is not.
 
 ### `docs/scheduler_input_requirements.md`: the hidden timeline levels, and a dragged occurrence is an exception — 2026-10-10
 

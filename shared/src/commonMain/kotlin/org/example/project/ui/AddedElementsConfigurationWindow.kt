@@ -300,44 +300,79 @@ private fun AddedActionSections(
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
-    // A group's inner groups (the default configuration of its kind) are drawn inside it, under a smaller heading.
-    for (group in SearchDomain.actionGroups(sections, added).flatMap { listOf(it) + it.inner }) {
-        @Suppress("NAME_SHADOWING")
-        val added = group.members
-        // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
-        val run = { command: SearchDomain.AddedCommand ->
-            SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
+    val groups = SearchDomain.actionGroups(sections, added)
+    val listed = groups.flatMapTo(HashSet()) { group -> listOf(group.id) + group.inner.map { it.id } }
+    val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
+    for (group in groups) {
+        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle) {
+            // What the group holds inside it (the default configuration of its kind), each with its own arrow.
+            for (inner in group.inner) {
+                ActionGroupBlock(inner, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle) {}
+            }
         }
-        val onOpenEach = { onOpenEach(added) }
-        val onClear = { onClear(added) }
+    }
+}
+
+/**
+ * One group of the actions section: its heading with **its expansion arrow** (user rule 2026-10-10: *"add an expansion
+ * arrow button to each group"* — the sections' own, [SectionArrow]; what is retracted is the window's configuration,
+ * [SearchDomain.Config.collapsedActionGroups]), and, while it is open, its actions drawn over its elements, then
+ * [inside].
+ */
+@Composable
+private fun ActionGroupBlock(
+    group: SearchDomain.ActionGroup,
+    state: SchedulerState,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    handlers: AddedActionHandlers,
+    onIntent: (SchedulerIntent) -> Unit,
+    nowMillis: () -> Long,
+    onOpenEach: (List<SearchDomain.Result>) -> Unit,
+    onClear: (List<SearchDomain.Result>) -> Unit,
+    onToggle: (String) -> Unit,
+    inside: @Composable () -> Unit,
+) {
+    val added = group.members
+    val collapsed = group.id in config.collapsedActionGroups
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        SectionArrow(collapsed) { onToggle(group.id) }
         if (group.heading == null) SectionTitle(group.title)
-        else Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
-        androidx.compose.runtime.key(group.kind, group.element, group.heading, added.map(SearchDomain::keyOf)) {
+        else Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+    }
+    if (collapsed) return
+    // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
+    val run = { command: SearchDomain.AddedCommand ->
+        SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
+    }
+    val openEach = { onOpenEach(added) }
+    val clear = { onClear(added) }
+    // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
+    androidx.compose.runtime.key(group.id, added.map(SearchDomain::keyOf)) {
         for (action in group.actions) {
             // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
             // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
             AddableAction(action, added, config) {
-            if (action in STACKED_ACTIONS) {
-                // An editor too tall for the label's row: under its label, at the section's width.
-                Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-                    Text(
-                        action.label,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear)
-                }
-            } else {
-                SettingRow(action.label) {
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear)
+                if (action in STACKED_ACTIONS) {
+                    // An editor too tall for the label's row: under its label, at the section's width.
+                    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+                        Text(
+                            action.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                        AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear)
+                    }
+                } else {
+                    SettingRow(action.label) {
+                        AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear)
+                    }
                 }
             }
-            }
-        }
         }
     }
+    inside()
 }
 
 /** The actions whose editor is a block of its own (a list of steps, a document) rather than a control in a row. */

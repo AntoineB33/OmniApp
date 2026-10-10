@@ -809,6 +809,12 @@ suggestions before it was ever entered.
     the list's order — its own configuration, **what says where it stands first** (`LEADING_ACTIONS`: a quota's target
     progression, a timer's or chrono's run, an alarm's state), then its title and the rest — with its kind's set
     actions when it is the only one of its kind.
+  - **Each group has its expansion arrow** (user rule 2026-10-10; `ActionGroupBlock`, the sections' own
+    `SectionArrow`): retracted, a group is its heading alone — its inner default configuration with it, which has an
+    arrow of its own when the group is open. What is retracted is the Search window's configuration
+    (`Config.collapsedActionGroups`, by `ActionGroup.id`: the element, the kind, "all", a kind's default — local view
+    state like the rest of it, absent from an older stored configuration = all open), and an id the section no
+    longer lists is dropped at the next press (`withActionGroupToggled`).
   - **One added element is ONE group**: its own configuration, then its kind's buttons ("New"…), then the general
     actions — **without "Remove all"** (*"it can be done by clicking on the cross"*) and without "Open each".
   - **The group of several elements of a kind also holds ONE FIELD FOR ALL OF THEM, and the kind's DEFAULT

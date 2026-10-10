@@ -389,6 +389,11 @@ object SearchDomain {
          * rest of the configuration, so it belongs to this Search window and not to the configurations window.
          */
         val actionQuery: String = "",
+        /**
+         * User rule 2026-10-10: the groups of the actions section retracted to their heading, by [ActionGroup.id] —
+         * each group has its expansion arrow. Kept with the rest of the window's configuration.
+         */
+        val collapsedActionGroups: Set<String> = emptySet(),
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
         /**
@@ -443,6 +448,7 @@ object SearchDomain {
                     periodBoxesUntil = filters.periodBoxesUntil?.toString(),
                     added = added,
                     actionQuery = actionQuery,
+                    collapsedActionGroups = collapsedActionGroups.sorted(),
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
@@ -524,6 +530,7 @@ object SearchDomain {
                     // index named whichever unit had shifted into it, so the key no longer means what was added.
                     added = stored.added.distinct().filterNot(::isLegacyHistoryUnitKey),
                     actionQuery = stored.actionQuery,
+                    collapsedActionGroups = stored.collapsedActionGroups.toSet(),
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
                     placement = Placement(
@@ -1064,6 +1071,8 @@ object SearchDomain {
         val added: List<String> = emptyList(),
         /** New 2026-10-01: absent from an older build's = no filter, the first period. */
         val actionQuery: String = "",
+        /** New 2026-10-10: absent from an older build's = every group of actions open. */
+        val collapsedActionGroups: List<String> = emptyList(),
         val resiliencePeriod: String? = null,
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
@@ -2509,6 +2518,19 @@ object SearchDomain {
         /** The heading of an [inner] group, which is not named after its members. */
         val heading: String? = null,
     ) {
+        /**
+         * What the group is known by across edits of the list — what its expansion arrow is remembered under
+         * ([Config.collapsedActionGroups]): the element of an element's group, the kind of a kind's (however many of
+         * it are added), one name for the group of every element.
+         */
+        val id: String
+            get() = when {
+                heading != null -> "default/" + kind?.name
+                element -> "element/" + members.joinToString(",") { keyOf(it) }
+                kind != null -> "kind/" + kind.name
+                else -> "all"
+            }
+
         /** The heading the section writes over the group. */
         val title: String
             get() {
@@ -2581,6 +2603,16 @@ object SearchDomain {
      * without "Remove every element from the list" (*"it can be done by clicking on the cross"*) nor "Open each".
      * A kind no added element is (the window of every configuration lists them all) keeps a group of its own, last.
      */
+    /**
+     * [config] once the arrow of the group [id] is pressed: retracted if it was open, open if it was retracted. The ids
+     * of groups the section no longer lists ([listed] — an element taken off the list) are dropped on the way, so the
+     * set never outgrows the section.
+     */
+    fun withActionGroupToggled(config: Config, id: String, listed: Set<String>): Config {
+        val kept = config.collapsedActionGroups.filterTo(HashSet()) { it in listed }
+        return config.copy(collapsedActionGroups = if (id in kept) kept - id else kept + id)
+    }
+
     fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> {
         if (added.isEmpty()) return sections.map { (kind, actions) -> ActionGroup(kind, emptyList(), actions) }
         fun membersOf(kind: Kind?) = added.filter { kind == null || actionKindOf(it) == kind || it.kind == kind }
