@@ -15,7 +15,9 @@ Check here before assuming the code matches the docs.
 
 The user: "In the calendar, if a panel is cut somewhere by only 20 seconds, then the title isn't shown again right
 after the cut." Two blocks of one task separated by at most 20 s (the work on either side of a look-away) each wrote
-their title; the second no longer does (`blocksContinuingAfterShortCut`). Display only. Client only.
+their title; the second no longer did (`blocksContinuingAfterShortCut`). **Reverted the same day** at the user's
+request ("Revert the rule saying that only a >20s cut would display the title again (which actually wasn't strictly
+applied)"): the function, its use and its test are gone, and every block writes its title as before. Client only.
 
 ### The actions section is grouped from every element down to each one — 2026-10-10
 

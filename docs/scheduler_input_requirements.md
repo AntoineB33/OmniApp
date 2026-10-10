@@ -1,6 +1,6 @@
 The timeline has a hidden level for the "alternative schedule", and other hidden levels called $tm_levels$. When a blue/orange outlined block is positioned at $t_r$, then what was there before is added at $t_r$ to the lowest $tm_level$ where nothing is at $t_r$. What is in the timeline is the result of the overlap of those $tm_levels$, applying them from top to bottom, ignoring those that are incompatible with the higher $tm_levels$.
 
-Example 1: the user drags a "no phone unlocked" period to a "no computer unlocked" period, then drags task A with 0 resilience to "no screen". On the timeline, it would be task A with "no phone unlocked" and no "no computer unlocked" because it would imply a "no screen" period which is incompatible with task A.
+Example 1: the user drags a "no phone unlocked" period to a "no computer unlocked" period, then drags there task A with 0 resilience to "no screen". On the timeline, it would be task A with "no phone unlocked" and no "no computer unlocked" because it would imply a "no screen" period which is incompatible with task A.
 
 Example 2: suppose the timeline is only task A, then the user manually adds a task B at 10h-12h. There are now two $tm_levels$: the bottom one with task A all along, and the top one with task B at 10h-12h. Next, the user selects task B at 11h-12h and task A at 12h-13h and drags it 4h further in the future. Now, the bottom $tm_level$ has an "Inactivity" period at 12h-13h, and the top $tm_level$ has task B at 15h-16h and task A at 16h-17h.
 

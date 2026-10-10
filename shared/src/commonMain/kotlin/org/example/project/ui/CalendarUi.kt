@@ -848,37 +848,6 @@ internal fun layoutWithBreakHoles(
     return out ?: layout
 }
 
-/** The longest cut after which a task's block does not write its title again ([blocksContinuingAfterShortCut]). */
-internal const val SHORT_CUT_MILLIS: Long = 20_000L
-
-/**
- * User rule 2026-10-10: *"if a panel is cut somewhere by only 20 seconds, then the title isn't shown again right
- * after the cut"* — **the keys ([calendarBlockKey]) of the task blocks that only CONTINUE a block of the same task
- * after a cut of at most [SHORT_CUT_MILLIS]** (a 20-second look-away: the work banked on either side of it, two
- * panels of one run). Such a block writes no title: the one above the cut still names it, twenty seconds higher, and
- * the hover bubble names it as ever. Inside ONE block the question does not arise — a block cut by a break
- * ([layoutWithBreakHoles]) writes its title on its topmost piece only.
- *
- * Read off the blocks' true times ([PlacedRecord.fullStartMillis]), so a block clipped at a day's edge is judged by
- * where it really starts. A longer cut — a 5- or 15-minute break — is long enough to be told again who is back.
- */
-internal fun blocksContinuingAfterShortCut(blocks: List<PlacedRecord>): Set<String> {
-    val tasks = blocks.filter { isTaskPanelRecord(it) && !it.inactivity && it.fullEndMillis > it.fullStartMillis }
-    if (tasks.size < 2) return emptySet()
-    val out = HashSet<String>()
-    for ((_, same) in tasks.groupBy { it.taskId?.value ?: ("title/" + it.title) }) {
-        if (same.size < 2) continue
-        val sorted = same.sortedBy { it.fullStartMillis }
-        var reach = sorted.first().fullEndMillis
-        for (block in sorted.drop(1)) {
-            val cut = block.fullStartMillis - reach
-            if (cut in 1..SHORT_CUT_MILLIS) out += calendarBlockKey(block)
-            reach = maxOf(reach, block.fullEndMillis)
-        }
-    }
-    return out
-}
-
 /**
  * Where the task panel [block] may not appear among [breaks] — the screen breaks that [refuses] its task, the one
  * question [layoutWithBreakHoles] asks — as [draggedBlockBounds] takes them. None for a block that is not a task panel.
@@ -6902,11 +6871,8 @@ private fun DayColumn(
                                 )
                             }
                     }
-                    // User rule 2026-10-10: a block that only continues its task after a 20-second cut writes no title.
-                    val continuing = blocksContinuingAfterShortCut(liveRecords)
                     liveRecords.forEach { record ->
                         val key = calendarBlockKey(record)
-                        if (key in continuing) return@forEach
                         // The title is written on the topmost slice only, and clipped to it.
                         val slice = liveLayout[key]?.firstOrNull() ?: PanelSlice(record.startHour, record.endHour, 0f, 1f)
                         add(
