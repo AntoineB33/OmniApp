@@ -1577,6 +1577,9 @@ object SchedulerDomain {
             // and breaks the adjacency, preventing a merge across it.
             val into = result.indexOfLast {
                 it.taskId != null && it.taskId == panel.taskId && it.pinned == panel.pinned &&
+                    // Two panels on different tm_levels are two blocks ([TimelineLevels]): fused, the one positioned
+                    // on top would take the level of the one underneath and be hidden where that one is.
+                    it.tmLevel == panel.tmLevel && it.tmShare == panel.tmShare &&
                     panel.startEpochMillis <= it.endEpochMillis
             }
             if (into >= 0) {

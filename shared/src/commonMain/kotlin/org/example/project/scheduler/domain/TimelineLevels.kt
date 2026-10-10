@@ -21,7 +21,8 @@ import org.example.project.scheduler.model.TaskTimeRange
  * period and a task panel cannot share a stretch where the period, or a period the account's combination rules bring
  * with it there ([PeriodKindConfig.closeRegions]), refuses the task — plus one more: under a period of its own kind a
  * period says nothing new, so that part of it is hidden too (*"the included block loses its blue/orange outlines"*).
- * And a task panel positioned over another task's panel hides it (*"Dragging task A into task B hides task B, unless
+ * The same holds of a task panel under a panel of its own task. And a task panel positioned over another task's panel
+ * hides it (*"Dragging task A into task B hides task B, unless
  * shift is pressed, which makes the two task panels share the width"*, [TaskPanel.tmShare]); two on ONE level — every
  * panel placed before the levels existed — go on sharing the width.
  *
@@ -110,7 +111,7 @@ object TimelineLevels {
         class Stated(val template: TaskPanel, val range: TaskTimeRange, val members: List<Member>)
         val members = shown.filter { it.id in inShown }.map { Member(it, true) } + hidden.filter { it.id in inHidden }.map { Member(it.panel, false) }
         val stated = ArrayList<Stated>()
-        for ((_, group) in members.groupBy { listOf(it.panel.tmBlockId, it.panel.tmLevel, it.panel.taskId?.value, it.panel.restrictiveKind) }) {
+        for ((_, group) in members.groupBy { listOf(it.panel.tmBlockId, it.panel.tmLevel, it.panel.taskId?.value, it.panel.restrictiveKind, it.panel.tmShare) }) {
             var run = ArrayList<Member>()
             var end = Long.MIN_VALUE
             fun close() {
@@ -152,10 +153,11 @@ object TimelineLevels {
                     // task's panel of a higher level that was not positioned to share the width.
                     val closed = if (periods.isEmpty()) emptyMap() else config.closeRegions(periods)
                     val refusing = closed.filterKeys { SchedulerDomain.periodRefuses(tasks, s.template.taskId, it) }.values.flatten()
+                    // (Under a panel of its OWN task it says nothing new, as a period under one of its kind.)
                     val over =
                         taskRuns.filter {
-                            it.panel.tmLevel > s.template.tmLevel && !it.panel.tmShare &&
-                                it.panel.taskId != s.template.taskId && it.panel.tmBlockId != s.template.tmBlockId
+                            it.panel.taskId == s.template.taskId ||
+                                (it.panel.tmLevel > s.template.tmLevel && !it.panel.tmShare)
                         }.map { it.span }
                     SchedulerDomain.subtractRegions(whole, refusing + over)
                 } else {

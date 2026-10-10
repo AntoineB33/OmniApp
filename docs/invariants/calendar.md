@@ -692,6 +692,28 @@ Global rules that always apply: `CLAUDE.md`.
     `SchedulerDomain.isDerivedInactivityFill`, read in `App` beside `derivedInactivityBands`). The fill is left out of
     what covers the timeline and out of the drawn records, so the band runs through it: one statement, one box. It
     stays stored (the plan reads it); edited by hand it is a period of the user's again, with its own box.
+  - **THE LEVELS ARE TESTED AGAINST A MODEL OF THE DOCUMENT, AT RANDOM** (2026-10-10, the user: *"The tests must make
+    it extremely unlikely that the user gets a situation where those requirements are not strictly satisfied"*).
+    `TimelineLevelsFuzzTest` lives through seeded sessions of calendar edits — lay, drag, drag an edge, share, remove,
+    undo — and after EACH asks every 5-minute slot two things of a model written from the document's sentences alone
+    (a stack of what the user placed, read from the top): *the timeline is the overlap* and *nothing the user placed
+    is destroyed or invented*; and that settling again moves nothing. `RecordLevelsFuzzTest` does the same behind
+    the line: *no slot a task worked is ever lost*, *no work stands in the record under a period that refuses it*,
+    *none is hidden where no such period stands*, and with every period gone every worked slot is back. Both run in
+    `:shared:jvmTest`. **A new rule about what a calendar edit does to the blocks goes into the model first**; a seed
+    that fails prints its whole sequence — fix the cause, never the seed list.
+    What they found the day they were written, each now a rule above or here:
+    - a task panel under a panel of its OWN task is hidden there, like a period under one of its kind (two overlapping
+      shown panels of one task had no single answer to "which one did the hand take");
+    - **two panels are fused (`mergeSameTaskPanels`) only on ONE level and with ONE sharing flag**: fused across, the
+      panel positioned on top took the level of the one under it and was hidden where that one was;
+    - a positioning that changes only whether the panel SHARES the width settles too (it did not, so what the panel
+      had hidden stayed hidden);
+    - pieces of one block that differ in the sharing flag are separate stated blocks (settling was not idempotent);
+    - **the hole rule fills only what is BARE** (`withVacatedPastFilled`): not where work stands or is hidden, not
+      where a block is hidden, not where the user's own Inactivity already stands — and the work it gives back to the
+      task on both sides is never given under a period that refuses that task. (A fill laid over hidden work kept it
+      from ever coming back; work given back under an Inactivity stood in the record under it.)
   - **A level is an ORDER here, not a row**: the document puts a block that hides nothing on the bottom level, and
     this raises every positioned block above what it overlaps. Nothing observable differs, and the order is what its
     first example needs (of two compatible periods, the one dragged later is the one that stays under a task).

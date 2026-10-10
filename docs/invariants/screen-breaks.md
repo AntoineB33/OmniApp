@@ -5,6 +5,26 @@ Global rules that always apply: `CLAUDE.md`.
 
 ---
 
+## The break rules are also asked at random
+
+`BreakMachineFuzzTest` (2026-10-10, in `:shared:jvmTest`): the now line moved by random amounts and its mode switched
+at random between the three, 300 seeds of 400 steps, and every break the line leaves behind checked against
+`docs/scheduler_requirements.md` § *screen breaks* — it lasts as long as its name implies; no two overlap; after a
+break of a label has ended, none of that label inside its bar; the line is never in mode 1 during a 20 s break; no
+20 s break starts under a mode-2 line; the events say what the state holds. `BreakMachineTest` pins each rule on the
+case that shows it; this asks them of whatever sequence the seeds reach.
+
+- **What it does not ask**, so a green run says nothing about it: the pull to the start of a known "no screen" period
+  (the one rule the requirements let contradict the others — there is no such period on its timeline), a break a hand
+  placed, and the bars a STRETCH away from a screen sets (the machine reads *"after a ≥ 5-minute of 'no screen'"* as
+  after the stretch has ended, so a 5min break 45 minutes after a 15min one, the line still away, is taken there).
+- **What it found**: two breaks can TOUCH — a 20 s break starting at the very instant a pose ends — when the mode
+  switches to 1 at that exact millisecond with a 20 s break owed since before the pose. In continuous time that has
+  no length, and a second later it is the requirements' own rule (the end of a pose bars no 20 s break), so the test
+  asks "never overlap" and the machine is unchanged. Read strictly, the chain rule would make them one break.
+
+---
+
 ## Screen breaks — the three dynamic restrictive periods
 
 → ADR 0003, ADR 0017, `docs/scheduler_requirements.md` § *Default restrictive periods*. The three are the 20-s

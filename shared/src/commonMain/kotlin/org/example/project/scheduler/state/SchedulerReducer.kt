@@ -2422,6 +2422,7 @@ object SchedulerReducer {
             val old = was[p.id]
             if (old != null && old.startEpochMillis == p.startEpochMillis && old.endEpochMillis == p.endEpochMillis &&
                 old.taskId == p.taskId && old.restrictiveKind == p.restrictiveKind && old.tmLevel == p.tmLevel &&
+                old.tmShare == p.tmShare &&
                 TimelineLevels.participates(old)
             ) continue
             windows += TaskTimeRange(p.startEpochMillis, p.endEpochMillis)
@@ -3718,7 +3719,23 @@ object SchedulerReducer {
         var out = panels
         val recordsBefore = HashMap<TaskId, List<TaskTimeRange>>()
         val recordsAfter = HashMap<TaskId, List<TaskTimeRange>>()
-        for (piece in SchedulerDomain.subtractRegions(listOf(from), listOfNotNull(to))) {
+        // Only what is still BARE is a hole: the work the levels gave back as the period left ([settleRecords]) and the
+        // task panels standing there are not, and a fill laid over them would hide them again.
+        // Nor is a stretch something is HIDDEN on (work, or a block, under a period still standing there: the bottom
+        // level is not bare under it), nor one the user's own Inactivity already covers.
+        val standing =
+            working.tasks.values.flatMap { it.record } +
+                working.hiddenPanels.map { TaskTimeRange(it.panel.startEpochMillis, it.panel.endEpochMillis) } +
+                panels.filter { SchedulerDomain.isUserPlaced(it) && (isTaskPanel(it) || it.restrictiveKind == PeriodKinds.INACTIVITY) }
+                    .map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        val userPeriods =
+            SchedulerDomain.afterCrossings(
+                panels.filter { it.isRestrictivePeriod && SchedulerDomain.isUserPlaced(it) }, working.periodCrossings, working.periodKindConfig,
+            )
+        val bare =
+            SchedulerDomain.subtractRegions(SchedulerDomain.subtractRegions(listOf(from), listOfNotNull(to)), standing)
+                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS }
+        for (piece in bare) {
             val tasks = working.tasks.mapValues { (id, task) -> recordsAfter[id]?.let { task.copy(record = it) } ?: task }
             val fill =
                 SchedulerDomain.vacatedPastFill(
@@ -3744,9 +3761,15 @@ object SchedulerReducer {
             }
             val taskId = fill.taskId
             if (taskId != null && fill.work.isNotEmpty()) {
-                val record = tasks[taskId]?.record ?: continue
+                val task = tasks[taskId] ?: continue
+                val record = task.record
+                // Work is given back only where the task may have run: never under a period that refuses it.
+                val refusing =
+                    userPeriods.filter { task.resilienceFor(it.restrictiveKind) <= 0.0 }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+                val work = SchedulerDomain.subtractRegions(fill.work, refusing)
+                if (work.isEmpty()) continue
                 recordsBefore.getOrPut(taskId) { record }
-                recordsAfter[taskId] = record + fill.work
+                recordsAfter[taskId] = record + work
             }
         }
         return VacatedFilled(working, out, RecordChanges.of(recordsBefore, recordsAfter))

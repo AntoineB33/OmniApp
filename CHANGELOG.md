@@ -74,6 +74,14 @@ findings, and what is still open, are in `docs/invariants/calendar.md` § *tm_le
   time". Read off a copy of the release DB: `panel/330`, the fill of a dragged 15-minute break (16:13:48 → 16:28:48),
   next to the DERIVED Inactivity of the idle stretch after it. An Inactivity fill is now drawn as part of the derived
   band (`isDerivedInactivityFill`). Display only.
+- **Randomized tests against a model of the document** (the user: "The tests must make it extremely unlikely that the
+  user gets a situation where those requirements are not strictly satisfied"): `TimelineLevelsFuzzTest` and
+  `RecordLevelsFuzzTest`, in `:shared:jvmTest`. They found five faults in the levels as first written, all fixed the
+  same day and listed in `docs/invariants/calendar.md` § *tm_levels* — among them a fill laid over hidden work, which
+  kept it from coming back, and same-task panels fused across levels.
+- `BreakMachineFuzzTest`: the same for the screen-break rules of `docs/scheduler_requirements.md` (random line
+  motion and mode switches). No fault in the machine; one edge of no length noted in
+  `docs/invariants/screen-breaks.md` (two breaks touching when the mode switches at the instant a pose ends).
 - Also: replacing a merged block (`ReplaceTaskPanels`) recorded its unit from the panels AFTER the removal, so Ctrl+Z
   did not give the replaced panels back; the unit now starts from the panels as they were.
 Client only. An older build on another device ignores the new fields and writes panels without them: a block it
