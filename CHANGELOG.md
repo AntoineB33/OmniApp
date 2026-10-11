@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section has a search bar that sorts — 2026-10-11
+
+The user: "In the action section of the Search window, add a search bar. The actions are separated into macro groups
+(for each set of elements the actions will apply to) and micro groups ('add to calendar' actions, 'Combinations'
+actions (for periods), etc…). The search bar sorts the micro groups by the matching of the micro group titles, but
+doesn't sort the macro groups. When the Search window comes from calendar > right-click > add…, then the search bar of
+the action section is by default 'add to calendar'."
+`Config.actionSearch` (stored, absent = empty), `SearchDomain.sortedByActionSearch`; "add…" sets it. It sorts and
+hides nothing; the configurations window's filter (`actionQuery`) is unchanged. Client only. Not tried on screen.
+
 ### A second right-click on the calendar opens the menu there — 2026-10-11
 
 The user: "When the user right-clicks on the calendar, then right-clicks elsewhere, it must open the right-click menu.

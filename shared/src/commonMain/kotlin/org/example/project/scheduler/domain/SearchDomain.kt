@@ -394,6 +394,13 @@ object SearchDomain {
          * each group has its expansion arrow. Kept with the rest of the window's configuration.
          */
         val collapsedActionGroups: Set<String> = emptySet(),
+        /**
+         * User rule 2026-10-11: **the actions section's own search bar**. It SORTS — inside each group of elements
+         * (a macro group), the actions (the micro groups, each under its title) that answer it come first, the best
+         * answer first ([actionSearchRank], [sortedByActionSearch]) — and takes nothing away, nor moves a group of
+         * elements. Not [actionQuery], which is the configurations window's FILTER.
+         */
+        val actionSearch: String = "",
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
         /**
@@ -452,6 +459,7 @@ object SearchDomain {
                     added = added,
                     actionQuery = actionQuery,
                     collapsedActionGroups = collapsedActionGroups.sorted(),
+                    actionSearch = actionSearch,
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
@@ -538,6 +546,7 @@ object SearchDomain {
                     added = stored.added.distinct().filterNot(::isLegacyHistoryUnitKey),
                     actionQuery = stored.actionQuery,
                     collapsedActionGroups = stored.collapsedActionGroups.toSet(),
+                    actionSearch = stored.actionSearch,
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
                     placement = Placement(
@@ -1266,6 +1275,8 @@ object SearchDomain {
         val actionQuery: String = "",
         /** New 2026-10-10: absent from an older build's = every group of actions open. */
         val collapsedActionGroups: List<String> = emptyList(),
+        /** New 2026-10-11: absent from an older build's = the actions in their own order. */
+        val actionSearch: String = "",
         val resiliencePeriod: String? = null,
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
@@ -2823,6 +2834,42 @@ object SearchDomain {
         return config.copy(collapsedActionGroups = if (id in kept) kept - id else kept + id)
     }
 
+    /**
+     * How well an action's title answers the actions section's search bar: 0 = the same words, 1 = starts with it,
+     * 2 = contains it, 3 = holds every word of it somewhere ("add to calendar" finds "Add to the calendar"); null =
+     * does not answer. A blank search answers nothing, so nothing is moved.
+     */
+    fun actionSearchRank(title: String, search: String): Int? {
+        val q = search.trim().lowercase()
+        if (q.isEmpty()) return null
+        matchRank(title, q)?.let { return it }
+        val t = title.lowercase()
+        val words = q.split(' ', '\t').filter { it.isNotEmpty() }
+        return if (words.isNotEmpty() && words.all { it in t }) 3 else null
+    }
+
+    /**
+     * User rule 2026-10-11: *"The search bar sorts the micro groups by the matching of the micro group titles, but
+     * doesn't sort the macro groups."* — [actions] (one macro group's micro groups) with those whose title answers
+     * [search] first, the best answer first; the rest after them, and every tie, in the order they stood in.
+     */
+    fun sortedByActionSearch(actions: List<AddedAction>, search: String): List<AddedAction> {
+        if (search.isBlank()) return actions
+        return actions.sortedBy { actionSearchRank(it.label, search) ?: Int.MAX_VALUE }
+    }
+
+    /** What the actions section's search bar holds when the window is opened by the calendar's "add…". */
+    const val CALENDAR_ADD_ACTION_SEARCH: String = "add to calendar"
+
+    /** [actionGroups] with each group's actions sorted by the section's search bar ([sortedByActionSearch]). */
+    fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>, search: String): List<ActionGroup> {
+        val groups = actionGroups(sections, added)
+        if (search.isBlank()) return groups
+        fun sorted(group: ActionGroup): ActionGroup =
+            group.copy(actions = sortedByActionSearch(group.actions, search), inner = group.inner.map(::sorted))
+        return groups.map(::sorted)
+    }
+
     fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> {
         if (added.isEmpty()) return sections.map { (kind, actions) -> ActionGroup(kind, emptyList(), actions) }
         fun membersOf(kind: Kind?) = added.filter { kind == null || actionKindOf(it) == kind || it.kind == kind }
@@ -3212,6 +3259,8 @@ object SearchDomain {
             kinds = CALENDAR_ADD_KINDS,
             filters = Filters(calendarAddOn = true, calendarAddAtMillis = atMillis),
             calendarClickMillis = atMillis,
+            // User rule 2026-10-11: what "add…" is for comes first among the actions.
+            actionSearch = CALENDAR_ADD_ACTION_SEARCH,
         )
 
     /** The kinds of what can be on the calendar at an instant — what the calendar's "edit…" lists. */

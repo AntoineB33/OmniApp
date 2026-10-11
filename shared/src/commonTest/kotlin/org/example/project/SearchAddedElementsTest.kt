@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -570,6 +571,52 @@ class SearchAddedElementsTest {
         assertTrue(editGroups.single { it.kind == SearchDomain.Kind.RestrictivePeriod }.settings.isNotEmpty(), "the period's own configurations have their group")
         // The switch says nothing while the button is off: every kind is listed.
         assertEquals(all.map { it.kinds }.toSet(), SearchDomain.configurationGroups("", every, counts, frozen = frozen).map { it.kinds }.toSet())
+    }
+
+    /**
+     * User rule 2026-10-11: *"In the action section of the Search window, add a search bar. The actions are separated
+     * into macro groups (for each set of elements the actions will apply to) and micro groups ('add to calendar'
+     * actions, 'Combinations' actions (for periods), etc…). The search bar sorts the micro groups by the matching of
+     * the micro group titles, but doesn't sort the macro groups. When the Search window comes from calendar >
+     * right-click > add…, then the search bar of the action section is by default 'add to calendar'."*
+     */
+    @Test
+    fun the_actions_search_bar_sorts_the_actions_inside_each_group_and_moves_no_group() {
+        val s = account()
+        val apple = taskWithTitle(s, "Apple")
+        val added = SearchDomain.resolve(s, listOf("Task/" + apple.value, "RestrictivePeriod/" + PeriodKinds.NO_SCREEN))
+        val sections =
+            SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
+        val plain = SearchDomain.actionGroups(sections, added)
+        // "add to calendar" answers "Add to the calendar" though the words are not side by side, and nothing else.
+        assertEquals(3, SearchDomain.actionSearchRank("Add to the calendar", "add to calendar"))
+        assertNull(SearchDomain.actionSearchRank("Drag on the calendar", "add to calendar"))
+        assertEquals(0, SearchDomain.actionSearchRank("Combinations", "combinations"))
+        assertEquals(1, SearchDomain.actionSearchRank("Combinations", "comb"))
+        assertNull(SearchDomain.actionSearchRank("Combinations", "  "))
+        // Sorted: the same groups, in the same order, each holding the same actions — the one that answers first.
+        val searched = SearchDomain.actionGroups(sections, added, SearchDomain.CALENDAR_ADD_ACTION_SEARCH)
+        assertEquals(plain.map { it.id }, searched.map { it.id }, "the groups of elements are not moved")
+        assertEquals(plain.map { it.actions.toSet() }, searched.map { it.actions.toSet() }, "nothing is hidden")
+        assertEquals(SearchDomain.AddedAction.PlaceOnCalendar, searched.first().actions.first())
+        assertEquals(
+            plain.first().actions.filterNot { it == SearchDomain.AddedAction.PlaceOnCalendar },
+            searched.first().actions.drop(1),
+            "the others keep the order they stood in",
+        )
+        // A period's own: "comb" brings its Combinations first, in ITS group, and moves nothing in the others'.
+        val comb = SearchDomain.actionGroups(sections, added, "comb")
+        val periodGroup = comb.single { it.element && it.kind == SearchDomain.Kind.RestrictivePeriod }
+        assertEquals(SearchDomain.AddedAction.PeriodCombinations, periodGroup.actions.first())
+        assertEquals(plain.first().actions, comb.first().actions)
+        // A blank bar sorts nothing.
+        assertEquals(plain, SearchDomain.actionGroups(sections, added, " "))
+        // "add…" opens with the bar on what it is for; "edit…" with it empty. It is kept with the window.
+        assertEquals(SearchDomain.CALENDAR_ADD_ACTION_SEARCH, SearchDomain.calendarAddConfig(0).actionSearch)
+        assertEquals("", SearchDomain.calendarAtConfig(0).actionSearch)
+        val kept = SearchDomain.Config(actionSearch = "resil")
+        assertEquals(kept, SearchDomain.Config.decode(kept.encode()))
+        assertEquals("", SearchDomain.Config.decode("""{"query":"x"}""")!!.actionSearch)
     }
 
     @Test

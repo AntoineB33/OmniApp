@@ -1721,6 +1721,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val moved =
                 config.copy(
                     kinds = fresh.kinds,
+                    // "add…": the actions section's search bar holds what it is for (user rule 2026-10-11).
+                    actionSearch = if (add) fresh.actionSearch else config.actionSearch,
                     // "edit…" lists what is there in the hover bubble's order (user rule 2026-10-02).
                     sorts = if (add) config.sorts else SearchDomain.withCalendarBubbleSort(config.sorts),
                     filters = config.filters.copy(

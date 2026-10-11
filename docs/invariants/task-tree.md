@@ -865,6 +865,17 @@ suggestions before it was ever entered.
     the list's order — its own configuration, **what says where it stands first** (`LEADING_ACTIONS`: a quota's target
     progression, a timer's or chrono's run, an alarm's state), then its title and the rest — with its kind's set
     actions when it is the only one of its kind.
+  - **The section has a SEARCH BAR, which sorts the actions inside each group and moves no group** (user rule
+    2026-10-11: *"The actions are separated into macro groups (for each set of elements the actions will apply to)
+    and micro groups ('add to calendar' actions, 'Combinations' actions (for periods), etc…). The search bar sorts
+    the micro groups by the matching of the micro group titles, but doesn't sort the macro groups."*;
+    `Config.actionSearch`, `SearchDomain.actionSearchRank`, `sortedByActionSearch`, `SearchAddedElementsTest`). A
+    macro group is an `ActionGroup`; a micro group is one action under its title, with whatever its editor holds.
+    The ones whose title answers the bar come first, the best answer first (the same words, starts with, contains,
+    holds every word); the rest follow in the order they stood in. **It hides nothing** — that is the configurations
+    window's filter, `Config.actionQuery`, a different field. Opened by the calendar's "add…", the bar holds "add
+    to calendar" (`CALENDAR_ADD_ACTION_SEARCH`, in `calendarAddConfig` and where "add…" re-points an open window).
+    Local view state (`actionSearch` in the stored configuration, absent = empty).
   - **Each group has its expansion arrow** (user rule 2026-10-10; `ActionGroupBlock`, the sections' own
     `SectionArrow`): retracted, a group is its heading alone — its inner default configuration with it, which has an
     arrow of its own when the group is open. What is retracted is the Search window's configuration

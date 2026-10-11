@@ -244,6 +244,15 @@ internal fun AddedActionsSection(
             )
         }
         if (collapsed) return@Column
+        // User rule 2026-10-11: the section's search bar. It SORTS the actions inside each group of elements — the
+        // ones whose title answers it first — and hides none, nor moves a group ([SearchDomain.sortedByActionSearch]).
+        OutlinedTextField(
+            value = config.actionSearch,
+            onValueChange = { onConfigChange(config.copy(actionSearch = it)) },
+            singleLine = true,
+            label = { Text("Search an action") },
+            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+        )
         // The filter is set in the configurations window; said here, with its way off, so a quarter showing one
         // action is never a mystery.
         if (config.actionQuery.isNotBlank()) {
@@ -300,7 +309,8 @@ private fun AddedActionSections(
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
-    val groups = SearchDomain.actionGroups(sections, added)
+    // …and, inside each, the actions that answer the section's search bar first (user rule 2026-10-11).
+    val groups = SearchDomain.actionGroups(sections, added, config.actionSearch)
     val listed = groups.flatMapTo(HashSet()) { group -> listOf(group.id) + group.inner.map { it.id } }
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
     for (group in groups) {
