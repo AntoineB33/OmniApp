@@ -6274,6 +6274,19 @@ private fun DayColumn(
             .toEpochMilliseconds()
     }
 
+    /**
+     * The instant under [offsetY] to the SECOND — what "edit…" asks the timeline about (anomaly 2026-10-11: a
+     * right-click on a break right after the now line listed the task before the line, because [millisAt] names the
+     * MINUTE the press is in, and that minute began before the line). [millisAt] stays the instant something is laid
+     * at: a block added from a click starts on a minute.
+     */
+    fun exactMillisAt(offsetY: Float): Long {
+        val seconds = (pressHour(offsetY, currentHourHeightPx).toDouble() * 3600.0).toInt().coerceIn(0, 24 * 3600 - 1)
+        return LocalDateTime(day.year, day.month, day.day, seconds / 3600, seconds % 3600 / 60, seconds % 60)
+            .toInstant(tz)
+            .toEpochMilliseconds()
+    }
+
     // PRD §8: the block whose vertical span contains [offsetY], if any (topmost wins).
     fun blockAt(offsetY: Float): PlacedRecord? =
         currentRecords.lastOrNull { pressSpans(it, offsetY, currentHourHeightPx) }
@@ -6693,7 +6706,7 @@ private fun DayColumn(
                                 DropdownMenuItem(
                                     text = { Text("edit $label") },
                                     onClick = {
-                                        anchor?.let { onEditElementsAt(millisAt(it.y), hits) }
+                                        anchor?.let { onEditElementsAt(exactMillisAt(it.y), hits) }
                                         closeMenu()
                                     },
                                 )
@@ -6701,7 +6714,7 @@ private fun DayColumn(
                     else -> DropdownMenuItem(
                         text = { Text("edit…") },
                         onClick = {
-                            anchor?.let { onEditElementsAt(millisAt(it.y), hits) }
+                            anchor?.let { onEditElementsAt(exactMillisAt(it.y), hits) }
                             closeMenu()
                         },
                     )

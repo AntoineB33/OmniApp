@@ -3307,6 +3307,13 @@ object SearchDomain {
         val out = HashSet<String>()
         fun covers(start: Long, end: Long) = start <= atMillis && atMillis < end
         fun near(instant: Long) = kotlin.math.abs(instant - atMillis) <= CALENDAR_MARK_TOLERANCE_MILLIS
+        // Anomaly 2026-10-11 (*"I right-clicked on the 15min break right after now line … but the result list has a
+        // task"*): a task is NOT on the calendar where a screen break drawn there refuses it. Its stored run spans
+        // the break — the rules hold it at the line across a break the line carries, and a panel placed by hand runs
+        // through one — and the calendar draws it cut ([SchedulerDomain.atLine], the column's break holes); so must
+        // this. Asked of the breaks the calendar DRAWS over the instant ([drawnPeriodKindsAt]).
+        val breaksHere = drawnPeriodKindsAt(atMillis).orEmpty().filter { it in PeriodKinds.BREAK_KINDS }
+        fun underBreak(taskId: TaskId) = breaksHere.any { SchedulerDomain.periodRefuses(state.tasks, taskId, it) }
         for (panel in SchedulerDomain.statedPanels(state)) {
             if (panel.chore) {
                 if (near(panel.startEpochMillis)) {
@@ -3314,10 +3321,10 @@ object SearchDomain {
                 }
                 continue
             }
-            if (covers(panel.startEpochMillis, panel.endEpochMillis)) panel.taskId?.let { out += taskKey(it) }
+            if (covers(panel.startEpochMillis, panel.endEpochMillis)) panel.taskId?.takeIf { !underBreak(it) }?.let { out += taskKey(it) }
         }
         for (task in state.tasks.values) {
-            if (task.record.any { covers(it.startEpochMillis, it.endEpochMillis) }) out += taskKey(task.id)
+            if (!underBreak(task.id) && task.record.any { covers(it.startEpochMillis, it.endEpochMillis) }) out += taskKey(task.id)
         }
         (calendarKindsAt(state, atMillis) + layerKindsAt(atMillis)).forEach { out += Kind.RestrictivePeriod.name + "/" + it }
         val local = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(timeZone)

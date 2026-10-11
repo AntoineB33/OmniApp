@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "edit…" on a break at the now line listed a task — 2026-10-11
+
+The user: "I right-clicked on the 15min break right after now line in account3, but the result list has a task..."
+The "is on the calendar at" filter read the task's stored run (which spans a break the line carries) and asked at the
+minute the press was in (which began before the line). It now leaves out a task a break drawn over the instant
+refuses, and "edit…" asks at the second. Display/search only. Client only. Not tried on screen.
+
 ### The whole tab of the window bar is clickable — 2026-10-11
 
 The user: "Make the whole tab in the system tray clickable. Right now, the paddings are not." The press was on the

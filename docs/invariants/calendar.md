@@ -1102,6 +1102,14 @@ Global rules that always apply: `CLAUDE.md`.
   over itself (`panelDecor` — patterns, outlines, layer hatches, hour lines) stops at its title: the title's box, as
   wide as the words and not the block, is painted the block's own colour. Only where the block is opaque and carries
   a decor; the title is no longer `fillMaxWidth`.
+- **"edit…" DOES NOT LIST A TASK UNDER A SCREEN BREAK THAT REFUSES IT, AND ASKS AT THE SECOND** (anomaly
+  2026-10-11: *"I right-clicked on the 15min break right after now line … but the result list has a task"*;
+  `SearchDomain.calendarElementsAt`, `exactMillisAt`, `SearchAddedElementsTest`). Two causes, both closed:
+  the filter read a task's STORED run, which spans a break the line carries (the rules hold the task at the line) or a
+  break a hand-placed panel runs through — the calendar draws both cut, so the filter now leaves out a task a break
+  DRAWN over the instant refuses (`drawnPeriodKindsAt`, the break kinds alone: under any other period the state is
+  already the levels' answer); and the instant was the MINUTE the press was in (`millisAt`), which began before a
+  line the press was after — "edit…" now asks at the second. `millisAt` stays what something is LAID at.
 - **"edit…" LISTS A SCREEN BREAK** (2026-10-03): the breaks are not `state.panels` (banked locally behind the
   line, predicted ahead), so the Search window's "is on the calendar at" is handed them with the layer bands
   (`CalendarLayersHolder.breaks` ← `displaySidePanels`, `SearchDomain.calendarBreaksAt` / `calendarBreakKinds`): the

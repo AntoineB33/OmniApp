@@ -244,6 +244,49 @@ class SearchAddedElementsTest {
         assertEquals(Triple(null, SearchDomain.ResilienceLevel.Any, null), Triple(older.periodDrawing, older.periodResilience, older.periodResilienceTask))
     }
 
+    /**
+     * Anomaly 2026-10-11: *"I right-clicked on the 15min break right after now line in account3, but the result list
+     * has a task"*. The task's stored run spans the break the line carries (the rules hold it at the line), and the
+     * calendar draws it cut; the "is on the calendar at" filter read the stored run.
+     */
+    @Test
+    fun a_task_is_not_on_the_calendar_where_a_screen_break_drawn_there_refuses_it() {
+        var s = account()
+        val apple = taskWithTitle(s, "Apple")
+        val banana = taskWithTitle(s, "Banana")
+        // Banana may run in a 15-minute break; Apple, like every task by default, may not.
+        s = s.copy(
+            tasks = s.tasks + (banana to s.tasks.getValue(banana).let { it.copy(resilience = it.resilience + (PeriodKinds.BREAK_15MIN to 1.0)) }),
+            panels = listOf(panel("a1", apple, "2026-09-10"), panel("b1", banana, "2026-09-10")),
+        )
+        val at = s.panels.first().let { it.startEpochMillis + (it.endEpochMillis - it.startEpochMillis) / 2 }
+        // The task rows of what is there (the break itself, and what it carries, are rows too).
+        fun tasksAt(state: SchedulerState) = SearchDomain.calendarElementsAt(state, at, TimeZone.UTC).filterTo(HashSet()) { it.startsWith("Task/") }
+        val previous = SearchDomain.drawnPeriodKindsAt
+        try {
+            // No break drawn there: both tasks are on the calendar at the instant.
+            SearchDomain.drawnPeriodKindsAt = { emptySet() }
+            assertEquals(setOf(SearchDomain.taskKey(apple), SearchDomain.taskKey(banana)), tasksAt(s))
+            // The 15-minute break drawn over it: the task it refuses is not there; the one it admits is.
+            SearchDomain.drawnPeriodKindsAt = { setOf(PeriodKinds.BREAK_15MIN) }
+            assertEquals(setOf(SearchDomain.taskKey(banana)), tasksAt(s))
+            // Work banked there is no more "there" than a panel is.
+            val worked = s.copy(panels = emptyList(), tasks = s.tasks + (apple to s.tasks.getValue(apple).copy(record = listOf(TaskTimeRange(at - HOUR, at + HOUR)))))
+            assertEquals(emptySet(), tasksAt(worked))
+            // A 20-second break refuses everybody.
+            SearchDomain.drawnPeriodKindsAt = { setOf(PeriodKinds.BREAK_20S) }
+            assertEquals(emptySet(), tasksAt(s))
+            // A period that is not a break says nothing here: what stands under it is the levels' answer, in the state.
+            SearchDomain.drawnPeriodKindsAt = { setOf(PeriodKinds.SLEEP) }
+            assertEquals(setOf(SearchDomain.taskKey(apple), SearchDomain.taskKey(banana)), tasksAt(s))
+            // Where the calendar shows nothing of the instant (null), the stored panels are the answer, as before.
+            SearchDomain.drawnPeriodKindsAt = { null }
+            assertEquals(setOf(SearchDomain.taskKey(apple), SearchDomain.taskKey(banana)), tasksAt(s))
+        } finally {
+            SearchDomain.drawnPeriodKindsAt = previous
+        }
+    }
+
     @Test
     fun a_restrictive_period_kind_is_on_the_calendar_by_a_period_of_that_kind() {
         val s = account().copy(panels = listOf(panel("n1", null, "2026-09-10").copy(noScreen = true)))
