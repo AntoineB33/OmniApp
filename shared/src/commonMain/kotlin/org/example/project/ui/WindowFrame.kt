@@ -1904,6 +1904,31 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
         // of the bar does not vanish into it. Always there (it is the fill's colour: unseen round a tab with no
         // outline), so a tab does not change size as it takes the focus.
         modifier = modifier
+            // The taskbar's toggle ([WindowFrameHost.onTabClicked]): a reduced window comes back, one without the
+            // focus takes it — on top and into the FOCUS, like every other way of asking for a window that is open,
+            // or a window that answers keystrokes would come back without its keyboard — and the window that has the
+            // focus is reduced. Shift and Ctrl clicks select tabs instead ([WindowFrameHost.onTabPressed]), so the
+            // modifiers are read off the press itself.
+            //
+            // **On the WHOLE tab** (user rule 2026-10-11: *"Make the whole tab in the system tray clickable. Right
+            // now, the paddings are not."*): it was on the name alone, so a press on the room round it — or on the
+            // outline — did nothing. The ✕ is a child with its own click, which takes its press first; this never
+            // sees it (`awaitFirstDown` waits for a press nobody has taken).
+            .pointerInput(row.id) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    // A right-click is the bar's menu ([WindowBar]) and selects nothing — left unconsumed for it.
+                    if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+                    val modifiers = currentEvent.keyboardModifiers
+                    if (waitForUpOrCancellation() != null) {
+                        host.onTabPressed(
+                            row.id,
+                            shift = modifiers.isShiftPressed,
+                            ctrl = modifiers.isCtrlPressed || modifiers.isMetaPressed,
+                        )
+                    }
+                }
+            }
             .border(TAB_OUTER_LINE, fill, RoundedCornerShape(8.dp + TAB_OUTER_LINE))
             .padding(TAB_OUTER_LINE),
         shape = RoundedCornerShape(8.dp),
@@ -1926,26 +1951,6 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
                 fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                // The taskbar's toggle ([WindowFrameHost.onTabClicked]): a reduced window comes back, one without
-                // the focus takes it — on top and into the FOCUS, like every other way of asking for a window
-                // that is open, or a window that answers keystrokes would come back without its keyboard — and
-                // the window that has the focus is reduced. Shift and Ctrl clicks select tabs instead
-                // ([WindowFrameHost.onTabPressed]), so the modifiers are read off the press itself.
-                modifier = Modifier.pointerInput(row.id) {
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        // A right-click is the bar's menu ([WindowBar]) and selects nothing — left unconsumed for it.
-                        if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
-                        val modifiers = currentEvent.keyboardModifiers
-                        if (waitForUpOrCancellation() != null) {
-                            host.onTabPressed(
-                                row.id,
-                                shift = modifiers.isShiftPressed,
-                                ctrl = modifiers.isCtrlPressed || modifiers.isMetaPressed,
-                            )
-                        }
-                    }
-                },
             )
             Box(
                 modifier = Modifier.size(20.dp).clip(CircleShape).clickable { row.onClose() },

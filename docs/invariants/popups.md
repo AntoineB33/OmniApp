@@ -217,7 +217,9 @@ means.
   one only brought back keeps its tab. The name goes when the window closes (`unregister`) and is kept locally on the
   `TabTitles` placement row, read back at startup for the windows that come back. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
   open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
-  maximized window stops above it. **A tab is a taskbar's** (`WindowFrameHost.onTabClicked`, 2026-09-26): a
+  maximized window stops above it. **The WHOLE tab takes the press** (user rule 2026-10-11:
+  the gesture is on the tab itself, outline and inner room included; it was on the name alone, so the room round the
+  name was dead. The ✕ keeps its own click). **A tab is a taskbar's** (`WindowFrameHost.onTabClicked`, 2026-09-26): a
   reduced window comes back and takes the focus, a window without the focus takes it (on top), and the window
   that HAS the focus is reduced — giving the focus up, so no hidden window keeps the keyboard. Its ✕ closes it
   outright.

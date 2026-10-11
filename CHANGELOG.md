@@ -11,6 +11,11 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The whole tab of the window bar is clickable — 2026-10-11
+
+The user: "Make the whole tab in the system tray clickable. Right now, the paddings are not." The press was on the
+tab's name alone; it is on the tab (`MinimizedChip`). The ✕ still closes. Client only. Not tried on screen.
+
 ### The window bar's tabs are walked from the keyboard — 2026-10-11
 
 The user: "Create a shortcut to easily navigate through the tabs in the system tray in the recent order (one for each
