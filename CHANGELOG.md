@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar's menu has one edit entry — 2026-10-11
+
+The user: "In the right-click menu of the calendar, remove the 'edit [something]', as it is done with 'edit...'."
+"edit [element]" (one thing under the cursor), "edit sleep schedule" and "edit timer" are gone; "edit…" is offered
+whenever something is there and opens the Search window of it. Double-click on a block is unchanged. Client only.
+
 ### "edit…" on a break at the now line listed a task — 2026-10-11
 
 The user: "I right-clicked on the 15min break right after now line in account3, but the result list has a task..."

@@ -1109,19 +1109,6 @@ private val CALENDAR_EDIT_ROW_ORDER: List<String> =
         EDIT_LABEL_TIMER,
     )
 
-/**
- * PRD §8: **the rows that are NOT elements of the add/edit window**, and therefore stay entries of their own
- * in the contextual menu.
- *
- * Each names an object the calendar does not LAY: the `task` behind a panel (the §13 window), the §17 sleep
- * SCHEDULE behind a sleep band, and the §18 countdown behind a timer marker. They are the same three
- * [calendarElementDrafts] drops, read from the other side — one list of what the window holds, one of what
- * it does not, and no row in both.
- */
-internal val CALENDAR_SIDE_EDIT_LABELS: Set<String> =
-    // User rule 2026-10-10: no "edit task" entry in the calendar's menu any more (nor "go to task tree"): a task is
-    // edited from the Search window "edit…" opens on it, where both are actions.
-    setOf(EDIT_LABEL_SLEEP_SCHEDULE, EDIT_LABEL_TIMER)
 
 /**
  * Where [choice] sits in [CALENDAR_EDIT_ROW_ORDER] — **asked of the ROW, because a period row wears its
@@ -6652,7 +6639,6 @@ private fun DayColumn(
         ) {
             val hits = menuHits
             val branch = menuBranch
-            val choices = remember(hits) { calendarEditChoices(hits) }
             val topMost = hits.lastOrNull()
             // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble.
             if (menuFromTouch && topMost != null) {
@@ -6697,35 +6683,18 @@ private fun DayColumn(
                     anchor?.let { a -> layerBands.filter { pressSpans(it, a.y, currentHourHeightPx) } }.orEmpty()
                 }
                 val things = remember(hits, layerHits) { calendarThingsAt(hits, layerHits) }
-                when (things.size) {
-                    0 -> Unit
-                    // "edit [element]" opens the Search window of what is here, as "edit…" does.
-                    1 ->
-                        (choices.firstOrNull { it.label != EDIT_LABEL_TASK }?.label ?: layerHits.firstOrNull()?.let { PeriodKinds.periodTitle(layerKindOf(it)) })
-                            ?.let { label ->
-                                DropdownMenuItem(
-                                    text = { Text("edit $label") },
-                                    onClick = {
-                                        anchor?.let { onEditElementsAt(exactMillisAt(it.y), hits) }
-                                        closeMenu()
-                                    },
-                                )
-                            }
-                    else -> DropdownMenuItem(
+                // User rule 2026-10-11: *"remove the 'edit [something]', as it is done with 'edit...'"* — ONE entry,
+                // "edit…", whatever is under the cursor: one thing or several, it opens the Search window of what is
+                // there. The entries that named a thing ("edit task panel", "edit sleep schedule", "edit timer") are
+                // gone; what they opened is reached from that window, and a double-click on a block still opens the
+                // block's own editor.
+                if (things.isNotEmpty()) {
+                    DropdownMenuItem(
                         text = { Text("edit…") },
                         onClick = {
                             anchor?.let { onEditElementsAt(exactMillisAt(it.y), hits) }
                             closeMenu()
                         },
-                    )
-                }
-                // PRD §8: **the rows that name something the calendar does not LAY** stay entries of their
-                // own — they are not elements of the window above, so collapsing them into it would be a second
-                // editor for an object that has one. PRD §17's sleep schedule and §18's timer.
-                choices.filter { it.label in CALENDAR_SIDE_EDIT_LABELS }.forEach { side ->
-                    DropdownMenuItem(
-                        text = { Text("edit ${side.label}") },
-                        onClick = { pickChoice(side) },
                     )
                 }
                 // (User rule 2026-10-10: "go to task tree" is no entry of this menu any more — it is an action of the

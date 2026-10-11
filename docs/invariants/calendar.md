@@ -886,7 +886,13 @@ Global rules that always apply: `CLAUDE.md`.
     window for `task`, §17's schedule for `sleep`, §18's window for `alarm`/`timer`, the one period editor
     for every kind, §14's for a reminder, the calendar edit window for a task panel. The menu never names a
     window;
-  - **the two rows that are NOT elements stay entries of their own** (`CALENDAR_SIDE_EDIT_LABELS`):
+  - **THE MENU HAS ONE EDIT ENTRY, "edit…"** (user rule 2026-10-11: *"In the right-click menu of the calendar,
+    remove the 'edit [something]', as it is done with 'edit...'"*). Whatever is under the cursor — one thing or
+    several — "edit…" opens the Search window of what is there. Gone: "edit [element]" (the one-thing case used to
+    put the element's name in the menu) and the entries that named an object the calendar does not lay ("edit sleep
+    schedule", "edit timer"; "edit task" went the day before). A double-click on a block still opens the block's own
+    editor (`calendarBlockEditChoice`). The paragraph below is how it stood until then.
+  - *(until 2026-10-11)* the two rows that are NOT elements stay entries of their own (`CALENDAR_SIDE_EDIT_LABELS`):
     `sleep schedule` and `timer`. Each names an object the calendar does not LAY — the §17 recurring rule, the §18
     countdown — so neither can be a row of a window whose whole subject is what is drawn at a point, and folding
     their fields in would be a second editor for a thing that already has one. (**The `task` row — "edit task" —
