@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDate
@@ -617,6 +618,57 @@ class SearchAddedElementsTest {
         val kept = SearchDomain.Config(actionSearch = "resil")
         assertEquals(kept, SearchDomain.Config.decode(kept.encode()))
         assertEquals("", SearchDomain.Config.decode("""{"query":"x"}""")!!.actionSearch)
+    }
+
+    /**
+     * User rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button next
+     * to the 'ends' field to set it to 15 minutes. If the user enters a value in the 'ends' field that implies that
+     * the added 15min break violates the rules, meaning that it spans over more than 15 minutes and has a part in the
+     * future part of the timeline, the user can't add it."*
+     */
+    @Test
+    fun a_lone_break_offers_its_own_length_and_cannot_be_laid_longer_into_the_future() {
+        val s = account()
+        val min = 60_000L
+        fun only(key: String) = SearchDomain.resolve(s, listOf(key))
+        val quarter = only("RestrictivePeriod/" + PeriodKinds.BREAK_15MIN)
+        assertEquals(1, quarter.size)
+        // The button: the break's own length. A 5-minute break has its own; a 20-second one is shorter than a block.
+        assertEquals(SearchDomain.PlacementDefault("15 min", 15 * min), SearchDomain.placementDefaultLength(s, quarter))
+        assertEquals(5 * min, SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.BREAK_5MIN))?.lengthMillis)
+        assertNull(SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.BREAK_20S)))
+        // Other elements with a length of their own: a task's minimum time, the Sleep schedule's two lengths.
+        val apple = taskWithTitle(s, "Apple")
+        assertEquals(
+            s.tasks.getValue(apple).minimumMinutes * min,
+            SearchDomain.placementDefaultLength(s, only("Task/" + apple.value))?.lengthMillis,
+        )
+        val schedule = org.example.project.scheduler.model.SleepSchedule()
+        val nights = s.copy(sleep = schedule)
+        assertEquals(schedule.sleepDurationMinutes * min, SearchDomain.placementDefaultLength(nights, only("RestrictivePeriod/" + PeriodKinds.SLEEP))?.lengthMillis)
+        assertEquals(schedule.beforeBedMinutes * min, SearchDomain.placementDefaultLength(nights, only("RestrictivePeriod/" + PeriodKinds.BEFORE_BED))?.lengthMillis)
+        assertNull(SearchDomain.placementDefaultLength(s.copy(sleep = null), only("RestrictivePeriod/" + PeriodKinds.SLEEP)), "no Sleep schedule: no length to offer")
+        // None for a period with no length of its own, nor for several elements.
+        assertNull(SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.NO_SCREEN)))
+        assertNull(SearchDomain.placementDefaultLength(s, quarter + only("Task/" + apple.value)))
+        assertNull(SearchDomain.placementDefaultLength(s, emptyList()))
+
+        // The rule: longer than its name implies AND reaching past now — refused. Each alone is not.
+        val now = 1_800_000_000_000L
+        fun violation(from: Long, to: Long, added: List<SearchDomain.Result> = quarter) = SearchDomain.placementBreakViolation(s, added, from, to, now)
+        assertNull(violation(now + 10 * min, now + 25 * min), "exactly its length, ahead of the line")
+        assertNotNull(violation(now + 10 * min, now + 26 * min), "a minute too long, ahead of the line")
+        assertNotNull(violation(now - 20 * min, now + min), "too long, and its end is past the line")
+        assertNull(violation(now - 60 * min, now - 10 * min), "too long but wholly behind the line: history rewritten")
+        assertNull(violation(now - 20 * min, now), "ending at the line is not past it")
+        assertNull(violation(now + 10 * min, now + 20 * min), "shorter is not what the rule refuses")
+        // It is the break that is refused, whatever is added with it; a period that is no break has no such rule.
+        assertNotNull(violation(now, now + 60 * min, quarter + only("Task/" + apple.value)))
+        assertNull(violation(now, now + 600 * min, only("RestrictivePeriod/" + PeriodKinds.NO_SCREEN)))
+        assertEquals("15 min", SearchDomain.lengthText(15 * min))
+        assertEquals("8 h 30", SearchDomain.lengthText(510 * min))
+        assertEquals("2 h", SearchDomain.lengthText(120 * min))
+        assertEquals("20 s", SearchDomain.lengthText(20_000))
     }
 
     @Test

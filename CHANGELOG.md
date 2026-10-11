@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Add to the calendar": a default length, and no over-long break into the future — 2026-10-11
+
+The user: "If the added elements list is only a 15min screen break, then add a default button next to the 'ends' field
+to set it to 15 minutes. If the user enters a value in the 'ends' field that implies that the added 15min break
+violates the rules, meaning that it spans over more than 15 minutes and has a part in the future part of the timeline,
+the user can't add it. Check if there are other situations where it is relevant that a default button appears next to
+an action." `placementDefaultLength` (a 5/15-minute break, a task's minimum time, the Sleep schedule's two lengths),
+`placementBreakViolation`. Client only. Not tried on screen.
+
 ### Every search bar has a cross that empties it — 2026-10-11
 
 The user: "To every search bar, add a cross at the right side." `SearchBarCross`, on six bars (`popups.md`). Client

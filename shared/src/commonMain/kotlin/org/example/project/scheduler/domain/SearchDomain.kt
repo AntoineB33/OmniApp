@@ -3624,6 +3624,74 @@ object SearchDomain {
     fun placementRefused(placement: Placement, startMillis: Long): Boolean =
         placementEnd(placement, startMillis) <= startMillis
 
+    /** A length "Add to the calendar"'s end can be set to at a press: what it is called, and the length. */
+    data class PlacementDefault(val label: String, val lengthMillis: Long)
+
+    /**
+     * User rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button next
+     * to the 'ends' field to set it to 15 minutes."* — **the length the ONE added element has of its own**, or null
+     * where there are several elements or the one has none:
+     *  - a screen break: as long as its name implies (`docs/scheduler_requirements.md`: *"A screen break period lasts
+     *    as long as its name implies"*) — the 5- and 15-minute ones; a 20-second one is shorter than the shortest
+     *    block the calendar lays, so it has no button;
+     *  - a task: its minimum execution time, which is the length a panel of it is meant to reach;
+     *  - the "sleep" period: the Sleep schedule's sleep time; "before bed": the length of its period before bed.
+     */
+    fun placementDefaultLength(state: SchedulerState, added: List<Result>): PlacementDefault? {
+        val only = added.singleOrNull() ?: return null
+        addedTaskIds(state, listOf(only)).singleOrNull()?.let { id ->
+            val minutes = state.tasks[id]?.minimumMinutes ?: return null
+            return if (minutes > 0) PlacementDefault("Minimum time (" + lengthText(minutes * 60_000L) + ")", minutes * 60_000L) else null
+        }
+        if (only !is ItemResult || only.kind != Kind.RestrictivePeriod) return null
+        breakLengthMillis(state, only.id)?.let { length ->
+            return if (length >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) PlacementDefault(lengthText(length), length) else null
+        }
+        val minutes =
+            when (only.id) {
+                // (No Sleep schedule on the account: no length to offer.)
+                PeriodKinds.SLEEP -> state.sleep?.sleepDurationMinutes ?: return null
+                PeriodKinds.BEFORE_BED -> state.sleep?.beforeBedMinutes ?: return null
+                else -> return null
+            }
+        return if (minutes > 0) PlacementDefault("Sleep schedule (" + lengthText(minutes * 60_000L) + ")", minutes * 60_000L) else null
+    }
+
+    /** How long a screen break of [kind] lasts on this account, or null where [kind] is no screen break. */
+    fun breakLengthMillis(state: SchedulerState, kind: String): Long? {
+        val label = SchedulerDomain.breakLabelOfKind(kind) ?: return null
+        return SchedulerDomain.dynamicPeriodSpecs(state.screenBreaks.ifEmpty { SchedulerDomain.DEFAULT_SCREEN_BREAKS })
+            .firstOrNull { it.label == label }?.durationMillis
+    }
+
+    /**
+     * User rule 2026-10-11: *"If the user enters a value in the 'ends' field that implies that the added 15min break
+     * violates the rules, meaning that it spans over more than 15 minutes and has a part in the future part of the
+     * timeline, the user can't add it"* — the sentence saying why `[startMillis, endMillis)` cannot be laid for the
+     * [added] elements, or null where it can: a screen break among them would last longer than its name implies while
+     * reaching past [nowMillis]. Wholly behind the line it is the user rewriting history, which the requirements allow.
+     */
+    fun placementBreakViolation(state: SchedulerState, added: List<Result>, startMillis: Long, endMillis: Long, nowMillis: Long): String? {
+        if (endMillis <= nowMillis) return null
+        for (row in added) {
+            if (row !is ItemResult || row.kind != Kind.RestrictivePeriod) continue
+            val length = breakLengthMillis(state, row.id) ?: continue
+            if (endMillis - startMillis > length) return "a " + row.name + " lasts " + lengthText(length) + ", and this one would reach past now."
+        }
+        return null
+    }
+
+    /** A length as a few words: "15 min", "8 h 30", "20 s". */
+    fun lengthText(millis: Long): String {
+        val seconds = millis / 1000
+        return when {
+            seconds < 60 -> "$seconds s"
+            seconds % 3600 == 0L -> "${seconds / 3600} h"
+            seconds < 3600 -> "${seconds / 60} min"
+            else -> "${seconds / 3600} h ${(seconds % 3600 / 60).toString().padStart(2, '0')}"
+        }
+    }
+
     // ----- The calendar's blocks (user rule 2026-10-05) ----------------------------------------------------
 
     /**

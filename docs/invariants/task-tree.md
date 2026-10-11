@@ -876,6 +876,16 @@ suggestions before it was ever entered.
     window's filter, `Config.actionQuery`, a different field. Opened by the calendar's "add…", the bar holds "add
     to calendar" (`CALENDAR_ADD_ACTION_SEARCH`, in `calendarAddConfig` and where "add…" re-points an open window).
     Local view state (`actionSearch` in the stored configuration, absent = empty).
+  - **"Add to the calendar"'s end has a DEFAULT button where the one added element has a length of its own** (user
+    rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button next to the
+    'ends' field to set it to 15 minutes"*; `SearchDomain.placementDefaultLength`, `CalendarPlacementEditor`): a 5- or
+    15-minute screen break's length (a 20-second one is shorter than the shortest block the calendar lays, so none), a
+    task's minimum execution time, the Sleep schedule's sleep time for "sleep" and its period's length for "before
+    bed". One added element only; beside the length, and beside the day-and-time when the end is stated that way.
+    **A screen break longer than its name implies cannot be laid where it reaches past now**
+    (`placementBreakViolation`: *"spans over more than 15 minutes and has a part in the future part of the
+    timeline"*): "Add" is off and the line under it says why. Wholly behind the line it is history rewritten, and
+    allowed; shorter than its name is not what the rule refuses.
   - **Each group has its expansion arrow** (user rule 2026-10-10; `ActionGroupBlock`, the sections' own
     `SectionArrow`): retracted, a group is its heading alone — its inner default configuration with it, which has an
     arrow of its own when the group is open. What is retracted is the Search window's configuration

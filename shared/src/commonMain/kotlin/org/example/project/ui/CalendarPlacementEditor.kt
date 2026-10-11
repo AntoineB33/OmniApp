@@ -50,6 +50,9 @@ internal fun CalendarPlacementEditor(
     val startAt = start?.let { localOf(it, tz) }
     val startMinutes = startAt?.let { it.hour * 60 + it.minute }
     val refused = start != null && SearchDomain.placementRefused(placement, start)
+    // User rule 2026-10-11: the length the ONE added element has of its own — a break's, a task's minimum time, the
+    // Sleep schedule's — one press away beside the end.
+    val default = SearchDomain.placementDefaultLength(state, added)
     // "Now" and "Right-click time" for one day-and-time: to the minute, as the fields say it.
     @Composable
     fun instantButtons(set: (Long) -> Unit) {
@@ -82,6 +85,9 @@ internal fun CalendarPlacementEditor(
                     write { it.copy(lengthMillis = length) }
                 }
                 NoteText("after the start", color = MaterialTheme.colorScheme.onSurface)
+                default?.let { own ->
+                    FrameButton(own.label, enabled = placement.lengthMillis != own.lengthMillis) { write { it.copy(lengthMillis = own.lengthMillis) } }
+                }
             } else {
                 val endAt = placement.endMillis?.let { localOf(it, tz) }
                 val endMinutes = endAt?.let { it.hour * 60 + it.minute }
@@ -100,6 +106,11 @@ internal fun CalendarPlacementEditor(
                     write { it.copy(endMillis = instantOf(endAt?.date ?: startAt?.date ?: today, minutes, tz)) }
                 }
                 instantButtons { at -> write { it.copy(endMillis = at) } }
+                if (default != null && start != null) {
+                    FrameButton(default.label, enabled = placement.endMillis != start + default.lengthMillis) {
+                        write { it.copy(endMillis = start + default.lengthMillis) }
+                    }
+                }
             }
         }
         if (start == null) {
@@ -107,9 +118,12 @@ internal fun CalendarPlacementEditor(
             return@Column
         }
         val end = SearchDomain.placementEnd(placement, start)
-        val drafts = if (refused) emptyList() else SearchDomain.calendarDrafts(state, added, start, endMillis = end)
+        // User rule 2026-10-11: a screen break longer than its name implies cannot be laid where it reaches the future.
+        val violation = if (refused) null else SearchDomain.placementBreakViolation(state, added, start, end, nowMillis())
+        val blocked = refused || violation != null
+        val drafts = if (blocked) emptyList() else SearchDomain.calendarDrafts(state, added, start, endMillis = end)
         // A timer is put on the clock to end there (it has no start on the calendar to give).
-        val timers = if (refused) emptyList() else SearchDomain.calendarTimerIntents(state, added, start, nowMillis())
+        val timers = if (blocked) emptyList() else SearchDomain.calendarTimerIntents(state, added, start, nowMillis())
         val timerCount = (timers.firstOrNull() as? SchedulerIntent.SetTimers)?.let { set ->
             set.entries.count { entry -> state.timers.none { it == entry } }
         } ?: 0
@@ -121,10 +135,13 @@ internal fun CalendarPlacementEditor(
             }
         }
         Text(
-            if (refused) "NOT ADDED — the end has to be after the start."
-            else "A task's panel and a period end there; a tag and a ring are at the start.",
-            style = if (refused) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelSmall,
-            color = if (refused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            when {
+                refused -> "NOT ADDED — the end has to be after the start."
+                violation != null -> "NOT ADDED — $violation"
+                else -> "A task's panel and a period end there; a tag and a ring are at the start."
+            },
+            style = if (blocked) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelSmall,
+            color = if (blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
