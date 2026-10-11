@@ -132,6 +132,7 @@ fun AddedElementsConfigurationWindow(
                     onValueChange = { onConfigChange(config.copy(actionQuery = it)) },
                     singleLine = true,
                     label = { Text("Search a configuration") },
+                    trailingIcon = { SearchBarCross(config.actionQuery) { onConfigChange(config.copy(actionQuery = "")) } },
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
@@ -251,6 +252,7 @@ internal fun AddedActionsSection(
             onValueChange = { onConfigChange(config.copy(actionSearch = it)) },
             singleLine = true,
             label = { Text("Search an action") },
+            trailingIcon = { SearchBarCross(config.actionSearch) { onConfigChange(config.copy(actionSearch = "")) } },
             modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
         )
         // The filter is set in the configurations window; said here, with its way off, so a quarter showing one

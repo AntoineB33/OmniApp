@@ -2622,6 +2622,7 @@ fun HistoryManagerWindow(
                         label = { Text("Filter") },
                         placeholder = { Text("a label, a detail line, a rule, a notification") },
                         singleLine = true,
+                        trailingIcon = { SearchBarCross(filter.query) { filter = filter.copy(query = "") } },
                         modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                     )
                     Button(

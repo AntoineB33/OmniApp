@@ -1,5 +1,7 @@
 package org.example.project.ui
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -271,4 +273,26 @@ private fun CompactFieldDecoration(
             }
         }
     }
+}
+
+/**
+ * User rule 2026-10-11: *"To every search bar, add a cross at the right side."* — the ✕ at the right end of a search
+ * bar: a press empties the bar ([onClear]). Always drawn, so the bar keeps its shape as it is typed in; set back and
+ * deaf while the bar is empty and there is nothing to take away. Given as the field's `trailingIcon`.
+ *
+ * One drawing for every search bar of the app (the Search window's, the two configuration windows', the actions
+ * section's, the notification filter's, the task picker's). The find bar's ✕ is another thing: it closes the bar.
+ */
+@Composable
+internal fun SearchBarCross(text: String, onClear: () -> Unit) {
+    val empty = text.isEmpty()
+    androidx.compose.material3.Text(
+        text = "✕",
+        style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (empty) 0.35f else 1f),
+        modifier = androidx.compose.ui.Modifier
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .clickable(enabled = !empty, onClick = onClear)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }

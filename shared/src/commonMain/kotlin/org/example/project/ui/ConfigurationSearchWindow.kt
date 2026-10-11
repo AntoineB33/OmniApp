@@ -151,6 +151,7 @@ fun ConfigurationSearchWindow(
                     onValueChange = { onOwnChange(own.copy(query = it)) },
                     singleLine = true,
                     label = { Text("Search a configuration") },
+                    trailingIcon = { SearchBarCross(own.query) { onOwnChange(own.copy(query = "")) } },
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })

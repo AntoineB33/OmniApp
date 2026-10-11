@@ -11,6 +11,11 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every search bar has a cross that empties it — 2026-10-11
+
+The user: "To every search bar, add a cross at the right side." `SearchBarCross`, on six bars (`popups.md`). Client
+only. Not tried on screen.
+
 ### The actions section has a search bar that sorts — 2026-10-11
 
 The user: "In the action section of the Search window, add a search bar. The actions are separated into macro groups

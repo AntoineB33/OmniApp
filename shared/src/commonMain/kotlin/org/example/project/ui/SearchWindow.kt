@@ -725,6 +725,7 @@ fun SearchWindow(
                     onValueChange = { onConfigChange(config.copy(query = it)) },
                     singleLine = true,
                     label = { Text("Search") },
+                    trailingIcon = { SearchBarCross(query) { onConfigChange(config.copy(query = "")) } },
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(fieldFocus)

@@ -206,6 +206,11 @@ means.
   so it ate the press that closed it. Now the press outside closes it and still lands: a second right-click opens the
   menu where it was made. Its `transientMenuDismissal` is keyed on the anchor — the closing press and the reopening
   one are the same event, so "open" never reads false between two menus.
+- **Every search bar has a ✕ at its right end, which empties it** (user rule 2026-10-11; `SearchBarCross`, the
+  field's `trailingIcon`): the Search window's bar, "Search a configuration" in both configuration windows, the
+  actions section's "Search an action", the notification list's "Filter" and the task picker's "Find a task". Always
+  drawn — set back and deaf while the bar is empty — so a bar keeps its shape as it is typed in. A new search bar
+  takes the same one. (The task tree's find bar has a ✕ of its own, which CLOSES the bar.)
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. **A tab's fill is its window's colour** (§ *Window colours*), so no state is said by a fill:

@@ -199,6 +199,7 @@ fun TaskPickerMenu(
                 onValueChange = { draft = it },
                 label = { Text("Find a task") },
                 singleLine = true,
+                trailingIcon = { SearchBarCross(draft) { draft = "" } },
                 modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus),
             )
             Column(
