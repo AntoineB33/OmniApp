@@ -99,6 +99,15 @@ import org.example.project.ui.CustomMenuSection
 import org.example.project.ui.LocalMenuButtonHost
 import org.example.project.ui.MenuButtonHost
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import org.example.project.scheduler.state.defaultSubtreePriorities
 import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.HistoryWindow
@@ -3241,6 +3250,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // to here, so this only sees a chord no window answered itself (the tree, the calendar and the
                 // Alarms window do; a text field keeps its own Ctrl+Z) — and the reducer makes it relative to
                 // the focused window, whichever that is.
+                // User rule 2026-10-11: the window bar's tabs walked from the keyboard, in EVERY window — on the
+                // PREVIEW pass, so the stroke is the walk's before a text field or the tree's own Tab can take it.
+                // The recent-order walk lasts while Ctrl stays down ([WindowFrameHost.walkTabsByRecency]).
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyUp &&
+                        (event.key == Key.CtrlLeft || event.key == Key.CtrlRight || event.key == Key.MetaLeft || event.key == Key.MetaRight)
+                    ) {
+                        windowFrames.endRecentWalk()
+                        return@onPreviewKeyEvent false
+                    }
+                    val move =
+                        org.example.project.ui.TabWalk.moveFor(
+                            event.key, event.type == KeyEventType.KeyDown, event.isCtrlPressed || event.isMetaPressed,
+                            event.isShiftPressed, event.isAltPressed,
+                        ) ?: return@onPreviewKeyEvent false
+                    when (move) {
+                        org.example.project.ui.TabWalk.Move.RecentOlder -> windowFrames.walkTabsByRecency(+1)
+                        org.example.project.ui.TabWalk.Move.RecentNewer -> windowFrames.walkTabsByRecency(-1)
+                        org.example.project.ui.TabWalk.Move.BarNext -> windowFrames.walkTabsInBarOrder(+1)
+                        org.example.project.ui.TabWalk.Move.BarPrevious -> windowFrames.walkTabsInBarOrder(-1)
+                    }
+                    // Taken even with no tab to go to: the stroke is the walk's, never a Tab typed into a field.
+                    true
+                }
                 .onKeyEvent { event ->
                     val intent = undoRedoIntentFor(event) ?: return@onKeyEvent false
                     vm.dispatch(intent)

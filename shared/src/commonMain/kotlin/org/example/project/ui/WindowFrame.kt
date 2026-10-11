@@ -1,5 +1,6 @@
 package org.example.project.ui
 
+import androidx.compose.ui.input.key.Key
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -608,6 +609,8 @@ class WindowFrameHost {
 
     fun unregister(id: String) {
         entries.removeAll { it.id == id }
+        recent.remove(id)
+        recentWalk = null
         stack.remove(id)
         if (focusedId == id) focusedId = null
         tabTitles.remove(id)
@@ -720,10 +723,78 @@ class WindowFrameHost {
      */
     var claimOnOpen: Boolean = true
 
+    /**
+     * User rule 2026-10-11: **the windows in the order they last had the focus**, the most recent first — what the
+     * "recent order" chords walk ([walkTabsByRecency]). Kept here because [focus] is the one place the focus moves.
+     * In memory only: a launch starts with none, and the windows it restores are walked in the bar's order.
+     */
+    private val recent = ArrayList<String>()
+
+    /** A walk through the recent order in progress: the order as it stood when it began, and where the walk is. */
+    private class RecentWalk(val order: List<String>, var index: Int)
+
+    private var recentWalk: RecentWalk? = null
+
+    /** Set while a walk itself moves the focus, so that move neither reorders [recent] nor ends the walk. */
+    private var walking = false
+
+    /**
+     * **The next tab of the window bar in the BAR's order** ([step] `+1` to the right, `-1` to the left, wrapping):
+     * its window comes back if it was reduced and takes the focus ([present]). From no focused window, the first
+     * tab to the right, the last to the left. False where the bar has no tab.
+     */
+    fun walkTabsInBarOrder(step: Int): Boolean {
+        val next = TabWalk.next(entries.map { it.id }, focusedId, step) ?: return false
+        present(next)
+        return true
+    }
+
+    /**
+     * **The next tab in the order the windows last had the focus** ([step] `+1` toward the older ones, `-1` back) —
+     * the task switcher's order. While the chord's modifier stays down the walk goes on through the order AS IT STOOD
+     * when it began (each step would otherwise make its window the most recent, and the second press would come
+     * straight back); [endRecentWalk] — the modifier released — makes the window it stopped on the most recent one.
+     * False where the bar has no tab.
+     */
+    fun walkTabsByRecency(step: Int): Boolean {
+        val walk =
+            recentWalk ?: run {
+                val order = TabWalk.recentOrder(recent, entries.map { it.id }, focusedId)
+                if (order.isEmpty()) return false
+                // From a focused window the walk starts ON it; from none, before the most recent one.
+                RecentWalk(order, if (focusedId != null && order.first() == focusedId) 0 else -1).also { recentWalk = it }
+            }
+        walk.index = TabWalk.step(walk.order.size, walk.index, step)
+        walking = true
+        try {
+            present(walk.order[walk.index])
+        } finally {
+            walking = false
+        }
+        return true
+    }
+
+    /** The recent-order chord's modifier was released: the window the walk stopped on is the most recent one. */
+    fun endRecentWalk() {
+        val walk = recentWalk ?: return
+        recentWalk = null
+        walk.order.getOrNull(walk.index)?.let { id ->
+            recent.remove(id)
+            recent.add(0, id)
+        }
+    }
+
     /** A press landed inside [id]: it takes the focus AND comes to the top of the stack. */
     fun focus(id: String) {
         val moved = focusedId != id
         focusedId = id
+        if (!walking) {
+            // Any other way of taking the focus ends a walk where it stands — the window it had reached did have the
+            // focus — and is the most recent window.
+            endRecentWalk()
+            recent.remove(id)
+            recent.add(0, id)
+        }
         raise(id)
         // The focused window's tab is selected (user rule 2026-10-01). Already among the selected tabs, the selection
         // stands — "open selection" focuses one of its own windows; outside it, the tab is selected alone, the way a
@@ -766,6 +837,72 @@ class WindowFrameHost {
     /** The task tree took a press: no framed window is focused any more. */
     fun blur() {
         focusedId = null
+    }
+}
+
+/**
+ * User rule 2026-10-11: *"a shortcut to easily navigate through the tabs in the system tray in the recent order (one
+ * for each direction), and a shortcut for the order of the tabs in the system tray (one for each direction)"* — the
+ * arithmetic of the two walks, which [WindowFrameHost] applies to its windows and `TabWalkTest` holds.
+ */
+object TabWalk {
+    /** The chords, as the keyboard-shortcuts window prints them and `App` answers them ([chordOf]). */
+    const val RECENT_BACK = "Ctrl + Tab"
+    const val RECENT_FORWARD = "Ctrl + Shift + Tab"
+    const val BAR_NEXT = "Ctrl + Page Down (or numpad 3)"
+    const val BAR_PREVIOUS = "Ctrl + Page Up (or numpad 9)"
+
+    /** What a key stroke asks of the window bar's tabs, or null. */
+    enum class Move { RecentOlder, RecentNewer, BarNext, BarPrevious }
+
+    /**
+     * The move the stroke is — on the facts that decide it, like the history chords' rule
+     * (`undoRedoIntentFor`): Ctrl (or Cmd) down, Alt up; Tab walks the recent order (Shift: the other way), Page
+     * Down / Page Up the bar's.
+     */
+    fun moveFor(key: Key, keyDown: Boolean, ctrlOrMeta: Boolean, shift: Boolean, alt: Boolean): Move? {
+        if (!keyDown || !ctrlOrMeta || alt) return null
+        return when {
+            sameKey(key, Key.Tab) -> if (shift) Move.RecentNewer else Move.RecentOlder
+            // The numeric pad's 3 and 9 ARE Page Down and Page Up — with Num Lock off they send those very keys, from
+            // the pad; with it on, the digits. Both are taken: on a keyboard whose only Page keys are the pad's, the
+            // chord must not depend on a lock (anomaly 2026-10-11: "I type ctrl + 9/3, with or without num lk, but
+            // it doesn't do anything").
+            sameKey(key, Key.PageDown) || sameKey(key, Key.NumPad3) -> Move.BarNext.takeIf { !shift }
+            sameKey(key, Key.PageUp) || sameKey(key, Key.NumPad9) -> Move.BarPrevious.takeIf { !shift }
+            else -> null
+        }
+    }
+
+    /**
+     * Whether [key] is the key [named] WHEREVER it is on the keyboard. On the desktop a [Key] carries its location —
+     * the numeric pad's Page Up is not `Key.PageUp`, which is the one of the block above the arrows — in the high half
+     * of its code; the low half is the key. (Elsewhere the high half is empty, and this is plain equality.)
+     */
+    fun sameKey(key: Key, named: Key): Boolean = (key.keyCode and 0xFFFFFFFFL) == (named.keyCode and 0xFFFFFFFFL)
+
+    /** The tab [step] places from [focused] in [order], wrapping; from no focused tab, the first or the last. */
+    fun next(order: List<String>, focused: String?, step: Int): String? {
+        if (order.isEmpty()) return null
+        val at = order.indexOf(focused)
+        if (at < 0) return if (step >= 0) order.first() else order.last()
+        return order[step(order.size, at, step)]
+    }
+
+    /** [index] moved by [step] round a list of [size]. */
+    fun step(size: Int, index: Int, step: Int): Int = (((index + step) % size) + size) % size
+
+    /**
+     * The order a recent walk goes through: [focused] first, then the windows by how recently they had the focus
+     * ([recent], most recent first), then the ones that never had it, in the bar's order ([open]) — every open
+     * window once, and none that has closed.
+     */
+    fun recentOrder(recent: List<String>, open: List<String>, focused: String?): List<String> {
+        val seen = LinkedHashSet<String>()
+        if (focused != null && focused in open) seen += focused
+        recent.filterTo(seen) { it in open }
+        seen += open
+        return seen.toList()
     }
 }
 

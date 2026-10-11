@@ -37,6 +37,36 @@ handler.
   window prints it; never a second copy. `GlobalHotkeys.claim` says which claim the OS granted, and the window
   shows it — "nothing happened" and "something else happened too" are otherwise undiagnosable.
 
+### The window bar's tabs, from the keyboard
+
+User rule 2026-10-11: *"a shortcut to easily navigate through the tabs in the system tray in the recent order (one for
+each direction), and a shortcut for the order of the tabs in the system tray (one for each direction)"*. Four FIXED
+chords, in every window (`TabWalk`, `WindowFrameHost.walkTabsByRecency` / `walkTabsInBarOrder`, `TabWalkTest`):
+
+| Chord | Does |
+| --- | --- |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | the windows in the order they last had the focus, back / forward |
+| `Ctrl + Page Down` / `Ctrl + Page Up` — or the numeric pad's `3` / `9` | the next tab of the bar to the right / to the left, wrapping |
+
+- **Answered on the root's PREVIEW pass** (`App`), so the stroke is the walk's before a text field or the tree's own
+  `Tab` takes it — and it is taken even with no tab to go to, never typed. They are Compose handlers scoped to the
+  app, so by the rule below they are **not rebindable** and are not claimed from the OS.
+- **A chord's key is matched WHEREVER it is on the keyboard** (`TabWalk.sameKey`; anomaly 2026-10-11: *"I type ctrl +
+  9/3, with or without num lk, but it doesn't do anything"*). On the desktop a `Key` carries its location: the numeric
+  pad's Page Up (Num Lock off) is the same code at the pad's location and is NOT `Key.PageUp`, so `==` never saw it;
+  with Num Lock on the pad sends its digits. Both are taken — on a keyboard whose only Page keys are the pad's the
+  chord must not depend on a lock. `TabWalkNumpadTest` (jvmTest: the keys are built as the desktop builds them).
+- **Reaching a tab is `present`**: a reduced window comes back and takes the focus, exactly as a click on its tab
+  that is not the focused one. So the move is a move of the focus like any other (`onFocus` → `FocusWindow`).
+- **The recent order is walked AS IT STOOD when the walk began, for as long as Ctrl stays down**
+  (`WindowFrameHost.RecentWalk`): each step would otherwise make its window the most recent and the second press
+  would come straight back. Ctrl released (`endRecentWalk`, the root's key-up) — or a press in any window — ends the
+  walk and makes the window it stopped on the most recent. So one press and release toggles between the last two
+  windows; held, it goes further back.
+- **The order**: the focused window, the others by how recently they had the focus, then the ones that never had it,
+  in the bar's order. In memory only (`WindowFrameHost.recent`): after a launch the restored windows are in the bar's
+  order until they are focused. A closed window leaves it.
+
 ### Rebinding the four (and only those four)
 
 - **These are the ONLY rebindable shortcuts in the app**, because they are the only ones that can collide with

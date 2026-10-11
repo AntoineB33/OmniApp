@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The window bar's tabs are walked from the keyboard — 2026-10-11
+
+The user: "Create a shortcut to easily navigate through the tabs in the system tray in the recent order (one for each
+direction), and a shortcut for the order of the tabs in the system tray (one for each direction)."
+`Ctrl + Tab` / `Ctrl + Shift + Tab` walk the windows in the order they last had the focus (the walk lasts while Ctrl is
+down); `Ctrl + Page Down` / `Ctrl + Page Up` the tabs in the bar's order. Fixed chords, listed in the keyboard-shortcuts
+window under "Window bar" (`TabWalk`, `docs/invariants/shortcuts.md`). The recent order is in memory only. Client only.
+Not tried on screen.
+- Anomaly the same day ("I type ctrl + 9/3, with or without num lk, but it doesn't do anything"): the Page chords
+  compared `Key.PageDown` / `Key.PageUp`, which on the desktop are the keys of the block above the arrows only. The
+  numeric pad's 3 and 9 are now taken with Num Lock off (Page keys at the pad's location) and on (its digits).
+
 ### The Search configurations are grouped by reach; one button and a switch replace two — 2026-10-11
 
 The user: "In the Search configurations window, with the same logic as in the action section of the Search window, the

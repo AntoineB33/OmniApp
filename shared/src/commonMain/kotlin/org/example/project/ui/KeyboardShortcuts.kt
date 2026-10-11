@@ -233,6 +233,18 @@ object KeyboardShortcutCatalog {
                 ),
             ),
             KeyboardShortcutGroup(
+                title = "Window bar",
+                note = "In every window, on the tabs of the bar along the bottom of the app. A reduced window " +
+                    "comes back as its tab is reached. The recent order is walked for as long as Ctrl stays " +
+                    "down; released, the window it stopped on is the most recent one.",
+                shortcuts = listOf(
+                    KeyboardShortcut(TabWalk.RECENT_BACK, "Go to the window that had the focus before — pressed again, the one before that"),
+                    KeyboardShortcut(TabWalk.RECENT_FORWARD, "The same walk, the other way"),
+                    KeyboardShortcut(TabWalk.BAR_NEXT, "Go to the next tab to the right"),
+                    KeyboardShortcut(TabWalk.BAR_PREVIOUS, "Go to the next tab to the left"),
+                ),
+            ),
+            KeyboardShortcutGroup(
                 title = "Calendar",
                 note = "While the calendar window is the focused surface.",
                 shortcuts = listOf(
