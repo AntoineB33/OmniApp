@@ -206,6 +206,10 @@ means.
   so it ate the press that closed it. Now the press outside closes it and still lands: a second right-click opens the
   menu where it was made. Its `transientMenuDismissal` is keyed on the anchor — the closing press and the reopening
   one are the same event, so "open" never reads false between two menus.
+- **A check-box drop-down's list has a vertical scroll bar while it is long enough to scroll** (user rule 2026-10-11;
+  `CheckBoxDropDown`, `DropDownScrollbar`). The list scrolls in a column of its own, 360 dp at most, with the bar at
+  its right edge — gone while everything fits; dragging along the bar scrolls the list. It is its own drawing and not
+  `ColumnScrollbar`: a menu measures its entries' intrinsic width, which a `BoxWithConstraints` cannot answer.
 - **Every search bar has a ✕ at its right end, which empties it** (user rule 2026-10-11; `SearchBarCross`, the
   field's `trailingIcon`): the Search window's bar, "Search a configuration" in both configuration windows, the
   actions section's "Search an action", the notification list's "Filter" and the task picker's "Find a task". Always

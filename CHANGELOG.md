@@ -11,6 +11,44 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Sleep block reads the span the calendar draws — 2026-10-11
+
+The user: "I still have the Sleep block starting today at 5:15, even though in the calendar it starts at now line."
+"Blocks on the calendar" listed a night over the schedule's span; the calendar draws tonight's cut at a line at a
+screen. The row and the list entry of a rule-laid period now read the drawn span where the calendar shows it. Client
+only. Not tried on screen.
+
+### A block's fields follow it on the calendar — 2026-10-11
+
+The user: "The date/time of the start/end of a block doesn't update as it gets changed in the calendar." In "Blocks on
+the calendar": while a block is held the fields now read where the hand has it, and after a release that gives the
+block another id (a night out of the Sleep schedule, an occurrence out of its pattern) the checked set follows it
+(`pickedBlocksFollowing`). Client only. Not tried on screen.
+
+### A check-box drop-down has a scroll bar when it scrolls — 2026-10-11
+
+The user: "Add a vertical scroll bar to this drop-down menu when it is long enough to be scrollable." Every
+`CheckBoxDropDown` (`DropDownScrollbar`); the list is 360 dp tall at most. Client only. Not tried on screen.
+
+### "Blocks on the calendar": a pattern's occurrences, and the drag as its button — 2026-10-11
+
+The user: "In the Sleep period actions, I look at the drop-down menu of 'Blocks on the calendar', and I see only one
+block. Since it is a pattern that repeats infinitely, they must not all showing in the drop-down list, but more must
+show as the user scrolls down in it. Also, remove the 'Drag on the calendar'. Add a button 'drag on the calendar' next
+to the 'remove' button, which allows the user to drag every block selected and shown under 'Blocks on the calendar'."
+The drop-down lists the Sleep schedule's nights, its periods before bed and a repeating panel's occurrences from today
+on, thirty days more at each scroll to the bottom (`patternBlocks`, `CheckBoxDropDown.onNearEnd`). "Drag on the
+calendar" is a held button beside "Remove" (`HeldDragButton`); the action of that name is no longer listed. Client
+only. Not tried on screen.
+
+### "Blocks on the calendar" lists the blocks and edits them in place — 2026-10-11
+
+The user: "In the action section, in 'Blocks on the calendar', replace the current button with a drop-down list showing
+all the blocks (with check boxes and a select all). When the user clicks on one, it is added under 'Blocks on the
+calendar' as two fields (start and end date/time). The user can edit them, which updates the calendar. A remove button
+allows the user to remove all the blocks displayed here." `CalendarBlocksEditor`; `Config.pickedBlocks` (stored,
+absent = none). "Remove" deletes the shown blocks from the calendar. Client only. Not tried on screen.
+
 ### "Add to the calendar": a default length, and no over-long break into the future — 2026-10-11
 
 The user: "If the added elements list is only a 15min screen break, then add a default button next to the 'ends' field

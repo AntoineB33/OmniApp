@@ -401,6 +401,11 @@ object SearchDomain {
          * elements. Not [actionQuery], which is the configurations window's FILTER.
          */
         val actionSearch: String = "",
+        /**
+         * User rule 2026-10-11: the blocks checked in the "Blocks on the calendar" action ([CalendarBlock.id]) — each
+         * stands under it with its start and end to edit. A block that is gone from the calendar is simply not shown.
+         */
+        val pickedBlocks: Set<String> = emptySet(),
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
         /**
@@ -460,6 +465,7 @@ object SearchDomain {
                     actionQuery = actionQuery,
                     collapsedActionGroups = collapsedActionGroups.sorted(),
                     actionSearch = actionSearch,
+                    pickedBlocks = pickedBlocks.sorted(),
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
@@ -547,6 +553,7 @@ object SearchDomain {
                     actionQuery = stored.actionQuery,
                     collapsedActionGroups = stored.collapsedActionGroups.toSet(),
                     actionSearch = stored.actionSearch,
+                    pickedBlocks = stored.pickedBlocks.toSet(),
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
                     placement = Placement(
@@ -1277,6 +1284,8 @@ object SearchDomain {
         val collapsedActionGroups: List<String> = emptyList(),
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
         val actionSearch: String = "",
+        /** New 2026-10-11: absent = no block picked in "Blocks on the calendar". */
+        val pickedBlocks: List<String> = emptyList(),
         val resiliencePeriod: String? = null,
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
@@ -2648,7 +2657,7 @@ object SearchDomain {
     fun addedActions(query: String, kinds: Set<Kind>, onlyKinds: Set<Kind>? = null): List<Pair<Kind?, List<AddedAction>>> =
         (listOf<Kind?>(null) + Kind.entries.filter { it in kinds && (onlyKinds == null || it in onlyKinds) })
             .mapNotNull { section ->
-                val actions = AddedAction.entries.filter { it.section == section && matchRank(it.label, query) != null }
+                val actions = AddedAction.entries.filter { it.section == section && it !in RETIRED_ACTIONS && matchRank(it.label, query) != null }
                 if (actions.isEmpty()) null else section to actions
             }
 
@@ -2923,6 +2932,13 @@ object SearchDomain {
         kinds.filter { membersOf(it.first).isEmpty() }.forEach { (kind, actions) -> out += ActionGroup(kind, emptyList(), actions) }
         return out
     }
+
+    /**
+     * The actions no longer LISTED (user rule 2026-10-11: *"remove the 'Drag on the calendar'"* — the drag is a button
+     * of "Blocks on the calendar" now, over the blocks checked there). Kept in the enum: an item of the lateral menu
+     * made from one before is named by it, and still draws its editor.
+     */
+    val RETIRED_ACTIONS: Set<AddedAction> = setOf(AddedAction.DragOnCalendar)
 
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
     val CALENDAR_ACTIONS: Set<AddedAction> =
@@ -3701,7 +3717,18 @@ object SearchDomain {
      * ([SchedulerDomain.ringOutline]: an isolated alarm, a timer put there). [owner] is the Search key ([keyOf]) of the
      * element it is a block of; a tag and a ring are an instant, their end their start.
      */
-    data class CalendarBlock(val id: String, val owner: String, val name: String, val startMillis: Long, val endMillis: Long)
+    data class CalendarBlock(
+        val id: String,
+        val owner: String,
+        val name: String,
+        val startMillis: Long,
+        val endMillis: Long,
+        /**
+         * The kind of a period a RULE lays here — a night of the Sleep schedule, its period before bed — or null for
+         * a block the state holds. One of a pattern that repeats for ever ([patternBlocks]).
+         */
+        val derivedKind: String? = null,
+    )
 
     private const val BLOCK_ALARM_PREFIX: String = "alarm:"
     private const val BLOCK_TIMER_PREFIX: String = "timer:"
@@ -3746,6 +3773,222 @@ object SearchDomain {
     /** The block a [Kind.CalendarBlock] row's id names, or null once it is gone from the calendar. */
     fun calendarBlockOf(state: SchedulerState, id: String, timeZone: TimeZone = TimeZone.currentSystemDefault()): CalendarBlock? =
         calendarBlocks(state, timeZone).firstOrNull { it.id == id }
+
+    /**
+     * User rule 2026-10-11: **every block the [added] elements have on the calendar**, in the timeline's order — what
+     * the "Blocks on the calendar" action's drop-down lists ([blockOwners]).
+     */
+    fun blocksOfAdded(
+        state: SchedulerState,
+        added: List<Result>,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        /** The stretch whose PATTERN occurrences are listed too ([patternBlocks]); null: none. */
+        patternsFrom: Long? = null,
+        patternsUntil: Long? = null,
+    ): List<CalendarBlock> {
+        val owners = blockOwners(added).toSet()
+        if (owners.isEmpty()) return emptyList()
+        val placed = calendarBlocks(state, timeZone).filter { it.owner in owners }
+        if (patternsFrom == null || patternsUntil == null) return placed
+        return (placed + patternBlocks(state, owners, patternsFrom, patternsUntil, timeZone)).distinctBy { it.id }.sortedBy { it.startMillis }
+    }
+
+    /**
+     * Anomaly 2026-10-11 (*"In the Sleep period actions … I see only one block. Since it is a pattern that repeats
+     * infinitely, they must not all showing in the drop-down list, but more must show as the user scrolls down"*):
+     * **the occurrences a pattern lays over `[fromMillis, untilMillis)`** for the elements [owners] name — the nights
+     * of the Sleep schedule and its periods before bed ([CalendarBlock.derivedKind]), and the later occurrences of a
+     * panel the user made repeat ([PanelRepeats]). A pattern has no end, so the caller asks for a stretch and for more
+     * as its list is scrolled. An occurrence taken out of its pattern (dragged, edited, removed) is not one of these.
+     */
+    fun patternBlocks(state: SchedulerState, owners: Set<String>, fromMillis: Long, untilMillis: Long, timeZone: TimeZone): List<CalendarBlock> {
+        val out = ArrayList<CalendarBlock>()
+        fun periodKey(kind: String) = Kind.RestrictivePeriod.name + "/" + kind
+        if (periodKey(PeriodKinds.SLEEP) in owners) {
+            SchedulerDomain.sleepPanels(state.sleep, fromMillis, untilMillis, timeZone).forEach {
+                out += CalendarBlock(it.id, periodKey(PeriodKinds.SLEEP), PeriodKinds.periodTitle(PeriodKinds.SLEEP), it.startEpochMillis, it.endEpochMillis, PeriodKinds.SLEEP)
+            }
+        }
+        if (periodKey(PeriodKinds.BEFORE_BED) in owners) {
+            SchedulerDomain.beforeBedPanels(state.sleep, fromMillis, untilMillis, timeZone).forEach {
+                out += CalendarBlock(it.id, periodKey(PeriodKinds.BEFORE_BED), PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED), it.startEpochMillis, it.endEpochMillis, PeriodKinds.BEFORE_BED)
+            }
+        }
+        for (panel in state.panels) {
+            if (panel.repeat == null || panel.chore || SchedulerDomain.panelOutline(panel) != SchedulerDomain.PanelOutline.User) continue
+            val owner = if (panel.isRestrictivePeriod) periodKey(panel.restrictiveKind) else panel.taskId?.let(::taskKey) ?: continue
+            if (owner !in owners) continue
+            val name = if (panel.isRestrictivePeriod) PeriodKinds.periodTitle(panel.restrictiveKind) else state.tasks[panel.taskId]?.title?.ifBlank { null } ?: panel.title
+            PanelRepeats.occurrences(panel, fromMillis, untilMillis, timeZone).forEach {
+                out += CalendarBlock(it.id, owner, name, it.startEpochMillis, it.endEpochMillis)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Anomaly 2026-10-11 (*"I still have the Sleep block starting today at 5:15, even though in the calendar it starts
+     * at now line"*): **the span the calendar draws a rule-laid [block] over**, out of the [pieces] it draws of that
+     * kind — the schedule gives a night (an hour before bed) its whole span, and the calendar cuts it where a line at
+     * a screen crossed it or the user placed a task (`SchedulerDomain.retractOverAtScreenPast`). From the first piece
+     * inside the rule's span to the last; a piece that reaches outside it is another period and is not read. Null for
+     * a block a hand placed (its stored span is the drawn one) and where the calendar draws nothing of it — off the
+     * days it shows, or wholly given up.
+     */
+    fun blockDrawnSpan(block: CalendarBlock, pieces: List<TaskTimeRange>): TaskTimeRange? {
+        if (block.derivedKind == null) return null
+        val own =
+            pieces.filter { it.endEpochMillis > it.startEpochMillis && it.startEpochMillis >= block.startMillis && it.endEpochMillis <= block.endMillis }
+        if (own.isEmpty()) return null
+        return TaskTimeRange(own.minOf { it.startEpochMillis }, own.maxOf { it.endEpochMillis })
+    }
+
+    /**
+     * Anomaly 2026-10-11 (*"The date/time of the start/end of a block doesn't update as it gets changed in the
+     * calendar"*): **[picked] once the calendar has changed from [before] to [after]** — a checked block that is gone
+     * while a block of the SAME element has appeared is that block under a new id (a night dragged out of the Sleep
+     * schedule, an occurrence taken out of its pattern, several panels committed as one), so the new id is checked in
+     * its place. Paired per element, in the timeline's order; a block that simply left (removed) leaves the picked
+     * ones, and a block that simply arrived is not checked. The same set where nothing of the kind happened.
+     */
+    fun pickedBlocksFollowing(picked: Set<String>, before: List<CalendarBlock>, after: List<CalendarBlock>): Set<String> {
+        if (picked.isEmpty() || before.isEmpty()) return picked
+        val now = after.mapTo(HashSet()) { it.id }
+        val was = before.associateBy { it.id }
+        val gone = picked.mapNotNull { id -> was[id]?.takeIf { id !in now } }
+        if (gone.isEmpty()) return picked
+        // What appeared: a block the state holds (never one more occurrence of a pattern scrolled into the list).
+        val fresh = after.filter { it.id !in was && !blockIsOfPattern(it) }.groupBy { it.owner }.mapValues { it.value.toMutableList() }
+        var out = picked
+        for (block in gone.sortedBy { it.startMillis }) {
+            val next = fresh[block.owner]?.removeFirstOrNull() ?: continue
+            out = out - block.id + next.id
+        }
+        return out
+    }
+
+    /** Whether [block] is one occurrence of a pattern: edited or dragged, it leaves the pattern and is a block of its own. */
+    fun blockIsOfPattern(block: CalendarBlock): Boolean = block.derivedKind != null || PanelRepeats.baseIdOf(block.id) != null
+
+    /**
+     * The id [block] is listed under once [blockEditIntent] is applied: its own — except an occurrence of a pattern,
+     * which becomes the panel the state mints next (both reducers allocate it first). What lets the list keep showing
+     * the block the user is in the middle of editing.
+     */
+    fun blockIdAfterEdit(state: SchedulerState, block: CalendarBlock): String =
+        if (blockIsOfPattern(block)) "panel/" + state.nextPanelCounter else block.id
+
+    /** The alarm's or timer's id where [block] is a ring; null for a panel, a tag or a period. */
+    fun blockRingId(block: CalendarBlock): String? =
+        when {
+            block.id.startsWith(BLOCK_ALARM_PREFIX) -> block.id.removePrefix(BLOCK_ALARM_PREFIX)
+            block.id.startsWith(BLOCK_TIMER_PREFIX) -> block.id.removePrefix(BLOCK_TIMER_PREFIX)
+            else -> null
+        }
+
+    /** A tag and a ring are an instant: one day-and-time, no end of their own. */
+    fun blockIsInstant(block: CalendarBlock): Boolean = block.endMillis <= block.startMillis
+
+    /** An isolated alarm's ring keeps its day: an alarm rings at a TIME OF DAY, and its date is the one it was moved on. */
+    fun blockKeepsItsDay(block: CalendarBlock): Boolean = block.id.startsWith(BLOCK_ALARM_PREFIX)
+
+    /**
+     * **The edit that puts [block] over `[startMillis, endMillis)`** — the one a drag of it on the calendar commits:
+     * a task's panel or a period through [SchedulerIntent.UpdateTaskPanel] (placed by hand, so the existence pin), a
+     * reminder's tag through the calendar's own element save, a ring through [calendarRingMoveIntent]. Null where
+     * there is nothing to write: the block is gone, the span is not one (an end not after the start), or it is where
+     * it already stands.
+     */
+    fun blockEditIntent(
+        state: SchedulerState,
+        block: CalendarBlock,
+        startMillis: Long,
+        endMillis: Long,
+        nowMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): SchedulerIntent? {
+        if (block.id.startsWith(BLOCK_ALARM_PREFIX)) {
+            return calendarRingMoveIntent(state, block.id.removePrefix(BLOCK_ALARM_PREFIX), false, block.startMillis, startMillis, nowMillis, timeZone)
+        }
+        if (block.id.startsWith(BLOCK_TIMER_PREFIX)) {
+            return calendarRingMoveIntent(state, block.id.removePrefix(BLOCK_TIMER_PREFIX), true, block.startMillis, startMillis, nowMillis, timeZone)
+        }
+        if (block.derivedKind != null) {
+            // A night of the schedule (or its period before bed): it leaves the schedule and is the user's period.
+            if (endMillis <= startMillis || (startMillis == block.startMillis && endMillis == block.endMillis)) return null
+            return SchedulerIntent.PlaceDerivedPeriod(block.derivedKind, block.startMillis, block.endMillis, startMillis, endMillis)
+        }
+        // An occurrence of a repeating panel is written through its own id: it leaves the pattern as an exception.
+        val panel =
+            state.panels.firstOrNull { it.id == block.id }
+                ?: PanelRepeats.baseIdOf(block.id)?.let { baseId -> state.panels.firstOrNull { it.id == baseId }?.copy(id = block.id) }
+                ?: return null
+        if (panel.chore) {
+            if (startMillis == panel.startEpochMillis) return null
+            return SchedulerIntent.AddCalendarElements(
+                listOf(
+                    CalendarElements.Draft(
+                        kind = CalendarElements.Kind.Reminder,
+                        existingId = panel.id,
+                        name = panel.title,
+                        startMillis = startMillis,
+                        endMillis = startMillis,
+                        reminderId = SchedulerDomain.reminderIdOfChorePanel(panel.id).orEmpty(),
+                        reminderChecked = panel.checked,
+                        // Put there by hand, as a drag of it pins it.
+                        reminderPinned = true,
+                    ),
+                ),
+            )
+        }
+        if (endMillis <= startMillis) return null
+        if (startMillis == block.startMillis && endMillis == block.endMillis) return null
+        return SchedulerIntent.UpdateTaskPanel(
+            panel.id, panel.taskId, panel.title, startMillis, endMillis, SchedulerDomain.pinsAfterHandPlacement(panel.pins),
+        )
+    }
+
+    /**
+     * **What takes [blocks] off the calendar**: the panels and the tags are removed ([SchedulerIntent.RemoveTaskPanels],
+     * one unit); an isolated ring's row is deleted (the rule it left already skips that day, so nothing rings then);
+     * a timer put on the calendar is no longer a block of it (it goes on running — stopping it is the timer's own
+     * action).
+     */
+    fun blockRemoveIntents(
+        state: SchedulerState,
+        blocks: List<CalendarBlock>,
+        nowMillis: Long = 0L,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): List<SchedulerIntent> {
+        val ids = blocks.mapTo(HashSet()) { it.id }
+        val out = ArrayList<SchedulerIntent>()
+        // A panel the state holds, and an occurrence of a repeating one (removed as an exception of its pattern).
+        val panels = state.panels.filter { it.id in ids }.map { it.id } + blocks.filter { it.derivedKind == null && PanelRepeats.baseIdOf(it.id) != null }.map { it.id }
+        if (panels.isNotEmpty()) out += SchedulerIntent.RemoveTaskPanels(panels.distinct())
+        // A night of the Sleep schedule, or its period before bed: the schedule skips it (as a dragged one leaves it).
+        val sleep = state.sleep
+        if (sleep != null) {
+            fun days(kind: String, prefix: String) =
+                blocks.filter { it.derivedKind == kind }.mapNotNull { it.id.removePrefix(prefix).toLongOrNull() }
+            val nights = days(PeriodKinds.SLEEP, "sleep/")
+            val evenings = days(PeriodKinds.BEFORE_BED, SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX)
+            if (nights.isNotEmpty() || evenings.isNotEmpty()) {
+                val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date.toEpochDays().toLong()
+                out += SchedulerIntent.SetSleepSchedule(
+                    sleep.copy(
+                        skippedWakeEpochDays = sleep.skippedWakeEpochDays + nights,
+                        skippedBeforeBedEpochDays = sleep.skippedBeforeBedEpochDays + evenings,
+                    ),
+                    today,
+                )
+            }
+        }
+        val alarms = state.alarms.filterNot { (BLOCK_ALARM_PREFIX + it.id) in ids && it.isolated }
+        if (alarms.size != state.alarms.size) out += SchedulerIntent.SetAlarms(alarms)
+        val timers = state.timers.map { if ((BLOCK_TIMER_PREFIX + it.id) in ids && it.calendarPlaced) it.copy(calendarPlaced = false) else it }
+        if (timers != state.timers) out += SchedulerIntent.SetTimers(timers)
+        return out
+    }
 
     /** The keys of the [added] elements that can have a block on the calendar ([CALENDAR_ADD_KINDS]), each once. */
     fun blockOwners(added: List<Result>): List<String> =

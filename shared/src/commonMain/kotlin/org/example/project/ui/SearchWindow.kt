@@ -1,5 +1,8 @@
 package org.example.project.ui
 
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1490,9 +1493,24 @@ internal fun <T> CheckBoxDropDown(
     onDeployed: () -> Unit = {},
     /** A right-click on an option checks it alone and closes the list (the Search type selector). */
     soloOnRightClick: Boolean = false,
+    /**
+     * User rule 2026-10-11, for a list with no end (the occurrences of a pattern that repeats for ever): called as the
+     * list is scrolled to its bottom, so the caller lists more — *"they must not all show in the drop-down list, but
+     * more must show as the user scrolls down in it"*. Null: the list is whole.
+     */
+    onNearEnd: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     val range = rememberCheckRange<T>()
+    val listScroll = androidx.compose.foundation.rememberScrollState()
+    val latestOnNearEnd by rememberUpdatedState(onNearEnd)
+    LaunchedEffect(listScroll, open) {
+        if (!open) return@LaunchedEffect
+        // At the bottom (or with a list too short to scroll): ask for more. Each answer lengthens the list, which
+        // takes the bottom away again until the user scrolls on.
+        androidx.compose.runtime.snapshotFlow { listScroll.maxValue - listScroll.value }
+            .collect { left -> if (left <= NEAR_END_PX) latestOnNearEnd?.invoke() }
+    }
     val latestOnDeployed by rememberUpdatedState(onDeployed)
     LaunchedEffect(deploy) {
         if (!deploy) return@LaunchedEffect
@@ -1521,6 +1539,11 @@ internal fun <T> CheckBoxDropDown(
             properties = PopupProperties(focusable = false),
             modifier = Modifier.checkRangeShift(range),
         ) {
+            // User rule 2026-10-11: *"Add a vertical scroll bar to this drop-down menu when it is long enough to be
+            // scrollable."* The list scrolls in a column of its own, no taller than [DROP_DOWN_LIST_MAX_HEIGHT], with
+            // the bar beside it ([DropDownScrollbar]) — the menu's own column never scrolls then, and shows no bar.
+            Box(Modifier.heightIn(max = DROP_DOWN_LIST_MAX_HEIGHT)) {
+            Column(Modifier.verticalScroll(listScroll).padding(end = if (listScroll.maxValue > 0) DROP_DOWN_SCROLLBAR_WIDTH else 0.dp)) {
             SelectAllMenuItem(
                 allChecked = checked.containsAll(options),
                 onSelectAll = { onChange(options.toSet()) },
@@ -1547,9 +1570,58 @@ internal fun <T> CheckBoxDropDown(
                         },
                 )
             }
+            }
+            DropDownScrollbar(listScroll, Modifier.align(Alignment.CenterEnd))
+            }
         }
     }
 }
+
+/** The tallest a drop-down's list is before it scrolls — and shows its scroll bar ([DropDownScrollbar]). */
+private val DROP_DOWN_LIST_MAX_HEIGHT = 360.dp
+private val DROP_DOWN_SCROLLBAR_WIDTH = 10.dp
+
+/**
+ * User rule 2026-10-11: **the vertical scroll bar of a drop-down's list**, at its right edge while the list is long
+ * enough to scroll ([state]'s `maxValue`), gone while everything fits. The thumb is as tall as the part shown is of
+ * the whole and stands where the list is scrolled to; dragged anywhere along the bar, it scrolls the list.
+ *
+ * Its own drawing rather than [ColumnScrollbar]: a menu measures its entries' INTRINSIC width, and that one is a
+ * `BoxWithConstraints`, which cannot be asked for it.
+ */
+@Composable
+private fun DropDownScrollbar(state: androidx.compose.foundation.ScrollState, modifier: Modifier = Modifier) {
+    if (state.maxValue <= 0) return
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    Box(
+        modifier
+            .width(DROP_DOWN_SCROLLBAR_WIDTH)
+            .fillMaxHeight()
+            .pointerInput(state) {
+                detectVerticalDragGestures { change, dragAmount ->
+                    change.consume()
+                    val track = size.height.toFloat()
+                    // One pixel along the bar is this many pixels of the list.
+                    if (track > 0f) state.dispatchRawDelta(dragAmount * (track + state.maxValue) / track)
+                }
+            }
+            .drawBehind {
+                val track = size.height
+                val whole = track + state.maxValue
+                val thumb = (track * track / whole).coerceAtLeast(minOf(24.dp.toPx(), track))
+                val top = (track - thumb) * state.value / state.maxValue
+                drawRoundRect(
+                    color = color,
+                    topLeft = androidx.compose.ui.geometry.Offset(0f, top),
+                    size = androidx.compose.ui.geometry.Size(size.width, thumb),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()),
+                )
+            },
+    )
+}
+
+/** How close to its bottom a list is "at its end" ([CheckBoxDropDown]'s `onNearEnd`): about two rows. */
+private const val NEAR_END_PX: Int = 96
 
 /**
  * [CheckBoxDropDown]'s one-choice sibling: the same field (its face [selected]'s [label], drawn as that one is), whose

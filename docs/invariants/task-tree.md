@@ -886,6 +886,51 @@ suggestions before it was ever entered.
     (`placementBreakViolation`: *"spans over more than 15 minutes and has a part in the future part of the
     timeline"*): "Add" is off and the line under it says why. Wholly behind the line it is history rewritten, and
     allowed; shorter than its name is not what the rule refuses.
+  - **"Blocks on the calendar" lists the blocks and edits them IN PLACE** (user rule 2026-10-11: *"replace the
+    current button with a drop-down list showing all the blocks (with check boxes and a select all). When the user
+    clicks on one, it is added under 'Blocks on the calendar' as two fields (start and end date/time). The user can
+    edit them, which updates the calendar. A remove button allows the user to remove all the blocks displayed
+    here."*; `CalendarBlocksEditor`, `SearchDomain.blocksOfAdded`, `blockEditIntent`, `blockRemoveIntents`). The
+    drop-down is the app's one check-box list over the blocks the added elements have on the calendar
+    (`calendarBlocks`: what a hand placed). A checked block stands under it with its start and end; an edit goes at
+    once through the block's own intent — the one a drag of it commits (`UpdateTaskPanel`, the tag's element save,
+    `calendarRingMoveIntent`) — so it is a History Unit like a drag. A tag and a ring are an instant (one
+    day-and-time); an isolated ring keeps its day. **"Remove" takes the blocks shown OFF THE CALENDAR**: panels and
+    tags removed in one unit, an isolated ring's row deleted, a timer no longer a block (it goes on running). Which
+    blocks are checked is `Config.pickedBlocks` (local view state). The "Search the blocks" button it replaced is
+    gone from the action; `blocksSearchConfig` and the handler behind it remain for whoever still opens that search.
+    - **A PATTERN's occurrences are listed too, over a stretch that grows as the list is scrolled** (anomaly
+      2026-10-11: *"In the Sleep period actions … I see only one block. Since it is a pattern that repeats
+      infinitely, they must not all showing in the drop-down list, but more must show as the user scrolls down"*;
+      `SearchDomain.patternBlocks`, `CheckBoxDropDown`'s `onNearEnd`): the nights of the Sleep schedule and its
+      periods before bed (`CalendarBlock.derivedKind`), and the later occurrences of a panel the user made repeat —
+      from today on, thirty days at a time, each scroll to the bottom of the list bringing thirty more (up to three
+      years). Until then only what a hand had placed was listed, so a schedule showed the one night ever dragged.
+      **Touched, an occurrence leaves its pattern**: edited it is `PlaceDerivedPeriod` (a night) or the repeating
+      panel's exception, and stays listed under the id the edit gives it (`blockIdAfterEdit`); removed, the schedule
+      skips that night (`SetSleepSchedule`) or the pattern that occurrence. NOT listed: an alarm's daily rings and a
+      reminder's future tags, which repeat too.
+    - **A row reads where its block IS, also while it is held and after a release that renames it** (anomaly
+      2026-10-11: *"The date/time of the start/end of a block doesn't update as it gets changed in the calendar"*).
+      While a block is held on the calendar nothing is saved, so the fields read the hand's span
+      (`CalendarElementDrag.heldInCalendar`, or the button's `blocks` + `deltaMillis`). And a release can give the
+      block another id — a night dragged out of the Sleep schedule, an occurrence out of its pattern, several
+      panels committed as one — so the checked set FOLLOWS it (`SearchDomain.pickedBlocksFollowing`: a checked block
+      gone at the very change a block of the same element appears is that block, moved).
+    - **A rule's period reads the span the calendar DRAWS it over** (anomaly 2026-10-11: *"I still have the Sleep
+      block starting today at 5:15, even though in the calendar it starts at now line"*;
+      `SearchDomain.blockDrawnSpan`). Cut in several pieces it reads from the first to the last, and an edit of one
+      field keeps the DRAWN value of the other. The
+      schedule gives tonight's window its whole span, and the calendar cuts it where the line is at a screen
+      (`calendar.md`); the row and the list entry of a night or a period before bed take the drawn span where the
+      calendar shows the block, the rule's span off the days it shows. Its edit still names the occurrence by the
+      rule's span (`PlaceDerivedPeriod`'s "from").
+    - **The drag is a button of this action** (user rule 2026-10-11: *"remove the 'Drag on the calendar'. Add a
+      button 'drag on the calendar' next to the 'remove' button, which allows the user to drag every block selected
+      and shown"*; `HeldDragButton`, the one held-button implementation): held, the checked blocks follow the pointer
+      over the calendar. Only blocks on the days the calendar SHOWS can be held — they are taken as the calendar
+      draws them — and the section says so where some are not. `AddedAction.DragOnCalendar` is no longer listed
+      (`RETIRED_ACTIONS`) but stays in the enum: a lateral-menu item made from it earlier still draws its editor.
   - **Each group has its expansion arrow** (user rule 2026-10-10; `ActionGroupBlock`, the sections' own
     `SectionArrow`): retracted, a group is its heading alone — its inner default configuration with it, which has an
     arrow of its own when the group is open. What is retracted is the Search window's configuration

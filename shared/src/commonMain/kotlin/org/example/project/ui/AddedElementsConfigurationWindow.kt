@@ -401,6 +401,7 @@ private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
         SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
         SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
         SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.DragOnCalendar,
+        SearchDomain.AddedAction.CalendarBlocks,
     )
 
 /** The actions that ARE a control of the app the menu already knows ([MenuControl]): added as that control. */
@@ -528,10 +529,9 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.PlaceOnCalendar ->
             CalendarPlacementEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
         SearchDomain.AddedAction.DragOnCalendar -> CalendarDragEditor(state, added, config, handlers, nowMillis)
-        SearchDomain.AddedAction.CalendarBlocks -> {
-            val owners = SearchDomain.blockOwners(added)
-            FrameButton("Search the blocks", enabled = owners.isNotEmpty()) { handlers.onOpenBlocksSearch(owners) }
-        }
+        // User rule 2026-10-11: the blocks themselves, picked from a check-box list and edited in place
+        // ([CalendarBlocksEditor]) — it was a button opening another Search window on them.
+        SearchDomain.AddedAction.CalendarBlocks -> CalendarBlocksEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
         SearchDomain.AddedAction.TaskAddCategory ->
             CategoryChooser(
                 cellId = "search/task-add-category",

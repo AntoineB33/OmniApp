@@ -671,6 +671,165 @@ class SearchAddedElementsTest {
         assertEquals("20 s", SearchDomain.lengthText(20_000))
     }
 
+    /**
+     * User rule 2026-10-11, "Blocks on the calendar": *"a drop-down list showing all the blocks (with check boxes and
+     * a select all). When the user clicks on one, it is added … as two fields (start and end date/time). The user can
+     * edit them, which updates the calendar. A remove button allows the user to remove all the blocks displayed
+     * here."*
+     */
+    @Test
+    fun the_blocks_of_the_added_elements_are_listed_edited_in_place_and_removed() {
+        val pins = org.example.project.scheduler.model.PanelPins(existence = true)
+        var s = account()
+        val apple = taskWithTitle(s, "Apple")
+        val banana = taskWithTitle(s, "Banana")
+        // Ahead of the real clock, so nothing here is the past.
+        val t0 = 4_000_000_000_000L / (24 * HOUR) * (24 * HOUR)
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(apple, "Apple", t0 + 10 * HOUR, t0 + 11 * HOUR, pins))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(banana, "Banana", t0 + 13 * HOUR, t0 + 14 * HOUR, pins))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_COMPUTER_UNLOCKED, t0 + 16 * HOUR, t0 + 17 * HOUR))
+        val added = SearchDomain.resolve(s, listOf("Task/" + apple.value, "RestrictivePeriod/" + PeriodKinds.NO_COMPUTER_UNLOCKED))
+        // The drop-down: the blocks of the ADDED elements — not Banana's — in the timeline's order.
+        val blocks = SearchDomain.blocksOfAdded(s, added, TimeZone.UTC)
+        assertEquals(listOf("Apple", PeriodKinds.periodTitle(PeriodKinds.NO_COMPUTER_UNLOCKED)), blocks.map { it.name })
+        assertEquals(emptyList(), SearchDomain.blocksOfAdded(s, emptyList(), TimeZone.UTC))
+        val panel = blocks.first()
+        assertEquals(false, SearchDomain.blockIsInstant(panel))
+        assertEquals(false, SearchDomain.blockKeepsItsDay(panel))
+
+        // An edit of its end is written to the calendar: the panel is where the fields say, under the same id.
+        val longer = assertNotNull(SearchDomain.blockEditIntent(s, panel, panel.startMillis, t0 + 12 * HOUR, 0L, TimeZone.UTC))
+        val edited = SchedulerReducer.reduce(s, longer)
+        val after = SearchDomain.blocksOfAdded(edited, added, TimeZone.UTC).first()
+        assertEquals(Triple(panel.id, t0 + 10 * HOUR, t0 + 12 * HOUR), Triple(after.id, after.startMillis, after.endMillis))
+        // Its start too; and the period's, by the same intent.
+        val later = SchedulerReducer.reduce(edited, assertNotNull(SearchDomain.blockEditIntent(edited, after, t0 + 10 * HOUR + 30 * 60_000, after.endMillis, 0L, TimeZone.UTC)))
+        assertEquals(t0 + 10 * HOUR + 30 * 60_000, later.panels.first { it.id == panel.id }.startEpochMillis)
+        val period = blocks.last()
+        val moved = SchedulerReducer.reduce(s, assertNotNull(SearchDomain.blockEditIntent(s, period, t0 + 18 * HOUR, t0 + 19 * HOUR, 0L, TimeZone.UTC)))
+        assertEquals(t0 + 18 * HOUR to t0 + 19 * HOUR, moved.panels.first { it.id == period.id }.let { it.startEpochMillis to it.endEpochMillis })
+        // Nothing is written for the span it already has, nor for an end not after its start, nor for a block that is gone.
+        assertNull(SearchDomain.blockEditIntent(s, panel, panel.startMillis, panel.endMillis, 0L, TimeZone.UTC))
+        assertNull(SearchDomain.blockEditIntent(s, panel, panel.startMillis, panel.startMillis, 0L, TimeZone.UTC))
+        assertNull(SearchDomain.blockEditIntent(s, panel.copy(id = "panel/gone"), panel.startMillis, t0 + 12 * HOUR, 0L, TimeZone.UTC))
+
+        // "Remove": the blocks shown are taken off the calendar, in one unit — the others stay.
+        var removed = s
+        SearchDomain.blockRemoveIntents(s, blocks).forEach { removed = SchedulerReducer.reduce(removed, it) }
+        assertEquals(emptyList(), SearchDomain.blocksOfAdded(removed, added, TimeZone.UTC))
+        assertEquals(listOf("Banana"), removed.panels.map { it.title })
+        assertEquals(emptyList(), SearchDomain.blockRemoveIntents(s, emptyList()))
+        // Which blocks are picked is the window's own, kept with its configuration.
+        val config = SearchDomain.Config(pickedBlocks = setOf(panel.id, period.id))
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        assertEquals(emptySet(), SearchDomain.Config.decode("""{"query":"x"}""")!!.pickedBlocks)
+    }
+
+    /**
+     * Anomaly 2026-10-11: *"In the Sleep period actions, I look at the drop-down menu of 'Blocks on the calendar', and
+     * I see only one block. Since it is a pattern that repeats infinitely, they must not all showing in the drop-down
+     * list, but more must show as the user scrolls down in it."* — and *"remove the 'Drag on the calendar'"*, which is
+     * a button of that action now.
+     */
+    @Test
+    fun a_patterns_occurrences_are_listed_over_a_stretch_that_grows_and_each_leaves_the_pattern_when_touched() {
+        val day = 24 * HOUR
+        val schedule = org.example.project.scheduler.model.SleepSchedule()
+        val s = account().copy(sleep = schedule)
+        val sleep = SearchDomain.resolve(s, listOf("RestrictivePeriod/" + PeriodKinds.SLEEP))
+        val from = millis("2030-03-04")
+        fun nights(days: Int) = SearchDomain.blocksOfAdded(s, sleep, TimeZone.UTC, from, from + days * day)
+        // Without a stretch: only what a hand placed (none here). With one: a night per day of it, and more with more.
+        assertEquals(emptyList(), SearchDomain.blocksOfAdded(s, sleep, TimeZone.UTC))
+        val month = nights(30)
+        assertTrue(month.size in 29..31, "a night a day: ${month.size}")
+        assertTrue(month.all { it.derivedKind == PeriodKinds.SLEEP && SearchDomain.blockIsOfPattern(it) })
+        assertEquals(month, month.sortedBy { it.startMillis })
+        val two = nights(60)
+        assertEquals(month, two.take(month.size), "scrolling on adds to the end, and moves nothing above")
+        assertTrue(two.size > month.size)
+        // Not for an element that has no pattern.
+        val apple = taskWithTitle(s, "Apple")
+        assertEquals(emptyList(), SearchDomain.blocksOfAdded(s, SearchDomain.resolve(s, listOf("Task/" + apple.value)), TimeZone.UTC, from, from + 60 * day))
+
+        // Edited, a night leaves the schedule and is the user's period — listed under the id the edit gives it.
+        val night = month[3]
+        val intent = assertNotNull(SearchDomain.blockEditIntent(s, night, night.startMillis + HOUR, night.endMillis + HOUR, from, TimeZone.UTC))
+        assertEquals(SchedulerIntent.PlaceDerivedPeriod(PeriodKinds.SLEEP, night.startMillis, night.endMillis, night.startMillis + HOUR, night.endMillis + HOUR), intent)
+        val after = SearchDomain.blockIdAfterEdit(s, night)
+        val edited = SchedulerReducer.reduce(s, intent)
+        val placed = edited.panels.single { it.id == after }
+        assertEquals(night.startMillis + HOUR to night.endMillis + HOUR, placed.startEpochMillis to placed.endEpochMillis)
+        val listed = SearchDomain.blocksOfAdded(edited, sleep, TimeZone.UTC, from, from + 30 * day)
+        assertTrue(listed.any { it.id == after && it.derivedKind == null }, "it is a block of its own now")
+        assertTrue(listed.none { it.id == night.id }, "and the schedule lays no night there any more")
+        assertNull(SearchDomain.blockEditIntent(s, night, night.startMillis, night.endMillis, from, TimeZone.UTC))
+
+        // Removed, the schedule skips those nights; every other one stands.
+        var removed = s
+        SearchDomain.blockRemoveIntents(s, month.take(2), from, TimeZone.UTC).forEach { removed = SchedulerReducer.reduce(removed, it) }
+        assertEquals(month.drop(2), SearchDomain.blocksOfAdded(removed, sleep, TimeZone.UTC, from, from + 30 * day))
+
+        // A panel the user made repeat: its later occurrences are listed, and one edited or removed is an exception.
+        val base =
+            TaskPanel(
+                "panel/7", null, "No screen", from + 10 * HOUR, from + 11 * HOUR, noScreen = true, periodKind = PeriodKinds.NO_SCREEN,
+                pins = org.example.project.scheduler.model.PanelPins(existence = true), repeat = org.example.project.scheduler.model.PanelRepeat(1),
+            )
+        val r = account().copy(panels = listOf(base), nextPanelCounter = 8)
+        val noScreen = SearchDomain.resolve(r, listOf("RestrictivePeriod/" + PeriodKinds.NO_SCREEN))
+        val week = SearchDomain.blocksOfAdded(r, noScreen, TimeZone.UTC, from, from + 7 * day)
+        assertEquals(7, week.size, "the panel itself and six later occurrences")
+        val third = week[3]
+        assertTrue(SearchDomain.blockIsOfPattern(third) && !SearchDomain.blockIsOfPattern(week.first()))
+        val moved = SchedulerReducer.reduce(r, assertNotNull(SearchDomain.blockEditIntent(r, third, third.startMillis + HOUR, third.endMillis + HOUR, from, TimeZone.UTC)))
+        assertEquals(setOf(3L), moved.panels.single { it.id == "panel/7" }.repeat?.skipped)
+        assertEquals(third.startMillis + HOUR, moved.panels.single { it.id == SearchDomain.blockIdAfterEdit(r, third) }.startEpochMillis)
+        var cut = r
+        SearchDomain.blockRemoveIntents(r, listOf(week[2]), from, TimeZone.UTC).forEach { cut = SchedulerReducer.reduce(cut, it) }
+        assertEquals(setOf(2L), cut.panels.single().repeat?.skipped)
+
+        // Anomaly 2026-10-11: "The date/time of the start/end of a block doesn't update as it gets changed in the
+        // calendar." Dragged ON THE CALENDAR, the checked night is a period of the user's under another id: the
+        // checked set follows it, so its row goes on showing it — where it is now.
+        val draggedOnCalendar = SchedulerReducer.reduce(s, SchedulerIntent.PlaceDerivedPeriod(PeriodKinds.SLEEP, night.startMillis, night.endMillis, night.startMillis + 2 * HOUR, night.endMillis + 2 * HOUR))
+        val afterDrag = SearchDomain.blocksOfAdded(draggedOnCalendar, sleep, TimeZone.UTC, from, from + 30 * day)
+        val following = SearchDomain.pickedBlocksFollowing(setOf(night.id, month[5].id), month, afterDrag)
+        assertEquals(2, following.size)
+        assertTrue(month[5].id in following && night.id !in following)
+        val moved2 = afterDrag.single { it.id in following && it.id != month[5].id }
+        assertEquals(night.startMillis + 2 * HOUR to night.endMillis + 2 * HOUR, moved2.startMillis to moved2.endMillis)
+        // A block that simply left is no longer checked; one that simply arrived is not checked for it; nothing
+        // moves where nothing changed, nor when the list only grew by scrolling.
+        assertEquals(setOf(month[5].id), SearchDomain.pickedBlocksFollowing(setOf(night.id, month[5].id), month, month - night) - night.id)
+        assertEquals(setOf(night.id), SearchDomain.pickedBlocksFollowing(setOf(night.id), month, month))
+        assertEquals(setOf(night.id), SearchDomain.pickedBlocksFollowing(setOf(night.id), month, two))
+        assertEquals(emptySet(), SearchDomain.pickedBlocksFollowing(emptySet(), month, afterDrag))
+        // Anomaly 2026-10-11: "I still have the Sleep block starting today at 5:15, even though in the calendar it
+        // starts at now line." The calendar draws a night CUT where a line at a screen crossed it — through the very
+        // funnel the display uses — and the block reads that span, not the schedule's.
+        val line = night.startMillis + 3 * HOUR
+        val drawnCut =
+            org.example.project.scheduler.domain.SchedulerDomain.retractOverAtScreenPast(
+                org.example.project.scheduler.domain.SchedulerDomain.sleepPanels(schedule, from, from + 30 * day, TimeZone.UTC),
+                listOf(TaskTimeRange(night.startMillis - day, line)),
+                s.periodKindConfig,
+            ).filter { it.id == night.id }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) }
+        assertEquals(TaskTimeRange(line, night.endMillis), SearchDomain.blockDrawnSpan(night, drawnCut))
+        // Cut in two, it reads from the first piece to the last; nothing drawn of it, the rule's span stands (null).
+        assertEquals(
+            TaskTimeRange(night.startMillis + HOUR, night.endMillis),
+            SearchDomain.blockDrawnSpan(night, listOf(TaskTimeRange(night.startMillis + HOUR, night.startMillis + 2 * HOUR), TaskTimeRange(line, night.endMillis))),
+        )
+        assertNull(SearchDomain.blockDrawnSpan(night, emptyList()))
+        // Another period that merely overlaps is not this night; a block a hand placed has only its stored span.
+        assertNull(SearchDomain.blockDrawnSpan(night, listOf(TaskTimeRange(night.startMillis - HOUR, night.startMillis + HOUR))))
+        assertNull(SearchDomain.blockDrawnSpan(listed.single { it.id == after }, listOf(TaskTimeRange(night.startMillis + 2 * HOUR, night.endMillis))))
+        // "Drag on the calendar" is no action of the list any more (it is a button of "Blocks on the calendar").
+        val general = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet()).first { it.first == null }.second
+        assertTrue(SearchDomain.AddedAction.DragOnCalendar !in general && SearchDomain.AddedAction.CalendarBlocks in general)
+    }
+
     @Test
     fun the_groups_of_actions_are_listed_by_how_many_added_elements_they_reach() {
         val s = account().copy(

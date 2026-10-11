@@ -98,45 +98,7 @@ internal fun CalendarDragEditor(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Held, not clicked: the press is the grab, and the release is the drop.
-            Text(
-                text = "Drag",
-                style = MaterialTheme.typography.labelLarge,
-                color = color,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier
-                    .onGloballyPositioned { coords = it }
-                    .clip(RoundedCornerShape(6.dp))
-                    .border(1.dp, if (enabled) MaterialTheme.colorScheme.outlineVariant else color, RoundedCornerShape(6.dp))
-                    .pointerInput(drag) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
-                            val from = currentAnchor.value ?: return@awaitEachGesture
-                            if (!drag.begin(currentHeld.value, from)) return@awaitEachGesture
-                            down.consume()
-                            currentOnDrag.value()
-                            var released = false
-                            try {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                    coords?.takeIf { it.isAttached }?.let { drag.moveTo(it.localToWindow(change.position)) }
-                                    change.consume()
-                                    if (!change.pressed) {
-                                        released = true
-                                        break
-                                    }
-                                }
-                            } finally {
-                                // The gesture cut short (the window closed under the press) drops nothing anywhere.
-                                if (released) drag.release() else drag.cancel()
-                            }
-                        }
-                    }
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            )
+            HeldDragButton(held, anchor, "Drag") { handlers.onDragOnCalendar() }
             NoteText(
                 when {
                     targets.isEmpty -> "No added element can be on the calendar."
@@ -149,4 +111,60 @@ internal fun CalendarDragEditor(
             )
         }
     }
+}
+
+/**
+ * **The button that is HELD, not clicked** (user rule 2026-10-07): the press takes hold of [held] — the blocks as the
+ * calendar draws them — at the instant [anchor] the pointer stands for ([CalendarElementDrag.begin]) and brings the
+ * calendar to the front ([onDragStarted]); the pointer carries them while it stays down, every one moved by the same
+ * time; the release puts each where it is, through the blocks' one funnel. Greyed and deaf with nothing to hold.
+ * One button for "Blocks on the calendar" and for the drag action it replaced.
+ */
+@Composable
+internal fun HeldDragButton(held: List<PlacedRecord>, anchor: Long?, text: String, onDragStarted: () -> Unit) {
+    val drag = LocalCalendarElementDrag.current
+    val enabled = held.isNotEmpty() && anchor != null
+    val currentHeld = rememberUpdatedState(held)
+    val currentAnchor = rememberUpdatedState(anchor)
+    val currentOnDrag = rememberUpdatedState(onDragStarted)
+    var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier
+            .onGloballyPositioned { coords = it }
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, if (enabled) MaterialTheme.colorScheme.outlineVariant else color, RoundedCornerShape(6.dp))
+            .pointerInput(drag) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+                    val from = currentAnchor.value ?: return@awaitEachGesture
+                    if (!drag.begin(currentHeld.value, from)) return@awaitEachGesture
+                    down.consume()
+                    currentOnDrag.value()
+                    var released = false
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            coords?.takeIf { it.isAttached }?.let { drag.moveTo(it.localToWindow(change.position)) }
+                            change.consume()
+                            if (!change.pressed) {
+                                released = true
+                                break
+                            }
+                        }
+                    } finally {
+                        // The gesture cut short (the window closed under the press) drops nothing anywhere.
+                        if (released) drag.release() else drag.cancel()
+                    }
+                }
+            }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
