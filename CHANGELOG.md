@@ -27,6 +27,9 @@ configurations as the result list changes."
 - Anomaly after the rebuild ("still no 'Every box from' … there is no period group"): the window counted the result
   rows without the calendar's layer bands, so a period that is on the timeline only as one had no row. It now reads
   the list with what the Search window reads it with.
+- Two filters of a period's own, which the user had named as existing ("filter to only periods that have ...
+  resilience to ..., filter to only periods that have the drawing ..."): "Drawing" and "Resilience of a task"
+  (`Filters.periodDrawing`, `periodResilience`, `periodResilienceTask`; stored, absent = not asked).
 - **Persisted shape** (local view state): `frozenKinds` and `collapsedGroups` added (absent = follows the results,
   all open); `showFiltersOn` is read past and unused.
 Client only. Not looked at on screen.

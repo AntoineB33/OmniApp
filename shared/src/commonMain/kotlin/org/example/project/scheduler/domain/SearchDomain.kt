@@ -421,6 +421,9 @@ object SearchDomain {
                     taskCategory = filters.taskCategory?.value,
                     categoryHasRules = filters.categoryHasRules.name,
                     periodOrigin = filters.periodOrigin.name,
+                    periodDrawing = filters.periodDrawing?.name,
+                    periodResilience = filters.periodResilience.name,
+                    periodResilienceTask = filters.periodResilienceTask?.value,
                     alarmState = filters.alarmState.name,
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     timerState = filters.timerState.name,
@@ -489,6 +492,9 @@ object SearchDomain {
                         taskCategory = stored.taskCategory?.let { CategoryId(it) },
                         categoryHasRules = enumNamed(stored.categoryHasRules, Tri.Any),
                         periodOrigin = enumNamed(stored.periodOrigin, PeriodOrigin.Any),
+                        periodDrawing = stored.periodDrawing?.let { name -> PeriodDrawing.entries.firstOrNull { it.name == name } },
+                        periodResilience = enumNamed(stored.periodResilience, ResilienceLevel.Any),
+                        periodResilienceTask = stored.periodResilienceTask?.let(::TaskId),
                         alarmState = enumNamed(stored.alarmState, AlarmState.Any),
                         alarmDays = stored.alarmDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
@@ -648,6 +654,22 @@ object SearchDomain {
      */
     enum class PeriodOrigin(val label: String) { Any("any"), BuiltIn("yes"), Yours("no") }
 
+    /**
+     * How much resilience a task has to a period, as the period filter asks it ([Filters.periodResilience]): none (the
+     * period refuses the task), some (it may run there, at whatever share), or all of it (the period leaves it be).
+     */
+    enum class ResilienceLevel(val label: String) {
+        Any("any"), None("none (0 %)"), Some("some (above 0 %)"), Full("full (100 %)");
+
+        fun holds(resilience: Double): Boolean =
+            when (this) {
+                Any -> true
+                None -> resilience <= 0.0
+                Some -> resilience > 0.0
+                Full -> resilience >= 1.0
+            }
+    }
+
     enum class AlarmState(val label: String) { Any("any"), On("on"), Off("off") }
 
     enum class TimerState(val label: String) { Any("any"), Idle("idle"), Running("running"), Paused("paused") }
@@ -669,6 +691,18 @@ object SearchDomain {
         val taskCategory: CategoryId? = null,
         val categoryHasRules: Tri = Tri.Any,
         val periodOrigin: PeriodOrigin = PeriodOrigin.Any,
+        /**
+         * User rule 2026-10-11 (*"filter to only periods that have the drawing …"*): only the periods drawn this way
+         * ([PeriodKindConfig.drawing], the period's own). Null = any.
+         */
+        val periodDrawing: PeriodDrawing? = null,
+        /**
+         * User rule 2026-10-11 (*"filter to only periods that have … resilience to …"*): only the periods
+         * [periodResilienceTask] has this much resilience to ([ResilienceLevel], the task's
+         * [org.example.project.scheduler.model.Task.resilienceFor]). Says nothing until both are given.
+         */
+        val periodResilience: ResilienceLevel = ResilienceLevel.Any,
+        val periodResilienceTask: TaskId? = null,
         val alarmState: AlarmState = AlarmState.Any,
         /** Empty = any day; else the alarm rings on at least one of them. */
         val alarmDays: Set<DayOfWeek> = emptySet(),
@@ -822,6 +856,8 @@ object SearchDomain {
                 Setting.TaskCategory -> taskCategory != null
                 Setting.CategoryHasRules -> categoryHasRules != Tri.Any
                 Setting.PeriodOriginSetting -> periodOrigin != PeriodOrigin.Any
+                Setting.PeriodDrawingSetting -> periodDrawing != null
+                Setting.PeriodResilienceSetting -> periodResilience != ResilienceLevel.Any && periodResilienceTask != null
                 Setting.AlarmStateSetting -> alarmState != AlarmState.Any
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
@@ -980,6 +1016,10 @@ object SearchDomain {
         TaskBoxesUntil(Kind.Task, "Every box until"),
         CategoryHasRules(Kind.Category, "Has rules"),
         PeriodOriginSetting(Kind.RestrictivePeriod, "Default periods"),
+        /** Only the periods drawn one way ([Filters.periodDrawing]). */
+        PeriodDrawingSetting(Kind.RestrictivePeriod, "Drawing"),
+        /** Only the periods a task has so much resilience to ([Filters.periodResilience]). */
+        PeriodResilienceSetting(Kind.RestrictivePeriod, "Resilience of a task"),
         PeriodOnCalendar(Kind.RestrictivePeriod, "On the calendar"),
         PeriodBoxesFrom(Kind.RestrictivePeriod, "Every box from"),
         PeriodBoxesUntil(Kind.RestrictivePeriod, "Every box until"),
@@ -1173,6 +1213,10 @@ object SearchDomain {
         val taskCategory: String? = null,
         val categoryHasRules: String? = null,
         val periodOrigin: String? = null,
+        /** New 2026-10-11: absent from an older build's = any drawing, no resilience asked. */
+        val periodDrawing: String? = null,
+        val periodResilience: String? = null,
+        val periodResilienceTask: String? = null,
         val alarmState: String? = null,
         val alarmDays: List<Int> = emptyList(),
         val timerState: String? = null,
@@ -2016,7 +2060,11 @@ object SearchDomain {
                     PeriodOrigin.Any -> true
                     PeriodOrigin.BuiltIn -> !PeriodKinds.isUserDefined(result.id)
                     PeriodOrigin.Yours -> PeriodKinds.isUserDefined(result.id)
-                } && (calendar == null ||
+                } && (filters.periodDrawing == null || state.periodKindConfig.drawing(result.id) == filters.periodDrawing) &&
+                    // A task that is gone asks nothing: the filter then reads as off rather than emptying the list.
+                    (filters.periodResilienceTask?.let { state.tasks[it] }
+                        ?.let { task -> filters.periodResilience.holds(task.resilienceFor(result.id)) } ?: true) &&
+                    (calendar == null ||
                     calendar.passes(
                         calendar.ofPeriodKind(result.id), filters.periodOnCalendar, filters.periodBoxesFrom, filters.periodBoxesUntil,
                         filters.calendarAt,

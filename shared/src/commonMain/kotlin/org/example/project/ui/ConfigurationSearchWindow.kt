@@ -394,6 +394,40 @@ private fun SettingEditor(
             Choices(SearchDomain.Tri.entries, f.categoryHasRules, { it.label }) { filters(f.copy(categoryHasRules = it)) }
         SearchDomain.Setting.PeriodOriginSetting ->
             Choices(SearchDomain.PeriodOrigin.entries, f.periodOrigin, { it.label }) { filters(f.copy(periodOrigin = it)) }
+        // User rule 2026-10-11: only the periods drawn one way — the period's own drawing field, as a filter.
+        SearchDomain.Setting.PeriodDrawingSetting ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                ChoiceDropDown(
+                    options = org.example.project.scheduler.domain.PeriodDrawing.entries,
+                    selected = f.periodDrawing,
+                    label = { it.label },
+                    onSelect = { filters(f.copy(periodDrawing = it)) },
+                    placeholder = "any drawing",
+                )
+                if (f.periodDrawing != null) ClearMark { filters(f.copy(periodDrawing = null)) }
+            }
+        // User rule 2026-10-11: only the periods a task has so much resilience to — how much, then the task.
+        SearchDomain.Setting.PeriodResilienceSetting ->
+            Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+                Choices(SearchDomain.ResilienceLevel.entries, f.periodResilience, { it.label }) { filters(f.copy(periodResilience = it)) }
+                NamingCell(
+                    cellId = PERIOD_RESILIENCE_TASK_CELL,
+                    shown = f.periodResilienceTask?.let { state.tasks[it]?.title ?: "(deleted)" }.orEmpty(),
+                    identityLabel = "Tasks",
+                    identity = { draft ->
+                        state.tasks.values.asSequence()
+                            .filter { it.title.isNotBlank() && it.title.contains(draft.trim(), ignoreCase = true) }
+                            .sortedBy { it.title.lowercase() }
+                            .take(30)
+                            .map { NamingRow(it.id.value, it.title, taskId = it.id) }
+                            .toList()
+                    },
+                    suggestions = { draft -> org.example.project.scheduler.domain.SchedulerDomain.titleSuggestions(state, draft) },
+                    onPick = { key -> filters(f.copy(periodResilienceTask = org.example.project.scheduler.model.TaskId(key))) },
+                    selectedKey = f.periodResilienceTask?.value,
+                    onCleared = { filters(f.copy(periodResilienceTask = null)) },
+                )
+            }
         SearchDomain.Setting.AlarmStateSetting ->
             Choices(SearchDomain.AlarmState.entries, f.alarmState, { it.label }) { filters(f.copy(alarmState = it)) }
         SearchDomain.Setting.AlarmDays ->
@@ -691,6 +725,19 @@ private fun CategoryPicker(
         onPick = { key -> onSelect(org.example.project.scheduler.model.CategoryId(key)) },
         selectedKey = selected?.value,
         onCleared = { onSelect(null) },
+    )
+}
+
+/** The resilience filter's task cell id: a cell of no tree. */
+private val PERIOD_RESILIENCE_TASK_CELL = org.example.project.scheduler.model.CellId("search/period-resilience-task-filter")
+
+/** The ✕ beside a filter that is set: back to "any". */
+@Composable
+private fun ClearMark(onClear: () -> Unit) {
+    Text(
+        text = "✕",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.clip(CircleShape).clickable(onClick = onClear).padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
 

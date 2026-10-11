@@ -825,6 +825,13 @@ suggestions before it was ever entered.
     — typed, or picked on the calendar (`BoxBound.BothFrom` / `BothUntil`) — is set for all of them. Each kind's own
     group keeps its own, to set one kind's alone. The other labels kinds share ("State", "Category", "Repeats") are
     different questions per kind and are not merged.
+  - **A period has filters of its own** (user rule 2026-10-11: *"filter to only periods that have … resilience to …,
+    filter to only periods that have the drawing …"*; `Setting.PeriodDrawingSetting`, `PeriodResilienceSetting`,
+    `SearchAddedElementsTest`): **"Drawing"** keeps the periods drawn one way (`PeriodKindConfig.drawing`, the
+    period's own), and **"Resilience of a task"** keeps the periods a chosen task has none / some / all of its
+    resilience to (`ResilienceLevel`, `Task.resilienceFor`) — it says nothing until both the level and the task are
+    given, nor about a task that is gone. Local view state like every filter (`periodDrawing`, `periodResilience`,
+    `periodResilienceTask` in the stored configuration, absent = not asked).
   - **The rows are counted off the list the Search window SHOWS** (`kindCountsInResults`, given the clock, the
     calendar's layer bands and the engine's runs exactly as `SearchWindow` gives them to `results`; anomaly
     2026-10-11: counted without the layer bands, a period on the timeline only as a band — the usual period under a

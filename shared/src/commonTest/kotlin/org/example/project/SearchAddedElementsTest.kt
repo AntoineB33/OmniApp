@@ -187,6 +187,63 @@ class SearchAddedElementsTest {
         assertEquals(before, listed, "the two bounds at the right-click drop nothing the calendar filter lists there")
     }
 
+    /**
+     * User rule 2026-10-11: *"there are search configurations only appliable to periods (e.g., filter to only periods
+     * that have ... resilience to ..., filter to only periods that have the drawing ..., etc...)"*.
+     */
+    @Test
+    fun a_period_is_filtered_by_its_drawing_and_by_the_resilience_a_task_has_to_it() {
+        val s = account()
+        val apple = taskWithTitle(s, "Apple")
+        fun rows(filters: SearchDomain.Filters) =
+            SearchDomain.results(s, setOf(SearchDomain.Kind.RestrictivePeriod), "", filters = filters, timeZone = TimeZone.UTC)
+                .map { (it as SearchDomain.ItemResult).id }
+        val all = rows(SearchDomain.Filters())
+        assertTrue(all.containsAll(listOf(PeriodKinds.NO_SCREEN, PeriodKinds.INACTIVITY, PeriodKinds.NO_COMPUTER_UNLOCKED)))
+
+        // By drawing: exactly the periods the account draws that way.
+        val config = s.periodKindConfig
+        for (drawing in org.example.project.scheduler.domain.PeriodDrawing.entries) {
+            assertEquals(all.filter { config.drawing(it) == drawing }, rows(SearchDomain.Filters(periodDrawing = drawing)), drawing.label)
+        }
+        assertTrue(rows(SearchDomain.Filters(periodDrawing = config.drawing(PeriodKinds.NO_COMPUTER_UNLOCKED))).contains(PeriodKinds.NO_COMPUTER_UNLOCKED))
+
+        // By the resilience a task has to them: an on-screen task has none to "no screen" or "inactivity", and all of
+        // it to a layer period (which restricts nothing by itself).
+        val task = s.tasks.getValue(apple)
+        fun level(level: SearchDomain.ResilienceLevel) = rows(SearchDomain.Filters(periodResilience = level, periodResilienceTask = apple))
+        assertEquals(all.filter { task.resilienceFor(it) <= 0.0 }, level(SearchDomain.ResilienceLevel.None))
+        assertEquals(all.filter { task.resilienceFor(it) > 0.0 }, level(SearchDomain.ResilienceLevel.Some))
+        assertEquals(all.filter { task.resilienceFor(it) >= 1.0 }, level(SearchDomain.ResilienceLevel.Full))
+        assertTrue(PeriodKinds.NO_SCREEN in level(SearchDomain.ResilienceLevel.None))
+        assertTrue(PeriodKinds.NO_COMPUTER_UNLOCKED in level(SearchDomain.ResilienceLevel.Full))
+        // A value given to the task moves the period from one side to the other.
+        val half = s.copy(tasks = s.tasks + (apple to task.copy(resilience = task.resilience + (PeriodKinds.NO_SCREEN to 0.5))))
+        fun halfRows(level: SearchDomain.ResilienceLevel) =
+            SearchDomain.results(half, setOf(SearchDomain.Kind.RestrictivePeriod), "", filters = SearchDomain.Filters(periodResilience = level, periodResilienceTask = apple), timeZone = TimeZone.UTC)
+                .map { (it as SearchDomain.ItemResult).id }
+        assertTrue(PeriodKinds.NO_SCREEN in halfRows(SearchDomain.ResilienceLevel.Some) && PeriodKinds.NO_SCREEN !in halfRows(SearchDomain.ResilienceLevel.Full))
+        // It says nothing until both the level and the task are given — and nothing about a task that is gone.
+        assertEquals(all, rows(SearchDomain.Filters(periodResilience = SearchDomain.ResilienceLevel.None)))
+        assertEquals(all, rows(SearchDomain.Filters(periodResilienceTask = apple)))
+        assertEquals(all, rows(SearchDomain.Filters(periodResilience = SearchDomain.ResilienceLevel.None, periodResilienceTask = TaskId("gone"))))
+        assertTrue(!SearchDomain.Filters(periodResilienceTask = apple).isOn(SearchDomain.Setting.PeriodResilienceSetting))
+        assertTrue(SearchDomain.Filters(periodResilience = SearchDomain.ResilienceLevel.None, periodResilienceTask = apple).isOn(SearchDomain.Setting.PeriodResilienceSetting))
+        // They are the period's own configurations — in its group, never a task's — and survive the local encoding;
+        // a configuration stored before them reads as neither asked.
+        val periodGroup = SearchDomain.configurations("", SearchDomain.Kind.entries.toSet()).single { it.first == SearchDomain.Kind.RestrictivePeriod }.second
+        assertTrue(periodGroup.containsAll(listOf(SearchDomain.Setting.PeriodDrawingSetting, SearchDomain.Setting.PeriodResilienceSetting)))
+        val stored = SearchDomain.Config(
+            filters = SearchDomain.Filters(
+                periodDrawing = org.example.project.scheduler.domain.PeriodDrawing.VerticalLines,
+                periodResilience = SearchDomain.ResilienceLevel.Some, periodResilienceTask = apple,
+            ),
+        )
+        assertEquals(stored, SearchDomain.Config.decode(stored.encode()))
+        val older = SearchDomain.Config.decode("""{"query":"x","periodOrigin":"Yours"}""")!!.filters
+        assertEquals(Triple(null, SearchDomain.ResilienceLevel.Any, null), Triple(older.periodDrawing, older.periodResilience, older.periodResilienceTask))
+    }
+
     @Test
     fun a_restrictive_period_kind_is_on_the_calendar_by_a_period_of_that_kind() {
         val s = account().copy(panels = listOf(panel("n1", null, "2026-09-10").copy(noScreen = true)))
