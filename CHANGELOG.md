@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A second right-click on the calendar opens the menu there — 2026-10-11
+
+The user: "When the user right-clicks on the calendar, then right-clicks elsewhere, it must open the right-click menu.
+Right now, it simply closes the previous one." The calendar's menu was focusable and ate the outside press; it is now
+non-focusable and dismissed by the app-root observer, like the tree's. Client only. Not tried on screen.
+
 ### The calendar's menu has one edit entry — 2026-10-11
 
 The user: "In the right-click menu of the calendar, remove the 'edit [something]', as it is done with 'edit...'."

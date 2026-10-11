@@ -200,6 +200,12 @@ means.
 - **Every window has an explicit default width AND height**, and its content sits in a `weight(1f)` slot.
   Never `heightIn(max = …)` + wrap: a window whose height is its content's cannot be given a different one
   by dragging its bottom edge, which is the whole point of the edge.
+- **The calendar's right-click menu is a menu like the others: non-focusable, dismissed by the root observer** (user
+  rule 2026-10-11: *"When the user right-clicks on the calendar, then right-clicks elsewhere, it must open the
+  right-click menu. Right now, it simply closes the previous one."*). It was the one right-click menu left focusable,
+  so it ate the press that closed it. Now the press outside closes it and still lands: a second right-click opens the
+  menu where it was made. Its `transientMenuDismissal` is keyed on the anchor — the closing press and the reopening
+  one are the same event, so "open" never reads false between two menus.
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. **A tab's fill is its window's colour** (§ *Window colours*), so no state is said by a fill:

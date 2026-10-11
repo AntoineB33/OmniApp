@@ -6632,10 +6632,21 @@ private fun DayColumn(
                 onEditChoice(choice)
             }
         }
+        // User rule 2026-10-11: *"When the user right-clicks on the calendar, then right-clicks elsewhere, it must open
+        // the right-click menu. Right now, it simply closes the previous one."* A focusable menu EATS the press that
+        // closes it, so the second right-click never reached the column. Like every other right-click menu of the app
+        // it is non-focusable and dismissed by the app-root observer ([transientMenuDismissal], `PopupWindows.kt`):
+        // the press outside closes it AND goes on to do what it was aimed at — a right-click opens the menu there, a
+        // left click selects. Registered per anchor: the same press closes the menu (root, Initial pass) and opens it
+        // again (the column), so "open" never reads false in between and one registration would be the closed one's.
+        androidx.compose.runtime.key(anchor) {
+            transientMenuDismissal(anchor != null) { closeMenu() }
+        }
         DropdownMenu(
             expanded = anchor != null,
             onDismissRequest = { closeMenu() },
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
+            properties = PopupProperties(focusable = false),
         ) {
             val hits = menuHits
             val branch = menuBranch
