@@ -114,6 +114,17 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    // `docs/scheduler_input_requirements.md`: a night (or an hour before bed) edited on the calendar left the
+    // schedule — which says so here, with where it went.
+    val account = LocalPatternExceptionState.current
+    val exceptions =
+        remember(account?.sleep, account?.panels, account?.hiddenPanels) {
+            val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+            account?.let {
+                org.example.project.scheduler.domain.PatternExceptions.ofSleep(it, tz)
+            }.orEmpty()
+        }
+    PatternExceptionsNote(exceptions)
 }
 
 /** The drop-down that says which time the field beside it edits. It never takes the keyboard: the calendar's is the calendar's. */

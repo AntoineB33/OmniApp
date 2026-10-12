@@ -3222,11 +3222,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val taskIdentityRow: @Composable (EditMenuItem) -> Unit = { item ->
             TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) })
         }
+        val patternExceptionDispatch = remember(vm) { { intent: SchedulerIntent -> vm.dispatch(intent) } }
         CompositionLocalProvider(
             LocalTaskIdentityRow provides taskIdentityRow,
             LocalPeriodRefusal provides periodRefusal,
             org.example.project.ui.LocalPeriodAtLine provides periodAtLine,
             org.example.project.ui.LocalCalendarElementDrag provides calendarElementDrag,
+            org.example.project.ui.LocalPatternExceptionState provides schedulerState,
+            org.example.project.ui.LocalPatternExceptionDispatch provides patternExceptionDispatch,
             org.example.project.ui.LocalHeldCalendarRecords provides heldCalendarRecords,
             LocalTransientMenuHost provides transientMenus,
             LocalWindowFrameHost provides windowFrames,
@@ -3852,6 +3855,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 },
                                 // The pattern of the panel this block is (an occurrence reads its pattern's).
                                 initialRepeatDays = repeatDaysOf(schedulerState.panels, block.entryId),
+                                repeatExceptions = repeatExceptionsOf(schedulerState, block.entryId, tz),
                                 onDismiss = { close() },
                                 // PRD §8: the bin — the menu's "Remove" now lives in the window that names
                                 // what it deletes.
@@ -3904,6 +3908,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             }
                                         },
                                 initialRepeatDays = repeatDaysOf(schedulerState.panels, draft.blocks.firstOrNull { it.entryId != null }?.entryId),
+                                repeatExceptions = repeatExceptionsOf(schedulerState, draft.blocks.firstOrNull { it.entryId != null }?.entryId, tz),
                                 onSave = { start, end, repeatDays ->
                                     if (draft.blocks.isEmpty()) {
                                         // `side-dev/README.md`: one intent lays a period of any kind.
@@ -5526,3 +5531,11 @@ private fun mergePanelsForDisplay(
         }
     return sleepRecords + beforeBedRecords + blockRecords + reminderRecords + sideRecords
 }
+
+/** What the edit window of the panel [entryId] says of its pattern's exceptions ([org.example.project.scheduler.domain.PatternExceptions]). */
+private fun repeatExceptionsOf(
+    state: SchedulerState,
+    entryId: String?,
+    timeZone: TimeZone,
+): List<org.example.project.scheduler.domain.PatternExceptions.Entry> =
+    org.example.project.scheduler.domain.PatternExceptions.ofPanel(state, entryId, timeZone)

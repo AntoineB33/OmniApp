@@ -2622,6 +2622,11 @@ object SchedulerReducer {
                 // CHECKED on it. `pinned` stays false all the same — see [derivePinned]'s overload.
                 pins = PanelPins(existence = true),
                 repeat = org.example.project.scheduler.model.PanelRepeat.of(intent.repeatEveryDays, null),
+                // A night (an hour before bed) moved out of the Sleep schedule: the schedule's exception names it.
+                patternOrigin =
+                    replacing?.takeIf {
+                        it.startsWith(DERIVED_SLEEP_ID_PREFIX) || it.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX)
+                    }.orEmpty(),
             )
         val (resolved, resolvedPanels) =
             resolveScreenOverrides(allocated, allocated.panels.filterNot { it.id == replacing } + panel, panelId)
@@ -2920,7 +2925,7 @@ object SchedulerReducer {
             // the edit window is a statement about the pattern itself (below).
             if (intent.repeatEveryDays == null || intent.repeatEveryDays == rule.everyDays) {
                 val (ownId, allocated) = state.allocatePanelId()
-                val own = occurrence.copy(id = ownId, repeat = null, auto = false)
+                val own = occurrence.copy(id = ownId, repeat = null, auto = false, patternOrigin = intent.id)
                 val taken =
                     allocated.panels.filterNot { it.id == intent.id }.map {
                         if (it.id == baseId) it.copy(repeat = rule.copy(skipped = rule.skipped + k)) else it

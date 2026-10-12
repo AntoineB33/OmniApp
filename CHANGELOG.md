@@ -11,6 +11,45 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every action is a micro group, titled alike — 2026-10-11
+
+The user: "In the action section, give to every micro group the same typo (same font for the micro group title etc…).
+For example, right now Configuration is bold, but not Add to the calendar… Put them all in micro groups. A micro group
+can have only one action." Every action now has its title on its own line in one style (`MicroGroupTitle`), its editor
+under it; the default-configuration group inside a group of elements uses the same title style. Client only. Not
+tried on screen.
+
+### An exception is drawn as its block — 2026-10-11
+
+The user: "The exception block must be displayed the same way an occurence block is displayed under 'Blocks on the
+calendar'." An exception with a block still on the calendar is now that list's row — name, start and end in fields
+that edit it (`CalendarBlockFields`, shared with the blocks editor) — under "instead of <the occurrence>"; one with no
+block left stays "… → removed". Client only. Not tried on screen.
+
+### A reminder says its exceptions too — 2026-10-11
+
+The user: "I added the reminder 'Claude (if already walked)', selected one block, changed 14:50 to 14:51, but I didn't
+see an exception info under the Every 1 day configuration." Reminders were left out of the exceptions
+(`PatternExceptions.ofReminder`): a tag moved off its cadence is now listed under "Every", in the Search window's
+action and in the reminders manager's row. Nothing new is stored. Client only. Not tried on screen.
+
+### The actions' search bar answers to any text of an action — 2026-10-11
+
+The user: "The search bar in the action bar sort the micro groups with any text, not just the title of the micro
+groups. But only the microgroup are sorted, not inside the microgroups." An action is ranked by its title first, then
+by the texts it shows under it — buttons, field labels, notes (`SearchDomain.actionSearchWords`, `actionSearchRank`).
+Not searched: what depends on the account (element and block names, field values). Client only. Not tried on screen.
+
+### A pattern's configuration says its exceptions — 2026-10-11
+
+The user: "Make sure the last paragraph in docs\\scheduler_input_requirements.md is satisfied. Right now, I modified
+the occurrence of 'Sleep' at 11/10/2026, but I don't see the exception info." The exception was stored and shown
+nowhere. `PatternExceptions` lists them — the Sleep schedule's nights and periods before bed, a repeating panel's
+occurrences, an alarm's rings — with where each went, and `PatternExceptionsNote` draws them under the Sleep
+schedule's fields, an alarm's row and the edit windows' "Repeat every" field. New persisted fields, both defaulted
+and absent from older payloads (`PatternExceptionsTest`): `TaskPanel.patternOrigin`, `AlarmEntry.isolatedFrom`. No
+SQLite or Supabase migration (they ride in the entity rows). Client only. Not tried on screen.
+
 ### An edit of the calendar never plans on the thread it came in on — 2026-10-11
 
 The user: "when I changed the starting time of the Sleep period, it froze a moment. Make sure the modification of the

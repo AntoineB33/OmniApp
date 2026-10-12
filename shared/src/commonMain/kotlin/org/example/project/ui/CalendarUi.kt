@@ -2207,6 +2207,15 @@ fun ChoresManagerWindow(
                     alert = row.alert,
                     onChange = { rows[index] = row.copy(alert = it); push() },
                 )
+                // `docs/scheduler_input_requirements.md`: a tag moved off this reminder's cadence is its exception.
+                val account = LocalPatternExceptionState.current
+                val exceptions =
+                    remember(account?.panels, account?.chores, row.id) {
+                        account?.takeUnless { defaults }?.let {
+                            org.example.project.scheduler.domain.PatternExceptions.ofReminder(it, row.id, TimeZone.currentSystemDefault())
+                        }.orEmpty()
+                    }
+                PatternExceptionsNote(exceptions)
 
                 // PRD §14: the row's Edit mode — the shared mode selector + menus show beneath the fields
                 // (and vanish when focus leaves the row). The id menu lists reminders matching the draft
@@ -9701,6 +9710,8 @@ fun ManualEntryEditWindow(
     noScreenResilienceForTaskId: (TaskId) -> Double? = { null },
     /** `docs/scheduler_requirements.md`: how often the block recurs, in days (0: it happens once) — [RepeatEveryField]. */
     initialRepeatDays: Int = 0,
+    /** The pattern's exceptions, said under the field that states it ([PatternExceptionsNote]). */
+    repeatExceptions: List<org.example.project.scheduler.domain.PatternExceptions.Entry> = emptyList(),
 ) {
     var title by remember { mutableStateOf(initialTitle) }
     var repeatText by remember { mutableStateOf(repeatDaysText(initialRepeatDays)) }
@@ -9810,6 +9821,7 @@ fun ManualEntryEditWindow(
                 PinSwitchRow("Distance", pins.distance) { pins = pins.copy(distance = it) }
 
                 RepeatEveryField(repeatText) { repeatText = it }
+                PatternExceptionsNote(repeatExceptions)
 
                 // `side-dev/README.md`: the task's resilience to "no on-screen task" — task-level, not
                 // per-panel, re-seeded whenever the effective task changes. Hidden for a calendar-only
@@ -9987,6 +9999,8 @@ fun PeriodEditWindow(
     onRemove: (() -> Unit)? = null,
     /** `docs/scheduler_requirements.md`: how often the period recurs, in days (0: once) — [RepeatEveryField]. */
     initialRepeatDays: Int = 0,
+    /** The pattern's exceptions, said under the field that states it ([PatternExceptionsNote]). */
+    repeatExceptions: List<org.example.project.scheduler.domain.PatternExceptions.Entry> = emptyList(),
 ) {
     var repeatText by remember { mutableStateOf(repeatDaysText(initialRepeatDays)) }
     // An already-open bound has no wall-clock time to show, so its (hidden) fields are seeded from `now`
@@ -10067,6 +10081,7 @@ fun PeriodEditWindow(
                 )
 
                 RepeatEveryField(repeatText) { repeatText = it }
+                PatternExceptionsNote(repeatExceptions)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

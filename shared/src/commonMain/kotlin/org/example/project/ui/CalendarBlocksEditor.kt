@@ -180,44 +180,7 @@ internal fun CalendarBlocksEditor(
                 val restEnd = drawnAt?.endEpochMillis ?: block.endMillis
                 val shownStart = live?.startEpochMillis ?: restStart
                 val shownEnd = live?.endEpochMillis ?: restEnd
-                val from = localOf(shownStart, tz)
-                val instant = SearchDomain.blockIsInstant(block)
-                val fixedDay = SearchDomain.blockKeepsItsDay(block)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        block.name.ifBlank { "(untitled)" },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        NoteText(if (instant) "at" else "starts", color = MaterialTheme.colorScheme.onSurface)
-                        DayField(from.date, "day", today, enabled = !fixedDay) { date ->
-                            val start = instantOf(date, from.hour * 60 + from.minute, tz)
-                            write(block, start, start + (restEnd - restStart))
-                        }
-                        TimeOfDayField(from.hour * 60 + from.minute, enabled = true, blank = "HH:MM") { minutes ->
-                            val start = instantOf(from.date, minutes, tz)
-                            // The start moved: the block keeps its END (it is the start field that was edited), unless
-                            // that would leave it no length — then it keeps its length.
-                            val end = if (instant) start else restEnd.takeIf { it > start } ?: (start + (restEnd - restStart))
-                            write(block, start, end)
-                        }
-                    }
-                    if (!instant) {
-                        val to = localOf(shownEnd, tz)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            NoteText("ends", color = MaterialTheme.colorScheme.onSurface)
-                            DayField(to.date, "day", today, enabled = true) { date ->
-                                write(block, restStart, instantOf(date, to.hour * 60 + to.minute, tz))
-                            }
-                            TimeOfDayField(to.hour * 60 + to.minute, enabled = true, blank = "HH:MM") { minutes ->
-                                write(block, restStart, instantOf(to.date, minutes, tz))
-                            }
-                        }
-                    }
-                }
+                CalendarBlockFields(block, shownStart, shownEnd, restStart, restEnd, today, tz) { start, end -> write(block, start, end) }
             }
         }
     }
@@ -227,3 +190,64 @@ internal fun CalendarBlocksEditor(
 private const val PATTERN_DAYS_STEP: Int = 30
 private const val PATTERN_DAYS_MAX: Int = 3 * 365
 private const val DAY_MILLIS: Long = 86_400_000L
+
+/**
+ * **One block of the calendar as its fields**: its name, then where it starts and where it ends — a day and a time
+ * each, an instant (a ring, a reminder's tag) on one line. The ONE drawing of a block off the calendar: the rows of
+ * "Blocks on the calendar" and the exceptions a configuration lists ([PatternExceptionsNote], user rule 2026-10-11:
+ * *"The exception block must be displayed the same way an occurence block is displayed under 'Blocks on the
+ * calendar'"*).
+ *
+ * [shownStart]/[shownEnd] is what the fields read (a block held on the calendar reads where the hand has it);
+ * [restStart]/[restEnd] what an edit of ONE field keeps of the other. [write] takes the block's new span.
+ */
+@Composable
+internal fun CalendarBlockFields(
+    block: SearchDomain.CalendarBlock,
+    shownStart: Long,
+    shownEnd: Long,
+    restStart: Long,
+    restEnd: Long,
+    today: kotlinx.datetime.LocalDate,
+    tz: TimeZone,
+    write: (start: Long, end: Long) -> Unit,
+) {
+    val from = localOf(shownStart, tz)
+    val instant = SearchDomain.blockIsInstant(block)
+    val fixedDay = SearchDomain.blockKeepsItsDay(block)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            block.name.ifBlank { "(untitled)" },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            NoteText(if (instant) "at" else "starts", color = MaterialTheme.colorScheme.onSurface)
+            DayField(from.date, "day", today, enabled = !fixedDay) { date ->
+                val start = instantOf(date, from.hour * 60 + from.minute, tz)
+                write(start, start + (restEnd - restStart))
+            }
+            TimeOfDayField(from.hour * 60 + from.minute, enabled = true, blank = "HH:MM") { minutes ->
+                val start = instantOf(from.date, minutes, tz)
+                // The start moved: the block keeps its END (it is the start field that was edited), unless
+                // that would leave it no length — then it keeps its length.
+                val end = if (instant) start else restEnd.takeIf { it > start } ?: (start + (restEnd - restStart))
+                write(start, end)
+            }
+        }
+        if (!instant) {
+            val to = localOf(shownEnd, tz)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                NoteText("ends", color = MaterialTheme.colorScheme.onSurface)
+                DayField(to.date, "day", today, enabled = true) { date ->
+                    write(restStart, instantOf(date, to.hour * 60 + to.minute, tz))
+                }
+                TimeOfDayField(to.hour * 60 + to.minute, enabled = true, blank = "HH:MM") { minutes ->
+                    write(restStart, instantOf(to.date, minutes, tz))
+                }
+            }
+        }
+    }
+}

@@ -319,7 +319,7 @@ private fun AddedActionSections(
         ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle) {
             // What the group holds inside it (the default configuration of its kind), each with its own arrow.
             for (inner in group.inner) {
-                ActionGroupBlock(inner, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle) {}
+                ActionGroupBlock(inner, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, micro = true) {}
             }
         }
     }
@@ -343,14 +343,19 @@ private fun ActionGroupBlock(
     onOpenEach: (List<SearchDomain.Result>) -> Unit,
     onClear: (List<SearchDomain.Result>) -> Unit,
     onToggle: (String) -> Unit,
+    /** A group INSIDE a group of elements (the default configuration of its kind): titled as an action is ([MicroGroupTitle]). */
+    micro: Boolean = false,
     inside: @Composable () -> Unit,
 ) {
     val added = group.members
     val collapsed = group.id in config.collapsedActionGroups
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         SectionArrow(collapsed) { onToggle(group.id) }
-        if (group.heading == null) SectionTitle(group.title)
-        else Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+        when {
+            micro -> MicroGroupTitle(group.title)
+            group.heading == null -> SectionTitle(group.title)
+            else -> Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+        }
     }
     if (collapsed) return
     // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
@@ -365,21 +370,13 @@ private fun ActionGroupBlock(
             // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
             // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
             AddableAction(action, added, config) {
-                if (action in STACKED_ACTIONS) {
-                    // An editor too tall for the label's row: under its label, at the section's width.
-                    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-                        Text(
-                            action.label,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        )
-                        AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear)
-                    }
-                } else {
-                    SettingRow(action.label) {
-                        AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear)
-                    }
+                // User rule 2026-10-11: *"give to every micro group the same typo … Put them all in micro groups. A
+                // micro group can have only one action."* — EVERY action is a micro group: its title on a line of its
+                // own, in the one title style ([MicroGroupTitle]), and its editor under it. Until then an editor short
+                // enough sat beside its label, in the label's font, and only the tall ones had a title.
+                Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+                    MicroGroupTitle(action.label)
+                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear)
                 }
             }
         }
@@ -387,22 +384,22 @@ private fun ActionGroupBlock(
     inside()
 }
 
-/** The actions whose editor is a block of its own (a list of steps, a document) rather than a control in a row. */
-private val STACKED_ACTIONS: Set<SearchDomain.AddedAction> =
-    setOf(
-        SearchDomain.AddedAction.TaskScheduleUnit, SearchDomain.AddedAction.TaskText, SearchDomain.AddedAction.TaskAddUnder,
-        SearchDomain.AddedAction.TaskPaths, SearchDomain.AddedAction.CategoryRules, SearchDomain.AddedAction.CategoryAddRule,
-        SearchDomain.AddedAction.AlarmAlert,
-        SearchDomain.AddedAction.TimerAlert, SearchDomain.AddedAction.ReminderAlert,
-        SearchDomain.AddedAction.PeriodCombinations, SearchDomain.AddedAction.HistoryInformation,
-        SearchDomain.AddedAction.HistoryRules,
-        SearchDomain.AddedAction.TaskFulfilment, SearchDomain.AddedAction.TaskFulfilledBy, SearchDomain.AddedAction.TaskCellCategories,
-        SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaLookTimes,
-        SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaResilience,
-        SearchDomain.AddedAction.QuotaLoops, SearchDomain.AddedAction.QuotaAmount,
-        SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.DragOnCalendar,
-        SearchDomain.AddedAction.CalendarBlocks,
+/**
+ * **The title of a micro group** of the actions section — one action, or a group of them inside a group of elements
+ * (the default configuration of a kind). ONE style for all of them (user rule 2026-10-11: *"right now Configuration is
+ * bold, but not Add to the calendar"*): the label's medium weight, in the text's own colour — a group of ELEMENTS
+ * keeps the accent colour, so the two levels still read apart.
+ */
+@Composable
+private fun MicroGroupTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
     )
+}
 
 /** The actions that ARE a control of the app the menu already knows ([MenuControl]): added as that control. */
 private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
@@ -952,6 +949,13 @@ private fun AddedActionEditor(
         // --- The reminders' settings: ONE field each, over every added reminder ----------------------------------
         SearchDomain.AddedAction.ReminderEvery -> {
             val reminders = SearchDomain.addedReminders(state, added)
+            // `docs/scheduler_input_requirements.md`: a tag moved off the cadence is its exception, said under it.
+            val exceptions =
+                remember(state.panels, state.chores, reminders) {
+                    val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+                    reminders.flatMap { org.example.project.scheduler.domain.PatternExceptions.ofReminder(state, it.id, tz) }
+                }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SharedTextField(
                     items = reminders,
@@ -972,6 +976,8 @@ private fun AddedActionEditor(
                         },
                     )
                 }
+            }
+            PatternExceptionsNote(exceptions)
             }
         }
         SearchDomain.AddedAction.ReminderTime ->

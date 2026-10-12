@@ -1115,4 +1115,31 @@ class SearchAddedElementsTest {
         assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.TaskDuplicate, keys))
         assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.OpenEach, keys))
     }
+
+    /**
+     * User rule 2026-10-11: *"The search bar in the action bar sort the micro groups with any text, not just the title
+     * of the micro groups. But only the microgroup are sorted, not inside the microgroups."*
+     */
+    @Test
+    fun the_actions_search_bar_answers_to_any_text_of_an_action_its_title_first() {
+        // "ends" is a field of two actions and the title of none: they come first, in the order they stood in.
+        val general = listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.ClearList)
+        assertEquals(listOf(SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.ClearList), SearchDomain.sortedByActionSearch(general, "ends"))
+        // A button's name finds its action: "Remove all" is ClearList's button, "remove" also a button of the blocks.
+        assertEquals(SearchDomain.AddedAction.ClearList, SearchDomain.sortedByActionSearch(general, "remove all").first())
+        assertEquals(listOf(SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.ClearList), SearchDomain.sortedByActionSearch(general, "remove").take(2).sortedBy { it.ordinal })
+        // A title always beats a text inside: "alert" is a title, "sound" only a word of it; "delete" a title too.
+        val alarm = listOf(SearchDomain.AddedAction.AlarmTime, SearchDomain.AddedAction.AlarmRingsFor, SearchDomain.AddedAction.AlarmAlert, SearchDomain.AddedAction.AlarmDelete)
+        assertEquals(SearchDomain.AddedAction.AlarmAlert, SearchDomain.sortedByActionSearch(alarm, "vibrate").first())
+        assertEquals(SearchDomain.AddedAction.AlarmDelete, SearchDomain.sortedByActionSearch(alarm, "bin").first())
+        assertEquals(0, SearchDomain.actionSearchRank(SearchDomain.AddedAction.AlarmAlert, "alert"))
+        assertEquals(4, SearchDomain.actionSearchRank(SearchDomain.AddedAction.AlarmAlert, "voice"))
+        assertEquals(5, SearchDomain.actionSearchRank(SearchDomain.AddedAction.AlarmAlert, "vibrate sound"))
+        assertNull(SearchDomain.actionSearchRank(SearchDomain.AddedAction.AlarmTime, "vibrate"))
+        // What the calendar's "add…" opens with still puts "Add to the calendar" first, by its title.
+        assertEquals(SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.sortedByActionSearch(general, SearchDomain.CALENDAR_ADD_ACTION_SEARCH).first())
+        // Nothing typed, nothing moved; nothing answering, nothing moved.
+        assertEquals(general, SearchDomain.sortedByActionSearch(general, " "))
+        assertEquals(general, SearchDomain.sortedByActionSearch(general, "zzz"))
+    }
 }

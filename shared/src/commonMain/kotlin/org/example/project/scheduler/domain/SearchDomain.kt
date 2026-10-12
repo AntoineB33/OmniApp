@@ -2859,13 +2859,91 @@ object SearchDomain {
 
     /**
      * User rule 2026-10-11: *"The search bar sorts the micro groups by the matching of the micro group titles, but
-     * doesn't sort the macro groups."* — [actions] (one macro group's micro groups) with those whose title answers
-     * [search] first, the best answer first; the rest after them, and every tie, in the order they stood in.
+     * doesn't sort the macro groups."* — [actions] (one macro group's micro groups) with those that answer [search]
+     * first, the best answer first (a title before any other text of the action, [actionSearchRank]); the rest after
+     * them, and every tie, in the order they stood in.
      */
     fun sortedByActionSearch(actions: List<AddedAction>, search: String): List<AddedAction> {
         if (search.isBlank()) return actions
-        return actions.sortedBy { actionSearchRank(it.label, search) ?: Int.MAX_VALUE }
+        return actions.sortedBy { actionSearchRank(it, search) ?: Int.MAX_VALUE }
     }
+
+    /**
+     * User rule 2026-10-11: *"The search bar in the action bar sort the micro groups with any text, not just the title
+     * of the micro groups. But only the microgroup are sorted, not inside the microgroups."* — how well the action
+     * [action] answers [search]: by its title first ([actionSearchRank] of the label, 0–3), else by ANY text it shows
+     * ([actionSearchWords]: 4 = it holds the search as typed, 5 = it holds every word of it); null = no text of it
+     * answers. A title always beats a text inside, so "ends" still puts an action CALLED that before one with an
+     * "ends" field. Nothing inside an action is reordered: the rank is the action's.
+     */
+    fun actionSearchRank(action: AddedAction, search: String): Int? {
+        actionSearchRank(action.label, search)?.let { return it }
+        val q = search.trim().lowercase()
+        if (q.isEmpty()) return null
+        val text = actionSearchWords(action).lowercase()
+        if (text.isEmpty()) return null
+        if (q in text) return 4
+        val words = q.split(' ', '\t').filter { it.isNotEmpty() }
+        return if (words.isNotEmpty() && words.all { it in text }) 5 else null
+    }
+
+    /**
+     * **The texts an action shows under its title** — its buttons, the labels of its fields, its notes — for the
+     * actions section's search bar ([actionSearchRank]). Kept here, beside the titles, because the search is the
+     * domain's: an editor that gains a button or a label gains its word here (`SearchAddedElementsTest`). NOT in it:
+     * what depends on the account — the names of the added elements, of their blocks, the values in the fields.
+     */
+    fun actionSearchWords(action: AddedAction): String =
+        when (action) {
+            AddedAction.OpenEach -> "open"
+            AddedAction.ClearList -> "remove all"
+            AddedAction.CreationSearchAll -> "every search"
+            AddedAction.PlaceOnCalendar -> "starts ends day at now right-click time after the start ends on add default length"
+            AddedAction.DragOnCalendar -> "drag hold the button block follows the pointer"
+            AddedAction.CalendarBlocks -> "choose blocks select all remove drag on the calendar starts ends at day"
+            AddedAction.TaskMinimumTime -> "min minutes apply"
+            AddedAction.TaskStartNow -> "start"
+            AddedAction.TaskEdit -> "edit"
+            AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar -> "go"
+            AddedAction.TaskCopyIds -> "copy"
+            AddedAction.TaskDeepCopy -> "deep copy"
+            AddedAction.TaskCollapseSubtrees -> "collapse"
+            AddedAction.TaskAddDefaultSubtree -> "add default sub-tree"
+            AddedAction.TaskResilience -> "period apply"
+            AddedAction.TaskScheduleUnit, AddedAction.TaskText -> "apply"
+            AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"
+            AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
+            AddedAction.SoundVolume -> "sound %"
+            AddedAction.TimerRun, AddedAction.ChronoRun -> "start pause reset all"
+            AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.AlarmNew, AddedAction.TimerNew,
+            AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew -> "new create"
+            AddedAction.TaskDuplicate, AddedAction.CategoryDuplicate, AddedAction.PeriodDuplicate, AddedAction.AlarmDuplicate,
+            AddedAction.TimerDuplicate, AddedAction.ChronoDuplicate, AddedAction.ReminderDuplicate, AddedAction.QuotaDuplicate -> "duplicate copy"
+            AddedAction.HistoryRules -> "copy the set of rules"
+            AddedAction.HistoryInformation -> "copy all"
+            AddedAction.TaskFulfilment -> "tasks add a task fulfils"
+            AddedAction.TaskFulfilledBy -> "set holds"
+            AddedAction.QuotaProgress -> "due by now loop renewal"
+            AddedAction.QuotaLookTimes -> "on the date days from today day at the time it is now due by then loop renewal add a time"
+            AddedAction.QuotaAmount -> "amount unit apply"
+            AddedAction.QuotaLoop -> "week day starts at ends after the start ends on repeats times without end mon tue wed thu fri sat sun"
+            AddedAction.QuotaRestarts -> "runs from 0 to 100 % in a period"
+            AddedAction.QuotaResilience -> "resilience values 100 % in every period not at 100 %"
+            AddedAction.QuotaLoops -> "loop restarts ends day at regular end add a loop"
+            AddedAction.TaskCellCategories -> "task cell categories place"
+            AddedAction.TaskPaths -> "place open task tree"
+            AddedAction.CategoryKind -> "carried by task cells carried by task ids"
+            AddedAction.CategoryName -> "unique rename"
+            AddedAction.CategoryRules, AddedAction.CategoryAddRule -> "rule label"
+            AddedAction.AlarmDelete, AddedAction.TimerDelete, AddedAction.ChronoDelete, AddedAction.QuotaDelete,
+            AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete -> "delete remove bin"
+            AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
+            AddedAction.ReminderConstraint -> "choose none"
+            AddedAction.PeriodDrawing -> "period"
+            AddedAction.PeriodTaskSearch -> "search the tasks"
+            AddedAction.PeriodReset -> "reset"
+            else -> ""
+        }
 
     /** What the actions section's search bar holds when the window is opened by the calendar's "add…". */
     const val CALENDAR_ADD_ACTION_SEARCH: String = "add to calendar"
@@ -3532,6 +3610,7 @@ object SearchDomain {
             days = setOf(date.dayOfWeek),
             onlyOnEpochDay = day,
             skippedEpochDays = emptySet(),
+            isolatedFrom = alarm.id,
         )
         // The dates a year behind are dropped as new ones are added, so the row does not grow for ever.
         val rule = alarm.copy(
@@ -3731,6 +3810,9 @@ object SearchDomain {
     )
 
     private const val BLOCK_ALARM_PREFIX: String = "alarm:"
+
+    /** The id of the block ([CalendarBlock.id]) an isolated ring of the alarm [alarmId] is on the calendar. */
+    fun alarmBlockId(alarmId: String): String = BLOCK_ALARM_PREFIX + alarmId
     private const val BLOCK_TIMER_PREFIX: String = "timer:"
 
     /** Every [CalendarBlock] of the account, in the timeline's order. */

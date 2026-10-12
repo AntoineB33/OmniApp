@@ -795,6 +795,16 @@ private fun AlarmRowEditor(
             alert = row.alert,
             onChange = { onRowChange(row.copy(alert = it), null) },
         )
+        // `docs/scheduler_input_requirements.md`: a ring dragged on the calendar left this alarm — which says so.
+        val account = LocalPatternExceptionState.current
+        val exceptions =
+            remember(account?.alarms, row.id) {
+                val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+                account?.takeUnless { settingsOnly }?.let {
+                    org.example.project.scheduler.domain.PatternExceptions.ofAlarm(it, row.id, tz)
+                }.orEmpty()
+            }
+        PatternExceptionsNote(exceptions)
     }
 }
 

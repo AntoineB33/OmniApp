@@ -871,8 +871,17 @@ suggestions before it was ever entered.
     the micro groups by the matching of the micro group titles, but doesn't sort the macro groups."*;
     `Config.actionSearch`, `SearchDomain.actionSearchRank`, `sortedByActionSearch`, `SearchAddedElementsTest`). A
     macro group is an `ActionGroup`; a micro group is one action under its title, with whatever its editor holds.
+    **Every action is a micro group, and every micro group's title is drawn the same** (user rule 2026-10-11: *"give
+    to every micro group the same typo … right now Configuration is bold, but not Add to the calendar … Put them all
+    in micro groups. A micro group can have only one action."*; `MicroGroupTitle`): the title on its own line, the
+    editor under it — no action sits beside its label any more (`STACKED_ACTIONS` is gone) — and the group inside a
+    group of elements (a kind's default configuration) takes that same title style.
     The ones whose title answers the bar come first, the best answer first (the same words, starts with, contains,
-    holds every word); the rest follow in the order they stood in. **It hides nothing** — that is the configurations
+    holds every word); then the ones ANY OTHER TEXT of which answers it (user rule 2026-10-11: *"sort the micro groups
+    with any text, not just the title … But only the microgroup are sorted, not inside the microgroups"* — a button,
+    a field's label, a note: `SearchDomain.actionSearchWords`, kept beside the titles, so an editor that gains a
+    button gains its word there; not the account's own texts — element names, field values); the rest follow in the
+    order they stood in. Nothing inside an action is reordered. **It hides nothing** — that is the configurations
     window's filter, `Config.actionQuery`, a different field. Opened by the calendar's "add…", the bar holds "add
     to calendar" (`CALENDAR_ADD_ACTION_SEARCH`, in `calendarAddConfig` and where "add…" re-points an open window).
     Local view state (`actionSearch` in the stored configuration, absent = empty).

@@ -676,6 +676,28 @@ Global rules that always apply: `CLAUDE.md`.
     the edit, `scheduler.md` § *An EDIT never plans inside its reducer*). The periods are read as the line left them
     (`afterCrossings`). `stripRecordsUnderPeriod` still runs after the commit and now finds nothing under a period of
     the user's; the engine-start strip of what the OS log says was no screen time is unchanged.
+  - **A pattern's configuration SAYS its exceptions** (`docs/scheduler_input_requirements.md`, last paragraph: *"When
+    an orange outlined block/chip becomes blue outlined, that means that the configuration that created this orange
+    outlined block/chip gets an 'exception' info"*; anomaly 2026-10-11: *"I modified the occurrence of 'Sleep' at
+    11/10/2026, but I don't see the exception info"*). The exception was always STORED — the Sleep schedule skips the
+    night (`skippedWakeEpochDays` / `skippedBeforeBedEpochDays`), a repeating panel the occurrence
+    (`PanelRepeat.skipped`), an alarm the day (`skippedEpochDays`) — and said nowhere. Now the block a hand makes of
+    an occurrence remembers which one it was (`TaskPanel.patternOrigin`, `AlarmEntry.isolatedFrom`; authoritative,
+    persisted, synced with the row), and ONE funnel lists a configuration's exceptions with where each went
+    (`PatternExceptions.ofSleep` / `ofPanel` / `ofAlarm`, `text`: `11/10/2026 05:15–12:15 → 06:15–12:15 (1 h
+    later)`, or `→ removed` once no block of it stands). Drawn by `PatternExceptionsNote` under the configuration's
+    fields — **each exception AS THE BLOCK IT IS, the way "Blocks on the calendar" draws a block** (user rule
+    2026-10-11; `CalendarBlockFields`, the one drawing of both; `Entry.blockId` names the block that list holds): its
+    name, its start and its end in fields that edit it on the calendar, under a line saying what it stands instead
+    of. An occurrence no block is left of stays a line of text. Wherever the fields are drawn: the Sleep schedule's fields (the calendar's configuration section, the Sleep
+    window, a lateral-menu control — `SleepScheduleFields`), an alarm's row, and the "Repeat every" field of both
+    edit windows, and a reminder's "Every" (the Search window's action and the reminders manager's row —
+    `ofReminder`: a tag of the cadence pinned away from its slot, which keeps the id of the day it stood for, so no
+    link is stored for it — a tag under the older id form, `chore/<reminder>/<offset>`, names no day and is read as
+    an occurrence of the day it stands on; anomaly 2026-10-11, *"changed 14:50 to 14:51, but I didn't see an exception info under the
+    Every 1 day configuration"*). An exception made before the link existed reads where the user's period of that kind stands over
+    the occurrence's span. NOT covered: a timer's ring moved on the calendar (`calendarPlaced`) — a timer rings once,
+    so the moved ring is the timer itself, with no occurrence left behind to list.
   - **Bounded** (`TimelineLevels.purged`, at every calendar commit): a hidden BLOCK piece wholly more than 90 days
     behind the line is dropped, and never more than 500 are kept (`server-quota.md`). Hidden WORK is never dropped: it
     is the record itself, moved, and no larger than it was there.

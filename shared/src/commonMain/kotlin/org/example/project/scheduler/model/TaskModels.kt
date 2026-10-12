@@ -360,6 +360,11 @@ data class AlarmEntry(
      * each one an occurrence the user dragged away into an isolated row ([onlyOnEpochDay]).
      */
     val skippedEpochDays: Set<Long> = emptySet(),
+    /**
+     * On an isolated ring ([onlyOnEpochDay]): the id of the alarm whose occurrence it was — what lets that alarm say
+     * where its exception went ([org.example.project.scheduler.domain.PatternExceptions]). Blank otherwise.
+     */
+    val isolatedFrom: String = "",
 ) {
     /** An isolated ring ([onlyOnEpochDay]) rather than a rule. */
     val isolated: Boolean get() = onlyOnEpochDay != null
@@ -992,6 +997,15 @@ data class TaskPanel(
      * like one (nothing else remembers the choice) but drawn with no outline, until a hand edits it.
      */
     val tmFill: Boolean = false,
+    /**
+     * `docs/scheduler_input_requirements.md`: *"When an orange outlined block/chip becomes blue outlined, that means
+     * that the configuration that created this orange outlined block/chip gets an 'exception' info"*. **The occurrence
+     * this block was, before a hand edited it out of its pattern** — its id there: a night of the Sleep schedule
+     * (`sleep/<wake day>`), its period before bed, an occurrence of a repeating panel (`repeat/<panel>/<k>`). Blank on
+     * every other block. What lets the pattern's configuration say where its exception went
+     * ([org.example.project.scheduler.domain.PatternExceptions]). Authoritative, persisted and synced with the panel.
+     */
+    val patternOrigin: String = "",
 ) {
     /** The block this panel is, or is a piece of ([tmOrigin]). */
     val tmBlockId: String get() = tmOrigin.ifBlank { id }

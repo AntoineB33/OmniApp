@@ -296,3 +296,78 @@ internal fun SearchBarCross(text: String, onClear: () -> Unit) {
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
+
+/**
+ * The account's state, for the configurations that say their **exceptions** ([PatternExceptionsNote]): the Sleep
+ * schedule's fields and an alarm's row are drawn in several windows from the configuration alone, and an exception is
+ * read off more than it (the block the hand made of the occurrence). `App` provides it; null outside the app (tests).
+ */
+internal val LocalPatternExceptionState =
+    androidx.compose.runtime.compositionLocalOf<org.example.project.scheduler.state.SchedulerState?> { null }
+
+/** How the exceptions' fields write: the app's dispatch. `App` provides it; null outside the app (the fields then only read). */
+internal val LocalPatternExceptionDispatch =
+    androidx.compose.runtime.compositionLocalOf<((org.example.project.scheduler.state.SchedulerIntent) -> Unit)?> { null }
+
+/** How many exceptions a configuration lists before it only counts the earlier ones. */
+private const val EXCEPTIONS_SHOWN: Int = 6
+
+/**
+ * `docs/scheduler_input_requirements.md`, its last paragraph: *"the configuration that created this orange outlined
+ * block/chip gets an 'exception' info"*. **The exceptions of a configuration, under its fields** — one per occurrence
+ * a hand edited out of the pattern: where the pattern would have laid it, then THE BLOCK IT IS NOW, drawn as "Blocks
+ * on the calendar" draws a block ([CalendarBlockFields], user rule 2026-10-11) — its fields edit it on the calendar.
+ * An occurrence no block is left of reads "removed". The latest [EXCEPTIONS_SHOWN], the earlier ones counted.
+ * Nothing where the pattern has none.
+ */
+@Composable
+internal fun PatternExceptionsNote(
+    entries: List<org.example.project.scheduler.domain.PatternExceptions.Entry>,
+    modifier: Modifier = Modifier,
+) {
+    if (entries.isEmpty()) return
+    val state = LocalPatternExceptionState.current
+    val dispatch = LocalPatternExceptionDispatch.current
+    val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+    val now = org.example.project.scheduler.state.SchedulerReducer.clock.nowMillis()
+    val today = localOf(now, tz).date
+    val blocks =
+        remember(state?.panels, state?.alarms, state?.timers) {
+            state?.let { org.example.project.scheduler.domain.SearchDomain.calendarBlocks(it, tz) }.orEmpty().associateBy { it.id }
+        }
+    val labelled = org.example.project.scheduler.domain.PatternExceptions.labelled(entries)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            if (entries.size == 1) "Exception" else "Exceptions (${entries.size})",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val earlier = entries.size - EXCEPTIONS_SHOWN
+        if (earlier > 0) {
+            Text("… and $earlier earlier", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        for (entry in entries.takeLast(EXCEPTIONS_SHOWN)) {
+            val block = entry.blockId?.let(blocks::get)
+            if (block == null || state == null) {
+                Text(
+                    org.example.project.scheduler.domain.PatternExceptions.text(entry, tz, labelled),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                continue
+            }
+            androidx.compose.runtime.key(block.id) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "instead of " + org.example.project.scheduler.domain.PatternExceptions.occurrenceText(entry, tz, labelled),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CalendarBlockFields(block, block.startMillis, block.endMillis, block.startMillis, block.endMillis, today, tz) { start, end ->
+                        org.example.project.scheduler.domain.SearchDomain.blockEditIntent(state, block, start, end, now, tz)?.let { dispatch?.invoke(it) }
+                    }
+                }
+            }
+        }
+    }
+}

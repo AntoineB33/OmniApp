@@ -559,6 +559,7 @@ object SchedulerStateCodec {
                         tmOrigin = it.tmOrigin,
                         tmShare = it.tmShare,
                         tmFill = it.tmFill,
+                        patternOrigin = it.patternOrigin,
                     )
                 },
             hiddenPanels = hiddenPanels.map { it.toPersistedHidden() },
@@ -977,6 +978,7 @@ object SchedulerStateCodec {
             tmOrigin = tmOrigin,
             tmShare = tmShare,
             tmFill = tmFill,
+            patternOrigin = patternOrigin,
         )
 
     private fun org.example.project.scheduler.model.HiddenPanel.toPersistedHidden(): PersistedHiddenPanel =
@@ -1236,6 +1238,7 @@ object SchedulerStateCodec {
                         tmOrigin = it.tmOrigin,
                         tmShare = it.tmShare,
                         tmFill = it.tmFill,
+                        patternOrigin = it.patternOrigin,
                     )
                 },
             hiddenPanels = hiddenPanels.map { it.toHidden() },
@@ -1592,6 +1595,7 @@ object SchedulerStateCodec {
             tmOrigin = tmOrigin,
             tmShare = tmShare,
             tmFill = tmFill,
+            patternOrigin = patternOrigin,
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -2034,6 +2038,7 @@ private fun AlarmEntry.toPersisted(): PersistedAlarm =
         onlyOnEpochDay = onlyOnEpochDay,
         // Sorted for the same reason as the days.
         skippedEpochDays = skippedEpochDays.sorted(),
+        isolatedFrom = isolatedFrom,
     )
 
 /** The inverse of [AlarmEntry.toPersisted]. A blank id is minted by the caller's `assignAlarmIds`. */
@@ -2052,6 +2057,7 @@ private fun PersistedAlarm.toAlarmEntry(): AlarmEntry =
         enabled = enabled,
         onlyOnEpochDay = onlyOnEpochDay,
         skippedEpochDays = skippedEpochDays.toSet(),
+        isolatedFrom = isolatedFrom,
     )
 
 /** PRD §18 Timers: the persisted form of one timer row — [AlarmEntry.toPersisted]'s rule for the timers. */
@@ -2134,6 +2140,8 @@ private data class PersistedAlarm(
     val onlyOnEpochDay: Long? = null,
     /** [AlarmEntry.skippedEpochDays]. New 2026-10-02: absent from an older payload, which skips no date. */
     val skippedEpochDays: List<Long> = emptyList(),
+    /** [AlarmEntry.isolatedFrom]. New 2026-10-11: absent from an older payload, an isolated ring that names no rule. */
+    val isolatedFrom: String = "",
 )
 
 /**
@@ -2693,6 +2701,8 @@ private data class PersistedPanel(
     val tmShare: Boolean = false,
     /** [org.example.project.scheduler.model.TaskPanel.tmFill]; false (and absent before) is a block a hand placed. */
     val tmFill: Boolean = false,
+    /** [org.example.project.scheduler.model.TaskPanel.patternOrigin]. New 2026-10-11: absent before, a block of no pattern. */
+    val patternOrigin: String = "",
 )
 
 /**
