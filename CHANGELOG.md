@@ -31,6 +31,17 @@ now" — "Would end", the clock plus its countdown (`TimerDomain.endMomentMillis
 "'Blocks on the calendar' should be removed when there is only timers in the added
 elements list" — no longer listed then (`actionsFor`). Client only. Not tried on screen.
 
+### A brief wake between two sleeps lost the second sleep — 2026-10-12
+
+Anomaly: `Get-SleepCycles.ps1` read "down 11:32:08, up 12:51:35" where account 3 had the computer unlocked from
+12:09 on. The machine, in standby since 11:32:08, woke at 12:09:11, was hibernated 26 s later (`42`) and resumed at
+12:51:35 with the usual `506` just before its `507`. `WindowsPowerLog.debounce` cancelled the 26-second wake against
+the hibernation (rightly), then put the WAKE back when that `506` "repeated the canceller" — its provisional-
+cancellation rule, written symmetric — and the hibernation was gone. At its next start the app walked 12:09:24 →
+12:53:00 in mode 1 "where the device was unlocked", two 20 s breaks conducted there. Now only a cancelled DOWN is
+restored (`WindowsPowerLogTest`, the machine's own events). Checked against the real log: 11:32:08 → 12:51:35.
+Client only. What that walk already banked over the stretch is not rewritten by this.
+
 ### "Lowest countdown": one row per timer, its buttons on the title; a timer's default in the actions — 2026-10-12
 
 The user: "add a button to vertically compact the timers shown in this micro group. It would put the fields elapsed

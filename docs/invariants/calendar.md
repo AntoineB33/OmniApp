@@ -25,7 +25,10 @@ Global rules that always apply: `CLAUDE.md`.
   alternates — but the cancellation is **provisional**: a later event repeating the state the bounce claimed
   to have returned to proves the return never happened, so the pair is restored and re-tested (two wakes with
   no sleep between them is not something the machine can do; dropping the pair lost a real standby and banked
-  records straight through it). Both window edges are handled: an open absence clips to `until`, and the state the window
+  records straight through it). **Only a cancelled DOWN is ever restored, never a cancelled wake** (anomaly
+  2026-10-12): Windows logs a `506` just before the `507` of an ordinary resume, so a down following a brief
+  wake-then-sleep is a duplicate, not a proof — restoring the wake there dropped the hibernation that had cancelled
+  it, and the computer read as unlocked for the 42 minutes it was off. Both window edges are handled: an open absence clips to `until`, and the state the window
   *opens* in comes from events fetched BEFORE it. A fourth rule is about the QUERY rather than the
   answer: **the child's stdout is DRAINED while the process runs**, never after it exits — a pipe holds
   4 KB on Windows and a process that fills it blocks until somebody reads, so waiting first deadlocks the

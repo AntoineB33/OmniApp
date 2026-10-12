@@ -243,6 +243,13 @@ internal object WindowsPowerLog {
      * machine then read as time spent at the desk, which is precisely the reading the record bank must not
      * get. The restored pair is still re-tested against [DEBOUNCE_MILLIS], so a genuinely brief flip stays
      * jitter.
+     *
+     * **Only a cancelled DOWN is ever put back** (anomaly 2026-10-12). The rule was written symmetric, and the
+     * mirror lost a sleep the same way: in standby since 11:32:08, the machine woke at 12:09:11 (`507`), was
+     * hibernated 26 s later (`42` @12:09:37 — which cancels that wake, rightly: under a minute), and resumed at
+     * 12:51:35 with the usual `506` then `507`. That `506` "repeated the canceller", so the 26-second wake was
+     * restored — and the hibernation that had cancelled it was gone: the computer read as unlocked from 12:09:11
+     * on, 42 minutes of on-screen time and two conducted 20 s breaks walked over a machine that was off.
      */
     fun debounce(events: List<PowerTransition>): List<PowerTransition> {
         val kept = ArrayList<PowerTransition>(events.size)
@@ -251,8 +258,12 @@ internal object WindowsPowerLog {
         var cancelledBy: Boolean? = null
         for (event in events) {
             if (cancelled != null) {
-                // Same polarity as the canceller ⇒ the state never returned; undo the cancellation.
-                if (cancelledBy == event.down) kept.add(cancelled)
+                // Same polarity as the canceller ⇒ the state never returned; undo the cancellation. ONLY of a DOWN
+                // (two wakes with no sleep between them is not something the machine can do). The mirror case — a
+                // brief wake cancelled by the sleep that ended it, then another down — is not one: Windows logs a
+                // `506` just before the `507` of an ordinary resume, so a down while down is the duplicate the
+                // rule below drops. Restoring the wake there kept the wake and LOST the sleep that cancelled it.
+                if (cancelledBy == event.down && cancelled.down) kept.add(cancelled)
                 cancelled = null
                 cancelledBy = null
             }

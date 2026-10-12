@@ -128,6 +128,34 @@ class WindowsPowerLogTest {
     }
 
     @Test
+    fun a_brief_wake_between_two_sleeps_does_not_lose_the_second_sleep() {
+        // Anomaly 2026-10-12, the release machine's own log (times of day as offsets from 11:32:08.661): standby,
+        // a resume bounce at 12:08:59, a real wake at 12:09:11, hibernated 26 s later, resumed at 12:51:35 with
+        // the usual `506` just before the `507`. The 26-second wake is jitter and the machine was away the whole
+        // time — what `Get-SleepCycles.ps1` reports. The symmetric restoration put the brief wake back when that
+        // last `506` "repeated" the hibernation that had cancelled it, and the hibernation was lost: the computer
+        // read as unlocked from 12:09:11 on.
+        val sleep = t0
+        fun at(minutes: Int, seconds: Int, millis: Int) = sleep + (minutes - 32) * minute + (seconds - 8) * 1_000L + (millis - 661)
+        val read =
+            WindowsPowerLog.transitions(
+                lines(
+                    sleep to 506,
+                    at(68, 59, 490) to 507,
+                    at(68, 59, 491) to 506,
+                    at(69, 11, 714) to 507,
+                    at(69, 37, 878) to 42,
+                    at(111, 35, 236) to 506,
+                    at(111, 35, 600) to 507,
+                ),
+            )!!
+        assertEquals(listOf(DeviceSleepGap(sleep, at(111, 35, 600))), WindowsPowerLog.intervals(read))
+        // The shape alone: up, down within the minute, down again much later, and the wake that ends it.
+        val kept = WindowsPowerLog.debounce(listOf(down(t0), up(t0 + hour), down(t0 + hour + 26_000), down(t0 + 2 * hour), up(t0 + 2 * hour + 400)))
+        assertEquals(listOf(down(t0), up(t0 + 2 * hour + 400)), kept)
+    }
+
+    @Test
     fun a_restored_bounce_is_still_re_tested_against_the_debounce() {
         // The restoration is not a licence to invent short absences: the recovered pair goes back through
         // the same minimum-dwell test, so a genuinely brief flip stays jitter and claims nothing.
