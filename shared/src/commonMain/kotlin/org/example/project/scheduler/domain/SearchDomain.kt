@@ -412,6 +412,11 @@ object SearchDomain {
          * the lowest countdown does. One no longer added is not shown.
          */
         val pickedTimers: Set<String> = emptySet(),
+        /**
+         * User rule 2026-10-12: the "Lowest countdown" action draws each timer it shows on ONE row — its countdown,
+         * its buttons, Elapsed and when it ends side by side — instead of a block of three lines.
+         */
+        val compactTimers: Boolean = false,
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
         /**
@@ -473,6 +478,7 @@ object SearchDomain {
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
                     pickedTimers = pickedTimers.sorted(),
+                    compactTimers = compactTimers,
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
@@ -562,6 +568,7 @@ object SearchDomain {
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
                     pickedTimers = stored.pickedTimers.toSet(),
+                    compactTimers = stored.compactTimers,
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
                     placement = Placement(
@@ -1296,6 +1303,8 @@ object SearchDomain {
         val pickedBlocks: List<String> = emptyList(),
         /** New 2026-10-12: absent = no timer picked in "Lowest countdown" (it then shows the lowest one). */
         val pickedTimers: List<String> = emptyList(),
+        /** New 2026-10-12: absent = each timer of "Lowest countdown" as a block, not on one row. */
+        val compactTimers: Boolean = false,
         val resiliencePeriod: String? = null,
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
@@ -2720,6 +2729,9 @@ object SearchDomain {
         setOf(
             AddedAction.QuotaNew, AddedAction.QuotaTitle, AddedAction.QuotaAmount, AddedAction.QuotaLoop,
             AddedAction.QuotaRestarts, AddedAction.QuotaResilience,
+            // User rule 2026-10-12: a timer's settings — what a new timer starts with ([SchedulerState.newTimerDefaults]),
+            // edited in the group inside the timers' ([actionGroups]); it had a window of its own behind a button.
+            AddedAction.TimerDuration, AddedAction.TimerRingsFor, AddedAction.TimerBelowZero, AddedAction.TimerAlert,
         )
 
     /**
@@ -2995,7 +3007,8 @@ object SearchDomain {
         fun bulk(actions: List<AddedAction>) = actions.filter { !isSetAction(it) && it !in PER_ELEMENT_ACTIONS }
         // The default configuration of [kind], as a group inside the group of several of its elements.
         fun defaults(kind: Kind?, actions: List<AddedAction>): List<ActionGroup> {
-            if (kind == null || defaultConfigurationAdded(added, kind)) return emptyList()
+            // Not where the kind's creation row is added and acted on as the kind: it then has its own group.
+            if (kind == null || added.any { it.kind == Kind.Creation && actionKindOf(it) == kind }) return emptyList()
             val editing = actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS && !isSetAction(it) }
             if (editing.isEmpty()) return emptyList()
             val row = ItemResult(Kind.Creation, kind.name, "New " + kind.label, "")
@@ -3010,7 +3023,10 @@ object SearchDomain {
             val mine = reached.map { (kind, actions) -> of(lone, kind, actions) }
             val actions =
                 mine.flatMap(::own) + mine.flatMap(::set) + general.filter { it != AddedAction.ClearList && it != AddedAction.OpenEach }
-            if (actions.isNotEmpty()) out += ActionGroup(actionKindOf(lone), added, actions.distinct(), element = true)
+            // The default configuration of its kind is inside its group: it is the only one of it (user rule 2026-10-12).
+            if (actions.isNotEmpty()) {
+                out += ActionGroup(actionKindOf(lone), added, actions.distinct(), element = true, inner = reached.flatMap { defaults(it.first, it.second) })
+            }
         } else {
             val whole = reached.filter { membersOf(it.first).size == added.size }
             val wide = general + whole.flatMap { set(it.second) } + whole.flatMap { bulk(it.second) }
@@ -3029,7 +3045,9 @@ object SearchDomain {
                 val actions =
                     mine.flatMap { own(of(element, it.first, it.second)) } +
                         mine.filter { membersOf(it.first).size == 1 }.flatMap { set(of(element, it.first, it.second)) }
-                if (actions.isNotEmpty()) out += ActionGroup(actionKindOf(element), listOf(element), actions.distinct(), element = true)
+                // …and the default configuration of a kind it is the only one of (the others have it in their group).
+                val inner = mine.filter { membersOf(it.first).size == 1 }.flatMap { defaults(it.first, it.second) }
+                if (actions.isNotEmpty()) out += ActionGroup(actionKindOf(element), listOf(element), actions.distinct(), element = true, inner = inner)
             }
         }
         kinds.filter { membersOf(it.first).isEmpty() }.forEach { (kind, actions) -> out += ActionGroup(kind, emptyList(), actions) }
@@ -3135,6 +3153,16 @@ object SearchDomain {
         val todayStart = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
             .atStartOfDayIn(timeZone).toEpochMilliseconds()
         return listOf(SchedulerIntent.SetChores(next, todayStart, nowMillis))
+    }
+
+    /**
+     * What the timers' SETTINGS actions edit: the added timers — led by the **default configuration** of a new timer
+     * (wearing [DEFAULT_CONFIGURATION_ID]) where the "New timer" row is among [added], which is what the group of the
+     * default configuration hands them ([actionGroups]). Never the run's actions: a default has none.
+     */
+    fun addedTimersOrDefault(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.TimerEntry> {
+        val own = addedTimers(state, added)
+        return if (defaultConfigurationAdded(added, Kind.Timer)) listOf(state.newTimerDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
     }
 
     /** The added timers the account still holds, in the list's order. */
@@ -4311,7 +4339,15 @@ object SearchDomain {
             is AddedCommand.TimersEdit -> {
                 val ids = idsOf(Kind.Timer)
                 val next = state.timers.map { if (it.id in ids) command.change(it) else it }
-                if (next == state.timers) emptyList() else listOf(SchedulerIntent.SetTimers(next, command.editKey))
+                // The default configuration is its own setting, not a row of the list ([addedTimersOrDefault]).
+                val default =
+                    if (!defaultConfigurationAdded(added, Kind.Timer)) null
+                    else command.change(state.newTimerDefaults.copy(id = DEFAULT_CONFIGURATION_ID)).let(NewElementDefaults::timerDefaults)
+                        .takeIf { it != state.newTimerDefaults }
+                listOfNotNull(
+                    default?.let { SchedulerIntent.SetNewTimerDefaults(it) },
+                    SchedulerIntent.SetTimers(next, command.editKey).takeIf { next != state.timers },
+                )
             }
             is AddedCommand.RemindersEdit -> {
                 val ids = idsOf(Kind.Reminder)

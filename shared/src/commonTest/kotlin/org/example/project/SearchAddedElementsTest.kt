@@ -938,9 +938,37 @@ class SearchAddedElementsTest {
         // It is a timer's run, for the timers picked in its drop-down — which ones is kept with the window's
         // configuration.
         assertEquals("Lowest countdown", lowest.label)
-        val picking = SearchDomain.Config(pickedTimers = setOf("t2", "t4"))
+        val picking = SearchDomain.Config(pickedTimers = setOf("t2", "t4"), compactTimers = true)
         assertEquals(picking, SearchDomain.Config.decode(picking.encode()))
         assertEquals(emptySet(), SearchDomain.Config.decode("""{"query":"x"}""")!!.pickedTimers, "a configuration written before it")
+        assertEquals(false, SearchDomain.Config.decode("""{"query":"x"}""")!!.compactTimers)
+
+        // User rule 2026-10-12: "The actions to define the default configurations of a timer are in the macro group
+        // that gathers all timers, or in the group of the timer if there is only one timer in the added elements list."
+        val settings = listOf(SearchDomain.AddedAction.TimerDuration, SearchDomain.AddedAction.TimerRingsFor, SearchDomain.AddedAction.TimerBelowZero, SearchDomain.AddedAction.TimerAlert)
+        fun defaultsOf(group: SearchDomain.ActionGroup) = group.inner.filter { it.kind == SearchDomain.Kind.Timer }
+        assertEquals(listOf(settings), defaultsOf(four.first()).map { it.actions })
+        assertEquals("Default configuration of a new timer", defaultsOf(four.first()).single().title)
+        assertTrue(four.drop(1).all { defaultsOf(it).isEmpty() }, "several timers: in their group only")
+        assertEquals(listOf(settings), defaultsOf(groups(listOf(timer("t1"))).single()).map { it.actions }, "one timer alone: in its group")
+        val beside = groups(listOf(timer("t1"), SearchDomain.ItemResult(SearchDomain.Kind.Alarm, "a1", "Wake", "")))
+        assertEquals(listOf(settings), beside.single { it.element && it.kind == SearchDomain.Kind.Timer }.let(::defaultsOf).map { it.actions })
+
+        // Those actions read and write the DEFAULT there: the group hands them the "New timer" row, not a timer.
+        val one = org.example.project.scheduler.model.TimerEntry(id = "t1", durationSeconds = 60)
+        val s = account().copy(timers = listOf(one))
+        val row = defaultsOf(four.first()).single().members
+        assertEquals(listOf(SearchDomain.DEFAULT_CONFIGURATION_ID), SearchDomain.addedTimersOrDefault(s, row).map { it.id })
+        assertEquals(s.newTimerDefaults.durationSeconds, SearchDomain.addedTimersOrDefault(s, row).single().durationSeconds)
+        val edited = SearchDomain.addedIntents(s, row, SearchDomain.AddedCommand.TimersEdit { it.copy(durationSeconds = 900) }, 0L).fold(s, ::r)
+        assertEquals(900, edited.newTimerDefaults.durationSeconds)
+        assertEquals("", edited.newTimerDefaults.id, "a default has no identity")
+        assertEquals(listOf(one), edited.timers, "no timer of the account is touched")
+        // A timer's own field leaves the default alone.
+        val own = SearchDomain.resolve(s, listOf("Timer/t1"))
+        val ownEdit = SearchDomain.addedIntents(s, own, SearchDomain.AddedCommand.TimersEdit { it.copy(durationSeconds = 900) }, 0L).fold(s, ::r)
+        assertEquals(s.newTimerDefaults, ownEdit.newTimerDefaults)
+        assertEquals(900, ownEdit.timers.single().durationSeconds)
         assertTrue(four.drop(1).none { lowest in it.actions }, "not in a timer's own group")
         assertTrue(four.drop(1).all { SearchDomain.AddedAction.TimerRun in it.actions })
         assertTrue(groups(listOf(timer("t1"))).none { lowest in it.actions }, "one timer alone: its run says its countdown")

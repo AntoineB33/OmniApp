@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -189,6 +190,8 @@ fun AlarmWindow(
      * shared field each over every added timer, so drawing them here again would be a second way to edit them.
      */
     embeddedRunOnly: Boolean = false,
+    /** With [embeddedRunOnly]: each timer's run on ONE row ([TimerRowEditor]'s `oneRow`). */
+    embeddedCompact: Boolean = false,
 ) {
     val embedded = embeddedSubjects != null
     val frame =
@@ -488,6 +491,7 @@ fun AlarmWindow(
                     nudgeButtons = only == null,
                     showElapsed = only != null,
                     runOnly = embeddedRunOnly,
+                    oneRow = embeddedRunOnly && embeddedCompact,
                     onRemove = {
                         timerRows.removeAt(index)
                         pushTimers()
@@ -578,10 +582,10 @@ fun AlarmWindow(
                     onShownChange(next)
                 }
                 // A chrono has nothing to configure but its name, so no default configuration.
-                onOpenDefaults?.takeIf { current.kind != AlarmWindowSubject.Kind.Chrono }?.let { open ->
-                    WindowLink(if (current.isAlarm) "Default alarm configuration" else "Default timer configuration") {
-                        open(current.isAlarm)
-                    }
+                // …nor a timer's here (user rule 2026-10-12): it is edited in the Search window's actions, in the group
+                // of the timers.
+                onOpenDefaults?.takeIf { current.isAlarm }?.let { open ->
+                    WindowLink("Default alarm configuration") { open(true) }
                 }
             }
             // Embedded: no "+ New" (the Search window's creation rows make one), but the default configuration of
@@ -590,9 +594,6 @@ fun AlarmWindow(
                 onOpenDefaults?.let { open ->
                     if (only.orEmpty().any { it.kind == AlarmWindowSubject.Kind.Alarm }) {
                         WindowLink("Default alarm configuration") { open(true) }
-                    }
-                    if (only.orEmpty().any { it.kind == AlarmWindowSubject.Kind.Timer }) {
-                        WindowLink("Default timer configuration") { open(false) }
                     }
                 }
             }
@@ -902,6 +903,11 @@ private fun TimerRowEditor(
     settingsOnly: Boolean = false,
     /** The opposite: the run alone — the countdown, its controls and Elapsed — and no setting ([AlarmWindow]'s `embeddedRunOnly`). */
     runOnly: Boolean = false,
+    /**
+     * User rule 2026-10-12, with [runOnly]: the run on ONE row — the timer's name, its countdown and buttons, then
+     * Elapsed and when it ends at their right — where it is otherwise three lines.
+     */
+    oneRow: Boolean = false,
 ) {
     val running = entry?.running == true
     val paused = entry?.paused == true
@@ -947,7 +953,8 @@ private fun TimerRowEditor(
     // landed yet, in the instant between adding it and the push.
     val countdownEditable = entry != null
 
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // The row's lines — which [oneRow] lays side by side instead of one under the other.
+    val lines: @Composable () -> Unit = {
         if (!runOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = row.durationText,
@@ -1103,6 +1110,25 @@ private fun TimerRowEditor(
             alert = row.alert,
             onChange = { onRowChange(row.copy(alert = it), null) },
         )
+    }
+    if (oneRow) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+            Text(
+                text = row.label.ifBlank { "Timer" },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.width(90.dp),
+            )
+            lines()
+        }
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { lines() }
     }
 }
 

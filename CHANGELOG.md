@@ -31,6 +31,19 @@ now" — "Would end", the clock plus its countdown (`TimerDomain.endMomentMillis
 "'Blocks on the calendar' should be removed when there is only timers in the added
 elements list" — no longer listed then (`actionsFor`). Client only. Not tried on screen.
 
+### "Lowest countdown": one row per timer, its buttons on the title; a timer's default in the actions — 2026-10-12
+
+The user: "add a button to vertically compact the timers shown in this micro group. It would put the fields elapsed
+and ends at the right side of the buttons pause and reset, so that each timer is shown in one row" — "Compact" /
+"Expand" beside the drop-down (`Config.compactTimers`, `TimerRowEditor(oneRow)`). "Start All, Pause All and Reset All
+buttons must be at the right side of the title 'Lowest countdown', and grayed if the button doesn't do anything" —
+on the title's line, over the timers shown, greyed when their intents are empty. "Remove the 'default timer
+configuration' button. The actions to define the default configurations of a timer are in the macro group that
+gathers all timers, or in the group of the timer if there is only one timer" — the link is gone from a timer's run;
+"Default configuration of a new timer" (Duration, Rings for, Below zero, Alert) is a group inside the timers' group,
+or inside the only timer's (`addedTimersOrDefault`, `SetNewTimerDefaults`). The same now holds for a quota alone in
+its kind. Client only. Not tried on screen.
+
 ### Every action is a micro group, titled alike — 2026-10-11
 
 The user: "In the action section, give to every micro group the same typo (same font for the micro group title etc…).

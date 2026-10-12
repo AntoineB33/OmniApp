@@ -41,7 +41,8 @@ and the codec strip the id, the name, the time of day and a timer's run. Every c
 - They are edited in the element's own editor in its settings-only mode (`AlarmWindow(defaults = true)`,
   `ChoresManagerWindow(defaults = true)`, one row under `DEFAULT_CONFIGURATION_ROW_ID`), a per-object window of
   its own (`ObjectWindowKey.Kind.AlarmDefaults` / `TimerDefaults` / `ReminderDefaults` — ☆ and kept across
-  restarts), opened from the link at the foot of any alarm's, timer's or reminder's own window.
+  restarts), opened from the link at the foot of any alarm's or reminder's own window. A timer's has no link any
+  more (2026-10-12): it is edited in the Search window's actions (below).
 
 ### A timer is an alarm at an ABSOLUTE instant, and that is the whole difference
 
@@ -160,6 +161,18 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   action, never part of "Run"** (anomaly, same day: it was first drawn inside "Run", which is `PER_ELEMENT_ACTIONS`
   — each timer's own group — so with four timers added no group ever drew it); `actionsFor` lists it only with two
   timers or more. `TimerRun` stays each timer's own.
+  **Start all / Pause all / Reset all stand on the action's TITLE line** (the one action that writes its own title:
+  `AddedActionEditor(titled)`), act on the timers shown, and each is greyed when it would do nothing — its intents
+  are empty (Start all with every shown timer running). **"Compact"** (`Config.compactTimers`, local view state)
+  draws each shown timer on ONE row — name, countdown, buttons, Elapsed, end — through `TimerRowEditor(oneRow)`,
+  the same lines laid side by side, never a second row implementation.
+- **A new timer's default configuration is edited in the Search window's actions, with no button and no link**
+  (user rule 2026-10-12; the alarms' and reminders' links stand). It is the group "Default configuration of a new
+  timer" inside the group of the timers — or inside the timer's own group when it is the only timer added
+  (`actionGroups`' `inner`, the quotas' mechanism): Duration, Rings for, Below zero, Alert
+  (`DEFAULT_CONFIGURATION_ACTIONS`). That group hands those editors the "New timer" row, so they read
+  `addedTimersOrDefault` (the default wearing `DEFAULT_CONFIGURATION_ID`) and `TimersEdit` writes
+  `SetNewTimerDefaults` — a setting, not a History Unit. The run's actions never see the default.
 - **Each countdown says the moment it will end, as a day and a time of day** (user rule 2026-10-12, `TimerEndFields`,
   under Elapsed in a timer's run; the ONE reading is `TimerDomain.endMomentMillis`): a RUNNING timer's
   `endsAtMillis` (behind the clock for one counting on below zero); for one that reached zero and went back to idle,

@@ -4138,6 +4138,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // The Search window's actions: the rows of exactly these elements, embedded (AlarmWindow).
                         embeddedSubjects: Set<AlarmWindowSubject>? = null,
                         embeddedRunOnly: Boolean = false,
+                        embeddedCompact: Boolean = false,
                         initialOffset: Offset = Offset.Zero,
                         initialSize: Size = Size.Zero,
                         onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
@@ -4219,6 +4220,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             defaults = defaults,
                             embeddedSubjects = embeddedSubjects,
                             embeddedRunOnly = embeddedRunOnly,
+                            embeddedCompact = embeddedCompact,
                         )
                     }
 
@@ -4420,13 +4422,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenBlocksSearch = { owners ->
                                 openNewWindow(FloatingWindow.Search, SearchDomain.blocksSearchConfig(owners).encode())
                             },
-                            timerRun = { subjects ->
+                            timerRun = { subjects, compact ->
                                 AccountAlarmWindow(
                                     subject = null,
                                     onDismiss = {},
                                     modifier = Modifier,
                                     embeddedSubjects = subjects,
                                     embeddedRunOnly = true,
+                                    embeddedCompact = compact,
                                 )
                             },
                             onCreate = ::createElement,

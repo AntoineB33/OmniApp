@@ -187,7 +187,8 @@ class AddedActionHandlers(
     val onOpenResilienceSearch: (String) -> Unit,
     /** A creation row's "Search every element of the kind": the Search window on that kind ([SearchDomain.kindSearchConfig]). */
     val onOpenKindSearch: (SearchDomain.Kind) -> Unit,
-    val timerRun: @Composable (Set<AlarmWindowSubject>) -> Unit,
+    /** [compact]: each timer on ONE row — countdown, buttons, Elapsed and when it ends side by side. */
+    val timerRun: @Composable (subjects: Set<AlarmWindowSubject>, compact: Boolean) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
     /**
      * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`) — and opened in a
@@ -379,8 +380,10 @@ private fun ActionGroupBlock(
                 // own, in the one title style ([MicroGroupTitle]), and its editor under it. Until then an editor short
                 // enough sat beside its label, in the label's font, and only the tall ones had a title.
                 Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-                    MicroGroupTitle(action.label)
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear)
+                    // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
+                    val ownTitle = action == SearchDomain.AddedAction.TimerLowestCountdown
+                    if (!ownTitle) MicroGroupTitle(action.label)
+                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = ownTitle)
                 }
             }
         }
@@ -508,6 +511,8 @@ private fun AddedActionEditor(
     nowMillis: () -> Long,
     onOpenEach: () -> Unit,
     onClear: () -> Unit,
+    /** The action's title is the editor's to write, for the ones that put buttons beside it; else its caller wrote it. */
+    titled: Boolean = false,
 ) {
     val taskIds = SearchDomain.addedTaskIds(state, added)
     val tasks = taskIds.mapNotNull { state.tasks[it] }
@@ -679,12 +684,13 @@ private fun AddedActionEditor(
                 Text("${SearchDomain.volumePercent(draft.toDouble())} %", style = MaterialTheme.typography.labelMedium)
             }
         }
-        SearchDomain.AddedAction.TimerLowestCountdown -> LowestCountdownEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
+        SearchDomain.AddedAction.TimerLowestCountdown ->
+            LowestCountdownEditor(state, added, config, onConfigChange, handlers, run, nowMillis, action.label.takeIf { titled })
         SearchDomain.AddedAction.TimerRun -> {
             // PRD §18 / `alarms-and-timers.md`: a timer's run IS its countdown — the three fields reading down (and
             // editable, each by its own unit) and Elapsed, the countdown in reverse. Each added timer's own, drawn by
             // the Alarms window's row over the same callbacks; the buttons below them act on every added timer at once.
-            TimerRunBlocks(SearchDomain.addedTimers(state, added), handlers) { run(SearchDomain.AddedCommand.TimersRun(it)) }
+            TimerRunBlocks(SearchDomain.addedTimers(state, added), handlers, onStep = { run(SearchDomain.AddedCommand.TimersRun(it)) })
         }
         SearchDomain.AddedAction.ChronoRun ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -902,7 +908,7 @@ private fun AddedActionEditor(
         // --- The timers' settings: ONE field each, over every added timer ----------------------------------------
         SearchDomain.AddedAction.TimerDuration ->
             SharedTextField(
-                items = SearchDomain.addedTimers(state, added),
+                items = SearchDomain.addedTimersOrDefault(state, added),
                 idOf = { it.id },
                 field = "Timer/duration",
                 read = { TimerDomain.formatDuration(it.durationSeconds) },
@@ -913,7 +919,7 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.TimerRingsFor ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SharedTextField(
-                    items = SearchDomain.addedTimers(state, added),
+                    items = SearchDomain.addedTimersOrDefault(state, added),
                     idOf = { it.id },
                     field = "Timer/sound",
                     read = { it.soundSeconds.toString() },
@@ -924,13 +930,13 @@ private fun AddedActionEditor(
                 NoteText("s", color = MaterialTheme.colorScheme.onSurface)
             }
         SearchDomain.AddedAction.TimerBelowZero -> {
-            val shared = SearchDomain.sharedValue(SearchDomain.addedTimers(state, added)) { it.goesNegative }
+            val shared = SearchDomain.sharedValue(SearchDomain.addedTimersOrDefault(state, added)) { it.goesNegative }
             Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { on ->
                 run(SearchDomain.AddedCommand.TimersEdit { it.copy(goesNegative = on == true) })
             }
         }
         SearchDomain.AddedAction.TimerAlert -> {
-            val shown = SearchDomain.sharedAlert(SearchDomain.addedTimers(state, added).map { it.alert })
+            val shown = SearchDomain.sharedAlert(SearchDomain.addedTimersOrDefault(state, added).map { it.alert })
             if (shown != null) {
                 AlertSettingsEditor(
                     alert = shown,
@@ -1101,8 +1107,12 @@ private fun ElementHeading(name: String, count: Int) {
  * lowest countdown** — the same block a timer's own "Run" draws ([TimerRunBlocks]) — under a check-box drop-down (the
  * app's one, with its "Select all") that lists every added timer from the lowest countdown to the highest
  * ([TimerDomain.byCountdown]), each as its countdown and its title. Checking timers there shows THEIR runs instead
- * ([SearchDomain.Config.pickedTimers]), in the same order; the buttons then act on those. The clock is the Alarms
- * window's own rule — re-read only while one of them is running.
+ * ([SearchDomain.Config.pickedTimers]), in the same order. The clock is the Alarms window's own rule — re-read only
+ * while one of them is running.
+ *
+ * **Start all / Pause all / Reset all stand on the title's line** ([title]; null where the caller wrote the title —
+ * the buttons then lead the editor), act on the timers SHOWN, and each is greyed when it would do nothing (Start all
+ * with every one of them running). **"Compact"** ([SearchDomain.Config.compactTimers]) draws each timer on one row.
  */
 @Composable
 private fun LowestCountdownEditor(
@@ -1113,12 +1123,9 @@ private fun LowestCountdownEditor(
     handlers: AddedActionHandlers,
     run: (SearchDomain.AddedCommand) -> Unit,
     nowMillis: () -> Long,
+    title: String?,
 ) {
     val timers = SearchDomain.addedTimers(state, added)
-    if (timers.size < 2) {
-        NoteText("Several timers have to be added.", color = MaterialTheme.colorScheme.onSurface)
-        return
-    }
     var now by remember { mutableStateOf(nowMillis()) }
     val anyRunning = timers.any { it.running }
     // Keyed on the timers too: a pause or a nudge of a held one moves its countdown with no tick to show it.
@@ -1135,40 +1142,64 @@ private fun LowestCountdownEditor(
         byId[id]?.let { TimerDomain.formatCountdown(it.remainingAtMillis(now)) + "  " + it.label.ifBlank { "Timer" } } ?: id
     val checked = config.pickedTimers.filterTo(LinkedHashSet()) { it in byId }
     // None checked: the one with the lowest countdown.
-    val shown = if (checked.isEmpty()) sorted.take(1) else sorted.filter { it.id in checked }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        CheckBoxDropDown(
-            options = sorted.map { it.id },
-            checked = checked,
-            face = if (shown.size == 1) line(shown.single().id) else "${shown.size} timers",
-            label = ::line,
-            onChange = { onConfigChange(config.copy(pickedTimers = it)) },
-            modifier = Modifier.width(260.dp),
-        )
-        // The buttons act on the timers shown, not on every timer of the group.
-        val shownIds = shown.mapTo(HashSet()) { it.id }
-        val shownRows = added.filter { it.kind == SearchDomain.Kind.Timer && (it as? SearchDomain.ItemResult)?.id in shownIds }
-        TimerRunBlocks(shown, handlers) { step ->
-            SearchDomain.addedIntents(state, shownRows, SearchDomain.AddedCommand.TimersRun(step), nowMillis())
-                .forEach { run(SearchDomain.AddedCommand.Raw(it)) }
+    val shown = if (timers.size < 2) emptyList() else if (checked.isEmpty()) sorted.take(1) else sorted.filter { it.id in checked }
+    val shownIds = shown.mapTo(HashSet()) { it.id }
+    val shownRows = added.filter { it.kind == SearchDomain.Kind.Timer && (it as? SearchDomain.ItemResult)?.id in shownIds }
+    // What each button would do to the timers shown: nothing, and it is greyed.
+    fun intents(step: SearchDomain.RunStep) = SearchDomain.addedIntents(state, shownRows, SearchDomain.AddedCommand.TimersRun(step), nowMillis())
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        title?.let {
+            MicroGroupTitle(it)
+            androidx.compose.foundation.layout.Spacer(Modifier.width(4.dp))
         }
+        SearchDomain.RunStep.entries.forEach { step ->
+            FrameButton(step.label + " all", enabled = intents(step).isNotEmpty()) {
+                intents(step).forEach { run(SearchDomain.AddedCommand.Raw(it)) }
+            }
+        }
+    }
+    if (timers.size < 2) {
+        NoteText("Several timers have to be added.", color = MaterialTheme.colorScheme.onSurface)
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CheckBoxDropDown(
+                options = sorted.map { it.id },
+                checked = checked,
+                face = if (shown.size == 1) line(shown.single().id) else "${shown.size} timers",
+                label = ::line,
+                onChange = { onConfigChange(config.copy(pickedTimers = it)) },
+                modifier = Modifier.width(260.dp),
+            )
+            FrameButton(if (config.compactTimers) "Expand" else "Compact") {
+                onConfigChange(config.copy(compactTimers = !config.compactTimers))
+            }
+        }
+        TimerRunBlocks(shown, handlers, compact = config.compactTimers)
     }
 }
 
 /**
  * The run of each of [timers] — its countdown, its controls, Elapsed and when it ends, the Alarms window's own row
- * ([AddedActionHandlers.timerRun]) — and, for several, the buttons that act on all of them ([onStep]).
+ * ([AddedActionHandlers.timerRun]) — and, where [onStep] is given, the buttons that act on all of them. [compact]:
+ * each on one row, which then names its timer itself.
  */
 @Composable
-private fun TimerRunBlocks(timers: List<TimerEntry>, handlers: AddedActionHandlers, onStep: (SearchDomain.RunStep) -> Unit) {
+private fun TimerRunBlocks(
+    timers: List<TimerEntry>,
+    handlers: AddedActionHandlers,
+    compact: Boolean = false,
+    onStep: ((SearchDomain.RunStep) -> Unit)? = null,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (timer in timers) {
             key(timer.id) {
-                ElementHeading(timer.label.ifBlank { "Timer" }, timers.size)
-                handlers.timerRun(setOf(AlarmWindowSubject(timer.id, AlarmWindowSubject.Kind.Timer)))
+                if (!compact) ElementHeading(timer.label.ifBlank { "Timer" }, timers.size)
+                handlers.timerRun(setOf(AlarmWindowSubject(timer.id, AlarmWindowSubject.Kind.Timer)), compact)
             }
         }
-        if (timers.size != 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (onStep != null && timers.size != 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             SearchDomain.RunStep.entries.forEach { step ->
                 FrameButton(step.label + if (timers.size > 1) " all" else "") { onStep(step) }
             }
