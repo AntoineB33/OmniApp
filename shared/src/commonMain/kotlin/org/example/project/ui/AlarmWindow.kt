@@ -471,6 +471,7 @@ fun AlarmWindow(
                     // between adding a row and the push landing.
                     entry = timers.firstOrNull { it.id == row.id },
                     nowMillis = displayNowMillis,
+                    clock = nowMillis,
                     onRowChange = { updated, field ->
                         timerRows[index] = updated
                         pushTimers(sessionKeyFor(row.id, field))
@@ -809,37 +810,60 @@ private fun AlarmRowEditor(
 }
 
 /**
- * User rule 2026-10-12: **the moment a timer will end**, as a day and a time of day beside its countdown. It is the
- * countdown said as an instant, so only a RUNNING timer has one — a held or idle one ends at no known moment, and its
- * fields are blank and deaf. An edit moves the end there through the nudge ([onNudge], the time left moved by the
- * difference), so the timer keeps running and the seconds it ends on stay as they were.
+ * User rule 2026-10-12: **the moment a timer will end**, as a day and a time of day beside its countdown — the
+ * countdown said as an instant ([TimerDomain.endMomentMillis]):
+ *  - a RUNNING timer's end ([TimerEntry.endsAtMillis]), behind the clock for one counting on below zero;
+ *  - a timer that reached zero and went back to idle: **the moment it reached zero** ([TimerEntry.endedAtMillis]),
+ *    read as "Ended" and deaf — there is no run to move — until a new run or Reset clears it;
+ *  - any other timer that is NOT running (held, or idle at its duration): **the moment it would reach zero if it ran
+ *    now** — the clock plus its countdown, so it moves on with the clock.
+ * An edit moves the end there through the nudge ([onNudge], the time left moved by the difference): the timer stays
+ * in the state it is in, and what is under the minute stays as it was.
  *
- * **A timer that reached zero still says when** (user rule 2026-10-12): one that goes below zero is still running, its
- * end behind the clock; any other went back to idle keeping that instant ([TimerEntry.endedAtMillis]), which the
- * fields then read — deaf, since there is no run to move — until a new run or Reset clears it.
+ * The fields state a minute, so a timer that is not running re-reads the clock ([clock]) only when its projected end
+ * crosses one — a display resample, never a request; a running one's end does not move with the clock at all.
  */
 @Composable
-internal fun TimerEndFields(entry: TimerEntry?, nowMillis: Long, onNudge: (Long) -> Unit) {
+internal fun TimerEndFields(entry: TimerEntry?, nowMillis: Long, clock: () -> Long, onNudge: (Long) -> Unit) {
     val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
-    val endsAt = entry?.endsAtMillis
-    val end = (endsAt ?: entry?.endedAtMillis)?.let { localOf(it, tz) }
+    val projected = entry != null && entry.endsAtMillis == null && entry.endedAtMillis == null
+    var heldNow by remember { mutableStateOf(clock()) }
+    if (projected && entry != null) {
+        LaunchedEffect(entry) {
+            while (true) {
+                heldNow = clock()
+                val at = TimerDomain.endMomentMillis(entry, heldNow)
+                delay(60_000L - (at % 60_000L + 60_000L) % 60_000L + 20L)
+            }
+        }
+    }
+    val end = entry?.let { localOf(TimerDomain.endMomentMillis(it, if (projected) heldNow else nowMillis), tz) }
     val minutes = end?.let { it.hour * 60 + it.minute }
+    val ended = entry != null && entry.endsAtMillis == null && entry.endedAtMillis != null
+    val movable = entry != null && !ended
     // The day and the minute are what the fields state: what is under the minute goes with the end as it is moved.
     fun moveTo(date: kotlinx.datetime.LocalDate, minuteOfDay: Int) {
-        if (endsAt == null || end == null || minutes == null) return
+        if (!movable || end == null || minutes == null) return
         val delta = instantOf(date, minuteOfDay, tz) - instantOf(end.date, minutes, tz)
         if (delta != 0L) onNudge(delta)
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(text = if (end != null && endsAt == null) "Ended" else "Ends", style = MaterialTheme.typography.bodySmall)
-        DayField(end?.date, "not running", localOf(nowMillis, tz).date, enabled = endsAt != null) { date ->
+        Text(
+            text = when {
+                ended -> "Ended"
+                projected -> "Would end"
+                else -> "Ends"
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        DayField(end?.date, "day", localOf(nowMillis, tz).date, enabled = movable) { date ->
             minutes?.let { moveTo(date, it) }
         }
         TimeOfDayField(
             minutes,
-            enabled = endsAt != null,
+            enabled = movable,
             blank = "—",
-            onNudge = { deltaMinutes -> if (endsAt != null) onNudge(deltaMinutes * 60_000L) },
+            onNudge = { deltaMinutes -> if (movable) onNudge(deltaMinutes * 60_000L) },
         ) { typed -> end?.let { moveTo(it.date, typed) } }
     }
 }
@@ -858,6 +882,8 @@ private fun TimerRowEditor(
     row: TimerRow,
     entry: TimerEntry?,
     nowMillis: Long,
+    /** The app clock itself, for what must move while nothing runs ([TimerEndFields]); [nowMillis] is the window's poll. */
+    clock: () -> Long,
     /** [AlarmRowEditor]'s rule: the edited row, and the text field it came from (null for a switch). */
     onRowChange: (TimerRow, String?) -> Unit,
     onStart: () -> Unit,
@@ -1042,7 +1068,7 @@ private fun TimerRowEditor(
                     modifier = Modifier.width(120.dp),
                 )
             }
-            TimerEndFields(entry, nowMillis, onNudge)
+            TimerEndFields(entry, nowMillis, clock, onNudge)
         }
         if (nudgeButtons && !settingsOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             NUDGE_SECONDS.forEachIndexed { index, seconds ->

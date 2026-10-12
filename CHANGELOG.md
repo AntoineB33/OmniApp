@@ -26,7 +26,9 @@ check-box drop-down listing every added timer from the lowest countdown to the h
 countdown the date/time field for the moment the timer will end" — `TimerEndFields` under Elapsed in a timer's run (a
 day and a time, a running timer's; an edit moves the end through the nudge); "if the timer reached 0, then the
 date/time field must still display the moment the timer reached 0" — the fields read `endedAtMillis` ("Ended") once
-the row is back to idle; and "'Blocks on the calendar' should be removed when there is only timers in the added
+the row is back to idle; "even if the timer isn't running, it must display the moment it will reach 0 if it runs
+now" — "Would end", the clock plus its countdown (`TimerDomain.endMomentMillis`), editable like a running one's; and
+"'Blocks on the calendar' should be removed when there is only timers in the added
 elements list" — no longer listed then (`actionsFor`). Client only. Not tried on screen.
 
 ### Every action is a micro group, titled alike — 2026-10-11

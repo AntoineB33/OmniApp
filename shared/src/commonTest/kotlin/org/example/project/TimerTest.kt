@@ -74,6 +74,25 @@ class TimerTest {
         assertEquals(listOf("running", "paused", "idle"), later.map { it.id })
     }
 
+    @Test
+    fun theMomentATimerEndsIsItsEndTheMomentItReachedZeroOrWhatRunningNowWouldGive() {
+        val running = timer(endsAtMillis = now + 3 * minute)
+        assertEquals(now + 3 * minute, TimerDomain.endMomentMillis(running, now + minute), "its end does not move with the clock")
+        // Not running: where it would end if it ran now — it moves on with the clock.
+        val paused = timer(remainingMillis = 2 * minute)
+        assertEquals(now + 2 * minute, TimerDomain.endMomentMillis(paused, now))
+        assertEquals(now + 3 * minute, TimerDomain.endMomentMillis(paused, now + minute))
+        assertEquals(now + 5 * minute, TimerDomain.endMomentMillis(timer(durationSeconds = 5 * 60), now), "idle: its duration")
+        // …and starting it there is exactly that end.
+        assertEquals(TimerDomain.endMomentMillis(paused, now), TimerDomain.started(paused, now).endsAtMillis)
+        // Reached zero and back to idle: the moment it reached zero stays, whatever the clock says.
+        val rang = TimerDomain.rang(timer(endsAtMillis = now), now)
+        assertTrue(rang.idle)
+        assertEquals(now, TimerDomain.endMomentMillis(rang, now + hour))
+        // Reset forgets it: it is again what running now would give.
+        assertEquals(now + hour + 5 * minute, TimerDomain.endMomentMillis(TimerDomain.reset(rang), now + hour))
+    }
+
     // ----- the three states ---------------------------------------------------------------------
 
     @Test

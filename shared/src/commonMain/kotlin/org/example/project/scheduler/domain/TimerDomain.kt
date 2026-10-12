@@ -114,6 +114,15 @@ object TimerDomain {
         timers.sortedBy { it.remainingAtMillis(nowMillis) }
 
     /**
+     * **The moment [entry] ends**, as the date/time field beside its countdown reads it (user rule 2026-10-12): a
+     * running timer's end; for one that reached zero and went back to idle, the moment it reached zero
+     * ([TimerEntry.endedAtMillis]); for any other timer that is not running, the moment it would reach zero **if it
+     * ran now** — [nowMillis] plus its countdown.
+     */
+    fun endMomentMillis(entry: TimerEntry, nowMillis: Long): Long =
+        entry.endsAtMillis ?: entry.endedAtMillis ?: (nowMillis + entry.remainingAtMillis(nowMillis))
+
+    /**
      * PRD §18 Timers: which of the Alarms window's three countdown fields an edit is about, and how many
      * millis one of its units is worth. The unit is the whole of what the field means — setting it moves the
      * countdown by *its own* delta, so the finer components are left exactly where they are.
