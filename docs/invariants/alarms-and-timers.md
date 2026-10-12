@@ -18,6 +18,14 @@ cross-device presence.
   that was handed an OS arming seam (Android) arms; every other device — iOS, which is a phone with no seam yet,
   and the browser — sweeps. Gating on `DeviceKind.Phone` alone left iOS ringing nothing (2026-10-04).
 - The sweep **self-delays to the next ring**, de-dupes on **(id, instant)**, and has no screen-active gate.
+- **A ring the device was away for is not sounded, but it is RECORDED** (anomaly 2026-10-12,
+  `SchedulerEngine.recordMissedRing`): one line in the notifications' record **at the instant it was due** — so the
+  notifications window lists it there — saying it was not sounded; nothing posted, spoken or rung. And a **timer** is
+  put back as a ring puts it (`TimerRang`: idle, keeping the instant it reached zero). The swallow used to leave no
+  trace and the timer running at zero for ever. Two ways to miss one, both covered: a crossing the sweep finds too
+  late (`ALARM_FRESH_MILLIS` — the process was suspended), and a timer whose end is behind what any sweep scans (the
+  app was not running: found at the sweep as a running timer with its end at or before the scan floor). A timer that
+  goes negative is not one: it runs on past zero by design. An alarm's row is left as it is.
 - The boundary is `LocalDateTime(day, hh:mm).toInstant(tz)` — **not** `startOfDay + minutes`, which skews on
   DST days.
 - Every ring is drawn on the calendar as an inert zero-duration marker, projected over the displayed span

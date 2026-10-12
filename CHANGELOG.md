@@ -31,6 +31,16 @@ now" — "Would end", the clock plus its countdown (`TimerDomain.endMomentMillis
 "'Blocks on the calendar' should be removed when there is only timers in the added
 elements list" — no longer listed then (`actionsFor`). Client only. Not tried on screen.
 
+### A ring the device slept through is recorded where it was due — 2026-10-12
+
+Anomaly: "the timer 'hygiene' says it stopped at 16:06, but in the unfocused notif window, it doesn't appear. It must
+appear for the time 16:06, even if the device was asleep at that moment." The computer slept 15:58 → 16:52; at the
+wake the sweep found the 16:06 crossing 46 minutes late and swallowed it (`ALARM_FRESH_MILLIS`), which recorded
+nothing — and left the timer running at zero. Now `recordMissedRing` writes it to the notifications' record at the
+instant it was due, marked "not sounded: the device was away" (no sound, no voice, no OS notification), and puts a
+timer back as a ring does. A timer that reached zero with the app not running at all is found at the sweep and
+treated the same (`TimerEngineTest`). Client only.
+
 ### A brief wake between two sleeps lost the second sleep — 2026-10-12
 
 Anomaly: `Get-SleepCycles.ps1` read "down 11:32:08, up 12:51:35" where account 3 had the computer unlocked from

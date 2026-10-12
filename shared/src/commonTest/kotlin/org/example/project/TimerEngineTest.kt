@@ -211,9 +211,9 @@ class TimerEngineTest {
 
     @Test
     fun a_desktop_stays_silent_for_a_timer_the_machine_slept_through() = runTest {
-        // The engine starts well PAST the end instant: the first sweep has no previous sweep, so the crossing
-        // measures Long.MAX_VALUE old and is swallowed. A countdown that ran out while the process was down
-        // is not sounded at the wrong moment on resume.
+        // The engine starts well PAST the end instant: the first sweep scans nothing behind its own start, so no
+        // crossing names the timer. A countdown that ran out while the process was down is not sounded at the
+        // wrong moment on resume.
         val start = at(9, 0)
         val scheduler = testScheduler
         val clock = object : AppClock {
@@ -229,7 +229,7 @@ class TimerEngineTest {
             screenActive = { true },
             ringAlarm = { rung.add(it) },
         )
-        vm.dispatch(SchedulerIntent.SetTimers(listOf(timer("timer-0", 60))))
+        vm.dispatch(SchedulerIntent.SetTimers(listOf(timer("timer-0", 60, label = "hygiene"))))
         vm.dispatch(SchedulerIntent.StartTimer("timer-0", at(7, 0)))
         engine.start()
         runCurrent()
@@ -237,5 +237,14 @@ class TimerEngineTest {
         runCurrent()
 
         assertTrue(rung.isEmpty(), "a timer crossed while the process was down does not ring on resume")
+        // Anomaly 2026-10-12: silent, but it HAPPENED — "it must appear for the time 16:06, even if the device was
+        // asleep at that moment". One line in the notifications' record, at the instant it was due, and the row put
+        // back as a ring puts it: idle, keeping the instant it reached zero (it stayed running at zero for ever).
+        val missed = vm.state.value.notificationLog.filter { it.title == RingKind.Timer.label }
+        assertEquals(listOf(at(7, 1)), missed.map { it.timeMillis }, "recorded once, at the instant it reached zero")
+        assertTrue(missed.single().message.startsWith("hygiene") && "not sounded" in missed.single().message)
+        val row = vm.state.value.timers.single()
+        assertTrue(row.idle, "the row is put back")
+        assertEquals(at(7, 1), row.endedAtMillis, "and still says when it reached zero")
     }
 }

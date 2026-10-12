@@ -336,6 +336,9 @@ private const val AWAY_SPAN_FETCH_TIMEOUT_MILLIS: Long = 3_000L
 // worth hearing a few seconds late, whereas a stale look-away cue is not.
 private const val ALARM_FRESH_MILLIS: Long = 60_000
 
+/** What the record of a ring the device was away for says after its name ([SchedulerEngine.recordMissedRing]). */
+internal const val MISSED_RING_NOTE: String = "  ·  not sounded: the device was away"
+
 // PRD §18 Alarms: how far the recomputed real instant of the armed ring may drift before the OS alarm is
 // rewritten. Only the debug sim clock drifts at all (it re-derives the real instant every display tick); on the
 // production clock the value is exactly stable, so this never applies.
@@ -1168,6 +1171,20 @@ class SchedulerEngine(
                     val scanFloor = alarmSweep.scanFloorMillis(LOOK_AWAY_SWEEP_CAP_MILLIS)
                     rungAlarms = rungAlarms.filterTo(mutableSetOf()) { it.second >= scanFloor }
 
+                    // A timer still running whose end is BEHIND what any sweep scans: it reached zero while the app
+                    // was not running at all, so no crossing will ever name it. It is a missed ring like the ones
+                    // swallowed below. Not one that goes negative: that one is meant to run on past zero.
+                    for (stale in timers) {
+                        val endedAt = stale.endsAtMillis ?: continue
+                        if (endedAt > scanFloor || !stale.schedulable || stale.goesNegative) continue
+                        Diagnostics.log(
+                            "timer ${stale.id} reached zero at ${Diagnostics.formatInstant(endedAt)} with the app not running: recorded, not sounded",
+                        )
+                        recordMissedRing(
+                            ArmedAlarm(stale.id, endedAt, stale.label, stale.soundSeconds, alert = stale.alert, kind = RingKind.Timer),
+                        )
+                    }
+
                     for (crossing in ringCrossingsBetween(alarms, timers, scanFloor, simNow)) {
                         val key = crossing.alarmId to crossing.atMillis
                         if (key in rungAlarms) continue
@@ -1179,6 +1196,7 @@ class SchedulerEngine(
                                     "swallowed: crossed ~$lateness ms (real) ago — process was suspended or " +
                                     "engine just started (budget $ALARM_FRESH_MILLIS ms, speed ${speed}x)",
                             )
+                            recordMissedRing(crossing)
                             continue
                         }
                         // Same entry point the phone's OS receiver uses, so both rings behave identically
@@ -1197,6 +1215,31 @@ class SchedulerEngine(
                     delay(((next - simNow).toDouble() / speed).toLong().coerceAtLeast(1L))
                 }
             }
+    }
+
+    /**
+     * A ring the device was away for (anomaly 2026-10-12: *"the timer says it stopped at 16:06, but in the unfocused
+     * notif window, it doesn't appear. It must appear for the time 16:06, even if the device was asleep"*). Too late
+     * to SOUND — that rule stands — but it happened, and the swallow left no trace of it: no line in the
+     * notifications' record, and a timer left running at zero for ever, its row never put back.
+     *
+     * So the ring is RECORDED at the instant it was due ([ArmedAlarm.atMillis], not the clock's: the record says
+     * when it happened), saying it was not sounded — nothing is posted, nothing is spoken, nothing rings — and a
+     * timer is put back exactly as a ring puts it ([SchedulerIntent.TimerRang]: idle, keeping the instant it reached
+     * zero; counting on below it for one that goes negative). An alarm's row is left as it is.
+     */
+    private fun recordMissedRing(missed: ArmedAlarm) {
+        val title = missed.kind.label
+        vm.dispatch(
+            SchedulerIntent.RecordNotification(
+                title,
+                missed.label.ifBlank { title } + MISSED_RING_NOTE,
+                missed.atMillis,
+                null,
+                SpokenMessages.SILENT,
+            ),
+        )
+        if (missed.timer) vm.dispatch(SchedulerIntent.TimerRang(missed.alarmId, clock.nowMillis()))
     }
 
     /**
