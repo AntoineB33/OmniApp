@@ -229,9 +229,13 @@ class CalendarBlocksSearchTest {
             ).firstOrNull { it.first == null }?.second.orEmpty()
         }
         val calendar = listOf(SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks)
-        for (key in listOf("Task/" + taskWithTitle(s, "Read").value, "RestrictivePeriod/deep work", "Reminder/reminder-0", "Alarm/alarm-0", "Timer/timer-0")) {
+        for (key in listOf("Task/" + taskWithTitle(s, "Read").value, "RestrictivePeriod/deep work", "Reminder/reminder-0", "Alarm/alarm-0")) {
             assertTrue(general(key).containsAll(calendar), key)
         }
+        // User rule 2026-10-12: with only timers added, no "Blocks on the calendar" — a timer's place there is the
+        // moment it ends, which its run states. "Add to the calendar" stands, and so do the blocks beside an alarm.
+        assertEquals(listOf(SearchDomain.AddedAction.PlaceOnCalendar), general("Timer/timer-0").filter { it in calendar })
+        assertTrue(general("Timer/timer-0", "Alarm/alarm-0").containsAll(calendar))
         val category = "Category/" + s.categories.first { it.title == "Home" }.id.value
         assertTrue(general(category).none { it in calendar }, "a category is never on the calendar")
         assertTrue(general(category).contains(SearchDomain.AddedAction.ClearList), "its other general actions stand")

@@ -56,6 +56,24 @@ class TimerTest {
         remainingMillis = remainingMillis,
     )
 
+    // ----- several timers, from the lowest countdown ----------------------------------------------
+
+    @Test
+    fun severalTimersAreListedFromTheLowestCountdownWhateverTheirState() {
+        val idle = timer(id = "idle", durationSeconds = 5 * 60)
+        val paused = timer(id = "paused", remainingMillis = 2 * minute)
+        val running = timer(id = "running", endsAtMillis = now + 3 * minute)
+        val belowZero = timer(id = "below", endsAtMillis = now - 7 * second).copy(goesNegative = true)
+        val sameAsPaused = timer(id = "same", durationSeconds = 2 * 60)
+
+        val sorted = TimerDomain.byCountdown(listOf(idle, paused, running, belowZero, sameAsPaused), now)
+        assertEquals(listOf("below", "paused", "same", "running", "idle"), sorted.map { it.id }, "equal countdowns keep their order")
+
+        // The running one reads down while the held ones stand still: it passes under them.
+        val later = TimerDomain.byCountdown(listOf(idle, paused, running), now + 2 * minute)
+        assertEquals(listOf("running", "paused", "idle"), later.map { it.id })
+    }
+
     // ----- the three states ---------------------------------------------------------------------
 
     @Test

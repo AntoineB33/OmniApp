@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Several timers: the lowest countdown, and all of them under it — 2026-10-12
+
+The user: "In the actions common to several timers, there must be the lowest countdown with the title of the timer,
+and a drop-down menu with all the added timers sorted from lowest to highest countdown." First drawn inside the
+timers' "Run" action — which is each timer's own, so with four timers added nothing showed (anomaly, same day) — then
+as a read-out of its own. Then: "The 'Run' micro group in the macro group of a timer must appear in a macro group that
+gather only several timers, but for the selected timer in a field with a drop-down menu with check boxes and 'select
+all'", and "The 'Run' micro group replaces the 'Lowest countdown' I added. Rename it 'Lowest countdown'." So the
+group of several timers has ONE action, "Lowest countdown" (`AddedAction.TimerLowestCountdown`,
+`LowestCountdownEditor`, `TimerDomain.byCountdown`): the run of the timer with the lowest countdown, under a
+check-box drop-down listing every added timer from the lowest countdown to the highest; the timers checked there
+(`Config.pickedTimers`, kept with the window's configuration) are the ones whose run it shows. Same day: "add to each
+countdown the date/time field for the moment the timer will end" — `TimerEndFields` under Elapsed in a timer's run (a
+day and a time, a running timer's; an edit moves the end through the nudge); "if the timer reached 0, then the
+date/time field must still display the moment the timer reached 0" — the fields read `endedAtMillis` ("Ended") once
+the row is back to idle; and "'Blocks on the calendar' should be removed when there is only timers in the added
+elements list" — no longer listed then (`actionsFor`). Client only. Not tried on screen.
+
 ### Every action is a micro group, titled alike — 2026-10-11
 
 The user: "In the action section, give to every micro group the same typo (same font for the micro group title etc…).

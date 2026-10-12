@@ -14,10 +14,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +37,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.key
 import org.example.project.scheduler.domain.CalendarLockDomain
@@ -675,22 +679,12 @@ private fun AddedActionEditor(
                 Text("${SearchDomain.volumePercent(draft.toDouble())} %", style = MaterialTheme.typography.labelMedium)
             }
         }
+        SearchDomain.AddedAction.TimerLowestCountdown -> LowestCountdownEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
         SearchDomain.AddedAction.TimerRun -> {
             // PRD §18 / `alarms-and-timers.md`: a timer's run IS its countdown — the three fields reading down (and
             // editable, each by its own unit) and Elapsed, the countdown in reverse. Each added timer's own, drawn by
             // the Alarms window's row over the same callbacks; the buttons below them act on every added timer at once.
-            val timers = SearchDomain.addedTimers(state, added)
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (timer in timers) {
-                    ElementHeading(timer.label.ifBlank { "Timer" }, timers.size)
-                    handlers.timerRun(setOf(AlarmWindowSubject(timer.id, AlarmWindowSubject.Kind.Timer)))
-                }
-                if (timers.size != 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SearchDomain.RunStep.entries.forEach { step ->
-                        FrameButton(step.label + if (timers.size > 1) " all" else "") { run(SearchDomain.AddedCommand.TimersRun(step)) }
-                    }
-                }
-            }
+            TimerRunBlocks(SearchDomain.addedTimers(state, added), handlers) { run(SearchDomain.AddedCommand.TimersRun(it)) }
         }
         SearchDomain.AddedAction.ChronoRun ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1099,6 +1093,86 @@ private fun AddedActionEditor(
 private fun ElementHeading(name: String, count: Int) {
     if (count > 1) {
         Text(name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+/**
+ * User rule 2026-10-12, the "Lowest countdown" action of the group of several timers: **the run of the timer with the
+ * lowest countdown** — the same block a timer's own "Run" draws ([TimerRunBlocks]) — under a check-box drop-down (the
+ * app's one, with its "Select all") that lists every added timer from the lowest countdown to the highest
+ * ([TimerDomain.byCountdown]), each as its countdown and its title. Checking timers there shows THEIR runs instead
+ * ([SearchDomain.Config.pickedTimers]), in the same order; the buttons then act on those. The clock is the Alarms
+ * window's own rule — re-read only while one of them is running.
+ */
+@Composable
+private fun LowestCountdownEditor(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    handlers: AddedActionHandlers,
+    run: (SearchDomain.AddedCommand) -> Unit,
+    nowMillis: () -> Long,
+) {
+    val timers = SearchDomain.addedTimers(state, added)
+    if (timers.size < 2) {
+        NoteText("Several timers have to be added.", color = MaterialTheme.colorScheme.onSurface)
+        return
+    }
+    var now by remember { mutableStateOf(nowMillis()) }
+    val anyRunning = timers.any { it.running }
+    // Keyed on the timers too: a pause or a nudge of a held one moves its countdown with no tick to show it.
+    LaunchedEffect(anyRunning, timers) {
+        now = nowMillis()
+        while (anyRunning) {
+            delay(COUNTDOWN_TICK_MILLIS)
+            now = nowMillis()
+        }
+    }
+    val sorted = TimerDomain.byCountdown(timers, now)
+    val byId = sorted.associateBy { it.id }
+    fun line(id: String): String =
+        byId[id]?.let { TimerDomain.formatCountdown(it.remainingAtMillis(now)) + "  " + it.label.ifBlank { "Timer" } } ?: id
+    val checked = config.pickedTimers.filterTo(LinkedHashSet()) { it in byId }
+    // None checked: the one with the lowest countdown.
+    val shown = if (checked.isEmpty()) sorted.take(1) else sorted.filter { it.id in checked }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        CheckBoxDropDown(
+            options = sorted.map { it.id },
+            checked = checked,
+            face = if (shown.size == 1) line(shown.single().id) else "${shown.size} timers",
+            label = ::line,
+            onChange = { onConfigChange(config.copy(pickedTimers = it)) },
+            modifier = Modifier.width(260.dp),
+        )
+        // The buttons act on the timers shown, not on every timer of the group.
+        val shownIds = shown.mapTo(HashSet()) { it.id }
+        val shownRows = added.filter { it.kind == SearchDomain.Kind.Timer && (it as? SearchDomain.ItemResult)?.id in shownIds }
+        TimerRunBlocks(shown, handlers) { step ->
+            SearchDomain.addedIntents(state, shownRows, SearchDomain.AddedCommand.TimersRun(step), nowMillis())
+                .forEach { run(SearchDomain.AddedCommand.Raw(it)) }
+        }
+    }
+}
+
+/**
+ * The run of each of [timers] — its countdown, its controls, Elapsed and when it ends, the Alarms window's own row
+ * ([AddedActionHandlers.timerRun]) — and, for several, the buttons that act on all of them ([onStep]).
+ */
+@Composable
+private fun TimerRunBlocks(timers: List<TimerEntry>, handlers: AddedActionHandlers, onStep: (SearchDomain.RunStep) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (timer in timers) {
+            key(timer.id) {
+                ElementHeading(timer.label.ifBlank { "Timer" }, timers.size)
+                handlers.timerRun(setOf(AlarmWindowSubject(timer.id, AlarmWindowSubject.Kind.Timer)))
+            }
+        }
+        if (timers.size != 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            SearchDomain.RunStep.entries.forEach { step ->
+                FrameButton(step.label + if (timers.size > 1) " all" else "") { onStep(step) }
+            }
+        }
     }
 }
 

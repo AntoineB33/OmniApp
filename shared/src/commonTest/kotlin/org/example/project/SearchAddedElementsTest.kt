@@ -916,6 +916,39 @@ class SearchAddedElementsTest {
         assertEquals(emptyList(), SearchDomain.addedIntents(after, added, SearchDomain.AddedCommand.Delete(SearchDomain.Kind.Alarm), 0L))
     }
 
+    /**
+     * Anomaly 2026-10-12 (*"with 4 added timers, I don't see the lowest countdown with the drop-down menu I asked in
+     * the first group of the action section"*): it had been put in "Run", which is each timer's own — so no group of
+     * several timers ever drew it. It is an action of that group, and of no timer alone.
+     */
+    @Test
+    fun the_lowest_countdown_is_an_action_of_the_group_of_several_timers() {
+        fun timer(id: String) = SearchDomain.ItemResult(SearchDomain.Kind.Timer, id, "Tea", "")
+        fun groups(added: List<SearchDomain.Result>) =
+            SearchDomain.actionGroups(
+                SearchDomain.actionsFor(
+                    SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added,
+                ),
+                added,
+            )
+        val lowest = SearchDomain.AddedAction.TimerLowestCountdown
+        val four = groups(listOf(timer("t1"), timer("t2"), timer("t3"), timer("t4")))
+        assertEquals(4, four.first().members.size)
+        assertTrue(lowest in four.first().actions, "in the first group: the one of the four timers")
+        // It is a timer's run, for the timers picked in its drop-down — which ones is kept with the window's
+        // configuration.
+        assertEquals("Lowest countdown", lowest.label)
+        val picking = SearchDomain.Config(pickedTimers = setOf("t2", "t4"))
+        assertEquals(picking, SearchDomain.Config.decode(picking.encode()))
+        assertEquals(emptySet(), SearchDomain.Config.decode("""{"query":"x"}""")!!.pickedTimers, "a configuration written before it")
+        assertTrue(four.drop(1).none { lowest in it.actions }, "not in a timer's own group")
+        assertTrue(four.drop(1).all { SearchDomain.AddedAction.TimerRun in it.actions })
+        assertTrue(groups(listOf(timer("t1"))).none { lowest in it.actions }, "one timer alone: its run says its countdown")
+        // Beside an alarm, the timers' own group holds it.
+        val mixed = groups(listOf(timer("t1"), timer("t2"), SearchDomain.ItemResult(SearchDomain.Kind.Alarm, "a1", "Wake", "")))
+        assertEquals(listOf(2), mixed.filter { lowest in it.actions }.map { it.members.size })
+    }
+
     /** User rule 2026-10-02: "don't do that just for alarms" — the timers and the reminders, one field for all. */
     @Test
     fun a_timers_and_a_reminders_settings_are_one_field_over_every_added_one_and_each_kind_has_its_bin() {

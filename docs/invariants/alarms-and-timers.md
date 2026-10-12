@@ -148,6 +148,28 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   live countdown**: while a field holds the caret, Elapsed counts against `TimerDomain.displayedCountdown` (the
   held fields, what is typed) — the same function the fields draw from — so it never runs on beside a
   countdown that reads as stopped.
+- **SEVERAL added timers have a "Lowest countdown" action, in THEIR group** (user rule 2026-10-12,
+  `AddedAction.TimerLowestCountdown`, `LowestCountdownEditor`): **the run of the timer with the lowest countdown** —
+  the same `TimerRunBlocks` each timer's own "Run" draws — under a check-box drop-down (the app's one, with its
+  "Select all") listing every added timer from the lowest countdown to the highest, each as its countdown and its
+  title. Checking timers there shows THEIR runs instead, in that order, and Start / Pause / Reset "all" act on the
+  ones shown. Which are checked is the Search window's (`SearchDomain.Config.pickedTimers`, local view state, like
+  `pickedBlocks`); none checked = the lowest one. The order is `TimerDomain.byCountdown` — the countdown each row
+  shows (`remainingAtMillis`: a paused row's banked time, an idle one's duration, below zero first), equal ones in
+  the list's order. Its clock is the window's rule below — re-read only while one of them is running. **It is a set
+  action, never part of "Run"** (anomaly, same day: it was first drawn inside "Run", which is `PER_ELEMENT_ACTIONS`
+  — each timer's own group — so with four timers added no group ever drew it); `actionsFor` lists it only with two
+  timers or more. `TimerRun` stays each timer's own.
+- **Each countdown says the moment it will end, as a day and a time of day** (user rule 2026-10-12, `TimerEndFields`,
+  under Elapsed in a timer's run). It is `endsAtMillis`, so only a RUNNING timer has one: a
+  held or idle row's fields are blank and deaf. An edit moves the end through `NudgeTimerRemaining` by the difference
+  — the timer keeps running, and what is under the minute stays. Never a second write path to the run.
+  **A timer that reached zero still says when**: one that goes below zero is still running, its end behind the
+  clock; any other went back to idle keeping `endedAtMillis`, which the fields then read ("Ended", deaf — there is
+  no run to move) until a new run or Reset clears it.
+- **With only timers added, "Blocks on the calendar" is not listed** (user rule 2026-10-12, `actionsFor`): a timer's
+  place on the calendar is the moment it ends, which those fields state and move. Beside any other element that can
+  be on the calendar, the action stands and lists the timers' blocks too.
 - **The run's length is `TimerEntry.runMillis`, fixed as the timer leaves idle** (start, or a countdown dialled
   in before it) to the duration of that moment, and cleared by Reset (the ring included). So a change to the
   countdown shows in Elapsed **mirrored**, and editing the Duration — what Reset goes back to — **does not

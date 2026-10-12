@@ -105,6 +105,15 @@ object TimerDomain {
     }
 
     /**
+     * [timers] from the lowest countdown to the highest at [nowMillis] — the Search window's read-out over several
+     * added timers, whose first entry is the one it names. The countdown is the one every row shows
+     * ([TimerEntry.remainingAtMillis]): a paused row's banked time, an idle one's full duration, and below zero for
+     * one that has gone negative, which therefore leads. Equal countdowns keep the order they came in.
+     */
+    fun byCountdown(timers: List<TimerEntry>, nowMillis: Long): List<TimerEntry> =
+        timers.sortedBy { it.remainingAtMillis(nowMillis) }
+
+    /**
      * PRD §18 Timers: which of the Alarms window's three countdown fields an edit is about, and how many
      * millis one of its units is worth. The unit is the whole of what the field means — setting it moves the
      * countdown by *its own* delta, so the finer components are left exactly where they are.

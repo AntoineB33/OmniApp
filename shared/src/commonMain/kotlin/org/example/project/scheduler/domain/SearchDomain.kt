@@ -406,6 +406,12 @@ object SearchDomain {
          * stands under it with its start and end to edit. A block that is gone from the calendar is simply not shown.
          */
         val pickedBlocks: Set<String> = emptySet(),
+        /**
+         * User rule 2026-10-12: the timers checked in the "Lowest countdown" action of the group of several timers
+         * ([AddedAction.TimerLowestCountdown], by id) — each stands under it with its run; none checked, the one with
+         * the lowest countdown does. One no longer added is not shown.
+         */
+        val pickedTimers: Set<String> = emptySet(),
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
         /**
@@ -466,6 +472,7 @@ object SearchDomain {
                     collapsedActionGroups = collapsedActionGroups.sorted(),
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
+                    pickedTimers = pickedTimers.sorted(),
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
@@ -554,6 +561,7 @@ object SearchDomain {
                     collapsedActionGroups = stored.collapsedActionGroups.toSet(),
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
+                    pickedTimers = stored.pickedTimers.toSet(),
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
                     placement = Placement(
@@ -1286,6 +1294,8 @@ object SearchDomain {
         val actionSearch: String = "",
         /** New 2026-10-11: absent = no block picked in "Blocks on the calendar". */
         val pickedBlocks: List<String> = emptyList(),
+        /** New 2026-10-12: absent = no timer picked in "Lowest countdown" (it then shows the lowest one). */
+        val pickedTimers: List<String> = emptyList(),
         val resiliencePeriod: String? = null,
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
@@ -2518,6 +2528,12 @@ object SearchDomain {
         TaskMinimumTime(Kind.Task, "Minimum time"),
         // The title of every added one of the kind at once (user rule 2026-10-02): empty unless they all share one.
         AlarmTitle(Kind.Alarm, "Title"),
+        /**
+         * User rule 2026-10-12, of SEVERAL added timers ([actionsFor]): a timer's "Run" ([TimerRun], each timer's own)
+         * for the timer with the lowest countdown — or for the timers checked in its drop-down
+         * ([Config.pickedTimers]), which lists them all from the lowest countdown up, each with its title.
+         */
+        TimerLowestCountdown(Kind.Timer, "Lowest countdown"),
         TimerTitle(Kind.Timer, "Title"),
         ChronoTitle(Kind.Chrono, "Title"),
         QuotaTitle(Kind.Quota, "Title"),
@@ -2719,10 +2735,17 @@ object SearchDomain {
                 val onCalendar = added.any { it.kind in CALENDAR_ADD_KINDS }
                 // "Open each" is about SEVERAL elements (user rule 2026-10-07): a lone one is opened by its own row.
                 val lone = added.size == 1
-                actions.filter { (onCalendar || it !in CALENDAR_ACTIONS) && !(lone && it == AddedAction.OpenEach) }
-                    .takeIf { it.isNotEmpty() }?.let { kind to it }
+                // A timer's place on the calendar is the moment it ends, which its run states and moves (user rule
+                // 2026-10-12): with nothing but timers added there is no block to list.
+                val onlyTimers = added.all { it.kind == Kind.Timer }
+                actions.filter {
+                    (onCalendar || it !in CALENDAR_ACTIONS) && !(lone && it == AddedAction.OpenEach) &&
+                        !(onlyTimers && it == AddedAction.CalendarBlocks)
+                }.takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
-                kind to actions
+                // The lowest countdown is of SEVERAL timers: one alone has its own run.
+                val several = added.count { it.kind == Kind.Timer } > 1
+                (kind to actions.filter { several || it != AddedAction.TimerLowestCountdown }).takeIf { it.second.isNotEmpty() }
             } else {
                 actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
             }
@@ -2800,7 +2823,7 @@ object SearchDomain {
                 AddedAction.CreationSearchAll, AddedAction.TaskAddCategory, AddedAction.TaskRemoveCategory,
                 AddedAction.TaskCopyIds, AddedAction.TaskDeepCopy, AddedAction.TaskCollapseSubtrees,
                 AddedAction.TaskAddDefaultSubtree, AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow,
-                AddedAction.PeriodReset,
+                AddedAction.PeriodReset, AddedAction.TimerLowestCountdown,
             )
     }
 
@@ -2914,7 +2937,9 @@ object SearchDomain {
             AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
             AddedAction.SoundVolume -> "sound %"
-            AddedAction.TimerRun, AddedAction.ChronoRun -> "start pause reset all"
+            AddedAction.TimerRun -> "start pause reset all elapsed ends day"
+            AddedAction.ChronoRun -> "start pause reset all"
+            AddedAction.TimerLowestCountdown -> "timers select all start pause reset all elapsed ends day run"
             AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.AlarmNew, AddedAction.TimerNew,
             AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew -> "new create"
             AddedAction.TaskDuplicate, AddedAction.CategoryDuplicate, AddedAction.PeriodDuplicate, AddedAction.AlarmDuplicate,

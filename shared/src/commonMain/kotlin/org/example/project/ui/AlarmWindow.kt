@@ -809,6 +809,42 @@ private fun AlarmRowEditor(
 }
 
 /**
+ * User rule 2026-10-12: **the moment a timer will end**, as a day and a time of day beside its countdown. It is the
+ * countdown said as an instant, so only a RUNNING timer has one — a held or idle one ends at no known moment, and its
+ * fields are blank and deaf. An edit moves the end there through the nudge ([onNudge], the time left moved by the
+ * difference), so the timer keeps running and the seconds it ends on stay as they were.
+ *
+ * **A timer that reached zero still says when** (user rule 2026-10-12): one that goes below zero is still running, its
+ * end behind the clock; any other went back to idle keeping that instant ([TimerEntry.endedAtMillis]), which the
+ * fields then read — deaf, since there is no run to move — until a new run or Reset clears it.
+ */
+@Composable
+internal fun TimerEndFields(entry: TimerEntry?, nowMillis: Long, onNudge: (Long) -> Unit) {
+    val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+    val endsAt = entry?.endsAtMillis
+    val end = (endsAt ?: entry?.endedAtMillis)?.let { localOf(it, tz) }
+    val minutes = end?.let { it.hour * 60 + it.minute }
+    // The day and the minute are what the fields state: what is under the minute goes with the end as it is moved.
+    fun moveTo(date: kotlinx.datetime.LocalDate, minuteOfDay: Int) {
+        if (endsAt == null || end == null || minutes == null) return
+        val delta = instantOf(date, minuteOfDay, tz) - instantOf(end.date, minutes, tz)
+        if (delta != 0L) onNudge(delta)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(text = if (end != null && endsAt == null) "Ended" else "Ends", style = MaterialTheme.typography.bodySmall)
+        DayField(end?.date, "not running", localOf(nowMillis, tz).date, enabled = endsAt != null) { date ->
+            minutes?.let { moveTo(date, it) }
+        }
+        TimeOfDayField(
+            minutes,
+            enabled = endsAt != null,
+            blank = "—",
+            onNudge = { deltaMinutes -> if (endsAt != null) onNudge(deltaMinutes * 60_000L) },
+        ) { typed -> end?.let { moveTo(it.date, typed) } }
+    }
+}
+
+/**
  * PRD §18 Timers: one editable timer row — duration + label on the first line, the countdown **field** and the
  * start/pause/reset controls on the second, sound length on the third and the alert block (PRD §11) on the
  * fourth.
@@ -1006,6 +1042,7 @@ private fun TimerRowEditor(
                     modifier = Modifier.width(120.dp),
                 )
             }
+            TimerEndFields(entry, nowMillis, onNudge)
         }
         if (nudgeButtons && !settingsOnly) Row(verticalAlignment = Alignment.CenterVertically) {
             NUDGE_SECONDS.forEachIndexed { index, seconds ->
@@ -1353,7 +1390,7 @@ private data class ChronoRow(
  * How often the window re-reads the clock while a timer counts down. Fast enough that the seconds readout
  * does not visibly stutter, and it runs only while this window is open **and** something is running.
  */
-private const val COUNTDOWN_TICK_MILLIS: Long = 250L
+internal const val COUNTDOWN_TICK_MILLIS: Long = 250L
 
 /** Monday-first, matching the calendar's week (PRD §8). */
 private val WEEK_DAYS: List<DayOfWeek> = DayOfWeek.entries.sortedBy { it.isoDayNumber }
