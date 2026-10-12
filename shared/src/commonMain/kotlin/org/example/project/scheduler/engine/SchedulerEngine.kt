@@ -2378,7 +2378,11 @@ class SchedulerEngine(
      */
     private fun launchRuleChangeReschedule() = scope.launch {
         var launching = true
-        vm.state.map { SchedulerDomain.schedulingSignature(it) }.distinctUntilChanged().collectLatest {
+        // …or REWROTE THE RECORDS ([SchedulerState.recordRewrites]): work removed, hidden under a period laid over the
+        // past, or given back. The records are outside the signature — the advance banks them all day — so the reducer
+        // counts the user's own rewrites, and that count is the other half of what is watched. It used to plan inside
+        // the edit instead, holding the thread the keystroke came in on (anomaly 2026-10-11).
+        vm.state.map { SchedulerDomain.schedulingSignature(it) to it.recordRewrites }.distinctUntilChanged().collectLatest {
             if (launching) {
                 launching = false
                 // The plan already on screen is kept; the horizon watcher extends it if it falls short.

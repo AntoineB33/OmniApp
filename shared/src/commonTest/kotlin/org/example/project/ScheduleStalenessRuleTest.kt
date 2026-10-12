@@ -96,4 +96,48 @@ class ScheduleStalenessRuleTest {
         runCurrent()
         assertEquals(afterEdit, h.engine.lastRescheduleMillis, "the edit's re-plan is the last one")
     }
+
+    /**
+     * Anomaly 2026-10-11 (*"when I changed the starting time of the Sleep period, it froze a moment"*): the user's own
+     * rewrite of the RECORDS — outside the scheduling signature — is no longer planned for inside the edit, on the
+     * thread it came in on. It is still answered: the reducer counts it (`SchedulerState.recordRewrites`) and the
+     * engine runs for it, like for a rule change.
+     */
+    @Test
+    fun a_record_the_user_rewrites_re_plans_through_the_engine_not_inside_the_edit() = runTest {
+        val scheduler = testScheduler
+        // An account with an hour of work already on the calendar, behind the line.
+        var seeded = org.example.project.scheduler.state.SchedulerState.empty()
+        seeded =
+            org.example.project.scheduler.state.SchedulerReducer.reduce(
+                seeded, SchedulerIntent.SetCellTitle(seeded.lists[seeded.rootListId]!!.cellIds[0], "A"),
+            )
+        val worked = org.example.project.scheduler.model.TaskTimeRange(T0 - 3 * HOUR, T0 - 2 * HOUR)
+        val seededTask = seeded.tasks.values.first { it.title == "A" }
+        seeded = seeded.copy(tasks = seeded.tasks + (seededTask.id to seededTask.copy(record = listOf(worked))))
+        val clock = object : AppClock {
+            override fun nowMillis(): Long = T0 + scheduler.currentTime
+        }
+        val vm = TaskSchedulerViewModel(initial = seeded, store = null, saveDispatcher = Dispatchers.Default)
+        val h = Harness(SchedulerEngine(vm = vm, clock = clock, scope = backgroundScope, deviceKind = DeviceKind.Desktop, screenActive = { true }), vm)
+        h.engine.start()
+        advanceTimeBy(HOUR)
+        runCurrent()
+        val planned = assertNotNull(h.engine.lastRescheduleMillis)
+        val task = h.vm.state.value.tasks.values.first { it.title == "A" }
+        assertTrue(worked in task.record)
+
+        val panelsBefore = h.vm.state.value.panels
+        val asksBefore = h.vm.state.value.recordRewrites
+        h.vm.dispatch(SchedulerIntent.RemoveRecordPeriod(task.id, worked.startEpochMillis, worked.endEpochMillis))
+        // The edit is the edit: the record is gone, the plan on the calendar is the one that was there, a run is asked.
+        assertTrue(worked !in h.vm.state.value.tasks.getValue(task.id).record)
+        assertTrue(panelsBefore === h.vm.state.value.panels, "the edit planned on the spot")
+        assertEquals(asksBefore + 1, h.vm.state.value.recordRewrites)
+        assertEquals(planned, h.engine.lastRescheduleMillis)
+
+        advanceTimeBy(DEBOUNCE_MILLIS + 1)
+        runCurrent()
+        assertTrue(assertNotNull(h.engine.lastRescheduleMillis) > planned, "the engine never ran for the rewritten record")
+    }
 }

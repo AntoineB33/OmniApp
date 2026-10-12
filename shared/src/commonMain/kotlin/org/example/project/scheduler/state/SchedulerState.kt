@@ -775,6 +775,16 @@ data class SchedulerState(
      * **in memory only**, like [scheduleCycle]: a restart starts without it, and the next fill finds it again.
      */
     val plannedIdle: List<org.example.project.scheduler.model.TaskTimeRange> = emptyList(),
+    /**
+     * Anomaly 2026-10-11 (*"when I changed the starting time of the Sleep period, it froze a moment"*): **how many
+     * times the user rewrote the RECORDS** — work removed from the calendar, hidden under a period laid over the past
+     * or given back as one left. The records are outside [org.example.project.scheduler.domain.SchedulerDomain.schedulingSignature]
+     * (the advance banks them all day), so this is what tells the engine to run again for such a change
+     * (`SchedulerEngine.launchRuleChangeReschedule` watches it beside the signature) — the reducer itself never plans
+     * for it: it did, on the thread the edit came in on. A request and nothing else: **in memory only**, like
+     * [scheduleCycle], never persisted or sent, kept across a pull ([withLocalViewStateFrom]).
+     */
+    val recordRewrites: Int = 0,
     /** Monotonic suffix for `panel/{n}` ids; never reused, so undo need not roll it back. */
     val nextPanelCounter: Int = 0,
     /**
@@ -1267,6 +1277,7 @@ data class SchedulerState(
             notificationLog = other.notificationLog,
             supabaseUsageLog = other.supabaseUsageLog,
             categoryRuleError = other.categoryRuleError,
+            recordRewrites = other.recordRewrites,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
                 .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection)),
@@ -1289,6 +1300,7 @@ data class SchedulerState(
             notificationLog = emptyList(),
             supabaseUsageLog = emptyList(),
             categoryRuleError = null,
+            recordRewrites = 0,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
                 .withCategory(HistoryCategory.Selection, SchedulerHistory()),

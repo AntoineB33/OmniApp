@@ -6688,7 +6688,8 @@ object SchedulerDomain {
      * - the regenerated panels themselves — including them would make every fill re-trigger the next one;
      * - the **records**, which the schedule-advance banks continuously as auto panels elapse (CLAUDE.md's
      *   reconstructibility rule puts them on the derived side). A record edit that IS user-authored
-     *   (`RemoveRecordPeriod`) therefore refills inside its own reducer instead of through this signature.
+     *   (`RemoveRecordPeriod`, work hidden under a period) counts itself in [SchedulerState.recordRewrites], which
+     *   the engine watches beside this signature — it is never planned for inside its reducer.
      *
      * The **dated** task trees are in it too, content and date alike — they are keyframes the fill reads
      * directly ([blendedTaskPriorities]), so editing one that is not on screen changes the plan exactly as

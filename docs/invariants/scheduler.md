@@ -770,9 +770,21 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   (`ProgressiveStageBoundaryTest`). The extension that keeps a stage's end as definitive keeps runs the stage's end
   did not bend.
 - **The reducer's in-line re-plans are a first stage too** (`SchedulerReducer.reduceInlineReplan` for `ForceTaskSwitch`
-  / `ForceTaskStart`, the same cap for `SetSleepSchedule`, `RemoveRecordPeriod` and the no-screen strip):
-  `PROGRESSIVE_FIRST_STAGE_MILLIS` ahead with `INLINE_REPLAN_SEARCH_MILLIS` of search, and the horizon watcher extends
-  them in doubling stages. They answer a press synchronously, so they may not hold the thread for a whole fill.
+  / `ForceTaskStart`): `PROGRESSIVE_FIRST_STAGE_MILLIS` ahead with `INLINE_REPLAN_SEARCH_MILLIS` of search, and the
+  horizon watcher extends them in doubling stages. They answer a press synchronously, so they may not hold the thread
+  for a whole fill.
+- **An EDIT never plans inside its reducer** (anomalies 2026-10-09 and 2026-10-11: *"when I changed the starting time
+  of the Sleep period, it froze a moment. Make sure the modification of the calendar doesn't freeze the user when they
+  modify fields in the app"*). An edit is reduced on the thread the keystroke came in on, a time field writes every
+  text that reads as a time, and `dispatch` re-reduces on a lost race with the engine's own run — so a fill there was
+  0.4 s alone and 2.7 s beside a run on the release account. The plan is the engine's, off that thread: an edit that
+  changes a rule moves `schedulingSignature`; one that only rewrites the RECORDS (`RemoveRecordPeriod`, work hidden
+  under a period laid over the past or given back as it leaves — `commitPanels`, `stripRecords`) counts itself in
+  `SchedulerState.recordRewrites` (in memory only, kept across a pull), which `launchRuleChangeReschedule` watches
+  beside the signature. The calendar keeps the previous set of rules until the run has one.
+  `CalendarEditNeverPlansInlineTest` reads the fill's own instrument (zero `scheduler.fillSchedule` while edits are
+  reduced), `ScheduleStalenessRuleTest` that the engine still runs for a rewritten record, and `startupCheck` makes
+  the edits — the typed start of a night included — on the copy of the release DB with the edit itself holding the UI thread ≤ 1 s (10–90 ms measured alone) and what it sets off ≤ 1.5 s afterwards.
 
 ### The rule state is the question; the set of rules is the answer
 

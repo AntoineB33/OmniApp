@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An edit of the calendar never plans on the thread it came in on — 2026-10-11
+
+The user: "when I changed the starting time of the Sleep period, it froze a moment. Make sure the modification of the
+calendar doesn't freeze the user when they modify fields in the app." Measured on a copy of the release DB
+(`startupCheck`): a period whose edit moved banked work re-planned inside its reducer (`refilledAfterRecordChange`) —
+0.4 s on the UI thread, 2.7 s when the engine's run was under way, once per text that read as a time. The reducer now
+only counts the rewrite (`SchedulerState.recordRewrites`, in memory only) and the engine runs for it, as for a rule
+change; `RemoveRecordPeriod` likewise. After: 16–33 ms per keystroke. Gated by `CalendarEditNeverPlansInlineTest`,
+`ScheduleStalenessRuleTest` and the edits `startupCheck` now makes. The calendar keeps the previous plan until the run
+answers (seconds on a large account). Client only. Not tried on screen.
+
 ### A Sleep block reads the span the calendar draws — 2026-10-11
 
 The user: "I still have the Sleep block starting today at 5:15, even though in the calendar it starts at now line."

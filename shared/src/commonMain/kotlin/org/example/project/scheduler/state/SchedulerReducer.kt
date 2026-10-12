@@ -3809,7 +3809,7 @@ object SchedulerReducer {
      * This is the one user-authored change the engine's [SchedulerDomain.schedulingSignature] watcher cannot
      * see (records are on the derived side of that signature — the schedule-advance banks them continuously,
      * so watching them would re-plan on every tick), yet it genuinely changes the past service the virtual
-     * clocks are seeded from. So it refills right here, like [reduceSetSleepSchedule] does.
+     * clocks are seeded from. So it ASKS the engine for a run ([refilledAfterRecordChange]) — never plans here.
      */
     private fun reduceRemoveRecordPeriod(
         state: SchedulerState,
@@ -3820,24 +3820,7 @@ object SchedulerReducer {
         if (range !in task.record) return state
         val updated =
             state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
-        if (!updated.automaticSchedule) return updated
-        val now = clock.nowMillis()
-        var cycle: ScheduleCycle? = null
-        var idle: List<TaskTimeRange> = emptyList()
-        val filled =
-            SchedulerDomain.fillSchedule(
-                updated,
-                now,
-                liveRest = liveRestGap(),
-                noScreenEvidence = noScreenEvidence(),
-                frozenBreaks = frozenScreenBreaks(),
-                tpMode = tpMode(),
-                horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
-                cycleSink = { cycle = it },
-                idleSink = { idle = it },
-                searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
-            )
-        return updated.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
+        return refilledAfterRecordChange(updated)
     }
 
     /**
@@ -3891,27 +3874,20 @@ object SchedulerReducer {
         return refilledAfterRecordChange(state.copy(tasks = tasks))
     }
 
-    /** [stripped] re-planned on the spot: the records are outside `schedulingSignature`, so nothing else would. */
-    private fun refilledAfterRecordChange(stripped: SchedulerState): SchedulerState {
-        if (!stripped.automaticSchedule) return stripped
-        val now = clock.nowMillis()
-        var cycle: ScheduleCycle? = null
-        var idle: List<TaskTimeRange> = emptyList()
-        val filled =
-            SchedulerDomain.fillSchedule(
-                stripped,
-                now,
-                liveRest = liveRestGap(),
-                noScreenEvidence = noScreenEvidence(),
-                frozenBreaks = frozenScreenBreaks(),
-                tpMode = tpMode(),
-                horizonMillis = cappedHorizon(now, now + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS),
-                cycleSink = { cycle = it },
-                idleSink = { idle = it },
-                searchBudget = SearchBudget.of(SchedulerDomain.INLINE_REPLAN_SEARCH_MILLIS),
-            )
-        return stripped.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
-    }
+    /**
+     * [stripped], **with the engine asked to run again for it** ([SchedulerState.recordRewrites]): the records are
+     * outside `schedulingSignature`, so nothing else would.
+     *
+     * Anomaly 2026-10-11 (*"when I changed the starting time of the Sleep period, it froze a moment. Make sure the
+     * modification of the calendar doesn't freeze the user when they modify fields in the app"*): it re-planned on the
+     * spot — a fill with its search, on the thread the edit came in on, once for every text that read as a time, and
+     * again for every time the engine's own run published under it (`dispatch` re-reduces on a lost race). Measured on
+     * the release account: 0.4 s alone, 2.7 s beside a run. The edit is the edit and nothing else, as for the Sleep
+     * schedule's fields (2026-10-09): the engine runs from scratch off this thread, and the calendar keeps the
+     * previous set of rules until it has one.
+     */
+    private fun refilledAfterRecordChange(stripped: SchedulerState): SchedulerState =
+        if (!stripped.automaticSchedule) stripped else stripped.copy(recordRewrites = stripped.recordRewrites + 1)
 
     /**
      * `docs/invariants/persistence.md` § *One history, per-device undo*: undo THIS device's newest applied unit of

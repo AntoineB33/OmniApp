@@ -671,8 +671,9 @@ Global rules that always apply: `CLAUDE.md`.
     unless explicitly rewritten. Stripping it violates this rule; it must be preserved."*; `settleRecords`,
     `HiddenPanel.record`). While the period stands, the stretch is out of the task's record and on the level under it;
     wherever the period no longer stands — moved, shrunk, removed, undone — it is back in the record as it was, joined
-    to what it was cut from. In the edit's own history unit (`PanelDelta.records`), so Ctrl+Z walks it; the plan is
-    asked again on the spot (records are outside `schedulingSignature`). The periods are read as the line left them
+    to what it was cut from. In the edit's own history unit (`PanelDelta.records`), so Ctrl+Z walks it; the engine is
+    asked for a run (`SchedulerState.recordRewrites` — records are outside `schedulingSignature`; never a plan inside
+    the edit, `scheduler.md` § *An EDIT never plans inside its reducer*). The periods are read as the line left them
     (`afterCrossings`). `stripRecordsUnderPeriod` still runs after the commit and now finds nothing under a period of
     the user's; the engine-start strip of what the OS log says was no screen time is unchanged.
   - **Bounded** (`TimelineLevels.purged`, at every calendar commit): a hidden BLOCK piece wholly more than 90 days
