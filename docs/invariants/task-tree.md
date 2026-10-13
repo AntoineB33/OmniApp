@@ -859,8 +859,10 @@ suggestions before it was ever entered.
     2026-10-13: *"Both 'Open all' and 'Remove from list' buttons must be in the first micro group of each macro
     group"*; `AddedAction.OpenEach`, titled "Open or remove from the list"). Both act on the group's own elements
     (`onOpenEach` / `onClear` take them) — the group of every element, a kind's, each element's and the lone
-    element's alike (the last two had neither until then; one element reads "Open"). It is first whatever the search
-    bar holds (`sortedByActionSearch` does not move it). "Remove every element from the list" is no longer an action
+    element's alike (the last two had neither until then; one element reads "Open"). It is **a micro group like any other: the
+    search bar sorts it with them** (user rule later that day: *"it should be affected by the search bar matching
+    sort"* — it was held first whatever the bar held for a few hours); first is where it stands while the bar is
+    empty. "Remove every element from the list" is no longer an action
     of its own (`RETIRED_ACTIONS`); as an item of the lateral menu the group shows "Open" alone — there is no list
     there to take anything off.
   - **A row of the added elements can leave ITS group open alone** (user rule 2026-10-13: *"in the right-click

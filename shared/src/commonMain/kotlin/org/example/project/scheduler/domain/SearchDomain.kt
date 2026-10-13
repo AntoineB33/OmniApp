@@ -2926,7 +2926,8 @@ object SearchDomain {
      * **One element alone is one group**: its own configuration, then its kind's set actions, then the general ones.
      * **Every group of elements OPENS with "Open all" and "Remove from list"** ([AddedAction.OpenEach], user rule
      * 2026-10-13), acting on the group's own elements — an element's group and the lone element's included, which had
-     * neither until then — and the search bar does not move it ([sortedByActionSearch]).
+     * neither until then. It is a micro group like any other: the search bar sorts it with them
+     * ([sortedByActionSearch]) — first is where it stands while the bar is empty.
      * A kind no added element is (the window of every configuration lists them all) keeps a group of its own, last.
      */
     /**
@@ -2973,12 +2974,13 @@ object SearchDomain {
      * User rule 2026-10-11: *"The search bar sorts the micro groups by the matching of the micro group titles, but
      * doesn't sort the macro groups."* — [actions] (one macro group's micro groups) with those that answer [search]
      * first, the best answer first (a title before any other text of the action, [actionSearchRank]); the rest after
-     * them, and every tie, in the order they stood in. The group's "Open all" / "Remove from list" stays its FIRST
-     * micro group whatever the bar holds (user rule 2026-10-13).
+     * them, and every tie, in the order they stood in. EVERY micro group is sorted, the group's "Open all" / "Remove
+     * from list" included (user rule 2026-10-13: *"a micro group like any other, so it should be affected by the search
+     * bar matching sort"* — it was held first whatever the bar held for a few hours that day).
      */
     fun sortedByActionSearch(actions: List<AddedAction>, search: String): List<AddedAction> {
         if (search.isBlank()) return actions
-        return actions.sortedBy { if (it == AddedAction.OpenEach) Int.MIN_VALUE else actionSearchRank(it, search) ?: Int.MAX_VALUE }
+        return actions.sortedBy { actionSearchRank(it, search) ?: Int.MAX_VALUE }
     }
 
     /**

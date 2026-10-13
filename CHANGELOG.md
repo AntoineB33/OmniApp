@@ -105,7 +105,9 @@ added elements list. It already appears in the group that gathers them all, but 
 groups ("Open each", "Remove every element from the list"), listed for every element and for a kind holding several,
 never in an element's own group. They are ONE micro group now (`AddedAction.OpenEach`, "Open or remove from the list"),
 the first of every group of elements — an element's and the lone element's included — acting on that group's elements,
-and the search bar does not move it. `ClearList` is retired (`RETIRED_ACTIONS`): kept for the lateral-menu items made
+and — corrected the same day: *"'Open and remove from the list' is a micro group like any other, so it should be
+affected by the search bar matching sort"* — the search bar sorts it with the others (it was first held in place
+whatever the bar held). `ClearList` is retired (`RETIRED_ACTIONS`): kept for the lateral-menu items made
 from it. `SearchAddedElementsTest`, `CalendarBlocksSearchTest`. Client rebuild; no migration.
 
 ### The calendar's texts give way in the hover bubble's order, wherever their elements start — 2026-10-13
