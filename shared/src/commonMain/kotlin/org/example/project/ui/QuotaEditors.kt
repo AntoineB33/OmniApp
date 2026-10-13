@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
@@ -456,7 +455,7 @@ internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled
                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
             Column(Modifier.width(250.dp).padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     DayOfWeek.entries.forEach { weekday ->
@@ -670,7 +669,7 @@ internal fun QuotaResilienceEditor(state: SchedulerState, quotas: List<QuotaEntr
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box {
             FrameButton("Resilience values  ▾", enabled = quotas.isNotEmpty() && kinds.isNotEmpty()) { open = true }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
+            AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (kind in kinds) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

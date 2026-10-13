@@ -46,7 +46,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -1775,7 +1774,7 @@ fun LateralMenu(
         // visible after the whole menu (this button included) slides off-screen.
         PageNavButton(page = page, onPageSelected = onPageSelected)
         transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
-        DropdownMenu(expanded = backgroundMenu, onDismissRequest = { backgroundMenu = false }, properties = PopupProperties(focusable = false)) {
+        AppDropdownMenu(expanded = backgroundMenu, onDismissRequest = { backgroundMenu = false }, properties = PopupProperties(focusable = false)) {
             DropdownMenuItem(
                 text = { Text(if (customizing) "Stop customizing" else "Customize") },
                 onClick = { backgroundMenu = false; onCustomize(!customizing) },
@@ -2632,7 +2631,8 @@ fun HistoryManagerWindow(
                         placeholder = { Text("a label, a detail line, a rule, a notification") },
                         singleLine = true,
                         trailingIcon = { SearchBarCross(filter.query) { filter = filter.copy(query = "") } },
-                        modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                        modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
+                            .revertsOnEscape(filter.query) { filter = filter.copy(query = it) },
                     )
                     Button(
                         // Back to the default view: all windows, any chord, no query.
@@ -2885,7 +2885,7 @@ private fun <T> HistoryDropdownField(
                 color = if (enabled) CalColors.accent else CalColors.muted,
                 style = MaterialTheme.typography.labelSmall,
             )
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 options.forEach { (name, value) ->
                     DropdownMenuItem(
                         text = { Text(name, style = MaterialTheme.typography.labelSmall) },
@@ -3491,7 +3491,7 @@ internal fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreR
             Text(unit.label, style = MaterialTheme.typography.bodyMedium)
             Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             ChoreRecurrenceUnit.entries.forEach { entry ->
                 DropdownMenuItem(
                     text = { Text(entry.label) },
@@ -3589,7 +3589,7 @@ private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         MenuButton(label = page.label, active = false, onClick = { expanded = true })
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             OmniPage.entries.forEach { entry ->
                 DropdownMenuItem(
                     text = { Text(entry.label) },
@@ -6645,7 +6645,7 @@ private fun DayColumn(
         androidx.compose.runtime.key(anchor) {
             transientMenuDismissal(anchor != null) { closeMenu() }
         }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = anchor != null,
             onDismissRequest = { closeMenu() },
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
@@ -6744,7 +6744,7 @@ private fun DayColumn(
             heldDrag = heldDrag?.copy(menuAt = null, following = true, lastY = null, pressed = false)
         }
         val heldMenuAt = heldDrag?.menuAt
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = heldMenuAt != null,
             onDismissRequest = { resumeHeldDrag() },
             offset = heldMenuAt?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
@@ -10498,7 +10498,7 @@ private fun EditModeSelector(options: List<EditModeOption>, focusPreserving: Boo
             Text(selectedLabel, style = MaterialTheme.typography.bodyMedium)
             Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
         }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             // Non-focusable in a focus-gated editor so opening the menu does not blur the title field and
@@ -10586,7 +10586,7 @@ private fun EditMenuRow(
             color = taskColor?.let(TaskPalette::foreground) ?: color ?: MaterialTheme.colorScheme.onSurface,
         )
         if (actions != null) {
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree.
                 // The row is still a task the field can be pointed at; what it has not got is a place to go,
                 // and a vanishing entry would read as "this row has no menu" instead of saying so.

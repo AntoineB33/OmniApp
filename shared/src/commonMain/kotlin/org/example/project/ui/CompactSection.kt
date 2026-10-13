@@ -22,6 +22,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -295,6 +302,34 @@ internal fun SearchBarCross(text: String, onClear: () -> Unit) {
             .clickable(enabled = !empty, onClick = onClear)
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
+}
+
+/**
+ * User rule 2026-10-13: *"In a search bar, when pressing escape, it should revert the search bar content to when the
+ * user entered edit mode."* — put on a search bar's field: what the bar held when it took the keyboard is remembered,
+ * and Escape hands it back ([onRevert]) while the bar still has the keyboard. Escape with nothing changed is left to
+ * whoever is under the bar; the focus leaving ends the session, so the next one starts from what the bar holds then.
+ *
+ * One answer for every search bar that keeps its text (the Search window's, the two configuration windows', the
+ * actions section's, the notification filter's). NOT the two whose Escape closes them — the task picker's and the
+ * tree's find bar: there the key already has its meaning.
+ */
+@Composable
+internal fun androidx.compose.ui.Modifier.revertsOnEscape(text: String, onRevert: (String) -> Unit): androidx.compose.ui.Modifier {
+    var entered by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val current by androidx.compose.runtime.rememberUpdatedState(text)
+    val revert by androidx.compose.runtime.rememberUpdatedState(onRevert)
+    return this
+        .onFocusChanged { entered = if (it.isFocused) entered ?: current else null }
+        .onPreviewKeyEvent { event ->
+            val was = entered
+            if (event.type != KeyEventType.KeyDown || event.key != Key.Escape || was == null || was == current) {
+                false
+            } else {
+                revert(was)
+                true
+            }
+        }
 }
 
 /**

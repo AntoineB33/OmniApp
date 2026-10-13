@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.isoDayNumber
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -1353,7 +1352,7 @@ private fun CountdownField(
                 },
         )
         transientMenuDismissal(menuOpen) { menuOpen = false }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
             properties = PopupProperties(focusable = false),

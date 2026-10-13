@@ -877,6 +877,12 @@ suggestions before it was ever entered.
     Configuration Search window's groups, the calendar's "Configuration"). It is handed the arrow's own handler —
     never a second answer to the press. A section retracted to a strip has no title, and the calendar's grid never
     had one: their arrow is the way back.
+  - **Escape in a search bar puts back what it held when it took the keyboard** (user rule 2026-10-13: *"In a
+    search bar, when pressing escape, it should revert the search bar content to when the user entered edit mode"*;
+    `Modifier.revertsOnEscape`, one answer for the Search window's bar, the actions section's, the two configuration
+    windows' and the notification filter's). The text is remembered at the focus's arrival and forgotten when it
+    leaves; Escape with nothing changed is not consumed. NOT the task picker's bar nor the tree's find bar, whose
+    Escape closes them.
   - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
     Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
     it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each

@@ -13,7 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -190,7 +189,7 @@ fun CalendarElementsWindow(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        DropdownMenu(expanded = kindMenuOpen, onDismissRequest = { kindMenuOpen = false }) {
+                        AppDropdownMenu(expanded = kindMenuOpen, onDismissRequest = { kindMenuOpen = false }) {
                             offeredKinds.forEach { option ->
                                 DropdownMenuItem(
                                     text = { Text(option.label) },

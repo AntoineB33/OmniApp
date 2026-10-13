@@ -11,6 +11,59 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every menu is a window of its own on the desktop, over any other application's — 2026-10-13
+
+The user: "Any right-click menus must appear above all, even above Firefox's picture-in-picture window." Third answer,
+and the one kept:
+1. The app's window held always-on-top while a menu was open — anomaly: "when I right-click in the app, the pip
+   disappears... I want it to act like when I right-click in the menu of Chrome: the pip is still there but behind the
+   right-click menu." Taken back.
+2. `compose.layers.type=WINDOW` — anomaly: "The app crashed when I right-clicked." Reproduced on a dev run: Compose
+   1.11.0's layer window resizes itself from inside its own draw, endlessly, until `skiko-windows-x64.dll` faults
+   (`EXCEPTION_ACCESS_VIOLATION`). Taken back.
+3. **`AppDropdownMenu`** (`ui/AppDropdownMenu.kt`, expect/actual): the one way to open a menu — all 36 of them, in 15
+   files, no longer call material's `DropdownMenu`. On the desktop it is a modeless always-on-top dialog owned by the
+   window it was opened in, sized and placed from an effect; on Android, iOS and the web it is material's menu
+   unchanged. A text field's cut / copy / paste menu goes the same way (`OwnWindowContextMenuRepresentation`).
+   Seen on a dev run on a throwaway account (the window bar's menu, a text field's menu: open, placed, the app
+   alive); NOT seen over a picture-in-picture window — the user's to confirm. On the desktop a menu now has square
+   corners and a thin outline in place of material's shadow, and a text field's menu shows every entry as enabled.
+
+**Anomaly, the same day**: "it takes a moment for the menu to appear after the right-click." A window, with its
+Direct3D surface, was made for every menu. `MenuWindows` keeps one per window that opens menus — hidden and emptied
+between two menus — and `main` makes the app's ahead (`warmMenuWindows`). Timed on a dev run on a throwaway account:
+about 70 ms after the click for the first menu, within the 50 ms the click lasts for the following ones. The delay
+before the change was not measured.
+
+**Anomaly, later that day**: "Now the right-click menu is slow to appear, when I right-click on an element in the
+result list of the Search window the menu doesn't appear where I right-clicked but at the left, and it doesn't even
+appear anymore when I right-click on the calendar." Two causes, both in `AppDropdownMenu.jvm.kt`, which is rewritten:
+- **Place**: it knew "under the anchor, else above". `menuPlacement` is now material's own rule, candidate for
+  candidate, off the same anchor (`parentCoordinates`) — the calendar's menu is back at the pointer. Compared with
+  material's on a dev run (`-Pomniapp.menuWindows=false`): the same place, at the calendar and at the window bar.
+- **Speed**: it went through Compose's `DialogWindow` — half a dozen turns of the event queue. `MenuSession` opens
+  the kept window in two, at the size the same menu had last time. Same run: on screen as soon as material's own.
+The Search window's result rows were not opened in that run (the throwaway account has none); they hang from the same
+rule. The user's account is far larger than the throwaway one: speed there is theirs to confirm.
+
+**Then**: "for the elements in the result list of the Search window, the menu still appears at the left of the
+element instead of the mouse position." Compared with material's on a task cell (the row a Search task result is):
+the same place — under the row, at its left, wherever along it the click lands; it never followed the pointer. It does
+now, in the Search window: `AppDropdownMenu(atPointer = …)` and `LocalRowMenusAtPointer`, read by the three row menus
+(a result's, an added element's, `TaskRow`'s). Seen on a dev run with it forced on a tree cell
+(`-Pomniapp.menusAtPointer=true`): the menu's corner on the pointer at three places; NOT seen on a Search row itself.
+
+`desktopApp/build.gradle.kts` forwards `-Pcompose.layers.type=…`, `-Pomniapp.menuWindows=…` and
+`-Pomniapp.menusAtPointer=…` to a dev run. `docs/invariants/popups.md`. Client
+rebuild; no migration.
+
+### Escape in a search bar puts back what it held — 2026-10-13
+
+The user: "In a search bar, when pressing escape, it should revert the search bar content to when the user entered edit
+mode." `Modifier.revertsOnEscape` (CompactSection.kt), on the Search window's bar, the actions section's, the two
+configuration windows' and the notification filter's: the text at the focus's arrival comes back at Escape. The task
+picker's bar and the tree's find bar keep their Escape, which closes them. UI only. Client rebuild; no migration.
+
 ### The sleep goal has a date; the sleep schedule is an action of the Sleep period — 2026-10-13
 
 The user: "In the sleep configurations, for the goal field, add a date field. If the user sets 13/10/2026 for go to

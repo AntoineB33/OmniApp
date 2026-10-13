@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.key
 import androidx.compose.ui.draw.clip
@@ -178,7 +177,7 @@ private fun SleepTimeChoice(
             Text(which.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
             Text("▾", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             SchedulerDomain.NightTime.entries.forEach { entry ->
                 DropdownMenuItem(
                     text = { Text(entry.label) },

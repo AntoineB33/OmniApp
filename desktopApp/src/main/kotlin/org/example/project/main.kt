@@ -65,6 +65,9 @@ fun main() {
             // minimized. Windows refuses a plain `toFront` to a process that is not in the foreground, so the window
             // is put on top for an instant first — the usual way an app answers its own notification there.
             val awtWindow = window
+            // A menu is a window of its own on the desktop: this window's is made ahead, so the first right-click
+            // does not wait for it (`AppDropdownMenu.jvm.kt`).
+            androidx.compose.runtime.LaunchedEffect(awtWindow) { org.example.project.ui.warmMenuWindows(awtWindow) }
             DisposableEffect(awtWindow) {
                 DesktopAppWindow.bringToFront = {
                     java.awt.EventQueue.invokeLater {
@@ -82,7 +85,13 @@ fun main() {
             // Whether the APP has the focus, as the OS says it — what "a notification fired while the app was not in
             // focus" is asked of ([LocalAppInFocus]). Not the Compose window's own flag, which a menu inside the app
             // turns off.
-            androidx.compose.runtime.CompositionLocalProvider(LocalAppInFocus provides rememberAppInFocus()) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalAppInFocus provides rememberAppInFocus(),
+                // A text field's own right-click menu is a window of its own, as every menu of the app is on the
+                // desktop (`AppDropdownMenu.jvm.kt`): over another application's always-on-top window.
+                androidx.compose.foundation.LocalContextMenuRepresentation provides
+                    org.example.project.ui.OwnWindowContextMenuRepresentation,
+            ) {
                 App(store = store)
             }
         }

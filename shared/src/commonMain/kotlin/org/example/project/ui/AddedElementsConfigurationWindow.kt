@@ -16,7 +16,6 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -141,7 +140,8 @@ fun AddedElementsConfigurationWindow(
                     singleLine = true,
                     label = { Text("Search a configuration") },
                     trailingIcon = { SearchBarCross(config.actionQuery) { onConfigChange(config.copy(actionQuery = "")) } },
-                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
+                        .revertsOnEscape(config.actionQuery) { onConfigChange(config.copy(actionQuery = it)) },
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 ResetButton(enabled = config.actionQuery.isNotEmpty() || own.kinds.isNotEmpty()) {
@@ -276,7 +276,8 @@ internal fun AddedActionsSection(
             singleLine = true,
             label = { Text("Search an action") },
             trailingIcon = { SearchBarCross(config.actionSearch) { onConfigChange(config.copy(actionSearch = "")) } },
-            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress()
+                .revertsOnEscape(config.actionSearch) { onConfigChange(config.copy(actionSearch = it)) },
         )
         // The filter is set in the configurations window; said here, with its way off, so a quarter showing one
         // action is never a mystery.
@@ -1370,7 +1371,7 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
                         )
                         transientMenuDismissal(open) { open = false }
-                        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+                        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
                             Column(Modifier.width(260.dp)) {
                                 for ((id, title) in windows) {
                                     Text(

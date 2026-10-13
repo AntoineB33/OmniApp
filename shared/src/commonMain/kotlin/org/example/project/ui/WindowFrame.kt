@@ -77,7 +77,6 @@ import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.window.PopupProperties
@@ -1768,7 +1767,7 @@ fun WindowBar(
         // Non-focusable and closed by the app root's observer, like every menu (`popups.md` § Menus). The bar is
         // the app's bottom edge, so the menu opens upward from it, at the pointer's x.
         transientMenuDismissal(menuAt != null) { menuAt = null }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = menuAt != null,
             onDismissRequest = { menuAt = null },
             offset = with(density) { DpOffset((menuAt?.x ?: 0f).toDp(), 0.dp) },
@@ -1868,7 +1867,7 @@ private fun WindowBarMoreButton(onUndo: () -> Unit, onRedo: () -> Unit) {
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
             properties = PopupProperties(focusable = false),

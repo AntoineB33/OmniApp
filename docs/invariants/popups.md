@@ -203,6 +203,59 @@ means.
 - **Every window has an explicit default width AND height**, and its content sits in a `weight(1f)` slot.
   Never `heightIn(max = …)` + wrap: a window whose height is its content's cannot be given a different one
   by dragging its bottom edge, which is the whole point of the edge.
+- **EVERY MENU GOES THROUGH `AppDropdownMenu`, AND ON THE DESKTOP IT IS AN OS WINDOW OF ITS OWN, ALWAYS ON TOP**
+  (user rule 2026-10-13: *"Any right-click menus must appear above all, even above Firefox's picture-in-picture
+  window"*, *"like when I right-click in the menu of Chrome: the pip is still there but behind the right-click
+  menu"*; `ui/AppDropdownMenu.kt`, `jvmMain/.../AppDropdownMenu.jvm.kt`). Material's `DropdownMenu` is drawn inside
+  the app's window, which another application's always-on-top window covers — so **never call it directly**: a menu
+  that does is the one left behind. `AppDropdownMenu` has its parameters and its anchoring (the layout it is
+  declared in, `offset`, under it or above where there is no room, kept on the screen's work area). On the desktop
+  it is a modeless, undecorated dialog owned by the window it was opened in, always on top, focusable only where the
+  menu is; elsewhere it IS material's menu. A text field's own cut / copy / paste menu is one too
+  (`OwnWindowContextMenuRepresentation`, set as `LocalContextMenuRepresentation` by the desktop's `main`).
+  - **Nothing of the menu rules changes**: a press in a menu never reaches the root observer, a press outside it in
+    the app does and still lands, a non-focusable menu leaves the keyboard where it was. What is new is the press in
+    ANOTHER application, which an always-on-top menu would otherwise outlive: the owner window losing the
+    foreground closes it (a focusable menu: the menu losing the focus), a menu opened from the menu excepted.
+  - **The window is sized and placed from a task of its own on the event queue, never from inside a layout or a
+    draw.** See the point on the two answers taken back.
+  - **A menu opens WHERE material's menu opens — its rule, candidate for candidate** (anomaly 2026-10-13: *"the
+    menu doesn't appear where I right-clicked but at the left, and it doesn't even appear anymore when I
+    right-click on the calendar"*; `menuPlacement`, a port of `DropdownMenuPositionProvider`). The anchor is the
+    layout the menu is declared in (`parentCoordinates`, as `Popup` reads it); across: start on the anchor's start +
+    offset, else end on its end, else against the window's edge; down: top on the anchor's bottom + offset, else
+    bottom on its top, else MIDDLE on its top, else against the window's edge — the first inside the app's window.
+    The first version knew only "under, else above": the calendar's menu hangs from a whole day column with the
+    pointer's place as its offset, and it is the LATER candidates that put it at the pointer. Seen side by side with
+    material's on a dev run (`-Pomniapp.menuWindows=false` draws the menus in the window again): the same place.
+  - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
+    elements in the result list of the Search window, the menu still appears at the left of the element instead of
+    the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).
+    Its rows run the whole width of a list, so "under the row, at its left" — where material puts the menu of a
+    layout, and where it always was: seen side by side on a task cell — is far from the hand. It reaches the three
+    row menus: a result's, an added element's, and the task rows borrowed from the tree (`TaskRow` reads the
+    local). The tree's own cells keep their menu under the cell. Desktop only (a finger has no pointer); a dev run's
+    `-Pomniapp.menusAtPointer=true` forces it everywhere, which is how it was seen.
+  - **A menu opens in as few turns of the event queue as there are** (same anomaly: *"the right-click menu is slow
+    to appear"*; `MenuSession`). Plain code, not Compose's `DialogWindow`, which took half a dozen turns — each
+    waiting for a frame of an app window with work of its own. The anchor is known in one turn; the window is shown
+    in the next at the size the same menu had last time (`MenuWindows.lastSize`, by call site), and the first time
+    it is measured out of sight and shown once fitted — never seen at a wrong size, nor moved under the eye.
+  - **A menu's window is KEPT and used again, never made per menu** (anomaly 2026-10-13: *"it takes a moment for
+    the menu to appear after the right-click"*; `MenuWindows`). Making an OS window with its Direct3D surface was
+    the moment. Each window that opens menus keeps ONE dialog — hidden and emptied between two menus, handed to the
+    next — and the app's own is made ahead by `main` (`warmMenuWindows`). Timed on a dev run, throwaway account: the
+    window is up about 35 ms after the press for a menu opened before (about 110 ms the first time), and it is on
+    screen as soon as material's own menu is (about 110 ms either way, as a screen capture sees it).
+  - **Two answers were shipped that day and taken back — do not put either back.** Holding the app's WINDOW
+    always-on-top while a menu is open hid the other application's window (*"the pip disappears"*).
+    `compose.layers.type=WINDOW` (Compose's own "every `Popup` is a window") **crashed the release app at the first
+    menu**: in Compose 1.11.0 `WindowComposeSceneLayer.onDrawBoundsChanged` resizes the layer's window from inside
+    its own draw (`setSize` → `SkiaLayer.reshape` → `Direct3DRedrawer.renderImmediately` → the draw again) without
+    end, and the JVM dies in `skiko-windows-x64.dll` (`EXCEPTION_ACCESS_VIOLATION`). The release leaves no trace of
+    it — no `diagnostics.log` line, no event; the `hs_err_pid*.log` is in the folder the app was started from. A dev
+    run can still try a layer type: `-Pcompose.layers.type=…` (`desktopApp/build.gradle.kts`).
+  - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **The calendar's right-click menu is a menu like the others: non-focusable, dismissed by the root observer** (user
   rule 2026-10-11: *"When the user right-clicks on the calendar, then right-clicks elsewhere, it must open the
   right-click menu. Right now, it simply closes the previous one."*). It was the one right-click menu left focusable,

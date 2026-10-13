@@ -122,7 +122,7 @@ private fun clampToScreen(anchor: ScreenPoint, width: Int, height: Int): ScreenP
  * to an edge. Not the raw bounds: a menu clamped to those has its last rows (the title suggestions, the very
  * thing the field raises) sitting behind the taskbar.
  */
-private fun workAreaAt(anchor: ScreenPoint): Rectangle? =
+internal fun workAreaAt(anchor: ScreenPoint): Rectangle? =
     runCatching {
         val configuration = GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
             .map { it.defaultConfiguration }

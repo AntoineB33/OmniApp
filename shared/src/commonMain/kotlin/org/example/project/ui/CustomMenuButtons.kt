@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -168,7 +167,7 @@ fun MenuAddableBox(key: Any?, onAdd: (MenuCustomizer) -> Unit, modifier: Modifie
         content()
         if (active) {
             transientMenuDismissal(menuOpen) { menuOpen = false }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false)) {
+            AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false)) {
                 DropdownMenuItem(
                     text = { Text("add in the left-side menu") },
                     onClick = {
@@ -608,7 +607,7 @@ internal fun CustomMenuSection(
                     }
                     }
                     transientMenuDismissal(menuOpen) { menuOpen = false }
-                    DropdownMenu(
+                    AppDropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = { menuOpen = false },
                         properties = PopupProperties(focusable = false),

@@ -67,6 +67,15 @@ tasks.withType<JavaExec>().configureEach {
     // Defaults OFF even on the dev `run` task — unlike the sim panel, the recorder samples the frame clock
     // and forces periodic collections, so it must be asked for rather than ride along with every dev run.
     systemProperty("omniapp.perf", (project.findProperty("omniapp.perf") as String?) ?: "false")
+    // Where Compose draws a `Popup` (`-Pcompose.layers.type=WINDOW|COMPONENT|SAME_CANVAS`): forwarded only when set,
+    // to try a layer type on a dev run without shipping it (`docs/invariants/popups.md`, the menus over another
+    // application's always-on-top window).
+    (project.findProperty("compose.layers.type") as String?)?.let { systemProperty("compose.layers.type", it) }
+    // `-Pomniapp.menuWindows=false`: every menu back inside the app's window (material's own), to compare with the
+    // menus that are windows of their own (`AppDropdownMenu.jvm.kt`). Forwarded only when set.
+    (project.findProperty("omniapp.menuWindows") as String?)?.let { systemProperty("omniapp.menuWindows", it) }
+    // `-Pomniapp.menusAtPointer=true`: every menu at the pointer, as the Search window's rows open theirs.
+    (project.findProperty("omniapp.menusAtPointer") as String?)?.let { systemProperty("omniapp.menusAtPointer", it) }
     // Debug fast-break override for testing the pause-cue voice message (`-Pomniapp.breakDurationMs`,
     // `-Pomniapp.breakIntervalMs`, `-Pomniapp.breakPauseThresholdMs`); forwarded only when set, so the app
     // defaults to production break timings. This unprefixed trio retimes the 5-min pose only — the older

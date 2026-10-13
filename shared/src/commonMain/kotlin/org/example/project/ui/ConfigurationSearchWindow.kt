@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -152,7 +151,8 @@ fun ConfigurationSearchWindow(
                     singleLine = true,
                     label = { Text("Search a configuration") },
                     trailingIcon = { SearchBarCross(own.query) { onOwnChange(own.copy(query = "")) } },
-                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
+                        .revertsOnEscape(own.query) { onOwnChange(own.copy(query = it)) },
                 )
                 KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 // This window's OWN search field and types; the Search window's configuration it lists is
@@ -324,7 +324,7 @@ private fun SettingEditor(
                 var statesOpen by remember { mutableStateOf(false) }
                 androidx.compose.foundation.layout.Box {
                     FrameButton(f.calendarAddFilter.label + " ▾") { statesOpen = true }
-                    androidx.compose.material3.DropdownMenu(expanded = statesOpen, onDismissRequest = { statesOpen = false }) {
+                    org.example.project.ui.AppDropdownMenu(expanded = statesOpen, onDismissRequest = { statesOpen = false }) {
                         SearchDomain.CalendarAddFilter.entries.forEach { choice ->
                             androidx.compose.material3.DropdownMenuItem(
                                 text = { androidx.compose.material3.Text((if (choice == f.calendarAddFilter) "● " else "○ ") + choice.label) },
@@ -531,7 +531,7 @@ private fun SortMethodPicker(
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
             properties = PopupProperties(focusable = false),
@@ -699,7 +699,7 @@ private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String,
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
             DropdownMenuItem(text = { Text("any") }, onClick = { open = false; onSelect(null) })
             options.forEach { option ->
                 DropdownMenuItem(text = { Text(label(option)) }, onClick = { open = false; onSelect(option) })

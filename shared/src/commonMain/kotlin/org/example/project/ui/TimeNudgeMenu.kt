@@ -1,7 +1,6 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,7 +55,7 @@ internal fun TimeNudgeMenu(enabled: Boolean = true, onNudge: (deltaMinutes: Int)
     ) {
         field()
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
             TIME_NUDGE_MINUTES.forEach { delta ->
                 DropdownMenuItem(text = { Text(timeNudgeLabel(delta)) }, onClick = { onNudge(delta) })
             }

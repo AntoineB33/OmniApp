@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -682,6 +681,8 @@ fun SearchWindow(
           )
           onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
       }
+      // User rule 2026-10-13: a row's right-click menu opens at the pointer in this window ([LocalRowMenusAtPointer]).
+      androidx.compose.runtime.CompositionLocalProvider(LocalRowMenusAtPointer provides true) {
       Box(Modifier.fillMaxWidth().weight(1f)) {
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
         if (searchCollapsed) {
@@ -737,6 +738,7 @@ fun SearchWindow(
                         .focusRequester(fieldFocus)
                         .onFocusChanged { fieldFocused = it.isFocused }
                         .leaveFocusOnOutsidePress()
+                        .revertsOnEscape(query) { onConfigChange(config.copy(query = it)) }
                         // ↓ or Enter leave the bar for the list, onto its first row; every other key types.
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1091,6 +1093,7 @@ fun SearchWindow(
           )
       }
       }
+      }
     }
 }
 
@@ -1309,10 +1312,11 @@ private fun AddedElementsList(
                         )
                     }
                     transientMenuDismissal(menuOpen) { menuOpen = false }
-                    DropdownMenu(
+                    AppDropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = { menuOpen = false },
                         properties = PopupProperties(focusable = false),
+                        atPointer = LocalRowMenusAtPointer.current,
                     ) {
                         val picked = selected.ifEmpty { setOf(key) }
                         MenuEntry(if (picked.size == 1) "remove" else "remove ${picked.size}") {
@@ -1567,7 +1571,7 @@ internal fun <T> CheckBoxDropDown(
                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
             properties = PopupProperties(focusable = false),
@@ -1696,7 +1700,7 @@ internal fun <T> ChoiceDropDown(
             )
         }
         transientMenuDismissal(open) { open = false }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(label(option)) },
@@ -2114,7 +2118,12 @@ private fun TaskPathBox(
     }
     menu?.let { shown ->
         transientMenuDismissal(menuOpen) { menuOpen = false }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false)) {
+        AppDropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            properties = PopupProperties(focusable = false),
+            atPointer = LocalRowMenusAtPointer.current,
+        ) {
             TaskCellMenuItems(shown) { menuOpen = false }
         }
     }
@@ -2152,7 +2161,7 @@ private fun TaskPathBox(
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
                 transientMenuDismissal(listOpen) { listOpen = false }
-                DropdownMenu(
+                AppDropdownMenu(
                     expanded = listOpen,
                     onDismissRequest = { listOpen = false },
                     properties = PopupProperties(focusable = false),
@@ -2277,7 +2286,7 @@ internal fun TaskIdentityRow(
                 afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
             )
             item.actions?.let { actions ->
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         text = { Text("go to task") },
                         enabled = actions.onGoToTask != null,
@@ -2395,10 +2404,11 @@ private fun ItemResultRow(
             )
         }
         transientMenuDismissal(menuOpen) { menuOpen = false }
-        DropdownMenu(
+        AppDropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
             properties = PopupProperties(focusable = false),
+            atPointer = LocalRowMenusAtPointer.current,
         ) {
             // EVERY row adds (user rule 2026-10-03): this Search window is every element's own window (2026-10-01),
             // so "add" and "add and remove others" are never replaced. A history unit's opening went to the History

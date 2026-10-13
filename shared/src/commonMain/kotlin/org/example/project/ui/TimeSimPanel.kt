@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -184,7 +183,7 @@ fun TimeSimPanel(
                             ) { menuOpen = true }
                             .padding(vertical = 2.dp, horizontal = 8.dp),
                     )
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         scopes.forEach { scope ->
                             DropdownMenuItem(
                                 text = { Text(scope.label, style = MaterialTheme.typography.labelMedium) },

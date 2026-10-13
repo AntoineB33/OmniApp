@@ -46,7 +46,7 @@ import org.example.project.scheduler.domain.PeriodFormula
 import org.example.project.scheduler.domain.PeriodFormulaToken
 import org.example.project.scheduler.domain.PeriodKindStyle
 import org.example.project.ui.periodDrawing
-import androidx.compose.material3.DropdownMenu
+import org.example.project.ui.AppDropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -1594,7 +1594,7 @@ private fun WeightTableHeader(
                         },
                 ) {
                     ColumnDragHandle(active = draggedColumn == column)
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text("Add column to the right") },
                             onClick = {
@@ -2318,7 +2318,7 @@ internal fun RelativePriorityWindow(
                     TextButton(onClick = { relativeToMenuOpen = true }) {
                         Text(relativeToLabel(state, relativeTo))
                     }
-                    DropdownMenu(
+                    AppDropdownMenu(
                         expanded = relativeToMenuOpen,
                         onDismissRequest = { relativeToMenuOpen = false },
                     ) {
@@ -3052,7 +3052,7 @@ internal fun TaskRow(
             // PRD §13 right-click contextual menu on a populated cell.
             if (cellMenu != null) {
                 transientMenuDismissal(contextMenuOpen) { contextMenuOpen = false }
-                DropdownMenu(
+                AppDropdownMenu(
                     expanded = contextMenuOpen,
                     onDismissRequest = { contextMenuOpen = false },
                     // PRD §13: the menu must NOT eat the press that closes it — clicking another cell has
@@ -3060,6 +3060,8 @@ internal fun TaskRow(
                     // its own outside-dismissal, so the dismissal is handed to the app-root observer
                     // instead (see [transientMenuDismissal], registered just above).
                     properties = PopupProperties(focusable = false),
+                    // At the pointer where the row is a list's, as wide as the list (the Search window's).
+                    atPointer = org.example.project.ui.LocalRowMenusAtPointer.current,
                 ) {
                     TaskCellMenuItems(cellMenu) { contextMenuOpen = false }
                 }
@@ -3309,7 +3311,7 @@ internal fun TaskRow(
                         // Same rule as the row's own menu: dismissed by the app-root observer, so the
                         // press that closes it still selects whatever it landed on.
                         transientMenuDismissal(priorityMenuOpen) { priorityMenuOpen = false }
-                        DropdownMenu(
+                        AppDropdownMenu(
                             expanded = priorityMenuOpen,
                             onDismissRequest = { priorityMenuOpen = false },
                             properties = PopupProperties(focusable = false),
