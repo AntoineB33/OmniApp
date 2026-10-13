@@ -4279,6 +4279,7 @@ private fun CalendarConfigurationSection(
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
                 softWrap = false,
+                modifier = Modifier.togglesSection(onCollapse),
             )
         }
         MiniMonth(

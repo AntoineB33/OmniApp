@@ -870,6 +870,13 @@ suggestions before it was ever entered.
     own, which is opened (`collapsedActionGroups`, so it is kept with the window); a group INSIDE a group keeps its
     arrow; the actions section is expanded if it was retracted, and scrolls to the group once the others are laid
     out retracted (`AddedActionsSection`'s `reveal` → the group's `BringIntoViewRequester`).
+  - **A press on a TITLE is a press on its arrow** (user rule 2026-10-13: *"Clicking in the title of a macro group
+    in the action section must be the same as clicking its expansion arrow button. Same thing for the title of the
+    sections of the Search window and the calendar window."*; `Modifier.togglesSection`, beside every `SectionArrow`
+    that has a title: a group of actions and the group inside it, the Search window's three sections, the
+    Configuration Search window's groups, the calendar's "Configuration"). It is handed the arrow's own handler —
+    never a second answer to the press. A section retracted to a strip has no title, and the calendar's grid never
+    had one: their arrow is the way back.
   - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
     Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
     it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each

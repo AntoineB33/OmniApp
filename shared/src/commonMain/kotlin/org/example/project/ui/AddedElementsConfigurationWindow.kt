@@ -263,7 +263,7 @@ internal fun AddedActionsSection(
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
                 softWrap = false,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).togglesSection(onToggleCollapsed),
             )
         }
         if (collapsed) return@Column
@@ -386,10 +386,13 @@ private fun ActionGroupBlock(
     Column(Modifier.fillMaxWidth().bringIntoViewRequester(requester), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         SectionArrow(collapsed) { onToggle(group.id) }
-        when {
-            micro -> MicroGroupTitle(group.title)
-            group.heading == null -> SectionTitle(group.title)
-            else -> Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+        // A press on the title is a press on the arrow (user rule 2026-10-13).
+        Box(Modifier.togglesSection { onToggle(group.id) }) {
+            when {
+                micro -> MicroGroupTitle(group.title)
+                group.heading == null -> SectionTitle(group.title)
+                else -> Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+            }
         }
     }
     if (collapsed) return@Column

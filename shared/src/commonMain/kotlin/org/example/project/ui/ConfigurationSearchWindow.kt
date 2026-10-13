@@ -197,8 +197,9 @@ fun ConfigurationSearchWindow(
                 for (group in groups) {
                     val collapsed = group.id in own.collapsedGroups
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        SectionArrow(collapsed) { onOwnChange(SearchDomain.withSettingGroupToggled(own, group.id, listed)) }
-                        SectionTitle(group.title)
+                        val toggle = { onOwnChange(SearchDomain.withSettingGroupToggled(own, group.id, listed)) }
+                        SectionArrow(collapsed, toggle)
+                        Box(Modifier.togglesSection(toggle)) { SectionTitle(group.title) }
                     }
                     if (collapsed) continue
                     // What every kind of the group has under one name: one field, written to all of them.

@@ -708,6 +708,7 @@ fun SearchWindow(
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     softWrap = false,
+                    modifier = Modifier.togglesSection { searchCollapsed = true },
                 )
             }
             // User rule 2026-10-07: the search header is as compact as the actions section ([CompactFields]: the bar,
@@ -1103,6 +1104,14 @@ internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
     TaskSheetExpandArrow(hasChildren = true, expanded = !collapsed, onToggle = onToggle, color = MaterialTheme.colorScheme.primary)
 }
 
+/**
+ * User rule 2026-10-13: **a press on the TITLE of a section or of a group is a press on its arrow** ([SectionArrow]) —
+ * *"Clicking in the title of a macro group in the action section must be the same as clicking its expansion arrow
+ * button. Same thing for the title of the sections of the Search window and the calendar window."* Put on the title
+ * beside every [SectionArrow], with the arrow's own handler: one answer to the press, never a second one.
+ */
+internal fun Modifier.togglesSection(onToggle: () -> Unit): Modifier = clickable(onClick = onToggle)
+
 /** The window's `selectionSurface`: a sub-tree of the result list's row, or of the added elements' — then the task's id. */
 private const val RESULT_SURFACE: String = "result/"
 private const val ADDED_SURFACE: String = "added/"
@@ -1193,6 +1202,7 @@ private fun AddedElementsList(
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
                 softWrap = false,
+                modifier = Modifier.togglesSection(onToggleCollapsed),
             )
         }
         if (collapsed) return@Column

@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A press on a section's or a group's title is a press on its arrow — 2026-10-13
+
+The user: "Clicking in the title of a macro group in the action section must be the same as clicking its expansion
+arrow button. Same thing for the title of the sections of the Search window and the calendar window."
+`Modifier.togglesSection`, on the title beside every `SectionArrow`: the groups of actions, the Search window's three
+sections, the Configuration Search window's groups (the same heading, so the same press) and the calendar's
+"Configuration". UI only. Client rebuild; no migration.
+
 ### "show only its actions", in the added elements' row menu — 2026-10-13
 
 The user: "In the added elements list, in the right-click menu, add the option to retract all macro groups except the
