@@ -390,7 +390,7 @@ class SearchAddedElementsTest {
         assertEquals(listOf(listOf(a, b), listOf(a), listOf(b)), two.map { it.members })
         assertEquals(listOf(false, true, true), two.map { it.element })
         assertEquals(listOf("Quota  ·  2", "Quota: Sport", "Quota: Reading"), two.map { it.title })
-        assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.ClearList, SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.QuotaDuplicate, SearchDomain.AddedAction.QuotaDelete)))
+        assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.QuotaDuplicate, SearchDomain.AddedAction.QuotaDelete)))
         // "There must also be a title field to rename every added quota elements at the same time, among other
         // things": the fields that write to both — but not where each one stands, which is each one's.
         assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
@@ -406,9 +406,9 @@ class SearchAddedElementsTest {
         )
         assertTrue(two.drop(1).all { it.inner.isEmpty() })
         for (own in two.drop(1)) {
-            assertEquals(listOf(SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), own.actions.take(2), "where it stands, then what it is called")
+            assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), own.actions.take(3), "open / remove, where it stands, then what it is called")
             assertTrue(SearchDomain.AddedAction.QuotaAmount in own.actions && SearchDomain.AddedAction.QuotaLoop in own.actions)
-            assertTrue(own.actions.none(SearchDomain::isSetAction), "what is about both is said once, in their group")
+            assertTrue(own.actions.drop(1).none(SearchDomain::isSetAction), "what is about both is said once, in their group")
         }
         // Nothing is lost.
         val listed =
@@ -416,14 +416,14 @@ class SearchAddedElementsTest {
                 .flatMap { it.second }
         assertEquals(listed.toSet(), (two[0].actions + two[1].actions).toSet())
 
-        // One quota: one group — its progression, its title, its other settings, then "New" and the rest; no
-        // "Remove all" (the cross of its row does it) and no "Open each".
+        // One quota: one group — "Open" and "Remove from list" (user rule 2026-10-13: the first micro group of EACH
+        // macro group), its progression, its title, its other settings, then "New" and the rest.
         val one = groups(listOf(a)).single()
         assertTrue(one.element)
         assertEquals("Quota: Sport", one.title)
-        assertEquals(listOf(SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), one.actions.take(2))
+        assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), one.actions.take(3))
         assertTrue(one.actions.indexOf(SearchDomain.AddedAction.QuotaNew) > one.actions.indexOf(SearchDomain.AddedAction.QuotaLoops), "its own configuration before the buttons about quotas")
-        assertTrue(SearchDomain.AddedAction.ClearList !in one.actions && SearchDomain.AddedAction.OpenEach !in one.actions)
+        assertEquals(1, one.actions.count { it == SearchDomain.AddedAction.OpenEach })
         assertTrue(SearchDomain.AddedAction.QuotaDelete in one.actions)
 
         // Mixed: every element, then the kind holding several of them, then each element — the lone alarm's group
@@ -433,10 +433,19 @@ class SearchAddedElementsTest {
         assertEquals(listOf(listOf(a, x, b), listOf(a, b), listOf(a), listOf(x), listOf(b)), mixed.map { it.members })
         assertEquals(listOf("Every element  ·  3", "Quota  ·  2", "Quota: Sport", "Alarm: Wake", "Quota: Reading"), mixed.map { it.title })
         assertTrue(mixed[0].actions.all { it.section == null })
-        assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.ClearList), mixed[1].actions.take(2), "the quotas alone can be opened, or taken off the list")
+        // User rule 2026-10-13: "Open all" and "Remove from list" are ONE micro group, the first of every macro group.
+        assertTrue(mixed.all { it.actions.first() == SearchDomain.AddedAction.OpenEach }, "every group opens with its elements' open / remove")
+        assertTrue(mixed.none { SearchDomain.AddedAction.ClearList in it.actions }, "its button is in that first micro group")
+        val searched =
+            SearchDomain.actionGroups(
+                SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(listOf(a, x, b))), listOf(a, x, b)),
+                listOf(a, x, b),
+                "title",
+            )
+        assertTrue(searched.all { it.actions.first() == SearchDomain.AddedAction.OpenEach }, "the search bar does not move it")
         assertTrue(SearchDomain.AddedAction.QuotaNew in mixed[1].actions && SearchDomain.AddedAction.QuotaNew !in mixed[2].actions)
         assertTrue(SearchDomain.AddedAction.QuotaTitle in mixed[1].actions && mixed[1].inner.size == 1 && mixed[0].inner.isEmpty())
-        assertEquals(SearchDomain.AddedAction.AlarmOnOff, mixed[3].actions.first())
+        assertEquals(SearchDomain.AddedAction.AlarmOnOff, mixed[3].actions[1])
         assertTrue(SearchDomain.AddedAction.AlarmNew in mixed[3].actions && SearchDomain.AddedAction.AlarmDelete in mixed[3].actions)
 
         // A "New quota" creation row beside a quota: its own group edits the default configuration, nothing else.
@@ -599,16 +608,17 @@ class SearchAddedElementsTest {
         val searched = SearchDomain.actionGroups(sections, added, SearchDomain.CALENDAR_ADD_ACTION_SEARCH)
         assertEquals(plain.map { it.id }, searched.map { it.id }, "the groups of elements are not moved")
         assertEquals(plain.map { it.actions.toSet() }, searched.map { it.actions.toSet() }, "nothing is hidden")
-        assertEquals(SearchDomain.AddedAction.PlaceOnCalendar, searched.first().actions.first())
+        // …right after "Open all" / "Remove from list", the first micro group whatever is typed (user rule 2026-10-13).
+        assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.PlaceOnCalendar), searched.first().actions.take(2))
         assertEquals(
-            plain.first().actions.filterNot { it == SearchDomain.AddedAction.PlaceOnCalendar },
-            searched.first().actions.drop(1),
+            plain.first().actions.filterNot { it == SearchDomain.AddedAction.PlaceOnCalendar || it == SearchDomain.AddedAction.OpenEach },
+            searched.first().actions.drop(2),
             "the others keep the order they stood in",
         )
         // A period's own: "comb" brings its Combinations first, in ITS group, and moves nothing in the others'.
         val comb = SearchDomain.actionGroups(sections, added, "comb")
         val periodGroup = comb.single { it.element && it.kind == SearchDomain.Kind.RestrictivePeriod }
-        assertEquals(SearchDomain.AddedAction.PeriodCombinations, periodGroup.actions.first())
+        assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.PeriodCombinations), periodGroup.actions.take(2))
         assertEquals(plain.first().actions, comb.first().actions)
         // A blank bar sorts nothing.
         assertEquals(plain, SearchDomain.actionGroups(sections, added, " "))
@@ -1184,11 +1194,12 @@ class SearchAddedElementsTest {
     @Test
     fun the_actions_search_bar_answers_to_any_text_of_an_action_its_title_first() {
         // "ends" is a field of two actions and the title of none: they come first, in the order they stood in.
-        val general = listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.ClearList)
-        assertEquals(listOf(SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.ClearList), SearchDomain.sortedByActionSearch(general, "ends"))
-        // A button's name finds its action: "Remove all" is ClearList's button, "remove" also a button of the blocks.
-        assertEquals(SearchDomain.AddedAction.ClearList, SearchDomain.sortedByActionSearch(general, "remove all").first())
-        assertEquals(listOf(SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.ClearList), SearchDomain.sortedByActionSearch(general, "remove").take(2).sortedBy { it.ordinal })
+        // …after "Open all" / "Remove from list", which stays the first micro group whatever is typed (2026-10-13).
+        val general = listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks)
+        assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.AddedAction.CalendarBlocks, SearchDomain.AddedAction.QuotaTitle), SearchDomain.sortedByActionSearch(general, "ends"))
+        // A button's name finds its action: "Open all" is a button of the first micro group.
+        assertEquals(4, SearchDomain.actionSearchRank(SearchDomain.AddedAction.OpenEach, "open all"))
+        assertEquals(SearchDomain.AddedAction.CalendarBlocks, SearchDomain.sortedByActionSearch(general, "remove")[1])
         // A title always beats a text inside: "alert" is a title, "sound" only a word of it; "delete" a title too.
         val alarm = listOf(SearchDomain.AddedAction.AlarmTime, SearchDomain.AddedAction.AlarmRingsFor, SearchDomain.AddedAction.AlarmAlert, SearchDomain.AddedAction.AlarmDelete)
         assertEquals(SearchDomain.AddedAction.AlarmAlert, SearchDomain.sortedByActionSearch(alarm, "vibrate").first())
@@ -1198,7 +1209,7 @@ class SearchAddedElementsTest {
         assertEquals(5, SearchDomain.actionSearchRank(SearchDomain.AddedAction.AlarmAlert, "vibrate sound"))
         assertNull(SearchDomain.actionSearchRank(SearchDomain.AddedAction.AlarmTime, "vibrate"))
         // What the calendar's "add…" opens with still puts "Add to the calendar" first, by its title.
-        assertEquals(SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.sortedByActionSearch(general, SearchDomain.CALENDAR_ADD_ACTION_SEARCH).first())
+        assertEquals(SearchDomain.AddedAction.PlaceOnCalendar, SearchDomain.sortedByActionSearch(general, SearchDomain.CALENDAR_ADD_ACTION_SEARCH)[1])
         // Nothing typed, nothing moved; nothing answering, nothing moved.
         assertEquals(general, SearchDomain.sortedByActionSearch(general, " "))
         assertEquals(general, SearchDomain.sortedByActionSearch(general, "zzz"))

@@ -2540,7 +2540,12 @@ object SearchDomain {
      * the Configuration Search window lists [Setting]s: [section] null is about the list as a whole.
      */
     enum class AddedAction(val section: Kind?, val label: String) {
-        OpenEach(null, "Open each"),
+        /**
+         * **The first micro group of every macro group** (user rule 2026-10-13: *"Both 'Open all' and 'Remove from
+         * list' buttons must be in the first micro group of each macro group"*): the two buttons about the group's
+         * elements as rows of the added elements list — open them, take them off it ([actionGroups]).
+         */
+        OpenEach(null, "Open or remove from the list"),
         /** The calendar's "add…" (user rule 2026-10-01): every added element that can go there, at the filter's instant. */
         PlaceOnCalendar(null, "Add to the calendar"),
         /**
@@ -2789,14 +2794,11 @@ object SearchDomain {
             if (kind == null) {
                 // The calendar's actions are those of an element that can be on the calendar (user rule 2026-10-05).
                 val onCalendar = added.any { it.kind in CALENDAR_ADD_KINDS }
-                // "Open each" is about SEVERAL elements (user rule 2026-10-07): a lone one is opened by its own row.
-                val lone = added.size == 1
                 // A timer's place on the calendar is the moment it ends, which its run states and moves (user rule
                 // 2026-10-12): with nothing but timers added there is no block to list.
                 val onlyTimers = added.all { it.kind == Kind.Timer }
                 actions.filter {
-                    (onCalendar || it !in CALENDAR_ACTIONS) && !(lone && it == AddedAction.OpenEach) &&
-                        !(onlyTimers && it == AddedAction.CalendarBlocks)
+                    (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && it == AddedAction.CalendarBlocks)
                 }.takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
                 // The lowest countdown is of SEVERAL timers: one alone has its own run.
@@ -2899,8 +2901,7 @@ object SearchDomain {
      *
      * [sections] is what [actionsFor] lists for [added]. Out of it:
      *  - **every added element**: the general actions, and what is said just below of a kind every element is;
-     *  - **each kind holding several of them** (in a group of its own where they are not all of them, with "Open
-     *    each" and "Remove every element from the list" acting on the kind's elements): that kind's set actions
+     *  - **each kind holding several of them** (in a group of its own where they are not all of them): that kind's set actions
      *    ([isSetAction]); then **one field for all of them at once** — *"a title field to rename every added quota
      *    elements at the same time, among other things"*: every own action that is one field over the elements it is
      *    given (all but [PER_ELEMENT_ACTIONS]); then, inside the group, **the default configuration of the kind**
@@ -2908,8 +2909,10 @@ object SearchDomain {
      *    configurations of the quota elements"*) — unless its creation row is added, which then has its own group;
      *  - **each element**, in the list's order: its own configuration, what says where it stands first
      *    ([LEADING_ACTIONS]) — and the set actions of its kind when it is the only one of it.
-     * **One element alone is one group**: its own configuration, then its kind's set actions, then the general ones —
-     * without "Remove every element from the list" (*"it can be done by clicking on the cross"*) nor "Open each".
+     * **One element alone is one group**: its own configuration, then its kind's set actions, then the general ones.
+     * **Every group of elements OPENS with "Open all" and "Remove from list"** ([AddedAction.OpenEach], user rule
+     * 2026-10-13), acting on the group's own elements — an element's group and the lone element's included, which had
+     * neither until then — and the search bar does not move it ([sortedByActionSearch]).
      * A kind no added element is (the window of every configuration lists them all) keeps a group of its own, last.
      */
     /**
@@ -2940,11 +2943,12 @@ object SearchDomain {
      * User rule 2026-10-11: *"The search bar sorts the micro groups by the matching of the micro group titles, but
      * doesn't sort the macro groups."* — [actions] (one macro group's micro groups) with those that answer [search]
      * first, the best answer first (a title before any other text of the action, [actionSearchRank]); the rest after
-     * them, and every tie, in the order they stood in.
+     * them, and every tie, in the order they stood in. The group's "Open all" / "Remove from list" stays its FIRST
+     * micro group whatever the bar holds (user rule 2026-10-13).
      */
     fun sortedByActionSearch(actions: List<AddedAction>, search: String): List<AddedAction> {
         if (search.isBlank()) return actions
-        return actions.sortedBy { actionSearchRank(it, search) ?: Int.MAX_VALUE }
+        return actions.sortedBy { if (it == AddedAction.OpenEach) Int.MIN_VALUE else actionSearchRank(it, search) ?: Int.MAX_VALUE }
     }
 
     /**
@@ -2974,7 +2978,7 @@ object SearchDomain {
      */
     fun actionSearchWords(action: AddedAction): String =
         when (action) {
-            AddedAction.OpenEach -> "open"
+            AddedAction.OpenEach -> "open all remove from list"
             AddedAction.ClearList -> "remove all"
             AddedAction.CreationSearchAll -> "every search"
             AddedAction.PlaceOnCalendar -> "starts ends day at now right-click time after the start ends on add default length"
@@ -3061,35 +3065,35 @@ object SearchDomain {
             return listOf(ActionGroup(kind, listOf(row), editing, heading = "Default configuration of a new " + kind.label))
         }
         val general = sections.firstOrNull { it.first == null }?.second.orEmpty()
+        // "Open all" and "Remove from list": the first micro group of every group of elements (user rule 2026-10-13).
+        val first = general.filter { it == AddedAction.OpenEach }
         val kinds = sortedByReach(sections.filter { it.first != null }, added)
         val reached = kinds.filter { membersOf(it.first).isNotEmpty() }
         val out = ArrayList<ActionGroup>()
         val lone = added.singleOrNull()
         if (lone != null) {
             val mine = reached.map { (kind, actions) -> of(lone, kind, actions) }
-            val actions =
-                mine.flatMap(::own) + mine.flatMap(::set) + general.filter { it != AddedAction.ClearList && it != AddedAction.OpenEach }
+            val actions = first + mine.flatMap(::own) + mine.flatMap(::set) + general
             // The default configuration of its kind is inside its group: it is the only one of it (user rule 2026-10-12).
             if (actions.isNotEmpty()) {
                 out += ActionGroup(actionKindOf(lone), added, actions.distinct(), element = true, inner = reached.flatMap { defaults(it.first, it.second) })
             }
         } else {
             val whole = reached.filter { membersOf(it.first).size == added.size }
-            val wide = general + whole.flatMap { set(it.second) } + whole.flatMap { bulk(it.second) }
+            val wide = first + general + whole.flatMap { set(it.second) } + whole.flatMap { bulk(it.second) }
             if (wide.isNotEmpty()) {
                 out += ActionGroup(whole.singleOrNull()?.first, added, wide.distinct(), inner = whole.flatMap { defaults(it.first, it.second) })
             }
-            val listWide = general.filter { it == AddedAction.OpenEach || it == AddedAction.ClearList }
             for ((kind, actions) in reached) {
                 val members = membersOf(kind)
                 if (members.size < 2 || members.size == added.size) continue
-                val about = listWide + set(actions) + bulk(actions)
+                val about = first + set(actions) + bulk(actions)
                 if (about.isNotEmpty()) out += ActionGroup(kind, members, about, inner = defaults(kind, actions))
             }
             for (element in added) {
                 val mine = reached.filter { element in membersOf(it.first) }
                 val actions =
-                    mine.flatMap { own(of(element, it.first, it.second)) } +
+                    first + mine.flatMap { own(of(element, it.first, it.second)) } +
                         mine.filter { membersOf(it.first).size == 1 }.flatMap { set(of(element, it.first, it.second)) }
                 // …and the default configuration of a kind it is the only one of (the others have it in their group).
                 val inner = mine.filter { membersOf(it.first).size == 1 }.flatMap { defaults(it.first, it.second) }
@@ -3103,9 +3107,10 @@ object SearchDomain {
     /**
      * The actions no longer LISTED (user rule 2026-10-11: *"remove the 'Drag on the calendar'"* — the drag is a button
      * of "Blocks on the calendar" now, over the blocks checked there). Kept in the enum: an item of the lateral menu
-     * made from one before is named by it, and still draws its editor.
+     * made from one before is named by it, and still draws its editor. "Remove every element from the list" went the
+     * same way (user rule 2026-10-13): its button stands beside "Open all", in the first micro group of every group.
      */
-    val RETIRED_ACTIONS: Set<AddedAction> = setOf(AddedAction.DragOnCalendar)
+    val RETIRED_ACTIONS: Set<AddedAction> = setOf(AddedAction.DragOnCalendar, AddedAction.ClearList)
 
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
     val CALENDAR_ACTIONS: Set<AddedAction> =

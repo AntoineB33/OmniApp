@@ -238,11 +238,10 @@ class CalendarBlocksSearchTest {
         assertTrue(general("Timer/timer-0", "Alarm/alarm-0").containsAll(calendar))
         val category = "Category/" + s.categories.first { it.title == "Home" }.id.value
         assertTrue(general(category).none { it in calendar }, "a category is never on the calendar")
-        assertTrue(general(category).contains(SearchDomain.AddedAction.ClearList), "its other general actions stand")
-        // User rule 2026-10-07: "When there is only one element in the added elements list … there should not be a
-        // section 'Open each'."
-        assertFalse(general(category).contains(SearchDomain.AddedAction.OpenEach), "one element: nothing to open EACH of")
-        assertTrue(general(category, "Alarm/alarm-0").contains(SearchDomain.AddedAction.OpenEach), "two: it is there")
+        // User rule 2026-10-13: "Open all" / "Remove from list" open EVERY macro group, a lone element's included
+        // (until then one element had no "Open each", user rule 2026-10-07).
+        assertTrue(general(category).contains(SearchDomain.AddedAction.OpenEach), "its other general actions stand")
+        assertTrue(general(category, "Alarm/alarm-0").contains(SearchDomain.AddedAction.OpenEach))
         assertTrue(general(category, "Alarm/alarm-0").containsAll(calendar))
         assertEquals(listOf("Alarm/alarm-0"), SearchDomain.blockOwners(added(s, category, "Alarm/alarm-0")))
     }

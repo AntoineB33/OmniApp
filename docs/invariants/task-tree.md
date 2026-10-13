@@ -853,15 +853,22 @@ suggestions before it was ever entered.
   list, default configurations for a quota element etc…), the one for the first quota in the list (progression, title
   etc…) and the one for the second quota"*; `SearchDomain.actionGroups`, `ActionGroup`, `SearchAddedElementsTest`).
   - **A group is a set of added elements and the actions drawn over THAT set** — the editors are the same ones, handed
-    the group's members as their added elements, so nothing is drawn by a second implementation. "Open each" and
-    "Remove all" act on the group's elements (`onOpenEach` / `onClear` take them), and an action added to the lateral
-    menu from a group carries that group's elements.
+    the group's members as their added elements, so nothing is drawn by a second implementation. An action added to
+    the lateral menu from a group carries that group's elements.
+  - **EVERY group of elements opens with ONE micro group holding "Open all" and "Remove from list"** (user rule
+    2026-10-13: *"Both 'Open all' and 'Remove from list' buttons must be in the first micro group of each macro
+    group"*; `AddedAction.OpenEach`, titled "Open or remove from the list"). Both act on the group's own elements
+    (`onOpenEach` / `onClear` take them) — the group of every element, a kind's, each element's and the lone
+    element's alike (the last two had neither until then; one element reads "Open"). It is first whatever the search
+    bar holds (`sortedByActionSearch` does not move it). "Remove every element from the list" is no longer an action
+    of its own (`RETIRED_ACTIONS`); as an item of the lateral menu the group shows "Open" alone — there is no list
+    there to take anything off.
   - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
     Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
     it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each
     element's group.
   - **The groups**: every element (the general actions, and the set actions of a kind every element is); each kind
-    holding several but not all (its set actions, with "Open each" and "Remove all" for those); then each element in
+    holding several but not all (its set actions); then each element in
     the list's order — its own configuration, **what says where it stands first** (`LEADING_ACTIONS`: a quota's target
     progression, a timer's or chrono's run, an alarm's state), then its title and the rest — with its kind's set
     actions when it is the only one of its kind.

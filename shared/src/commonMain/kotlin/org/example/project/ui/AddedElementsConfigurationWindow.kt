@@ -500,7 +500,7 @@ internal fun MenuActionItem(
             CompactFields {
                 AddedActionEditor(
                     state, action, added, config, { onConfigChange(it.encode()) }, handlers, run, nowMillis,
-                    onOpenEach = { added.forEach(onOpen) }, onClear = {},
+                    onOpenEach = { added.forEach(onOpen) }, onClear = null,
                 )
             }
         }
@@ -519,7 +519,8 @@ private fun AddedActionEditor(
     run: (SearchDomain.AddedCommand) -> Unit,
     nowMillis: () -> Long,
     onOpenEach: () -> Unit,
-    onClear: () -> Unit,
+    /** Takes the elements off the added elements list; null where there is no list to take them off (the lateral menu). */
+    onClear: (() -> Unit)?,
     /** The action's title is the editor's to write, for the ones that put buttons beside it; else its caller wrote it. */
     titled: Boolean = false,
 ) {
@@ -528,8 +529,16 @@ private fun AddedActionEditor(
     fun idsOf(kind: SearchDomain.Kind) =
         added.filterIsInstance<SearchDomain.ItemResult>().filter { it.kind == kind }.mapTo(HashSet()) { it.id }
     when (action) {
-        SearchDomain.AddedAction.OpenEach -> FrameButton("Open ${added.size}", enabled = added.isNotEmpty(), onClick = onOpenEach)
-        SearchDomain.AddedAction.ClearList -> FrameButton("Remove all", enabled = added.isNotEmpty(), onClick = onClear)
+        // User rule 2026-10-13: the two buttons about the group's elements as rows of the list, in ONE micro group —
+        // the first of every group of elements ([SearchDomain.actionGroups]).
+        SearchDomain.AddedAction.OpenEach ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                FrameButton(if (added.size == 1) "Open" else "Open all", enabled = added.isNotEmpty(), onClick = onOpenEach)
+                if (onClear != null) FrameButton("Remove from list", enabled = added.isNotEmpty(), onClick = onClear)
+            }
+        // No longer listed ([SearchDomain.RETIRED_ACTIONS]): what an item of the lateral menu made from it still draws.
+        SearchDomain.AddedAction.ClearList ->
+            FrameButton("Remove from list", enabled = added.isNotEmpty() && onClear != null, onClick = { onClear?.invoke() })
         // A creation row leads to every element of the kind it makes: one button per kind among the added rows.
         SearchDomain.AddedAction.CreationSearchAll -> {
             val kinds = SearchDomain.creationKinds(added)
