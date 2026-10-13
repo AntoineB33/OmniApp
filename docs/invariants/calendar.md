@@ -381,10 +381,12 @@ Global rules that always apply: `CLAUDE.md`.
   `showsDayDate = false`, its date being in the header), the §14 tags, the §18 rings and the BOTTOM LINE of
   every outlined period box (a text it would cross goes below it). **A label is written only where its whole
   line lies inside its own element — pushed or not**: a period a few dp tall names itself in the bubble
-  alone. Labels are taken top
-  to bottom; **at the very same point, in the hover bubble's own order** (`CalendarBubbleSection.Kind.rank` —
-  a task's title keeps the point, the period's label goes below it). Each is written at the first clear place
-  at or below its element's top, so the one that gives way goes BELOW the other. It is the band rule above by
+  alone. Labels are taken **in the hover bubble's own order, wherever their elements start**
+  (`CalendarBubbleSection.Kind.rank` — a task's title or a break's name keeps its place, the period's label
+  goes below it), and top to bottom among equal ranks. Each is written at the first clear place
+  at or below its element's top, so the one that gives way — always the lower-ranked — goes BELOW the other.
+  Until 2026-10-13 the rank only broke ties at the very same point, so an "Inactivity" opening a few dp above
+  a "15 minute break" kept the point and the break, too short to hold its name any lower, went unnamed. It is the band rule above by
   another route: nothing is moved to make room and no element is stretched — a label pushed past its
   element's bottom is not written, the zoom being what brings it back. A wrapping panel title is capped at
   the lines that fit before the next text below (`CalendarLabelSlot.maxLines`). It is re-asked whenever a

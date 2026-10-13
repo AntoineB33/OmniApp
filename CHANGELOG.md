@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar's texts give way in the hover bubble's order, wherever their elements start — 2026-10-13
+
+The user: "In the calendar, the title display on blocks must abide by the same priority ranking as in the hovering
+info bubble. Right now, I saw the title 'Inactivity' appear in priority over '15 minute break'." `calendarLabelSlots`
+took the labels top to bottom and read `CalendarBubbleSection.Kind.rank` only where two wanted the very same point, so
+a period opening a few dp above a break kept the point and the break — too short to hold its name any lower — was not
+named. The labels are now taken by rank first and top to bottom among equals: the lower-ranked text is the one that
+goes below (or, with no room there, is not written). `CalendarLabelSlotsTest`. Client rebuild; no migration.
+
 ### Several timers: the lowest countdown, and all of them under it — 2026-10-12
 
 The user: "In the actions common to several timers, there must be the lowest countdown with the title of the timer,

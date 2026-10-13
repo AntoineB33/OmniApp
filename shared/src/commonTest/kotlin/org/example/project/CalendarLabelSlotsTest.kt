@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 /**
  * PRD §8: no two texts of a day column share a point, and no marker is drawn over one
  * ([calendarLabelSlots]). Where a task panel's title and a period's label would overlap, one is written below
- * the other — the lower one, or at the very same point the one the hover bubble ranks lower.
+ * the other — the one the hover bubble ranks lower, or among equals the lower one.
  */
 class CalendarLabelSlotsTest {
     private val line = 18f
@@ -64,11 +64,28 @@ class CalendarLabelSlotsTest {
     }
 
     @Test
-    fun overlapping_texts_at_different_points_push_the_lower_one_down() {
-        // The period opens 5 dp above the panel: it keeps its place and the panel's title goes below it.
+    fun overlapping_texts_at_different_points_push_the_lower_ranked_one_down() {
+        // The period opens 5 dp above the panel: the title still keeps its place, as it leads the hover
+        // bubble, and the period's label goes below it.
         val slots = calendarLabelSlots(listOf(panel("t", 105f, 300f), band("p", 100f, 900f)), emptyList())
-        assertEquals(0f, slots.getValue("p").inset)
-        assertEquals(13f, slots.getValue("t").inset)
+        assertEquals(0f, slots.getValue("t").inset)
+        assertEquals(23f, slots.getValue("p").inset)
+    }
+
+    @Test
+    fun a_break_inside_a_period_that_opened_just_above_it_keeps_its_name() {
+        // Reported 2026-10-13: "Inactivity" was written and the "15 minute break" one line tall under it was not.
+        val pause = CalendarLabelBox("b", 105f, 125f, 0f, 1f, CalendarBubbleSection.Kind.Break.rank, line)
+        val slots = calendarLabelSlots(listOf(band("p", 100f, 900f), pause), emptyList())
+        assertEquals(0f, slots.getValue("b").inset)
+        assertEquals(23f, slots.getValue("p").inset)
+    }
+
+    @Test
+    fun equal_ranks_are_taken_top_to_bottom() {
+        val slots = calendarLabelSlots(listOf(panel("low", 105f, 300f), panel("high", 100f, 300f)), emptyList())
+        assertEquals(0f, slots.getValue("high").inset)
+        assertEquals(13f, slots.getValue("low").inset)
     }
 
     @Test
@@ -79,7 +96,7 @@ class CalendarLabelSlotsTest {
         assertEquals(0f to 0f, insets(60f))
         assertEquals(0f to 8f, insets(90f)) // the panel is above now: the period's label gives way
         assertEquals(0f to line, insets(100f))
-        assertEquals(8f to 0f, insets(110f)) // the panel is below now: its title gives way
+        assertEquals(0f to 28f, insets(110f)) // the panel is below now: the period's label still gives way
         assertEquals(0f to 0f, insets(130f))
     }
 
@@ -95,10 +112,10 @@ class CalendarLabelSlotsTest {
 
     @Test
     fun a_text_with_no_room_below_is_not_written() {
-        // The panel is too short to hold its title under the period's label.
-        val slots = calendarLabelSlots(listOf(panel("t", 105f, 125f), band("p", 100f, 900f)), emptyList())
-        assertNull(slots["t"])
-        assertEquals(0f, slots.getValue("p").inset)
+        // The period is too short to hold its label under the panel's title.
+        val slots = calendarLabelSlots(listOf(panel("t", 100f, 300f), band("p", 105f, 125f)), emptyList())
+        assertNull(slots["p"])
+        assertEquals(0f, slots.getValue("t").inset)
     }
 
     @Test

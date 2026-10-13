@@ -7626,7 +7626,7 @@ private val CALENDAR_LABEL_SLOT = 18.dp
  * takes.
  *
  * [rank] is [CalendarBubbleSection.Kind.rank], the hover bubble's own ordering: it is what says which of two
- * texts wanting the same point keeps it. [height] is the one line the text needs, and it is written only
+ * texts whose lines would meet keeps its place. [height] is the one line the text needs, and it is written only
  * where that whole line lies inside `[top, bottom]`.
  */
 internal data class CalendarLabelBox(
@@ -7656,13 +7656,14 @@ internal data class CalendarLabelSlot(val inset: Float, val maxLines: Int)
  * over one.** The one answer for the panel titles, the period labels and the break names; a label missing
  * from the result has no room and is not written (the hover bubble still names it, the zoom brings it back).
  *
- * Every label wants the top of its own element. They are taken top to bottom, and where two want the very
- * same point, in the order the hover bubble names them ([CalendarLabelBox.rank]; ties in list order): each
- * is written at the first place at or below its element's top that is clear of the [obstacles] and of every
- * label already written, so the one that gives way is always the lower — or, at the same point, the
- * lower-ranked — and it goes BELOW the other, never away. Nothing is moved to make room and no element is
- * stretched to hold its name: a label whose whole line does not fit inside its element there — pushed or
- * not — is dropped.
+ * Every label wants the top of its own element. They are taken **in the order the hover bubble names them**
+ * ([CalendarLabelBox.rank]) — WHEREVER their elements start — and top to bottom among equals (ties in list
+ * order): each is written at the first place at or below its element's top that is clear of the [obstacles]
+ * and of every label already written, so the one that gives way is always the lower-ranked — among equals,
+ * the lower — and it goes BELOW the other, never away. Taking them top to bottom first let an "Inactivity"
+ * that opened a few dp above a "15 minute break" keep the point and the break, too short to hold its name
+ * any lower, lose it (2026-10-13). Nothing is moved to make room and no element is stretched to hold its
+ * name: a label whose whole line does not fit inside its element there — pushed or not — is dropped.
  *
  * A written label holds ONE line against the labels after it; [CalendarLabelSlot.maxLines] is how many more
  * a wrapping title may take before it would reach the next text below it.
@@ -7680,7 +7681,7 @@ internal fun calendarLabelSlots(
     fun Taken.crosses(xStart: Float, xEnd: Float) = this.xStart < xEnd - eps && this.xEnd > xStart + eps
     val taken = obstacles.mapTo(mutableListOf()) { Taken(it.top, it.bottom, it.xStart, it.xEnd, null) }
     val written = mutableListOf<Pair<CalendarLabelBox, Float>>()
-    labels.sortedWith(compareBy<CalendarLabelBox> { it.top }.thenBy { it.rank }).forEach { label ->
+    labels.sortedWith(compareBy<CalendarLabelBox> { it.rank }.thenBy { it.top }).forEach { label ->
         var y = label.top
         // Each pass moves [y] strictly down past something taken, so it ends within taken.size passes.
         while (true) {
