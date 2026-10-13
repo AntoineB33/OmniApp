@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -242,6 +245,11 @@ internal fun AddedActionsSection(
     /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
     collapsed: Boolean = false,
     onToggleCollapsed: () -> Unit = {},
+    /**
+     * The group to scroll to ([SearchDomain.ActionGroup.id]) and the count of the request, so that asking twice for
+     * the same group scrolls twice — the added elements' "show only its actions" (user rule 2026-10-13).
+     */
+    reveal: Pair<String, Int>? = null,
     modifier: Modifier = Modifier,
 ) {
     CompactFields {
@@ -301,7 +309,7 @@ internal fun AddedActionsSection(
             verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
         ) {
             if (sections.isEmpty()) NoteText("No action matches.")
-            AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear)
+            AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, reveal)
         }
         ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
         }
@@ -322,6 +330,7 @@ private fun AddedActionSections(
     nowMillis: () -> Long,
     onOpenEach: (List<SearchDomain.Result>) -> Unit,
     onClear: (List<SearchDomain.Result>) -> Unit,
+    reveal: Pair<String, Int>? = null,
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
@@ -330,7 +339,7 @@ private fun AddedActionSections(
     val listed = groups.flatMapTo(HashSet()) { group -> listOf(group.id) + group.inner.map { it.id } }
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
     for (group in groups) {
-        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle) {
+        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, reveal = reveal?.takeIf { it.first == group.id }) {
             // What the group holds inside it (the default configuration of its kind), each with its own arrow.
             for (inner in group.inner) {
                 ActionGroupBlock(inner, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, micro = true) {}
@@ -359,10 +368,22 @@ private fun ActionGroupBlock(
     onToggle: (String) -> Unit,
     /** A group INSIDE a group of elements (the default configuration of its kind): titled as an action is ([MicroGroupTitle]). */
     micro: Boolean = false,
+    /** Set on the group the section is asked to scroll to ([AddedActionsSection]'s `reveal`). */
+    reveal: Pair<String, Int>? = null,
     inside: @Composable () -> Unit,
 ) {
     val added = group.members
     val collapsed = group.id in config.collapsedActionGroups
+    // User rule 2026-10-13: the added elements' "show only its actions" scrolls the section to this group — once the
+    // others are retracted and laid out, the place to scroll to being the one it has THEN.
+    val requester = remember { BringIntoViewRequester() }
+    LaunchedEffect(reveal) {
+        if (reveal == null) return@LaunchedEffect
+        withFrameNanos { }
+        requester.bringIntoView()
+    }
+    // One box per group, spaced as the section spaces its rows: what the scroll brings into view is the whole group.
+    Column(Modifier.fillMaxWidth().bringIntoViewRequester(requester), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         SectionArrow(collapsed) { onToggle(group.id) }
         when {
@@ -371,7 +392,7 @@ private fun ActionGroupBlock(
             else -> Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
         }
     }
-    if (collapsed) return
+    if (collapsed) return@Column
     // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
     val run = { command: SearchDomain.AddedCommand ->
         SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
@@ -398,6 +419,7 @@ private fun ActionGroupBlock(
         }
     }
     inside()
+    }
 }
 
 /**

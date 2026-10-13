@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "show only its actions", in the added elements' row menu — 2026-10-13
+
+The user: "In the added elements list, in the right-click menu, add the option to retract all macro groups except the
+one for this element alone, and scroll to it if necessary." The entry retracts every group of the actions section but
+the right-clicked element's own, opens that one, expands the section if it was retracted and scrolls to the group
+(`SearchDomain.withOnlyElementGroupOpen`, `AddedActionsSection`'s `reveal`). What is retracted is the window's stored
+configuration, as the arrows' is. `SearchAddedElementsTest`. Client rebuild; no migration.
+
 ### "Open all" and "Remove from list" open every macro group of the actions — 2026-10-13
 
 The user: "In the macro groups of the action section of the Search window, add the button to remove the items from the

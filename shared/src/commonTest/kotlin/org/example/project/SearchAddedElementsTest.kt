@@ -1188,6 +1188,35 @@ class SearchAddedElementsTest {
     }
 
     /**
+     * User rule 2026-10-13: *"In the added elements list, in the right-click menu, add the option to retract all macro
+     * groups except the one for this element alone, and scroll to it if necessary."*
+     */
+    @Test
+    fun a_row_of_the_added_elements_leaves_its_own_group_of_actions_open_alone() {
+        fun quota(id: String, title: String) = SearchDomain.ItemResult(SearchDomain.Kind.Quota, id, title, "")
+        val a = quota("q1", "Sport")
+        val b = quota("q2", "Reading")
+        val x = SearchDomain.ItemResult(SearchDomain.Kind.Alarm, "x", "Wake", "")
+        val added = listOf(a, x, b)
+        val ownOfB = "element/" + SearchDomain.keyOf(b)
+        // The default configuration inside the quotas' group was retracted, B's own group too: the first keeps its
+        // arrow, the second is opened, and every other group of elements is retracted.
+        val before = SearchDomain.Config(collapsedActionGroups = setOf("default/Quota", ownOfB, "gone"))
+        val (after, id) = SearchDomain.withOnlyElementGroupOpen(before, added, b)!!
+        assertEquals(ownOfB, id)
+        assertEquals(
+            setOf("all", "kind/Quota", "element/" + SearchDomain.keyOf(a), "element/" + SearchDomain.keyOf(x), "default/Quota"),
+            after.collapsedActionGroups,
+        )
+        // One element alone: its one group, opened.
+        val (lone, loneId) = SearchDomain.withOnlyElementGroupOpen(SearchDomain.Config(collapsedActionGroups = setOf("element/" + SearchDomain.keyOf(a))), listOf(a), a)!!
+        assertEquals("element/" + SearchDomain.keyOf(a), loneId)
+        assertTrue(lone.collapsedActionGroups.isEmpty())
+        // Not in the list: nothing to show.
+        assertNull(SearchDomain.withOnlyElementGroupOpen(before, listOf(a, x), b))
+    }
+
+    /**
      * User rule 2026-10-11: *"The search bar in the action bar sort the micro groups with any text, not just the title
      * of the micro groups. But only the microgroup are sorted, not inside the microgroups."*
      */

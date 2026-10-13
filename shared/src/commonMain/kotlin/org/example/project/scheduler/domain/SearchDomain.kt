@@ -2926,6 +2926,22 @@ object SearchDomain {
     }
 
     /**
+     * User rule 2026-10-13, the added elements' row menu: *"retract all macro groups except the one for this element
+     * alone, and scroll to it if necessary"* — [config] with every group of the actions section retracted but
+     * [element]'s own, which is opened, and that group's id (what the section scrolls to). The groups are the ones the
+     * section lists for [added] ([actionGroups]); what a group holds inside it (a kind's default configuration) keeps
+     * the arrow it had. Null where the section lists no group of the element's own.
+     */
+    fun withOnlyElementGroupOpen(config: Config, added: List<Result>, element: Result): Pair<Config, String>? {
+        val groups = actionGroups(actionsFor(addedActions(config.actionQuery, Kind.entries.toSet(), actionKindsOf(added)), added), added)
+        val key = keyOf(element)
+        val own = groups.firstOrNull { it.element && it.members.singleOrNull()?.let(::keyOf) == key } ?: return null
+        val inner = groups.flatMapTo(HashSet()) { group -> group.inner.map { it.id } }
+        val retracted = groups.mapTo(HashSet()) { it.id } - own.id + config.collapsedActionGroups.filter { it in inner }
+        return config.copy(collapsedActionGroups = retracted) to own.id
+    }
+
+    /**
      * How well an action's title answers the actions section's search bar: 0 = the same words, 1 = starts with it,
      * 2 = contains it, 3 = holds every word of it somewhere ("add to calendar" finds "Add to the calendar"); null =
      * does not answer. A blank search answers nothing, so nothing is moved.

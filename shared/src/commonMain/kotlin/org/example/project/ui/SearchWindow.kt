@@ -652,6 +652,8 @@ fun SearchWindow(
       // section gives its room to its neighbour, and the separator between the two is gone with it.
       var searchCollapsed by remember { mutableStateOf(splits?.searchHidden ?: false) }
       var actionsCollapsed by remember { mutableStateOf(splits?.actionsHidden ?: false) }
+      // The group of actions the added elements' "show only its actions" last asked for, and the count of the asks.
+      var actionReveal by remember { mutableStateOf<Pair<String, Int>?>(null) }
       var addedCollapsed by remember { mutableStateOf(splits?.addedHidden ?: false) }
       LaunchedEffect(splits) {
           splits?.let {
@@ -1022,6 +1024,7 @@ fun SearchWindow(
                 },
                 collapsed = actionsCollapsed,
                 onToggleCollapsed = { actionsCollapsed = !actionsCollapsed },
+                reveal = actionReveal,
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(if (actionsCollapsed) Modifier else Modifier.weight(if (bothOpen) topRightShare.coerceAtLeast(LEAST_SECTION_SHARE) else 1f))
@@ -1051,6 +1054,14 @@ fun SearchWindow(
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
                 onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
                 onRemoveAll = { keys -> onConfigChange(config.copy(added = SearchDomain.removing(config.added, keys))) },
+                // User rule 2026-10-13: every group of the actions retracted but this element's own, and scrolled to.
+                onShowOnlyActions = { row ->
+                    SearchDomain.withOnlyElementGroupOpen(config, addedRows, row)?.let { (next, groupId) ->
+                        onConfigChange(next)
+                        actionsCollapsed = false
+                        actionReveal = groupId to ((actionReveal?.second ?: 0) + 1)
+                    }
+                },
                 collapsed = addedCollapsed,
                 onToggleCollapsed = { addedCollapsed = !addedCollapsed },
                 modifier = Modifier
@@ -1100,6 +1111,12 @@ private const val ADDED_SURFACE: String = "added/"
 private const val REMOVE_OTHERS_LABEL: String = "remove the others"
 
 /**
+ * The added elements' row menu (user rule 2026-10-13): every group of the actions section retracted but the one of this
+ * element alone, which the section scrolls to ([SearchDomain.withOnlyElementGroupOpen]).
+ */
+private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
+
+/**
  * The added elements, in the order they were added: each row its kind, its name and its detail (a task's
  * shortest path), a double-click opens it as the result list does ([SearchRowOpeners]), and its ✕ takes it off
  * the list — never off the account.
@@ -1131,6 +1148,8 @@ private fun AddedElementsList(
     onKeepOnly: (Set<String>) -> Unit,
     /** The row menu's "remove": the selected elements leave the list. */
     onRemoveAll: (Set<String>) -> Unit,
+    /** The row menu's "show only its actions": the actions section shows the row's own group alone ([SHOW_ONLY_ACTIONS_LABEL]). */
+    onShowOnlyActions: (SearchDomain.Result) -> Unit,
     /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
     collapsed: Boolean = false,
     onToggleCollapsed: () -> Unit = {},
@@ -1296,6 +1315,11 @@ private fun AddedElementsList(
                                 menuOpen = false
                                 onKeepOnly(picked)
                             }
+                        }
+                        // About the row under the pointer alone, whatever is selected: a group is ONE element's.
+                        MenuEntry(SHOW_ONLY_ACTIONS_LABEL) {
+                            menuOpen = false
+                            onShowOnlyActions(currentRow)
                         }
                     }
                     }
