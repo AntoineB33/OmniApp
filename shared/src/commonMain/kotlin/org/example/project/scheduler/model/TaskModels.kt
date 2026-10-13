@@ -654,6 +654,14 @@ data class SleepSchedule(
      * long before it. An hour until then, which is the default; `0` lays none.
      */
     val beforeBedMinutes: Int = 60,
+    /**
+     * User rule 2026-10-13: **the day the goal is reached ON** — the local day of the WAKE of the night whose wake time
+     * is [goalWakeMinutes] (the fields say it as the day of whichever time of the night is chosen: a goal bedtime of
+     * 22:00 on the 13th, 7h45 of sleep, is a goal wake on the 14th). With it, the wake time goes evenly from
+     * [wakeMinutes] on [anchorEpochDay] to the goal on that day; null = the drift of 15 min every 2 days.
+     * See [org.example.project.scheduler.domain.SchedulerDomain.effectiveWakeMinutes].
+     */
+    val goalWakeEpochDay: Long? = null,
 )
 
 /**

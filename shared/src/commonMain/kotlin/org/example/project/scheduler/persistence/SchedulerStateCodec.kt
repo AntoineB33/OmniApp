@@ -2312,12 +2312,14 @@ private data class PersistedSleep(
     val skippedBeforeBedEpochDays: List<Long> = emptyList(),
     /** [SleepSchedule.beforeBedMinutes]. New 2026-10-09: absent from an older payload, whose period was an hour. */
     val beforeBedMinutes: Int = 60,
+    /** [SleepSchedule.goalWakeEpochDay]. New 2026-10-13: absent from an older payload, whose goal had no date. */
+    val goalWakeEpochDay: Long? = null,
 )
 
 private fun SleepSchedule.toPersistedSleep(): PersistedSleep =
     PersistedSleep(
         wakeMinutes, goalWakeMinutes, sleepDurationMinutes, anchorEpochDay,
-        skippedWakeEpochDays.sorted(), skippedBeforeBedEpochDays.sorted(), beforeBedMinutes,
+        skippedWakeEpochDays.sorted(), skippedBeforeBedEpochDays.sorted(), beforeBedMinutes, goalWakeEpochDay,
     )
 
 private fun PersistedSleep.toSleepSchedule(): SleepSchedule =
@@ -2325,6 +2327,7 @@ private fun PersistedSleep.toSleepSchedule(): SleepSchedule =
         wakeMinutes, goalWakeMinutes, sleepDurationMinutes, anchorEpochDay,
         skippedWakeEpochDays.toSet(), skippedBeforeBedEpochDays.toSet(),
         beforeBedMinutes.coerceIn(0, SchedulerDomain.MAX_BEFORE_BED_MINUTES),
+        goalWakeEpochDay,
     )
 
 @Serializable

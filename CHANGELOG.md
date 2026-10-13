@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The sleep goal has a date; the sleep schedule is an action of the Sleep period — 2026-10-13
+
+The user: "In the sleep configurations, for the goal field, add a date field. If the user sets 13/10/2026 for go to
+sleep goal field which is at 22PM, and sleep time is 7h45min, then the date field of the wake up goal field is set to
+14/10/2026. Also, put the sleep configurations in the sleep period actions instead of the calendar window."
+
+- **The date**: `SleepSchedule.goalWakeEpochDay` (the goal night's wake day; `PersistedSleep.goalWakeEpochDay`, absent
+  from an older payload = no date, no migration). The field shows the day of the chosen time of the night
+  (`goalNightEpochDay` / `withGoalNightDay`), with a cross to take it off. **What it does was not stated and is this
+  change's reading of "goal date"**: a dated goal is reached ON that day — `effectiveWakeMinutes` goes evenly from the
+  day the schedule is saved to the goal's — while a goal with no date drifts 15 min every 2 days as before.
+- **Where**: `AddedAction.PeriodSleepSchedule`, the Sleep period's own action in the Search window; the calendar's
+  configuration section no longer shows the fields. The Sleep window and the lateral menu's item still do.
+
+`SleepScheduleEditTest`, `SearchAddedElementsTest`. Client rebuild; the field syncs inside the sleep schedule's
+existing row — no Supabase migration.
+
 ### A press on a section's or a group's title is a press on its arrow — 2026-10-13
 
 The user: "Clicking in the title of a macro group in the action section must be the same as clicking its expansion

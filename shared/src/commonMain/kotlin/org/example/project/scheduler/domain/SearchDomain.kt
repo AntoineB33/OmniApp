@@ -2693,6 +2693,12 @@ object SearchDomain {
         TimerRun(Kind.Timer, "Run"),
         ChronoRun(Kind.Chrono, "Run"),
         // The period edit window's sections (removed 2026-10-01), over every added period.
+        /**
+         * User rule 2026-10-13 (*"put the sleep configurations in the sleep period actions instead of the calendar
+         * window"*): the Sleep schedule's fields — the night's times, the goal and its date, the two lengths. The
+         * SLEEP period's own, and no other period's ([isSleepPeriod]).
+         */
+        PeriodSleepSchedule(Kind.RestrictivePeriod, "Sleep schedule"),
         PeriodDrawing(Kind.RestrictivePeriod, "Drawing"),
         PeriodCombinations(Kind.RestrictivePeriod, "Combinations"),
         PeriodTaskSearch(Kind.RestrictivePeriod, "Search its tasks"),
@@ -2803,7 +2809,10 @@ object SearchDomain {
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
                 // The lowest countdown is of SEVERAL timers: one alone has its own run.
                 val several = added.count { it.kind == Kind.Timer } > 1
-                (kind to actions.filter { several || it != AddedAction.TimerLowestCountdown }).takeIf { it.second.isNotEmpty() }
+                // The Sleep schedule is the Sleep period's: listed where that period is added.
+                val sleepAdded = added.any(::isSleepPeriod)
+                (kind to actions.filter { (several || it != AddedAction.TimerLowestCountdown) && (sleepAdded || it != AddedAction.PeriodSleepSchedule) })
+                    .takeIf { it.second.isNotEmpty() }
             } else {
                 actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
             }
@@ -2867,7 +2876,12 @@ object SearchDomain {
             AddedAction.TaskCellCategories, AddedAction.TaskFulfilment, AddedAction.TaskFulfilledBy,
             AddedAction.TaskStartNow, AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar,
             AddedAction.CategoryName, AddedAction.ShortcutChord, AddedAction.ShortcutWindow,
+            AddedAction.PeriodSleepSchedule,
         )
+
+    /** Whether [result] is the Sleep period — the one element the Sleep schedule's fields are an action of. */
+    fun isSleepPeriod(result: Result): Boolean =
+        result is ItemResult && result.kind == Kind.RestrictivePeriod && result.id == PeriodKinds.SLEEP
 
     /**
      * The actions about a SET of elements as such — a command every member takes alike (make one, copy them, delete
@@ -3043,6 +3057,8 @@ object SearchDomain {
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
             AddedAction.PeriodDrawing -> "period"
+            AddedAction.PeriodSleepSchedule ->
+                "wake up go to bed stop screens goal time date total sleep time no screen before bed"
             AddedAction.PeriodTaskSearch -> "search the tasks"
             AddedAction.PeriodReset -> "reset"
             else -> ""
@@ -3065,7 +3081,9 @@ object SearchDomain {
         fun membersOf(kind: Kind?) = added.filter { kind == null || actionKindOf(it) == kind || it.kind == kind }
         // A creation row acted on as its kind ("New quota") has that kind's default configuration, nothing else of it.
         fun of(element: Result, kind: Kind?, actions: List<AddedAction>) =
-            if (element.kind == Kind.Creation && kind != Kind.Creation) actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS } else actions
+            if (element.kind == Kind.Creation && kind != Kind.Creation) actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }
+            // The Sleep schedule is the Sleep period's own, and no other period's.
+            else actions.filter { it != AddedAction.PeriodSleepSchedule || isSleepPeriod(element) }
         fun own(actions: List<AddedAction>) =
             actions.filterNot(::isSetAction).let { mine -> LEADING_ACTIONS.filter { it in mine } + mine.filterNot { it in LEADING_ACTIONS } }
         fun set(actions: List<AddedAction>) = actions.filter(::isSetAction)

@@ -169,11 +169,14 @@ means.
   calendar's "add…" / "edit…", from an element's row and from the actions that open one; the Categories window from
   a Search window's "window" rows. With no button of the user's own, a plain Search window has no way in from the
   menu — which is what was asked.
-- **The sleep schedule is a section of the calendar's configuration** (user rule 2026-10-07; `SleepScheduleFields`):
-  it left the lateral menu, whose "Sleep schedule" button is gone. ONE drawing of the fields, for that section and
-  for the Sleep window — which the calendar's "edit… → sleep schedule" on a Sleep band still opens, and which a
-  window kept from before, or a button the user made for it, still brings back. A field re-reads a value written
-  from the other place, never under the hand typing it.
+- **The sleep schedule is an ACTION OF THE SLEEP PERIOD** (user rule 2026-10-13: *"put the sleep configurations in
+  the sleep period actions instead of the calendar window"*; `SearchDomain.AddedAction.PeriodSleepSchedule`,
+  `SleepScheduleFields`). It was a section of the calendar's configuration from 2026-10-07 (when it left the lateral
+  menu) until then; that section no longer shows it. The action is the Sleep period's own and no other period's
+  (`isSleepPeriod`: listed where that period is added, in ITS group, never in the periods' group). ONE drawing of
+  the fields, for the action, for the Sleep window — which the calendar's "edit… → sleep schedule" on a Sleep band
+  still opens — and for the lateral menu's item (the action added to the menu IS `MenuControl.SleepSchedule`). A
+  field re-reads a value written from another place, never under the hand typing it.
 - **Dragging a MAXIMIZED window's head un-maximizes it under the pointer** (user rule 2026-10-01;
   `WindowFrameState.unmaximizeUnder`): the window takes back its normal size — its default one if it never had
   one — with the pointer at the same fraction along the head and the head under it, and the drag carries it on.

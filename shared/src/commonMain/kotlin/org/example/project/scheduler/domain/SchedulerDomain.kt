@@ -2375,9 +2375,31 @@ object SchedulerDomain {
     fun withNightTime(sleep: SleepSchedule, time: NightTime, minutes: Int): SleepSchedule =
         sleep.copy(wakeMinutes = onTheClock(minutes + minutesBeforeWake(sleep, time)))
 
-    /** [sleep] drifting toward a night whose [time] is at [minutes] of the day. */
-    fun withGoalNightTime(sleep: SleepSchedule, time: NightTime, minutes: Int): SleepSchedule =
-        sleep.copy(goalWakeMinutes = onTheClock(minutes + minutesBeforeWake(sleep, time)))
+    /**
+     * [sleep] drifting toward a night whose [time] is at [minutes] of the day. The day stated for that time
+     * ([goalNightEpochDay]) is kept: it is the field beside the one being typed in.
+     */
+    fun withGoalNightTime(sleep: SleepSchedule, time: NightTime, minutes: Int): SleepSchedule {
+        val day = goalNightEpochDay(sleep, time)
+        return withGoalNightDay(sleep.copy(goalWakeMinutes = onTheClock(minutes + minutesBeforeWake(sleep, time))), time, day)
+    }
+
+    /**
+     * User rule 2026-10-13: **the day [time] of the GOAL night falls on** (*"If the user sets 13/10/2026 for go to
+     * sleep goal field which is at 22PM, and sleep time is 7h45min, then the date field of the wake up goal field is
+     * set to 14/10/2026"*) — one night, so one stored day ([SleepSchedule.goalWakeEpochDay], its wake's), said as the
+     * day of whichever time is asked. Null = the goal has no date.
+     */
+    fun goalNightEpochDay(sleep: SleepSchedule, time: NightTime): Long? =
+        sleep.goalWakeEpochDay?.let { (it * 24 * 60 + sleep.goalWakeMinutes - minutesBeforeWake(sleep, time)).floorDiv(24L * 60) }
+
+    /** [sleep] with [time] of its goal night on [epochDay] (null = no date): the day its wake falls on is what is kept. */
+    fun withGoalNightDay(sleep: SleepSchedule, time: NightTime, epochDay: Long?): SleepSchedule =
+        sleep.copy(
+            goalWakeEpochDay = epochDay?.let {
+                (it * 24 * 60 + goalNightTimeMinutes(sleep, time) + minutesBeforeWake(sleep, time)).floorDiv(24L * 60)
+            },
+        )
 
     /** When [sleep] goes to bed, as a time of day: its wake time less its sleep time. */
     fun bedtimeMinutes(sleep: SleepSchedule): Int = nightTimeMinutes(sleep, NightTime.GoToBed)
@@ -2400,10 +2422,21 @@ object SchedulerDomain {
      * The wake time (minutes since local midnight) for the local day [dateEpochDay], after applying the
      * 15-min-per-2-days drift toward [SleepSchedule.goalWakeMinutes]. Returns the plain
      * [SleepSchedule.wakeMinutes] when there is no anchor or it is already at the goal. Pure.
+     *
+     * User rule 2026-10-13: **a goal with a DATE** ([SleepSchedule.goalWakeEpochDay]) is reached on that day — the
+     * wake time goes evenly from the anchor day's to the goal's, a whole minute at a time and never past it, and is
+     * the goal's from then on (at once where the date is not after the anchor).
      */
     fun effectiveWakeMinutes(sleep: SleepSchedule, dateEpochDay: Long): Int {
         val anchor = sleep.anchorEpochDay ?: return sleep.wakeMinutes
         if (sleep.goalWakeMinutes == sleep.wakeMinutes) return sleep.wakeMinutes
+        val goalDay = sleep.goalWakeEpochDay
+        if (goalDay != null) {
+            val span = goalDay - anchor
+            if (span <= 0 || dateEpochDay >= goalDay) return sleep.goalWakeMinutes
+            val done = (dateEpochDay - anchor).coerceAtLeast(0)
+            return sleep.wakeMinutes + ((sleep.goalWakeMinutes - sleep.wakeMinutes).toLong() * done / span).toInt()
+        }
         val steps = ((dateEpochDay - anchor) / 2).coerceAtLeast(0)
         val maxShift = abs(sleep.goalWakeMinutes - sleep.wakeMinutes).toLong()
         val shift = (steps * 15).coerceIn(0, maxShift).toInt()

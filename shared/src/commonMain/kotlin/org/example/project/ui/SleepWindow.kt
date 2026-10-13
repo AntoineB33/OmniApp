@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.dp
+import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.SleepSchedule
 
 /**
@@ -77,9 +78,10 @@ fun SleepWindow(
 }
 
 /**
- * **The sleep schedule's fields**. Each edit is saved at once through [onSave]. ONE drawing: the calendar's
- * configuration section shows it (user rule 2026-10-07 — it left the lateral menu for there), and so does the Sleep
- * window the calendar's "edit… → sleep schedule" still opens. [fieldModifier] is the caller's word on each field (the
+ * **The sleep schedule's fields**. Each edit is saved at once through [onSave]. ONE drawing: the Sleep period's
+ * "Sleep schedule" action shows it (user rule 2026-10-13 — it left the calendar's configuration section for there, as
+ * it had left the lateral menu for the calendar on 2026-10-07), and so do the Sleep window the calendar's "edit… →
+ * sleep schedule" still opens and the lateral menu's item. [fieldModifier] is the caller's word on each field (the
  * calendar's hand the keyboard back at a press outside).
  *
  * User rule 2026-10-09: **a drop-down says which time of the night the two time fields are about** — wake up, go to
@@ -99,6 +101,34 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
         ) { onSave(SchedulerDomain.withNightTime(sleep, which, it)) }
         TimeField("Goal ${which.label.lowercase()} time", SchedulerDomain.goalNightTimeMinutes(sleep, which), fieldModifier = fieldModifier) {
             onSave(SchedulerDomain.withGoalNightTime(sleep, which, it))
+        }
+        // User rule 2026-10-13: the day the goal is reached on, said as the day of the chosen time of that night — a
+        // goal bedtime on the 13th is a goal wake on the 14th ([SchedulerDomain.goalNightEpochDay]). No date: the wake
+        // time drifts 15 min every 2 days, as it always did.
+        val tz = remember { kotlinx.datetime.TimeZone.currentSystemDefault() }
+        val today = kotlin.time.Clock.System.now().toLocalDateTime(tz).date
+        val goalDay = SchedulerDomain.goalNightEpochDay(sleep, which)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Goal ${which.label.lowercase()} date",
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (goalDay != null) {
+                Text(
+                    text = "✕",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable { onSave(SchedulerDomain.withGoalNightDay(sleep, which, null)) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            DayField(goalDay?.let { kotlinx.datetime.LocalDate.fromEpochDays(it.toInt()) }, "no date", today, enabled = true) { picked ->
+                onSave(SchedulerDomain.withGoalNightDay(sleep, which, picked.toEpochDays().toLong()))
+            }
         }
     }
     TimeField("Total sleep time", sleep.sleepDurationMinutes, allowOver24 = true, fieldModifier = fieldModifier) {

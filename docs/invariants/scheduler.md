@@ -308,6 +308,14 @@ model exists to prevent.
   precedes it. Stating any of them (`withNightTime`) moves the whole night; none changes the sleep time or the length
   of the period before bed, which have fields of their own. The goal the wake time drifts toward is said as the same
   time (`withGoalNightTime`). Stored still as `wakeMinutes` / `goalWakeMinutes` and the two lengths: nothing new.
+- **The goal may have a DATE, and it is the day of ONE night said three ways too** (user rule 2026-10-13: *"If the
+  user sets 13/10/2026 for go to sleep goal field which is at 22PM, and sleep time is 7h45min, then the date field of
+  the wake up goal field is set to 14/10/2026"*; `SleepSchedule.goalWakeEpochDay`, `goalNightEpochDay`,
+  `withGoalNightDay`, `SleepScheduleEditTest`). ONE day is stored — the goal night's WAKE day — and the field shows
+  the day of whichever time is chosen; typing a goal time keeps the day beside it. **A dated goal is reached ON that
+  day** (`effectiveWakeMinutes`): the wake time goes evenly from the anchor day's to the goal's, a whole minute at a
+  time and never past it, the goal's from then on, and at once where the date is not after the anchor. **No date is
+  the drift it always was** (15 min every 2 days) — a payload written before the field reads exactly as it did.
 - **Editing the sleep schedule runs no fill in the reducer** (anomaly 2026-10-09: the fields froze under the hand).
   `reduceSetSleepSchedule` commits the edit and returns; the schedule is in `schedulingSignature`, so the engine runs
   from scratch for it off the UI thread after its debounce. It refilled in line until then — a fill with its search,

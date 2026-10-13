@@ -694,7 +694,7 @@ Global rules that always apply: `CLAUDE.md`.
     fields — **each exception AS THE BLOCK IT IS, the way "Blocks on the calendar" draws a block** (user rule
     2026-10-11; `CalendarBlockFields`, the one drawing of both; `Entry.blockId` names the block that list holds): its
     name, its start and its end in fields that edit it on the calendar, under a line saying what it stands instead
-    of. An occurrence no block is left of stays a line of text. Wherever the fields are drawn: the Sleep schedule's fields (the calendar's configuration section, the Sleep
+    of. An occurrence no block is left of stays a line of text. Wherever the fields are drawn: the Sleep schedule's fields (the Sleep period's "Sleep schedule" action, the Sleep
     window, a lateral-menu control — `SleepScheduleFields`), an alarm's row, and the "Repeat every" field of both
     edit windows, and a reminder's "Every" (the Search window's action and the reminders manager's row —
     `ofReminder`: a tag of the cadence pinned away from its slot, which keeps the id of the day it stood for, so no

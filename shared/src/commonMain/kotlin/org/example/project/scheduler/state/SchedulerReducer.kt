@@ -7038,6 +7038,8 @@ internal data class SleepDelta(
                 add("wake ${before?.let { hhmm(it.wakeMinutes) } ?: "—"} → ${hhmm(after.wakeMinutes)}")
             if (before?.goalWakeMinutes != after.goalWakeMinutes)
                 add("goal wake ${before?.let { hhmm(it.goalWakeMinutes) } ?: "—"} → ${hhmm(after.goalWakeMinutes)}")
+            if (before?.goalWakeEpochDay != after.goalWakeEpochDay)
+                add("goal wake day ${day(before?.goalWakeEpochDay)} → ${day(after.goalWakeEpochDay)}")
             if (before?.sleepDurationMinutes != after.sleepDurationMinutes)
                 add("duration ${before?.let { hhmm(it.sleepDurationMinutes) } ?: "—"} → ${hhmm(after.sleepDurationMinutes)}")
         }
@@ -7045,6 +7047,8 @@ internal data class SleepDelta(
     override fun undo(state: SchedulerState): SchedulerState = state.copy(sleep = before)
 
     override fun redo(state: SchedulerState): SchedulerState = state.copy(sleep = after)
+
+    private fun day(epochDay: Long?): String = epochDay?.let { kotlinx.datetime.LocalDate.fromEpochDays(it.toInt()).toString() } ?: "—"
 
     private fun hhmm(minutes: Int): String {
         val h = (minutes / 60) % 24

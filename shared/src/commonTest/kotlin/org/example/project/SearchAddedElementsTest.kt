@@ -1187,6 +1187,28 @@ class SearchAddedElementsTest {
         assertTrue(!SearchDomain.actionCanAct(s, SearchDomain.AddedAction.OpenEach, keys))
     }
 
+    /** User rule 2026-10-13: "put the sleep configurations in the sleep period actions instead of the calendar window". */
+    @Test
+    fun the_sleep_schedule_is_an_action_of_the_sleep_period_and_of_no_other() {
+        fun period(kind: String) = SearchDomain.ItemResult(SearchDomain.Kind.RestrictivePeriod, kind, kind, "")
+        fun groups(added: List<SearchDomain.Result>) =
+            SearchDomain.actionGroups(
+                SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added),
+                added,
+            )
+        val schedule = SearchDomain.AddedAction.PeriodSleepSchedule
+        val sleep = period(PeriodKinds.SLEEP)
+        val noScreen = period(PeriodKinds.NO_SCREEN)
+        // Alone: in its one group, right under the open / remove buttons.
+        assertEquals(schedule, groups(listOf(sleep)).single().actions[1])
+        assertTrue(groups(listOf(noScreen)).none { schedule in it.actions }, "another period has no sleep schedule")
+        // Beside another period: in the Sleep period's own group alone — not the periods', not the other's.
+        val both = groups(listOf(noScreen, sleep))
+        assertEquals(listOf(listOf(sleep)), both.filter { schedule in it.actions }.map { it.members })
+        assertEquals(0, SearchDomain.actionSearchRank(schedule, "sleep schedule"))
+        assertEquals(4, SearchDomain.actionSearchRank(schedule, "goal"))
+    }
+
     /**
      * User rule 2026-10-13: *"In the added elements list, in the right-click menu, add the option to retract all macro
      * groups except the one for this element alone, and scroll to it if necessary."*

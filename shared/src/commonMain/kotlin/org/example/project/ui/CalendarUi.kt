@@ -4324,17 +4324,9 @@ private fun CalendarConfigurationSection(
         Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
         MenuAddable(MenuControl.PlanTimeLimit) { PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange) }
         MenuAddable(MenuControl.MinimumTimeWeight) { MinimumTimeWeightField(minimumTimeWeight, onMinimumTimeWeightChange) }
-        // User rule 2026-10-07: the sleep schedule, from the lateral menu — the nightly window the scheduler avoids
-        // is drawn on this calendar, and set here. The Sleep window's own fields ([SleepScheduleFields]).
-        if (sleepSchedule != null) {
-            HorizontalDivider()
-            MenuAddable(MenuControl.SleepSchedule) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Sleep", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
-                    SleepScheduleFields(sleepSchedule, onSleepScheduleChange, fieldModifier = Modifier.leaveFocusOnOutsidePress())
-                }
-            }
-        }
+        // The sleep schedule is no longer set here (user rule 2026-10-13: *"put the sleep configurations in the sleep
+        // period actions instead of the calendar window"*): it is the Sleep period's "Sleep schedule" action
+        // ([org.example.project.scheduler.domain.SearchDomain.AddedAction.PeriodSleepSchedule]).
     }
     ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
     }

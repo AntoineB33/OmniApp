@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
+import kotlinx.datetime.toLocalDateTime
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.key
 import org.example.project.scheduler.domain.CalendarLockDomain
@@ -448,6 +449,7 @@ private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
         SearchDomain.AddedAction.VoiceSwitch to MenuControl.Voice,
         SearchDomain.AddedAction.NotificationsSwitch to MenuControl.Notifications,
         SearchDomain.AddedAction.SoundVolume to MenuControl.SoundVolume,
+        SearchDomain.AddedAction.PeriodSleepSchedule to MenuControl.SleepSchedule,
     )
 
 /**
@@ -1097,6 +1099,21 @@ private fun AddedActionEditor(
                     onChange = { edited ->
                         run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(alert = SearchDomain.withAlertChange(it.alert, shown, edited)) })
                     },
+                )
+            }
+        }
+        // User rule 2026-10-13: the Sleep schedule's fields, the Sleep window's own ([SleepScheduleFields]) — written
+        // through the one intent every other place that shows them writes.
+        SearchDomain.AddedAction.PeriodSleepSchedule -> {
+            val tz = remember { kotlinx.datetime.TimeZone.currentSystemDefault() }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(320.dp)) {
+                SleepScheduleFields(
+                    state.sleep ?: org.example.project.scheduler.model.SleepSchedule(),
+                    onSave = { edited ->
+                        val today = kotlin.time.Instant.fromEpochMilliseconds(nowMillis()).toLocalDateTime(tz).date.toEpochDays().toLong()
+                        run.asIntentSink()(SchedulerIntent.SetSleepSchedule(edited, today))
+                    },
+                    fieldModifier = Modifier.leaveFocusOnOutsidePress(),
                 )
             }
         }
