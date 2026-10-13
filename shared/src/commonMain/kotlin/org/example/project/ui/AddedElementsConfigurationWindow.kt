@@ -212,6 +212,15 @@ class AddedActionHandlers(
     val onSetNotificationsEnabled: (Boolean) -> Unit = {},
     /** The scheduler engine's runs, for the history units' "Information" (they are the view model's, kept in memory). */
     val schedulerRuns: () -> List<org.example.project.scheduler.state.SchedulerRunEntry> = { emptyList() },
+    /**
+     * User rule 2026-10-12, the chords mapped to a window ([WindowShortcuts]) — the device's, so `App`'s to hold and
+     * to write: the mappings, the windows one can name (frame id to the name it goes by), a mapping changed, and
+     * mappings deleted (by id).
+     */
+    val windowShortcuts: () -> List<WindowShortcut> = { emptyList() },
+    val shortcutWindows: () -> List<Pair<String, String>> = { emptyList() },
+    val onWindowShortcutChange: (WindowShortcut) -> Unit = {},
+    val onDeleteWindowShortcuts: (List<String>) -> Unit = {},
 )
 
 /**
@@ -701,7 +710,7 @@ private fun AddedActionEditor(
         // --- A new element of the kind (in a Search window of its own), and a copy of each added one (joining these) ---
         SearchDomain.AddedAction.TaskNew, SearchDomain.AddedAction.CategoryNew, SearchDomain.AddedAction.PeriodNew,
         SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
-        SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew -> {
+        SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.ShortcutNew -> {
             val kind = action.section ?: return
             FrameButton("New " + kind.label) { handlers.onCreate(kind) }
         }
@@ -721,6 +730,17 @@ private fun AddedActionEditor(
         // with its copy button, and "Copy all" per unit. What opening the History window on the unit used to show.
         // The set of rules each added scheduler-engine row returned: its own block, so it is not looked for under
         // the rule state. A History Unit the user made returned none.
+        // --- The keyboard shortcuts (user rule 2026-10-12): the chord of each, and a window shortcut's window ------
+        SearchDomain.AddedAction.ShortcutChord -> ShortcutChordEditor(state, added, handlers, run)
+        SearchDomain.AddedAction.ShortcutWindow -> ShortcutWindowEditor(added, handlers)
+        SearchDomain.AddedAction.ShortcutDelete -> {
+            // Only a chord for a window is the user's to delete: the app's own shortcuts stay.
+            val rows = added.filter { windowShortcutIdOf(it) != null }
+            FrameButton(if (rows.size == 1) "🗑 Delete" else "🗑 Delete ${rows.size}", enabled = rows.isNotEmpty()) {
+                handlers.onDeleteWindowShortcuts(rows.mapNotNull(::windowShortcutIdOf))
+                onConfigChange(config.copy(added = config.added - rows.map(SearchDomain::keyOf).toSet()))
+            }
+        }
         SearchDomain.AddedAction.HistoryRules -> {
             val runs = handlers.schedulerRuns()
             val rows = added.filterIsInstance<SearchDomain.ItemResult>()
@@ -1202,6 +1222,125 @@ private fun TimerRunBlocks(
         if (onStep != null && timers.size != 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             SearchDomain.RunStep.entries.forEach { step ->
                 FrameButton(step.label + if (timers.size > 1) " all" else "") { onStep(step) }
+            }
+        }
+    }
+}
+
+/** The mapping's id an added keyboard-shortcut row names, or null for one of the app's own shortcuts. */
+private fun windowShortcutIdOf(row: SearchDomain.Result): String? =
+    (row as? SearchDomain.ItemResult)?.takeIf { it.kind == SearchDomain.Kind.Shortcut }
+        ?.id?.takeIf { it.startsWith(WindowShortcuts.SEARCH_PREFIX) }?.removePrefix(WindowShortcuts.SEARCH_PREFIX)
+
+/**
+ * User rule 2026-10-12, a keyboard shortcut's **Chord**: what each added shortcut is on, and the capture that moves
+ * it ([ChordCapture]). One of the app's own goes through its intent ([SchedulerIntent.SetGlobalShortcutBinding] —
+ * "Reset" is back to the chord it ships with); a window's goes to `App` ([AddedActionHandlers.onWindowShortcutChange]).
+ * One chord is one thing across both: each asks the other list before taking it.
+ */
+@Composable
+private fun ShortcutChordEditor(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    handlers: AddedActionHandlers,
+    run: (SearchDomain.AddedCommand) -> Unit,
+) {
+    val rows = added.filterIsInstance<SearchDomain.ItemResult>().filter { it.kind == SearchDomain.Kind.Shortcut }
+    val mappings = handlers.windowShortcuts()
+    val titles = handlers.shortcutWindows().toMap()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (row in rows) {
+            key(row.id) {
+                ElementHeading(row.name, rows.size)
+                val global = org.example.project.scheduler.platform.GlobalShortcut.entries.firstOrNull { it.name == row.id }
+                val mapping = windowShortcutIdOf(row)?.let { id -> mappings.firstOrNull { it.id == id } }
+                when {
+                    global != null ->
+                        ChordCapture(
+                            chord = org.example.project.scheduler.platform.GlobalShortcutBindings.chordOf(state.shortcutBindings, global),
+                            resetLabel = "Reset".takeIf { global in state.shortcutBindings },
+                            onTake = { binding ->
+                                val why =
+                                    org.example.project.scheduler.platform.GlobalShortcutBindings.rejection(state.shortcutBindings, global, binding)
+                                        ?: WindowShortcuts.heldByWindow(mappings, binding, { titles[it] ?: it })
+                                if (why == null) run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetGlobalShortcutBinding(global, binding)))
+                                why
+                            },
+                            onReset = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetGlobalShortcutBinding(global, null))) },
+                        )
+                    mapping != null ->
+                        ChordCapture(
+                            chord = mapping.chord?.chord,
+                            resetLabel = "Remove".takeIf { mapping.chord != null },
+                            onTake = { binding ->
+                                val why = WindowShortcuts.rejection(state.shortcutBindings, mappings, mapping.id, binding) { titles[it] ?: it }
+                                if (why == null) handlers.onWindowShortcutChange(mapping.copy(chord = binding))
+                                why
+                            },
+                            onReset = { handlers.onWindowShortcutChange(mapping.copy(chord = null)) },
+                        )
+                    else -> NoteText("This shortcut no longer exists.", color = MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * User rule 2026-10-12, a window shortcut's **Window**: the window its chord brings back, picked in a drop-down of
+ * every window that can be named ([AddedActionHandlers.shortcutWindows]). The app's own shortcuts have none.
+ */
+@Composable
+private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: AddedActionHandlers) {
+    val rows = added.filterIsInstance<SearchDomain.ItemResult>().filter { it.kind == SearchDomain.Kind.Shortcut }
+    val mappings = handlers.windowShortcuts()
+    val windows = handlers.shortcutWindows()
+    val titles = windows.toMap()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (row in rows) {
+            key(row.id) {
+                ElementHeading(row.name, rows.size)
+                val mapping = windowShortcutIdOf(row)?.let { id -> mappings.firstOrNull { it.id == id } }
+                if (mapping == null) {
+                    NoteText("One of the app's own shortcuts: it brings no window.", color = MaterialTheme.colorScheme.onSurface)
+                } else {
+                    var open by remember { mutableStateOf(false) }
+                    Box(Modifier.width(260.dp)) {
+                        Text(
+                            text = (mapping.window?.let { titles[it] ?: "$it (closed)" } ?: "choose a window…") + "  ▾",
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                                .menuToggleClickable(open) { open = it }
+                                .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
+                        )
+                        transientMenuDismissal(open) { open = false }
+                        DropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
+                            Column(Modifier.width(260.dp)) {
+                                for ((id, title) in windows) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (id == mapping.window) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                open = false
+                                                handlers.onWindowShortcutChange(mapping.copy(window = id))
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

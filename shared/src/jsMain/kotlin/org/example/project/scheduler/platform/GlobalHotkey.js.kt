@@ -6,6 +6,8 @@ package org.example.project.scheduler.platform
  */
 actual fun installGlobalHotkeys(
     bindings: Map<GlobalShortcut, ShortcutBinding>,
+    windowChords: Set<ShortcutBinding>,
+    onWindowChord: (ShortcutBinding) -> Unit,
     onShortcut: (GlobalShortcut) -> Unit,
 ) = GlobalHotkeys.reportClaim(GlobalHotkeyClaim.Unsupported)
 

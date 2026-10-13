@@ -89,9 +89,12 @@ class TaskPathsAndCreationTest {
         assertTrue(rows.all { it.kind == SearchDomain.Kind.Creation })
         assertEquals(listOf("New alarm"), SearchDomain.results(SchedulerState.empty(), kinds, "alarm").map { it.name })
         // Not made by the user: no creation row.
-        listOf(SearchDomain.Kind.HistoryUnit, SearchDomain.Kind.TaskRelation, SearchDomain.Kind.Shortcut).forEach {
+        listOf(SearchDomain.Kind.HistoryUnit, SearchDomain.Kind.TaskRelation).forEach {
             assertFalse(it in SearchDomain.CREATABLE)
         }
+        // User rule 2026-10-12: a keyboard shortcut IS made by the user — a chord for a window.
+        assertTrue(SearchDomain.Kind.Shortcut in SearchDomain.CREATABLE)
+        assertEquals(listOf("New keyboard shortcut"), SearchDomain.results(SchedulerState.empty(), kinds, "keyboard").map { it.name })
     }
 
     @Test

@@ -54,6 +54,14 @@ private const val BALLOON_CLICK_REACH_MILLIS: Long = 2 * 60 * 1000L
 object DesktopAppWindow {
     @Volatile
     var bringToFront: () -> Unit = {}
+
+    /**
+     * Ask the OS for the foreground for [window], the way that is granted to a process that is NOT in front (the
+     * task picker's own request, `TaskPickerOverlay.jvm.kt`): a chord swallowed by our keyboard hook is not our
+     * window having been typed into, so a plain `toFront` puts the window on top and leaves the KEYBOARD with the
+     * application the user was in. Best-effort, and nothing off Windows.
+     */
+    fun takeForeground(window: java.awt.Window) = org.example.project.ui.requestForeground(window)
 }
 
 actual fun sendSystemNotification(title: String, message: String, target: NotificationTarget) {

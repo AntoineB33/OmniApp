@@ -240,7 +240,7 @@ private fun hasForeground(window: AwtWindow): Boolean {
  * window's own queue out of the shared state. Best-effort throughout: off Windows, `requestFocus` is all
  * there is.
  */
-private fun requestForeground(window: AwtWindow) {
+internal fun requestForeground(window: AwtWindow) {
     if (!isWindows) return
     runCatching {
         val user32 = User32.INSTANCE

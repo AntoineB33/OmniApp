@@ -31,6 +31,24 @@ now" — "Would end", the clock plus its countdown (`TimerDomain.endMomentMillis
 "'Blocks on the calendar' should be removed when there is only timers in the added
 elements list" — no longer listed then (`actionsFor`). Client only. Not tried on screen.
 
+### A chord of the user's own for any window — 2026-10-12
+
+The user: "Allow the user to map any shortcut to any window. The defined shortcut would then put focus on the app and
+put focus on the mapped window." The Keyboard shortcuts window has a "Windows" block: every window of the lateral
+menu, and every other open one, with "Set" / "Rebind" / "Remove" — the system-wide shortcuts' own capture. The chord
+is claimed by the same hook (`installGlobalHotkeys(windowChords, onWindowChord)`); a press brings the app to the
+front — `DesktopAppWindow.bringToFront` now asks the OS for the foreground as the task picker does — and presents the
+window (opening a lateral-menu one that is closed). Kept on this device (`WindowShortcuts` placement row), under the
+shortcuts' two rules, one chord for one thing across both lists. The hook now matches key and modifiers together:
+two chords may end on one key. Client only (desktop). Not tried on screen.
+
+Same day, anomaly: "The action section for a keyboard shortcut element in the Search window is empty. The user is
+supposed to create a new shortcut/window map with the 'new' button in the actions of a keyboard element or a keyboard
+creation element." A mapping is now an element of its own (`WindowShortcut`: id, window, chord — the row's shape
+changed from "frame id → chord", still read), listed among the keyboard shortcuts of the Search window; the kind has a
+"New keyboard shortcut" creation row and four actions — New, Chord, Window, Delete (`ShortcutChordEditor`,
+`ShortcutWindowEditor`, `ChordCapture`). The five shortcuts' chord is rebound from there too.
+
 ### A ring the device slept through is recorded where it was due — 2026-10-12
 
 Anomaly: "the timer 'hygiene' says it stopped at 16:06, but in the unfocused notif window, it doesn't appear. It must

@@ -51,8 +51,10 @@ private const val KEY_DOWN_BIT = 0x8000
 
 actual fun installGlobalHotkeys(
     bindings: Map<GlobalShortcut, ShortcutBinding>,
+    windowChords: Set<ShortcutBinding>,
+    onWindowChord: (ShortcutBinding) -> Unit,
     onShortcut: (GlobalShortcut) -> Unit,
-) = GlobalHotkeyClaimant.install(bindings, onShortcut)
+) = GlobalHotkeyClaimant.install(bindings, windowChords, onWindowChord, onShortcut)
 
 actual fun setGlobalHotkeyCapture(capturing: Boolean) = GlobalHotkeyClaimant.setCapturing(capturing)
 
@@ -70,12 +72,20 @@ private fun ShortcutKey.virtualKey(): Int =
         else -> VK_F1 + (label.drop(1).toInt() - 1)
     }
 
-/** One system-wide chord as the OS sees it: which [GlobalShortcut] it fires, and how it is claimed. */
-private class Chord(val shortcut: GlobalShortcut, val binding: ShortcutBinding) {
-    val vk: Int = binding.key.virtualKey()
+/** The first hot-key id of the chords mapped to a window: above every [GlobalShortcut]'s (its ordinal + 1). */
+private const val WINDOW_HOTKEY_BASE = 1000
 
-    /** Stable per shortcut, so re-registering after a rebinding replaces the right entry in the table. */
-    val hotkeyId: Int = shortcut.ordinal + 1
+/**
+ * One system-wide chord as the OS sees it: what it fires — a [GlobalShortcut], or ([shortcut] null) the window the
+ * user mapped [binding] to — and how it is claimed.
+ */
+private class Chord(
+    val shortcut: GlobalShortcut?,
+    val binding: ShortcutBinding,
+    /** Its place in the fallback hot-key table; a shortcut's is stable (its ordinal + 1). */
+    val hotkeyId: Int,
+) {
+    val vk: Int = binding.key.virtualKey()
 
     val modifiers: Int =
         (if (binding.ctrl) MOD_CONTROL else 0) or
@@ -120,6 +130,12 @@ internal object GlobalHotkeyClaimant {
     @Volatile
     private var onShortcut: ((GlobalShortcut) -> Unit)? = null
 
+    @Volatile
+    private var onWindowChord: ((ShortcutBinding) -> Unit)? = null
+
+    /** The ids the fallback table holds now — what a rewrite has to release. The loop thread's only. */
+    private var registeredIds: List<Int> = emptyList()
+
     /** The live chords, re-read by the hook on every keystroke. Replaced whole, never mutated in place. */
     @Volatile
     private var chords: List<Chord> = emptyList()
@@ -139,7 +155,7 @@ internal object GlobalHotkeyClaimant {
     private var installed = false
 
     /** The chords whose key-down we swallowed, so auto-repeat fires once and the key-up is swallowed too. */
-    private val latched = HashSet<GlobalShortcut>()
+    private val latched = HashSet<ShortcutBinding>()
 
     // Every press hops off the hook thread onto this one: the hook must return within milliseconds or Windows
     // drops it, and the handler reaches the engine (and the diagnostics file).
@@ -159,18 +175,22 @@ internal object GlobalHotkeyClaimant {
                 // While the window is listening for a chord the claim stands down entirely — including for
                 // the chords we own, which are precisely the ones the user needs to be able to press there.
                 if (nCode >= 0 && !capturing) {
-                    val chord = chords.firstOrNull { it.vk == lParam.vkCode }
-                    if (chord != null) {
+                    val vk = lParam.vkCode
+                    // Several chords may end on one key (Ctrl+Alt+K and Ctrl+Shift+Alt+K), so the key alone names
+                    // none of them: the cheap test first, the modifiers only for a key some chord ends on.
+                    if (chords.any { it.vk == vk }) {
                         when (wParam.toInt()) {
-                            WM_KEYDOWN, WM_SYSKEYDOWN ->
-                                if (chordModifiersHeld(chord.binding)) {
+                            WM_KEYDOWN, WM_SYSKEYDOWN -> {
+                                val chord = chords.firstOrNull { it.vk == vk && chordModifiersHeld(it.binding) }
+                                if (chord != null) {
                                     // Auto-repeat re-sends the down; only the transition is a press.
-                                    if (latched.add(chord.shortcut)) fire(chord.shortcut)
+                                    if (latched.add(chord.binding)) fire(chord)
                                     return swallow
                                 }
+                            }
                             // Swallow the up only for a down we swallowed, so no window is ever handed a
                             // release for a key it was never told about.
-                            WM_KEYUP, WM_SYSKEYUP -> if (latched.remove(chord.shortcut)) return swallow
+                            WM_KEYUP, WM_SYSKEYUP -> if (latched.removeAll { it.key.virtualKey() == vk }) return swallow
                         }
                     }
                 }
@@ -184,9 +204,15 @@ internal object GlobalHotkeyClaimant {
         }
 
     @Synchronized
-    fun install(bindings: Map<GlobalShortcut, ShortcutBinding>, callback: (GlobalShortcut) -> Unit) {
+    fun install(
+        bindings: Map<GlobalShortcut, ShortcutBinding>,
+        windowChords: Set<ShortcutBinding>,
+        windowCallback: (ShortcutBinding) -> Unit,
+        callback: (GlobalShortcut) -> Unit,
+    ) {
         onShortcut = callback
-        val next = GlobalShortcutBindings.resolve(bindings).map { (shortcut, binding) -> Chord(shortcut, binding) }
+        onWindowChord = windowCallback
+        val next = chordsOf(bindings, windowChords).map { (shortcut, binding, id) -> Chord(shortcut, binding, id) }
         val changed = next.map { it.shortcut to it.binding } != chords.map { it.shortcut to it.binding }
         chords = next
         // Later calls only re-point the callback and re-register: the OS claim is made once per process.
@@ -259,7 +285,7 @@ internal object GlobalHotkeyClaimant {
                         // Only reached when the hook is absent or was dropped by Windows: a swallowed key
                         // never reaches the hot-key table, so the two claims cannot both fire for one press.
                         if (!capturing) {
-                            chords.firstOrNull { it.hotkeyId == msg.wParam.toInt() }?.let { fire(it.shortcut) }
+                            chords.firstOrNull { it.hotkeyId == msg.wParam.toInt() }?.let { fire(it) }
                         }
                     // A rebinding, or the window standing the claim down to listen for a chord.
                     WM_OMNIAPP_RECONFIGURE -> applyHotkeyRegistrations(user32)
@@ -276,7 +302,7 @@ internal object GlobalHotkeyClaimant {
             loopThreadId = 0
             runCatching {
                 hook?.let { User32.INSTANCE.UnhookWindowsHookEx(it) }
-                GlobalShortcut.entries.forEach { User32.INSTANCE.UnregisterHotKey(null, it.ordinal + 1) }
+                registeredIds.forEach { User32.INSTANCE.UnregisterHotKey(null, it) }
             }
         }
     }
@@ -291,10 +317,13 @@ internal object GlobalHotkeyClaimant {
      * @return how many chords the OS granted.
      */
     private fun applyHotkeyRegistrations(user32: User32): Int {
-        GlobalShortcut.entries.forEach { runCatching { user32.UnregisterHotKey(null, it.ordinal + 1) } }
+        registeredIds.forEach { runCatching { user32.UnregisterHotKey(null, it) } }
+        registeredIds = emptyList()
         if (capturing) return 0
+        val claimed = chords
+        registeredIds = claimed.map { it.hotkeyId }
         // hWnd = null: this thread's queue receives WM_HOTKEY, so no window is needed at all.
-        return chords.count { chord ->
+        return claimed.count { chord ->
             user32.RegisterHotKey(null, chord.hotkeyId, chord.modifiers, chord.vk).also { ok ->
                 // A chord is exclusive across the whole session: another application already owns it.
                 if (!ok) Diagnostics.log("global hotkeys: RegisterHotKey(${chord.binding.chord}) refused")
@@ -341,13 +370,39 @@ internal object GlobalHotkeyClaimant {
     private fun isKeyDown(vk: Int): Boolean =
         (User32.INSTANCE.GetAsyncKeyState(vk).toInt() and KEY_DOWN_BIT) != 0
 
-    private fun fire(shortcut: GlobalShortcut) {
-        val chord = chords.firstOrNull { it.shortcut == shortcut }?.binding?.chord ?: shortcut.defaultChord
+    private fun fire(chord: Chord) {
+        val shortcut = chord.shortcut
         dispatchExecutor.execute {
-            Diagnostics.log("global hotkey pressed: $chord (${shortcut.action})")
             // Never let a throw kill the loop, or the shortcuts would silently stop working for the session.
-            runCatching { onShortcut?.invoke(shortcut) }
-                .onFailure { Diagnostics.log("global hotkey handler failed: ${it.message}") }
+            runCatching {
+                if (shortcut != null) {
+                    Diagnostics.log("global hotkey pressed: ${chord.binding.chord} (${shortcut.action})")
+                    onShortcut?.invoke(shortcut)
+                } else {
+                    // A window's chord: the app comes to the front — the OS's side of it, done here — and the
+                    // app then puts the focus on the window the chord is mapped to.
+                    Diagnostics.log("global hotkey pressed: ${chord.binding.chord} (a window's)")
+                    DesktopAppWindow.bringToFront()
+                    onWindowChord?.invoke(chord.binding)
+                }
+            }.onFailure { Diagnostics.log("global hotkey handler failed: ${it.message}") }
         }
+    }
+
+    /**
+     * Every chord to claim, each with what it fires (null: a window's) and its hot-key id: the shortcuts at the
+     * chords [bindings] resolves them to, then [windowChords] — less any a shortcut already holds, which is that
+     * shortcut's — in the order their spelling gives, so the same set always gets the same ids.
+     */
+    fun chordsOf(
+        bindings: Map<GlobalShortcut, ShortcutBinding>,
+        windowChords: Set<ShortcutBinding>,
+    ): List<Triple<GlobalShortcut?, ShortcutBinding, Int>> {
+        val shortcuts = GlobalShortcutBindings.resolve(bindings)
+        val taken = shortcuts.values.toSet()
+        return shortcuts.map { (shortcut, binding) -> Triple<GlobalShortcut?, ShortcutBinding, Int>(shortcut, binding, shortcut.ordinal + 1) } +
+            windowChords.filter { it !in taken && it.modifierCount >= GlobalShortcutBindings.MIN_MODIFIERS }
+                .sortedBy { it.chord }
+                .mapIndexed { index, binding -> Triple<GlobalShortcut?, ShortcutBinding, Int>(null, binding, WINDOW_HOTKEY_BASE + index) }
     }
 }

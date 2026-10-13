@@ -73,6 +73,8 @@ fun main() {
                         awtWindow.toFront()
                         awtWindow.isAlwaysOnTop = false
                         awtWindow.requestFocus()
+                        // …and the keyboard with it: a chord mapped to a window is struck from another application.
+                        DesktopAppWindow.takeForeground(awtWindow)
                     }
                 }
                 onDispose { DesktopAppWindow.bringToFront = {} }

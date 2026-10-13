@@ -83,6 +83,7 @@ import org.example.project.scheduler.platform.currentDeviceKind
 import org.example.project.scheduler.platform.deviceLockedIntervals
 import org.example.project.scheduler.platform.GlobalHotkeys
 import org.example.project.scheduler.platform.GlobalShortcut
+import org.example.project.scheduler.platform.ShortcutBinding
 import org.example.project.scheduler.platform.installGlobalHotkeys
 import org.example.project.scheduler.platform.installPauseCuePushBridge
 import org.example.project.scheduler.platform.installPlatformActivityListener
@@ -298,7 +299,7 @@ private class CalendarLayersHolder {
 private val VIEW_ROWS: Set<String> =
     setOf(
         CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID,
-        CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, "AppWindow",
+        CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
     )
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
@@ -814,8 +815,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Android/iOS.
         // Keyed on the bindings too (PRD §7): rebinding a chord in the keyboard-shortcuts window has to reach
         // the OS claim without a restart, and the seam's later calls are exactly the re-registration path.
-        LaunchedEffect(engine, schedulerState.shortcutBindings) {
-            installGlobalHotkeys(schedulerState.shortcutBindings) { shortcut ->
+        // User rule 2026-10-12: the chords the user mapped to a window ([org.example.project.ui.WindowShortcuts]) —
+        // frame id → chord, local-only like the windows' places, kept on a placement row of its own. Claimed with the
+        // shortcuts below; a press brings the app to the front (the platform's side) and asks for the window here.
+        // The ask is a flow because the callback runs on the claim's own dispatch thread, not on the frame loop.
+        var windowShortcuts by remember(placementStore) {
+            mutableStateOf(org.example.project.ui.WindowShortcuts.decode(placements[org.example.project.ui.WindowShortcuts.PLACEMENT_ID]?.config))
+        }
+        fun saveWindowShortcuts(next: List<org.example.project.ui.WindowShortcut>) {
+            windowShortcuts = next
+            updatePlacementById(org.example.project.ui.WindowShortcuts.PLACEMENT_ID) {
+                it.copy(config = org.example.project.ui.WindowShortcuts.encode(next))
+            }
+        }
+        val windowChordPresses = remember { kotlinx.coroutines.flow.MutableSharedFlow<ShortcutBinding>(extraBufferCapacity = 8) }
+        val windowChordSet = org.example.project.ui.WindowShortcuts.chordsOf(windowShortcuts)
+        LaunchedEffect(engine, schedulerState.shortcutBindings, windowChordSet) {
+            installGlobalHotkeys(
+                schedulerState.shortcutBindings,
+                windowChords = windowChordSet,
+                onWindowChord = { windowChordPresses.tryEmit(it) },
+            ) { shortcut ->
                 // The receipt FIRST, and unconditionally: the chord is struck with another window in front, so
                 // without it "OmniApp never got the press" and "OmniApp got it and had nothing to do" look
                 // identical from where the user is sitting. It is posted here, at the OS seam, and not inside
@@ -1702,6 +1722,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (notificationsWindowOpen == false) notificationsWindowId = null
         }
 
+        // User rule 2026-10-12: a window's chord was struck (the app is already coming to the front): the focus goes
+        // to the window it is mapped to. Open — brought back as a click on its tab brings it; a lateral-menu window
+        // that is closed is opened; a closed copy leads to its kind's window; a closed per-object window to nothing.
+        fun presentMappedWindow(id: String) {
+            val kind = lateralWindowOf(id)
+            when {
+                windowFrames.registrations.any { it.id == id } -> if (kind != null) presentWindow(kind, id) else windowFrames.present(id)
+                kind != null && id == kind.name -> {
+                    setWindowOpen(kind, true)
+                    focusWindow(kind)
+                    windowFrames.present(id)
+                }
+                kind != null -> openNewWindow(kind)
+            }
+        }
+        // Every window a chord can be mapped to, frame id to the name it goes by: the lateral menu's, open or not,
+        // then the other open ones (copies, per-object windows) by their tab's name, then what is still mapped.
+        fun shortcutWindowTitles(): List<Pair<String, String>> {
+            val lateral = FloatingWindow.entries.filter { it != FloatingWindow.TimeSim }.map { it.name to it.title }
+            val open = windowFrames.registrations.map { it.id to windowFrames.tabTitleOf(it) }
+            val names = lateral.toMap() + open.toMap()
+            return (lateral.map { it.first } + open.map { it.first } + windowShortcuts.mapNotNull { it.window }).distinct()
+                .map { id -> id to (names[id] ?: "$id (closed)") }
+        }
+        val presentMapped by rememberUpdatedState(::presentMappedWindow)
+        LaunchedEffect(windowChordPresses) {
+            windowChordPresses.collect { chord ->
+                org.example.project.ui.WindowShortcuts.windowOf(windowShortcuts, chord)?.let { presentMapped(it) }
+            }
+        }
+
         // The Search windows (by frame id) whose type selector opens deployed once they show — the calendar's "add…".
         // A one-shot: the window takes its id off as it deploys the drop-down. Compose-only.
         val searchKindsToDeploy = remember { mutableStateListOf<String>() }
@@ -1897,7 +1948,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         objectWindowType(kind), objectWindowTypeTitle(kind), placeholder = true,
                     )
                 }
-            return open + closed + types
+            // The chords mapped to a window (user rule 2026-10-12): keyboard-shortcut rows, not windows
+            // ([SearchDomain.WindowEntry.mapping]) — the device's, so handed in here with its windows.
+            val titles = shortcutWindowTitles().toMap()
+            val mapped = windowShortcuts.map { shortcut ->
+                SearchDomain.WindowEntry(
+                    shortcut.id, shortcut.id, SearchDomain.WindowStatus.NotOpen, type = "window shortcut",
+                    mapping = SearchDomain.WindowEntry.WindowChord(shortcut.window?.let { titles[it] ?: it }, shortcut.chord?.chord),
+                )
+            }
+            return open + closed + types + mapped
         }
         // PRD §7 Search, a "creation" row (user spec 2026-09-26): a new element of [kind], made the way that kind's
         // own "+ New …" makes it — through the same intents and the account's default configuration — and opened in
@@ -1971,6 +2031,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     focusWindow(FloatingWindow.TaskTrees)
                 }
                 SearchDomain.Kind.Window -> openNewWindow(FloatingWindow.Search, SearchDomain.WINDOW_TYPES_CONFIG.encode())
+                // User rule 2026-10-12: a new chord for a window — with neither yet; its actions give it both.
+                SearchDomain.Kind.Shortcut -> {
+                    val id = org.example.project.ui.WindowShortcuts.mintId(windowShortcuts)
+                    saveWindowShortcuts(windowShortcuts + org.example.project.ui.WindowShortcut(id))
+                    openElementSearch(SearchDomain.Kind.Shortcut, org.example.project.ui.WindowShortcuts.SEARCH_PREFIX + id)
+                }
                 else -> Unit
             }
         }
@@ -4404,6 +4470,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // window's and the reminder editor's components embedded over the same callbacks.
                     val addedActionHandlers =
                         AddedActionHandlers(
+                            windowShortcuts = { windowShortcuts },
+                            shortcutWindows = ::shortcutWindowTitles,
+                            onWindowShortcutChange = { saveWindowShortcuts(org.example.project.ui.WindowShortcuts.with(windowShortcuts, it)) },
+                            onDeleteWindowShortcuts = { ids -> saveWindowShortcuts(windowShortcuts.filterNot { it.id in ids }) },
                             onStartNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                             onEdit = { openElementSearch(SearchDomain.Kind.Task, it.value) },
                             onGoToTaskTree = { taskId ->
@@ -4691,6 +4761,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             bindings = schedulerState.shortcutBindings,
                             onRebind = { shortcut, binding ->
                                 vm.dispatch(SchedulerIntent.SetGlobalShortcutBinding(shortcut, binding))
+                            },
+                            windows = shortcutWindowTitles(),
+                            windowShortcuts = windowShortcuts,
+                            // The window's row there: its first mapping given the chord, or one made for it; "Remove"
+                            // takes away every mapping of that window.
+                            onBindWindow = { id, binding ->
+                                val existing = windowShortcuts.firstOrNull { it.window == id }
+                                saveWindowShortcuts(
+                                    when {
+                                        binding == null -> windowShortcuts.filterNot { it.window == id }
+                                        existing != null -> org.example.project.ui.WindowShortcuts.with(windowShortcuts, existing.copy(chord = binding))
+                                        else ->
+                                            windowShortcuts +
+                                                org.example.project.ui.WindowShortcut(org.example.project.ui.WindowShortcuts.mintId(windowShortcuts), id, binding)
+                                    },
+                                )
                             },
                             onDismiss = { shortcutsWindowOpen = false },
                             initialOffset = shortcutsOffset,

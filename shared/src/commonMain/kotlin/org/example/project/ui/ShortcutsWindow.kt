@@ -82,6 +82,14 @@ fun ShortcutsWindow(
     bindings: Map<GlobalShortcut, ShortcutBinding>,
     /** Bind [GlobalShortcut] to the captured chord, or — with a null binding — back to its default. */
     onRebind: (GlobalShortcut, ShortcutBinding?) -> Unit,
+    /**
+     * User rule 2026-10-12, the chords mapped to a window ([WindowShortcuts]): every window that can be given one —
+     * frame id to the name it goes by — in the order they are listed, and the mappings made so far.
+     */
+    windows: List<Pair<String, String>> = emptyList(),
+    windowShortcuts: List<WindowShortcut> = emptyList(),
+    /** Give the window (by frame id) the captured chord, or — with a null binding — take its chord away. */
+    onBindWindow: (String, ShortcutBinding?) -> Unit = { _, _ -> },
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
@@ -94,7 +102,10 @@ fun ShortcutsWindow(
     val frame = rememberWindowFrameState("Shortcuts", initialOffset, initialSize)
     // The row currently listening for a chord, or null. Compose-only state: a capture in flight is not a
     // fact about the account, and closing the window must simply abandon it.
-    var capturing by remember { mutableStateOf<GlobalShortcut?>(null) }
+    var capturing by remember { mutableStateOf<CaptureTarget?>(null) }
+    // Which block the refusal below is shown under: the one whose row was listening.
+    var rejectionForWindow by remember { mutableStateOf(false) }
+    val windowTitles = windows.toMap()
     // Why the last captured chord was refused, shown under the block until the next capture succeeds.
     var rejection by remember { mutableStateOf<String?>(null) }
     val captureFocus = remember { FocusRequester() }
@@ -152,11 +163,25 @@ fun ShortcutsWindow(
                             shift = event.isShiftPressed,
                             alt = event.isAltPressed,
                         )
-                    val why = GlobalShortcutBindings.rejection(bindings, capturingNow, binding)
+                    // One chord, one thing — across both lists: a shortcut may not take a window's chord either.
+                    val why =
+                        when (capturingNow) {
+                            is CaptureTarget.Global ->
+                                GlobalShortcutBindings.rejection(bindings, capturingNow.shortcut, binding)
+                                    ?: WindowShortcuts.heldByWindow(windowShortcuts, binding, { windowTitles[it] ?: it })
+                            is CaptureTarget.Window ->
+                                WindowShortcuts.rejection(
+                                    bindings, windowShortcuts, windowShortcuts.firstOrNull { it.window == capturingNow.id }?.id, binding,
+                                ) { windowTitles[it] ?: it }
+                        }
                     rejection = why
+                    rejectionForWindow = capturingNow is CaptureTarget.Window
                     if (why == null) {
                         capturing = null
-                        onRebind(capturingNow, binding)
+                        when (capturingNow) {
+                            is CaptureTarget.Global -> onRebind(capturingNow.shortcut, binding)
+                            is CaptureTarget.Window -> onBindWindow(capturingNow.id, binding)
+                        }
                     }
                     true
                 }
@@ -201,19 +226,19 @@ fun ShortcutsWindow(
                 )
                 GlobalShortcut.entries.forEach { shortcut ->
                     GlobalShortcutRow(
-                        shortcut = shortcut,
+                        action = shortcut.action,
                         chord = GlobalShortcutBindings.chordOf(bindings, shortcut),
                         // Only an override can be reset — a shortcut already on its shipped chord has
                         // nothing to put back.
                         overridden = shortcut in bindings,
-                        listening = capturingNow == shortcut,
+                        listening = capturingNow == CaptureTarget.Global(shortcut),
                         // The chords do nothing on a platform that cannot claim them, so there is
                         // nothing to rebind there either.
                         rebindable = claim != GlobalHotkeyClaim.Unsupported,
                         onStartCapture = {
                             rejection = null
                             captureHasFocus = false
-                            capturing = shortcut
+                            capturing = CaptureTarget.Global(shortcut)
                         },
                         onCancelCapture = {
                             rejection = null
@@ -226,23 +251,53 @@ fun ShortcutsWindow(
                         },
                     )
                 }
-                rejection?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 4.dp),
+                if (!rejectionForWindow) CaptureNotes(rejection, listening = capturingNow is CaptureTarget.Global)
+            }
+
+            // User rule 2026-10-12: a chord of the user's own for any window. Struck from anywhere, it brings the app
+            // to the front and puts the focus on that window — opening it where it is a window of the lateral menu.
+            if (claim != GlobalHotkeyClaim.Unsupported) {
+                GroupBlock(
+                    KeyboardShortcutGroup(
+                        title = "Windows",
+                        note = "A chord of your own for a window: from any application, it brings OmniApp to the front " +
+                            "and puts the focus on that window. Kept on this device.",
+                        shortcuts = emptyList(),
+                    ),
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth().height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant),
                     )
-                }
-                if (capturingNow != null) {
-                    Text(
-                        text = "Press the chord you want — at least " +
-                            "${GlobalShortcutBindings.MIN_MODIFIERS} of Ctrl, Shift and Alt, then a " +
-                            "letter, a digit or a function key. Escape cancels.",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
+                    windows.forEach { (id, title) ->
+                        val target = CaptureTarget.Window(id)
+                        val bound = windowShortcuts.firstOrNull { it.window == id && it.chord != null }?.chord
+                        GlobalShortcutRow(
+                            action = title,
+                            chord = bound?.chord ?: "—",
+                            overridden = bound != null,
+                            listening = capturingNow == target,
+                            rebindable = true,
+                            bindLabel = if (bound == null) "Set" else "Rebind",
+                            resetLabel = "Remove",
+                            onStartCapture = {
+                                rejection = null
+                                captureHasFocus = false
+                                capturing = target
+                            },
+                            onCancelCapture = {
+                                rejection = null
+                                capturing = null
+                            },
+                            onReset = {
+                                rejection = null
+                                capturing = null
+                                onBindWindow(id, null)
+                            },
+                        )
+                    }
+                    if (rejectionForWindow) CaptureNotes(rejection, listening = false)
+                    CaptureNotes(null, listening = capturingNow is CaptureTarget.Window)
                 }
             }
 
@@ -270,6 +325,116 @@ fun ShortcutsWindow(
                 }
             }
         }
+    }
+}
+
+/** What a listening row is listening FOR: one of the app's system-wide shortcuts, or a window's own chord. */
+private sealed interface CaptureTarget {
+    data class Global(val shortcut: GlobalShortcut) : CaptureTarget
+
+    data class Window(val id: String) : CaptureTarget
+}
+
+/** Under a block of rebindable chords: why the last chord was refused, and what to press while a row listens. */
+@Composable
+private fun CaptureNotes(rejection: String?, listening: Boolean) {
+    rejection?.let {
+        Text(
+            text = it,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+    if (listening) {
+        Text(
+            text = "Press the chord you want — at least " +
+                "${GlobalShortcutBindings.MIN_MODIFIERS} of Ctrl, Shift and Alt, then a " +
+                "letter, a digit or a function key. Escape cancels.",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/**
+ * **One chord, as a control**: what it is, and the buttons that move it — the capture the rows above use, for a chord
+ * shown anywhere else (the Search window's keyboard-shortcut actions, user rule 2026-10-12). "Set" / "Rebind" listens
+ * for the chord pressed, the OS claim standing down meanwhile ([setGlobalHotkeyCapture], balanced on every way out:
+ * a chord taken, Escape, Cancel, the focus lost, the control leaving). [onTake] is handed the chord and answers why
+ * it is refused, or null once it has taken it. [resetLabel] null: nothing to put back.
+ */
+@Composable
+internal fun ChordCapture(chord: String?, resetLabel: String?, onTake: (ShortcutBinding) -> String?, onReset: () -> Unit) {
+    var listening by remember { mutableStateOf(false) }
+    var rejection by remember { mutableStateOf<String?>(null) }
+    var hasFocus by remember { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    val listeningNow = listening
+    DisposableEffect(listeningNow) {
+        if (listeningNow) setGlobalHotkeyCapture(true)
+        onDispose { if (listeningNow) setGlobalHotkeyCapture(false) }
+    }
+    LaunchedEffect(listeningNow) { if (listeningNow) runCatching { focus.requestFocus() } }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (listeningNow) {
+                Text(
+                    text = "Press a chord…",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .width(150.dp)
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                hasFocus = true
+                            } else if (hasFocus) {
+                                hasFocus = false
+                                listening = false
+                                rejection = null
+                            }
+                        }
+                        .focusRequester(focus)
+                        .focusable()
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
+                            if (event.key == Key.Escape) {
+                                listening = false
+                                rejection = null
+                                return@onPreviewKeyEvent true
+                            }
+                            val key = capturableKeys[event.key] ?: return@onPreviewKeyEvent true
+                            val why = onTake(ShortcutBinding(key, ctrl = event.isCtrlPressed, shift = event.isShiftPressed, alt = event.isAltPressed))
+                            rejection = why
+                            if (why == null) listening = false
+                            true
+                        },
+                )
+                Spacer(Modifier.width(8.dp))
+                RowAction("Cancel") {
+                    listening = false
+                    rejection = null
+                }
+            } else {
+                ChordText(chord ?: "—")
+                Spacer(Modifier.width(8.dp))
+                RowAction(if (chord == null) "Set" else "Rebind") {
+                    rejection = null
+                    hasFocus = false
+                    listening = true
+                }
+                resetLabel?.let {
+                    Spacer(Modifier.width(4.dp))
+                    RowAction(it) {
+                        rejection = null
+                        onReset()
+                    }
+                }
+            }
+        }
+        CaptureNotes(rejection, listeningNow)
     }
 }
 
@@ -305,11 +470,14 @@ private fun GroupBlock(group: KeyboardShortcutGroup, body: @Composable () -> Uni
  */
 @Composable
 private fun GlobalShortcutRow(
-    shortcut: GlobalShortcut,
+    /** What the chord does: a shortcut's action, or the window it brings back. */
+    action: String,
     chord: String,
     overridden: Boolean,
     listening: Boolean,
     rebindable: Boolean,
+    bindLabel: String = "Rebind",
+    resetLabel: String = "Reset",
     onStartCapture: () -> Unit,
     onCancelCapture: () -> Unit,
     onReset: () -> Unit,
@@ -331,7 +499,7 @@ private fun GlobalShortcutRow(
         }
         Spacer(Modifier.width(8.dp))
         Text(
-            text = shortcut.action,
+            text = action,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
@@ -341,10 +509,10 @@ private fun GlobalShortcutRow(
             if (listening) {
                 RowAction("Cancel", onCancelCapture)
             } else {
-                RowAction("Rebind", onStartCapture)
+                RowAction(bindLabel, onStartCapture)
                 if (overridden) {
                     Spacer(Modifier.width(4.dp))
-                    RowAction("Reset", onReset)
+                    RowAction(resetLabel, onReset)
                 }
             }
         }

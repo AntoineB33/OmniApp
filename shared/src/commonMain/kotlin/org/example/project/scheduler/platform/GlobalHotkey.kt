@@ -66,6 +66,17 @@ data class ShortcutBinding(
             if (alt) append("Alt+")
             append(key.label)
         }
+
+    companion object {
+        /** [chord]'s reverse — how a chord kept as text is read back; null for a text that spells none. */
+        fun parse(chord: String): ShortcutBinding? {
+            val parts = chord.split('+').map { it.trim() }
+            val key = ShortcutKey.byLabel(parts.lastOrNull().orEmpty()) ?: return null
+            val modifiers = parts.dropLast(1).map { it.lowercase() }
+            if (modifiers.any { it !in setOf("ctrl", "shift", "alt") }) return null
+            return ShortcutBinding(key, ctrl = "ctrl" in modifiers, shift = "shift" in modifiers, alt = "alt" in modifiers)
+        }
+    }
 }
 
 /**
@@ -253,9 +264,16 @@ object GlobalHotkeys {
  * Idempotent, mirroring [installPlatformActivityListener]: the OS claim is made at most once per process, so
  * recomposition can never take the chords twice. A later call **re-points [onShortcut] and re-registers
  * [bindings]** — which is how a rebinding made in the keyboard-shortcuts window takes effect with no restart.
+ *
+ * **[windowChords] are the chords the user mapped to a window** (user rule 2026-10-12): claimed by the same hook, in
+ * the same table, under the same rules. A press of one **brings the app to the front first** — the platform's own
+ * doing, since only it can — and then calls [onWindowChord] with the chord, for the app to put the focus on the
+ * window it is mapped to. A chord a [GlobalShortcut] holds is that shortcut's: it is not claimed twice.
  */
 expect fun installGlobalHotkeys(
     bindings: Map<GlobalShortcut, ShortcutBinding>,
+    windowChords: Set<ShortcutBinding> = emptySet(),
+    onWindowChord: (ShortcutBinding) -> Unit = {},
     onShortcut: (GlobalShortcut) -> Unit,
 )
 

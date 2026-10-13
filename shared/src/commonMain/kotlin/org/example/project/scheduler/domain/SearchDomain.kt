@@ -143,8 +143,9 @@ object SearchDomain {
 
         /**
          * One CREATION row per kind of element the user can make ([CREATABLE]): opening it makes a new one, as that
-         * kind's own "+ New …" does, and opens its window (user spec 2026-09-26). History units, task relations and
-         * keyboard shortcuts are not made by the user, so they have none.
+         * kind's own "+ New …" does, and opens its window (user spec 2026-09-26). History units and task relations
+         * are not made by the user, so they have none. A new keyboard shortcut is a chord for a window (user rule
+         * 2026-10-12, [WindowEntry.mapping]).
          */
         Creation("creation"),
     }
@@ -156,8 +157,14 @@ object SearchDomain {
     val CREATABLE: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.TaskTree, Kind.Window,
+            Kind.TaskTree, Kind.Window, Kind.Shortcut,
         )
+
+    /**
+     * What the id of a chord mapped to a window wears as a [Kind.Shortcut] row, where the app's own shortcuts are
+     * named by their [GlobalShortcut] name: `window:ws-3` (user rule 2026-10-12).
+     */
+    const val WINDOW_SHORTCUT_PREFIX: String = "window:"
 
     /**
      * What the period edit window's resilience button types into the actions' filter ([Config.actionQuery]): the
@@ -358,7 +365,16 @@ object SearchDomain {
         val typeTitle: String = title,
         /** A TYPE no window is open of — listed only one-per-type, never as a window of its own. */
         val placeholder: Boolean = false,
+        /**
+         * User rule 2026-10-12: this entry is NOT a window — it is **a chord the user mapped to a window**, handed in
+         * with `App`'s windows because, like them, it is the device's and not the account's ([id] is the mapping's).
+         * A [Kind.Shortcut] row, never a [Kind.Window] one.
+         */
+        val mapping: WindowChord? = null,
     ) {
+        /** What a mapping says: the window it brings back (null: none chosen yet) and its chord (null: none yet). */
+        data class WindowChord(val windowTitle: String?, val chord: String?)
+
         companion object {
             /** A one-per-type row's id: what opening it asks `App` for. */
             const val TYPE_PREFIX: String = "type:"
@@ -430,7 +446,8 @@ object SearchDomain {
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
-            get() = Kind.Window in kinds || added.any { it.startsWith(Kind.Window.name + "/") }
+            get() = Kind.Window in kinds || Kind.Shortcut in kinds ||
+                added.any { it.startsWith(Kind.Window.name + "/") || it.startsWith(Kind.Shortcut.name + "/") }
 
         /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */
         fun encode(): String =
@@ -1859,13 +1876,22 @@ object SearchDomain {
                     val binding = state.shortcutBindings[shortcut] ?: shortcut.defaultBinding
                     val rebound = binding != shortcut.defaultBinding
                     ItemResult(kind, shortcut.name, shortcut.action, binding.chord + if (rebound) " · rebound" else "")
+                } + windows.mapNotNull { entry ->
+                    // The chords the user mapped to a window: each an element of its own, made with "New".
+                    val mapping = entry.mapping ?: return@mapNotNull null
+                    ItemResult(
+                        kind, WINDOW_SHORTCUT_PREFIX + entry.id,
+                        "Window: " + (mapping.windowTitle ?: "none chosen yet"), mapping.chord ?: "no chord yet",
+                    )
                 }
                 // Each instance its own row — two copies of Search are two rows; the detail is where it stands.
                 Kind.Window ->
-                    if (windowTypesOnly) {
-                        windowTypeRows(windows)
-                    } else {
-                        windows.filterNot { it.placeholder }.map { window -> ItemResult(kind, window.id, window.title, window.status.label) }
+                    windows.filter { it.mapping == null }.let { real ->
+                        if (windowTypesOnly) {
+                            windowTypeRows(real)
+                        } else {
+                            real.filterNot { it.placeholder }.map { window -> ItemResult(kind, window.id, window.title, window.status.label) }
+                        }
                     }
                 Kind.Creation -> CREATABLE.map { made ->
                     ItemResult(kind, made.name, "New " + made.label, creationDetail(made))
@@ -2276,6 +2302,7 @@ object SearchDomain {
         when (kind) {
             Kind.Task -> "at the top of the tree, in its edit window"
             Kind.Window -> "a Search window of the window types"
+            Kind.Shortcut -> "a chord for a window"
             Kind.TaskTree -> "a copy of the open tree"
             else -> "in its own window"
         }
@@ -2643,6 +2670,12 @@ object SearchDomain {
         ReminderConstraint(Kind.Reminder, "Constrained in"),
         ReminderAlert(Kind.Reminder, "Alert"),
         ReminderDelete(Kind.Reminder, "Delete"),
+        // User rule 2026-10-12: a keyboard shortcut's actions. "New" makes a chord for a window; the chord of every
+        // shortcut is set here; a window's shortcut also says which window, and can be deleted.
+        ShortcutNew(Kind.Shortcut, "New"),
+        ShortcutChord(Kind.Shortcut, "Chord"),
+        ShortcutWindow(Kind.Shortcut, "Window"),
+        ShortcutDelete(Kind.Shortcut, "Delete"),
         CategoryDelete(Kind.Category, "Delete"),
         // The time of day put on the clock's (user rule 2026-10-02): every added alarm, every added reminder.
         AlarmTimeNow(Kind.Alarm, "Set to the current time"),
@@ -2712,7 +2745,16 @@ object SearchDomain {
      * acted on as that kind: the actions then edit what a new one starts with ([defaultConfigurationAdded]).
      */
     fun actionKindOf(result: Result): Kind =
-        if (result.kind == Kind.Creation && result is ItemResult && result.id == Kind.Quota.name) Kind.Quota else result.kind
+        if (result.kind == Kind.Creation && result is ItemResult) {
+            // …and "New keyboard shortcut" (user rule 2026-10-12): its one action is the shortcuts' "New".
+            when (result.id) {
+                Kind.Quota.name -> Kind.Quota
+                Kind.Shortcut.name -> Kind.Shortcut
+                else -> result.kind
+            }
+        } else {
+            result.kind
+        }
 
     /** Whether the "New [kind]" creation row is among [added] — its default configuration is then being edited. */
     fun defaultConfigurationAdded(added: List<Result>, kind: Kind): Boolean =
@@ -2732,6 +2774,8 @@ object SearchDomain {
             // User rule 2026-10-12: a timer's settings — what a new timer starts with ([SchedulerState.newTimerDefaults]),
             // edited in the group inside the timers' ([actionGroups]); it had a window of its own behind a button.
             AddedAction.TimerDuration, AddedAction.TimerRingsFor, AddedAction.TimerBelowZero, AddedAction.TimerAlert,
+            // A "New keyboard shortcut" row has no default to edit: "New" is the whole of what it offers.
+            AddedAction.ShortcutNew,
         )
 
     /**
@@ -2820,7 +2864,7 @@ object SearchDomain {
             AddedAction.ChronoRun, AddedAction.HistoryRules, AddedAction.HistoryInformation, AddedAction.TaskPaths,
             AddedAction.TaskCellCategories, AddedAction.TaskFulfilment, AddedAction.TaskFulfilledBy,
             AddedAction.TaskStartNow, AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar,
-            AddedAction.CategoryName,
+            AddedAction.CategoryName, AddedAction.ShortcutChord, AddedAction.ShortcutWindow,
         )
 
     /**
@@ -2953,7 +2997,9 @@ object SearchDomain {
             AddedAction.ChronoRun -> "start pause reset all"
             AddedAction.TimerLowestCountdown -> "timers select all start pause reset all elapsed ends day run"
             AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.AlarmNew, AddedAction.TimerNew,
-            AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew -> "new create"
+            AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew, AddedAction.ShortcutNew -> "new create"
+            AddedAction.ShortcutChord -> "set rebind reset remove press a chord ctrl shift alt"
+            AddedAction.ShortcutWindow -> "choose a window"
             AddedAction.TaskDuplicate, AddedAction.CategoryDuplicate, AddedAction.PeriodDuplicate, AddedAction.AlarmDuplicate,
             AddedAction.TimerDuplicate, AddedAction.ChronoDuplicate, AddedAction.ReminderDuplicate, AddedAction.QuotaDuplicate -> "duplicate copy"
             AddedAction.HistoryRules -> "copy the set of rules"
@@ -2973,7 +3019,7 @@ object SearchDomain {
             AddedAction.CategoryName -> "unique rename"
             AddedAction.CategoryRules, AddedAction.CategoryAddRule -> "rule label"
             AddedAction.AlarmDelete, AddedAction.TimerDelete, AddedAction.ChronoDelete, AddedAction.QuotaDelete,
-            AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete -> "delete remove bin"
+            AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete, AddedAction.ShortcutDelete -> "delete remove bin"
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
             AddedAction.PeriodDrawing -> "period"

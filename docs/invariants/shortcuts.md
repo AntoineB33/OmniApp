@@ -67,11 +67,53 @@ chords, in every window (`TabWalk`, `WindowFrameHost.walkTabsByRecency` / `walkT
   in the bar's order. In memory only (`WindowFrameHost.recent`): after a launch the restored windows are in the bar's
   order until they are focused. A closed window leaves it.
 
-### Rebinding the four (and only those four)
+### A chord of the user's own for any window
 
-- **These are the ONLY rebindable shortcuts in the app**, because they are the only ones that can collide with
-  anything outside it — a system-wide claim is first come, first served. Every other chord is a Compose handler
-  scoped to a surface; do not make one of those rebindable.
+User rule 2026-10-12: *"Allow the user to map any shortcut to any window. The defined shortcut would then put focus on
+the app and put focus on the mapped window."* (`ui/WindowShortcuts.kt`, the "Windows" block of the Keyboard shortcuts
+window, `WindowShortcutsTest`, `WindowChordClaimTest`.)
+
+- **It is a system-wide chord like the five, claimed by the SAME hook in the SAME table**
+  (`installGlobalHotkeys(windowChords, onWindowChord)`, `GlobalHotkeyClaimant.chordsOf`) — never a second hook, a
+  second loop or a Compose handler: it is struck from another application. Same key set, same capture, same floor of
+  two modifiers.
+- **One chord is one thing across both lists** (`WindowShortcuts.rejection` / `heldByWindow`): a window may not take a
+  shortcut's chord nor another window's, and a shortcut may not take a window's. Where the two lists still meet (a
+  shortcut moved onto a window's chord on another device — the windows' map is not synced), the shortcut wins: the
+  claim drops the window's.
+- **The hook matches the key AND the modifiers before it names a chord.** Several chords may now end on one key
+  (`Ctrl+Alt+K` for a window, `Ctrl+Shift+Alt+K` for another); taking "the chord of this key" and then testing its
+  modifiers, as the five could, would make the second one dead.
+- **The press brings the APP to the front on the platform's side, then the app presents the window.** The claim calls
+  `DesktopAppWindow.bringToFront` — which now also ASKS THE OS FOR THE FOREGROUND the task picker's way
+  (`requestForeground`, `AttachThreadInput`): a chord our hook swallowed is not our window having been typed into, so
+  a plain `toFront` would put the window on top and leave the keyboard where it was. The app's side runs on the frame
+  loop (the callback is on the claim's dispatch thread, so it only emits to a flow): an open window is presented as a
+  click on its tab presents it; a closed lateral-menu window is opened; a closed copy leads to its kind's window; a
+  closed per-object window to nothing. No receipt notification: the window arriving is the receipt.
+- **Each mapping is an ELEMENT of its own** (`WindowShortcut`: an id, a window, a chord — either may be unset; only
+  one with BOTH is claimed, `WindowShortcuts.chordsOf`), and the list is **LOCAL-ONLY view state**, on a placement row
+  of its own (`WindowShortcuts.PLACEMENT_ID`), like the windows' places and colours: a frame id is a fact about this
+  device's windows. Never synced, not an Undo/Redo unit. Unlike the tabs' names it OUTLIVES its window closing.
+  `decode` heals (a chord that spells none or is under the floor is unset, a second entry on one chord loses it, an
+  id missing or twice is minted) and still reads the first shape written (frame id → chord).
+- **A keyboard shortcut is a Search element WITH ACTIONS, and "New" is how a mapping is made** (anomaly 2026-10-12:
+  the action section of a keyboard-shortcut element was empty). `Kind.Shortcut` rows are the five AND the mappings
+  (`window:<id>`, named "Window: …", detail its chord); the mappings reach `SearchDomain` in the list `App` hands in
+  with its windows (`WindowEntry.mapping` — the device's, like them; never a `Kind.Window` row; `Config.readsWindows`
+  is true for the shortcut kind too). The actions: **New** (`createElement(Kind.Shortcut)`: a mapping with neither
+  window nor chord, opened in a Search window of its own — also the one action of the "New keyboard shortcut"
+  creation row, `actionKindOf`), **Chord** (`ChordCapture`, the keyboard-shortcuts window's own capture as a control:
+  one of the five through `SetGlobalShortcutBinding`, a mapping through `App`), **Window** (a drop-down of the windows
+  that can be named; the five have none) and **Delete** (the mappings only). The mappings are written by `App`
+  (`AddedActionHandlers.onWindowShortcutChange` / `onDeleteWindowShortcuts`), never by an intent: they are not state
+  of the account. The "Windows" block of the Keyboard shortcuts window is the same list, read by window.
+
+### Rebinding the five, and the windows' own
+
+- **These — and the windows' chords above — are the ONLY rebindable shortcuts in the app**, because they are the only
+  ones that can collide with anything outside it — a system-wide claim is first come, first served. Every other chord
+  is a Compose handler scoped to a surface; do not make one of those rebindable.
 - **`GlobalShortcut.defaultBinding` is what it SHIPS with, never what the app is listening for.** The live chord
   is `GlobalShortcutBindings.chordOf(state.shortcutBindings, …)` — the window, the receipt notification and the
   diagnostics all go through it. `GlobalShortcut.chord` is gone precisely so nothing can print the wrong one.
