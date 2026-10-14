@@ -174,6 +174,15 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   are empty (Start all with every shown timer running). **"Compact"** (`Config.compactTimers`, local view state)
   draws each shown timer on ONE row — name, countdown, buttons, Elapsed, end — through `TimerRowEditor(oneRow)`,
   the same lines laid side by side, never a second row implementation.
+- **A chrono's run is the timer's turned round** (anomaly 2026-10-14: *"in the chrono element, I don't see the
+  countdown group in the action section similar to the timer element"* — a chrono's "Run" was three bare buttons and
+  showed no count, and several chronos had no group of their own). **"Run"** (`ChronoRun`, each chrono's own) draws
+  the Alarms window's chrono row, its count and its buttons alone — `ChronoRowEditor(runOnly)`, through the same
+  `AddedActionHandlers.timerRun` — and Start / Pause / Reset "all" under several. **SEVERAL added chronos have a
+  "Highest count" action, in THEIR group** (`AddedAction.ChronoHighestCount`, `HighestCountEditor`): "Lowest countdown"
+  exactly, ordered by `ChronoDomain.byCount` (the highest count first; a paused one at its banked time), picked in
+  `Config.pickedChronos`, and drawn on one row each by "Compact" (`Config.compactChronos`, `ChronoRowEditor(oneRow)`:
+  title, count, buttons). A set action listed only with two chronos or more, like the timers'.
 - **A new timer's default configuration is edited in the Search window's actions, with no button and no link**
   (user rule 2026-10-12; the alarms' and reminders' links stand). It is the group "Default configuration of a new
   timer" inside the group of the timers — or inside the timer's own group when it is the only timer added

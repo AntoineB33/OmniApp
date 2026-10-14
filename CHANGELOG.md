@@ -24,6 +24,15 @@ the stretch by 5 % and never went under 90 minutes. The fit is now EXACT: first 
 stretch shorter than what the zoom ceiling shows (~5 min in the bottom half of this screen) is centred at the ceiling. Every
 other calendar opens as before. `CalendarNotificationsTest`, `RollingCalendarTest`. Client rebuild only.
 
+### The chronos' run and "Highest count" — 2026-10-14
+
+The user: "In the chrono element, I don't see the countdown group in the action section similar to the timer
+element." A chrono's "Run" was three bare buttons with no count, and several chronos had nothing like the timers'
+"Lowest countdown". "Run" now draws the Alarms window's chrono row (`ChronoRowEditor(runOnly, oneRow)`); a new set
+action of several chronos, "Highest count" (`ChronoHighestCount`, `HighestCountEditor`, `ChronoDomain.byCount`), with
+its picks and its compact layout in the window's configuration (`Config.pickedChronos`, `compactChronos`, local view
+state; absent in an older configuration = none picked, not compact). `SearchAddedElementsTest`. Client rebuild only.
+
 ### The calendar grid's title retracts it — 2026-10-14
 
 The user: "In the calendar, the title of both sections must be clickable to expand or retract like the arrow button."

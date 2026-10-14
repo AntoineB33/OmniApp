@@ -989,6 +989,47 @@ class SearchAddedElementsTest {
         assertEquals(listOf(2), mixed.filter { lowest in it.actions }.map { it.members.size })
     }
 
+    /**
+     * Anomaly 2026-10-14: *"In the chrono element, I don't see the countdown group in the action section similar to the
+     * timer element."* — the timers' "Lowest countdown" turned round for the chronos: "Highest count", an action of the
+     * group of several chronos and of no chrono alone, the highest count first.
+     */
+    @Test
+    fun the_highest_count_is_an_action_of_the_group_of_several_chronos() {
+        fun chrono(id: String) = SearchDomain.ItemResult(SearchDomain.Kind.Chrono, id, "Run", "")
+        fun groups(added: List<SearchDomain.Result>) =
+            SearchDomain.actionGroups(
+                SearchDomain.actionsFor(
+                    SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added,
+                ),
+                added,
+            )
+        val highest = SearchDomain.AddedAction.ChronoHighestCount
+        val three = groups(listOf(chrono("c1"), chrono("c2"), chrono("c3")))
+        assertTrue(highest in three.first().actions, "in the group of the three chronos")
+        assertTrue(three.drop(1).none { highest in it.actions }, "not in a chrono's own group")
+        assertTrue(three.drop(1).all { SearchDomain.AddedAction.ChronoRun in it.actions }, "each keeps its own run")
+        assertTrue(groups(listOf(chrono("c1"))).none { highest in it.actions }, "one chrono alone: its run says its count")
+        val mixed = groups(listOf(chrono("c1"), chrono("c2"), SearchDomain.ItemResult(SearchDomain.Kind.Timer, "t1", "Tea", "")))
+        assertEquals(listOf(2), mixed.filter { highest in it.actions }.map { it.members.size })
+        // Which ones are picked, and whether they stand on one row each, are kept with the window's configuration.
+        val picking = SearchDomain.Config(pickedChronos = setOf("c1", "c3"), compactChronos = true)
+        assertEquals(picking, SearchDomain.Config.decode(picking.encode()))
+        assertEquals(emptySet(), SearchDomain.Config.decode("""{"query":"x"}""")!!.pickedChronos, "a configuration written before it")
+        assertEquals(false, SearchDomain.Config.decode("""{"query":"x"}""")!!.compactChronos)
+        // The highest count first — a running one counting from its start, a paused one its banked time.
+        val now = 100_000L
+        val counts = listOf(
+            org.example.project.scheduler.model.ChronoEntry(id = "c1", bankedMillis = 5_000L),
+            org.example.project.scheduler.model.ChronoEntry(id = "c2", startedAtMillis = now - 60_000L),
+            org.example.project.scheduler.model.ChronoEntry(id = "c3"),
+        )
+        assertEquals(listOf("c2", "c1", "c3"), org.example.project.scheduler.domain.ChronoDomain.byCount(counts, now).map { it.id })
+        // The added chronos the account still holds, in the list's order; one gone is not shown.
+        val s = account().copy(chronos = counts)
+        assertEquals(listOf("c3", "c1"), SearchDomain.addedChronos(s, listOf(chrono("c3"), chrono("gone"), chrono("c1"))).map { it.id })
+    }
+
     /** User rule 2026-10-02: "don't do that just for alarms" — the timers and the reminders, one field for all. */
     @Test
     fun a_timers_and_a_reminders_settings_are_one_field_over_every_added_one_and_each_kind_has_its_bin() {

@@ -30,6 +30,14 @@ object ChronoDomain {
     fun healed(entry: ChronoEntry): ChronoEntry =
         if (entry.bankedMillis >= 0L) entry else entry.copy(bankedMillis = 0L)
 
+    /**
+     * [chronos] from the highest count to the lowest at [nowMillis] — the Search window's read-out over several added
+     * chronos ("Highest count", user rule 2026-10-14), whose first entry is the one it names: the timers' "Lowest
+     * countdown" turned round, as a chrono is a timer turned round. Equal counts keep the order they came in.
+     */
+    fun byCount(chronos: List<ChronoEntry>, nowMillis: Long): List<ChronoEntry> =
+        chronos.sortedByDescending { it.elapsedAtMillis(nowMillis) }
+
     /** How the Alarms window and the Search results print a chrono: `M:SS`, or `H:MM:SS` from an hour up. */
     fun format(millis: Long): String = TimerDomain.formatCountdown(millis.coerceAtLeast(0L) / 1_000L * 1_000L)
 

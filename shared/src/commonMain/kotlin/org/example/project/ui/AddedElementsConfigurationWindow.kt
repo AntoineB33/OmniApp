@@ -191,7 +191,10 @@ class AddedActionHandlers(
     val onOpenResilienceSearch: (String) -> Unit,
     /** A creation row's "Search every element of the kind": the Search window on that kind ([SearchDomain.kindSearchConfig]). */
     val onOpenKindSearch: (SearchDomain.Kind) -> Unit,
-    /** [compact]: each timer on ONE row — countdown, buttons, Elapsed and when it ends side by side. */
+    /**
+     * The run of each timer or chrono of [subjects] — the Alarms window's own row, its run alone. [compact]: each on ONE
+     * row — a timer's countdown, buttons, Elapsed and when it ends side by side; a chrono's title, count and buttons.
+     */
     val timerRun: @Composable (subjects: Set<AlarmWindowSubject>, compact: Boolean) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
     /**
@@ -418,7 +421,8 @@ private fun ActionGroupBlock(
                 // enough sat beside its label, in the label's font, and only the tall ones had a title.
                 Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
                     // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
-                    val ownTitle = action == SearchDomain.AddedAction.TimerLowestCountdown
+                    val ownTitle =
+                        action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
                     if (!ownTitle) MicroGroupTitle(action.label)
                     AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = ownTitle)
                 }
@@ -740,12 +744,16 @@ private fun AddedActionEditor(
             // the Alarms window's row over the same callbacks; the buttons below them act on every added timer at once.
             TimerRunBlocks(SearchDomain.addedTimers(state, added), handlers, onStep = { run(SearchDomain.AddedCommand.TimersRun(it)) })
         }
+        // User rule 2026-10-14 (anomaly: the chrono had only three buttons where the timer has its countdown): a chrono's
+        // run IS its count — the Alarms window's row, its count and its buttons, each added chrono's own.
         SearchDomain.AddedAction.ChronoRun ->
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                SearchDomain.RunStep.entries.forEach { step ->
-                    FrameButton(step.label) { run(SearchDomain.AddedCommand.ChronosRun(step)) }
-                }
-            }
+            ChronoRunBlocks(
+                SearchDomain.addedChronos(state, added), handlers, compact = config.compactChronos,
+                onCompactChange = { onConfigChange(config.copy(compactChronos = it)) },
+                onStep = { run(SearchDomain.AddedCommand.ChronosRun(it)) },
+            )
+        SearchDomain.AddedAction.ChronoHighestCount ->
+            HighestCountEditor(state, added, config, onConfigChange, handlers, run, nowMillis, action.label.takeIf { titled })
         // --- A new element of the kind (in a Search window of its own), and a copy of each added one (joining these) ---
         SearchDomain.AddedAction.TaskNew, SearchDomain.AddedAction.CategoryNew, SearchDomain.AddedAction.PeriodNew,
         SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
@@ -1286,6 +1294,109 @@ private fun TimerRunBlocks(
                 FrameButton(step.label + if (timers.size > 1) " all" else "") { onStep(step) }
             }
         }
+    }
+}
+
+/**
+ * User rule 2026-10-14: the run of each of [chronos] — its count and its buttons, the Alarms window's own row
+ * ([AddedActionHandlers.timerRun]) — and, where [onStep] is given and there are several, the buttons that act on all of
+ * them. "Compact" ([SearchDomain.Config.compactChronos], through [onCompactChange]) draws each on one row, named.
+ */
+@Composable
+private fun ChronoRunBlocks(
+    chronos: List<org.example.project.scheduler.model.ChronoEntry>,
+    handlers: AddedActionHandlers,
+    compact: Boolean,
+    onCompactChange: ((Boolean) -> Unit)?,
+    onStep: ((SearchDomain.RunStep) -> Unit)? = null,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (onCompactChange != null && chronos.size > 1) {
+            FrameButton(if (compact) "Expand" else "Compact") { onCompactChange(!compact) }
+        }
+        for (chrono in chronos) {
+            key(chrono.id) {
+                if (!compact) ElementHeading(chrono.label.ifBlank { "Chrono" }, chronos.size)
+                handlers.timerRun(setOf(AlarmWindowSubject(chrono.id, AlarmWindowSubject.Kind.Chrono)), compact)
+            }
+        }
+        if (onStep != null && chronos.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            SearchDomain.RunStep.entries.forEach { step -> FrameButton(step.label + " all") { onStep(step) } }
+        }
+    }
+}
+
+/**
+ * User rule 2026-10-14, the "Highest count" action of the group of several chronos — [LowestCountdownEditor] for the
+ * chronos: **the run of the chrono with the highest count**, under a check-box drop-down listing every added chrono
+ * from the highest count down ([ChronoDomain.byCount]), each as its count and its title. Checking chronos there shows
+ * THEIR runs instead ([SearchDomain.Config.pickedChronos]). Start all / Pause all / Reset all stand on the title's line,
+ * act on the chronos SHOWN, and are greyed where they would do nothing; "Compact" draws each on one row.
+ */
+@Composable
+private fun HighestCountEditor(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    handlers: AddedActionHandlers,
+    run: (SearchDomain.AddedCommand) -> Unit,
+    nowMillis: () -> Long,
+    title: String?,
+) {
+    val chronos = SearchDomain.addedChronos(state, added)
+    var now by remember { mutableStateOf(nowMillis()) }
+    val anyRunning = chronos.any { it.running }
+    // The Alarms window's clock rule: re-read only while one of them is running (the order moves with the counts).
+    LaunchedEffect(anyRunning, chronos) {
+        now = nowMillis()
+        while (anyRunning) {
+            delay(COUNTDOWN_TICK_MILLIS)
+            now = nowMillis()
+        }
+    }
+    val sorted = org.example.project.scheduler.domain.ChronoDomain.byCount(chronos, now)
+    val byId = sorted.associateBy { it.id }
+    fun line(id: String): String =
+        byId[id]?.let {
+            org.example.project.scheduler.domain.ChronoDomain.format(it.elapsedAtMillis(now)) + "  " + it.label.ifBlank { "Chrono" }
+        } ?: id
+    val checked = config.pickedChronos.filterTo(LinkedHashSet()) { it in byId }
+    // None checked: the one with the highest count.
+    val shown = if (chronos.size < 2) emptyList() else if (checked.isEmpty()) sorted.take(1) else sorted.filter { it.id in checked }
+    val shownIds = shown.mapTo(HashSet()) { it.id }
+    val shownRows = added.filter { it.kind == SearchDomain.Kind.Chrono && (it as? SearchDomain.ItemResult)?.id in shownIds }
+    fun intents(step: SearchDomain.RunStep) = SearchDomain.addedIntents(state, shownRows, SearchDomain.AddedCommand.ChronosRun(step), nowMillis())
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        title?.let {
+            MicroGroupTitle(it)
+            androidx.compose.foundation.layout.Spacer(Modifier.width(4.dp))
+        }
+        SearchDomain.RunStep.entries.forEach { step ->
+            FrameButton(step.label + " all", enabled = intents(step).isNotEmpty()) {
+                intents(step).forEach { run(SearchDomain.AddedCommand.Raw(it)) }
+            }
+        }
+    }
+    if (chronos.size < 2) {
+        NoteText("Several chronos have to be added.", color = MaterialTheme.colorScheme.onSurface)
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CheckBoxDropDown(
+                options = sorted.map { it.id },
+                checked = checked,
+                face = if (shown.size == 1) line(shown.single().id) else "${shown.size} chronos",
+                label = ::line,
+                onChange = { onConfigChange(config.copy(pickedChronos = it)) },
+                modifier = Modifier.width(260.dp),
+            )
+            FrameButton(if (config.compactChronos) "Expand" else "Compact") {
+                onConfigChange(config.copy(compactChronos = !config.compactChronos))
+            }
+        }
+        ChronoRunBlocks(shown, handlers, compact = config.compactChronos, onCompactChange = null)
     }
 }
 

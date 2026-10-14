@@ -467,6 +467,14 @@ object SearchDomain {
          * its buttons, Elapsed and when it ends side by side — instead of a block of three lines.
          */
         val compactTimers: Boolean = false,
+        /**
+         * User rule 2026-10-14, the timers' rule for the chronos: the chronos checked in the "Highest count" action of
+         * the group of several chronos ([AddedAction.ChronoHighestCount], by id); none checked, the one with the highest
+         * count stands under it. One no longer added is not shown.
+         */
+        val pickedChronos: Set<String> = emptySet(),
+        /** Each chrono a chrono's run shows ("Run", "Highest count") on ONE row: its title, its count, its buttons. */
+        val compactChronos: Boolean = false,
         /** The resilience action's period field ([AddedAction.TaskResilience]); null = the first kind it offers. */
         val resiliencePeriod: String? = null,
         /**
@@ -530,6 +538,8 @@ object SearchDomain {
                     pickedBlocks = pickedBlocks.sorted(),
                     pickedTimers = pickedTimers.sorted(),
                     compactTimers = compactTimers,
+                    pickedChronos = pickedChronos.sorted(),
+                    compactChronos = compactChronos,
                     resiliencePeriod = resiliencePeriod,
                     calendarAddOn = filters.calendarAddOn,
                     calendarAddAtMillis = filters.calendarAddAtMillis,
@@ -620,6 +630,8 @@ object SearchDomain {
                     pickedBlocks = stored.pickedBlocks.toSet(),
                     pickedTimers = stored.pickedTimers.toSet(),
                     compactTimers = stored.compactTimers,
+                    pickedChronos = stored.pickedChronos.toSet(),
+                    compactChronos = stored.compactChronos,
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
                     placement = Placement(
@@ -1356,6 +1368,10 @@ object SearchDomain {
         val pickedTimers: List<String> = emptyList(),
         /** New 2026-10-12: absent = each timer of "Lowest countdown" as a block, not on one row. */
         val compactTimers: Boolean = false,
+        /** New 2026-10-14: absent = no chrono picked in "Highest count" (it then shows the highest one). */
+        val pickedChronos: List<String> = emptyList(),
+        /** New 2026-10-14: absent = each chrono's run as a block, not on one row. */
+        val compactChronos: Boolean = false,
         val resiliencePeriod: String? = null,
         /** New 2026-10-01 (the calendar filter): absent = off, no position, not from the calendar. */
         val calendarAddOn: Boolean = false,
@@ -2609,6 +2625,12 @@ object SearchDomain {
          * ([Config.pickedTimers]), which lists them all from the lowest countdown up, each with its title.
          */
         TimerLowestCountdown(Kind.Timer, "Lowest countdown"),
+        /**
+         * User rule 2026-10-14 (anomaly: *"in the chrono element, I don't see the countdown group … similar to the timer
+         * element"*): [TimerLowestCountdown] for SEVERAL added chronos — the run of the chrono with the highest count, or
+         * of those checked in its drop-down ([Config.pickedChronos]), which lists them from the highest count down.
+         */
+        ChronoHighestCount(Kind.Chrono, "Highest count"),
         TimerTitle(Kind.Timer, "Title"),
         ChronoTitle(Kind.Chrono, "Title"),
         QuotaTitle(Kind.Quota, "Title"),
@@ -2847,11 +2869,18 @@ object SearchDomain {
                     (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && it == AddedAction.CalendarBlocks)
                 }.takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
-                // The lowest countdown is of SEVERAL timers: one alone has its own run.
-                val several = added.count { it.kind == Kind.Timer } > 1
+                // The lowest countdown is of SEVERAL timers, the highest count of several chronos: one alone has its own run.
+                val severalTimers = added.count { it.kind == Kind.Timer } > 1
+                val severalChronos = added.count { it.kind == Kind.Chrono } > 1
                 // The Sleep schedule is the Sleep period's: listed where that period is added.
                 val sleepAdded = added.any(::isSleepPeriod)
-                (kind to actions.filter { (several || it != AddedAction.TimerLowestCountdown) && (sleepAdded || it != AddedAction.PeriodSleepSchedule) })
+                (
+                    kind to actions.filter {
+                        (severalTimers || it != AddedAction.TimerLowestCountdown) &&
+                            (severalChronos || it != AddedAction.ChronoHighestCount) &&
+                            (sleepAdded || it != AddedAction.PeriodSleepSchedule)
+                    }
+                )
                     .takeIf { it.second.isNotEmpty() }
             } else {
                 actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
@@ -2935,7 +2964,8 @@ object SearchDomain {
                 AddedAction.CreationSearchAll, AddedAction.TaskAddCategory, AddedAction.TaskRemoveCategory,
                 AddedAction.TaskCopyIds, AddedAction.TaskDeepCopy, AddedAction.TaskCollapseSubtrees,
                 AddedAction.TaskAddDefaultSubtree, AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow,
-                AddedAction.PeriodReset, AddedAction.TimerLowestCountdown, AddedAction.NotificationCalendar,
+                AddedAction.PeriodReset, AddedAction.TimerLowestCountdown, AddedAction.ChronoHighestCount,
+                AddedAction.NotificationCalendar,
             )
     }
 
@@ -3070,8 +3100,9 @@ object SearchDomain {
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
             AddedAction.SoundVolume -> "sound %"
             AddedAction.TimerRun -> "start pause reset all elapsed ends day"
-            AddedAction.ChronoRun -> "start pause reset all"
+            AddedAction.ChronoRun -> "start resume pause reset all compact expand"
             AddedAction.TimerLowestCountdown -> "timers select all start pause reset all elapsed ends day run"
+            AddedAction.ChronoHighestCount -> "chronos select all start pause reset all run compact expand"
             AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.AlarmNew, AddedAction.TimerNew,
             AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew, AddedAction.ShortcutNew -> "new create"
             AddedAction.ShortcutChord -> "set rebind reset remove press a chord ctrl shift alt"
@@ -3291,6 +3322,12 @@ object SearchDomain {
     fun addedTimersOrDefault(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.TimerEntry> {
         val own = addedTimers(state, added)
         return if (defaultConfigurationAdded(added, Kind.Timer)) listOf(state.newTimerDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
+    }
+
+    /** The added chronos the account still holds, in the list's order. */
+    fun addedChronos(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.ChronoEntry> {
+        val byId = state.chronos.associateBy { it.id }
+        return addedIds(added, Kind.Chrono).mapNotNull { byId[it] }
     }
 
     /** The added timers the account still holds, in the list's order. */

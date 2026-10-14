@@ -549,6 +549,8 @@ fun AlarmWindow(
                         pushChronos()
                     },
                     onFieldFocus = { field, focused -> onFieldFocus(row.id + "/" + field, focused) },
+                    runOnly = embeddedRunOnly,
+                    oneRow = embeddedRunOnly && embeddedCompact,
                 )
                 if (only == null && index != chronoRows.lastIndex) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
@@ -1147,9 +1149,49 @@ private fun ChronoRowEditor(
     onReset: () -> Unit,
     onRemove: () -> Unit,
     onFieldFocus: (String, Boolean) -> Unit,
+    /**
+     * The Search window's "Run" / "Highest count" (user rule 2026-10-14, the timer's [TimerRowEditor] `runOnly`): the
+     * count and its buttons alone — the label and the bin are that window's "Title" and "Delete".
+     */
+    runOnly: Boolean = false,
+    /** With [runOnly]: on ONE row, which then names its chrono itself. */
+    oneRow: Boolean = false,
 ) {
     val running = entry?.running == true
     val paused = entry?.paused == true
+    @Composable
+    fun Run() {
+        Text(
+            text = ChronoDomain.format(entry?.elapsedAtMillis(nowMillis) ?: 0L),
+            style = MaterialTheme.typography.titleMedium,
+            color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(96.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        if (running) {
+            TimerActionChip(text = "Pause", onClick = onPause)
+        } else {
+            TimerActionChip(text = if (paused) "Resume" else "Start", enabled = entry != null, onClick = onStart)
+        }
+        Spacer(Modifier.width(6.dp))
+        TimerActionChip(text = "Reset", enabled = running || paused, onClick = onReset)
+    }
+    if (runOnly) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (oneRow) {
+                Text(
+                    text = row.label.ifBlank { "Chrono" },
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.width(120.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Run()
+        }
+        return
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -1167,22 +1209,7 @@ private fun ChronoRowEditor(
                 Text("🗑", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = ChronoDomain.format(entry?.elapsedAtMillis(nowMillis) ?: 0L),
-                style = MaterialTheme.typography.titleMedium,
-                color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(96.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            if (running) {
-                TimerActionChip(text = "Pause", onClick = onPause)
-            } else {
-                TimerActionChip(text = if (paused) "Resume" else "Start", enabled = entry != null, onClick = onStart)
-            }
-            Spacer(Modifier.width(6.dp))
-            TimerActionChip(text = "Reset", enabled = running || paused, onClick = onReset)
-        }
+        Row(verticalAlignment = Alignment.CenterVertically) { Run() }
     }
 }
 
