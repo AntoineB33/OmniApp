@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Ctrl+Tab walks the tabs as in Chrome; Ctrl+Page Up undoes a move between windows — 2026-10-15
+
+The user: "Ctrl + tab and ctrl + shift + tab must do the same as in Chrome, and ctrl + PgUp must do the same as Ctrl + Z
+but only on history units about change of focus between windows." `Ctrl+Tab` / `Ctrl+Shift+Tab` now go to the next tab
+of the window bar to the right / left, wrapping (what Page Down / Page Up did). `Ctrl+Page Up` (or the pad's 9) undoes
+this device's last WindowNav unit — `SchedulerIntent.UndoFocus`, a walk over that category alone, so a selection or a
+change in between is left as it is — and `Ctrl+Page Down` (or the pad's 3) redoes it (`RedoFocus`), the redo the user
+did not name. The walk in the order the windows last had the focus (user rule 2026-10-11) lost its chords and is
+removed (`walkTabsByRecency`, `RecentWalk`, `TabWalk.recentOrder`); the order itself stays for where the focus goes on
+a close. `TabWalkTest`, `TabWalkNumpadTest`, `HistoryChordsByWindowTest`.
+
 ### The Search window's Reset cancels the whole configuration, then brings it back — 2026-10-15
 
 Anomaly on account 3: the window of the "History Search" button, reset as it opened, went to "tasks only" — the default

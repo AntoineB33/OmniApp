@@ -37,20 +37,26 @@ handler.
   window prints it; never a second copy. `GlobalHotkeys.claim` says which claim the OS granted, and the window
   shows it — "nothing happened" and "something else happened too" are otherwise undiagnosable.
 
-### The window bar's tabs, from the keyboard
+### The window bar's tabs and the moves of the focus, from the keyboard
 
-User rule 2026-10-11: *"a shortcut to easily navigate through the tabs in the system tray in the recent order (one for
-each direction), and a shortcut for the order of the tabs in the system tray (one for each direction)"*. Four FIXED
-chords, in every window (`TabWalk`, `WindowFrameHost.walkTabsByRecency` / `walkTabsInBarOrder`, `TabWalkTest`):
+User rule 2026-10-15: *"Ctrl + tab and ctrl + shift + tab must do the same as in Chrome, and ctrl + PgUp must do the same
+as Ctrl + Z but only on history units about change of focus between windows."* Four FIXED chords, in every window
+(`TabWalk`, `WindowFrameHost.walkTabsInBarOrder`, `SchedulerIntent.UndoFocus` / `RedoFocus`, `TabWalkTest`,
+`HistoryChordsByWindowTest`):
 
 | Chord | Does |
 | --- | --- |
-| `Ctrl + Tab` / `Ctrl + Shift + Tab` | the windows in the order they last had the focus, back / forward |
-| `Ctrl + Page Down` / `Ctrl + Page Up` — or the numeric pad's `3` / `9` | the next tab of the bar to the right / to the left, wrapping |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | the next tab of the bar to the right / to the left, wrapping — Chrome's |
+| `Ctrl + Page Up` / `Ctrl + Page Down` — or the numeric pad's `9` / `3` | the last move of the focus between windows undone / redone |
 
 - **Answered on the root's PREVIEW pass** (`App`), so the stroke is the walk's before a text field or the tree's own
-  `Tab` takes it — and it is taken even with no tab to go to, never typed. They are Compose handlers scoped to the
+  `Tab` takes it — and it is taken even with nothing to go to, never typed. They are Compose handlers scoped to the
   app, so by the rule below they are **not rebindable** and are not claimed from the OS.
+- **Page Up / Down walk the WindowNav units alone** (`FOCUS_MOVES`), this device's, as Ctrl+Z / Ctrl+Y walk the
+  changes: a selection or a change made between two moves is not walked (`Shift+Alt+arrows` walks the moves AND the
+  selections). The state's focus moves, and the focus walk's effect in `App` brings the window it names to the user —
+  opened again if it was a lateral-menu window closed since; a copy closed since cannot come back. Page Down is the
+  redo the user did not name, so that a Page Up can be taken back.
 - **A chord's key is matched WHEREVER it is on the keyboard** (`TabWalk.sameKey`; anomaly 2026-10-11: *"I type ctrl +
   9/3, with or without num lk, but it doesn't do anything"*). On the desktop a `Key` carries its location: the numeric
   pad's Page Up (Num Lock off) is the same code at the pad's location and is NOT `Key.PageUp`, so `==` never saw it;
@@ -58,14 +64,9 @@ chords, in every window (`TabWalk`, `WindowFrameHost.walkTabsByRecency` / `walkT
   chord must not depend on a lock. `TabWalkNumpadTest` (jvmTest: the keys are built as the desktop builds them).
 - **Reaching a tab is `present`**: a reduced window comes back and takes the focus, exactly as a click on its tab
   that is not the focused one. So the move is a move of the focus like any other (`onFocus` → `FocusWindow`).
-- **The recent order is walked AS IT STOOD when the walk began, for as long as Ctrl stays down**
-  (`WindowFrameHost.RecentWalk`): each step would otherwise make its window the most recent and the second press
-  would come straight back. Ctrl released (`endRecentWalk`, the root's key-up) — or a press in any window — ends the
-  walk and makes the window it stopped on the most recent. So one press and release toggles between the last two
-  windows; held, it goes further back.
-- **The order**: the focused window, the others by how recently they had the focus, then the ones that never had it,
-  in the bar's order. In memory only (`WindowFrameHost.recent`): after a launch the restored windows are in the bar's
-  order until they are focused. A closed window leaves it.
+- These chords walked the windows in the order they last had the focus until 2026-10-15 (user rule 2026-10-11), and
+  the Page keys the bar; that walk is gone with its chords. The order itself stays (`WindowFrameHost.recent`): it is
+  where the focus goes when the focused window closes (`popups.md`).
 
 ### A chord of the user's own for any window
 

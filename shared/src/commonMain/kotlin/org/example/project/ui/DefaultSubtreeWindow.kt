@@ -212,6 +212,8 @@ private fun SchedulerIntent.forDefaultSubtree(): SchedulerIntent =
         is SchedulerIntent.RedoSelection,
         is SchedulerIntent.UndoPosition,
         is SchedulerIntent.RedoPosition,
+        is SchedulerIntent.UndoFocus,
+        is SchedulerIntent.RedoFocus,
         is SchedulerIntent.FocusWindow,
         // Already about the template, by name.
         is SchedulerIntent.SetDefaultSubtreeCellBound,

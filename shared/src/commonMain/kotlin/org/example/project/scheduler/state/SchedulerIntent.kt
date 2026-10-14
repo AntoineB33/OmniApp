@@ -1691,6 +1691,13 @@ sealed interface SchedulerIntent {
     data object RedoPosition : SchedulerIntent
 
     /**
+     * Ctrl+Page Up / Ctrl+Page Down — undo/redo **the moves of the focus between windows** alone, as Ctrl+Z / Ctrl+Y
+     * do the changes (user rule 2026-10-15). Walking a move back refocuses the window it left.
+     */
+    data object UndoFocus : SchedulerIntent
+    data object RedoFocus : SchedulerIntent
+
+    /**
      * PRD §5: the selection of a window not drawn as a tree ([SchedulerState.windowSelections]) — the Search
      * window's row, the Task trees window's open entry. [key] null = nothing selected. [record] false is a
      * reset the window makes on its own (a new search starts on its first row), which is not a position the

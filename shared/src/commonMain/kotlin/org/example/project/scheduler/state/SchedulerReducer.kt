@@ -804,6 +804,8 @@ object SchedulerReducer {
             SchedulerIntent.RedoSelection -> redoIn(state, selectionsOf(state))
             SchedulerIntent.UndoPosition -> undoIn(state, POSITIONS)
             SchedulerIntent.RedoPosition -> redoIn(state, POSITIONS)
+            SchedulerIntent.UndoFocus -> undoIn(state, FOCUS_MOVES)
+            SchedulerIntent.RedoFocus -> redoIn(state, FOCUS_MOVES)
         }
     }
 
@@ -860,6 +862,9 @@ object SchedulerReducer {
 
     /** `Shift+Alt+arrows`: every selection of every window and every move of the focus, in the order made. */
     private val POSITIONS = HistoryWalk(listOf(HistoryCategory.Selection, HistoryCategory.WindowNav))
+
+    /** `Ctrl+Page Up/Down`: the moves of the focus between windows alone (user rule 2026-10-15). */
+    private val FOCUS_MOVES = HistoryWalk(listOf(HistoryCategory.WindowNav))
 
     /**
      * The window (and, for a per-copy selection, the copy) a selection unit is about. The tree's own selection
@@ -1595,7 +1600,8 @@ object SchedulerReducer {
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
             inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
-            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition
+            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition ||
+            inner is SchedulerIntent.UndoFocus || inner is SchedulerIntent.RedoFocus
         ) {
             return state
         }
@@ -1665,7 +1671,8 @@ object SchedulerReducer {
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
             inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
-            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition
+            inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition ||
+            inner is SchedulerIntent.UndoFocus || inner is SchedulerIntent.RedoFocus
         ) {
             return state
         }

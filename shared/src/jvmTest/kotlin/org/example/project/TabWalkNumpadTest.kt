@@ -17,19 +17,19 @@ class TabWalkNumpadTest {
     private fun move(key: Key, shift: Boolean = false) = TabWalk.moveFor(key, keyDown = true, ctrlOrMeta = true, shift = shift, alt = false)
 
     @Test
-    fun the_numeric_pads_3_and_9_walk_the_bar_with_num_lock_off_and_on() {
+    fun the_numeric_pads_3_and_9_are_page_down_and_up_with_num_lock_off_and_on() {
         // Num Lock off: Page Down / Page Up, sent from the pad.
         val padPageDown = Key(KeyEvent.VK_PAGE_DOWN, KeyEvent.KEY_LOCATION_NUMPAD)
         val padPageUp = Key(KeyEvent.VK_PAGE_UP, KeyEvent.KEY_LOCATION_NUMPAD)
         assertEquals(false, padPageDown == Key.PageDown, "the pad's key is another Key: equality alone never saw it")
-        assertEquals(TabWalk.Move.BarNext, move(padPageDown))
-        assertEquals(TabWalk.Move.BarPrevious, move(padPageUp))
+        assertEquals(TabWalk.Move.FocusRedo, move(padPageDown))
+        assertEquals(TabWalk.Move.FocusUndo, move(padPageUp))
         // Num Lock on: the digits of the pad.
-        assertEquals(TabWalk.Move.BarNext, move(Key(KeyEvent.VK_NUMPAD3, KeyEvent.KEY_LOCATION_NUMPAD)))
-        assertEquals(TabWalk.Move.BarPrevious, move(Key(KeyEvent.VK_NUMPAD9, KeyEvent.KEY_LOCATION_NUMPAD)))
+        assertEquals(TabWalk.Move.FocusRedo, move(Key(KeyEvent.VK_NUMPAD3, KeyEvent.KEY_LOCATION_NUMPAD)))
+        assertEquals(TabWalk.Move.FocusUndo, move(Key(KeyEvent.VK_NUMPAD9, KeyEvent.KEY_LOCATION_NUMPAD)))
         // The block above the arrows, as before.
-        assertEquals(TabWalk.Move.BarNext, move(Key.PageDown))
-        assertEquals(TabWalk.Move.BarPrevious, move(Key.PageUp))
+        assertEquals(TabWalk.Move.FocusRedo, move(Key.PageDown))
+        assertEquals(TabWalk.Move.FocusUndo, move(Key.PageUp))
         // The digits of the top row are not the pad's: Ctrl + 3 and Ctrl + 9 stay free.
         assertNull(move(Key.Three))
         assertNull(move(Key.Nine))

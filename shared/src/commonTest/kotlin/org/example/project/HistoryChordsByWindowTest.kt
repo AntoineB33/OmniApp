@@ -75,6 +75,35 @@ class HistoryChordsByWindowTest {
         assertEquals("Focus Search#2", s.histories.forCategory(HistoryCategory.WindowNav).units.last().delta.label)
     }
 
+    /**
+     * User rule 2026-10-15: *"ctrl + PgUp must do the same as Ctrl + Z but only on history units about change of focus
+     * between windows"* — and Ctrl + PgDn redoes them. A selection or a change made between two moves is not walked.
+     */
+    @Test
+    fun ctrl_page_up_and_down_walk_the_moves_of_the_focus_alone() {
+        var s = SchedulerState.empty()
+        s = focus(s, HistoryWindow.Calendar)
+        s = focus(s, HistoryWindow.Search, "#3")
+        s = select(s, "task/1", "#3")
+        s = r(s, SchedulerIntent.SetCellTitle(firstCell(s), "Daily"))
+        s = focus(s, HistoryWindow.Alarms)
+
+        s = r(s, SchedulerIntent.UndoFocus)
+        assertEquals(HistoryWindow.Search to "#3", s.focusedWindow to s.focusedInstance, "back to the window it came from")
+        assertEquals("task/1", searchRow(s, "#3"), "the selection is no move of the focus")
+        assertEquals("Daily", s.tasks[s.cells[firstCell(s)]!!.taskId!!]!!.title, "nor is a change")
+        s = r(s, SchedulerIntent.UndoFocus)
+        assertEquals(HistoryWindow.Calendar to "", s.focusedWindow to s.focusedInstance)
+        assertEquals("task/1", searchRow(s, "#3"))
+
+        s = r(s, SchedulerIntent.RedoFocus)
+        assertEquals(HistoryWindow.Search to "#3", s.focusedWindow to s.focusedInstance)
+        s = r(s, SchedulerIntent.RedoFocus)
+        assertEquals(HistoryWindow.Alarms, s.focusedWindow)
+        // Nothing more to redo.
+        assertSame(s, r(s, SchedulerIntent.RedoFocus))
+    }
+
     @Test
     fun a_change_committed_after_the_press_that_left_its_window_is_still_that_windows() {
         // User rule 2026-10-01: a Search row's rename lands on blur, when the press elsewhere has already moved the

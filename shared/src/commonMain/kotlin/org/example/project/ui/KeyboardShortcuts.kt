@@ -30,6 +30,9 @@ import org.example.project.scheduler.state.SchedulerIntent
  *    selections of the focused window;
  *  - **Shift+Alt+←** / **Shift+Alt+→** → [SchedulerIntent.UndoPosition] / [SchedulerIntent.RedoPosition]:
  *    every position — every window's selections and every move of the focus between windows.
+ *  - **Ctrl+Page Up** / **Ctrl+Page Down** → [SchedulerIntent.UndoFocus] / [SchedulerIntent.RedoFocus]: the moves
+ *    of the focus between windows alone — read by `TabWalk.moveFor` with the window bar's chords, on the app root's
+ *    preview pass, so a text field cannot take them.
  *
  * `Cmd` counts as `Ctrl` throughout, as it does everywhere else in the app. Which units the intent then walks
  * is not decided here — that is `SchedulerReducer`, off the focused window. Returns null for anything else,
@@ -235,13 +238,12 @@ object KeyboardShortcutCatalog {
             KeyboardShortcutGroup(
                 title = "Window bar",
                 note = "In every window, on the tabs of the bar along the bottom of the app. A reduced window " +
-                    "comes back as its tab is reached. The recent order is walked for as long as Ctrl stays " +
-                    "down; released, the window it stopped on is the most recent one.",
+                    "comes back as its tab is reached.",
                 shortcuts = listOf(
-                    KeyboardShortcut(TabWalk.RECENT_BACK, "Go to the window that had the focus before — pressed again, the one before that"),
-                    KeyboardShortcut(TabWalk.RECENT_FORWARD, "The same walk, the other way"),
                     KeyboardShortcut(TabWalk.BAR_NEXT, "Go to the next tab to the right"),
                     KeyboardShortcut(TabWalk.BAR_PREVIOUS, "Go to the next tab to the left"),
+                    KeyboardShortcut(TabWalk.FOCUS_UNDO, "Undo the last move between windows — back to the window you were in"),
+                    KeyboardShortcut(TabWalk.FOCUS_REDO, "Redo the move between windows Page Up undid"),
                 ),
             ),
             KeyboardShortcutGroup(

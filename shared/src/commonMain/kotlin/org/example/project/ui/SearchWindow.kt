@@ -2044,6 +2044,7 @@ private fun SearchSubtree(
                 is SchedulerIntent.Undo, is SchedulerIntent.Redo,
                 is SchedulerIntent.UndoSelection, is SchedulerIntent.RedoSelection,
                 is SchedulerIntent.UndoPosition, is SchedulerIntent.RedoPosition,
+                is SchedulerIntent.UndoFocus, is SchedulerIntent.RedoFocus,
                 is SchedulerIntent.FocusWindow,
                 -> onIntent(intent)
                 else -> {

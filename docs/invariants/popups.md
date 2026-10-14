@@ -366,7 +366,7 @@ means.
   for any existing row, so a cleared row would reopen un-maximized.
 - **A closing window hands the focus on in ONE place** (`ViewHistoryRecorder.focusAfterClose` →
   `WindowFrameHost.focusHeirOf`): a window closing WITHOUT the focus leaves it where it is; one closing with it hands
-  it to the window that had the focus most recently (the recent order the chords walk), not reduced and not closing,
+  it to the window that had the focus most recently (`WindowFrameHost.recent`), not reduced and not closing,
   and only without one to the front window — or nowhere. `TabSelectionTest`.
 - **The window the app was left on comes back focused, A COPY INCLUDED** (anomaly 2026-10-14: "timers Search",
   `Search#3`, focused, the app rebuilt, the "unfocused notif" window closed — and "Claude quota", the Search window
