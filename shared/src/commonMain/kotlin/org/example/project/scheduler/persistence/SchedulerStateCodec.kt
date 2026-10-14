@@ -718,6 +718,7 @@ object SchedulerStateCodec {
                 },
             nextCategoryCounter = nextCategoryCounter,
             focusedWindow = focusedWindow.name,
+            focusedInstance = focusedInstance,
             histories = if (withHistories) histories.toPersisted() else null,
             sleep = sleep?.toPersistedSleep(),
             sleepingUntilMillis = sleepingUntilMillis,
@@ -1380,6 +1381,8 @@ object SchedulerStateCodec {
             // By name: the five focus targets an older build wrote are all windows of the list, and a name this
             // build does not know is the tree.
             focusedWindow = windowNamed(focusedWindow) ?: HistoryWindow.Tree,
+            // Only with the window it was written with: a name this build does not know is the tree itself.
+            focusedInstance = if (windowNamed(focusedWindow) != null) focusedInstance else "",
             histories = histories?.toHistories() ?: SchedulerHistories(),
             sleep = sleep?.toSleepSchedule(),
             sleepingUntilMillis = sleepingUntilMillis,
@@ -1813,6 +1816,9 @@ private data class PersistedState(
     // PRD §7: the focused window; a missing value decodes to the task tree (payloads written before window
     // focus was persisted).
     val focusedWindow: String = "Tree",
+    // Which copy of it ("#3"; "" = the window itself) — persisted since the copies come back after a restart (anomaly
+    // 2026-10-14). A missing value decodes to the window itself, which is all a payload written before could say.
+    val focusedInstance: String = "",
     // PRD §5/§6: the Undo/Redo history, now persisted so debug-time changes can be reverted at restart.
     // A missing value decodes to empty (payloads written before history was persisted start fresh).
     val histories: PersistedHistories? = null,

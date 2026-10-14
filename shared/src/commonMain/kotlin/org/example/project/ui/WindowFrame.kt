@@ -585,8 +585,23 @@ class WindowFrameHost {
      */
     val frontId: String? get() = stack.lastOrNull()
 
-    /** The front window once [id] is gone — where the focus goes when [id] closes. Never one still [closing]. */
+    /** The front window once [id] is gone. Never one still [closing]. */
     fun frontIdExcluding(id: String): String? = stack.lastOrNull { it != id && it !in closing }
+
+    /**
+     * **Where the focus goes when [id] closes**: nowhere new while another window has it — closing a window that does
+     * not have the focus leaves the focus where it is — else the window that had the focus most recently ([recent]),
+     * not reduced and not [closing], and only without one the front window ([frontIdExcluding]). Anomaly 2026-10-14:
+     * "timers Search" focused, the app rebuilt, the "unfocused notif" window closed, and the focus went to "Claude
+     * quota" — the front of a stack the restart had rebuilt in the order the windows came back, not the window the user
+     * had been in. Null: the focus stays as it is.
+     */
+    fun focusHeirOf(id: String): String? {
+        focusedId?.let { if (it != id && it !in closing) return null }
+        return recent.firstOrNull { other ->
+            other != id && other !in closing && entries.any { it.id == other && !it.state.minimized }
+        } ?: frontIdExcluding(id)
+    }
 
     /**
      * The windows a [closeWindows] call has closed that have not unregistered yet. A window leaves the stack only when

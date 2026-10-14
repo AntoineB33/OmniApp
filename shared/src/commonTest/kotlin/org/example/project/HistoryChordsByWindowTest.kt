@@ -280,6 +280,30 @@ class HistoryChordsByWindowTest {
     }
 
     /**
+     * Anomaly 2026-10-14: "timers Search" (`Search#3`) focused, the app rebuilt — and it came back focused on the
+     * Search window itself ("Claude quota"): the copy was kept in memory only, while the copies come back after a
+     * restart. The copy is persisted with the window now; a payload written before it reads as the window itself.
+     */
+    @Test
+    fun the_focused_copy_comes_back_after_a_restart() {
+        val s = focus(SchedulerState.empty(), HistoryWindow.Search, "#3")
+        val encoded = SchedulerStateCodec.encode(s)
+        val back = assertNotNull(SchedulerStateCodec.decode(encoded))
+        assertEquals(HistoryWindow.Search, back.focusedWindow)
+        assertEquals("#3", back.focusedInstance)
+
+        // As a build before it wrote it: no instance at all.
+        assertTrue("\"focusedInstance\":\"#3\"" in encoded)
+        val older = assertNotNull(SchedulerStateCodec.decode(encoded.replace(",\"focusedInstance\":\"#3\"", "")))
+        assertEquals(HistoryWindow.Search, older.focusedWindow)
+        assertEquals("", older.focusedInstance)
+        // A window this build does not know is the tree itself, not a copy of it.
+        val unknown = assertNotNull(SchedulerStateCodec.decode(encoded.replace("\"focusedWindow\":\"Search\"", "\"focusedWindow\":\"Wormhole\"")))
+        assertEquals(HistoryWindow.Tree, unknown.focusedWindow)
+        assertEquals("", unknown.focusedInstance)
+    }
+
+    /**
      * The "All tasks" window was removed (2026-09-25). What it wrote still decodes: every unit it recorded
      * edited the live tree, so its name reads back as the tree's — the focused window, a unit's window, a focus
      * move's ends and its selection units alike.

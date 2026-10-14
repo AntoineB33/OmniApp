@@ -813,8 +813,9 @@ data class SchedulerState(
     val focusedWindow: HistoryWindow = HistoryWindow.Tree,
     /**
      * Which copy of [focusedWindow] has the focus: `""` for the window itself, else the copy's suffix (`"#2"`,
-     * the head's ⧉). Only a window whose selection is per copy (the Search window's rows) reads it. In memory
-     * only: a restart reopens on the window, not on the copy.
+     * the head's ⧉). Persisted with [focusedWindow], local like it (anomaly 2026-10-14): the copies come back after a
+     * restart, so the focus must come back on the copy — kept in memory only, "timers Search" (`Search#3`) came back
+     * as the Search window itself ("Claude quota"), and that is where the focus went.
      */
     val focusedInstance: String = "",
     /**

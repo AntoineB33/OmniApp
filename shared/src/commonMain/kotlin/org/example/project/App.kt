@@ -1263,8 +1263,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // writes that restore the windows are not the user's), never while an undo or redo is being put back.
         viewHistory.dispatch = { vm.dispatch(it) }
         viewHistory.focusAfterClose = { closing ->
-            // A window that closes hands the focus to the one under it, which is where its close is undone from.
-            windowFrames.frontIdExcluding(closing)?.let { windowFrames.focus(it) }
+            // A window that closes with the focus hands it to the one the user was in before it, which is where its
+            // close is undone from.
+            windowFrames.focusHeirOf(closing)?.let { windowFrames.focus(it) }
         }
         LaunchedEffect(Unit) {
             repeat(3) { withFrameNanos { } }

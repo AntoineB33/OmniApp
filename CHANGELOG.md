@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A restart keeps the focus on the copy it was on — 2026-10-14
+
+The anomaly below came back with its fix deployed. The release DB's focus moves told the rest: before the restart the
+focus was on `Search#3` ("timers Search"); the first move after it starts from `Search` — the Search window itself,
+"Claude quota". `SchedulerState.focusedInstance` (which copy of the focused window) was kept in memory only ("a restart
+reopens on the window, not on the copy"), from before the copies came back after a restart; so the launch focused the
+original, and closing the notif window rightly handed the focus back to it. It is now persisted beside `focusedWindow`
+(`PersistedSchedulerState.focusedInstance`, default `""` — an older payload reads as the window itself; local, stripped
+from the fingerprint as before). `HistoryChordsByWindowTest`. Client rebuild only.
+
+### A closed window gives the focus back to the one you were in — 2026-10-14
+
+Anomaly: "timers Search" focused, the app rebuilt, the "unfocused notif" window closed — and "Claude quota" got the
+focus. A window that closed handed the focus to the front of the stacking order, and did so even when the closing
+window did not have the focus. `WindowFrameHost.focusHeirOf` now decides: a window closing without the focus leaves it
+alone; one closing with it hands it to the window that had the focus most recently (not reduced, not closing), the front
+window only when there is none. `TabSelectionTest`. Not the whole cause — see the entry above. Client rebuild only.
+
 ### A timer that rang says when it would end now — 2026-10-14
 
 Anomaly on account 3: the "test" timer (45 min, rang at 13:31:01 and went back to idle) had its end field stuck on

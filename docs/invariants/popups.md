@@ -346,7 +346,7 @@ means.
   The menu is a menu (`transientMenuDismissal`, non-focusable).
 - **Closing several windows at once goes through `WindowFrameHost.closeWindows`** — the bar's Reset and "close
   selection" both. It marks every one of them *closing* before the first close, so the focus each close hands on
-  (`frontIdExcluding`, `App`'s `focusAfterClose`) goes to a window that stays, or nowhere. A closed window leaves the
+  (`focusHeirOf`, `App`'s `focusAfterClose`) goes to a window that stays, or nowhere. A closed window leaves the
   stack only when it leaves composition, a frame later; a loop of plain closes handed the focus to a window of the
   same batch, and the state's focus then named a closed window, which `App` opens again (the Shift+Alt focus walk's
   effect) — both Reset and "close selection" left a window open (anomaly 2026-10-01, `TabSelectionTest`).
@@ -364,8 +364,16 @@ means.
   `TASK_TREE_DEFAULT_CHROME`, so the tree reopens as on a first run — maximized, and un-maximizing gives the
   default size, centred. The chrome is WRITTEN as the default, not cleared: `WindowChromeMemory.saved` answers
   for any existing row, so a cleared row would reopen un-maximized.
-- **A closing window hands the focus on in ONE place** (`ViewHistoryRecorder.focusAfterClose`: to the window under
-  it, or nowhere). The calendar's close no longer sends the focus to the tree (`SetCalendarFocus` is dispatched on
+- **A closing window hands the focus on in ONE place** (`ViewHistoryRecorder.focusAfterClose` →
+  `WindowFrameHost.focusHeirOf`): a window closing WITHOUT the focus leaves it where it is; one closing with it hands
+  it to the window that had the focus most recently (the recent order the chords walk), not reduced and not closing,
+  and only without one to the front window — or nowhere. `TabSelectionTest`.
+- **The window the app was left on comes back focused, A COPY INCLUDED** (anomaly 2026-10-14: "timers Search",
+  `Search#3`, focused, the app rebuilt, the "unfocused notif" window closed — and "Claude quota", the Search window
+  itself, got the focus, twice). The state's focus is a window AND its copy (`focusedWindow`, `focusedInstance`), both
+  persisted (local, never synced); the copy was kept in memory only, so a restart handed the focus to the original
+  window, which then was the window the user had been in "before" the notif window. `HistoryChordsByWindowTest`.
+- The calendar's close no longer sends the focus to the tree (`SetCalendarFocus` is dispatched on
   opening only): it named the tree even when the tree was closed too, and the focus walk's effect (which opens the
   window the state's focus names) then reopened it — "close selection" over every tab left a window open
   (anomaly 2026-10-01). Anything that moves the state's focus to a window must be sure that window is open.

@@ -136,7 +136,7 @@ class TabSelectionTest {
             host.register(
                 WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) {
                     // App's focusAfterClose, synchronous inside the close; the window leaves composition later.
-                    focusedAfterClose += host.frontIdExcluding(id)
+                    focusedAfterClose += host.focusHeirOf(id)
                     closedNotYetDisposed += id
                 },
             )
@@ -151,7 +151,7 @@ class TabSelectionTest {
         val survivors = listOf("x", "y", "z")
         focusedAfterClose.clear()
         for (id in survivors) {
-            host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) { focusedAfterClose += host.frontIdExcluding(id) })
+            host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) { focusedAfterClose += host.focusHeirOf(id) })
         }
         host.focus("y")
         host.onTabPressed("z", shift = true, ctrl = false)
@@ -175,7 +175,7 @@ class TabSelectionTest {
         fun close(id: String) {
             host.closeOpenedFrom(id)
             closed += id
-            focusedAfterClose += host.frontIdExcluding(id)
+            focusedAfterClose += host.focusHeirOf(id)
         }
         for (id in listOf("Alarms", "Calendar", "Search", "ConfigSearch")) {
             host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) { close(id) })
@@ -183,6 +183,47 @@ class TabSelectionTest {
         close("Calendar")
         assertEquals(listOf("ConfigSearch", "Search", "Calendar"), closed)
         assertEquals(listOf<String?>("Alarms", "Alarms", "Alarms"), focusedAfterClose)
+    }
+
+    /**
+     * Anomaly 2026-10-14: "timers Search" focused, the app rebuilt, the "unfocused notif" window closed — and the focus
+     * went to "Claude quota", the front of a stack the restart rebuilt in the order the windows came back. A window
+     * that closes with the focus hands it to the window the user was in before it; one closing without it leaves the
+     * focus alone.
+     */
+    @Test
+    fun a_closing_window_hands_the_focus_to_the_one_focused_before_it_and_no_other() {
+        val host = WindowFrameHost()
+        host.tabParentOf = { if (it == "Calendar#2") "Search#2" else null }
+        val focusedAfterClose = mutableListOf<String?>()
+        // App's close: the windows opened from it first, then the focus handed on.
+        fun close(id: String) {
+            host.closeOpenedFrom(id)
+            host.focusHeirOf(id)?.let(host::focus)
+            focusedAfterClose += host.focusedId
+        }
+        // Put back by a restart in this order — the stack's — and the focus handed to "timers Search" at launch.
+        for (id in listOf("Calendar", "Search#3", "Search", "Search#2", "Calendar#2")) {
+            host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) { close(id) })
+        }
+        host.focus("Search#3")
+        // The calendar under the notif window raised since (a lock re-fitting it, say): still not where the focus goes.
+        host.raise("Search")
+        host.raise("Search#2")
+        host.raise("Calendar#2")
+
+        // Closed without being pressed (its tab's ✕): the focus does not move.
+        host.registrations.first { it.id == "Search#2" }.onClose()
+        assertEquals(listOf<String?>("Search#3", "Search#3"), focusedAfterClose)
+        listOf("Search#2", "Calendar#2").forEach(host::unregister)
+
+        // Pressed first (its head's ✕ is in it): the focus goes back to the window it came from.
+        focusedAfterClose.clear()
+        host.register(WindowFrameHost.Registration("Search#2", "Search#2", WindowFrameState("Search#2"), false, null) { close("Search#2") })
+        host.raise("Search")
+        host.focus("Search#2")
+        host.registrations.first { it.id == "Search#2" }.onClose()
+        assertEquals(listOf<String?>("Search#3"), focusedAfterClose)
     }
 
     @Test
