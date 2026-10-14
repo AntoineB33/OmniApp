@@ -275,6 +275,16 @@ means.
   actions section's "Search an action", the notification list's "Filter" and the task picker's "Find a task". Always
   drawn — set back and deaf while the bar is empty — so a bar keeps its shape as it is typed in. A new search bar
   takes the same one. (The task tree's find bar has a ✕ of its own, which CLOSES the bar.)
+- **Typing in a search bar brings the list under it back to its top** (user rule 2026-10-14; `ScrollsToTopWhenTyped`,
+  for a `ScrollState` or a `LazyListState`): each of the bars above — the Search window's results, the actions
+  section, the two configuration windows' lists, the History window's rows, the task picker's suggestions. Every change
+  of the text counts, the ✕ emptying it included; the first composition does not, so a list put back with text in its
+  bar keeps its place. **Deleting what was typed puts the list back where it was** (user rule 2026-10-14, the same
+  day): the first change of a typing session notes the bar's text and the list's place, and the text coming back to it
+  restores that place — unless the HAND scrolled the list meanwhile (a scroll this did not make, seen as it happens;
+  for a plain list also the list found away from where this put it), and then it goes to the top like any change. A
+  plain list's restore waits up to three frames for the longer list to be laid out, a scroll being clamped to the
+  height laid out. A new search bar's list calls it too. `ScrollsToTopWhenTypedTest`.
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. **A tab's fill is its window's colour** (§ *Window colours*), so no state is said by a fill:

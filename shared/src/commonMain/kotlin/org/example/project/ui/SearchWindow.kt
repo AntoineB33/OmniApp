@@ -320,6 +320,8 @@ fun SearchWindow(
     // Which copy of the window this is: its selection is its own (PRD §5, `Alt+←` walks it back).
     val instance = LocalWindowInstance.current?.suffix ?: ""
     val listState = rememberLazyListState()
+    // User rule 2026-10-14: typing in the bar brings the result list back to its top.
+    ScrollsToTopWhenTyped(query, listState)
     val fieldFocus = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
     // The bar holds the focus from the moment the window opens: it is where the user types.

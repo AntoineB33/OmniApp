@@ -158,8 +158,11 @@ fun AddedElementsConfigurationWindow(
             HorizontalDivider()
 
             // --- The actions ------------------------------------------------------------------------
+            // User rule 2026-10-14: typing in the bar brings the list back to its top.
+            val actionsScroll = rememberScrollState()
+            ScrollsToTopWhenTyped(config.actionQuery, actionsScroll)
             Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(actionsScroll),
                 verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
                 if (sections.isEmpty()) NoteText("No configuration matches.")
@@ -306,6 +309,8 @@ internal fun AddedActionsSection(
             )
         // A vertical scrollbar on its right (user rule 2026-10-03), the same the lists of the window have.
         val scroll = rememberScrollState()
+        // User rule 2026-10-14: typing in the section's bar brings its list back to the top.
+        ScrollsToTopWhenTyped(config.actionSearch, scroll)
         Box(Modifier.fillMaxWidth().weight(1f)) {
         Column(
             modifier = Modifier

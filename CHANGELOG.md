@@ -24,6 +24,21 @@ the stretch by 5 % and never went under 90 minutes. The fit is now EXACT: first 
 stretch shorter than what the zoom ceiling shows (~5 min in the bottom half of this screen) is centred at the ceiling. Every
 other calendar opens as before. `CalendarNotificationsTest`, `RollingCalendarTest`. Client rebuild only.
 
+### Deleting what was typed puts the list back — 2026-10-14
+
+The user: "If the user types something on the search bar, then delete, if the user didn't scroll by themselves then the
+scroll comes back to what it was before entering edit mode in the search bar." `ScrollsToTopWhenTyped` now holds a
+typing session (the bar's text and the list's place at its first change); the text coming back restores the place,
+unless the hand scrolled meanwhile. `ScrollsToTopWhenTypedTest` (letter by letter and back; a hand scroll; a lazy list
+put back on its row and offset). Client rebuild only.
+
+### Typing in a search bar scrolls its list to the top — 2026-10-14
+
+The user: "When typing in a search bar, the list below must be scrolled to the top (in the action section and the
+search section of the Search window for example)." One helper, `ScrollsToTopWhenTyped`, called by the list under every
+search bar (the six that carry `SearchBarCross`). The first composition is not typing: a list put back with text in
+its bar keeps its place. `ScrollsToTopWhenTypedTest`. Client rebuild only.
+
 ### The chronos' run and "Highest count" — 2026-10-14
 
 The user: "In the chrono element, I don't see the countdown group in the action section similar to the timer

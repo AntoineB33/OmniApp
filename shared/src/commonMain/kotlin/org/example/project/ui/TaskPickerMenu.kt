@@ -202,11 +202,14 @@ fun TaskPickerMenu(
                 trailingIcon = { SearchBarCross(draft) { draft = "" } },
                 modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus),
             )
+            // User rule 2026-10-14: typing in the bar brings the suggestions under it back to their top.
+            val suggestionsScroll = rememberScrollState()
+            ScrollsToTopWhenTyped(draft, suggestionsScroll)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 200.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(suggestionsScroll),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 EditModeMenuBlock(

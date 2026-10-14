@@ -2699,6 +2699,9 @@ fun HistoryManagerWindow(
                     }
                 }
 
+                // User rule 2026-10-14: typing in the filter brings the list back to its top.
+                val rowsScroll = rememberScrollState()
+                ScrollsToTopWhenTyped(filter.query, rowsScroll)
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -2714,7 +2717,7 @@ fun HistoryManagerWindow(
                         SelectionContainer(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .verticalScroll(rememberScrollState()),
+                                .verticalScroll(rowsScroll),
                         ) {
                             Column(
                                 modifier = Modifier

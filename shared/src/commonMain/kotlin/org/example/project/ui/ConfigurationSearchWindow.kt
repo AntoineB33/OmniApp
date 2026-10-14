@@ -186,8 +186,11 @@ fun ConfigurationSearchWindow(
 
             // --- The result section: the sorting methods in force, then the configurations -------------
             SortMethodList(config.sorts) { onConfigChange(config.copy(sorts = it)) }
+            // User rule 2026-10-14: typing in the bar brings the list back to its top.
+            val resultScroll = rememberScrollState()
+            ScrollsToTopWhenTyped(own.query, resultScroll)
             Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(resultScroll),
                 verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
                 if (groups.isEmpty()) NoteText("No configuration matches.")

@@ -283,6 +283,95 @@ private fun CompactFieldDecoration(
 }
 
 /**
+ * User rule 2026-10-14: *"When typing in a search bar, the list below must be scrolled to the top"* — [scroll] (the
+ * list under a bar holding [text]) back to its top each time the text changes, the cross's emptying included. Every
+ * search bar of the app ([SearchBarCross]'s) has its list call this, a `ScrollState`'s or a `LazyListState`'s.
+ *
+ * …and back where it was (user rule 2026-10-14, the same day: *"If the user types something on the search bar, then
+ * delete, if the user didn't scroll by themselves then the scroll comes back to what it was before"*): the first change
+ * of a typing session notes what the bar held and where the list stood; the text coming back to that puts the list
+ * back there — unless the hand scrolled it meanwhile, in which case it goes to the top like any other change.
+ */
+@Composable
+internal fun ScrollsToTopWhenTyped(text: String, scroll: androidx.compose.foundation.ScrollState) =
+    ScrollsToTopWhenTyped(
+        text,
+        scrolling = { scroll.isScrollInProgress },
+        // A plain list stays where it was put unless something scrolls it: one found elsewhere was moved by the hand,
+        // however short the move (a lazy one is moved by its rows being changed under it too, so it is not asked).
+        movesOnlyByHand = true,
+        position = { scroll.value },
+        toTop = { scroll.scrollTo(0) },
+        restore = { target ->
+            // The list the text gives back is laid out a frame later, and a scroll is clamped to the height laid out.
+            var frames = 0
+            while (scroll.maxValue < target && frames++ < 3) androidx.compose.runtime.withFrameNanos { }
+            scroll.scrollTo(target)
+        },
+    )
+
+@Composable
+internal fun ScrollsToTopWhenTyped(text: String, list: androidx.compose.foundation.lazy.LazyListState) =
+    ScrollsToTopWhenTyped(
+        text,
+        scrolling = { list.isScrollInProgress },
+        movesOnlyByHand = false,
+        position = { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset },
+        toTop = { list.scrollToItem(0) },
+        restore = { (index, offset) -> list.scrollToItem(index, offset) },
+    )
+
+/** A typing session of a search bar: what it held and where its list stood before it, and whether the hand scrolled since. */
+private class TypingSession<P>(val text: String, val position: P) {
+    var handScrolled = false
+}
+
+@Composable
+private fun <P> ScrollsToTopWhenTyped(
+    text: String,
+    scrolling: () -> Boolean,
+    movesOnlyByHand: Boolean,
+    position: () -> P,
+    toTop: suspend () -> Unit,
+    restore: suspend (P) -> Unit,
+) {
+    // Where this last put the list, for [movesOnlyByHand]: found anywhere else, the hand moved it.
+    val put = remember { androidx.compose.runtime.mutableStateOf<P?>(null) }
+    // What the bar held when the list was last told: the first composition is no typing, so a list opened (or put
+    // back) with text in its bar keeps its place.
+    val told = remember { androidx.compose.runtime.mutableStateOf(text) }
+    val session = remember { androidx.compose.runtime.mutableStateOf<TypingSession<P>?>(null) }
+    // True while THIS moves the list: a scroll seen then is not the hand's. Read in the same snapshot as the scroll
+    // itself, so a scroll of ours can never be seen without it (ours is over before it is set back).
+    val moving = remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { scrolling() && !moving.value }.collect { hand ->
+            if (hand) session.value?.handScrolled = true
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(text) {
+        if (text == told.value) return@LaunchedEffect
+        val open = session.value ?: TypingSession(told.value, position()).also { session.value = it }
+        if (movesOnlyByHand && put.value != null && position() != put.value) open.handScrolled = true
+        told.value = text
+        moving.value = true
+        try {
+            if (text == open.text) {
+                // Back to what the bar held: the session is over, and the list goes back where it stood if no hand moved it.
+                session.value = null
+                if (open.handScrolled) toTop() else restore(open.position)
+                put.value = null
+            } else {
+                toTop()
+                put.value = position()
+            }
+        } finally {
+            moving.value = false
+        }
+    }
+}
+
+/**
  * User rule 2026-10-11: *"To every search bar, add a cross at the right side."* — the ✕ at the right end of a search
  * bar: a press empties the bar ([onClear]). Always drawn, so the bar keeps its shape as it is typed in; set back and
  * deaf while the bar is empty and there is nothing to take away. Given as the field's `trailingIcon`.
