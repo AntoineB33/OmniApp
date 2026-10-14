@@ -757,8 +757,8 @@ fun SearchWindow(
                     deploy = deployKinds,
                     onDeployed = onKindsDeployed,
                 )
-                // Back to the configuration the window opened with while it has changed since, else to the default
-                // one (`SearchDomain.resetConfig`).
+                // Back to the configuration the window opened with while it has changed since, else the whole
+                // configuration cancelled (`SearchDomain.resetConfig`).
                 val reset = SearchDomain.resetConfig(config, openedConfig)
                 ResetButton(enabled = reset != config) { onConfigChange(reset) }
             }

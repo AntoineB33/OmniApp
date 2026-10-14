@@ -757,18 +757,28 @@ class SearchWindowTest {
     }
 
     @Test
-    fun reset_goes_back_to_the_opening_configuration_then_to_the_default_one() {
+    fun reset_goes_back_to_the_opening_configuration_then_cancels_it_all_then_back_again() {
         val opened = SearchDomain.elementSearchConfig(SearchDomain.Kind.Alarm, "a1")
         val changed =
             opened.copy(query = "x", added = emptyList(), filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
+        val cleared = SearchDomain.CLEARED_CONFIG
+        // No filter at all: every kind checked, every element shown (user rule 2026-10-15).
+        assertEquals(SearchDomain.Kind.entries.toSet(), cleared.kinds)
+        assertTrue(cleared.query.isEmpty() && cleared.added.isEmpty())
+        assertEquals(SearchDomain.Filters(), cleared.filters)
         // Changed since it opened: the whole opening configuration comes back, added elements and filters included.
         assertEquals(opened, SearchDomain.resetConfig(changed, opened))
-        // As it opened: the default configuration, to start on something unrelated.
-        assertEquals(SearchDomain.Config(), SearchDomain.resetConfig(opened, opened))
-        // Nothing known of how it opened: the default one.
-        assertEquals(SearchDomain.Config(), SearchDomain.resetConfig(changed, null))
-        // Opened on the default configuration and left there: nothing to reset (the button is greyed).
-        assertEquals(SearchDomain.Config(), SearchDomain.resetConfig(SearchDomain.Config(), SearchDomain.Config()))
+        // As it opened: the whole configuration cancelled — every kind, not the default's tasks alone…
+        assertEquals(cleared, SearchDomain.resetConfig(opened, opened))
+        // …and a second click brings the opening one back (anomaly 2026-10-15: the History Search window).
+        val history = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.HistoryUnit))
+        assertEquals(cleared, SearchDomain.resetConfig(history, history))
+        assertEquals(history, SearchDomain.resetConfig(cleared, history))
+        // Nothing known of how it opened: cancelled, and nothing more to reset once it is.
+        assertEquals(cleared, SearchDomain.resetConfig(changed, null))
+        assertEquals(cleared, SearchDomain.resetConfig(cleared, null))
+        // Opened on the cleared configuration and left there: nothing to reset (the button is greyed).
+        assertEquals(cleared, SearchDomain.resetConfig(cleared, cleared))
     }
 
     @Test

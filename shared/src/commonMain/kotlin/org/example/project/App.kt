@@ -1146,7 +1146,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // this device's placement row, so they outlive the app. Local-only view state.
         // One per Search window — the original and each copy, by frame id — decoded from its row on first read.
         val searchConfigs = remember { mutableStateMapOf<String, SearchDomain.Config>() }
-        // The configuration each Search window OPENED with — what its Reset goes back to before the default one
+        // The configuration each Search window OPENED with — what its Reset goes back to, after cancelling it all
         // (`SearchDomain.resetConfig`). Compose-only: a window still open at a restart opened with what it held then.
         val searchOpenedConfigs = remember { mutableStateMapOf<String, SearchDomain.Config>() }
         fun searchConfigOf(id: String): SearchDomain.Config =

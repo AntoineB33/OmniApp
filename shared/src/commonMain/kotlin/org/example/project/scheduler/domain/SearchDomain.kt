@@ -351,13 +351,25 @@ object SearchDomain {
         added.flatMapTo(HashSet()) { listOf(actionKindOf(it), it.kind) }
 
     /**
-     * What the Search window's **Reset** puts in the place of [current] (user rule 2026-10-02): the configuration the
-     * window [opened] with while it has changed since — so a window opened on something ("edit…" on the calendar)
-     * goes back to it — else the default configuration, to start on something unrelated. The WHOLE configuration:
+     * **A search that filters nothing** — what Reset "cancels the whole configuration" to (user rule 2026-10-15: *"it
+     * means no filter, so every possible element are shown, so the element type selector has everything selected"*):
+     * every kind checked, no text, every filter, sort and selection at its default and nothing added. Not [Config]'s
+     * default, which checks the tasks alone. A getter: [Config]'s defaults are declared further down this object, and a
+     * value built here would read them before they are set.
+     */
+    val CLEARED_CONFIG: Config
+        get() = Config(kinds = Kind.entries.toSet())
+
+    /**
+     * What the Search window's **Reset** puts in the place of [current]: the configuration the window [opened] with
+     * while it has changed since — so a window opened on something ("edit…" on the calendar) goes back to it (user rule
+     * 2026-10-02) — else the whole configuration cancelled ([CLEARED_CONFIG]), so a second click comes back to the
+     * opening one (anomaly 2026-10-15: the History Search button's window, reset as it opened, went to the default
+     * configuration — the tasks checked — and nothing brought its history units back). The WHOLE configuration:
      * filters, sorts and added elements included. Equal to [current] when there is nothing to reset.
      */
     fun resetConfig(current: Config, opened: Config?): Config =
-        if (opened != null && current != opened) opened else Config()
+        if (opened != null && current != opened) opened else CLEARED_CONFIG
 
     /** The Search configuration a [Kind.Window] creation row opens: every window TYPE, once. */
     val WINDOW_TYPES_CONFIG: Config
@@ -1075,8 +1087,8 @@ object SearchDomain {
         SearchText(null, "Search text"),
         Types(null, "Types"),
         /**
-         * The Search window's own Reset ([resetConfig]): back to the configuration it opened with, else to the
-         * default one. Listed here because every configuration of the Search window is — and it is not the
+         * The Search window's own Reset ([resetConfig]): back to the configuration it opened with, else the whole
+         * configuration cancelled. Listed here because every configuration of the Search window is — and it is not the
          * Configuration Search window's own Reset, which clears that window's search.
          */
         ResetSearch(null, "Reset"),

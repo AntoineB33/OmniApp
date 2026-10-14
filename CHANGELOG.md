@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search window's Reset cancels the whole configuration, then brings it back — 2026-10-15
+
+Anomaly on account 3: the window of the "History Search" button, reset as it opened, went to "tasks only" — the default
+configuration, `Config()`, checks the tasks — and no click brought its history units back. The user: Reset "should
+cancel all search configuration, or resetting it to when the window opened (if clicked a second time I must come back
+to only history units selected)" — and, of "cancel all": "it means no filter, so every possible element are shown, so
+the element type selector has everything selected". `SearchDomain.resetConfig` now puts `CLEARED_CONFIG` (every kind
+checked, no text, every filter at its default, nothing added) where it put `Config()`; a changed configuration still goes back to the opening one first, so the
+opening configuration and the cleared one alternate. `SearchWindowTest`.
+
 ### A restart keeps the focus on the copy it was on — 2026-10-14
 
 The anomaly below came back with its fix deployed. The release DB's focus moves told the rest: before the restart the

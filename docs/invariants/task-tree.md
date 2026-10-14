@@ -1113,11 +1113,14 @@ suggestions before it was ever entered.
   draws it** — the type selector is the same field with a drop-down (`KindsDropDown`), and the Search window's
   Reset is a setting of its own (`Setting.ResetSearch`, "Reset"), distinct from the Configuration
   Search window's own Reset in its top section.
-- **The Search window's Reset goes back to the configuration it OPENED with, then to the default one** (user rule
+- **The Search window's Reset goes back to the configuration it OPENED with, then cancels it all** (user rule
   2026-10-02, `SearchDomain.resetConfig` — the one rule for the window's button and the `ResetSearch` setting): while
   the configuration differs from the opening one, a click restores that one WHOLE (text, types, filters, sorts, added
-  elements — the calendar's "edit…" list comes back); when it does not, a click puts the default `Config()`; greyed
-  when that changes nothing. The opening configuration is `App`'s `searchOpenedConfigs` (Compose-only): what the
+  elements — the calendar's "edit…" list comes back); when it does not, a click cancels the whole configuration
+  (`CLEARED_CONFIG`: NO FILTER — every kind checked so every element is shown, no text, nothing added; user rule
+  2026-10-15), so the next click brings the opening one back; greyed when that changes nothing. Not the default
+  `Config()`, which checks the tasks alone (anomaly 2026-10-15: the History
+  Search button's window, reset as it opened, went to "tasks only", and no click brought its history units back). The opening configuration is `App`'s `searchOpenedConfigs` (Compose-only): what the
   window's row held when it opened (`openNewWindow`, a ⧉ copy), re-taken when the calendar's "add…"/"edit…" moves an
   existing window to a new right-click, and — for a window still open at a restart — what it held then.
 - **The configuration windows' Reset (`ResetButton`) clears ITS OWN search field and types**, and never touches the
