@@ -37,6 +37,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
@@ -67,9 +68,9 @@ import kotlin.math.roundToInt
  * from inside a layout or a draw**.
  *
  * The other two are the day's other anomalies:
- *  - **it opens WHERE material's menu opens** ([menuPlacement], material's own rule, candidate for candidate): the
- *    first version knew "under the anchor, else above it" and nothing else, which sent the calendar's menu — hung
- *    from a whole day column and moved to the pointer by its offset — off the screen, and others to the left;
+ *  - **it opens BESIDE what it is about, never over it** ([menuPlacement]): below, else above, else at the right,
+ *    else at the left, on the screen (user rule 2026-10-14). Material's own rule, ported here on 2026-10-13, fitted
+ *    the menu in the app's window and fell back to centring it on the anchor, which hid the field it was about;
  *  - **it opens in as few turns of the event queue as there are** ([MenuSession]): the anchor is known in one, the
  *    window is shown at the size the same menu had last time in the next. Going through Compose's `DialogWindow`
  *    took half a dozen, each waiting for a frame of an app window that has its own work to do.
@@ -386,53 +387,26 @@ private fun pointerIn(owner: AwtWindow): Offset? =
         Offset(((at.x - origin.x) * scale).toFloat(), ((at.y - origin.y) * scale).toFloat())
     }.getOrNull()
 
-/** Material's `MenuVerticalMargin`: how close to the top or the bottom of the window a menu may be placed. */
-private const val MENU_VERTICAL_MARGIN_DP = 48
-
 /**
- * **Where a menu of [size] (AWT units) opens, on the screen — material's own rule, candidate for candidate**
- * (`DropdownMenuPositionProvider`), so that a menu opens exactly where it did when it was drawn inside the window.
- * [anchor] and [offsetPx] are pixels in [owner]'s content, which is "the window" the rule fits the menu in:
- *
- *  - across: its start on the anchor's start (+ the offset); else its end on the anchor's end; else against the
- *    window's left or right edge, whichever side the anchor is on — the first that lies inside the window;
- *  - down: its top on the anchor's bottom (+ the offset); else its bottom on the anchor's top; else its middle on the
- *    anchor's top; else against the window's top or bottom — the first that lies inside the window, a margin apart.
- *
- * (The later ones down are what put the calendar's menu at the pointer: it hangs from a whole day column, with the
- * pointer's place in the column as its offset.) The answer is then kept on the screen it falls on — the one thing
- * added: a window of its own may reach past the app's, but not past the screen.
+ * **Where a menu of [size] (AWT units) opens, on the screen**: beside its anchor — below, else above, else at the
+ * right, else at the left, the first side the whole menu fits on, inside the work area of the screen the anchor is on
+ * ([menuSpot], user rule 2026-10-14). [anchor] and [offsetPx] are pixels in [owner]'s content; the offset moves the
+ * anchor (the window bar's menu: the bar, at the pointer's x). The menu is a window of its own, so the room it has is
+ * the SCREEN's, not the app window's: under a field near the bottom of a small window it still opens below.
  */
 private fun menuPlacement(owner: AwtWindow, anchor: Rect, offsetPx: Offset, size: Dimension): Point {
     val pane = (owner as? RootPaneContainer)?.contentPane
     val origin = runCatching { (pane ?: owner).locationOnScreen }.getOrNull() ?: owner.location
     val scale = owner.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
-    val windowWidth = ((pane?.width ?: owner.width) * scale).roundToInt()
-    val windowHeight = ((pane?.height ?: owner.height) * scale).roundToInt()
-    val width = (size.width * scale).roundToInt()
-    val height = (size.height * scale).roundToInt()
-    val left = anchor.left.roundToInt()
-    val top = anchor.top.roundToInt()
-    val right = anchor.right.roundToInt()
-    val bottom = anchor.bottom.roundToInt()
-    val dx = offsetPx.x.roundToInt()
-    val dy = offsetPx.y.roundToInt()
-    val margin = (MENU_VERTICAL_MARGIN_DP * scale).roundToInt()
-
-    val across = listOf(left + dx, right - width + dx, if ((left + right) / 2 < windowWidth / 2) 0 else windowWidth - width)
-    val x = across.firstOrNull { it >= 0 && it + width <= windowWidth } ?: across.last()
-    val down = listOf(
-        bottom + dy,
-        top - height + dy,
-        top - height / 2 + dy,
-        if ((top + bottom) / 2 < windowHeight / 2) margin else windowHeight - height - margin,
+    fun screen(px: Float) = (px / scale).roundToInt()
+    val on = IntRect(
+        left = origin.x + screen(anchor.left + offsetPx.x),
+        top = origin.y + screen(anchor.top + offsetPx.y),
+        right = origin.x + screen(anchor.right + offsetPx.x),
+        bottom = origin.y + screen(anchor.bottom + offsetPx.y),
     )
-    val y = down.firstOrNull { it >= margin && it + height <= windowHeight - margin } ?: down.last()
-
-    val at = Point(origin.x + (x / scale).roundToInt(), origin.y + (y / scale).roundToInt())
-    val area = workAreaAt(ScreenPoint(at.x, at.y)) ?: workAreaAt(ScreenPoint(origin.x, origin.y)) ?: return at
-    return Point(
-        at.x.coerceIn(area.x, maxOf(area.x, area.x + area.width - size.width)),
-        at.y.coerceIn(area.y, maxOf(area.y, area.y + area.height - size.height)),
-    )
+    val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
+        ?: return Point(on.left, on.bottom)
+    val spot = menuSpot(on, IntSize(size.width, size.height), IntRect(area.x, area.y, area.x + area.width, area.y + area.height))
+    return Point(spot.x, spot.y)
 }

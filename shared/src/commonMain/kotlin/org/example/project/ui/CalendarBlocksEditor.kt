@@ -229,12 +229,17 @@ internal fun CalendarBlockFields(
                 val start = instantOf(date, from.hour * 60 + from.minute, tz)
                 write(start, start + (restEnd - restStart))
             }
-            TimeOfDayField(from.hour * 60 + from.minute, enabled = true, blank = "HH:MM") { minutes ->
-                val start = instantOf(from.date, minutes, tz)
-                // The start moved: the block keeps its END (it is the start field that was edited), unless
-                // that would leave it no length — then it keeps its length.
-                val end = if (instant) start else restEnd.takeIf { it > start } ?: (start + (restEnd - restStart))
-                write(start, end)
+            // The start moved: the block keeps its END (it is the start field that was edited), unless
+            // that would leave it no length — then it keeps its length.
+            fun moveStart(start: Long) = write(start, if (instant) start else restEnd.takeIf { it > start } ?: (start + (restEnd - restStart)))
+            TimeOfDayField(
+                from.hour * 60 + from.minute,
+                enabled = true,
+                blank = "HH:MM",
+                // A step past midnight is the next day's (or the day before's): the block's times are instants.
+                onNudge = { delta -> moveStart(shownStart + delta * 60_000L) },
+            ) { minutes ->
+                moveStart(instantOf(from.date, minutes, tz))
             }
         }
         if (!instant) {
@@ -244,7 +249,12 @@ internal fun CalendarBlockFields(
                 DayField(to.date, "day", today, enabled = true) { date ->
                     write(restStart, instantOf(date, to.hour * 60 + to.minute, tz))
                 }
-                TimeOfDayField(to.hour * 60 + to.minute, enabled = true, blank = "HH:MM") { minutes ->
+                TimeOfDayField(
+                    to.hour * 60 + to.minute,
+                    enabled = true,
+                    blank = "HH:MM",
+                    onNudge = { delta -> write(restStart, shownEnd + delta * 60_000L) },
+                ) { minutes ->
                     write(restStart, instantOf(to.date, minutes, tz))
                 }
             }

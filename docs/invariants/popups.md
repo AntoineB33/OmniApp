@@ -220,15 +220,18 @@ means.
     foreground closes it (a focusable menu: the menu losing the focus), a menu opened from the menu excepted.
   - **The window is sized and placed from a task of its own on the event queue, never from inside a layout or a
     draw.** See the point on the two answers taken back.
-  - **A menu opens WHERE material's menu opens — its rule, candidate for candidate** (anomaly 2026-10-13: *"the
-    menu doesn't appear where I right-clicked but at the left, and it doesn't even appear anymore when I
-    right-click on the calendar"*; `menuPlacement`, a port of `DropdownMenuPositionProvider`). The anchor is the
-    layout the menu is declared in (`parentCoordinates`, as `Popup` reads it); across: start on the anchor's start +
-    offset, else end on its end, else against the window's edge; down: top on the anchor's bottom + offset, else
-    bottom on its top, else MIDDLE on its top, else against the window's edge — the first inside the app's window.
-    The first version knew only "under, else above": the calendar's menu hangs from a whole day column with the
-    pointer's place as its offset, and it is the LATER candidates that put it at the pointer. Seen side by side with
-    material's on a dev run (`-Pomniapp.menuWindows=false` draws the menus in the window again): the same place.
+  - **A menu opens BESIDE what it is about, never over it: below, else above, else at the right, else at the left**
+    (user rule 2026-10-14: *"The right-click menu is hiding the field, even though there are spaces at the bottom. If
+    there is no space below, it must be at the top, then at the right, then at the left. Check anywhere there is a
+    right-click menu or drop-down menu."*; `menuSpot`, called by `menuPlacement`). The first side the WHOLE menu fits
+    on, inside the work area of the SCREEN the anchor is on — the menu is a window of its own, so a field near the
+    bottom of a small app window still has its menu below it. Along that side it slides to stay on the screen; only
+    where no side has room does it cover the anchor. The anchor is the layout the menu is declared in
+    (`parentCoordinates`, as `Popup` reads it), moved by the offset (the window bar's menu: the bar, at the pointer's
+    x), or the pointer itself (`atPointer`) — which the calendar's two menus now use, being declared on a whole day
+    column. This REPLACED the port of material's `DropdownMenuPositionProvider` (2026-10-13), whose fallback centred
+    the menu on its anchor's top edge and hid the field. The global task picker (`TaskPickerOverlay`) opens by the
+    same rule beside the pointer. Phones and the browser keep material's own menu and placement.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
     elements in the result list of the Search window, the menu still appears at the left of the element instead of
     the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).

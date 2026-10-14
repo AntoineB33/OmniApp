@@ -19,6 +19,8 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.TIME_NUDGE_MINUTES
+import org.example.project.ui.LENGTH_NUDGE_MILLIS
+import org.example.project.ui.nudgeLabel
 import org.example.project.ui.draftAfterStoreChange
 import org.example.project.ui.nudgedTimeOfDay
 import org.example.project.ui.timeNudgeLabel
@@ -210,6 +212,11 @@ class CalendarBlocksSearchTest {
     @Test
     fun a_time_fields_menu_steps_by_an_hour_ten_minutes_or_one_round_the_clock() {
         assertEquals(listOf("+1 h", "+10 min", "+1 min", "−1 min", "−10 min", "−1 h"), TIME_NUDGE_MINUTES.map(::timeNudgeLabel))
+        // User rule 2026-10-14: "Add to the calendar"'s end, a length to the second, steps by seconds too.
+        assertEquals(
+            listOf("+1 h", "+10 min", "+1 min", "+10 s", "+1 s", "−1 s", "−10 s", "−1 min", "−10 min", "−1 h"),
+            LENGTH_NUDGE_MILLIS.map(::nudgeLabel),
+        )
         assertEquals("21:30", timeOfDayText(nudgedTimeOfDay(20 * 60 + 30, 60)))
         assertEquals("20:20", timeOfDayText(nudgedTimeOfDay(20 * 60 + 30, -10)))
         assertEquals("20:31", timeOfDayText(nudgedTimeOfDay(20 * 60 + 30, 1)))

@@ -7004,6 +7004,9 @@ private fun DayColumn(
             onDismissRequest = { closeMenu() },
             offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
             properties = PopupProperties(focusable = false),
+            // Beside the right-click, not beside the whole day column the menu is declared in (user rule 2026-10-14):
+            // the desktop's menu opens from the pointer; elsewhere the offset says where it was.
+            atPointer = true,
         ) {
             val hits = menuHits
             val branch = menuBranch
@@ -7102,6 +7105,7 @@ private fun DayColumn(
             expanded = heldMenuAt != null,
             onDismissRequest = { resumeHeldDrag() },
             offset = heldMenuAt?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
+            atPointer = true,
         ) {
             DropdownMenuItem(
                 text = { Text("cancel") },
@@ -10204,20 +10208,29 @@ fun ManualEntryEditWindow(
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = startText,
-                        onValueChange = { startText = it },
-                        label = { Text("Begins (HH:mm)") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = endText,
-                        onValueChange = { endText = it },
-                        label = { Text("Ends (HH:mm)") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
+                    // The right-click steps (user rule 2026-10-14), each time on its own day as the fields are.
+                    Box(Modifier.weight(1f)) {
+                        HmTextNudgeMenu(startText, { startText = it }) {
+                            OutlinedTextField(
+                                value = startText,
+                                onValueChange = { startText = it },
+                                label = { Text("Begins (HH:mm)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    Box(Modifier.weight(1f)) {
+                        HmTextNudgeMenu(endText, { endText = it }) {
+                            OutlinedTextField(
+                                value = endText,
+                                onValueChange = { endText = it },
+                                label = { Text("Ends (HH:mm)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                 }
 
                 // PRD §8 pin switches: the four independent pin dimensions. Only "existence" is enforced
@@ -10475,6 +10488,7 @@ fun PeriodEditWindow(
                     timeText = startTimeText,
                     onTimeChange = { startTimeText = it },
                     valid = resolvedStart != null,
+                    tz = tz,
                 )
                 PeriodBoundEditor(
                     label = "Ends",
@@ -10486,6 +10500,7 @@ fun PeriodEditWindow(
                     timeText = endTimeText,
                     onTimeChange = { endTimeText = it },
                     valid = resolvedEnd != null,
+                    tz = tz,
                 )
 
                 RepeatEveryField(repeatText) { repeatText = it }
@@ -10569,6 +10584,7 @@ private fun PeriodBoundEditor(
     timeText: String,
     onTimeChange: (String) -> Unit,
     valid: Boolean,
+    tz: TimeZone,
 ) {
     EditMenuSectionLabel(label)
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -10586,14 +10602,28 @@ private fun PeriodBoundEditor(
                 singleLine = true,
                 modifier = Modifier.weight(1.6f),
             )
-            OutlinedTextField(
-                value = timeText,
-                onValueChange = onTimeChange,
-                label = { Text("HH:mm") },
-                isError = !valid,
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
+            // The right-click steps (user rule 2026-10-14): the instant moved, its date carried along past midnight.
+            val at = parseDateTime(dateText, timeText, tz)
+            Box(Modifier.weight(1f)) {
+                TimeNudgeMenu(
+                    enabled = at != null,
+                    onNudge = { delta ->
+                        at?.let {
+                            onDateChange(formatDate(it + delta * 60_000L, tz))
+                            onTimeChange(formatHm(it + delta * 60_000L, tz))
+                        }
+                    },
+                ) {
+                    OutlinedTextField(
+                        value = timeText,
+                        onValueChange = onTimeChange,
+                        label = { Text("HH:mm") },
+                        isError = !valid,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
     }
 }
@@ -10692,13 +10722,16 @@ fun ReminderEditWindow(
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
-                    OutlinedTextField(
-                        value = timeText,
-                        onValueChange = { timeText = it },
-                        label = { Text("Time") },
-                        singleLine = true,
-                        modifier = Modifier.width(96.dp),
-                    )
+                    // The right-click steps (user rule 2026-10-14), on the tag's own day as the field is.
+                    HmTextNudgeMenu(timeText, { timeText = it }) {
+                        OutlinedTextField(
+                            value = timeText,
+                            onValueChange = { timeText = it },
+                            label = { Text("Time") },
+                            singleLine = true,
+                            modifier = Modifier.width(96.dp),
+                        )
+                    }
                 }
 
                 // --- Reminders id menu + Title suggestions, shared with the reminders manager. No mode

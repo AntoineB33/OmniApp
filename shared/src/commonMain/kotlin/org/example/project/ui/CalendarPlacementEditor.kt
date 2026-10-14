@@ -25,6 +25,8 @@ import org.example.project.scheduler.state.SchedulerState
  *  - the button that lays every added element that can go there ([SearchDomain.calendarDrafts], saved as the
  *    calendar's element window saves its own). A task's panel and a period take the end; a reminder's tag, an alarm's
  *    ring and a timer's end are an instant, at the start.
+ * Every time field has the right-click menu of steps ([TimeNudgeMenu]); the end's length too (user rule 2026-10-14,
+ * to the second: [LENGTH_NUDGE_MILLIS]).
  * Beside each day-and-time (the start, and the end when it is stated as one) stand **"Now"** and — user rule
  * 2026-10-07, *"only if the Search window originates from the calendar from a right-click"*
  * ([SearchDomain.Config.calendarClickMillis]) — **"Right-click time"**, which set it to the clock's instant and to the
@@ -87,6 +89,8 @@ internal fun CalendarPlacementEditor(
                     blank = "1",
                     defaultUnit = QuotaDomain.LengthUnit.Hours,
                     units = QuotaDomain.LengthUnit.entries,
+                    // A step that would leave no length is not taken.
+                    onNudge = { delta -> (placement.lengthMillis + delta).takeIf { it > 0L }?.let { length -> write { it.copy(lengthMillis = length) } } },
                 ) { length ->
                     write { it.copy(lengthMillis = length) }
                 }

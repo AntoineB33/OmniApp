@@ -588,16 +588,31 @@ private fun BoundRow(
             singleLine = true,
             modifier = Modifier.weight(1.6f),
         )
-        OutlinedTextField(
-            value = timeText,
-            onValueChange = { typed ->
-                fieldText[timeKey] = typed
-                parseDateTime(dateText, typed, tz)?.let { onEdit(CalendarElements.Bound.At, it) }
-            },
-            label = { Text(if (shared == null && fieldText[timeKey] == null) "—" else "HH:mm") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
+        // The right-click steps (user rule 2026-10-14): the instant moved, its date carried along past midnight.
+        val at = parseDateTime(dateText, timeText, tz)
+        Box(Modifier.weight(1f)) {
+            TimeNudgeMenu(
+                enabled = at != null,
+                onNudge = { delta ->
+                    at?.let {
+                        fieldText.remove(dateKey)
+                        fieldText.remove(timeKey)
+                        onEdit(CalendarElements.Bound.At, it + delta * 60_000L)
+                    }
+                },
+            ) {
+                OutlinedTextField(
+                    value = timeText,
+                    onValueChange = { typed ->
+                        fieldText[timeKey] = typed
+                        parseDateTime(dateText, typed, tz)?.let { onEdit(CalendarElements.Bound.At, it) }
+                    },
+                    label = { Text(if (shared == null && fieldText[timeKey] == null) "—" else "HH:mm") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 

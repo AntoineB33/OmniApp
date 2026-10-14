@@ -1223,6 +1223,14 @@ Global rules that always apply: `CLAUDE.md`.
 - **Known inconsistency:** layers **and the §9 record bank** read the OS lock history; the engine's pause
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.
+- **Every time field of the calendar's editors has the right-click menu of steps** (`TimeNudgeMenu`: ±1 h, ±10 min,
+  ±1 min; user rule 2026-10-14: *"The end field must have a right-click menu with the +/- values. Find in the calendar
+  other fields that should have this right-click menu"*). ONE menu (`NudgeMenu`), wherever the field is drawn:
+  "Add to the calendar"'s start and end (its end's LENGTH too, to the second: `LENGTH_NUDGE_MILLIS`, a step leaving no
+  length not taken), "Blocks on the calendar"'s start and end, the element window's "Begins"/"Ends" time, the period
+  window's, the panel window's "Begins"/"Ends" and the reminder tag's "Time" (`HmTextNudgeMenu`: text held until
+  Save). A field that holds an INSTANT steps the instant, its date carried past midnight; one that holds only a time
+  on a fixed day steps round the clock. A field with no time in it (blank, half-typed, mixed) opens nothing.
 
 ### Day and week display modes
 

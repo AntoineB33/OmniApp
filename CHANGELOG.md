@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Menus open beside what they are about — 2026-10-14
+
+The user: "The right-click menu is hiding the field, even though there are spaces at the bottom. If there is no space
+below, it must be at the top, then at the right, then at the left. Check anywhere there is a right-click menu or
+drop-down menu." Every desktop menu goes through `AppDropdownMenu`, whose placement was a port of material's rule. That
+rule fitted the menu in the APP's window with a 48 dp margin and fell back to centring the menu on the field's top edge.
+It is replaced by `menuSpot`: below, else above, else right, else left, the first side the whole menu fits on in
+the SCREEN's work area. The calendar's two menus (declared on a whole day column) now open from the pointer. The global
+task picker uses the same rule. Phones and the browser keep material's menu. `MenuPlacementTest`. Client rebuild only.
+
+### The right-click steps on the calendar's time fields — 2026-10-14
+
+The user: "The end field must have a right-click menu with the +/- values. Find in the calendar other fields that
+should have this right-click menu." "Add to the calendar"'s end as a LENGTH now has the menu, with ±10 s and ±1 s
+besides the time steps (`LENGTH_NUDGE_MILLIS`). Also given the menu: the element window's "Begins"/"Ends" time, the
+period window's, the panel window's "Begins"/"Ends" and the reminder tag's "Time". "Blocks on the calendar"'s start and
+end already had the menu, but stepped round the clock; they now step the instant, so 23:30 + 1 h is the next day's
+00:30. ONE menu, `NudgeMenu`, under `TimeNudgeMenu`. `CalendarBlocksSearchTest`. Client rebuild only.
+
 ### "Add to the calendar"'s end: a "Default" button for more elements — 2026-10-14
 
 The user: "Under 'Add in the calendar' for a timer element, the end field, there should be a button named 'default' to

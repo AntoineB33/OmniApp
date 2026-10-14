@@ -38,7 +38,37 @@ internal fun nudgedTimeOfDay(minutes: Int, deltaMinutes: Int): Int = ((minutes +
  * to step from) the right-click opens nothing.
  */
 @Composable
-internal fun TimeNudgeMenu(enabled: Boolean = true, onNudge: (deltaMinutes: Int) -> Unit, field: @Composable () -> Unit) {
+internal fun TimeNudgeMenu(enabled: Boolean = true, onNudge: (deltaMinutes: Int) -> Unit, field: @Composable () -> Unit) =
+    NudgeMenu(enabled, TIME_NUDGE_MINUTES.map { it * 60_000L }, { delta -> onNudge((delta / 60_000L).toInt()) }, field)
+
+/**
+ * What the right-click menu of a field that holds a LENGTH to the second ("Add to the calendar"'s end, user rule
+ * 2026-10-14) adds or removes, in millis: the time fields' steps, and 10 s and 1 s between them.
+ */
+internal val LENGTH_NUDGE_MILLIS: List<Long> =
+    listOf(3_600_000L, 600_000L, 60_000L, 10_000L, 1_000L).let { up -> up + up.reversed().map { -it } }
+
+/** How the menu names a step of [deltaMillis]: `+1 h`, `−10 min`, `+10 s`. */
+internal fun nudgeLabel(deltaMillis: Long): String {
+    val seconds = kotlin.math.abs(deltaMillis) / 1_000L
+    if (seconds % 60L == 0L) return timeNudgeLabel((deltaMillis / 60_000L).toInt())
+    return (if (deltaMillis > 0) "+" else "−") + "$seconds s"
+}
+
+/**
+ * [TimeNudgeMenu] round a field that holds its time of day as `HH:mm` TEXT, kept by the window until it saves (the
+ * calendar's own edit windows: a panel's, a period's, a reminder tag's): the text stepped round the clock. A text that
+ * is not a time opens nothing.
+ */
+@Composable
+internal fun HmTextNudgeMenu(text: String, onText: (String) -> Unit, field: @Composable () -> Unit) {
+    val minutes = timeOfDayOf(text)
+    TimeNudgeMenu(enabled = minutes != null, onNudge = { delta -> minutes?.let { onText(timeOfDayText(nudgedTimeOfDay(it, delta))) } }, field)
+}
+
+/** The menu itself, over any steps ([stepsMillis], in the order it lists them); [TimeNudgeMenu]'s rules. */
+@Composable
+internal fun NudgeMenu(enabled: Boolean, stepsMillis: List<Long>, onNudge: (deltaMillis: Long) -> Unit, field: @Composable () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box(
         Modifier.pointerInput(enabled) {
@@ -56,8 +86,8 @@ internal fun TimeNudgeMenu(enabled: Boolean = true, onNudge: (deltaMinutes: Int)
         field()
         transientMenuDismissal(open) { open = false }
         AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            TIME_NUDGE_MINUTES.forEach { delta ->
-                DropdownMenuItem(text = { Text(timeNudgeLabel(delta)) }, onClick = { onNudge(delta) })
+            stepsMillis.forEach { delta ->
+                DropdownMenuItem(text = { Text(nudgeLabel(delta)) }, onClick = { onNudge(delta) })
             }
         }
     }

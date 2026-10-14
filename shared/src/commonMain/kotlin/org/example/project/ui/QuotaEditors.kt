@@ -612,8 +612,19 @@ internal fun LengthField(
     /** The units the drop-down offers: a quota's, unless the field says otherwise. */
     units: List<QuotaDomain.LengthUnit> = QuotaDomain.QUOTA_LENGTH_UNITS,
     onBlank: (() -> Unit)? = null,
+    /**
+     * The right-click menu's step, where the field has one ([NudgeMenu] over [LENGTH_NUDGE_MILLIS], user rule
+     * 2026-10-14: *"The end field must have a right-click menu with the +/- values"*); null = no menu.
+     */
+    onNudge: ((deltaMillis: Long) -> Unit)? = null,
     onChange: (Long) -> Unit,
 ) {
+    if (onNudge != null) {
+        NudgeMenu(enabled = millis != null, stepsMillis = LENGTH_NUDGE_MILLIS, onNudge = onNudge) {
+            LengthField(millis, mixed, blank, defaultUnit, units, onBlank, onNudge = null, onChange)
+        }
+        return
+    }
     var unit by remember { mutableStateOf(millis?.let { QuotaDomain.lengthUnitOf(it, units) } ?: defaultUnit) }
     var draft by remember { mutableStateOf(millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty()) }
     // The stored length changed and it is not what the field says: written elsewhere (another field, Undo), so read again.

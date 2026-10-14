@@ -105,16 +105,19 @@ actual fun TaskPickerOverlay(
 private fun Int.dpUnits() = androidx.compose.ui.unit.Dp(toFloat())
 
 /**
- * The top-left corner to open a menu of [width] × [height] at, so that a pointer near the right or bottom
- * edge of its screen does not put half the menu off it — the ordinary rule for a contextual menu. Clamped
- * against the screen the pointer is actually on (a multi-monitor desktop's bounds are one plane, and the
+ * The top-left corner to open a menu of [width] × [height] at, beside the pointer: below it, else above, else at
+ * its right, else at its left — the app's one rule for where a menu opens ([menuSpot], user rule 2026-10-14) — inside
+ * the work area of the screen the pointer is actually on (a multi-monitor desktop's bounds are one plane, and the
  * second monitor's origin can be negative), falling back to the pointer itself if no device claims it.
  */
 private fun clampToScreen(anchor: ScreenPoint, width: Int, height: Int): ScreenPoint {
     val area = workAreaAt(anchor) ?: return anchor
-    val x = anchor.x.coerceIn(area.x, maxOf(area.x, area.x + area.width - width))
-    val y = anchor.y.coerceIn(area.y, maxOf(area.y, area.y + area.height - height))
-    return ScreenPoint(x, y)
+    val spot = menuSpot(
+        androidx.compose.ui.unit.IntRect(anchor.x, anchor.y, anchor.x, anchor.y),
+        androidx.compose.ui.unit.IntSize(width, height),
+        androidx.compose.ui.unit.IntRect(area.x, area.y, area.x + area.width, area.y + area.height),
+    )
+    return ScreenPoint(spot.x, spot.y)
 }
 
 /**
