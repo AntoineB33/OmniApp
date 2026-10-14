@@ -11,6 +11,7 @@ import kotlinx.datetime.atStartOfDayIn
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.model.AlarmEntry
+import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
@@ -646,23 +647,36 @@ class SearchAddedElementsTest {
         val quarter = only("RestrictivePeriod/" + PeriodKinds.BREAK_15MIN)
         assertEquals(1, quarter.size)
         // The button: the break's own length. A 5-minute break has its own; a 20-second one is shorter than a block.
-        assertEquals(SearchDomain.PlacementDefault("15 min", 15 * min), SearchDomain.placementDefaultLength(s, quarter))
-        assertEquals(5 * min, SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.BREAK_5MIN))?.lengthMillis)
+        assertEquals(15 * min, SearchDomain.placementDefaultLength(s, quarter))
+        assertEquals(5 * min, SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.BREAK_5MIN)))
         assertNull(SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.BREAK_20S)))
         // Other elements with a length of their own: a task's minimum time, the Sleep schedule's two lengths.
         val apple = taskWithTitle(s, "Apple")
         assertEquals(
             s.tasks.getValue(apple).minimumMinutes * min,
-            SearchDomain.placementDefaultLength(s, only("Task/" + apple.value))?.lengthMillis,
+            SearchDomain.placementDefaultLength(s, only("Task/" + apple.value)),
         )
         val schedule = org.example.project.scheduler.model.SleepSchedule()
         val nights = s.copy(sleep = schedule)
-        assertEquals(schedule.sleepDurationMinutes * min, SearchDomain.placementDefaultLength(nights, only("RestrictivePeriod/" + PeriodKinds.SLEEP))?.lengthMillis)
-        assertEquals(schedule.beforeBedMinutes * min, SearchDomain.placementDefaultLength(nights, only("RestrictivePeriod/" + PeriodKinds.BEFORE_BED))?.lengthMillis)
+        assertEquals(schedule.sleepDurationMinutes * min, SearchDomain.placementDefaultLength(nights, only("RestrictivePeriod/" + PeriodKinds.SLEEP)))
+        assertEquals(schedule.beforeBedMinutes * min, SearchDomain.placementDefaultLength(nights, only("RestrictivePeriod/" + PeriodKinds.BEFORE_BED)))
         assertNull(SearchDomain.placementDefaultLength(s.copy(sleep = null), only("RestrictivePeriod/" + PeriodKinds.SLEEP)), "no Sleep schedule: no length to offer")
-        // None for a period with no length of its own, nor for several elements.
+        // User rule 2026-10-14: an alarm's and a timer's — how long its ring sounds; several elements agreeing give theirs.
+        val rings = s.copy(
+            alarms = listOf(AlarmEntry(id = "alarm-1", label = "Wake", soundSeconds = 3), AlarmEntry(id = "alarm-2", label = "Mute", soundSeconds = 0)),
+            timers = listOf(TimerEntry(id = "timer-1", label = "Tea", soundSeconds = 3), TimerEntry(id = "timer-2", label = "Egg", soundSeconds = 10)),
+        )
+        fun ring(vararg keys: String) = SearchDomain.placementDefaultLength(rings, SearchDomain.resolve(rings, keys.toList()))
+        assertEquals(3_000L, ring("Timer/timer-1"))
+        assertEquals(10_000L, ring("Timer/timer-2"))
+        assertEquals(3_000L, ring("Alarm/alarm-1"))
+        assertEquals(3_000L, ring("Alarm/alarm-1", "Timer/timer-1"), "the same length for both")
+        assertNull(ring("Timer/timer-1", "Timer/timer-2"), "two lengths: no default")
+        assertNull(ring("Alarm/alarm-2"), "a silent ring has no length")
+        // None for a period with no length of its own, nor where one of several has none or they disagree.
         assertNull(SearchDomain.placementDefaultLength(s, only("RestrictivePeriod/" + PeriodKinds.NO_SCREEN)))
-        assertNull(SearchDomain.placementDefaultLength(s, quarter + only("Task/" + apple.value)))
+        assertNull(SearchDomain.placementDefaultLength(s, quarter + only("RestrictivePeriod/" + PeriodKinds.NO_SCREEN)))
+        assertNull(SearchDomain.placementDefaultLength(s, quarter + only("RestrictivePeriod/" + PeriodKinds.BREAK_5MIN)))
         assertNull(SearchDomain.placementDefaultLength(s, emptyList()))
 
         // The rule: longer than its name implies AND reaching past now — refused. Each alone is not.

@@ -595,8 +595,9 @@ internal fun TimeOfDayField(
 
 /**
  * **A length of time: a number and the unit it is in** (user rule 2026-10-05) — a field, and a button whose drop-down
- * lists the units ([QuotaDomain.LengthUnit]: minutes, hours, days, weeks). The number is written as soon as it is one
- * (to the minute, [QuotaDomain.parseLengthIn]); picking a unit keeps the number and writes it in that unit. A stored
+ * lists the [units] (a quota's, [QuotaDomain.QUOTA_LENGTH_UNITS]: minutes, hours, days, weeks). The number is written
+ * as soon as it is one (to the minute — to the second in seconds, [QuotaDomain.parseLengthIn]); picking a unit keeps
+ * the number and writes it in that unit. A stored
  * length reads in the largest unit it is a whole number of ([QuotaDomain.lengthUnitOf]) — but never changes unit under
  * the hand that is typing it (`24` hours stays hours while a `240` is on its way).
  * [blank] is what the empty field reads; where no length is an answer too, emptying the field says it ([onBlank]).
@@ -608,17 +609,19 @@ internal fun LengthField(
     blank: String = "7",
     /** The unit the drop-down stands on while there is no length to read one off. */
     defaultUnit: QuotaDomain.LengthUnit = QuotaDomain.LengthUnit.Days,
+    /** The units the drop-down offers: a quota's, unless the field says otherwise. */
+    units: List<QuotaDomain.LengthUnit> = QuotaDomain.QUOTA_LENGTH_UNITS,
     onBlank: (() -> Unit)? = null,
     onChange: (Long) -> Unit,
 ) {
-    var unit by remember { mutableStateOf(millis?.let(QuotaDomain::lengthUnitOf) ?: defaultUnit) }
+    var unit by remember { mutableStateOf(millis?.let { QuotaDomain.lengthUnitOf(it, units) } ?: defaultUnit) }
     var draft by remember { mutableStateOf(millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty()) }
     // The stored length changed and it is not what the field says: written elsewhere (another field, Undo), so read again.
     var seen by remember { mutableStateOf(millis) }
     if (seen != millis) {
         seen = millis
         if (QuotaDomain.parseLengthIn(draft, unit) != millis) {
-            millis?.let { unit = QuotaDomain.lengthUnitOf(it) }
+            millis?.let { unit = QuotaDomain.lengthUnitOf(it, units) }
             draft = millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty()
         }
     }
@@ -637,7 +640,7 @@ internal fun LengthField(
             modifier = Modifier.width(96.dp).endsEditOnOutsidePress { draft = millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty() },
         )
         ChoiceDropDown(
-            options = QuotaDomain.LengthUnit.entries,
+            options = units,
             selected = unit,
             label = { it.label },
             onSelect = { picked ->

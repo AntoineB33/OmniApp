@@ -50,8 +50,8 @@ internal fun CalendarPlacementEditor(
     val startAt = start?.let { localOf(it, tz) }
     val startMinutes = startAt?.let { it.hour * 60 + it.minute }
     val refused = start != null && SearchDomain.placementRefused(placement, start)
-    // User rule 2026-10-11: the length the ONE added element has of its own — a break's, a task's minimum time, the
-    // Sleep schedule's — one press away beside the end.
+    // User rules 2026-10-11 and 2026-10-14: the length the added elements have of their own — a break's, a task's
+    // minimum time, the Sleep schedule's, a ring's sound — one press of "Default" away beside the end.
     val default = SearchDomain.placementDefaultLength(state, added)
     // "Now" and "Right-click time" for one day-and-time: to the minute, as the fields say it.
     @Composable
@@ -81,12 +81,18 @@ internal fun CalendarPlacementEditor(
             Switch(checked = placement.endByDelta, onCheckedChange = { on -> write { it.copy(endByDelta = on) } })
             if (placement.endByDelta) {
                 NoteText("ends", color = MaterialTheme.colorScheme.onSurface)
-                LengthField(placement.lengthMillis, mixed = false, blank = "1", defaultUnit = QuotaDomain.LengthUnit.Hours) { length ->
+                LengthField(
+                    placement.lengthMillis,
+                    mixed = false,
+                    blank = "1",
+                    defaultUnit = QuotaDomain.LengthUnit.Hours,
+                    units = QuotaDomain.LengthUnit.entries,
+                ) { length ->
                     write { it.copy(lengthMillis = length) }
                 }
                 NoteText("after the start", color = MaterialTheme.colorScheme.onSurface)
                 default?.let { own ->
-                    FrameButton(own.label, enabled = placement.lengthMillis != own.lengthMillis) { write { it.copy(lengthMillis = own.lengthMillis) } }
+                    FrameButton("Default", enabled = placement.lengthMillis != own) { write { it.copy(lengthMillis = own) } }
                 }
             } else {
                 val endAt = placement.endMillis?.let { localOf(it, tz) }
@@ -107,8 +113,8 @@ internal fun CalendarPlacementEditor(
                 }
                 instantButtons { at -> write { it.copy(endMillis = at) } }
                 if (default != null && start != null) {
-                    FrameButton(default.label, enabled = placement.endMillis != start + default.lengthMillis) {
-                        write { it.copy(endMillis = start + default.lengthMillis) }
+                    FrameButton("Default", enabled = placement.endMillis != start + default) {
+                        write { it.copy(endMillis = start + default) }
                     }
                 }
             }

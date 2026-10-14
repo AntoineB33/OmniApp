@@ -921,12 +921,17 @@ suggestions before it was ever entered.
     window's filter, `Config.actionQuery`, a different field. Opened by the calendar's "add…", the bar holds "add
     to calendar" (`CALENDAR_ADD_ACTION_SEARCH`, in `calendarAddConfig` and where "add…" re-points an open window).
     Local view state (`actionSearch` in the stored configuration, absent = empty).
-  - **"Add to the calendar"'s end has a DEFAULT button where the one added element has a length of its own** (user
-    rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button next to the
-    'ends' field to set it to 15 minutes"*; `SearchDomain.placementDefaultLength`, `CalendarPlacementEditor`): a 5- or
-    15-minute screen break's length (a 20-second one is shorter than the shortest block the calendar lays, so none), a
-    task's minimum execution time, the Sleep schedule's sleep time for "sleep" and its period's length for "before
-    bed". One added element only; beside the length, and beside the day-and-time when the end is stated that way.
+  - **"Add to the calendar"'s end has a button called "Default" where the added elements have a length of their
+    own** (user rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button
+    next to the 'ends' field to set it to 15 minutes"*; widened 2026-10-14: *"for a timer element […] a button named
+    'default' to set the end of the block at 3 seconds after the start if the sound is set to 3 seconds. […] Find as
+    many elements as possible where it is relevant"*; `SearchDomain.placementDefaultLength` over `elementOwnLength`,
+    `CalendarPlacementEditor`): a 5- or 15-minute screen break's length (a 20-second one is shorter than the shortest
+    block the calendar lays, so none), a task's minimum execution time, the Sleep schedule's sleep time for "sleep" and
+    its period's length for "before bed", an alarm's and a timer's ring sound (`soundSeconds`; a silent one has none).
+    Several added elements get it when every one has a length and they all agree. Always labelled "Default"; beside the
+    length, and beside the day-and-time when the end is stated that way. The length field here offers SECONDS too
+    (to the second); a quota's length field does not (`QuotaDomain.QUOTA_LENGTH_UNITS`).
     **A screen break longer than its name implies cannot be laid where it reaches past now**
     (`placementBreakViolation`: *"spans over more than 15 minutes and has a part in the future part of the
     timeline"*): "Add" is off and the line under it says why. Wholly behind the line it is history rewritten, and

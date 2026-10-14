@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Add to the calendar"'s end: a "Default" button for more elements — 2026-10-14
+
+The user: "Under 'Add in the calendar' for a timer element, the end field, there should be a button named 'default' to
+set the end of the block at 3 seconds after the start if the sound is set to 3 seconds. In the 15min break element, the
+button must also be named 'default'. Find as many elements as possible where it is relevant." The button beside the end
+is now always called "Default" (it was "15 min", "Minimum time (…)", "Sleep schedule (…)"). It now also appears for an
+alarm and a timer (their ring sound's length), and for several added elements whose own lengths all agree.
+`SearchDomain.placementDefaultLength` returns the length alone; `elementOwnLength` gives each element's. The end's
+length field gained a "seconds" unit (to the second); a quota's length field keeps minutes and up. `QuotaTest`,
+`SearchAddedElementsTest`. Client rebuild only.
+
 ### The notifications calendar opens on its notifications and the now-line — 2026-10-14
 
 The user: "The window on the timeline of the calendar window linked to an unfocused notif must be by default from the

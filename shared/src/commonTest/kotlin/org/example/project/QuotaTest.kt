@@ -475,7 +475,14 @@ class QuotaTest {
         // User rule 2026-10-05: the field is a number and a unit's drop-down. A stored length reads in the largest unit
         // it is a whole number of; a number is written in the unit picked, to the minute.
         val units = QuotaDomain.LengthUnit.entries.associateBy { it.label }
-        assertEquals(listOf("minutes", "hours", "days", "weeks"), QuotaDomain.LengthUnit.entries.map { it.label })
+        assertEquals(listOf("minutes", "hours", "days", "weeks"), QuotaDomain.QUOTA_LENGTH_UNITS.map { it.label })
+        // Seconds are "Add to the calendar"'s (a ring's sound, user rule 2026-10-14) — and to the second there.
+        val all = QuotaDomain.LengthUnit.entries
+        assertEquals(units["seconds"], QuotaDomain.lengthUnitOf(3_000L, all))
+        assertEquals(units["minutes"], QuotaDomain.lengthUnitOf(3_000L), "a quota's field has no seconds")
+        assertEquals(units["minutes"], QuotaDomain.lengthUnitOf(120_000L, all))
+        assertEquals(3_000L, QuotaDomain.parseLengthIn("3", units.getValue("seconds")))
+        assertEquals(90_000L, QuotaDomain.parseLengthIn("90", units.getValue("seconds")))
         assertEquals(units["weeks"], QuotaDomain.lengthUnitOf(WEEK))
         assertEquals(units["days"], QuotaDomain.lengthUnitOf(3 * DAY))
         assertEquals(units["hours"], QuotaDomain.lengthUnitOf(DAY + 12 * HOUR))

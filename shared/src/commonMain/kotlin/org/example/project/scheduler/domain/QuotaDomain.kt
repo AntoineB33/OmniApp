@@ -196,18 +196,27 @@ object QuotaDomain {
 
     /**
      * **The unit a length is typed in** (user rule 2026-10-05): the length field is a number and a drop-down of these.
-     * A length is stored in millis whatever unit it was typed in; the unit is how the field reads it.
+     * A length is stored in millis whatever unit it was typed in; the unit is how the field reads it. Seconds are
+     * "Add to the calendar"'s only (an alarm's ring, user rule 2026-10-14): a quota's lengths are to the minute
+     * ([QUOTA_LENGTH_UNITS]).
      */
     enum class LengthUnit(val label: String, val millis: Long) {
+        Seconds("seconds", 1_000L),
         Minutes("minutes", 60_000L),
         Hours("hours", 3_600_000L),
         Days("days", 86_400_000L),
         Weeks("weeks", 604_800_000L),
     }
 
-    /** The unit a stored length reads best in: the largest it is a whole number of (36 h is hours, 24 h a day). */
-    fun lengthUnitOf(millis: Long): LengthUnit =
-        LengthUnit.entries.lastOrNull { millis > 0L && millis % it.millis == 0L } ?: LengthUnit.Minutes
+    /** The units a quota's length field offers: every one but seconds. */
+    val QUOTA_LENGTH_UNITS: List<LengthUnit> = LengthUnit.entries - LengthUnit.Seconds
+
+    /**
+     * The unit a stored length reads best in, among [units]: the largest it is a whole number of (36 h is hours, 24 h
+     * a day), else the smallest.
+     */
+    fun lengthUnitOf(millis: Long, units: List<LengthUnit> = QUOTA_LENGTH_UNITS): LengthUnit =
+        units.lastOrNull { millis > 0L && millis % it.millis == 0L } ?: units.first()
 
     /** [millis] as a number of [unit]: whole where it is (`7`), else to the hundredth (`1.5`). */
     fun lengthIn(millis: Long, unit: LengthUnit): String {
@@ -218,15 +227,16 @@ object QuotaDomain {
     }
 
     /**
-     * A typed number of [unit], in millis, to the minute (`1.5` hours is 90 minutes; a comma reads as the point). Null
-     * for anything that is not a number, or for a length of nothing.
+     * A typed number of [unit], in millis, to the minute (`1.5` hours is 90 minutes; a comma reads as the point) — to
+     * the second when typed in seconds. Null for anything that is not a number, or for a length of nothing.
      */
     fun parseLengthIn(text: String, unit: LengthUnit): Long? {
         // Digits and one point only: the JVM's own reading takes `1d` and `1f` for numbers, and they are not lengths.
         val typed = text.trim().replace(',', '.').takeIf { Regex("""\d+\.?\d*|\.\d+""").matches(it) } ?: return null
         val number = typed.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 } ?: return null
-        val minutes = kotlin.math.round(number * unit.millis / 60_000.0)
-        return if (minutes < 1.0 || minutes > 5_256_000_000.0) null else minutes.toLong() * 60_000L
+        val step = if (unit == LengthUnit.Seconds) 1_000L else 60_000L
+        val steps = kotlin.math.round(number * unit.millis / step)
+        return if (steps < 1.0 || steps * step > 5_256_000_000.0 * 60_000.0) null else steps.toLong() * step
     }
 
     /** A length as the field reads it: `7d`, `1d 12h`, `2h 30min`, `45min` — whole minutes, the largest units first. */

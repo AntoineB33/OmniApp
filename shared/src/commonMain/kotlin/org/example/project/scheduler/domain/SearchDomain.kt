@@ -3937,37 +3937,53 @@ object SearchDomain {
     fun placementRefused(placement: Placement, startMillis: Long): Boolean =
         placementEnd(placement, startMillis) <= startMillis
 
-    /** A length "Add to the calendar"'s end can be set to at a press: what it is called, and the length. */
-    data class PlacementDefault(val label: String, val lengthMillis: Long)
-
     /**
      * User rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button next
-     * to the 'ends' field to set it to 15 minutes."* — **the length the ONE added element has of its own**, or null
-     * where there are several elements or the one has none:
+     * to the 'ends' field to set it to 15 minutes."* — widened 2026-10-14 (*"Under 'Add in the calendar' for a timer
+     * element, the end field, there should be a button named 'default' to set the end of the block at 3 seconds after
+     * the start if the sound is set to 3 seconds. […] Find as many elements as possible where it is relevant"*):
+     * **the length the added elements have of their own** — the one every one of them has ([elementOwnLength]), or
+     * null where one has none or two disagree. The button that sets it is called "Default" whatever gives it.
+     */
+    fun placementDefaultLength(state: SchedulerState, added: List<Result>): Long? {
+        if (added.isEmpty()) return null
+        val lengths = added.map { elementOwnLength(state, it) ?: return null }.distinct()
+        return lengths.singleOrNull()
+    }
+
+    /**
+     * The length ONE added element has of its own, or null where it has none:
      *  - a screen break: as long as its name implies (`docs/scheduler_requirements.md`: *"A screen break period lasts
      *    as long as its name implies"*) — the 5- and 15-minute ones; a 20-second one is shorter than the shortest
-     *    block the calendar lays, so it has no button;
+     *    block the calendar lays, so it has none;
      *  - a task: its minimum execution time, which is the length a panel of it is meant to reach;
-     *  - the "sleep" period: the Sleep schedule's sleep time; "before bed": the length of its period before bed.
+     *  - the "sleep" period: the Sleep schedule's sleep time; "before bed": the length of its period before bed;
+     *  - an alarm and a timer: how long its ring sounds ([org.example.project.scheduler.model.AlarmEntry.soundSeconds]).
      */
-    fun placementDefaultLength(state: SchedulerState, added: List<Result>): PlacementDefault? {
-        val only = added.singleOrNull() ?: return null
-        addedTaskIds(state, listOf(only)).singleOrNull()?.let { id ->
-            val minutes = state.tasks[id]?.minimumMinutes ?: return null
-            return if (minutes > 0) PlacementDefault("Minimum time (" + lengthText(minutes * 60_000L) + ")", minutes * 60_000L) else null
+    fun elementOwnLength(state: SchedulerState, row: Result): Long? {
+        if (row is TaskResult) {
+            val minutes = state.tasks[row.taskId]?.minimumMinutes ?: return null
+            return if (minutes > 0) minutes * 60_000L else null
         }
-        if (only !is ItemResult || only.kind != Kind.RestrictivePeriod) return null
-        breakLengthMillis(state, only.id)?.let { length ->
-            return if (length >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) PlacementDefault(lengthText(length), length) else null
+        if (row !is ItemResult) return null
+        val seconds = when (row.kind) {
+            Kind.Alarm -> state.alarms.firstOrNull { it.id == row.id }?.soundSeconds
+            Kind.Timer -> state.timers.firstOrNull { it.id == row.id }?.soundSeconds
+            else -> null
+        }
+        if (seconds != null) return if (seconds > 0) seconds * 1_000L else null
+        if (row.kind != Kind.RestrictivePeriod) return null
+        breakLengthMillis(state, row.id)?.let { length ->
+            return if (length >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) length else null
         }
         val minutes =
-            when (only.id) {
+            when (row.id) {
                 // (No Sleep schedule on the account: no length to offer.)
                 PeriodKinds.SLEEP -> state.sleep?.sleepDurationMinutes ?: return null
                 PeriodKinds.BEFORE_BED -> state.sleep?.beforeBedMinutes ?: return null
                 else -> return null
             }
-        return if (minutes > 0) PlacementDefault("Sleep schedule (" + lengthText(minutes * 60_000L) + ")", minutes * 60_000L) else null
+        return if (minutes > 0) minutes * 60_000L else null
     }
 
     /** How long a screen break of [kind] lasts on this account, or null where [kind] is no screen break. */
