@@ -876,7 +876,9 @@ suggestions before it was ever entered.
     in the action section must be the same as clicking its expansion arrow button. Same thing for the title of the
     sections of the Search window and the calendar window."*; `Modifier.togglesSection`, beside every `SectionArrow`
     that has a title: a group of actions and the group inside it, the Search window's three sections, the
-    Configuration Search window's groups, the calendar's "Configuration"). It is handed the arrow's own handler —
+    Configuration Search window's groups, the calendar's "Configuration" and — user rule 2026-10-14, *"the title of
+    both sections must be clickable"* — the calendar grid's, its month label (`WeekView(onCollapse)`). A retracted
+    section is its arrow alone, so it is the arrow that expands it). It is handed the arrow's own handler —
     never a second answer to the press. A section retracted to a strip has no title, and the calendar's grid never
     had one: their arrow is the way back.
   - **Escape in a search bar puts back what it held when it took the keyboard** (user rule 2026-10-13: *"In a

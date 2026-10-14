@@ -10,6 +10,7 @@ import org.example.project.ui.MIN_WINDOW_HEIGHT_PX
 import org.example.project.ui.WindowChrome
 import org.example.project.ui.WindowFill
 import org.example.project.ui.WindowFrameState
+import org.example.project.ui.WindowHalf
 
 /**
  * `docs/invariants/popups.md`: the whole of a window's geometry — the head's drag, the three resizable
@@ -271,6 +272,55 @@ class WindowFrameStateTest {
         s.moveBy(Offset(0f, 30f))
         s.clampVertical(containerHeight = 800f, windowHeight = 300f, headHeight = 36f)
         assertEquals(30f, s.offset.y)
+    }
+
+    @Test
+    fun `a window clamped by a content area still growing goes back to where it was put`() {
+        // Anomaly 2026-10-14: the notifications window put in the top half of a 1404 px content area (offset -351,
+        // height 702) came back at launch ~150 px down — the first layout ran at the app window's restored 1100 px,
+        // before the maximize, and the clamp kept what it left.
+        val s = WindowFrameState("Search#2", initialOffset = Offset(0f, -351f), initialSize = Size(1353f, 702f))
+        s.clampVertical(containerHeight = 1100f, windowHeight = 702f, headHeight = 60f)
+        assertEquals(-199f, s.offset.y)
+        s.clampVertical(containerHeight = 1404f, windowHeight = 702f, headHeight = 60f)
+        assertEquals(-351f, s.offset.y)
+        // Moved by the hand since the clamp: the hand's place is the one kept.
+        s.clampVertical(containerHeight = 1100f, windowHeight = 702f, headHeight = 60f)
+        s.moveBy(Offset(0f, 50f))
+        s.clampVertical(containerHeight = 1404f, windowHeight = 702f, headHeight = 60f)
+        assertEquals(-149f, s.offset.y)
+    }
+
+    @Test
+    fun `a window held in a half follows the content area until the hand moves it`() {
+        // Anomaly 2026-10-14: the "unfocused notif" pair was sized once off the 1054 px area of the app window's
+        // restored size at launch, and stayed that size once it was maximized to 1404 px.
+        val s = state(width = 400f, height = 300f)
+        s.holdHalf(WindowHalf.Top)
+        assertEquals(WindowFill.Width, s.fill)
+        assertTrue(s.fitHalf(1054f))
+        assertEquals(527f, s.size.height)
+        assertEquals(-263.5f, s.offset.y)
+        assertTrue(s.fitHalf(1404f))
+        assertEquals(702f, s.size.height)
+        assertEquals(-351f, s.offset.y)
+        // Fitted already: nothing to keep.
+        assertFalse(s.fitHalf(1404f))
+        val bottom = state(width = 400f, height = 300f)
+        bottom.holdHalf(WindowHalf.Bottom)
+        bottom.fitHalf(1404f)
+        assertEquals(351f, bottom.offset.y)
+        // The hand moved it: it is the user's now.
+        s.moveBy(Offset(0f, 40f))
+        assertFalse(s.fitHalf(1054f))
+        assertEquals(-311f, s.offset.y)
+        // So is one the hand resized, or maximized.
+        bottom.resizeBottomBy(-20f)
+        assertFalse(bottom.fitHalf(1054f))
+        val maximized = state(width = 400f, height = 300f)
+        maximized.holdHalf(WindowHalf.Top)
+        maximized.toggleMaximize()
+        assertFalse(maximized.fitHalf(1404f))
     }
 
     @Test

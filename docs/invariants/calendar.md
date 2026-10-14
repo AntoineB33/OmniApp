@@ -405,9 +405,25 @@ Global rules that always apply: `CLAUDE.md`.
 - **The ZOOM is the other half of that rule.** A 20-s look-away is 0.27 dp tall at zoom 1f, so the in-bound
   (`MAX_CALENDAR_ZOOM`) must be high enough to bring the shortest of the three over a label line and under a
   cursor — that is what the ceiling is for, and it is why the band may be left un-named at an ordinary zoom.
-  The effective cap is `maxCalendarZoom(dayHeightPxAtZoom1)`, which lowers it on a display where a whole day row
-  would exceed what a Compose constraint can represent; **every** zoom path clamps through it, the fits
-  (`calendarSpanZoom` / `wholeDayZoom`) included.
+  The effective cap is `maxCalendarZoom(dayHeightPxAtZoom1)`, which lowers it on a display where a day would pass
+  `MAX_DAY_HEIGHT_PX` (2^25 px, where the `Float` scroll offset still steps by at most 2 px: under two seconds in a
+  viewport); **every** zoom path clamps through it, the fits (`calendarSpanZoom` / `wholeDayZoom`) included.
+- **A day row TALLER THAN `SLICED_DAY_HEIGHT_PX` LAYS OUT ONLY ITS SLICE** (`DaySlice`, `daySlice`; user rule
+  2026-10-14, the zoom reaching seconds). Compose cannot measure a node past ~262 143 px, and a row used to be laid
+  out whole, midnight to midnight — so the ceiling was ~200 000 px a day, about 5 minutes on screen. Past that height
+  a row lays out its cull window (`visibleHourWindow`, whose quantum is also capped at `CULL_QUANTUM_MAX_PX`) plus a
+  viewport on each side, placed at the slice's top, and **everything in it is placed from the slice's origin**: the
+  records' hours move up by it and are cut to it as they enter `DayColumn` (`inSlice` — a cut edge no longer follows
+  the line; a reminder tag or a ring, which has no height, is only moved), the instants the column turns into hours
+  read from a midnight moved down by it (`midnightMillis`; the day's own, `dayMidnightMillis`, stays the column's key
+  and the rings' clamp), what a drag preview derives from an instant is cut to it too, the now-line, the
+  checked-reminder hours and the cull window are moved by it, and a press turned into an instant adds it back
+  (`currentSliceOrigin`, read live like the scale). The hour lines and the graduations — the column's, the gutter's
+  and those a panel redraws over itself (`PanelDecor.originHour`) — are drawn at the hours of the DAY, in `Double`,
+  down to the second (`calendarTickSeconds`, `graduationSeconds`, `graduationLabel` ":MM:SS"). At or below that
+  height a row is the WHOLE day exactly as before (`DaySlice.WholeDay`), so nothing up to the old ceiling changed.
+  **Never size or place anything in a day row from midnight**: from `midnightMillis`, or from a record's hours.
+  `CalendarSecondsRenderTest` renders a 6-second view.
 - **Everything the grid places carries the FULL INSTANT, the NOW-LINE included** (`LocalTime.hourOfDayExact`,
   read by `recordsForDay`). The zoom ceiling is what makes it load-bearing: where a minute is hundreds of
   pixels, reading a time to the minute does not round it, it MOVES it by up to 59 s. The indicator was drawn

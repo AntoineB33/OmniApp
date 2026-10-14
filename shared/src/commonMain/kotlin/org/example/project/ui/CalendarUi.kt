@@ -142,6 +142,7 @@ import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.time.Instant
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -3979,6 +3980,12 @@ fun CalendarFloatingWindow(
      * makes that pick observable.
      */
     jumpNonce: Int = 0,
+    /**
+     * User rule 2026-10-14: the stretch of time (millis) the window opens on, whole — the calendar under an
+     * "unfocused notif" window: its first notification to its last, the now-line included. It opens with "Lock to
+     * now" OFF, which would otherwise pull the view onto the line alone. Null = the ordinary opening.
+     */
+    openingSpan: Pair<Long, Long>? = null,
 ) {
     val frame = rememberWindowFrameState("Calendar", initialOffset, initialSize)
     // PRD §8 zoom: the zoom mechanics live in WeekView (which owns the scroll state + viewport geometry,
@@ -3993,13 +4000,40 @@ fun CalendarFloatingWindow(
     // Compose state — neither persisted nor synced (CLAUDE.md: local-only view state).
     // It starts ON: opening the calendar always lands on the present (with the matching [WeekView] zoom
     // fit), and the window is only composed while it is open, so every open gets this fresh default.
-    var lockNowLine by remember { mutableStateOf(true) }
+    var lockNowLine by remember { mutableStateOf(openingSpan == null) }
+    // User rule 2026-10-14 (anomaly: *"the $now line$ is moving forward, so the window is supposed to get larger,
+    // otherwise the configurations of this calendar window are not satisfied"*): **"Lock to notifications"** — the
+    // view HELD on [openingSpan], its end following the line, as "Lock to now" holds the line in the middle. On for a
+    // calendar opened on a stretch, and on again whenever the stretch changes (new notifications, or the link read a
+    // frame late); released like the other locks, by a scroll, a zoom or a date pick of the hand.
+    var lockNotifications by remember { mutableStateOf(openingSpan != null) }
+    LaunchedEffect(openingSpan) {
+        if (openingSpan != null) {
+            lockNowLine = false
+            lockNotifications = true
+        }
+    }
     // "go to calendar" asked for the task lock: the now-line lock yields to it.
-    LaunchedEffect(lockOnTaskNonce) { if (lockOnTaskNonce > 0) lockNowLine = false }
-    // The two locks are one or the other: turning "Lock to now" on releases the task.
+    LaunchedEffect(lockOnTaskNonce) {
+        if (lockOnTaskNonce > 0) {
+            lockNowLine = false
+            lockNotifications = false
+        }
+    }
+    // The three locks are one or another: turning one on releases the others.
     fun setLockNowLine(on: Boolean) {
         lockNowLine = on
-        if (on) onLockOnTaskChange(false)
+        if (on) {
+            onLockOnTaskChange(false)
+            lockNotifications = false
+        }
+    }
+    fun setLockNotifications(on: Boolean) {
+        lockNotifications = on
+        if (on) {
+            lockNowLine = false
+            onLockOnTaskChange(false)
+        }
     }
     // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
     // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
@@ -4147,6 +4181,9 @@ fun CalendarFloatingWindow(
                     lockTaskMillis = lockTaskMillis?.takeIf { lockOnTask },
                     onReleaseTaskLock = { onLockOnTaskChange(false) },
                     displayMode = displayMode,
+                    spanLock = openingSpan?.takeIf { lockNotifications },
+                    onReleaseSpanLock = { lockNotifications = false },
+                    onCollapse = { gridCollapsed = true },
                 )
                 // The grid's arrow, in its top left corner (the hours' gutter, above the first hour).
                 if (!gridCollapsed) {
@@ -4193,11 +4230,16 @@ fun CalendarFloatingWindow(
                 onToggleAutomaticSchedule = onToggleAutomaticSchedule,
                 lockNowLine = lockNowLine,
                 onLockNowLineChange = ::setLockNowLine,
+                lockNotifications = lockNotifications.takeIf { openingSpan != null },
+                onLockNotificationsChange = ::setLockNotifications,
                 lockedTaskTitle = lockedTaskTitle,
                 lockOnTask = lockOnTask,
                 lockTaskPending = lockTaskPending,
                 onLockOnTaskChange = { on ->
-                    if (on) lockNowLine = false
+                    if (on) {
+                        lockNowLine = false
+                        lockNotifications = false
+                    }
                     onLockOnTaskChange(on)
                 },
                 showReminders = showReminders,
@@ -4233,6 +4275,9 @@ private fun CalendarConfigurationSection(
     onToggleAutomaticSchedule: (Boolean) -> Unit,
     lockNowLine: Boolean,
     onLockNowLineChange: (Boolean) -> Unit,
+    /** "Lock to notifications", or null where the window was opened on no stretch: no switch then. */
+    lockNotifications: Boolean?,
+    onLockNotificationsChange: (Boolean) -> Unit,
     lockedTaskTitle: String?,
     lockOnTask: Boolean,
     lockTaskPending: Boolean,
@@ -4297,6 +4342,10 @@ private fun CalendarConfigurationSection(
         // in the lateral menu): it is about what this window shows.
         MenuAddable(MenuControl.AutoSchedule) { CalendarConfigurationSwitch("Auto schedule", automaticSchedule, onToggleAutomaticSchedule) }
         CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
+        // User rule 2026-10-14: the view held on the notifications this window shows, first to last, the line included.
+        if (lockNotifications != null) {
+            CalendarConfigurationSwitch("Lock to notifications", lockNotifications, onLockNotificationsChange)
+        }
         // PRD §8 "locked on task": there once a task cell's "go to calendar" named a task. Held on the middle of
         // its panel closest to the now-line — or, while none exists yet, on the definitive-schedule front, which
         // the loading mark says.
@@ -4498,17 +4547,30 @@ private const val MIN_CALENDAR_ZOOM = 0.25f
  * overlaps the task panel beside it. This is the other half of that fix: nothing is stretched, and the zoom
  * reaches far enough to look at whatever is too small to read.
  *
+ * User rule 2026-10-14 raised it from 128 to reach SECONDS: the calendar under an "unfocused notif" window opens on
+ * exactly the notifications it shows, and two of them can be seconds apart. A day that tall is no longer laid out
+ * whole — each row lays out only its [DaySlice] — so the bound is the precision of the scroll ([MAX_DAY_HEIGHT_PX]).
+ *
  * The effective cap is [maxCalendarZoom], which lowers this one on a dense display.
  */
-private const val MAX_CALENDAR_ZOOM = 128f
+private const val MAX_CALENDAR_ZOOM = 32_768f
 private const val CALENDAR_ZOOM_STEP = 1.15f
 
 /**
- * The tallest a single day row may be laid out at, in PIXELS. Compose packs a measurement into a `Long`, so
- * a constraint beyond ~262 143 px cannot be represented at all and the layout throws — a limit [MAX_CALENDAR_ZOOM]
- * alone cannot respect, because a day's height at zoom 1f is a dp height times the display's density.
+ * The tallest a day may be, in PIXELS: 2^25, where the `Float` scroll offset still steps by at most 2 px. About
+ * 1.7 s of timeline in a 650 px viewport.
+ *
+ * It used to be 200 000 px, because a day row was laid out WHOLE and Compose packs a measurement into a `Long`: a
+ * constraint beyond ~262 143 px cannot be represented at all and the layout throws. A row taller than
+ * [SLICED_DAY_HEIGHT_PX] now lays out only the hours around the viewport ([DaySlice]), so no node ever gets tall.
  */
-private const val MAX_DAY_HEIGHT_PX = 200_000f
+private const val MAX_DAY_HEIGHT_PX = 33_554_432f
+
+/**
+ * Above this day height a day row lays out only its [DaySlice]; at or below it, the whole day, exactly as it always
+ * has — the old ceiling, so nothing the calendar did up to it changes.
+ */
+internal const val SLICED_DAY_HEIGHT_PX = 200_000f
 
 /**
  * PRD §8 zoom: the effective in-bound — [MAX_CALENDAR_ZOOM], lowered on a display dense enough that a whole
@@ -4536,6 +4598,34 @@ private const val MIN_TICK_DP = 26f
 internal fun calendarTickMinutes(hourHeight: Dp): Int {
     val dpPerMinute = hourHeight.value / 60f
     return listOf(60, 30, 15, 10, 5, 1).lastOrNull { it * dpPerMinute >= MIN_TICK_DP } ?: 60
+}
+
+/**
+ * [calendarTickMinutes] carried on below the minute (user rule 2026-10-14: the zoom reaches seconds), in SECONDS: the
+ * same steps, then 30/15/10/5/1 s. Equal to `calendarTickMinutes(hourHeight) * 60` wherever a minute tick is fine
+ * enough, so a grid that never zooms past the minute draws exactly what it did.
+ */
+internal fun calendarTickSeconds(hourHeight: Dp): Int {
+    val dpPerSecond = hourHeight.value / 3600f
+    return listOf(3600, 1800, 900, 600, 300, 60, 30, 15, 10, 5, 1).lastOrNull { it * dpPerSecond >= MIN_TICK_DP } ?: 3600
+}
+
+/** The graduation instants between [fromHour] and [toHour] of a day, every [tickSeconds], as seconds of the day. */
+internal fun graduationSeconds(fromHour: Float, toHour: Float, tickSeconds: Int): IntProgression {
+    val first = ceil(fromHour * 3600.0 / tickSeconds).toInt() * tickSeconds
+    val last = floor(toHour * 3600.0 / tickSeconds).toInt() * tickSeconds
+    return first..last step tickSeconds.coerceAtLeast(1)
+}
+
+/** The gutter's name for the graduation at [secondOfDay]: the hour on the hour, ":MM" on a minute, ":MM:SS" below. */
+internal fun graduationLabel(secondOfDay: Int): String {
+    val minute = secondOfDay % 3600 / 60
+    val second = secondOfDay % 60
+    return when {
+        minute == 0 && second == 0 -> hourLabel(secondOfDay / 3600)
+        second == 0 -> ":" + minute.toString().padStart(2, '0')
+        else -> ":" + minute.toString().padStart(2, '0') + ":" + second.toString().padStart(2, '0')
+    }
 }
 
 /**
@@ -4604,6 +4694,7 @@ internal data class HourWindow(val topHour: Float, val bottomHour: Float) {
  */
 private const val CULL_QUANTUM_MIN_HOURS = 1f
 private const val CULL_QUANTUM_MAX_HOURS = 6f
+private const val CULL_QUANTUM_MAX_PX = 20_000f
 
 /**
  * The hours of day-row [row] inside a [viewportPx]-tall viewport scrolled to [offsetPx], snapped OUTWARD to
@@ -4619,10 +4710,61 @@ internal fun visibleHourWindow(row: Int, offsetPx: Float, dayHeightPx: Float, vi
     val topHour = (offsetPx - row * dayHeightPx) / hourPx
     val bottomHour = topHour + viewportPx / hourPx
     if (bottomHour <= 0f || topHour >= 24f) return HourWindow.Empty
-    val quantum = (viewportPx / hourPx).coerceIn(CULL_QUANTUM_MIN_HOURS, CULL_QUANTUM_MAX_HOURS)
+    // Never more than [CULL_QUANTUM_MAX_PX] tall: zoomed to seconds an hour is millions of pixels, and the window is
+    // what a sliced row lays out ([DaySlice]).
+    val quantum =
+        (viewportPx / hourPx).coerceIn(minOf(CULL_QUANTUM_MIN_HOURS, CULL_QUANTUM_MAX_PX / hourPx), CULL_QUANTUM_MAX_HOURS)
     return HourWindow(
         topHour = (floor(topHour / quantum) * quantum).coerceIn(0f, 24f),
         bottomHour = (ceil(bottomHour / quantum) * quantum).coerceIn(0f, 24f),
+    )
+}
+
+/**
+ * User rule 2026-10-14 (*"I am sure that I can build a Python script that can show a rectangle with a caption saying
+ * that this rectangle represents 1 second"*): **the part of its day a day row lays out** — from [originHour] to
+ * [endHour] — and the hour everything in the row is placed from.
+ *
+ * A day row used to be laid out whole, midnight to midnight, and slid under the viewport: zooming in made the whole
+ * day taller, and Compose cannot measure a node past ~262 143 px, so the zoom stopped at about 5 minutes on screen.
+ * Past [SLICED_DAY_HEIGHT_PX] a row lays out only the hours around the viewport instead (its [HourWindow], one
+ * viewport more on each side so an edge it cuts is never seen), and whatever that slice shows — an hour or a second —
+ * only changes the scale inside it. [WholeDay] below that height, which is the row exactly as it was.
+ */
+internal data class DaySlice(val originHour: Float, val endHour: Float) {
+    val lengthHours: Float get() = endHour - originHour
+    val isWholeDay: Boolean get() = originHour == 0f && endHour == 24f
+
+    companion object {
+        val WholeDay = DaySlice(0f, 24f)
+    }
+}
+
+/** The [DaySlice] a row with [window] on screen lays out, a day being [dayHeightPx] tall in a [viewportPx]-tall viewport. */
+internal fun daySlice(window: HourWindow, dayHeightPx: Float, viewportPx: Float): DaySlice {
+    if (dayHeightPx <= SLICED_DAY_HEIGHT_PX || viewportPx <= 0f || window == HourWindow.WholeDay) return DaySlice.WholeDay
+    if (window.isEmpty) return DaySlice(0f, 0f)
+    val margin = viewportPx / (dayHeightPx / 24f)
+    return DaySlice((window.topHour - margin).coerceIn(0f, 24f), (window.bottomHour + margin).coerceIn(0f, 24f))
+}
+
+/**
+ * This record placed from [slice]'s origin: its hours moved up by [DaySlice.originHour] and, for one that lasts, cut
+ * to the slice — so no element is taller than the slice. A cut edge no longer follows the line (it is the slice's).
+ * A zero-duration marker (a reminder tag, a ring) is only moved: it has no height, and its stacking sweeps read where
+ * it really is.
+ */
+internal fun PlacedRecord.inSlice(slice: DaySlice): PlacedRecord {
+    if (slice.isWholeDay) return this
+    val origin = slice.originHour
+    if (reminder || alarm) return copy(startHour = startHour - origin, endHour = endHour - origin)
+    val start = (startHour - origin).coerceIn(0f, slice.lengthHours)
+    val end = (endHour - origin).coerceIn(start, slice.lengthHours)
+    return copy(
+        startHour = start,
+        endHour = end,
+        startFollowsLine = startFollowsLine && start == startHour - origin,
+        endFollowsLine = endFollowsLine && end == endHour - origin,
     )
 }
 
@@ -4710,6 +4852,54 @@ private const val MINUTES_PER_DAY = 24 * 60
 
 /** PRD §8: the span of timeline a freshly opened calendar is zoomed to show — an hour and a half. */
 internal const val OPENING_SPAN_MINUTES = 90
+
+/** Where a calendar's grid stands: the leftmost column's top day, the zoom, and how far into that day it is scrolled. */
+internal data class CalendarView(val anchorDay: LocalDate, val zoom: Float, val offsetPx: Float)
+
+/**
+ * User rule 2026-10-14: **a calendar opened on a stretch of time** ([startMillis] to [endMillis]) shows exactly that
+ * stretch — the calendar under an "unfocused notif" window, from its first notification to its last, the now-line
+ * included: the first at the top of the viewport, the last at its bottom. No margin and no minimum (anomaly
+ * 2026-10-14: *"the window is too large"* — the first version padded it by 5 % and never went under the ordinary
+ * hour and a half, so two notifications seconds apart opened on 90 minutes).
+ *
+ * Week mode: each column is its own endless timeline ([rollingDayAt]), so the stretch runs down the column of the day
+ * it starts on, in its week ([weekAnchorDay]). Day mode: the timeline wraps from column to column, so the stretch
+ * fills them all ([columnCount] viewports), from the top of the leftmost. The zoom is clamped into its bounds like any
+ * other: a stretch shorter than what the viewport shows at the zoom CEILING (under two seconds since the rows are
+ * sliced, [DaySlice]; about 5 minutes before — anomaly 2026-10-14 again, a 6-second pair) is centred in it, the
+ * closest the grid can come; one of days at the lowest zoom starts at the top and runs on below the viewport.
+ */
+internal fun calendarSpanView(
+    startMillis: Long,
+    endMillis: Long,
+    timeZone: TimeZone,
+    mode: CalendarDisplayMode,
+    viewportPx: Float,
+    columnCount: Int,
+    dayHeightPxAtZoom1: Float,
+): CalendarView {
+    val dayMode = mode == CalendarDisplayMode.Day
+    val room = if (dayMode) viewportPx * columnCount.coerceAtLeast(1) else viewportPx
+    val span = (endMillis - startMillis).coerceAtLeast(0L)
+    val ceiling = maxCalendarZoom(dayHeightPxAtZoom1)
+    val zoom =
+        if (room <= 0f || dayHeightPxAtZoom1 <= 0f) 1f
+        else if (span == 0L) ceiling
+        else (room / (dayHeightPxAtZoom1 * span / MILLIS_PER_DAY)).toFloat().coerceIn(MIN_CALENDAR_ZOOM, ceiling)
+    // What the viewport shows at that zoom: more than the stretch only where the ceiling stopped the fit.
+    val shown = if (room > 0f && dayHeightPxAtZoom1 > 0f) (room / (dayHeightPxAtZoom1 * zoom) * MILLIS_PER_DAY).toLong() else span
+    val from = startMillis - ((shown - span) / 2).coerceAtLeast(0L)
+    val start = Instant.fromEpochMilliseconds(from).toLocalDateTime(timeZone)
+    return CalendarView(
+        anchorDay = if (dayMode) start.date else weekAnchorDay(start.date),
+        zoom = zoom,
+        // To the millisecond: a stretch of seconds is the whole viewport, and a second is a sixth of it.
+        offsetPx = (start.time.hourOfDayExact() / 24.0 * dayHeightPxAtZoom1 * zoom).toFloat(),
+    )
+}
+
+private const val MILLIS_PER_DAY = 86_400_000.0
 
 /**
  * PRD §7 date pick: the day that must sit in the LEFTMOST column so the picked [date] is shown with its
@@ -4876,6 +5066,16 @@ private fun WeekView(
     displayMode: CalendarDisplayMode = CalendarDisplayMode.Week,
     /** Drawn at the end of the month-label row — the window's own view menu. */
     headerTrailing: @Composable RowScope.() -> Unit = {},
+    /**
+     * User rule 2026-10-14, "Lock to notifications": the stretch of time (millis, start to end) the grid is HELD on,
+     * whole ([calendarSpanView]) — its end carried on by the now-line once the line passes it, so the view grows as the
+     * line moves. Null = not held (and, at the opening, the ordinary hour and a half around the line).
+     */
+    spanLock: Pair<Long, Long>? = null,
+    /** Releases [spanLock]: the hand scrolled, zoomed or picked a date — it looked elsewhere. */
+    onReleaseSpanLock: () -> Unit = {},
+    /** Retracts the grid section (its title, the month, does what its arrow does); null where there is none. */
+    onCollapse: (() -> Unit)? = null,
 ) {
     val tz = remember { TimeZone.currentSystemDefault() }
     // Follows the (possibly simulated) clock so the now-line moves as accelerated time advances.
@@ -4946,6 +5146,12 @@ private fun WeekView(
         if (!on) onReleaseTaskLock()
     }
     val lockTaskState = rememberUpdatedState(lockTaskMillis)
+    // "Lock to notifications", read live by the same long-lived handlers: what the hand does releases it.
+    val spanLockState = rememberUpdatedState(spanLock)
+    val releaseSpanLock = rememberUpdatedState(onReleaseSpanLock)
+    fun releaseSpanLockByHand() {
+        if (spanLockState.value != null) releaseSpanLock.value()
+    }
     // PRD §8 zoom vs. scroll: whether the last pointer event over the grid carried the zoom modifier
     // (Ctrl/Cmd on the event itself, or the focus-tracked key state). The gesture handler below decides a
     // wheel turn is a ZOOM on exactly this, and the scroller consults the SAME decision — so one notch can
@@ -4955,7 +5161,8 @@ private fun WeekView(
     // exactly where DayColumn's current-time indicator is drawn ([hourOfDay]) and the lock must centre on the
     // line the user can see: at the zoom a 20-second break needs, a minute is hundreds of pixels, so a
     // minute-resolution fraction would park the line most of a screen away from it.
-    val nowFraction = now.hourOfDay() / 24f
+    // Below the second since the zoom reaches seconds (user rule 2026-10-14): a second can be a third of the viewport.
+    val nowFraction = (now.hourOfDayExact() / 24.0).toFloat()
     val nowFractionState = rememberUpdatedState(nowFraction)
     val todayState = rememberUpdatedState(today)
     // ADR 0009: where the line is for the LOCK — the reading of the rules until the grid's own line clock
@@ -4974,7 +5181,7 @@ private fun WeekView(
     fun centerOnNowLine(dayH: Float) {
         if (dayH <= 0f || viewportHpx <= 0f) return
         val lineTime = lockTaskState.value?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) } ?: lockLineTime()
-        val dayFraction = lineTime?.time?.hourOfDay()?.div(24f) ?: nowFractionState.value
+        val dayFraction = lineTime?.time?.hourOfDayExact()?.div(24.0)?.toFloat() ?: nowFractionState.value
         val lineDay = lineTime?.date ?: todayState.value
         // PRD §8 day mode: the columns are one timeline, so the line has ONE place — the middle of the
         // LEFTMOST column — and there is no occurrence to choose between.
@@ -5008,6 +5215,8 @@ private fun WeekView(
     // state this needs no mutex and no wait for the scroll range to grow — the offset is a plain number
     // with no upper bound, so a burst of zoom steps composes exactly, one synchronous update each.
     fun applyZoom(factor: Float, focal: Float, focalAfter: Float = focal) {
+        // A zoom is the hand's (the lock below fits by assigning, never through here): the stretch is let go.
+        releaseSpanLockByHand()
         val next = (zoom * factor).coerceIn(MIN_CALENDAR_ZOOM, maxCalendarZoom(dayHeightPxAt(1f)))
         if (next == zoom && focal == focalAfter) return
         val f = next / zoom
@@ -5053,6 +5262,7 @@ private fun WeekView(
         // PRD §8 now-line lock: a scroll — wheel, drag or fling — is the user taking the view somewhere
         // else, so it switches the lock off rather than being fought by it on the next tick.
         if (delta != 0f && lockNow.value) releaseLock.value(false)
+        if (delta != 0f) releaseSpanLockByHand()
         offsetPx += delta
         rebase(dayHeightPxAt(zoom))
         delta
@@ -5082,6 +5292,8 @@ private fun WeekView(
     LaunchedEffect(viewportHpx) {
         if (openingZoomApplied || viewportHpx <= 0f) return@LaunchedEffect
         openingZoomApplied = true
+        // A calendar held on a stretch is fitted by that lock (below), not by the ordinary opening.
+        if (spanLock != null) return@LaunchedEffect
         val target = calendarSpanZoom(viewportHpx, dayHeightPxAt(1f), OPENING_SPAN_MINUTES)
         // Through [applyZoom] rather than assigning [zoom], so the offset is re-anchored and rebased (and,
         // while locked, re-centred on the now-line) exactly as any other zoom is.
@@ -5120,6 +5332,7 @@ private fun WeekView(
         // PRD §8 now-line lock: a date pick is the same intent as a scroll — "take me elsewhere" — so it
         // releases the lock, which would otherwise pull the grid straight back off that day on the next tick.
         if (lockNow.value) releaseLock.value(false)
+        releaseSpanLockByHand()
     }
 
     // PRD §8 now-line lock: re-apply the centring whenever anything it is a function of moves — the clock,
@@ -5238,6 +5451,23 @@ private fun WeekView(
     // PRD §8 now-line lock, on the same clock: re-centred once per pixel the line travels, from an effect
     // rather than a composition read, so the grid itself never recomposes for it.
     SideEffect { lockLineMillis.value = { compositionNowMillis.value } }
+    // User rule 2026-10-14, "Lock to notifications": the view holds the stretch whole, from its start to its end or the
+    // line, whichever is later — *"the $now line$ is moving forward, so the window is supposed to get larger"*. Fitted
+    // again each time the line has travelled a pixel ([compositionNowMillis]: the step that would put it below the
+    // view), from an effect like the now-line lock, never per frame for nothing: the step grows with the stretch, so a
+    // stretch of an hour re-fits every few seconds. Assigned, not zoomed through [applyZoom], which is the hand's.
+    LaunchedEffect(spanLock, viewportHpx, displayMode, columnCount) {
+        val (start, end) = spanLock ?: return@LaunchedEffect
+        if (viewportHpx <= 0f) return@LaunchedEffect
+        snapshotFlow { compositionNowMillis.value }.collect { line ->
+            val view =
+                calendarSpanView(start, maxOf(end, line), tz, modeState.value, viewportHpx, columnCountState.value, dayHeightPxAt(1f))
+            zoom = view.zoom
+            anchorDay = view.anchorDay
+            offsetPx = view.offsetPx
+            rebase(dayHeightPxAt(zoom))
+        }
+    }
     LaunchedEffect(lockNowLine) {
         if (!lockNowLine) return@LaunchedEffect
         snapshotFlow { compositionNowMillis.value }.collect {
@@ -5275,6 +5505,8 @@ private fun WeekView(
             Text(
                 text = monthLabel(anchorDay),
                 style = MaterialTheme.typography.titleMedium,
+                // User rule 2026-10-14: the section's title retracts it, as its arrow does.
+                modifier = onCollapse?.let { Modifier.togglesSection(it) } ?: Modifier,
             )
             if (overlapArmed) {
                 Spacer(Modifier.width(8.dp))
@@ -5455,7 +5687,15 @@ private fun WeekView(
                 Box(Modifier.width(gutterWidth).fillMaxHeight()) {
                     val gutterShift = columnShifts.getOrElse(gutterColumn) { gutterColumn }
                     repeat(rowCount) { row ->
-                        Column(
+                        // PRD §8 / ADR 0009: cull the labels to the hours on screen. Zoomed in, a
+                        // 24-hour gutter is hundreds of Text nodes per row and nearly all of them are
+                        // scrolled out of view.
+                        val window =
+                            hourWindows.value.getOrNull(gutterColumn)?.getOrNull(row) ?: HourWindow.WholeDay
+                        // The part of the day this row lays out ([DaySlice]): the whole day, or zoomed past
+                        // [SLICED_DAY_HEIGHT_PX] the hours around the viewport — the same slice as its columns'.
+                        val slice = daySlice(window, dayHeightPx, viewportHpx)
+                        val rowModifier =
                             Modifier
                                 .fillMaxWidth()
                                 // A day row is `dayHeightPx` tall by construction — that is what the
@@ -5469,16 +5709,40 @@ private fun WeekView(
                                 // only combination that gives a full-height row placed exactly where
                                 // [offsetPx] says. See [DayColumn]'s own note below.
                                 .wrapContentHeight(Alignment.Top, unbounded = true)
-                                .height(hourHeight * 24)
+                                .height(hourHeight * slice.lengthHours)
                                 .offset {
-                                    IntOffset(0, (row * dayHeightPx - columnOffset(gutterColumn, gutterShift)).roundToInt())
-                                },
-                        ) {
-                            // PRD §8 / ADR 0009: cull the labels to the hours on screen. Zoomed in, a
-                            // 24-hour gutter is hundreds of Text nodes per row and nearly all of them are
-                            // scrolled out of view.
-                            val window =
-                                hourWindows.value.getOrNull(gutterColumn)?.getOrNull(row) ?: HourWindow.WholeDay
+                                    IntOffset(
+                                        0,
+                                        (row * dayHeightPx + slice.originHour * dayHeightPx / 24f -
+                                            columnOffset(gutterColumn, gutterShift)).roundToInt(),
+                                    )
+                                }
+                        if (!slice.isWholeDay) {
+                            // Each label placed from the slice's origin, down to the second.
+                            Box(rowModifier) {
+                                val tick = calendarTickSeconds(hourHeight)
+                                if (!window.isEmpty) graduationSeconds(window.topHour, window.bottomHour, tick).forEach { second ->
+                                    Box(
+                                        Modifier
+                                            .offset(y = hourHeight * (second / 3600f - slice.originHour))
+                                            .height(hourHeight * (tick / 3600f))
+                                            .fillMaxWidth()
+                                            .padding(end = 6.dp),
+                                    ) {
+                                        Text(
+                                            text = graduationLabel(second),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (second % 3600 == 0) CalColors.muted
+                                            else CalColors.muted.copy(alpha = 0.5f),
+                                            textAlign = TextAlign.End,
+                                            modifier = Modifier.fillMaxWidth().offset(y = (-6).dp),
+                                        )
+                                    }
+                                }
+                            }
+                            return@repeat
+                        }
+                        Column(rowModifier) {
                             val tick = calendarTickMinutes(hourHeight)
                             val tickHeight = hourHeight * (tick / 60f)
                             val ticksPerDay = 24 * 60 / tick
@@ -5522,6 +5786,9 @@ private fun WeekView(
                         val columnShift = columnShifts.getOrElse(column) { column }
                         repeat(rowCount) { row ->
                             val day = rollingDayAt(anchorDay, row, columnShift)
+                            // The part of the day this row lays out ([DaySlice]) and the pixel it starts at.
+                            val slice = daySlice(windows.getOrElse(row) { HourWindow.WholeDay }, dayHeightPx, viewportHpx)
+                            val sliceTopPx = slice.originHour * dayHeightPx / 24f
                             // Keyed on the day so a column's transient state (an open contextual menu, an
                             // armed move) belongs to the date it was opened on and cannot be inherited by
                             // the next day that rolls into the same slot.
@@ -5541,6 +5808,7 @@ private fun WeekView(
                                             taskColors = taskColors,
                                             taskSheetColors = taskSheetColors,
                                             visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
+                                            slice = slice,
                                             // The badge below is drawn for every row but the top one.
                                             showsDayDate = row > 0,
                                             onAddAt = onAddAt,
@@ -5574,9 +5842,9 @@ private fun WeekView(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .wrapContentHeight(Alignment.Top, unbounded = true)
-                                                .height(hourHeight * 24)
+                                                .height(hourHeight * slice.lengthHours)
                                                 .offset {
-                                                    IntOffset(0, (row * dayHeightPx - columnOffset(column, columnShift)).roundToInt())
+                                                    IntOffset(0, (row * dayHeightPx + sliceTopPx - columnOffset(column, columnShift)).roundToInt())
                                                 },
                                         )
                                     }
@@ -5594,6 +5862,7 @@ private fun WeekView(
                                     taskColors = taskColors,
                                     taskSheetColors = taskSheetColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
+                                    slice = slice,
                                     // The badge below is drawn for every row but the top one.
                                     showsDayDate = row > 0,
                                     onAddAt = onAddAt,
@@ -5627,9 +5896,9 @@ private fun WeekView(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .wrapContentHeight(Alignment.Top, unbounded = true)
-                                        .height(hourHeight * 24)
+                                        .height(hourHeight * slice.lengthHours)
                                         .offset {
-                                            IntOffset(0, (row * dayHeightPx - columnOffset(column, columnShift)).roundToInt())
+                                            IntOffset(0, (row * dayHeightPx + sliceTopPx - columnOffset(column, columnShift)).roundToInt())
                                         }
                                         // Under the press, and unseen, while the released calendar is drawn.
                                         .graphicsLayer { alpha = if (heldShown.value) 0f else 1f },
@@ -5843,6 +6112,13 @@ private fun DayColumn(
      */
     visibleHours: HourWindow,
     /**
+     * User rule 2026-10-14: the part of the day this column lays out ([DaySlice]) — the whole day, or, zoomed past
+     * [SLICED_DAY_HEIGHT_PX], the hours around the viewport. Everything below is placed from its origin: the records'
+     * hours are moved up by it (and cut to it, [inSlice]) as they come in, the instants this column turns into hours
+     * are read from a midnight moved down by it, and a press turned into an instant adds it back.
+     */
+    slice: DaySlice = DaySlice.WholeDay,
+    /**
      * PRD §8: does this column's day boundary carry the in-grid day-date badge ("Mon 12")? True for every
      * row but the top one, whose date is written in the header above the viewport. It is what a panel
      * opening at midnight has to write its own label clear of ([calendarLabelSlots]).
@@ -5860,12 +6136,17 @@ private fun DayColumn(
     // clock here — stepped to the pixel, so it recomposes once per pixel of travel and every other column not
     // at all — and everything below (hit-testing, hover tiles, the overlap slices, whether a label fits) is
     // answered for that position. The remaining fraction of a pixel is the layout phase's ([lineDriftHours]).
-    val columnFollowsLine = sampledRecords.any { it.followsLine }
+    // Placed from the slice's origin ([DaySlice]) — the same records for a whole-day row.
+    val slicedRecords =
+        remember(sampledRecords, slice) {
+            if (slice.isWholeDay) sampledRecords else sampledRecords.map { it.inSlice(slice) }
+        }
+    val columnFollowsLine = slicedRecords.any { it.followsLine }
     val lineElapsedMillis = if (columnFollowsLine) compositionNowMillis.value - sampleNowMillis else 0L
     val records =
-        remember(sampledRecords, lineElapsedMillis) {
-            if (lineElapsedMillis == 0L) sampledRecords
-            else sampledRecords.map { it.advancedAlongLine(lineElapsedMillis) }
+        remember(slicedRecords, lineElapsedMillis) {
+            if (lineElapsedMillis == 0L) slicedRecords
+            else slicedRecords.map { it.advancedAlongLine(lineElapsedMillis) }
         }
     // The edges on this column that follow the line, by the hour they are drawn at. Every placement below asks
     // this ONE set whether its top or bottom moves, so a slice, a period box and a label cut from the same
@@ -5924,8 +6205,11 @@ private fun DayColumn(
     // fall, a "no screen" period ([layerBandsAroundPlaced]). The bubble, the menu and the drawing all read these.
     val refuses = LocalPeriodRefusal.current
     val periodAtLine = LocalPeriodAtLine.current
-    val midnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
+    val dayMidnightMillis = LocalDateTime(day.year, day.month, day.day, 0, 0)
         .toInstant(tz).toEpochMilliseconds()
+    // The instant this column's hour 0 stands for: its midnight, or its slice's origin ([DaySlice]). Every instant
+    // below is turned into an hour from it, so it lands where the (moved) records do.
+    val midnightMillis = dayMidnightMillis + (slice.originHour * 3_600_000.0).roundToLong()
     val layerBands =
         remember(restLayerBands, blockRecords, screenBreakMarkers, periodKindConfig, refuses, midnightMillis) {
             layerBandsAroundPlaced(
@@ -5937,6 +6221,10 @@ private fun DayColumn(
     val derivedLayerPeriods =
         remember(layerBands, periodHits, sleepBands, screenBreakMarkers, periodKindConfig, midnightMillis) {
             derivedLayerPeriods(layerBands, periodHits + sleepBands + screenBreakMarkers, periodKindConfig, midnightMillis)
+                .let { periods ->
+                    // Read from the slice's origin like the rest, and cut to it ([DaySlice]).
+                    if (slice.isWholeDay) periods else periods.map { it.inSlice(DaySlice(0f, slice.lengthHours)) }
+                }
         }
     // PRD §8: the drawn period boxes — one per period ([periodSegments]).
     // Cached on the record list like [overlapLayout], for the same reason: this column recomposes for every
@@ -5952,7 +6240,10 @@ private fun DayColumn(
     // PRD §8 / ADR 0009: is any of `[top, bottom]` on screen? Every emission below asks this first. The
     // lists themselves are deliberately NOT filtered — the sweeps and layouts above/below need the whole
     // day — so culling can never move an element, only omit one that is not visible anyway.
-    fun onScreen(top: Float, bottom: Float) = visibleHours.intersects(top, bottom)
+    val shownHours =
+        if (slice.isWholeDay) visibleHours
+        else HourWindow(visibleHours.topHour - slice.originHour, visibleHours.bottomHour - slice.originHour)
+    fun onScreen(top: Float, bottom: Float) = shownHours.intersects(top, bottom)
 
     /** The same test for the fixed-height markers, whose position is a Dp down the column, not an hour. */
     fun onScreenDp(top: Dp, bottom: Dp) =
@@ -5966,11 +6257,12 @@ private fun DayColumn(
     //    column carries a line at all, whether it is scrolled into view, which tags are overdue.
     //  • [nowLineHour] — the exact clock, sampled per frame and read back in the DRAW phase. It decides
     //    only WHERE those elements are placed, which is the half that has to be continuous.
-    val nowHour = now?.hourOfDay()
+    // Both from the slice's origin, like everything else this column places.
+    val nowHour = now?.hourOfDay()?.minus(slice.originHour)
     val nowLineOnScreen = nowHour != null && onScreen(nowHour, nowHour)
     // Read only inside the `graphicsLayer` blocks below: the exact clock as an hour of THIS day.
     fun nowLineHour(): Double =
-        Instant.fromEpochMilliseconds(frameNowMillis.value).toLocalDateTime(tz).time.hourOfDayExact()
+        Instant.fromEpochMilliseconds(frameNowMillis.value).toLocalDateTime(tz).time.hourOfDayExact() - slice.originHour
 
     // PRD §8: the bubble sections EVERY hoverable element in this column stacks under its own — the grey
     // periods the cursor sits inside and the two "nobody unlocked" LAYERS hatched over it. The layers
@@ -6156,6 +6448,8 @@ private fun DayColumn(
     // task panel the cursor is plainly inside. Fresh lists with stale arithmetic is not half a fix, it is the
     // same bug: everything the closure reads has to be live, and these are the rest of what it reads.
     val currentHourHeightPx by rememberUpdatedState(with(density) { hourHeight.toPx() })
+    // …and the hour a press's y is counted from ([DaySlice]), which moves with the scroll once the rows are sliced.
+    val currentSliceOrigin by rememberUpdatedState(slice.originHour)
     val currentReminderHeightPx by rememberUpdatedState(with(density) { REMINDER_TAG_HEIGHT.toPx() })
     val currentRingHeightPx by rememberUpdatedState(with(density) { ALARM_MARKER_HEIGHT.toPx() })
     // Read by the phone's menu-armed "move" drag, for the same reason [currentRecords] is.
@@ -6172,7 +6466,7 @@ private fun DayColumn(
     // Read by the menu's hit test and by the label placement ([calendarLabelSlots]) — one sweep, not two.
     val reminderPlacements =
         reminderTagPlacements(reminderTags, hourHeight, nowHour) { tag ->
-            tag.checkedAtMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() }
+            tag.checkedAtMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() - slice.originHour }
         }
     val currentReminderPlacements by rememberUpdatedState(reminderPlacements)
 
@@ -6257,13 +6551,17 @@ private fun DayColumn(
             val raw = period?.let { periodDragBounds(it, drag.edge, deltaMillis) } ?: return@let null
             val left = periodAtLine(period.restrictiveKind, raw)
             if (left == raw) return@let null
-            fun hour(millis: Long) = ((millis - midnightMillis) / 3_600_000f).coerceIn(0f, 24f)
+            fun hour(millis: Long) = ((millis - midnightMillis) / 3_600_000f).coerceIn(0f, slice.lengthHours)
             HeldPeriodCut(drag.key, left?.let { hour(it.startEpochMillis) to hour(it.endEpochMillis) }?.takeIf { it.second > it.first })
         }
+    // What these derive from an instant is placed from [midnightMillis] — the slice's origin — but not cut to the
+    // slice: [inSliceLength] does that, so nothing they draw is taller than the row.
+    fun PlacedRecord.inSliceLength(): PlacedRecord =
+        if (slice.isWholeDay) this else inSlice(DaySlice(0f, slice.lengthHours))
     val liveRecords =
-        dragPreview?.let { blocksForBlockDrag(effRecords, it.key, it.range, it.shareWidth, midnightMillis) }
+        dragPreview?.let { blocksForBlockDrag(effRecords, it.key, it.range, it.shareWidth, midnightMillis).map { r -> r.inSliceLength() } }
             ?: if (movedPeriods.isEmpty()) effRecords
-            else blocksForPeriodDrag(effRecords, movedPeriods, midnightMillis, refuses)
+            else blocksForPeriodDrag(effRecords, movedPeriods, midnightMillis, refuses).map { it.inSliceLength() }
     // The period boxes as DRAWN: at rest but while a task block is dragged over one that refuses it. The
     // gesture half keeps reading [drawnPeriods] — those nodes hold a press and must not change under it.
     val shownPeriods =
@@ -6272,7 +6570,7 @@ private fun DayColumn(
                 periodSegments(
                     periodsForBlockDrag(
                         periodRecords, effRecords, sleepBands, dragged, preview.range, midnightMillis, refuses,
-                    ),
+                    ).map { it.inSliceLength() },
                 )
             }
         } ?: drawnPeriods
@@ -6284,14 +6582,14 @@ private fun DayColumn(
                 restLayerBands,
                 placedPanelSpans(effRecords, preview.key to preview.range, screenBreakMarkers, refuses),
                 periodKindConfig, refuses, midnightMillis,
-            )
+            ).map { it.inSliceLength() }
         } ?: layerBands
 
     // Epoch millis at a vertical pixel offset within this 24-hour column. [currentHourHeightPx], never
     // `hourHeight`: this is called from the gesture closure, which outlives a zoom (above) — and it is what
     // anchors "add…", so a stale scale would lay the new thing at an hour nobody pointed at.
     fun millisAt(offsetY: Float): Long {
-        val hours = pressHour(offsetY, currentHourHeightPx)
+        val hours = (pressHour(offsetY, currentHourHeightPx) + currentSliceOrigin).coerceIn(0f, 23.999f)
         val hour = hours.toInt()
         val minute = ((hours - hour) * 60f).toInt().coerceIn(0, 59)
         return LocalDateTime(day.year, day.month, day.day, hour, minute)
@@ -6306,7 +6604,8 @@ private fun DayColumn(
      * at: a block added from a click starts on a minute.
      */
     fun exactMillisAt(offsetY: Float): Long {
-        val seconds = (pressHour(offsetY, currentHourHeightPx).toDouble() * 3600.0).toInt().coerceIn(0, 24 * 3600 - 1)
+        val seconds =
+            ((pressHour(offsetY, currentHourHeightPx).toDouble() + currentSliceOrigin) * 3600.0).toInt().coerceIn(0, 24 * 3600 - 1)
         return LocalDateTime(day.year, day.month, day.day, seconds / 3600, seconds % 3600 / 60, seconds % 60)
             .toInstant(tz)
             .toEpochMilliseconds()
@@ -6386,7 +6685,7 @@ private fun DayColumn(
     androidx.compose.runtime.DisposableEffect(elementDrag) {
         onDispose { if (toldHeld) elementDrag.heldInCalendar = null }
     }
-    androidx.compose.runtime.DisposableEffect(elementDrag, midnightMillis) {
+    androidx.compose.runtime.DisposableEffect(elementDrag, dayMidnightMillis) {
         val lent =
             CalendarElementDrag.Column(
                 timeAt = { windowPosition ->
@@ -6397,8 +6696,8 @@ private fun DayColumn(
                 },
                 records = { currentAllRecords.value },
             )
-        elementDrag.columns[midnightMillis] = lent
-        onDispose { if (elementDrag.columns[midnightMillis] === lent) elementDrag.columns.remove(midnightMillis) }
+        elementDrag.columns[dayMidnightMillis] = lent
+        onDispose { if (elementDrag.columns[dayMidnightMillis] === lent) elementDrag.columns.remove(dayMidnightMillis) }
     }
 
     Box(
@@ -6592,6 +6891,23 @@ private fun DayColumn(
                 }
             },
     ) {
+        // A sliced row ([DaySlice]) draws its lines at the hours and graduations of the DAY, from the slice's origin
+        // and down to the second; a whole-day row as it always has.
+        val tickSeconds = if (slice.isWholeDay) calendarTickMinutes(hourHeight) * 60 else calendarTickSeconds(hourHeight)
+        val tickMinutes = tickSeconds / 60
+        if (!slice.isWholeDay) {
+            val faint = CalColors.grid.copy(alpha = 0.4f)
+            Box(
+                Modifier.fillMaxSize().drawBehind {
+                    val hourPx = hourHeight.toPx().toDouble()
+                    for (second in graduationSeconds(slice.originHour, slice.endHour, tickSeconds)) {
+                        val y = ((second / 3600.0 - slice.originHour) * hourPx).toFloat()
+                        if (second % 3600 == 0) drawLine(CalColors.grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                        else drawLine(faint, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                    }
+                },
+            )
+        } else {
         // Hour grid lines.
         Column(Modifier.fillMaxSize()) {
             for (hour in 0..23) {
@@ -6603,10 +6919,10 @@ private fun DayColumn(
                 )
             }
         }
+        }
         // PRD §8 graduation: once zoomed in, faint sub-hour lines at the current tick (every 30/15/10/5/1
         // min); the on-hour lines are already drawn above. One draw pass (cheap regardless of zoom).
-        val tickMinutes = calendarTickMinutes(hourHeight)
-        if (tickMinutes < 60) {
+        if (slice.isWholeDay && tickMinutes < 60) {
             val faint = CalColors.grid.copy(alpha = 0.4f)
             Box(
                 Modifier.fillMaxSize().drawBehind {
@@ -6631,7 +6947,7 @@ private fun DayColumn(
         // panel, band and marker, so anything drawn above still wins its own hover and only the stretches
         // nothing else claims fall through to here. Culled to the visible window like everything else
         // (ADR 0009): a layer scrolled out of view emits no node.
-        bubbleHoverZones(0f, 24f, contextOverlays).forEach { zone ->
+        bubbleHoverZones(0f, slice.lengthHours, contextOverlays).forEach { zone ->
             if (zone.sections.isEmpty() || !onScreen(zone.top, zone.bottom)) return@forEach
             Box(
                 Modifier
@@ -6842,7 +7158,7 @@ private fun DayColumn(
         // User rule 2026-10-01: what of this column crosses a task panel, which the panel redraws over itself in the
         // colour of highest contrast with its task's ([PanelDecor]) — the same markings, outlines and lines the
         // column draws under the panels below. Held on what it reads, so a keystroke elsewhere costs nothing.
-        val panelDecor = remember(sleepBands, shownPeriods, shownLayerBands, periodKindConfig, tickMinutes) {
+        val panelDecor = remember(sleepBands, shownPeriods, shownLayerBands, periodKindConfig, tickSeconds, slice.originHour) {
             val sleepDrawingsForPanels = periodKindConfig.boxDrawings(PeriodKinds.SLEEP)
             PanelDecor(
                 bands =
@@ -6863,7 +7179,8 @@ private fun DayColumn(
                             val kind = if (band.layerFake) PeriodKinds.fakeLayerKind(band.layer!!) else PeriodKinds.layerKind(band.layer!!)
                             PanelDecorBand(band.startHour, band.endHour, listOf(periodKindConfig.drawing(kind)), outlined = false)
                         },
-                tickMinutes = tickMinutes,
+                tickSeconds = tickSeconds,
+                originHour = slice.originHour,
             )
         }
         // PRD §8 Overlap Mode: the panels at their in-progress layout while a move/resize preview shows (the
@@ -6890,7 +7207,7 @@ private fun DayColumn(
         val labelSlots =
             remember(
                 liveRecords, liveLayout, screenBreakMarkers, sideLayout, bandLabels, sleepBands, shownPeriods,
-                reminderPlacements, alarmPlacements, chipPlacements, hourHeight, showsDayDate,
+                reminderPlacements, alarmPlacements, chipPlacements, hourHeight, showsDayDate, slice.originHour,
             ) {
                 fun y(hour: Float) = (hourHeight * hour).value
                 val labels = buildList {
@@ -6942,7 +7259,8 @@ private fun DayColumn(
                     }
                 }
                 val obstacles = buildList {
-                    if (showsDayDate) add(CalendarLabelObstacle(0f, DAY_DATE_BADGE_HEIGHT.value))
+                    // At the day's midnight, which is the top of the row only when the row starts there ([DaySlice]).
+                    if (showsDayDate && slice.originHour == 0f) add(CalendarLabelObstacle(0f, DAY_DATE_BADGE_HEIGHT.value))
                     reminderPlacements.forEach { (_, top) ->
                         add(CalendarLabelObstacle(top.value, (top + REMINDER_TAG_HEIGHT).value))
                     }
@@ -7486,7 +7804,7 @@ private fun DayColumn(
                 // time is a time of day), and is committed through the blocks' own funnel, which knows a ring.
                 onMoveBy = { deltaMillis ->
                     val target = (marker.fullStartMillis + deltaMillis)
-                        .coerceIn(midnightMillis, midnightMillis + 24 * 3_600_000L - 60_000L)
+                        .coerceIn(dayMidnightMillis, dayMidnightMillis + 24 * 3_600_000L - 60_000L)
                     onCommitBounds(marker, target, target, false)
                 },
                 onLockScroll = onLockScroll,
@@ -7529,7 +7847,7 @@ private fun DayColumn(
             else underOverlaysFor(CalendarOverlayLayer.Tag)
         fun checkedAtHour(tag: PlacedRecord): Float? =
             tag.checkedAtMillis?.let {
-                Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay()
+                Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() - slice.originHour
             }
         fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
         // PRD §14: scheduled reminders that fall at the same time — or close enough that their fixed-height
@@ -9576,7 +9894,13 @@ private fun CalendarBlockBody(
  * Outside the panel they keep their own colour, drawn under it; inside, the same pattern continues in the contrast
  * colour — the tiles are aligned on the column, so a line crossing the panel's edge does not break.
  */
-internal data class PanelDecor(val bands: List<PanelDecorBand>, val tickMinutes: Int)
+internal data class PanelDecor(
+    val bands: List<PanelDecorBand>,
+    /** The column's graduation ([calendarTickSeconds]); a whole hour draws none between the hour lines. */
+    val tickSeconds: Int,
+    /** The hour of the day the column places from ([DaySlice.originHour]): 0 for a whole-day row. */
+    val originHour: Float = 0f,
+)
 
 /**
  * One full-width band of [PanelDecor]: its hours, its drawings, and whether the panel redraws its outline — a grey
@@ -9609,20 +9933,22 @@ private fun Modifier.panelDecor(placement: PanelDecorPlacement, color: Color): M
         val outline = USER_PLACED_BORDER_DP.toPx()
         val corner = 3.dp.toPx()
         onDrawBehind {
-            // The hour lines, and the graduation ticks between them when zoomed in.
-            val firstHour = kotlin.math.floor(placement.topHour).toInt()
-            val lastHour = kotlin.math.ceil(placement.topHour + size.height / hh).toInt()
-            for (h in firstHour..lastHour) {
-                val y = h * hh - top
+            // The hour lines, and the graduation ticks between them when zoomed in — at the hours of the DAY, so
+            // read from the row's slice origin ([DaySlice]), and in Double: zoomed to seconds a Float hour of day
+            // is a few pixels coarse. The block clips them, so only the ones over it are drawn.
+            val origin = decor.originHour.toDouble()
+            val absTop = placement.topHour + decor.originHour
+            val absBottom = absTop + size.height / hh
+            fun yOf(secondOfDay: Int) = ((secondOfDay / 3600.0 - origin) * hh).toFloat() - top
+            for (second in graduationSeconds(absTop, absBottom, 3600)) {
+                val y = yOf(second)
                 drawLine(color, Offset(0f, y), Offset(size.width, y), strokeWidth = line)
             }
-            if (decor.tickMinutes < 60) {
-                val ticks = 60 / decor.tickMinutes
-                for (h in firstHour..lastHour) {
-                    for (k in 1 until ticks) {
-                        val y = (h + k / ticks.toFloat()) * hh - top
-                        drawLine(color, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-                    }
+            if (decor.tickSeconds < 3600) {
+                for (second in graduationSeconds(absTop, absBottom, decor.tickSeconds)) {
+                    if (second % 3600 == 0) continue
+                    val y = yOf(second)
+                    drawLine(color, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
                 }
             }
             for (band in decor.bands) {

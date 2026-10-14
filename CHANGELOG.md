@@ -11,6 +11,106 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The notifications calendar opens on its notifications and the now-line — 2026-10-14
+
+The user: "The window on the timeline of the calendar window linked to an unfocused notif must be by default from the
+first to last notifications and including the $now line$." A calendar whose tab's parent is a notifications window
+opens with `CalendarNotifications.openingSpan` (its chips, first to last, stretched to the now-line) fitted by
+`calendarSpanView`. It opens with "Lock to now" off.
+
+The user then: "the window is too large. It must only span from the first notif to the last one including the $now
+line$." The 14:45 pair held two notifications two seconds apart, the line a second later, and the first version padded
+the stretch by 5 % and never went under 90 minutes. The fit is now EXACT: first at the top, last at the bottom. A
+stretch shorter than what the zoom ceiling shows (~5 min in the bottom half of this screen) is centred at the ceiling. Every
+other calendar opens as before. `CalendarNotificationsTest`, `RollingCalendarTest`. Client rebuild only.
+
+### The calendar grid's title retracts it — 2026-10-14
+
+The user: "In the calendar, the title of both sections must be clickable to expand or retract like the arrow button."
+"Configuration" already was (`togglesSection`, 2026-10-13); the grid's title, the month label, now is too
+(`WeekView(onCollapse)`). As in the Search window, a retracted section is its arrow alone, which expands it.
+`CalendarSecondsRenderTest` (a click on the month retracts the grid). Client rebuild only.
+
+### "Lock to notifications": the view grows with the line — 2026-10-14
+
+The user: "the $now line$ is moving forward, so the window is supposed to get larger, otherwise the configurations of
+this calendar window are not satisfied." The stretch was fitted at moments (the opening, a change of notifications);
+it is now a LOCK held continuously, beside "Lock to now" and "Locked on task" (one at a time): `WeekView(spanLock)`
+re-fits [first, max(last, line)] each time the line has travelled a pixel (`compositionNowMillis`), by assignment,
+never through `applyZoom`, which is the hand's and releases it (as a scroll and a date pick do). Switch "Lock to
+notifications" in the configuration section, only for a window opened on a stretch; on again whenever the stretch
+changes. The re-fit recomposes the grid (the zoom changes); its rate is the viewport over the stretch — every frame
+for a stretch of seconds, every few seconds for an hour. `CalendarSecondsRenderTest` (the view grows as the line moves
+on). Client rebuild only.
+
+### The notifications calendar is fitted again when what it shows changes — 2026-10-14
+
+The user, after the seconds build was deployed (18:16): "the window of the calendar in the timeline is still too
+large". The release DB showed the pair standing since 17:10, untouched, so still gathering: its calendar (`Calendar#2`)
+held 12 notifications, 17:10:02 to 18:16:42. After the 18:16:34 restart the view was fitted to 17:10:02 → ~18:16:35,
+and the 18:16:42 notifications reached the standing pair without a re-fit: the last notifications and the line were
+below the view. The span is now re-read whenever the calendar's notifications or its link change (`App.kt`), and the
+calendar fits again on a new span (`WeekView`'s `fittedSpan`), turning "Lock to now" off. `CalendarSecondsRenderTest`
+(the open calendar is fitted again). Client rebuild only. Open question to the user: whether an untouched pair should
+go on gathering across separate out-of-focus stretches (here it spans an hour).
+
+### The calendar zooms to seconds: a day row lays out only its slice — 2026-10-14
+
+The user, the 17:10 pair (a notification at 17:10:02, out of focus since 17:09:58, the line at 17:10:04 — 6 s) still
+opening on ~5 minutes: "the window of the calendar in the timeline is still too large". That was the zoom ceiling,
+and the ceiling was Compose's: a day row was laid out WHOLE, midnight to midnight, and no node can be measured past
+~262 143 px, so a day stopped at 200 000 px. Asked whether to rebuild the rows, the user: "I am sure that I can build a
+Python script that can show a rectangle with a caption saying that this rectangle represents 1 second. Why is it a
+problem here?" — it is not; then "yes".
+
+A row taller than `SLICED_DAY_HEIGHT_PX` (the old 200 000 px, so nothing below it changes) now lays out only its
+`DaySlice` — the cull window and a viewport each side — and places everything from the slice's origin (`calendar.md`).
+`MAX_CALENDAR_ZOOM` went from 128 to 32 768 and `MAX_DAY_HEIGHT_PX` to 2^25 px (where the `Float` offset steps by 2 px):
+under two seconds on screen. The cull quantum is capped at 20 000 px; the gutter and the grid graduate down to the
+second (":MM:SS"); the opening fit and the lock read the line below the second (`hourOfDayExact`).
+`RollingCalendarTest` (the 6-second fit, the slice, the graduation), `CalendarSecondsRenderTest` (renders the 6-second
+view headlessly: the 8-hour panel cut to the slice fills the column). Client rebuild only. Not seen on screen.
+
+### The "unfocused notif" pair is HELD in its halves — 2026-10-14
+
+The user, after the fix below: "The unfocused notif still isn't stuck to the top of the app, and the calendar isn't
+stuck to the bottom." The release DB showed a fresh pair opened at 14:00:11, three seconds after launch, sized from a
+1054 px content area: the app window's restored 800 × 600 dp, before the maximize (about 1404 px). `placeInHalf`
+worked out the halves ONCE, in px, from `WindowFrameHost.containerSize` as the last laid-out window had measured it.
+It now asks the frame to HOLD the half (`WindowFrameHost.holdHalf`, picked up by a frame not made yet). The frame fits
+it at every layout (`WindowFrameState.fitHalf`) and keeps what it fitted as the window's geometry, until the hand
+moves, resizes, fills or maximizes the window. `containerSize` is gone (`placeInHalf` was its only reader).
+`WindowFrameStateTest`. Client rebuild only. A pair already on screen keeps its wrong size: close it, and the next
+one opens held.
+
+### The "unfocused notif" pair after a restart — 2026-10-14
+
+The user, after a rebuild: the "unfocused notif" window did not fill the top half, no calendar was in the lower half
+(two calendar tabs on the bar, though), and the calendar's tab had no line linking it to the window. The release DB
+showed the pair opened at 13:31 and stored correctly in its halves; the 13:41 launch then answered a notification
+by bringing back the STANDING window, which hit two faults behind the three symptoms:
+- **Its calendar was forgotten.** The pair is held in memory only, so after a restart the calendar was neither given
+  the new notification nor brought back: it stayed under the maximized windows. Its chips then no longer matched the
+  window's added notifications, so the bar's link (which reads that match after a restart) was gone too. Now the
+  standing window's calendar is found as the copy showing what the window held, BEFORE the window is given the new
+  ones; it gets them, and comes back in front with the window over it.
+- **The window sat ~80 dp too low.** `WindowFrameState.clampVertical` kept the offset it computed against the first
+  content area laid out, the app window's restored size before the maximize. It now remembers the offset it moved
+  the window away from and goes back toward it as the area grows, unless something else moved the window since
+  (`WindowFrameStateTest`). This one is inferred from the code and the stored geometry, not seen on screen — and
+  it was NOT what kept the pair out of its halves: see the entry above.
+
+Client rebuild only.
+
+### The notifications calendar's tab is linked to the "unfocused notif" window's — 2026-10-14
+
+The user: "The calendar view that appears with the unfocused notif must be linked to the unfocused notif in the system
+tray (the same way a Search window tab can be linked to the calendar window)." `tabParentOf` names the notifications
+window as the calendar's parent: the pair `App` opened while it holds it, else (after a restart) the notifications
+window whose added notifications are exactly the calendar's chips (`CalendarNotifications.notificationsWindowOf`,
+`CalendarNotificationsTest`). Being a link of the bar, closing the notifications window now closes that calendar too
+(`closeOpenedFrom`). Client rebuild only.
+
 ### A menu opened at the pointer stays where it opened — 2026-10-14
 
 The user: "Sometimes, the right-click menu has glitches: appears, then teleports to the new position of the mouse."

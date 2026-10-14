@@ -1,5 +1,6 @@
 package org.example.project
 
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.test.Test
@@ -10,6 +11,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
 import org.example.project.ui.HourWindow
+import org.example.project.ui.inSlice
 import org.example.project.ui.OPENING_SPAN_MINUTES
 import org.example.project.ui.calendarSpanZoom
 import org.example.project.ui.nowLineCenterColumnShift
@@ -33,6 +35,59 @@ import org.example.project.ui.zoomAnchoredOffset
 class RollingCalendarTest {
 
     private val dayHeight = 1152f // 24 h × 48 dp at zoom 1
+
+    // ----- opening on a stretch of time (user rule 2026-10-14) -------------------------------------
+
+    @Test
+    fun a_calendar_opened_on_a_stretch_shows_it_whole_from_the_top_of_its_days_column() {
+        val utc = kotlinx.datetime.TimeZone.UTC
+        // Wednesday 2026-10-14, 13:00 to 15:00 UTC: the first notification, and the now-line two hours later.
+        val start = 1_791_982_800_000L
+        val end = start + 2 * 3_600_000L
+        val viewport = 700f
+        val view = org.example.project.ui.calendarSpanView(
+            start, end, utc, org.example.project.ui.CalendarDisplayMode.Week, viewport, 7, dayHeight,
+        )
+        // Its week: Monday the 12th in the leftmost column, so the 14th is the third.
+        assertEquals(LocalDate(2026, 10, 12), view.anchorDay)
+        // Exactly the two hours fill the viewport — no margin (anomaly 2026-10-14: "the window is too large")…
+        val dayPx = dayHeight * view.zoom
+        val shownMinutes = viewport / dayPx * 24 * 60
+        assertTrue(abs(shownMinutes - 120f) < 0.1f, "shows $shownMinutes min")
+        // …13:00 at the top, so 15:00 is at the bottom.
+        val topHour = view.offsetPx / dayPx * 24
+        assertTrue(abs(topHour - 13f) < 0.001f, "top at $topHour h")
+
+        // Day mode: the timeline wraps over the columns, so the stretch fills all of them, from its own day.
+        val day = org.example.project.ui.calendarSpanView(
+            start, end, utc, org.example.project.ui.CalendarDisplayMode.Day, viewport, 3, dayHeight,
+        )
+        assertEquals(LocalDate(2026, 10, 14), day.anchorDay)
+        assertTrue(abs(3 * viewport / (dayHeight * day.zoom) * 24 * 60 - 120f) < 0.1f)
+
+        // Notifications seconds apart (the anomaly's 17:10 pair: 6 s, the now-line included): exactly those seconds —
+        // the rows are sliced ([DaySlice]), so the zoom reaches them.
+        val seconds = org.example.project.ui.calendarSpanView(
+            start + 12_345L, start + 18_345L, utc, org.example.project.ui.CalendarDisplayMode.Week, viewport, 7, dayHeight,
+        )
+        val secondsDayPx = dayHeight.toDouble() * seconds.zoom
+        val shownSeconds = viewport / secondsDayPx * 86_400.0
+        assertTrue(abs(shownSeconds - 6.0) < 0.01, "shows $shownSeconds s")
+        // The first notification at the top, to a few milliseconds (a second is a sixth of the viewport here).
+        val topSecond = seconds.offsetPx.toDouble() / secondsDayPx * 86_400.0 - 13 * 3600.0
+        assertTrue(abs(topSecond - 12.345) < 0.02, "top at 13:00 + $topSecond s")
+
+        // A stretch of no length at all (one notification, the now-line on it): as close as the grid goes, the zoom
+        // ceiling — under two seconds — with the instant in the middle of the viewport.
+        val short = org.example.project.ui.calendarSpanView(
+            start, start, utc, org.example.project.ui.CalendarDisplayMode.Week, viewport, 7, dayHeight,
+        )
+        assertEquals(maxCalendarZoom(dayHeight), short.zoom)
+        val shortDayPx = dayHeight * short.zoom
+        assertTrue(viewport / shortDayPx * 86_400f < 2f)
+        val middleHour = (short.offsetPx + viewport / 2f) / shortDayPx * 24
+        assertTrue(abs(middleHour - 13f) < 0.0001f, "middle at $middleHour h")
+    }
 
     // ----- the layout law ---------------------------------------------------------------------
 
@@ -268,7 +323,7 @@ class RollingCalendarTest {
         // Clamped into the zoom bounds like any other zoom, and neutral before the first layout.
         assertEquals(
             maxCalendarZoom(dayHeight),
-            calendarSpanZoom(viewportPx = 1_000_000f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90),
+            calendarSpanZoom(viewportPx = 1_000_000_000f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90),
         )
         assertEquals(0.25f, calendarSpanZoom(viewportPx = 1f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
         assertEquals(1f, calendarSpanZoom(viewportPx = 0f, dayHeightPxAtZoom1 = dayHeight, spanMinutes = 90))
@@ -294,13 +349,15 @@ class RollingCalendarTest {
 
     @Test
     fun the_zoom_ceiling_drops_on_a_display_a_day_row_would_overflow() {
-        // A day row is laid out at a real pixel height, and Compose cannot represent a constraint past
-        // ~262 143 px. The dp ceiling alone cannot promise that (a day's px height scales with the display
-        // density), so the effective bound is lowered until the row fits — and never below the floor.
-        val dense = 200_000f / 10f // a day row 10x taller than the budget at the dp ceiling
+        // A day is a real pixel height, and past 2^25 px the Float scroll offset steps by more than 2 px (a day row
+        // is no longer laid out whole — [DaySlice] — so Compose's ~262 143 px limit is not the bound any more). The
+        // dp ceiling alone cannot promise that (a day's px height scales with the display density), so the
+        // effective bound is lowered until the day fits — and never below the floor.
+        val budget = 33_554_432f
+        val dense = budget / 10_000f // a day 10 000x the budget at zoom 1: past it well before the dp ceiling
         assertTrue(maxCalendarZoom(dense) < maxCalendarZoom(dayHeight))
-        assertTrue(dense * maxCalendarZoom(dense) <= 200_000f)
-        assertEquals(0.25f, maxCalendarZoom(dayHeightPxAtZoom1 = 10_000_000f))
+        assertTrue(dense * maxCalendarZoom(dense) <= budget)
+        assertEquals(0.25f, maxCalendarZoom(dayHeightPxAtZoom1 = 1_000_000_000f))
         // Before the first layout there is no density to read: the plain dp ceiling.
         assertEquals(maxCalendarZoom(0f), maxCalendarZoom(-1f))
     }
@@ -327,7 +384,7 @@ class RollingCalendarTest {
         // A viewport far shorter/taller than any legal zoom can render a day at is clamped like any other
         // zoom — the fit is a zoom, not an escape from the bounds.
         assertEquals(0.25f, wholeDayZoom(viewportPx = 10f, dayHeightPxAtZoom1 = dayHeight))
-        assertEquals(maxCalendarZoom(dayHeight), wholeDayZoom(viewportPx = 1_000_000f, dayHeightPxAtZoom1 = dayHeight))
+        assertEquals(maxCalendarZoom(dayHeight), wholeDayZoom(viewportPx = 1_000_000_000f, dayHeightPxAtZoom1 = dayHeight))
         // The zoom floor must still be low enough for a genuinely small window to show a whole day, or the
         // pick would silently stop keeping its promise there.
         assertEquals(0.5f, wholeDayZoom(viewportPx = dayHeight / 2f, dayHeightPxAtZoom1 = dayHeight))
@@ -500,5 +557,71 @@ class RollingCalendarTest {
         // Zoomed in, the saving is dramatic: a ~1.9 h viewport holds a few hours, not a day.
         val zoomed = visibleHourWindow(0, offsetPx = 0f, dayHeightPx = dayHeight * 8f, viewportPx = 726f)
         assertTrue(zoomed.bottomHour - zoomed.topHour <= 6f, "$zoomed")
+    }
+
+    // ----- the sliced day row (user rule 2026-10-14: the zoom reaches seconds) -------------------------
+
+    @Test
+    fun a_day_row_zoomed_to_seconds_lays_out_only_the_hours_around_the_viewport() {
+        // Compose cannot measure a node past ~262 143 px, and 6 s in a 650 px viewport is a day of ~9 million px.
+        val viewport = 650f
+        val dayH = 86_400f / 6f * viewport
+        val hourPx = dayH / 24f
+        // Scrolled to 17:10:00 of the row's day.
+        val offset = (17f + 10f / 60f) * hourPx
+        val window = visibleHourWindow(0, offset, dayH, viewport)
+        val slice = org.example.project.ui.daySlice(window, dayH, viewport)
+        // The slice holds what is on screen, with a viewport more on each side…
+        assertTrue(slice.originHour <= window.topHour - viewport / hourPx + 1e-4f, "$slice for $window")
+        assertTrue(slice.endHour >= window.bottomHour + viewport / hourPx - 1e-4f, "$slice for $window")
+        assertTrue(window.topHour <= 17f + 10f / 60f && window.bottomHour >= 17f + 10f / 60f + 6f / 3600f, "$window")
+        // …and is far shorter than anything Compose cannot measure: the cull window is bounded in PIXELS too.
+        assertTrue(slice.lengthHours * hourPx < 100_000f, "slice ${slice.lengthHours * hourPx} px")
+        // At or below the old ceiling a row is laid out whole, exactly as it was.
+        assertEquals(
+            org.example.project.ui.DaySlice.WholeDay,
+            org.example.project.ui.daySlice(visibleHourWindow(0, 0f, 200_000f, viewport), 200_000f, viewport),
+        )
+        // Before the viewport is measured nothing is sliced, and a row off screen lays out nothing.
+        assertEquals(org.example.project.ui.DaySlice.WholeDay, org.example.project.ui.daySlice(HourWindow.WholeDay, dayH, viewport))
+        assertEquals(0f, org.example.project.ui.daySlice(HourWindow.Empty, dayH, viewport).lengthHours)
+    }
+
+    @Test
+    fun a_record_in_a_sliced_row_is_placed_from_the_slice_and_cut_to_it() {
+        val slice = org.example.project.ui.DaySlice(17f, 17.5f)
+        fun record(start: Float, end: Float) =
+            org.example.project.ui.PlacedRecord("Work", start, end, scheduled = true, startFollowsLine = true, endFollowsLine = true)
+        // Inside: moved up by the origin, its edges as they were.
+        val inside = record(17.1f, 17.2f).inSlice(slice)
+        assertEquals(0.1f, inside.startHour, 1e-4f)
+        assertEquals(0.2f, inside.endHour, 1e-4f)
+        assertTrue(inside.startFollowsLine && inside.endFollowsLine)
+        // Across it (a sleep band of the night): cut to the slice, and the cut edges are the slice's, not the line's.
+        val across = record(10f, 23f).inSlice(slice)
+        assertEquals(0f, across.startHour)
+        assertEquals(0.5f, across.endHour)
+        assertTrue(!across.startFollowsLine && !across.endFollowsLine)
+        // A ring has no height: only moved, so its stacking sweep reads where it really is.
+        val ring = record(9f, 9f).copy(alarm = true).inSlice(slice)
+        assertEquals(-8f, ring.startHour)
+        // A whole-day row is untouched.
+        assertEquals(record(9f, 10f), record(9f, 10f).inSlice(org.example.project.ui.DaySlice.WholeDay))
+    }
+
+    @Test
+    fun the_graduation_goes_down_to_the_second_and_is_unchanged_above_the_minute() {
+        // Wherever a minute tick was fine enough, the same tick in seconds — a grid that never zooms past the minute
+        // draws exactly what it did.
+        for (h in listOf(24f, 48f, 96f, 144f, 192f, 384f, 1560f)) {
+            val minutes = org.example.project.ui.calendarTickMinutes(h.dp)
+            if (minutes > 1) assertEquals(minutes * 60, org.example.project.ui.calendarTickSeconds(h.dp), "at $h dp")
+        }
+        // Zoomed to seconds (6 s in ~325 dp: ~195 000 dp an hour), a tick every second.
+        assertEquals(1, org.example.project.ui.calendarTickSeconds(195_000.dp))
+        assertEquals(listOf(61_800, 61_805, 61_810), org.example.project.ui.graduationSeconds(17f + 10f / 60f, 17f + 10f / 60f + 12f / 3600f, 5).toList())
+        assertEquals(":10:05", org.example.project.ui.graduationLabel(61_805))
+        assertEquals(":10", org.example.project.ui.graduationLabel(61_800))
+        assertEquals("5 PM", org.example.project.ui.graduationLabel(61_200))
     }
 }

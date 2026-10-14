@@ -95,6 +95,36 @@ class CalendarNotificationsTest {
     }
 
     @Test
+    fun the_calendar_opened_under_the_notifications_window_is_that_windows_on_the_bar() {
+        // User rule 2026-10-14: the calendar's tab is linked to the "unfocused notif" window's — read off what both
+        // hold, so it survives a restart.
+        val since = day + 9 * hour
+        val keys = SearchDomain.notificationKeysSince(log, since)
+        val calendar = CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }.reversed())
+        val notif = SearchDomain.notificationsConfig(since).copy(added = keys)
+        val plain = SearchDomain.Config(added = keys)
+        assertEquals("Search#3", CalendarNotifications.notificationsWindowOf(calendar, listOf("Search" to plain, "Search#3" to notif)))
+        // Not a notifications window's chips, or none at all: under no window.
+        assertEquals(null, CalendarNotifications.notificationsWindowOf(CalendarNotifications.WindowConfig(listOf(keys[0].substringAfter('/'))), listOf("Search#3" to notif)))
+        assertEquals(null, CalendarNotifications.notificationsWindowOf(CalendarNotifications.WindowConfig(), listOf("Search#3" to SearchDomain.notificationsConfig(since))))
+        // Something else added beside the notifications does not unlink it.
+        assertEquals("Search#3", CalendarNotifications.notificationsWindowOf(calendar, listOf("Search#3" to notif.copy(added = keys + "Alarm/alarm-0"))))
+    }
+
+    @Test
+    fun the_notifications_calendar_opens_from_the_first_to_the_last_with_the_now_line() {
+        val chips = CalendarNotifications.chips(log, SearchDomain.notificationIds(log).drop(1))
+        // The now-line after the last: the stretch runs on to it.
+        assertEquals(day + 9 * hour to day + 40 * hour, CalendarNotifications.openingSpan(chips, day + 40 * hour))
+        // Between them: first to last.
+        assertEquals(day + 9 * hour to day + 30 * hour, CalendarNotifications.openingSpan(chips, day + 20 * hour))
+        // Before the first (a clock set back): from the line.
+        assertEquals(day to day + 30 * hour, CalendarNotifications.openingSpan(chips, day))
+        // None shown: an ordinary opening.
+        assertEquals(null, CalendarNotifications.openingSpan(emptyList(), day))
+    }
+
+    @Test
     fun a_group_of_notifications_has_the_button_that_opens_a_calendar_with_them() {
         val state = SchedulerState.empty().copy(notificationLog = log)
         val added = SearchDomain.resolve(state, SearchDomain.notificationKeysSince(log, day))

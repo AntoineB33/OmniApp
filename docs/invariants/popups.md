@@ -121,7 +121,8 @@ means.
   inside the window (the calendar's configuration section), not in the head.
 - **The calendar window's two sections — the grid and the configuration — are the Search window's** (user rule
   2026-10-07; `CalendarFloatingWindow`): each is retracted to its arrow and expanded again by it (`SectionArrow`; the
-  grid's is in its top left corner, the configuration's before its title), and the line between them is dragged
+  grid's is in its top left corner, the configuration's before its title; each TITLE — the month label, "Configuration" —
+  retracts its section too, `togglesSection`), and the line between them is dragged
   (`SectionSeparator`), up to the edges. Compose-only, like the Search window's splits. **The grid stays composed**
   while it is retracted or squeezed — laid out at `CALENDAR_GRID_MIN_WIDTH` at least and cut (`keepsWidthAbove`): its
   scroll and its zoom are its own, and a week laid out in no width is a case nothing else asks of it. The
@@ -299,8 +300,10 @@ means.
   outright.
 - **A window opened from another has its tab beside that one's, a line under the two** (user rule 2026-10-06,
   `WindowTabGroups`, `WindowTabGroupsTest`): a Search configurations window (and an Added elements configurations
-  window) right of its Search window, a Search window the calendar's right-click opened right of the calendar. The
-  parent is DERIVED (`WindowFrameHost.tabParentOf`, answered by `App` off `ConfigurationSearch.target` and
+  window) right of its Search window, a Search window the calendar's right-click opened right of the calendar, and
+  (user rule 2026-10-14) the calendar opened under an "unfocused notif" window right of that window — the pair the
+  app opened while it holds it, else the notifications window whose added notifications are exactly the calendar's
+  chips (`CalendarNotifications.notificationsWindowOf`, so it survives a restart). The parent is DERIVED (`WindowFrameHost.tabParentOf`, answered by `App` off `ConfigurationSearch.target` and
   `Config.calendarClickMillis`), never stored, and is none once that window is closed. The bar lists a window then
   the windows opened from it, in opening order, so only the opened ones leave the order of opening; one line runs
   from a window to the last of those opened from it, and the line of a deeper window is drawn ABOVE (calendar,
@@ -378,7 +381,10 @@ means.
 - **The head is always reachable.** `WindowFrameState.clampVertical`, fed by the frame's own layout, keeps
   the head between the top of the content area and its lowest row — including for a window taller than the
   area, which centred would put its own head (and all five of its buttons) out of reach. Clamping a fixed
-  point converges, so re-applying it on every layout pass is safe. This lives in the frame, not in the
+  point converges, so re-applying it on every layout pass is safe. **The clamp remembers where the window was
+  put** (anomaly 2026-10-14): until something else moves it, it goes back toward that place as the content area
+  grows. At launch the first layout runs at the app window's restored size, before the maximize, and a clamp that
+  kept its own answer left a window put in the top half ~80 dp down for good. This lives in the frame, not in the
   calendar window that first needed it.
 
 ## Duplicating a window
@@ -659,7 +665,33 @@ It lives in the host because the host already sees the only two events that deci
   to the standing window and to that calendar (held by frame id for the session; closed, it is not reopened). The
   app adding notifications is not the user changing the window (`isUntouchedNotificationsWindow` lets added
   notifications be); adding anything else, or changing the search, still makes it theirs. The halves are set when
-  the windows OPEN — a standing window brought back keeps the place the user gave it.
+  the windows OPEN — a standing window brought back keeps the place the user gave it. **A half is a rule the frame
+  HOLDS, not a size worked out once** (anomaly 2026-10-14; `WindowFrameHost.holdHalf`, `WindowFrameState.fitHalf`,
+  `WindowFrameStateTest`): the window is fitted to the content area at every layout, so it grows with the maximize at
+  launch and follows the window bar, until the hand moves, resizes, fills or maximizes it. Sized once off the area
+  measured at launch, the app window's restored 800 × 600 before the maximize, the pair stayed a quarter too short and
+  away from both edges. The hold is in memory only; the place it fitted is kept as the window's geometry.
+- **The calendar under an "unfocused notif" window opens on its notifications, first to last, the now-line included**
+  (user rule 2026-10-14; `CalendarNotifications.openingSpan`, `calendarSpanView`, `CalendarFloatingWindow(openingSpan)`):
+  instead of the ordinary hour and a half around the line, and with "Lock to now" OFF, which would pull the view back
+  onto the line alone. "Under" is the bar's link (`tabParentOf`), never a second reading. EXACTLY the stretch: the first at
+  the top, the last at the bottom, no margin and no minimum (anomaly 2026-10-14, *"the window is too large"*: a 5 % margin
+  and a 90-minute floor opened two notifications seconds apart on an hour and a half). Seconds included: the zoom reaches
+  them since the day rows are sliced (`calendar.md`, `DaySlice`; anomaly 2026-10-14 again: a 6-second pair still opened
+  on ~5 minutes, the old ceiling). Shorter than what the ceiling shows (under two seconds), it is centred at the ceiling,
+  as close as the grid goes. Week mode runs it down the column of its first day, in that
+  week; day mode spreads it over the columns. **It is a LOCK, not an opening** — "Lock to notifications", the third of
+  the calendar's locks beside "Lock to now" and "Locked on task" (one at a time): the view is HELD on the stretch, its
+  end carried on by the line, re-fitted each time the line has travelled a pixel (anomaly 2026-10-14: *"the $now line$
+  is moving forward, so the window is supposed to get larger, otherwise the configurations of this calendar window are
+  not satisfied"*). The span is re-read whenever the notifications the calendar shows change or its link appears, and
+  that turns the lock on again (anomaly 2026-10-14: the 18:16 pair, standing since 17:10 across a restart, was given the
+  18:16:42 notifications with the view still fitted to 17:10–18:16:35). A scroll, a zoom or a date pick of the hand
+  releases it, like the other locks; its switch is in the configuration section, there only for a window opened on a
+  stretch. A pair that stays untouched GATHERS everything since it opened, so its stretch is that long. **Brought back, it brings its
+  calendar back with it** (anomaly 2026-10-14), in front of the other windows and under it, and gives it the new
+  notifications. After a restart nothing holds that calendar, so it is found as the calendar copy showing what the
+  window held until then — read BEFORE the window is given the new ones.
 - **A notification's id is its instant and its place among those of that instant** (`SearchDomain.notificationIds`),
   not its place in the log: the log is a rolling tail, and a place in it changed for every notification each time
   the oldest was dropped — an added notification, or one a calendar shows, then named another.

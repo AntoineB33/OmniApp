@@ -122,6 +122,9 @@ import kotlin.math.roundToInt
  * `CLAUDE.md`'s *one rule, one funnel* names.
  */
 
+/** A half of the content area the app holds a window in, across its whole width ([WindowFrameState.holdHalf]). */
+enum class WindowHalf { Top, Bottom }
+
 /** Which axes a window has been told to fill. [Both] is what "maximized" means. */
 enum class WindowFill {
     None,
@@ -232,6 +235,7 @@ class WindowFrameState(
         val dx = if (fill.fillsWidth) 0f else delta.x
         val dy = if (fill.fillsHeight) 0f else delta.y
         if (dx == 0f && dy == 0f) return
+        half = null
         offset = Offset(offset.x + dx, offset.y + dy)
         normalOffset = Offset(normalOffset.x + dx, normalOffset.y + dy)
     }
@@ -267,6 +271,7 @@ class WindowFrameState(
         val height = (size.height + dy).coerceAtLeast(minHeight)
         val applied = height - size.height
         if (applied == 0f) return
+        half = null
         setNormalHeight(height)
         setNormalOffsetY(offset.y + applied / 2f)
     }
@@ -286,6 +291,7 @@ class WindowFrameState(
         }
         val applied = size.height - height
         if (applied == 0f) return
+        half = null
         setNormalHeight(height)
         setNormalOffsetY(offset.y + applied / 2f)
     }
@@ -312,8 +318,53 @@ class WindowFrameState(
         // lower number depends on whether the window is taller than the container, so they are ordered.
         val atTop = -restingTop
         val atBottom = lowestTop - restingTop
-        val y = offset.y.coerceIn(minOf(atTop, atBottom), maxOf(atTop, atBottom))
+        // What the window was asked to stand at, not what the last clamp left (anomaly 2026-10-14): at launch the
+        // content area is laid out at the app window's small restored size before it is maximized, and a clamp that
+        // forgot the asked place left a window put in the top half ~80 dp down for good. While nothing else has moved
+        // it since the clamp, it goes back toward that place as the content area grows.
+        val wanted = clampedFrom?.takeIf { offset.y == clampedTo } ?: offset.y
+        val y = wanted.coerceIn(minOf(atTop, atBottom), maxOf(atTop, atBottom))
+        clampedFrom = wanted.takeIf { it != y }
+        clampedTo = y
         if (y != offset.y) setNormalOffsetY(y)
+    }
+
+    /** The offset [clampVertical] last moved the window away from, and the one it moved it to. */
+    private var clampedFrom: Float? = null
+    private var clampedTo: Float = 0f
+
+    /**
+     * The half of the content area the app put this window in ([holdHalf]), held until the hand moves, resizes or
+     * fills it — or null. In memory only.
+     */
+    var half: WindowHalf? = null
+        private set
+
+    /**
+     * **The app puts the window in the top or the bottom half of the content area, across its whole width**
+     * (user rule 2026-10-13, the "unfocused notif" window and its calendar). A RULE, fitted at every layout
+     * ([fitHalf]), never a size worked out once: anomaly 2026-10-14 — the halves were measured at launch off the app
+     * window's restored 800 × 600 before it was maximized, and stayed that small.
+     */
+    fun holdHalf(which: WindowHalf) {
+        minimized = false
+        applyFill(WindowFill.Width)
+        half = which
+    }
+
+    /**
+     * The held [half] fitted to a content area [containerHeight] px tall: half its height, against its top or its
+     * bottom. True when that moved or resized the window — a geometry to keep.
+     */
+    fun fitHalf(containerHeight: Float): Boolean {
+        val which = half ?: return false
+        if (containerHeight <= 0f || minimized || fill.fillsHeight) return false
+        val height = containerHeight / 2f
+        val y = if (which == WindowHalf.Top) -containerHeight / 4f else containerHeight / 4f
+        if (size.height == height && offset.y == y) return false
+        setNormalHeight(height)
+        setNormalOffsetY(y)
+        return true
     }
 
     fun setFillWidth(on: Boolean) = applyFill(fill.withWidth(on))
@@ -348,6 +399,7 @@ class WindowFrameState(
      * resized", the window's default.
      */
     fun applyLayout(offset: Offset, size: Size, fill: WindowFill, minimized: Boolean) {
+        half = null
         normalOffset = offset
         normalSize = size
         this.offset = offset
@@ -371,6 +423,7 @@ class WindowFrameState(
     private fun applyFill(next: WindowFill) {
         val previous = fill
         if (next == previous) return
+        half = null
         if (previous == WindowFill.None) {
             normalOffset = offset
             normalSize = size
@@ -387,6 +440,7 @@ class WindowFrameState(
     }
 
     private fun setNormalWidth(width: Float) {
+        half = null
         size = Size(width, size.height)
         normalSize = Size(width, normalSize.height)
     }
@@ -418,8 +472,22 @@ class WindowFrameState(
  * per-object one.
  */
 class WindowFrameHost {
-    /** The content area the windows stand in, in px — zero until a window has been laid out. Not observable: it is asked. */
-    var containerSize: Size = Size.Zero
+    /** A half asked for ([holdHalf]) before its window's frame exists — taken by the frame as it is made. */
+    private val pendingHalves = HashMap<String, WindowHalf>()
+
+    /**
+     * The window [id] is put in [which] half of the content area and held there ([WindowFrameState.holdHalf]) — at
+     * once if it is up, else as its frame is made: a window the app has just opened has no frame until the next
+     * composition.
+     */
+    fun holdHalf(id: String, which: WindowHalf) {
+        val frame = entries.firstOrNull { it.id == id }?.state
+        if (frame != null) frame.holdHalf(which) else pendingHalves[id] = which
+    }
+
+    /** The half asked for [id] before its frame was made, handed over once. */
+    internal fun takePendingHalf(id: String): WindowHalf? = pendingHalves.remove(id)
+
     class Registration(
         val id: String,
         title: String,
@@ -951,8 +1019,11 @@ fun rememberWindowFrameState(
     val fullId = id + (instance?.suffix ?: "")
     val offset = instance?.copy?.initialOffset ?: initialOffset
     val size = instance?.copy?.initialSize ?: initialSize
+    val host = LocalWindowFrameHost.current
     return remember(fullId) {
         WindowFrameState(fullId, offset, size, initialChrome = memory?.saved(fullId) ?: defaultChrome)
+            // A half the app asked for before this frame existed ([WindowFrameHost.holdHalf]).
+            .also { frame -> host?.takePendingHalf(fullId)?.let(frame::holdHalf) }
     }
 }
 
@@ -1354,10 +1425,12 @@ fun AppWindowFrame(
             // Measure the window and the content area around it, so a window can never be left with its
             // head — and its five buttons — off the top or the bottom of the app.
             .onGloballyPositioned { coordinates ->
-                // The content area every window stands in, as the last window laid out measured it: what a window
-                // told to take half of it is sized from ([WindowFrameHost.containerSize]).
-                coordinates.parentLayoutCoordinates?.size?.let { area ->
-                    if (area.width > 0 && area.height > 0) host?.containerSize = Size(area.width.toFloat(), area.height.toFloat())
+                // A window the app holds in a half of the content area is fitted to the area as it is NOW — it grows
+                // with the maximize at launch, the window bar coming and going — and the place it is fitted to is kept
+                // as its geometry. Its height was just set, so this pass's measure is stale: the clamp waits for the next.
+                if (state.fitHalf(coordinates.parentLayoutCoordinates?.size?.height?.toFloat() ?: 0f)) {
+                    commit()
+                    return@onGloballyPositioned
                 }
                 state.clampVertical(
                     containerHeight = coordinates.parentLayoutCoordinates?.size?.height?.toFloat() ?: 0f,

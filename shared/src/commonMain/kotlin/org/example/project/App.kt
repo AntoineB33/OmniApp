@@ -213,6 +213,7 @@ import org.example.project.ui.LocalWindowFrameHost
 import org.example.project.ui.WindowChrome
 import org.example.project.ui.WindowChromeMemory
 import org.example.project.ui.WindowFill
+import org.example.project.ui.WindowHalf
 import org.example.project.ui.MINIMIZED_BAR_HEIGHT
 import org.example.project.ui.WindowBar
 import org.example.project.ui.TransientMenuHost
@@ -1662,17 +1663,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // lists and edits: the one it was opened from — or the original, once that copy is closed.
         fun configTargetOf(configId: String): String =
             configSearchOf(configId).target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
-        // The window bar's tab of a window opened from another stands beside that one's, a line under the two (user
-        // rule 2026-10-06, `WindowTabGroups`): a configurations window's Search window, and the calendar for a Search
-        // window its right-click opened. Read off what the windows hold; a parent that is closed is none.
-        windowFrames.tabParentOf = { frameId ->
-            when (lateralWindowOf(frameId)) {
-                FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> configTargetOf(frameId)
-                FloatingWindow.Search ->
-                    FloatingWindow.Calendar.name.takeIf { searchConfigOf(frameId).calendarClickMillis != null }
-                else -> null
-            }
-        }
         // **EACH Search window has its own configurations window** (anomaly 2026-10-06: two Search windows' buttons
         // led to one and the same window, which the last press re-pointed — the first Search window lost its own).
         // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the
@@ -1703,16 +1693,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // by its frame id, for the session, so that what the window gathers next is shown there too.
         var notificationsCalendarId by remember { mutableStateOf<String?>(null) }
         // The window [id] — a copy the app has just opened, or one already on screen — over the whole width of the
-        // app and its top or bottom half. Where the app's own size is not known yet (no window laid out), nothing.
+        // app and its top or bottom half, HELD there by the frame, which fits it to the content area at every layout
+        // until the hand moves it (anomaly 2026-10-14: sized once off the area at launch, before the app window was
+        // maximized, the pair stayed a quarter too short and away from the edges).
         fun placeInHalf(id: String, top: Boolean) {
-            val area = windowFrames.containerSize
-            if (area.height <= 0f) return
-            val offset = Offset(0f, if (top) -area.height / 4f else area.height / 4f)
-            windowChromeMemory.save(id, WindowChrome(WindowFill.Width, minimized = false))
-            updatePlacementById(id) { it.copy(x = offset.x, y = offset.y, height = area.height / 2f, minimized = false) }
-            windowFrames.registrations.firstOrNull { it.id == id }?.state?.let { frame ->
-                frame.applyLayout(offset, Size(frame.size.width, area.height / 2f), WindowFill.Width, minimized = false)
-            }
+            windowFrames.holdHalf(id, if (top) WindowHalf.Top else WindowHalf.Bottom)
         }
         var unfocusedSinceMillis by remember { mutableStateOf<Long?>(clock.nowMillis()) }
         var notificationAnsweredAtMillis by remember { mutableStateOf<Long?>(null) }
@@ -1728,6 +1713,29 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             listOfNotNull(FloatingWindow.Search.name.takeIf { isWindowOpen(FloatingWindow.Search) }) +
                 windowCopies.filter { lateralWindowOf(it) == FloatingWindow.Search }
         val notificationsWindowOpen = notificationsWindowId?.let { it in openSearchFrames() }
+        // The window bar's tab of a window opened from another stands beside that one's, a line under the two (user
+        // rule 2026-10-06, `WindowTabGroups`): a configurations window's Search window, the calendar for a Search
+        // window its right-click opened, and (user rule 2026-10-14) the "unfocused notif" window for the calendar
+        // opened under it. Read off what the windows hold; a parent that is closed is none.
+        windowFrames.tabParentOf = { frameId ->
+            when (lateralWindowOf(frameId)) {
+                FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> configTargetOf(frameId)
+                FloatingWindow.Search ->
+                    FloatingWindow.Calendar.name.takeIf { searchConfigOf(frameId).calendarClickMillis != null }
+                FloatingWindow.Calendar ->
+                    // The pair the app opened, while it holds it; else (after a restart) the notifications window
+                    // whose added notifications are the ones this calendar shows.
+                    if (frameId == notificationsCalendarId) {
+                        notificationsWindowId?.takeIf { it in openSearchFrames() }
+                    } else {
+                        CalendarNotifications.notificationsWindowOf(
+                            calendarConfigOf(frameId),
+                            openSearchFrames().map { it to searchConfigOf(it) },
+                        )
+                    }
+                else -> null
+            }
+        }
         LaunchedEffect(appFocused, lastNotificationAtMillis) {
             if (!appFocused && unfocusedSinceMillis == null) unfocusedSinceMillis = clock.nowMillis()
             val since = unfocusedSinceMillis
@@ -1750,6 +1758,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // list in the added elements list as well"* — and the calendar under it shows them as chips.
                 if (standing != null) {
                     val config = searchConfigOf(standing)
+                    // Its calendar: the one held this session, else (anomaly 2026-10-14: after a restart nothing is
+                    // held, so the calendar was neither given the new notifications nor brought back, and its tab lost
+                    // the line under the pair) the calendar copy showing what the window held until now — read BEFORE
+                    // the window is given the new ones.
+                    val calendarId =
+                        notificationsCalendarId?.takeIf { it in windowCopies && standing == notificationsWindowId }
+                            ?: windowCopies.firstOrNull { id ->
+                                lateralWindowOf(id) == FloatingWindow.Calendar &&
+                                    CalendarNotifications.notificationsWindowOf(calendarConfigOf(id), listOf(standing to config)) == standing
+                            }
                     val keys =
                         SearchDomain.notificationKeysSince(schedulerState.notificationLog, config.filters.notificationsSinceMillis ?: since)
                     if (config.added != keys) {
@@ -1758,9 +1776,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         searchConfigs[standing] = gathered
                         updatePlacementById(standing) { it.copy(config = gathered.encode()) }
                     }
-                    notificationsCalendarId?.takeIf { it in windowCopies }?.let { calendarId ->
+                    if (calendarId != null) {
                         setCalendarConfig(calendarId, CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }))
+                        // The pair comes back together: the calendar in front of the other windows, the notifications
+                        // over it.
+                        presentWindow(FloatingWindow.Calendar, calendarId)
                     }
+                    notificationsCalendarId = calendarId
                     presentWindow(FloatingWindow.Search, standing)
                     notificationsWindowId = standing
                 } else {
@@ -3825,10 +3847,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     labelOf = { CalendarNotifications.label(it, tz) },
                                 )
                             }
+                        // User rule 2026-10-14: the calendar under an "unfocused notif" window (its tab's parent, the
+                        // bar's one reading) opens on its notifications, first to last, the now-line included. Read
+                        // again whenever the notifications it shows change (anomaly 2026-10-14: a standing pair given
+                        // new ones kept the view fitted before them — the last notifications and the line below it) and
+                        // when the link appears; in between the view is the user's.
+                        val openingParent = windowFrames.tabParentOf(calendarId)
+                        val openingSpan = remember(calendarId, openingParent, calendarConfig.notifications) {
+                            val parent = openingParent
+                            if (parent != null && lateralWindowOf(parent) == FloatingWindow.Search &&
+                                SearchDomain.isNotificationsWindow(searchConfigOf(parent))
+                            ) {
+                                CalendarNotifications.openingSpan(
+                                    CalendarNotifications.chips(schedulerState.notificationLog, calendarConfig.notifications),
+                                    clock.nowMillis(),
+                                )
+                            } else {
+                                null
+                            }
+                        }
                         CompositionLocalProvider(org.example.project.ui.LocalCalendarNotifications provides notificationsView) {
                         CalendarFloatingWindow(
                             selectedDate = selectedDate,
                             today = today,
+                            openingSpan = openingSpan,
                             // PRD §8 "locked on task", set by a task cell's "go to calendar" — which is about THE
                             // calendar, the one it opens: a copy has no such lock.
                             lockedTaskTitle = if (isCopy) null else calendarLockTask?.let { schedulerState.tasks[it]?.title?.ifBlank { null } },
