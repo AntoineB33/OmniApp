@@ -136,6 +136,10 @@ private fun HangingMenu(
     val site = currentCompositeKeyHash
     val session = remember(owner) { MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals) }
     DisposableEffect(session) { onDispose { session.close() } }
+    // The pointer is read ONCE, as the menu opens — where the right-click was. Read at every layout of the anchor (a
+    // row's hover, a scroll, a recomposition of the list), it sent the open menu after the hand moving to it (anomaly
+    // 2026-10-14: *"appears, then teleports to the new position of the mouse"*).
+    val pointer = remember(session) { if (atPointer) pointerIn(owner) else null }
     // What the menu hangs from: the layout it is declared in, exactly as material's menu reads it (`Popup`: a node of
     // no size, there only while the menu is open, that reports its parent's place in the window).
     Layout(
@@ -143,7 +147,6 @@ private fun HangingMenu(
         modifier = Modifier.onGloballyPositioned { own ->
             own.parentCoordinates?.let { parent ->
                 val origin = parent.positionInWindow()
-                val pointer = if (atPointer) pointerIn(owner) else null
                 session.hangFrom(
                     when {
                         pointer != null -> Rect(pointer, Size.Zero)

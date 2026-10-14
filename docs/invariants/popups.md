@@ -234,7 +234,10 @@ means.
     Its rows run the whole width of a list, so "under the row, at its left" — where material puts the menu of a
     layout, and where it always was: seen side by side on a task cell — is far from the hand. It reaches the three
     row menus: a result's, an added element's, and the task rows borrowed from the tree (`TaskRow` reads the
-    local). The tree's own cells keep their menu under the cell. Desktop only (a finger has no pointer); a dev run's
+    local). The tree's own cells keep their menu under the cell. **The pointer is read ONCE, as the menu opens**
+    (anomaly 2026-10-14: *"appears, then teleports to the new position of the mouse"*): the anchor's layout runs
+    again while the menu is open (a hover, a scroll, the list recomposing), and reading the pointer there moved the
+    open menu to wherever the hand had gone. Desktop only (a finger has no pointer); a dev run's
     `-Pomniapp.menusAtPointer=true` forces it everywhere, which is how it was seen.
   - **A menu opens in as few turns of the event queue as there are** (same anomaly: *"the right-click menu is slow
     to appear"*; `MenuSession`). Plain code, not Compose's `DialogWindow`, which took half a dozen turns — each

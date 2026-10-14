@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A menu opened at the pointer stays where it opened — 2026-10-14
+
+The user: "Sometimes, the right-click menu has glitches: appears, then teleports to the new position of the mouse."
+The menus that open at the pointer (the Search window's rows) read the pointer in the anchor's `onGloballyPositioned`,
+which runs again at every re-layout of the row while the menu is open — a hover, a scroll, the list recomposing — so
+the open menu jumped to wherever the hand had moved, typically on its way to an entry. The pointer is now read once,
+as the menu opens (`HangingMenu`, `AppDropdownMenu.jvm.kt`). Client rebuild only.
+
 ### Every menu is a window of its own on the desktop, over any other application's — 2026-10-13
 
 The user: "Any right-click menus must appear above all, even above Firefox's picture-in-picture window." Third answer,
