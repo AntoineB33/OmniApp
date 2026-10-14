@@ -550,7 +550,7 @@ private fun BoundRow(
     val dateKey = section.key + "/" + label + "/date"
     val timeKey = section.key + "/" + label + "/time"
     val dateText = fieldText[dateKey] ?: shared?.let { formatDate(it, tz) } ?: ""
-    val timeText = fieldText[timeKey] ?: shared?.let { formatHm(it, tz) } ?: ""
+    val timeText = fieldText[timeKey] ?: shared?.let { formatHms(it, tz) } ?: ""
 
     EditMenuSectionLabel(label)
     if (offered.size > 1) {
@@ -591,13 +591,14 @@ private fun BoundRow(
         // The right-click steps (user rule 2026-10-14): the instant moved, its date carried along past midnight.
         val at = parseDateTime(dateText, timeText, tz)
         Box(Modifier.weight(1f)) {
-            TimeNudgeMenu(
+            NudgeMenu(
                 enabled = at != null,
+                stepsMillis = LENGTH_NUDGE_MILLIS,
                 onNudge = { delta ->
                     at?.let {
                         fieldText.remove(dateKey)
                         fieldText.remove(timeKey)
-                        onEdit(CalendarElements.Bound.At, it + delta * 60_000L)
+                        onEdit(CalendarElements.Bound.At, it + delta)
                     }
                 },
             ) {
@@ -607,7 +608,7 @@ private fun BoundRow(
                         fieldText[timeKey] = typed
                         parseDateTime(dateText, typed, tz)?.let { onEdit(CalendarElements.Bound.At, it) }
                     },
-                    label = { Text(if (shared == null && fieldText[timeKey] == null) "—" else "HH:mm") },
+                    label = { Text(if (shared == null && fieldText[timeKey] == null) "—" else "HH:mm:ss") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )

@@ -217,6 +217,13 @@ class CalendarBlocksSearchTest {
             listOf("+1 h", "+10 min", "+1 min", "+10 s", "+1 s", "−1 s", "−10 s", "−1 min", "−10 min", "−1 h"),
             LENGTH_NUDGE_MILLIS.map(::nudgeLabel),
         )
+        // User rule 2026-10-14: the fields that say an instant say its second, and read a time typed with or without one.
+        assertEquals("07:05:09", org.example.project.ui.timeOfDaySecondsText(7 * 3600 + 5 * 60 + 9))
+        assertEquals(7 * 3600 + 5 * 60 + 9, org.example.project.ui.timeOfDaySecondsOf("7:05:09"))
+        assertEquals(7 * 3600 + 5 * 60, org.example.project.ui.timeOfDaySecondsOf("07:05"))
+        for (bad in listOf("07:05:60", "07:05:", "1:2:3:4", "24:00")) assertEquals(null, org.example.project.ui.timeOfDaySecondsOf(bad), bad)
+        assertEquals(7 * 3600 + 5 * 60 + 9, org.example.project.ui.editorSecondsOf("07:05:09"))
+        assertEquals(null, org.example.project.ui.editorSecondsOf("7"), "an editor wants at least the minutes")
         assertEquals("21:30", timeOfDayText(nudgedTimeOfDay(20 * 60 + 30, 60)))
         assertEquals("20:20", timeOfDayText(nudgedTimeOfDay(20 * 60 + 30, -10)))
         assertEquals("20:31", timeOfDayText(nudgedTimeOfDay(20 * 60 + 30, 1)))

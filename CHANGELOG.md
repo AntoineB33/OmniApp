@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A timer that rang says when it would end now — 2026-10-14
+
+Anomaly on account 3: the "test" timer (45 min, rang at 13:31:01 and went back to idle) had its end field stuck on
+13:31:01; it should read now + 45 min. `TimerDomain.endMomentMillis` read `endedAtMillis` — the instant it reached
+zero, kept only so "Below zero" can resume from it — as its end, and the window showed it as a deaf "Ended". A timer
+that is not running now always reads "Would end", the clock plus its countdown, and its end can be moved. `TimerTest`.
+Client rebuild only.
+
+### The time fields say the second — 2026-10-14
+
+The user: "The time fields must also show the seconds. Find in the app other fields that should do that as well."
+Every field that says an INSTANT now reads and takes `HH:MM:SS` (`TimeOfDaySecondsField`; `formatHms` and
+`editorSecondsOf` for the text the edit windows hold), and its right-click menu steps seconds too. These are "Add to the
+calendar"'s start and end (its "Now" and "Right-click time" to the second), "Blocks on the calendar"'s start and end,
+the element window's and the period window's Begins/Ends, the panel window's Begins/Ends, the reminder tag's Time, and a
+timer's end. A minute field used to rewrite what it did not show: a block at 10:00:37 saved from the panel window went
+to 10:00:00. The fields of a RULE's time (alarm, reminder, quota, sleep schedule) stay to the minute, which is how they
+are stored. `CalendarBlocksSearchTest`. Client rebuild only.
+
 ### Menus open beside what they are about — 2026-10-14
 
 The user: "The right-click menu is hiding the field, even though there are spaces at the bottom. If there is no space

@@ -56,14 +56,19 @@ internal fun nudgeLabel(deltaMillis: Long): String {
 }
 
 /**
- * [TimeNudgeMenu] round a field that holds its time of day as `HH:mm` TEXT, kept by the window until it saves (the
- * calendar's own edit windows: a panel's, a period's, a reminder tag's): the text stepped round the clock. A text that
- * is not a time opens nothing.
+ * The right-click steps round a field that holds its time of day as `HH:mm:ss` TEXT (to the second, user rule
+ * 2026-10-14), kept by the window until it saves (the calendar's own edit windows: a panel's, a reminder tag's): the
+ * text stepped round the clock, seconds steps included ([LENGTH_NUDGE_MILLIS]). A text that is not a time opens nothing.
  */
 @Composable
-internal fun HmTextNudgeMenu(text: String, onText: (String) -> Unit, field: @Composable () -> Unit) {
-    val minutes = timeOfDayOf(text)
-    TimeNudgeMenu(enabled = minutes != null, onNudge = { delta -> minutes?.let { onText(timeOfDayText(nudgedTimeOfDay(it, delta))) } }, field)
+internal fun TimeTextNudgeMenu(text: String, onText: (String) -> Unit, field: @Composable () -> Unit) {
+    val seconds = editorSecondsOf(text)
+    NudgeMenu(
+        enabled = seconds != null,
+        stepsMillis = LENGTH_NUDGE_MILLIS,
+        onNudge = { delta -> seconds?.let { onText(timeOfDaySecondsText((((it + delta / 1_000L) % 86_400L + 86_400L) % 86_400L).toInt())) } },
+        field = field,
+    )
 }
 
 /** The menu itself, over any steps ([stepsMillis], in the order it lists them); [TimeNudgeMenu]'s rules. */

@@ -192,13 +192,14 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   `SetNewTimerDefaults` — a setting, not a History Unit. The run's actions never see the default.
 - **Each countdown says the moment it will end, as a day and a time of day** (user rule 2026-10-12, `TimerEndFields`,
   under Elapsed in a timer's run; the ONE reading is `TimerDomain.endMomentMillis`): a RUNNING timer's
-  `endsAtMillis` (behind the clock for one counting on below zero); for one that reached zero and went back to idle,
-  **the moment it reached zero** (`endedAtMillis`, read "Ended" and deaf — there is no run to move — until a new run
-  or Reset clears it); for any other timer that is NOT running, **the moment it would reach zero if it ran now**
-  ("Would end": the clock plus its countdown). An edit moves the end through `NudgeTimerRemaining` by the difference
-  — the row stays in the state it is in, and what is under the minute stays. Never a second write path to the run.
-  A timer that is not running re-reads the clock only when its projected end crosses a minute (the fields state
-  minutes) — a display resample, the window's 250 ms poll still runs only while something is running.
+  `endsAtMillis` (behind the clock for one counting on below zero); for any timer that is NOT running, **the moment it
+  would reach zero if it ran now** ("Would end": the clock plus its countdown). One that rang and went back to idle is
+  one of those (anomaly 2026-10-14: the field stood on the 13:31:01 it reached zero at instead of now + its 45 min) —
+  `endedAtMillis` is kept for "Below zero" alone and is never read as the end. An edit moves the end through `NudgeTimerRemaining` by the difference
+  — the row stays in the state it is in, and what is under the second stays. Never a second write path to the run.
+  The time field says the SECOND (`HH:MM:SS`, `TimeOfDaySecondsField`, user rule 2026-10-14), so a timer that is not
+  running re-reads the clock only when its projected end crosses a second — a display resample, the window's 250 ms
+  poll still runs only while something is running.
 - **With only timers added, "Blocks on the calendar" is not listed** (user rule 2026-10-12, `actionsFor`): a timer's
   place on the calendar is the moment it ends, which those fields state and move. Beside any other element that can
   be on the calendar, the action stands and lists the timers' blocks too.

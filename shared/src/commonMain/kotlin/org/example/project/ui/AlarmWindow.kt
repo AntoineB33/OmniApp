@@ -815,57 +815,52 @@ private fun AlarmRowEditor(
  * User rule 2026-10-12: **the moment a timer will end**, as a day and a time of day beside its countdown — the
  * countdown said as an instant ([TimerDomain.endMomentMillis]):
  *  - a RUNNING timer's end ([TimerEntry.endsAtMillis]), behind the clock for one counting on below zero;
- *  - a timer that reached zero and went back to idle: **the moment it reached zero** ([TimerEntry.endedAtMillis]),
- *    read as "Ended" and deaf — there is no run to move — until a new run or Reset clears it;
- *  - any other timer that is NOT running (held, or idle at its duration): **the moment it would reach zero if it ran
- *    now** — the clock plus its countdown, so it moves on with the clock.
+ *  - any timer that is NOT running (held, or idle at its duration — one that rang and went back to idle included,
+ *    anomaly 2026-10-14): **the moment it would reach zero if it ran now** — the clock plus its countdown, so it
+ *    moves on with the clock.
  * An edit moves the end there through the nudge ([onNudge], the time left moved by the difference): the timer stays
- * in the state it is in, and what is under the minute stays as it was.
+ * in the state it is in, and what is under the second stays as it was.
  *
- * The fields state a minute, so a timer that is not running re-reads the clock ([clock]) only when its projected end
- * crosses one — a display resample, never a request; a running one's end does not move with the clock at all.
+ * The fields state a SECOND (`HH:MM:SS`, user rule 2026-10-14: *"The time fields must also show the seconds"*), so a
+ * timer that is not running re-reads the clock ([clock]) only when its projected end crosses one — a display
+ * resample, never a request; a running one's end does not move with the clock at all.
  */
 @Composable
 internal fun TimerEndFields(entry: TimerEntry?, nowMillis: Long, clock: () -> Long, onNudge: (Long) -> Unit) {
     val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
-    val projected = entry != null && entry.endsAtMillis == null && entry.endedAtMillis == null
+    val projected = entry != null && entry.endsAtMillis == null
     var heldNow by remember { mutableStateOf(clock()) }
     if (projected && entry != null) {
         LaunchedEffect(entry) {
             while (true) {
                 heldNow = clock()
                 val at = TimerDomain.endMomentMillis(entry, heldNow)
-                delay(60_000L - (at % 60_000L + 60_000L) % 60_000L + 20L)
+                delay(1_000L - (at % 1_000L + 1_000L) % 1_000L + 20L)
             }
         }
     }
     val end = entry?.let { localOf(TimerDomain.endMomentMillis(it, if (projected) heldNow else nowMillis), tz) }
-    val minutes = end?.let { it.hour * 60 + it.minute }
-    val ended = entry != null && entry.endsAtMillis == null && entry.endedAtMillis != null
-    val movable = entry != null && !ended
-    // The day and the minute are what the fields state: what is under the minute goes with the end as it is moved.
-    fun moveTo(date: kotlinx.datetime.LocalDate, minuteOfDay: Int) {
-        if (!movable || end == null || minutes == null) return
-        val delta = instantOf(date, minuteOfDay, tz) - instantOf(end.date, minutes, tz)
+    val seconds = end?.let(::secondOfDay)
+    val movable = entry != null
+    // The day and the second are what the fields state: what is under the second goes with the end as it is moved.
+    fun moveTo(date: kotlinx.datetime.LocalDate, secondOfDay: Int) {
+        if (!movable || end == null || seconds == null) return
+        val delta = instantOfSecond(date, secondOfDay, tz) - instantOfSecond(end.date, seconds, tz)
         if (delta != 0L) onNudge(delta)
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = when {
-                ended -> "Ended"
-                projected -> "Would end"
-                else -> "Ends"
-            },
+            text = if (projected) "Would end" else "Ends",
             style = MaterialTheme.typography.bodySmall,
         )
         DayField(end?.date, "day", localOf(nowMillis, tz).date, enabled = movable) { date ->
-            minutes?.let { moveTo(date, it) }
+            seconds?.let { moveTo(date, it) }
         }
-        TimeOfDayField(
-            minutes,
+        TimeOfDaySecondsField(
+            seconds,
             enabled = movable,
             blank = "—",
-            onNudge = { deltaMinutes -> if (movable) onNudge(deltaMinutes * 60_000L) },
+            onNudge = { delta -> if (movable) onNudge(delta) },
         ) { typed -> end?.let { moveTo(it.date, typed) } }
     }
 }

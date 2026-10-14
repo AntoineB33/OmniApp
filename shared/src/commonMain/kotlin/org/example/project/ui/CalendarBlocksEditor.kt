@@ -226,20 +226,21 @@ internal fun CalendarBlockFields(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             NoteText(if (instant) "at" else "starts", color = MaterialTheme.colorScheme.onSurface)
             DayField(from.date, "day", today, enabled = !fixedDay) { date ->
-                val start = instantOf(date, from.hour * 60 + from.minute, tz)
+                val start = instantOfSecond(date, secondOfDay(from), tz)
                 write(start, start + (restEnd - restStart))
             }
             // The start moved: the block keeps its END (it is the start field that was edited), unless
             // that would leave it no length — then it keeps its length.
             fun moveStart(start: Long) = write(start, if (instant) start else restEnd.takeIf { it > start } ?: (start + (restEnd - restStart)))
-            TimeOfDayField(
-                from.hour * 60 + from.minute,
+            // To the second, as the calendar draws the block (user rule 2026-10-14).
+            TimeOfDaySecondsField(
+                secondOfDay(from),
                 enabled = true,
-                blank = "HH:MM",
+                blank = "HH:MM:SS",
                 // A step past midnight is the next day's (or the day before's): the block's times are instants.
-                onNudge = { delta -> moveStart(shownStart + delta * 60_000L) },
-            ) { minutes ->
-                moveStart(instantOf(from.date, minutes, tz))
+                onNudge = { delta -> moveStart(shownStart + delta) },
+            ) { seconds ->
+                moveStart(instantOfSecond(from.date, seconds, tz))
             }
         }
         if (!instant) {
@@ -247,15 +248,15 @@ internal fun CalendarBlockFields(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 NoteText("ends", color = MaterialTheme.colorScheme.onSurface)
                 DayField(to.date, "day", today, enabled = true) { date ->
-                    write(restStart, instantOf(date, to.hour * 60 + to.minute, tz))
+                    write(restStart, instantOfSecond(date, secondOfDay(to), tz))
                 }
-                TimeOfDayField(
-                    to.hour * 60 + to.minute,
+                TimeOfDaySecondsField(
+                    secondOfDay(to),
                     enabled = true,
-                    blank = "HH:MM",
-                    onNudge = { delta -> write(restStart, shownEnd + delta * 60_000L) },
-                ) { minutes ->
-                    write(restStart, instantOf(to.date, minutes, tz))
+                    blank = "HH:MM:SS",
+                    onNudge = { delta -> write(restStart, shownEnd + delta) },
+                ) { seconds ->
+                    write(restStart, instantOfSecond(to.date, seconds, tz))
                 }
             }
         }

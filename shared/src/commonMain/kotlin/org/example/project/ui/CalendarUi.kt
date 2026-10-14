@@ -9995,16 +9995,19 @@ private fun twoDigits(n: Int): String = n.toString().padStart(2, '0')
 internal fun formatDate(millis: Long, tz: TimeZone): String =
     Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz).date.toString()
 
-/** `YYYY-MM-DD` + `H:mm`/`HH:mm` -> that local instant; null while either half is not (yet) valid. */
+/**
+ * `YYYY-MM-DD` + `H:mm`/`HH:mm`/`HH:mm:ss` -> that local instant; null while either half is not (yet) valid. The
+ * editors' time fields say the second (user rule 2026-10-14), and a time typed without one is on the minute.
+ */
 internal fun parseDateTime(dateText: String, timeText: String, tz: TimeZone): Long? {
     val date = runCatching { LocalDate.parse(dateText.trim()) }.getOrNull() ?: return null
-    val parts = timeText.trim().split(":")
-    if (parts.size != 2) return null
-    val h = parts[0].toIntOrNull() ?: return null
-    val m = parts[1].toIntOrNull() ?: return null
-    if (h !in 0..23 || m !in 0..59) return null
-    return LocalDateTime(date, LocalTime(h, m)).toInstant(tz).toEpochMilliseconds()
+    val seconds = editorSecondsOf(timeText) ?: return null
+    return instantOfSecond(date, seconds, tz)
 }
+
+/** An editor's typed time, `H:mm` or `HH:mm:ss`, as its second of the day; null when malformed. */
+internal fun editorSecondsOf(text: String): Int? =
+    text.trim().takeIf { it.split(':').size in 2..3 }?.let(::timeOfDaySecondsOf)
 
 internal fun formatHm(millis: Long, tz: TimeZone): String {
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
@@ -10017,9 +10020,10 @@ internal fun formatHm(millis: Long, tz: TimeZone): String {
  * The bubble is the one place that answers "when exactly is this", and the calendar is full of things a
  * minute cannot express: a 20-second look-away (§15) reads as a zero-length range at `HH:MM`, and every
  * derived band is cut at the millisecond a device locked or a session opened, so two of them abutting look
- * like they overlap. The EDITORS keep `formatHm` — their fields parse `H:mm` and commit on the minute.
+ * like they overlap. The editors' time fields read it too since 2026-10-14 (user rule: *"The time fields must also
+ * show the seconds"*), and parse `H:mm` or `HH:mm:ss` ([editorSecondsOf]).
  */
-private fun formatHms(millis: Long, tz: TimeZone): String {
+internal fun formatHms(millis: Long, tz: TimeZone): String {
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(tz)
     return "${twoDigits(dt.hour)}:${twoDigits(dt.minute)}:${twoDigits(dt.second)}"
 }
@@ -10051,15 +10055,10 @@ internal fun bubbleTimeRange(
     openStart: Boolean = false,
 ): String = "${hmsOrInfinity(startMillis, openStart, tz)} – ${hmsOrInfinityEnd(endMillis, tz)}"
 
-/** Parse "H:mm" / "HH:mm" onto the calendar date of [refMillis]; null when malformed. */
+/** Parse "H:mm" / "HH:mm" / "HH:mm:ss" onto the calendar date of [refMillis]; null when malformed. */
 private fun parseHmOnDateOf(text: String, refMillis: Long, tz: TimeZone): Long? {
-    val parts = text.trim().split(":")
-    if (parts.size != 2) return null
-    val h = parts[0].toIntOrNull() ?: return null
-    val m = parts[1].toIntOrNull() ?: return null
-    if (h !in 0..23 || m !in 0..59) return null
-    val date = Instant.fromEpochMilliseconds(refMillis).toLocalDateTime(tz).date
-    return LocalDateTime(date.year, date.month, date.day, h, m).toInstant(tz).toEpochMilliseconds()
+    val seconds = editorSecondsOf(text) ?: return null
+    return instantOfSecond(Instant.fromEpochMilliseconds(refMillis).toLocalDateTime(tz).date, seconds, tz)
 }
 
 /** PRD §8 one labeled pin-dimension switch row in the calendar edit window. */
@@ -10133,8 +10132,8 @@ fun ManualEntryEditWindow(
     // the first-task default.
     var selectedTaskId by remember { mutableStateOf(initialTaskId) }
     var newTaskChosen by remember { mutableStateOf(false) }
-    var startText by remember { mutableStateOf(formatHm(startMillis, tz)) }
-    var endText by remember { mutableStateOf(formatHm(endMillis, tz)) }
+    var startText by remember { mutableStateOf(formatHms(startMillis, tz)) }
+    var endText by remember { mutableStateOf(formatHms(endMillis, tz)) }
     // PRD §8: the four independent pin dimensions, toggled by the switches below. Only [existence] is
     // enforced today (a pinned panel survives a reschedule); position/spanning/distance are stored and
     // shown so they round-trip across edits until their enforcement lands.
@@ -10210,22 +10209,22 @@ fun ManualEntryEditWindow(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     // The right-click steps (user rule 2026-10-14), each time on its own day as the fields are.
                     Box(Modifier.weight(1f)) {
-                        HmTextNudgeMenu(startText, { startText = it }) {
+                        TimeTextNudgeMenu(startText, { startText = it }) {
                             OutlinedTextField(
                                 value = startText,
                                 onValueChange = { startText = it },
-                                label = { Text("Begins (HH:mm)") },
+                                label = { Text("Begins (HH:mm:ss)") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
                     Box(Modifier.weight(1f)) {
-                        HmTextNudgeMenu(endText, { endText = it }) {
+                        TimeTextNudgeMenu(endText, { endText = it }) {
                             OutlinedTextField(
                                 value = endText,
                                 onValueChange = { endText = it },
-                                label = { Text("Ends (HH:mm)") },
+                                label = { Text("Ends (HH:mm:ss)") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
@@ -10436,9 +10435,9 @@ fun PeriodEditWindow(
         mutableStateOf(if (SchedulerDomain.isOpenFuture(endMillis)) CalendarElements.Bound.Infinite else CalendarElements.Bound.At)
     }
     var startDateText by remember { mutableStateOf(formatDate(startSeed, tz)) }
-    var startTimeText by remember { mutableStateOf(formatHm(startSeed, tz)) }
+    var startTimeText by remember { mutableStateOf(formatHms(startSeed, tz)) }
     var endDateText by remember { mutableStateOf(formatDate(endSeed, tz)) }
-    var endTimeText by remember { mutableStateOf(formatHm(endSeed, tz)) }
+    var endTimeText by remember { mutableStateOf(formatHms(endSeed, tz)) }
 
     val label = PeriodKinds.periodTitle(kind)
     val resolvedStart =
@@ -10605,19 +10604,20 @@ private fun PeriodBoundEditor(
             // The right-click steps (user rule 2026-10-14): the instant moved, its date carried along past midnight.
             val at = parseDateTime(dateText, timeText, tz)
             Box(Modifier.weight(1f)) {
-                TimeNudgeMenu(
+                NudgeMenu(
                     enabled = at != null,
+                    stepsMillis = LENGTH_NUDGE_MILLIS,
                     onNudge = { delta ->
                         at?.let {
-                            onDateChange(formatDate(it + delta * 60_000L, tz))
-                            onTimeChange(formatHm(it + delta * 60_000L, tz))
+                            onDateChange(formatDate(it + delta, tz))
+                            onTimeChange(formatHms(it + delta, tz))
                         }
                     },
                 ) {
                     OutlinedTextField(
                         value = timeText,
                         onValueChange = onTimeChange,
-                        label = { Text("HH:mm") },
+                        label = { Text("HH:mm:ss") },
                         isError = !valid,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -10676,7 +10676,7 @@ fun ReminderEditWindow(
     // empty string is a distinct sentinel meaning the user explicitly picked "New Reminder" (a brand-new,
     // distinct reminder) even when the typed title matches an existing one; null means "no explicit pick".
     var selectedReminderId by remember { mutableStateOf<String?>(null) }
-    var timeText by remember { mutableStateOf(formatHm(initialMillis, tz)) }
+    var timeText by remember { mutableStateOf(formatHms(initialMillis, tz)) }
     // PRD §14: the two switches. "checked" defaults on when ADDING (the common case — recording something
     // just done) and "pinned" off; editing an existing tag seeds both from it. At least one keeps the tag
     // alive across regeneration.
@@ -10723,7 +10723,7 @@ fun ReminderEditWindow(
                         modifier = Modifier.weight(1f),
                     )
                     // The right-click steps (user rule 2026-10-14), on the tag's own day as the field is.
-                    HmTextNudgeMenu(timeText, { timeText = it }) {
+                    TimeTextNudgeMenu(timeText, { timeText = it }) {
                         OutlinedTextField(
                             value = timeText,
                             onValueChange = { timeText = it },

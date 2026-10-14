@@ -30,7 +30,7 @@ import org.example.project.scheduler.state.SchedulerState
  * Beside each day-and-time (the start, and the end when it is stated as one) stand **"Now"** and — user rule
  * 2026-10-07, *"only if the Search window originates from the calendar from a right-click"*
  * ([SearchDomain.Config.calendarClickMillis]) — **"Right-click time"**, which set it to the clock's instant and to the
- * position of that right-click, to the minute as the fields say it.
+ * position of that right-click, to the second as the fields say it (`HH:MM:SS`, user rule 2026-10-14).
  * The start and the end are this Search window's ([SearchDomain.Config.placement], local-only view state). An end not
  * after the start is shown as the error it is, and nothing is laid.
  */
@@ -50,32 +50,32 @@ internal fun CalendarPlacementEditor(
     fun write(change: (SearchDomain.Placement) -> SearchDomain.Placement) = onConfigChange(config.copy(placement = change(placement)))
     val start = SearchDomain.placementStart(config)
     val startAt = start?.let { localOf(it, tz) }
-    val startMinutes = startAt?.let { it.hour * 60 + it.minute }
+    val startSeconds = startAt?.let(::secondOfDay)
     val refused = start != null && SearchDomain.placementRefused(placement, start)
     // User rules 2026-10-11 and 2026-10-14: the length the added elements have of their own — a break's, a task's
     // minimum time, the Sleep schedule's, a ring's sound — one press of "Default" away beside the end.
     val default = SearchDomain.placementDefaultLength(state, added)
-    // "Now" and "Right-click time" for one day-and-time: to the minute, as the fields say it.
+    // "Now" and "Right-click time" for one day-and-time: to the second, as the fields say it (user rule 2026-10-14).
     @Composable
     fun instantButtons(set: (Long) -> Unit) {
-        FrameButton("Now") { set(nowMillis() / 60_000L * 60_000L) }
-        config.calendarClickMillis?.let { click -> FrameButton("Right-click time") { set(click / 60_000L * 60_000L) } }
+        FrameButton("Now") { set(nowMillis() / 1_000L * 1_000L) }
+        config.calendarClickMillis?.let { click -> FrameButton("Right-click time") { set(click / 1_000L * 1_000L) } }
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             NoteText("starts", color = MaterialTheme.colorScheme.onSurface)
             DayField(startAt?.date, "day", today, enabled = true) { date ->
-                write { it.copy(startMillis = instantOf(date, startMinutes ?: 0, tz)) }
+                write { it.copy(startMillis = instantOfSecond(date, startSeconds ?: 0, tz)) }
             }
             NoteText("at", color = MaterialTheme.colorScheme.onSurface)
             // A step past midnight is the next day's (or the day before's): the start is an instant.
-            TimeOfDayField(
-                startMinutes,
+            TimeOfDaySecondsField(
+                startSeconds,
                 enabled = true,
-                blank = "HH:MM",
-                onNudge = { delta -> start?.let { from -> write { it.copy(startMillis = from + delta * 60_000L) } } },
-            ) { minutes ->
-                write { it.copy(startMillis = instantOf(startAt?.date ?: today, minutes, tz)) }
+                blank = "HH:MM:SS",
+                onNudge = { delta -> start?.let { from -> write { it.copy(startMillis = from + delta) } } },
+            ) { seconds ->
+                write { it.copy(startMillis = instantOfSecond(startAt?.date ?: today, seconds, tz)) }
             }
             instantButtons { at -> write { it.copy(startMillis = at) } }
         }
@@ -100,20 +100,20 @@ internal fun CalendarPlacementEditor(
                 }
             } else {
                 val endAt = placement.endMillis?.let { localOf(it, tz) }
-                val endMinutes = endAt?.let { it.hour * 60 + it.minute }
+                val endSeconds = endAt?.let(::secondOfDay)
                 NoteText("ends on", color = MaterialTheme.colorScheme.onSurface)
                 DayField(endAt?.date, "day", today, enabled = true) { date ->
-                    write { it.copy(endMillis = instantOf(date, endMinutes ?: startMinutes ?: 0, tz)) }
+                    write { it.copy(endMillis = instantOfSecond(date, endSeconds ?: startSeconds ?: 0, tz)) }
                 }
                 NoteText("at", color = MaterialTheme.colorScheme.onSurface)
-                TimeOfDayField(
-                    endMinutes,
+                TimeOfDaySecondsField(
+                    endSeconds,
                     enabled = true,
                     refused = refused,
-                    blank = "HH:MM",
-                    onNudge = { delta -> placement.endMillis?.let { from -> write { it.copy(endMillis = from + delta * 60_000L) } } },
-                ) { minutes ->
-                    write { it.copy(endMillis = instantOf(endAt?.date ?: startAt?.date ?: today, minutes, tz)) }
+                    blank = "HH:MM:SS",
+                    onNudge = { delta -> placement.endMillis?.let { from -> write { it.copy(endMillis = from + delta) } } },
+                ) { seconds ->
+                    write { it.copy(endMillis = instantOfSecond(endAt?.date ?: startAt?.date ?: today, seconds, tz)) }
                 }
                 instantButtons { at -> write { it.copy(endMillis = at) } }
                 if (default != null && start != null) {

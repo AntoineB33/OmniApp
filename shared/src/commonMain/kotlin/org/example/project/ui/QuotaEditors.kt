@@ -543,10 +543,24 @@ internal fun timeOfDayOf(text: String): Int? {
     return if (parts.size <= 2 && h in 0..23 && m in 0..59) h * 60 + m else null
 }
 
+/** A time of day to the second as its field reads it: `HH:MM:SS` (user rule 2026-10-14). */
+internal fun timeOfDaySecondsText(seconds: Int): String =
+    timeOfDayText(seconds / 60) + ":" + (seconds % 60).toString().padStart(2, '0')
+
+/** A typed time of day in seconds — `7`, `07:05`, `07:05:30` — or null for anything else. */
+internal fun timeOfDaySecondsOf(text: String): Int? {
+    val parts = text.trim().split(':')
+    if (parts.size > 3) return null
+    val minutes = timeOfDayOf(parts.take(2).joinToString(":")) ?: return null
+    val seconds = if (parts.size == 3) parts[2].toIntOrNull()?.takeIf { it in 0..59 } ?: return null else 0
+    return minutes * 60 + seconds
+}
+
 /**
  * A time of day, `HH:MM`; [minutes] null reads "mixed". A time that does not parse shows as an error, unwritten — and
  * so does one the caller [refused]. Left, the field reads [minutes] again: it never goes on showing a time that is
- * not the one stored.
+ * not the one stored. For a RULE's time, stored to the minute (an alarm's, a quota's, the sleep schedule's); a field
+ * that says an instant is [TimeOfDaySecondsField].
  */
 @Composable
 internal fun TimeOfDayField(
@@ -563,14 +577,56 @@ internal fun TimeOfDayField(
      */
     onNudge: ((deltaMinutes: Int) -> Unit)? = null,
     onChange: (Int) -> Unit,
+) = TimeField(
+    minutes, enabled, refused, blank, onSettled, ::timeOfDayText, ::timeOfDayOf, "HH:MM", 92.dp,
+    TIME_NUDGE_MINUTES.map { it * 60_000L },
+    onNudge = { delta -> if (onNudge != null) onNudge((delta / 60_000L).toInt()) else minutes?.let { onChange(nudgedTimeOfDay(it, (delta / 60_000L).toInt())) } },
+    onChange = onChange,
+)
+
+/**
+ * **A time of day to the second, `HH:MM:SS`** (user rule 2026-10-14: *"The time fields must also show the
+ * seconds"*) — for a field that says an INSTANT, which the calendar draws to the second: "Add to the calendar"'s
+ * start and end, a block's, a timer's end. Typed as `HH`, `HH:MM` or `HH:MM:SS`; its right-click menu steps seconds
+ * too ([LENGTH_NUDGE_MILLIS]). [TimeOfDayField]'s rules otherwise.
+ */
+@Composable
+internal fun TimeOfDaySecondsField(
+    seconds: Int?,
+    enabled: Boolean,
+    refused: Boolean = false,
+    blank: String = "mixed",
+    onSettled: () -> Unit = {},
+    /** The right-click menu's step; null = round the clock. */
+    onNudge: ((deltaMillis: Long) -> Unit)? = null,
+    onChange: (Int) -> Unit,
+) = TimeField(
+    seconds, enabled, refused, blank, onSettled, ::timeOfDaySecondsText, ::timeOfDaySecondsOf, "HH:MM:SS", 112.dp,
+    LENGTH_NUDGE_MILLIS,
+    onNudge = { delta ->
+        if (onNudge != null) onNudge(delta) else seconds?.let { onChange((((it + delta / 1_000L) % 86_400L + 86_400L) % 86_400L).toInt()) }
+    },
+    onChange = onChange,
+)
+
+/** The one time field under [TimeOfDayField] and [TimeOfDaySecondsField]: [value] in the unit [format] reads. */
+@Composable
+private fun TimeField(
+    value: Int?,
+    enabled: Boolean,
+    refused: Boolean,
+    blank: String,
+    onSettled: () -> Unit,
+    format: (Int) -> String,
+    parse: (String) -> Int?,
+    pattern: String,
+    width: androidx.compose.ui.unit.Dp,
+    steps: List<Long>,
+    onNudge: (deltaMillis: Long) -> Unit,
+    onChange: (Int) -> Unit,
 ) {
-    fun format(m: Int) = timeOfDayText(m)
-    fun parse(text: String): Int? = timeOfDayOf(text)
-    var draft by rememberFieldDraft(minutes, ::timeOfDayText, ::timeOfDayOf)
-    TimeNudgeMenu(
-        enabled = enabled && minutes != null,
-        onNudge = { delta -> if (onNudge != null) onNudge(delta) else minutes?.let { onChange(nudgedTimeOfDay(it, delta)) } },
-    ) {
+    var draft by rememberFieldDraft(value, format, parse)
+    NudgeMenu(enabled = enabled && value != null, stepsMillis = steps, onNudge = onNudge) {
         OutlinedTextField(
             value = draft,
             onValueChange = { text ->
@@ -578,15 +634,15 @@ internal fun TimeOfDayField(
                 val typed = parse(text)
                 // The stored time typed back is no change to write — but it IS the end of whatever was refused before
                 // it (anomaly 2026-10-04: the red message stayed on after the real end was typed back).
-                if (typed != null && typed == minutes) onSettled() else typed?.let(onChange)
+                if (typed != null && typed == value) onSettled() else typed?.let(onChange)
             },
             singleLine = true,
             enabled = enabled,
             // Red for what is ON SCREEN: a refusal no longer colours a field that reads the stored time.
-            isError = (refused && parse(draft) != minutes) || (draft.isNotBlank() && parse(draft) == null),
-            placeholder = { Text(if (minutes == null) blank else "HH:MM") },
-            modifier = Modifier.width(92.dp).endsEditOnOutsidePress {
-                draft = minutes?.let(::format).orEmpty()
+            isError = (refused && parse(draft) != value) || (draft.isNotBlank() && parse(draft) == null),
+            placeholder = { Text(if (value == null) blank else pattern) },
+            modifier = Modifier.width(width).endsEditOnOutsidePress {
+                draft = value?.let(format).orEmpty()
                 onSettled()
             },
         )
@@ -776,6 +832,13 @@ internal fun localOf(millis: Long, tz: TimeZone): LocalDateTime = kotlin.time.In
 
 internal fun instantOf(date: LocalDate, minutes: Int, tz: TimeZone): Long =
     LocalDateTime(date.year, date.month, date.day, minutes / 60, minutes % 60).toInstant(tz).toEpochMilliseconds()
+
+/** [instantOf] to the second: [seconds] into [date]. */
+internal fun instantOfSecond(date: LocalDate, seconds: Int, tz: TimeZone): Long =
+    LocalDateTime(date.year, date.month, date.day, seconds / 3600, seconds / 60 % 60, seconds % 60).toInstant(tz).toEpochMilliseconds()
+
+/** The second of the day [at] is at. */
+internal fun secondOfDay(at: LocalDateTime): Int = at.hour * 3600 + at.minute * 60 + at.second
 
 /**
  * **The particular loops** of each added quota (user rule 2026-10-04): a LIST — "add a loop" puts the period of the

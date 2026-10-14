@@ -1231,6 +1231,16 @@ Global rules that always apply: `CLAUDE.md`.
   window's, the panel window's "Begins"/"Ends" and the reminder tag's "Time" (`HmTextNudgeMenu`: text held until
   Save). A field that holds an INSTANT steps the instant, its date carried past midnight; one that holds only a time
   on a fixed day steps round the clock. A field with no time in it (blank, half-typed, mixed) opens nothing.
+- **Every one of those time fields says the SECOND, `HH:MM:SS`** (user rule 2026-10-14: *"The time fields must also
+  show the seconds. Find in the app other fields that should do that as well."*), and its menu steps ±10 s and ±1 s
+  too (`LENGTH_NUDGE_MILLIS`). They say instants the calendar draws to the second — a 20-second look-away, a
+  notification, a block cut where a device locked — and a minute field rewrote what it did not show: a block at
+  10:00:37 edited in the panel window was saved at 10:00:00. `TimeOfDaySecondsField` for the live fields,
+  `formatHms` / `editorSecondsOf` / `TimeTextNudgeMenu` for the text the edit windows hold until Save; a time typed
+  without seconds (`H:mm`) is on the minute. "Add to the calendar"'s "Now" and "Right-click time" set the second too,
+  and so does a timer's end (`alarms-and-timers.md`). **A RULE's time stays to the minute** (`TimeOfDayField`): an
+  alarm's, a reminder's, a quota's, the sleep schedule's are stored as minutes of the day, so a second there would be
+  a value the field cannot keep.
 
 ### Day and week display modes
 
