@@ -403,11 +403,21 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - **Per-object windows**: `ObjectWindowsHost(windows) { w -> }` draws every open window of an `ObjectWindows`;
   a copy is one more window on the same subject, titled with its number. A window must close through
   `w.close()` (its Save, bin and ✕ close that window, not another), and read its object off `w.subject`.
-- **Not duplicable**: the **task tree** (above), the **Calendar** — its display pipeline in `App` (records, projections, the schedule
-  horizon handed to the engine) is derived from ONE visible span, so a copy on another week would drag every
-  projection to its span and leave the original blank; it needs that pipeline made per-window first
-  (`display-hot-path.md` binds each to its visible window). **Notices** (`MessagePopup`) — a message has no
-  second view. The debug time-sim panel wears no frame.
+- **THERE CAN BE SEVERAL CALENDAR WINDOWS, AND THEY SHARE ONE DISPLAY PIPELINE** (user rule 2026-10-13; `App`'s
+  `LateralWindow(FloatingWindow.Calendar)`, `calendarSpans`). The original and its copies — the head's ⧉, or a
+  calendar asked for WITH the notifications it shows (below) — each have their own selected day, month, scroll,
+  zoom, sections and notification selection, declared where the window is drawn and read by frame id. The pipeline
+  in `App` (records, projections, the far-week plan, the horizon handed to the engine) is NOT per window: it runs
+  over the days that cover every open calendar (`visibleFirstDay` / `visibleDayCount`, the union of what each
+  reports). **Two calendars on far-apart weeks therefore pay for what lies between them** — the user's choice
+  (asked 2026-10-13) over a pipeline per window, which stays the way to take that cost back
+  (`display-hot-path.md` binds a cost to the visible window; here it is bound to the windows' common span).
+  The now-line is resampled at the finest resolution any of them reports. What is about THE calendar stays the
+  original's: "go to calendar"'s task lock, the menu button and a notification's click (`openNewWindow` with no
+  configuration brings the original back; one given a configuration opens a copy, or brings back the calendar
+  already showing exactly that). A copy's sections are its own for the session.
+- **Not duplicable**: the **task tree** (above). **Notices** (`MessagePopup`) — a message has no second view. The
+  debug time-sim panel wears no frame.
 - **Known sharing**: the Search window's sub-tree expansion, selection and edit session, and the default
   sub-tree's tree state, are `SchedulerState` view state, not the window's — their copies share them.
 
@@ -635,6 +645,21 @@ It lives in the host because the host already sees the only two events that deci
 - **It is called "unfocused notif", not "Search"** (user rule 2026-10-06; `SearchDomain.windowTitle`), on its head and on
   its tab of the window bar. The name is read off the configuration — never stored — so it comes back with the window,
   and a window the user turns into another search is a Search window again. A tab a ☆ button named keeps that name.
+- **It holds every notification it lists as an ADDED ELEMENT too, and opens over a calendar that shows them**
+  (user rule 2026-10-13: *"it opens and occupies all the top half of the app, and what occupies all the lower half
+  is a calendar window that comes from the button in the first macro group. The unfocused notif window has all the
+  notification elements in the result list in the added elements list as well"*; `SearchDomain.
+  notificationKeysSince`, `App`'s `placeInHalf`, `CalendarNotificationsTest`). A NEW notifications window is a COPY
+  (`Search#n`, never the Search window's own row), filling the app's width and its top half, with every notification
+  since the focus was lost added; under it, on the bottom half, a calendar COPY whose chips are those notifications —
+  what the "Calendar" action of its first group of actions opens. Each further out-of-focus notification is added
+  to the standing window and to that calendar (held by frame id for the session; closed, it is not reopened). The
+  app adding notifications is not the user changing the window (`isUntouchedNotificationsWindow` lets added
+  notifications be); adding anything else, or changing the search, still makes it theirs. The halves are set when
+  the windows OPEN — a standing window brought back keeps the place the user gave it.
+- **A notification's id is its instant and its place among those of that instant** (`SearchDomain.notificationIds`),
+  not its place in the log: the log is a rolling tail, and a place in it changed for every notification each time
+  the oldest was dropped — an added notification, or one a calendar shows, then named another.
 - **Event-driven**: the log growing and the focus changing (`LocalWindowInfo.isWindowFocused`, the same on every
   platform) are the only things that ask. The app counts as out of focus from its start until it first has it, and the
   instant the focus was lost is kept, so a notification posted while the composition was not running (a phone's

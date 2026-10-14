@@ -212,9 +212,39 @@ object SearchDomain {
             sorts = listOf(SortMethod(Kind.Notification, SortKey.NotificationDate, descending = true)),
         )
 
-    /** A [Kind.Notification] row's id: the instant it was posted at and its place in the log (two can share an instant). */
-    fun notificationId(entry: org.example.project.scheduler.state.NotificationLogEntry, index: Int): String =
-        entry.timeMillis.toString() + "#" + index
+    /**
+     * A [Kind.Notification] row's id: the instant it was posted at and its place among the notifications posted at
+     * that very instant (two can share one) — see [notificationIds], which is where the place is counted.
+     */
+    fun notificationId(entry: org.example.project.scheduler.state.NotificationLogEntry, ordinal: Int): String =
+        entry.timeMillis.toString() + "#" + ordinal
+
+    /**
+     * The ids of [log]'s notifications, in the log's order. The place in an id is counted among the notifications of
+     * the SAME INSTANT, not along the log: the log is a rolling tail, and an id that was a place in it changed for
+     * every notification each time the oldest one was dropped — an added notification, or one a calendar shows
+     * ([CalendarNotifications]), then named another, or nothing (2026-10-13).
+     */
+    fun notificationIds(log: List<org.example.project.scheduler.state.NotificationLogEntry>): List<String> {
+        val seen = HashMap<Long, Int>()
+        return log.map { entry ->
+            val ordinal = seen[entry.timeMillis] ?: 0
+            seen[entry.timeMillis] = ordinal + 1
+            notificationId(entry, ordinal)
+        }
+    }
+
+    /**
+     * The keys ([keyOf]) of the notifications posted from [sinceMillis] on, newest first — what the notifications
+     * window ([notificationsConfig]) lists, and so what the app ADDS to it (user rule 2026-10-13: *"The unfocused notif
+     * window has all the notification elements in the result list in the added elements list as well"*).
+     */
+    fun notificationKeysSince(log: List<org.example.project.scheduler.state.NotificationLogEntry>, sinceMillis: Long): List<String> {
+        val ids = notificationIds(log)
+        return log.indices.filter { log[it].timeMillis >= sinceMillis }
+            .sortedByDescending { log[it].timeMillis }
+            .map { Kind.Notification.name + "/" + ids[it] }
+    }
 
     /** What a scheduler RUN's row id starts with ([schedulerRunId]) — no history category is called that. */
     private const val RUN_ID_PREFIX: String = "run#"
@@ -270,12 +300,16 @@ object SearchDomain {
         config.kinds == setOf(Kind.Notification) && config.filters.notificationsSinceMillis != null
 
     /**
-     * Whether [config] is a notifications window's exactly as the app opened it (user rule 2026-10-06): nothing of its
-     * search configuration changed and nothing added. Only such a window goes on gathering — once the user has changed
-     * it, the next notification out of focus opens a new one beside it.
+     * Whether [config] is a notifications window's as the app keeps it (user rule 2026-10-06): nothing of its search
+     * configuration changed, and nothing added but notifications — which the app adds itself, every one the window
+     * lists ([notificationKeysSince], user rule 2026-10-13). Only such a window goes on gathering — once the user has
+     * changed its search or added something else, the next notification out of focus opens a new one beside it.
      */
-    fun isUntouchedNotificationsWindow(config: Config): Boolean =
-        config.filters.notificationsSinceMillis?.let { config == notificationsConfig(it) } == true
+    fun isUntouchedNotificationsWindow(config: Config): Boolean {
+        val since = config.filters.notificationsSinceMillis ?: return false
+        return config.copy(added = emptyList()) == notificationsConfig(since) &&
+            config.added.all { it.startsWith(Kind.Notification.name + "/") }
+    }
 
     /** What a Search window is called, on its head and on its tab of the window bar. */
     const val WINDOW_TITLE: String = "Search"
@@ -1848,15 +1882,15 @@ object SearchDomain {
                         if (block.endMillis > block.startMillis) " → " + dateTime(block.endMillis, timeZone) else ""
                     ItemResult(kind, block.id, block.name, span)
                 }
-                Kind.Notification -> state.notificationLog.mapIndexed { index, entry ->
+                Kind.Notification -> notificationIds(state.notificationLog).let { ids -> state.notificationLog.mapIndexed { index, entry ->
                     val said = entry.spoken?.takeIf { it.isNotBlank() && it != entry.message }?.let { " · said: $it" }.orEmpty()
                     ItemResult(
                         kind,
-                        notificationId(entry, index),
+                        ids[index],
                         entry.title.ifBlank { "Notification" },
                         listOf(entry.message, dateTime(entry.timeMillis, timeZone)).filter { it.isNotBlank() }.joinToString(" · ") + said,
                     )
-                }
+                } }
                 Kind.TaskTree -> state.taskTrees.map { entry ->
                     val open = entry.id == state.activeTaskTreeId
                     val size = if (open) state.tasks.size else entry.tree.tasks.size
@@ -2700,6 +2734,12 @@ object SearchDomain {
          */
         PeriodSleepSchedule(Kind.RestrictivePeriod, "Sleep schedule"),
         PeriodDrawing(Kind.RestrictivePeriod, "Drawing"),
+        /**
+         * User rule 2026-10-13: *"add the button to open a calendar window that shows all the notifications selected,
+         * which are all the notifications of the macro group in the action section"* — a calendar window whose chips
+         * are the group's notifications ([CalendarNotifications]).
+         */
+        NotificationCalendar(Kind.Notification, "Calendar"),
         PeriodCombinations(Kind.RestrictivePeriod, "Combinations"),
         PeriodTaskSearch(Kind.RestrictivePeriod, "Search its tasks"),
         PeriodDelete(Kind.RestrictivePeriod, "Delete"),
@@ -2895,7 +2935,7 @@ object SearchDomain {
                 AddedAction.CreationSearchAll, AddedAction.TaskAddCategory, AddedAction.TaskRemoveCategory,
                 AddedAction.TaskCopyIds, AddedAction.TaskDeepCopy, AddedAction.TaskCollapseSubtrees,
                 AddedAction.TaskAddDefaultSubtree, AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow,
-                AddedAction.PeriodReset, AddedAction.TimerLowestCountdown,
+                AddedAction.PeriodReset, AddedAction.TimerLowestCountdown, AddedAction.NotificationCalendar,
             )
     }
 
@@ -3059,6 +3099,7 @@ object SearchDomain {
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
             AddedAction.PeriodDrawing -> "period"
+            AddedAction.NotificationCalendar -> "open a calendar with these notifications chips"
             AddedAction.PeriodSleepSchedule ->
                 "wake up go to bed stop screens goal time date total sleep time no screen before bed"
             AddedAction.PeriodTaskSearch -> "search the tasks"

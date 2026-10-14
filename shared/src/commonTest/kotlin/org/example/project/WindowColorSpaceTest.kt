@@ -123,9 +123,11 @@ class WindowColorSpaceTest {
         val opened = SearchDomain.notificationsConfig(t0)
         assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened))
         assertTrue(SearchDomain.isUntouchedNotificationsWindow(SearchDomain.Config.decode(opened.encode())!!))
-        // Changed by the user — its search configuration, or its added elements: no longer the one that gathers.
+        // Changed by the user — its search configuration, or an added element that is not a notification: no longer
+        // the one that gathers. The notifications themselves are added by the app (user rule 2026-10-13).
         assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(query = "timer")))
-        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = listOf("Notification/$t0#0"))))
+        assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = listOf("Notification/$t0#0"))))
+        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = listOf("Notification/$t0#0", "Alarm/alarm-0"))))
         assertFalse(SearchDomain.isUntouchedNotificationsWindow(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Notification))))
         // The window is a default window of its own, apart from the Search windows; the second one, opened beside
         // the changed one, is in the same part and away from it.

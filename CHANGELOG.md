@@ -64,6 +64,34 @@ mode." `Modifier.revertsOnEscape` (CompactSection.kt), on the Search window's ba
 configuration windows' and the notification filter's: the text at the focus's arrival comes back at Escape. The task
 picker's bar and the tree's find bar keep their Escape, which closes them. UI only. Client rebuild; no migration.
 
+### Several calendar windows; notification chips; the notifications window over its calendar — 2026-10-13
+
+The user: "There can be several calendar windows. Add configurations in the calendar window to show a chip for all the
+notifications that are selected in a drop-down menu. In the action section, add the button to open a calendar window
+that shows all the notifications selected, which are all the notifications of the macro group in the action section.
+When the unfocused notif window appears automatically, it opens and occupies all the top half of the app, and what
+occupies all the lower half is a calendar window that comes from the button in the first macro group. The unfocused
+notif window has all the notification elements in the result list in the added elements list as well."
+
+- **Several calendars**: the calendar was "not duplicable" (one display pipeline, one visible span). Asked, the user
+  chose a SHARED pipeline over one per window: `App` draws the calendar through `LateralWindow` (the original and
+  each copy, its head now has the duplicate button), each with its own day, month, scroll, zoom and sections, and the
+  pipeline runs over the span covering every open calendar (`calendarSpans`). Far-apart calendars pay for what lies
+  between them.
+- **Chips**: `CalendarNotifications` — a window's `WindowConfig` (its placement row's `config`; absent = none, no
+  migration), the "Notifications" drop-down in its configuration section, an inert chip per checked notification at
+  its instant (`LocalCalendarNotifications`, `NotificationChip`).
+- **The action**: `AddedAction.NotificationCalendar` ("Calendar"), a set action of the notifications' group.
+- **The notifications window**: opened as a copy on the top half with every notification it lists added, over a
+  calendar copy on the bottom half showing them; both follow what it gathers next. `isUntouchedNotificationsWindow`
+  lets added notifications be. `WindowFrameHost.containerSize` is what the halves are measured from.
+- **A notification's id** is its instant and its place among those of that instant (`notificationIds`), no longer
+  its place in a log that rolls. A notification added to a Search window before this is no longer found by its key.
+
+Seen on a dev run on a throwaway account: the two windows opening by themselves in their halves, six notifications
+gathered and added, a chip on the calendar. NOT seen: the "Calendar" button pressed, the drop-down opened, two
+calendars on different weeks, the user's large account. `CalendarNotificationsTest`. Client rebuild; no migration.
+
 ### The sleep goal has a date; the sleep schedule is an action of the Sleep period — 2026-10-13
 
 The user: "In the sleep configurations, for the goal field, add a date field. If the user sets 13/10/2026 for go to

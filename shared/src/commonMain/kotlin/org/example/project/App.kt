@@ -41,6 +41,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.ChronoDomain
 import org.example.project.scheduler.domain.CalendarLockDomain
+import org.example.project.scheduler.domain.CalendarNotifications
 import org.example.project.scheduler.ui.CalendarGoTo
 import org.example.project.scheduler.ui.LocalCalendarGoTo
 import org.example.project.ui.EditMenuItem
@@ -1170,6 +1171,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 coalesceKey = typed?.let { SEARCH_KEY + id + "/" + it },
             )
         }
+        // User rule 2026-10-13: **each calendar window's own configuration** — the notifications it shows as chips
+        // ([CalendarNotifications.WindowConfig]) — by frame id, on the window's placement row like a Search window's.
+        // Local-only view state.
+        val calendarConfigs = remember { mutableStateMapOf<String, CalendarNotifications.WindowConfig>() }
+        fun calendarConfigOf(id: String): CalendarNotifications.WindowConfig =
+            calendarConfigs[id] ?: CalendarNotifications.WindowConfig.decode(placements[id]?.config).also { calendarConfigs[id] = it }
+        fun setCalendarConfig(id: String, config: CalendarNotifications.WindowConfig) {
+            if (config == calendarConfigOf(id)) return
+            calendarConfigs[id] = config
+            updatePlacementById(id) { it.copy(config = config.encode().ifEmpty { null }) }
+        }
         // The Configuration Search window: open or not, and — per window, by frame id — its OWN configuration
         // (which configurations it lists, and which Search window it edits).
         var configSearchWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.ConfigSearch)) }
@@ -1340,6 +1352,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 searchOpenedConfigs[id] = it
             }
             configSearches[fromId]?.let { configSearches[id] = it }
+            calendarConfigs.remove(id)
+            calendarConfigs[fromId]?.let { calendarConfigs[id] = it }
             windowCopies.add(id)
             windowFrames.focus(id)
         }
@@ -1528,6 +1542,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             when (lateralWindowOf(frameId)) {
                 FloatingWindow.Search -> searchConfigOf(frameId).encode()
                 FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> configSearchOf(frameId).encode()
+                FloatingWindow.Calendar -> calendarConfigOf(frameId).encode()
                 else -> null
             }
         // A button made before buttons kept a configuration (2026-09-26) is given one ONCE, here at startup, from
@@ -1545,6 +1560,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.Search -> (SearchDomain.Config.decode(config) ?: SearchDomain.Config()).encode()
                 FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig ->
                     (SearchDomain.ConfigurationSearch.decode(config) ?: SearchDomain.ConfigurationSearch()).encode()
+                FloatingWindow.Calendar -> CalendarNotifications.WindowConfig.decode(config).encode()
                 else -> null
             }
         // Bring the open window [id] of [kind] back: out of the window bar, to the front, into the focus.
@@ -1594,11 +1610,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // ☆ button's snapshot) or the kind's default configuration. **When that exact window is open already** —
         // same kind, same configuration (any window of a kind that has none) — it is brought back and focused
         // instead; otherwise a NEW one opens: the original when it is not open (where it was left), else a copy set
-        // off from it (`Search#2`, the head's ⧉ mechanism). Never closes one. The task tree and the calendar exist
-        // once (`popups.md`, *Not duplicable*): theirs is opened when closed and brought back when open.
+        // off from it (`Search#2`, the head's ⧉ mechanism). Never closes one. The task tree exists once (`popups.md`,
+        // *Not duplicable*): it is opened when closed and brought back when open. So is THE calendar when it is asked
+        // for with no configuration (its menu button, a notification's click) — a second calendar window is one
+        // asked for with the notifications it shows (user rule 2026-10-13), or the head's ⧉.
+        // [asCopy]: never the original's own place, even while it is closed — a window the APP opens beside the
+        // user's own (the calendar under the notifications window) must not take that one's row.
         // Returns the frame id of the window it opened or brought back.
-        fun openNewWindow(kind: FloatingWindow, config: String? = null): String {
-            if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.Calendar || kind == FloatingWindow.TimeSim) {
+        fun openNewWindow(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false): String {
+            if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.TimeSim || (kind == FloatingWindow.Calendar && config == null)) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
                 windowFrames.present(kind.name)
@@ -1611,7 +1631,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 return existing
             }
             val id =
-                if (!isWindowOpen(kind)) {
+                if (!isWindowOpen(kind) && !asCopy) {
                     kind.name
                 } else {
                     val used = windowCopies.filter { lateralWindowOf(it) == kind }.mapNotNull { it.substringAfter('#').toIntOrNull() }.toSet()
@@ -1621,6 +1641,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             searchConfigs.remove(id)
             searchOpenedConfigs.remove(id)
             configSearches.remove(id)
+            calendarConfigs.remove(id)
             if (id == kind.name) {
                 updatePlacementById(id) { it.copy(config = config, minimized = false) }
                 setWindowOpen(kind, true)
@@ -1678,6 +1699,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Event-driven: the log growing and the focus changing are the only things that ask (never a timer). The
         // app counts as out of focus from its start until it first has the focus.
         var notificationsWindowId by remember { mutableStateOf<String?>(null) }
+        // User rule 2026-10-13: the calendar window the app opened UNDER it, showing its notifications as chips — held
+        // by its frame id, for the session, so that what the window gathers next is shown there too.
+        var notificationsCalendarId by remember { mutableStateOf<String?>(null) }
+        // The window [id] — a copy the app has just opened, or one already on screen — over the whole width of the
+        // app and its top or bottom half. Where the app's own size is not known yet (no window laid out), nothing.
+        fun placeInHalf(id: String, top: Boolean) {
+            val area = windowFrames.containerSize
+            if (area.height <= 0f) return
+            val offset = Offset(0f, if (top) -area.height / 4f else area.height / 4f)
+            windowChromeMemory.save(id, WindowChrome(WindowFill.Width, minimized = false))
+            updatePlacementById(id) { it.copy(x = offset.x, y = offset.y, height = area.height / 2f, minimized = false) }
+            windowFrames.registrations.firstOrNull { it.id == id }?.state?.let { frame ->
+                frame.applyLayout(offset, Size(frame.size.width, area.height / 2f), WindowFill.Width, minimized = false)
+            }
+        }
         var unfocusedSinceMillis by remember { mutableStateOf<Long?>(clock.nowMillis()) }
         var notificationAnsweredAtMillis by remember { mutableStateOf<Long?>(null) }
         // **Whether the APP has the focus is the platform's to say** (anomaly 2026-10-07: the window opened while the
@@ -1710,9 +1746,44 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 fun gathering(id: String) = SearchDomain.isUntouchedNotificationsWindow(searchConfigOf(id))
                 val standing = notificationsWindowId?.takeIf { it in open && gathering(it) }
                     ?: open.firstOrNull { gathering(it) }
-                notificationsWindowId =
-                    if (standing != null) standing.also { presentWindow(FloatingWindow.Search, it) }
-                    else openNewWindow(FloatingWindow.Search, SearchDomain.notificationsConfig(since).encode())
+                // User rule 2026-10-13: *"The unfocused notif window has all the notification elements in the result
+                // list in the added elements list as well"* — and the calendar under it shows them as chips.
+                if (standing != null) {
+                    val config = searchConfigOf(standing)
+                    val keys =
+                        SearchDomain.notificationKeysSince(schedulerState.notificationLog, config.filters.notificationsSinceMillis ?: since)
+                    if (config.added != keys) {
+                        // The app's own gathering, not an edit of the user's: no History Unit.
+                        val gathered = config.copy(added = keys)
+                        searchConfigs[standing] = gathered
+                        updatePlacementById(standing) { it.copy(config = gathered.encode()) }
+                    }
+                    notificationsCalendarId?.takeIf { it in windowCopies }?.let { calendarId ->
+                        setCalendarConfig(calendarId, CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }))
+                    }
+                    presentWindow(FloatingWindow.Search, standing)
+                    notificationsWindowId = standing
+                } else {
+                    // A NEW one: *"it opens and occupies all the top half of the app, and what occupies all the lower
+                    // half is a calendar window that comes from the button in the first macro group"* — the calendar
+                    // of every notification it lists. Both are copies, so neither takes the place of the Search
+                    // window or of the calendar the user keeps.
+                    val keys = SearchDomain.notificationKeysSince(schedulerState.notificationLog, since)
+                    val id =
+                        openNewWindow(FloatingWindow.Search, SearchDomain.notificationsConfig(since).copy(added = keys).encode(), asCopy = true)
+                    placeInHalf(id, top = true)
+                    val calendarId =
+                        openNewWindow(
+                            FloatingWindow.Calendar,
+                            CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }).encode(),
+                            asCopy = true,
+                        )
+                    placeInHalf(calendarId, top = false)
+                    notificationsCalendarId = calendarId
+                    // The notifications are what the user comes back to: their window has the focus, not the calendar.
+                    presentWindow(FloatingWindow.Search, id)
+                    notificationsWindowId = id
+                }
             }
             // Back in focus: what fired meanwhile has been answered above, and the next stretch starts when it leaves.
             if (appFocused) unfocusedSinceMillis = null
@@ -2128,19 +2199,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             persistPlacement(FloatingWindow.AddedConfig, addedConfigOffset, addedConfigSize, addedConfigWindowOpen)
         }
 
-        var selectedDate by remember { mutableStateOf(today) }
-        var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
+        // User rule 2026-10-13: **there can be several calendar windows** — the original and its copies (the head's ⧉,
+        // or a calendar opened with the notifications it shows). Each has its own selected day, month, scroll and zoom
+        // (declared where the window is drawn); what they SHARE is the display pipeline below, which runs over the
+        // days that cover every open calendar ([calendarSpans]). Two calendars on far-apart weeks therefore pay for
+        // what lies between them — the price chosen over a pipeline per window (`popups.md`, *Duplicating a window*).
+        val anyCalendarOpen = calendarOpen || windowCopies.any { lateralWindowOf(it) == FloatingWindow.Calendar }
 
         // PRD §8: the calendar scrolls through the days ENDLESSLY — under day d sits day d+1 — so what is
         // on screen is no longer "the week containing [selectedDate]" but a day span the scroll lands on, and
         // the calendar reports it up as it rolls. Seeded with the span the grid opens on (today's column plus
         // the six to its right, two day-rows deep) so the first frame projects what it is about to be asked
         // for; [selectedDate] now only says which day the calendar JUMPS to when picked in the month rail.
-        var visibleFirstDay by remember { mutableStateOf(today) }
-        var visibleDayCount by remember { mutableStateOf(8) }
-        // PRD §7: a date pick in the month rail is an EVENT the calendar must act on even when it picks the
-        // day already selected (the scroll has since carried the grid elsewhere), so it is counted, not read.
-        var calendarJumpNonce by remember { mutableStateOf(0) }
+        // By frame id: the days each open calendar window has on screen. The span every projection is computed for is
+        // the one that covers them all.
+        val calendarSpans = remember { mutableStateMapOf<String, Pair<LocalDate, Int>>() }
+        val visibleFirstDay = calendarSpans.values.minOfOrNull { it.first } ?: today
+        val visibleDayCount =
+            calendarSpans.values.maxOfOrNull { it.first.plus(it.second, DateTimeUnit.DAY) }
+                ?.let { end -> (end.toEpochDays() - visibleFirstDay.toEpochDays()).toInt() } ?: 8
+        // The now-line's resolution each calendar window reported: the finest one is what the display is resampled at.
+        val calendarResolutions = remember { HashMap<String, Long>() }
         // PRD §8 "locked on task" (user spec 2026-09-26): the task a cell's "go to calendar" named, whether the
         // calendar is locked on it, and how many times it was asked for (each ask turns "Lock to now" off). View
         // state of this session, like the now-line lock — Compose-only, never persisted.
@@ -2208,8 +2287,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // to exactly that span (capped at 168h) instead of computing schedule the user is not looking at.
         // Closing the calendar drops it back to the ten-minute floor the headless notification/cue paths
         // need. Growing it past the plan (scrolling further out) triggers one extension in the engine.
-        LaunchedEffect(engine, calendarOpen, visibleSpanEndMillis) {
-            engine.setCalendarHorizon(if (calendarOpen) visibleSpanEndMillis else null)
+        LaunchedEffect(engine, anyCalendarOpen, visibleSpanEndMillis) {
+            engine.setCalendarHorizon(if (anyCalendarOpen) visibleSpanEndMillis else null)
         }
 
         // PRD §9/§17 "schedule the whole span displayed": the engine materializes the work plan out to
@@ -3094,8 +3173,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // calendar is open (nothing else draws these), and only when the first reading or the instant changed,
         // so a recomposition for an unrelated reason (a keystroke in the tree) pays for one derivation, not two.
         val calendarRecords =
-            remember(calendarOpen, nowMillis, calendarDisplay.records) {
-                if (!calendarOpen) {
+            remember(anyCalendarOpen, nowMillis, calendarDisplay.records) {
+                if (!anyCalendarOpen) {
                     calendarDisplay.records
                 } else {
                     withLineMotion(
@@ -3194,7 +3273,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             SchedulerDomain.displayResampleDelayMillis(
                 displayBounds, nowMillis, tz,
                 millisPerPixel =
-                    if (calendarOpen) nowLineMillisPerPixel else DEFAULT_NOW_LINE_MILLIS_PER_PIXEL,
+                    if (anyCalendarOpen) nowLineMillisPerPixel else DEFAULT_NOW_LINE_MILLIS_PER_PIXEL,
                 lineOffsets = displayLineOffsets,
             )
             }
@@ -3712,17 +3791,52 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     }
 
-                    if (calendarOpen) {
+                    if (anyCalendarOpen) {
+                      // User rule 2026-10-13: the calendar's ONE call site, drawn for the original and for each copy
+                      // ([LateralWindow]). What is declared here is that window's own.
+                      LateralWindow(FloatingWindow.Calendar, calendarOpen) {
+                        val calendarId = windowInstanceId(FloatingWindow.Calendar.name)
+                        val isCopy = LocalWindowInstance.current?.copy != null
+                        var selectedDate by remember { mutableStateOf(today) }
+                        var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
+                        // PRD §7: a date pick in the month rail is an EVENT the calendar must act on even when it
+                        // picks the day already selected (the scroll has since carried the grid elsewhere), so it is
+                        // counted, not read.
+                        var calendarJumpNonce by remember { mutableStateOf(0) }
+                        // A copy's sections are its own for the session; the original's are kept ([saveWindowSections]).
+                        var copyConfigurationWidth by remember { mutableStateOf(calendarConfigurationWidth) }
+                        var copySectionsHidden by remember { mutableStateOf(calendarSectionsHidden) }
+                        DisposableEffect(calendarId) {
+                            onDispose {
+                                calendarSpans.remove(calendarId)
+                                calendarResolutions.remove(calendarId)
+                            }
+                        }
+                        // The notifications THIS window shows as chips, and its drop-down of them.
+                        val calendarConfig = calendarConfigOf(calendarId)
+                        val notificationsView =
+                            remember(schedulerState.notificationLog, calendarConfig, tz, calendarId) {
+                                val log = schedulerState.notificationLog
+                                org.example.project.ui.CalendarNotificationsView(
+                                    options = CalendarNotifications.options(log, calendarConfig.notifications),
+                                    selected = calendarConfig.notifications.toSet(),
+                                    onChange = { setCalendarConfig(calendarId, CalendarNotifications.WindowConfig(it.toList())) },
+                                    chipsByDay = CalendarNotifications.byDay(CalendarNotifications.chips(log, calendarConfig.notifications), tz),
+                                    labelOf = { CalendarNotifications.label(it, tz) },
+                                )
+                            }
+                        CompositionLocalProvider(org.example.project.ui.LocalCalendarNotifications provides notificationsView) {
                         CalendarFloatingWindow(
                             selectedDate = selectedDate,
                             today = today,
-                            // PRD §8 "locked on task", set by a task cell's "go to calendar".
-                            lockedTaskTitle = calendarLockTask?.let { schedulerState.tasks[it]?.title?.ifBlank { null } },
-                            lockOnTask = calendarLockOnTask,
-                            lockTaskMillis = calendarLockTarget.first,
-                            lockTaskPending = calendarLockTarget.second,
-                            onLockOnTaskChange = { calendarLockOnTask = it },
-                            lockOnTaskNonce = calendarLockNonce,
+                            // PRD §8 "locked on task", set by a task cell's "go to calendar" — which is about THE
+                            // calendar, the one it opens: a copy has no such lock.
+                            lockedTaskTitle = if (isCopy) null else calendarLockTask?.let { schedulerState.tasks[it]?.title?.ifBlank { null } },
+                            lockOnTask = !isCopy && calendarLockOnTask,
+                            lockTaskMillis = if (isCopy) null else calendarLockTarget.first,
+                            lockTaskPending = !isCopy && calendarLockTarget.second,
+                            onLockOnTaskChange = { if (!isCopy) calendarLockOnTask = it },
+                            lockOnTaskNonce = if (isCopy) 0 else calendarLockNonce,
                             displayMode = calendarDisplayMode,
                             onDisplayModeChange = {
                                 vm.dispatch(
@@ -3750,7 +3864,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // PRD §8 focus: pressing in the calendar makes it the focused surface again
                             // (e.g. after a click into the tree had handed focus back) and raises it to the
                             // top of the window layers. (onFocus fires inside the window, after its offset.)
-                            onFocus = { focusWindow(FloatingWindow.Calendar) },
+                            // (A copy raises and focuses itself through its own wiring: this would raise the original.)
+                            onFocus = { if (!isCopy) focusWindow(FloatingWindow.Calendar) },
                             // PRD §8 contextual menu "add…": the ONE add entry, opening the one element
                             // window on an empty list. What is being put here, of which kind, and with
                             // which configuration is all answered there, and its Save is what lays it.
@@ -3861,10 +3976,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             minimumTimeWeight = schedulerState.minimumTimeWeight,
                             onMinimumTimeWeightChange = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
                             sleepSchedule = schedulerState.sleep,
-                            configurationWidthDp = calendarConfigurationWidth,
-                            onConfigurationWidthChange = { calendarConfigurationWidth = it; saveWindowSections() },
-                            sectionsHidden = calendarSectionsHidden,
-                            onSectionsHiddenChange = { calendarSectionsHidden = it; saveWindowSections() },
+                            configurationWidthDp = if (isCopy) copyConfigurationWidth else calendarConfigurationWidth,
+                            onConfigurationWidthChange = {
+                                if (isCopy) {
+                                    copyConfigurationWidth = it
+                                } else {
+                                    calendarConfigurationWidth = it
+                                    saveWindowSections()
+                                }
+                            },
+                            sectionsHidden = if (isCopy) copySectionsHidden else calendarSectionsHidden,
+                            onSectionsHiddenChange = {
+                                if (isCopy) {
+                                    copySectionsHidden = it
+                                } else {
+                                    calendarSectionsHidden = it
+                                    saveWindowSections()
+                                }
+                            },
                             onSleepScheduleChange = {
                                 vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong()))
                             },
@@ -3885,14 +4014,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // PRD §8/§9: the endless scroll says which days are on screen; the horizon and
                             // every display projection above are computed from exactly that span.
                             onVisibleDaysChanged = { firstDay, dayCount ->
-                                visibleFirstDay = firstDay
-                                visibleDayCount = dayCount
+                                if (calendarSpans[calendarId] != (firstDay to dayCount)) calendarSpans[calendarId] = firstDay to dayCount
                             },
                             // ADR 0009: the grid's own temporal resolution, which is what bounds how
-                            // often anything pinned to the now-line is re-derived.
-                            onNowLineResolutionChanged = { nowLineMillisPerPixel = it },
+                            // often anything pinned to the now-line is re-derived — the finest of the open calendars'.
+                            onNowLineResolutionChanged = {
+                                calendarResolutions[calendarId] = it
+                                nowLineMillisPerPixel = calendarResolutions.values.min()
+                            },
                             jumpNonce = calendarJumpNonce,
                         )
+                        }
+                      }
 
                         // PRD §8 edit window, opened over the calendar window and the tree — the
                         // one-element case of a TASK PANEL, reached from the "edit…" chooser and from a
@@ -4474,6 +4607,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             shortcutWindows = ::shortcutWindowTitles,
                             onWindowShortcutChange = { saveWindowShortcuts(org.example.project.ui.WindowShortcuts.with(windowShortcuts, it)) },
                             onDeleteWindowShortcuts = { ids -> saveWindowShortcuts(windowShortcuts.filterNot { it.id in ids }) },
+                            // User rule 2026-10-13: a calendar window whose chips are these notifications — the one
+                            // already showing exactly them is brought back, else a new one opens.
+                            onOpenNotificationsCalendar = { ids ->
+                                openNewWindow(FloatingWindow.Calendar, CalendarNotifications.WindowConfig(ids).encode())
+                            },
                             onStartNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                             onEdit = { openElementSearch(SearchDomain.Kind.Task, it.value) },
                             onGoToTaskTree = { taskId ->

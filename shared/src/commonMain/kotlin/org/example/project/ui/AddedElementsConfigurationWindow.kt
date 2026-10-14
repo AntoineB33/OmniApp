@@ -225,6 +225,8 @@ class AddedActionHandlers(
     val shortcutWindows: () -> List<Pair<String, String>> = { emptyList() },
     val onWindowShortcutChange: (WindowShortcut) -> Unit = {},
     val onDeleteWindowShortcuts: (List<String>) -> Unit = {},
+    /** "Calendar" on notifications: a calendar window showing these (by id) as chips ([org.example.project.scheduler.domain.CalendarNotifications]). */
+    val onOpenNotificationsCalendar: (List<String>) -> Unit = {},
 )
 
 /**
@@ -1102,6 +1104,14 @@ private fun AddedActionEditor(
                     },
                 )
             }
+        }
+        // User rule 2026-10-13: a calendar window whose chips are the group's notifications.
+        SearchDomain.AddedAction.NotificationCalendar -> {
+            val ids = org.example.project.scheduler.domain.CalendarNotifications.idsOf(added)
+            FrameButton(
+                if (ids.size == 1) "Open a calendar with it" else "Open a calendar with these ${ids.size}",
+                enabled = ids.isNotEmpty(),
+            ) { handlers.onOpenNotificationsCalendar(ids) }
         }
         // User rule 2026-10-13: the Sleep schedule's fields, the Sleep window's own ([SleepScheduleFields]) — written
         // through the one intent every other place that shows them writes.

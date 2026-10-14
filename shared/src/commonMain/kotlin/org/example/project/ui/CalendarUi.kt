@@ -4319,6 +4319,25 @@ private fun CalendarConfigurationSection(
         }
         MenuAddable(MenuControl.Reminders) { CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders) }
         MenuAddable(MenuControl.ScreenBreaks) { CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks) }
+        // User rule 2026-10-13: the notifications THIS calendar window shows as chips, checked in a drop-down.
+        LocalCalendarNotifications.current?.let { notifications ->
+            val labels = remember(notifications.options) { notifications.options.associate { it.id to notifications.labelOf(it) } }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(start = 4.dp)) {
+                Text("Notifications", style = MaterialTheme.typography.labelMedium)
+                CheckBoxDropDown(
+                    options = notifications.options.map { it.id },
+                    checked = notifications.selected,
+                    face = when (notifications.selected.size) {
+                        0 -> "none shown"
+                        1 -> "1 shown"
+                        else -> "${notifications.selected.size} shown"
+                    },
+                    label = { labels[it] ?: it },
+                    onChange = notifications.onChange,
+                    modifier = Modifier.width(CALENDAR_CONFIGURATION_WIDTH - 24.dp),
+                )
+            }
+        }
         HorizontalDivider()
         // User rule 2026-10-04: the resources the scheduler engine may use, on THIS device.
         Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
@@ -6073,6 +6092,22 @@ private fun DayColumn(
                 add(marker to y)
             }
         }
+    // User rule 2026-10-13: the notifications this calendar window shows, each a chip at the instant it was posted —
+    // pushed down by the one before it where two would overlap, as the rings above are. One placement, read by the
+    // drawing and by the texts' placement ([calendarLabelSlots]: no text is written under a chip).
+    val notificationChips = LocalCalendarNotifications.current?.chipsByDay?.get(day).orEmpty()
+    val chipPlacements: List<Pair<org.example.project.scheduler.domain.CalendarNotifications.Chip, Dp>> =
+        remember(notificationChips, hourHeight, midnightMillis) {
+            buildList {
+                var lastBottom: Dp? = null
+                notificationChips.forEach { chip ->
+                    val natural = hourHeight * ((chip.timeMillis - midnightMillis) / 3_600_000f)
+                    val y = lastBottom?.let { maxOf(natural, it) } ?: natural
+                    lastBottom = y + NOTIFICATION_CHIP_HEIGHT
+                    add(chip to y)
+                }
+            }
+        }
     // PRD §8/§18: what a ring marker OWES the bubble. It is drawn over the panels and the bands, so it hides
     // them — and, being inert (no click to lose, unlike a §14 tag), it is easy to leave reporting nothing at
     // all, which is exactly what it did: hovering a timer's end named the task panel underneath and never the
@@ -6855,7 +6890,7 @@ private fun DayColumn(
         val labelSlots =
             remember(
                 liveRecords, liveLayout, screenBreakMarkers, sideLayout, bandLabels, sleepBands, shownPeriods,
-                reminderPlacements, alarmPlacements, hourHeight, showsDayDate,
+                reminderPlacements, alarmPlacements, chipPlacements, hourHeight, showsDayDate,
             ) {
                 fun y(hour: Float) = (hourHeight * hour).value
                 val labels = buildList {
@@ -6913,6 +6948,9 @@ private fun DayColumn(
                     }
                     alarmPlacements.forEach { (_, top) ->
                         add(CalendarLabelObstacle(top.value, (top + ALARM_MARKER_HEIGHT).value))
+                    }
+                    chipPlacements.forEach { (_, top) ->
+                        add(CalendarLabelObstacle(top.value, (top + NOTIFICATION_CHIP_HEIGHT).value))
                     }
                     // The bottom line of every outlined period box: it is drawn across the column (and
                     // redrawn over a task panel, [PanelDecor]), so a text it would cross goes below it.
@@ -7455,6 +7493,13 @@ private fun DayColumn(
             )
         }
 
+        // User rule 2026-10-13: the notification chips. Inert — they register no pointer input, so the press and the
+        // hover go to whatever is under them — and drawn before the reminders, which stay the top-most thing.
+        chipPlacements.forEach { (chip, y) ->
+            if (!onScreenDp(y, y + NOTIFICATION_CHIP_HEIGHT)) return@forEach
+            NotificationChip(chip.title, Modifier.offset(y = y))
+        }
+
         // PRD §14 Reminders: zero-duration checkable tags, placed by three rules. A still-future, unchecked
         // reminder sits at its scheduled time. An unchecked reminder whose time has passed is *overdue* and
         // accumulates on the live now-line, stacked top-down (so it tracks the clock until dealt with). A
@@ -7555,6 +7600,46 @@ private val REMINDER_TAG_HEIGHT = 18.dp
 
 /** PRD §18: an alarm ring rendered as a small marker on the calendar (zero duration, so a fixed height). */
 private val ALARM_MARKER_HEIGHT = 18.dp
+
+/** A notification chip's height on the calendar: one `labelSmall` line and its padding, as a ring's. */
+private val NOTIFICATION_CHIP_HEIGHT = 18.dp
+
+/**
+ * User rule 2026-10-13: **what a calendar window shows of the notifications** — the ones its drop-down lists
+ * ([options], newest first), the ones checked there ([selected], by id) and their write ([onChange]), and the chips it
+ * draws, by the day they fall on ([chipsByDay]). Provided by `App` around EACH calendar window — every window has its
+ * own selection ([org.example.project.scheduler.domain.CalendarNotifications.WindowConfig]) — and read by the
+ * configuration section and by the day columns; null where none is given (a preview): no drop-down, no chip.
+ */
+class CalendarNotificationsView(
+    val options: List<org.example.project.scheduler.domain.CalendarNotifications.Chip>,
+    val selected: Set<String>,
+    val onChange: (Set<String>) -> Unit,
+    val chipsByDay: Map<LocalDate, List<org.example.project.scheduler.domain.CalendarNotifications.Chip>>,
+    /** How the drop-down names one: when it was posted, then its title. */
+    val labelOf: (org.example.project.scheduler.domain.CalendarNotifications.Chip) -> String,
+)
+
+val LocalCalendarNotifications = androidx.compose.runtime.compositionLocalOf<CalendarNotificationsView?> { null }
+
+/** One notification on the timeline: its title on a small rounded mark at the column's right, at the instant it was posted. */
+@Composable
+private fun NotificationChip(title: String, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().height(NOTIFICATION_CHIP_HEIGHT).padding(horizontal = 2.dp), contentAlignment = Alignment.CenterEnd) {
+        Text(
+            text = "🔔 " + title,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colorScheme.tertiaryContainer)
+                .border(1.dp, MaterialTheme.colorScheme.tertiary, RoundedCornerShape(4.dp))
+                .padding(horizontal = 4.dp),
+        )
+    }
+}
 
 /**
  * PRD §15: smallest rendered height for a screen-break band — a hairline, not a label line.

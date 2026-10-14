@@ -393,6 +393,15 @@ Global rules that always apply: `CLAUDE.md`.
   position changes (the drag preview's `liveRecords`, a record the now-line carries, the zoom), so a text is
   always placed for where its element is NOW. Never add a label that computes its own inset.
   `CalendarLabelSlotsTest`.
+- **A calendar window shows the notifications checked in ITS drop-down as chips** (user rule 2026-10-13;
+  `CalendarNotifications`, `LocalCalendarNotifications`, `NotificationChip`). "Notifications", in the window's
+  configuration section, is the app's one check-box drop-down over the log's last 200 notifications and every
+  checked one; what is checked is that WINDOW's configuration (`WindowConfig`, on its placement row — local-only
+  view state, each calendar window its own). A chip is the notification's title at the instant it was posted, on
+  the right of its day column, pushed below the one before it where two would meet (the rings' sweep). It is
+  **inert**: no pointer input, so the press and the hover go to what is under it — and unlike a ring it says
+  nothing in the hover bubble. No text is written under one (`calendarLabelSlots`' obstacles). `App` provides the
+  view around each calendar window; with none (a preview) there is no drop-down and no chip.
 - **The ZOOM is the other half of that rule.** A 20-s look-away is 0.27 dp tall at zoom 1f, so the in-bound
   (`MAX_CALENDAR_ZOOM`) must be high enough to bring the shortest of the three over a label line and under a
   cursor — that is what the ceiling is for, and it is why the band may be left un-named at an ordinary zoom.

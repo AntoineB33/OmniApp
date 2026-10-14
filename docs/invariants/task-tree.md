@@ -885,6 +885,11 @@ suggestions before it was ever entered.
     windows' and the notification filter's). The text is remembered at the focus's arrival and forgotten when it
     leaves; Escape with nothing changed is not consumed. NOT the task picker's bar nor the tree's find bar, whose
     Escape closes them.
+  - **A group of notifications has "Calendar": a calendar window showing them as chips** (user rule 2026-10-13;
+    `AddedAction.NotificationCalendar`, `AddedActionHandlers.onOpenNotificationsCalendar`,
+    `CalendarNotificationsTest`). A set action, so it stands once, in the widest group of notifications — the group
+    of every element when they are all notifications — and reads its notifications off that group's members. The
+    calendar already showing exactly those is brought back; else a new calendar window opens (`popups.md`).
   - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
     Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
     it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each

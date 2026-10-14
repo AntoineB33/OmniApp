@@ -418,6 +418,8 @@ class WindowFrameState(
  * per-object one.
  */
 class WindowFrameHost {
+    /** The content area the windows stand in, in px — zero until a window has been laid out. Not observable: it is asked. */
+    var containerSize: Size = Size.Zero
     class Registration(
         val id: String,
         title: String,
@@ -1352,6 +1354,11 @@ fun AppWindowFrame(
             // Measure the window and the content area around it, so a window can never be left with its
             // head — and its five buttons — off the top or the bottom of the app.
             .onGloballyPositioned { coordinates ->
+                // The content area every window stands in, as the last window laid out measured it: what a window
+                // told to take half of it is sized from ([WindowFrameHost.containerSize]).
+                coordinates.parentLayoutCoordinates?.size?.let { area ->
+                    if (area.width > 0 && area.height > 0) host?.containerSize = Size(area.width.toFloat(), area.height.toFloat())
+                }
                 state.clampVertical(
                     containerHeight = coordinates.parentLayoutCoordinates?.size?.height?.toFloat() ?: 0f,
                     windowHeight = coordinates.size.height.toFloat(),
