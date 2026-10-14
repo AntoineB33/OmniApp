@@ -65,16 +65,16 @@ each time such a command finishes, a voice tells the user they can come back. Th
 
 ## Deployment surfaces
 
-**Always state what must be redeployed for a change to take effect, and which script.** Two independent
-surfaces:
+**State what must be redeployed when it is not the usual client rebuild.** Two independent surfaces:
 
 1. **Supabase** (`supabase/migrations/`, Edge Functions, `pause-cue-setup.sql`'s pg_cron) →
    `deploy-supabase.bat`.
 2. **The client apps** (any `shared`/desktop/Android Kotlin) → an app rebuild via
    `account{1,2,3}-*deploy*.bat`. The running binary is stale until then.
 
-When reporting a change as done, name the surface(s) it needs — or say "no deploy needed" (e.g. a test-only
-change).
+When reporting a change as done (user rule 2026-10-15): a client rebuild alone is the default and goes unsaid. Name
+the deploy only when Supabase needs `deploy-supabase.bat` (with or without the client), or say "no deploy needed"
+when nothing has to be rebuilt (e.g. a test- or docs-only change).
 
 A `:shared:check` / `:shared:jvmTest` pass means the code compiles and its logic is correct. It does **not**
 mean the change is live on device. Never conflate the two. The common failure: a client-only fix silently
