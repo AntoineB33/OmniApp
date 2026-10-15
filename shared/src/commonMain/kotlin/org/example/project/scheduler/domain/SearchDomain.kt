@@ -99,9 +99,9 @@ object SearchDomain {
      * The drop-down of the configuration section, in the order the user listed it. Each kind carries a check
      * box there: the search looks for every checked kind at once ([results]).
      */
-    enum class Kind(val label: String) {
+    enum class Kind(val label: String, plural: String? = null) {
         Task("task"),
-        Category("task category"),
+        Category("task category", "task categories"),
         RestrictivePeriod("restrictive period"),
         Alarm("alarm"),
         Timer("timer"),
@@ -148,6 +148,10 @@ object SearchDomain {
          * 2026-10-12, [WindowEntry.mapping]).
          */
         Creation("creation"),
+        ;
+
+        /** What several of the kind are called — a Search window's title says it ([windowTitle]). */
+        val plural: String = plural ?: (label + "s")
     }
 
     /**
@@ -318,12 +322,40 @@ object SearchDomain {
     const val NOTIFICATIONS_WINDOW_TITLE: String = "unfocused notif"
 
     /**
-     * The title of the Search window showing [config] (user rule 2026-10-06): the notifications window has a name of
-     * its own. Read off the configuration, so it comes back with the window after a restart — and a window the user
-     * turns into another search is a Search window again.
+     * **The title of the Search window showing [config]** — read off the configuration, so it follows every change of
+     * it and comes back with the window after a restart (user rule 2026-10-15: *"Make the title of a Search window
+     * update with the Search configurations … if the configuration is simply only timers, it is 'all timers' …
+     * Since there are an infinite number of them, … for the config only timers and can be added to the calendar before
+     * 1995, just name it 'all timers' as well"*). So it says the KINDS and the text typed, never a filter:
+     *  - the notifications window has a name of its own (user rule 2026-10-06), [NOTIFICATIONS_WINDOW_TITLE];
+     *  - one to three kinds: "all timers", "all timers and alarms", "all tasks, timers and alarms";
+     *  - more: "all tasks, timers and 4 more kinds"; every kind: "everything", or "everything but timers" with one or
+     *    two left out; none: "nothing";
+     *  - with text typed, the kinds it is looked for in: `timers matching "tea"`.
+     * A name the user gave the window ([WindowFrameHost.tabTitles] — a lateral-menu button's, or "Rename") is shown in
+     * its place, by the frame.
      */
-    fun windowTitle(config: Config): String =
-        if (isNotificationsWindow(config)) NOTIFICATIONS_WINDOW_TITLE else WINDOW_TITLE
+    fun windowTitle(config: Config): String {
+        if (isNotificationsWindow(config)) return NOTIFICATIONS_WINDOW_TITLE
+        val kinds = Kind.entries.filter { it in config.kinds }
+        val left = Kind.entries.filter { it !in config.kinds }
+        fun list(names: List<String>): String =
+            if (names.size == 1) names.single() else names.dropLast(1).joinToString(", ") + " and " + names.last()
+        val what =
+            when {
+                kinds.isEmpty() -> return "nothing"
+                left.isEmpty() -> "everything"
+                left.size <= 2 && kinds.size > 3 -> "everything but " + list(left.map { it.plural })
+                kinds.size <= 3 -> list(kinds.map { it.plural })
+                else -> kinds.take(2).joinToString(", ") { it.plural } + " and ${kinds.size - 2} more kinds"
+            }
+        val query = config.query.trim()
+        return when {
+            query.isNotEmpty() -> "$what matching \"$query\""
+            what.startsWith("everything") -> what
+            else -> "all $what"
+        }
+    }
 
     /**
      * Whether the notifications window is owed (user rule 2026-10-04): a notification was posted while the app was NOT

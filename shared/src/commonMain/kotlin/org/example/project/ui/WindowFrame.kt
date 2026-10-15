@@ -50,6 +50,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -523,15 +528,31 @@ class WindowFrameHost {
     private val entries = mutableStateListOf<Registration>()
 
     /**
-     * PRD §7 (user rule 2026-10-01): **a tab's own name**, by frame id — what the window bar's tab reads instead of
-     * the window's title: the name of the lateral-menu button the user made that created the window. Dropped when the
-     * window closes ([unregister]); kept by `App` on a placement row of its own so a window that comes back after a
-     * restart comes back with it.
+     * PRD §7 (user rule 2026-10-01): **a window's own name**, by frame id — what its tab AND its head read instead of
+     * the window's title: the name of the lateral-menu button the user made that created the window, or the one typed
+     * after the head's "Rename" (user rule 2026-10-15). A name the user gave is never overwritten by the title a window
+     * works out for itself (a Search window's, [SearchDomain.windowTitle]). Dropped when the window closes
+     * ([unregister]); kept by `App` on a placement row of its own so a window that comes back after a restart comes back
+     * with it.
      */
     val tabTitles = mutableStateMapOf<String, String>()
 
+    /** `App` writes [tabTitles] down whenever [rename] changes them. */
+    var onTabTitlesChanged: (() -> Unit)? = null
+
     /** What the window bar's tab of [registration] reads: its own name ([tabTitles]), else the window's title. */
     fun tabTitleOf(registration: Registration): String = tabTitles[registration.id] ?: registration.title
+
+    /**
+     * The head's "Rename" (user rule 2026-10-15): [name] becomes [id]'s own name. Blank — or the very title the window
+     * gives itself ([ownTitle]) — gives the name back: the window is called what it says again, and follows it.
+     */
+    fun rename(id: String, name: String, ownTitle: String) {
+        val trimmed = name.trim()
+        val before = tabTitles[id]
+        if (trimmed.isEmpty() || trimmed == ownTitle) tabTitles.remove(id) else tabTitles[id] = trimmed
+        if (tabTitles[id] != before) onTabTitlesChanged?.invoke()
+    }
 
     /**
      * User rule 2026-10-06: **every window's colour**, `0xRRGGBB` by frame id — the background of its head and of its
@@ -1015,7 +1036,15 @@ class WindowInstance(
  * [ObjectWindows] made the key because `App` can reopen it. One host for every window, so no window has to be
  * wired for it and none can be forgotten.
  */
-class MenuButtonHost(val canAdd: (frameId: String) -> Boolean, val add: (key: String, title: String) -> Unit)
+class MenuButtonHost(
+    val canAdd: (frameId: String) -> Boolean,
+    /** A button for the window [frameId] — opening [key] — named [title] (the head's ☆). */
+    val add: (key: String, title: String, frameId: String) -> Unit,
+    /** Whether a button of the lateral menu is this window's: it opened it, or the ☆ made it from it. */
+    val has: (frameId: String) -> Boolean = { false },
+    /** The head's "Remove from menu" (user rule 2026-10-15): that button, or those, taken off the menu. */
+    val remove: (frameId: String) -> Unit = {},
+)
 
 val LocalMenuButtonHost = staticCompositionLocalOf<MenuButtonHost?> { null }
 
@@ -1291,6 +1320,11 @@ fun AppWindowFrame(
     canMinimize: Boolean = true,
     /** Extra head controls, drawn between the title and the five buttons. */
     headTrailing: @Composable RowScope.() -> Unit = {},
+    /**
+     * The BUTTONS among [headTrailing], as entries of the head's right-click menu (user rule 2026-10-15: *"one option
+     * for each button in the right side of the header"*) — a status drawn there ("Calculating…") is no button.
+     */
+    headMenu: List<HeadMenuEntry> = emptyList(),
     /** The default window whose colours this one takes its own among, where its id does not say it ([WindowFrameHost.Registration.colorKind]). */
     colorKind: String? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -1406,14 +1440,20 @@ fun AppWindowFrame(
         ) {
             Column(Modifier.fillMaxSize()) {
                 WindowHead(
-                    title = title,
+                    // The user's name for the window, where it has one: a menu button's, or "Rename"'s.
+                    title = host?.tabTitles?.get(state.id) ?: title,
+                    ownTitle = title,
+                    onRename = { name -> host?.rename(state.id, name, title) },
+                    inMenu = menuButtons?.has?.invoke(state.id) == true,
+                    onRemoveFromMenu = { menuButtons?.remove?.invoke(state.id) },
+                    headMenu = headMenu,
                     state = state,
                     // The window's own colour; a frame outside any host (a preview) keeps the theme's.
                     color = host?.colors?.get(state.id)?.let(::windowColor) ?: MaterialTheme.colorScheme.surfaceVariant,
                     obstacle = headObstacle,
                     onClose = onClose,
                     onDuplicate = instance?.onDuplicate,
-                    onAddToMenu = menuKey?.let { key -> menuButtons?.let { { title: String -> it.add(key, title) } } },
+                    onAddToMenu = menuKey?.let { key -> menuButtons?.let { { title: String -> it.add(key, title, state.id) } } },
                     canMinimize = canMinimize,
                     onCommit = commit,
                     onHeadHeight = { headHeight[0] = it },
@@ -1509,6 +1549,13 @@ fun AppWindowFrame(
 @Composable
 private fun WindowHead(
     title: String,
+    /** The title the window gives itself — what a "Rename" to it, or to nothing, goes back to following. */
+    ownTitle: String,
+    onRename: (String) -> Unit,
+    /** A button of the lateral menu is this window's ([MenuButtonHost.has]): "Remove from menu" can take it off. */
+    inMenu: Boolean,
+    onRemoveFromMenu: () -> Unit,
+    headMenu: List<HeadMenuEntry>,
     state: WindowFrameState,
     /** The head's background — the window's colour; what is drawn on it takes [TaskPalette.foreground]. */
     color: Color,
@@ -1558,6 +1605,10 @@ private fun WindowHead(
         if (shift != titleShiftPx) titleShiftPx = shift
     }
     LaunchedEffect(obstacle) { updateShift() }
+    // User rule 2026-10-15: *"The user can modify the title of a window by right-clicking on the header of the window. It
+    // opens a menu with 'rename', 'remove from menu' and one option for each button in the right side of the header."*
+    var menuOpen by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
     // The title, the head's buttons and whatever a window adds to its head are all drawn in the colour of highest
     // contrast with the window's own, like what is drawn on a task's.
     CompositionLocalProvider(LocalContentColor provides TaskPalette.foreground(color)) {
@@ -1581,17 +1632,54 @@ private fun WindowHead(
                     onCommit()
                 },
             )
+            // After the drag in the chain, so it sees a right-click first and consumes it: the head's menu, at the
+            // pointer — a long-press for a finger. The head's buttons let a right-click through: still the head.
+            .then(org.example.project.scheduler.ui.contextMenuModifier(enabled = true) { menuOpen = true })
             // `end` clears the right resize edge and `top` the top one, so neither covers a head button.
             .padding(start = HEAD_TITLE_START, end = RESIZE_EDGE_THICKNESS + 2.dp, top = RESIZE_EDGE_THICKNESS, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(start = with(density) { titleShiftPx.toDp() }),
+        val titleModifier = Modifier.weight(1f).padding(start = with(density) { titleShiftPx.toDp() })
+        if (renaming) {
+            HeadTitleField(title, titleModifier) { name ->
+                renaming = false
+                name?.let(onRename)
+            }
+        } else {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = titleModifier,
+            )
+        }
+        HeadMenu(
+            open = menuOpen,
+            onDismiss = { menuOpen = false },
+            entries = buildList {
+                add(HeadMenuEntry("Rename") { renaming = true })
+                add(HeadMenuEntry("Remove from menu", enabled = inMenu, onClick = onRemoveFromMenu))
+                // One per button on the right of the head, in their order.
+                addAll(headMenu)
+                onAddToMenu?.let { add(HeadMenuEntry("Add a button for this window to the left menu") { it(title) }) }
+                onDuplicate?.let { add(HeadMenuEntry("Duplicate", onClick = it)) }
+                add(HeadMenuEntry(if (state.fill.fillsWidth) "Stop filling the width" else "Fill the width") {
+                    state.setFillWidth(!state.fill.fillsWidth)
+                    onCommit()
+                })
+                add(HeadMenuEntry(if (state.fill.fillsHeight) "Stop filling the height" else "Fill the height") {
+                    state.setFillHeight(!state.fill.fillsHeight)
+                    onCommit()
+                })
+                if (canMinimize) add(HeadMenuEntry("Reduce") { state.minimize() })
+                add(HeadMenuEntry(if (state.maximized) "Restore" else "Maximize") {
+                    state.toggleMaximize()
+                    onCommit()
+                })
+                add(HeadMenuEntry("Close", onClick = onClose))
+            },
         )
         headTrailing()
         onAddToMenu?.let { WindowHeadButton("☆", "Add a button for this window to the left menu") { it(title) } }
@@ -1612,6 +1700,80 @@ private fun WindowHead(
         WindowHeadButton("✕", "Close", onClose)
     }
     }
+}
+
+/** One entry of a window head's right-click menu ([AppWindowFrame]'s `headMenu`, and the frame's own). */
+class HeadMenuEntry(val label: String, val enabled: Boolean = true, val onClick: () -> Unit)
+
+/** The head's right-click menu (user rule 2026-10-15): at the pointer, a menu like the others (`popups.md`). */
+@Composable
+private fun HeadMenu(open: Boolean, onDismiss: () -> Unit, entries: List<HeadMenuEntry>) {
+    transientMenuDismissal(open, onDismiss)
+    AppDropdownMenu(
+        expanded = open,
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.PopupProperties(focusable = false),
+        atPointer = true,
+    ) {
+        for (entry in entries) {
+            DropdownMenuItem(
+                text = { Text(entry.label) },
+                enabled = entry.enabled,
+                onClick = {
+                    onDismiss()
+                    entry.onClick()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The head's title while it is renamed: the name typed in place of the title, all of it selected. Enter or leaving
+ * it gives [onDone] the name; Escape gives null — nothing renamed.
+ */
+@Composable
+private fun HeadTitleField(title: String, modifier: Modifier, onDone: (String?) -> Unit) {
+    var value by remember {
+        mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(title, androidx.compose.ui.text.TextRange(0, title.length)))
+    }
+    val focus = remember { FocusRequester() }
+    var focused by remember { mutableStateOf(false) }
+    var done by remember { mutableStateOf(false) }
+    fun finish(name: String?) {
+        if (done) return
+        done = true
+        onDone(name)
+    }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val color = LocalContentColor.current
+    androidx.compose.foundation.text.BasicTextField(
+        value = value,
+        onValueChange = { value = it },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.titleSmall.copy(color = color),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(color),
+        modifier = modifier
+            .focusRequester(focus)
+            .onFocusChanged {
+                if (focused && !it.isFocused) finish(value.text)
+                focused = it.isFocused
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.Enter, Key.NumPadEnter -> {
+                        finish(value.text)
+                        true
+                    }
+                    Key.Escape -> {
+                        finish(null)
+                        true
+                    }
+                    else -> false
+                }
+            },
+    )
 }
 
 /** A window's colour ([WindowFrameHost.colors], `0xRRGGBB`) to paint with: opaque, like a task's. */

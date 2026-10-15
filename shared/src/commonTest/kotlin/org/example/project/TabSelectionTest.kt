@@ -226,6 +226,34 @@ class TabSelectionTest {
         assertEquals(listOf<String?>("Search#3"), focusedAfterClose)
     }
 
+    /**
+     * User rule 2026-10-15: the head's "Rename" gives a window a name of its own, which its title — a Search window's,
+     * worked out from its configuration — never overwrites; renamed to nothing, or to that very title, it follows its
+     * title again.
+     */
+    @Test
+    fun a_renamed_window_keeps_its_name_until_it_is_given_back() {
+        val host = WindowFrameHost()
+        var saves = 0
+        host.onTabTitlesChanged = { saves++ }
+        val registration = WindowFrameHost.Registration("Search#2", "all timers", WindowFrameState("Search#2"), false, null) {}
+        host.register(registration)
+        host.rename("Search#2", "  Tea timers ", ownTitle = "all timers")
+        assertEquals("Tea timers", host.tabTitleOf(registration))
+        // The configuration changes: the window's own title moves, its name does not.
+        host.retitle("Search#2", "all timers and alarms")
+        assertEquals("Tea timers", host.tabTitleOf(registration))
+        // Renamed to its own title, or to nothing: it follows the title again.
+        host.rename("Search#2", "all timers and alarms", ownTitle = "all timers and alarms")
+        assertEquals("all timers and alarms", host.tabTitleOf(registration))
+        host.rename("Search#2", "Mine", ownTitle = "all timers and alarms")
+        host.rename("Search#2", " ", ownTitle = "all timers and alarms")
+        assertEquals("all timers and alarms", host.tabTitleOf(registration))
+        assertEquals(4, saves, "each change written down, and only a change")
+        host.rename("Search#2", "", ownTitle = "all timers and alarms")
+        assertEquals(4, saves)
+    }
+
     @Test
     fun a_window_that_closes_leaves_the_one_it_was_opened_from_and_the_others_open() {
         val host = WindowFrameHost()

@@ -966,6 +966,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             updatePlacementById(CustomMenuButtons.TAB_TITLES_PLACEMENT_ID) {
                 it.copy(config = CustomMenuButtons.encodeTabTitles(windowFrames.tabTitles.toMap()))
             }
+        // A window renamed from its head (user rule 2026-10-15) keeps the name like a menu button's.
+        windowFrames.onTabTitlesChanged = { saveTabTitles() }
         // The windows' colours (user rule 2026-10-06; [WindowFrameHost.colors]): loaded once, for the windows that
         // come back — so each comes back in its colour — and written whenever a window that opens is given one.
         remember(placementStore) {
@@ -1906,13 +1908,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7: a button made from a window's head (☆): at the bottom of the menu, its title open for typing
         // with a default name all selected — a lateral-menu window's own title (a copy's followed by its number,
         // like its frame id), a per-object window's object and what it is ("Tea timer").
-        fun addMenuButton(key: String, title: String) {
+        fun addMenuButton(key: String, title: String, frameId: String? = null) {
             val objectKey = ObjectWindowKey.decode(key)
             val kind = lateralWindowOf(key)
             // Named after what it opens — a new window of that kind, not this copy of it.
             val name = objectKey?.buttonTitle(schedulerState) ?: kind?.title ?: title
             val (list, id) = CustomMenuButtons.added(menuButtons, key, name, windowConfigOf(key))
             setMenuButtons(list)
+            // The window it was made from is its window: the head's "Remove from menu" finds it there.
+            if (frameId != null) menuButtonWindows[id] = frameId
             editingMenuButton = id
             // The field has to be seen to be typed in: the menu opens, scrolled to its end.
             menuCollapsed = false
@@ -1933,8 +1937,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // Every window the app can open by its frame id gets the ☆: the lateral-menu windows and their copies. A
         // per-object window about an object with a stable id brings its own key ([ObjectWindowKey]).
+        // User rule 2026-10-15, the head's "Remove from menu": the buttons that are this window's — the one that opened it
+        // or that its ☆ made ([menuButtonWindows]), else, after a restart, the button it is named after and opens it.
+        fun menuButtonsOf(frameId: String): List<CustomMenuButton> {
+            val key = windowFrames.registrations.firstOrNull { it.id == frameId }?.menuKey
+            val name = windowFrames.tabTitles[frameId]
+            return menuButtons.filter { button ->
+                menuButtonWindows[button.id] == frameId || (key != null && button.windowId == key && button.title == name)
+            }
+        }
         val menuButtonHost = remember {
-            MenuButtonHost(canAdd = { lateralWindowOf(it) != null }, add = { id, title -> addMenuButton(id, title) })
+            MenuButtonHost(
+                canAdd = { lateralWindowOf(it) != null },
+                add = { key, title, frameId -> addMenuButton(key, title, frameId) },
+                has = { menuButtonsOf(it).isNotEmpty() },
+                remove = { frameId ->
+                    val gone = menuButtonsOf(frameId)
+                    if (gone.isNotEmpty()) {
+                        val ids = gone.mapTo(HashSet()) { it.id }
+                        setMenuButtons(menuButtons.filterNot { it.id in ids })
+                        ids.forEach { menuButtonWindows.remove(it); menuButtonOpenedLayouts.remove(it) }
+                        // The window was named after its button: without it, it is called what it says again.
+                        if (gone.any { it.title == windowFrames.tabTitles[frameId] }) {
+                            windowFrames.tabTitles.remove(frameId)
+                            saveTabTitles()
+                        }
+                    }
+                },
+            )
         }
         // A button the user made (☆) opens its window like every button of the menu ([openNewWindow]): a
         // per-object window on its object — the one open on it already, brought back, when there is one — or a

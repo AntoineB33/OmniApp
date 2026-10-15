@@ -197,10 +197,34 @@ class NotificationsWindowTest {
         val byHand = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Notification))
         assertEquals(null, SearchDomain.Config.decode(byHand.encode())!!.filters.notificationsSinceMillis)
         assertFalse(SearchDomain.isNotificationsWindow(byHand))
-        // User rule 2026-10-06: the window the app opens has a name of its own; one opened by hand is a Search window.
+        // User rule 2026-10-06: the window the app opens has a name of its own; one opened by hand is named after what
+        // it searches (user rule 2026-10-15).
         assertEquals("unfocused notif", SearchDomain.windowTitle(SearchDomain.Config.decode(config.encode())!!))
-        assertEquals("Search", SearchDomain.windowTitle(byHand))
-        assertEquals("Search", SearchDomain.windowTitle(SearchDomain.Config()))
+        assertEquals("all notifications", SearchDomain.windowTitle(byHand))
+        assertEquals("all tasks", SearchDomain.windowTitle(SearchDomain.Config()))
+    }
+
+    /**
+     * User rule 2026-10-15: *"Make the title of a Search window update with the Search configurations … if the
+     * configuration is simply only timers, it is 'all timers' … for the config only timers and can be added to the
+     * calendar before 1995, just name it 'all timers' as well."*
+     */
+    @Test
+    fun a_search_window_is_named_after_the_kinds_it_searches_and_the_text_typed() {
+        fun title(vararg kinds: SearchDomain.Kind, query: String = "", filters: SearchDomain.Filters = SearchDomain.Filters()) =
+            SearchDomain.windowTitle(SearchDomain.Config(query = query, kinds = kinds.toSet(), filters = filters))
+        assertEquals("all timers", title(SearchDomain.Kind.Timer))
+        // A filter is no part of the name.
+        assertEquals("all timers", title(SearchDomain.Kind.Timer, filters = SearchDomain.Filters(calendarAddOn = true, calendarAtOn = true, calendarAtMillis = 0L)))
+        assertEquals("all alarms and timers", title(SearchDomain.Kind.Timer, SearchDomain.Kind.Alarm), "in the kinds' own order")
+        assertEquals("all tasks, timers and reminders", title(SearchDomain.Kind.Reminder, SearchDomain.Kind.Task, SearchDomain.Kind.Timer))
+        assertEquals("all task categories", title(SearchDomain.Kind.Category))
+        assertEquals("all tasks, task categories and 2 more kinds", title(SearchDomain.Kind.Task, SearchDomain.Kind.Category, SearchDomain.Kind.Timer, SearchDomain.Kind.Alarm))
+        assertEquals("everything", title(*SearchDomain.Kind.entries.toTypedArray()))
+        assertEquals("everything but windows", title(*(SearchDomain.Kind.entries - SearchDomain.Kind.Window).toTypedArray()))
+        assertEquals("nothing", title())
+        assertEquals("timers matching \"tea\"", title(SearchDomain.Kind.Timer, query = " tea "))
+        assertEquals("everything matching \"tea\"", title(*SearchDomain.Kind.entries.toTypedArray(), query = "tea"))
     }
 
     @Test

@@ -263,6 +263,19 @@ means.
     it — no `diagnostics.log` line, no event; the `hs_err_pid*.log` is in the folder the app was started from. A dev
     run can still try a layer type: `-Pcompose.layers.type=…` (`desktopApp/build.gradle.kts`).
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
+- **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
+  the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from
+  menu' and one option for each button in the right side of the header of the window."*; `WindowHead`'s `HeadMenu`, a
+  menu like the others — non-focusable, `transientMenuDismissal`). **Rename** turns the title into a field, all of it
+  selected: Enter or leaving it names the window (`WindowFrameHost.rename` → `tabTitles`, written down by `App` on the
+  `TabTitles` row), Escape renames nothing, and a name left empty or equal to the window's own title gives the name back
+  — the window follows its title again. **Remove from menu** takes off the lateral menu the button(s) that are this
+  window's (`MenuButtonHost.has` / `remove`: the one that opened it or its ☆ made — `menuButtonWindows` — else, after a
+  restart, the button it is named after that opens it), and the name that button gave goes with it; greyed where there
+  is none. Then one entry per button on the right of the head, in their order: the window's own (`AppWindowFrame`'s
+  `headMenu`, for the BUTTONS of its `headTrailing` — the History unit's "Copy all"; a status like "Calculating…" is
+  none), ☆, ⧉, the two fills, Reduce, Maximize/Restore, Close. The head's buttons let a right-click through: it is
+  still the head's.
 - **A menu entry acts on the RELEASE, never on the press — the right button's included** (anomaly 2026-10-15: *"I
   right-clicked on the element type drop-down menu in the Search window, and it opened a menu as if I right-clicked on
   the element in the result list"*; `CheckBoxDropDown`'s right-click pick, `DropDownRightClickTest`). On the desktop a
@@ -679,6 +692,14 @@ It lives in the host because the host already sees the only two events that deci
   once its search configuration or its added elements differ from what the app opened it with, it is theirs — the
   next notification out of focus leaves it as it is and opens a NEW notifications window beside it, in a colour of
   the same part of the cube (§ *Window colours*). An untouched one is still brought back in front.
+- **Every other Search window is named after what it searches** (user rule 2026-10-15: *"Make the title of a Search
+  window update with the Search configurations, except if its title is set by the user … if the configuration is
+  simply only timers, it is 'all timers' … for the config only timers and can be added to the calendar before 1995,
+  just name it 'all timers' as well"*; `SearchDomain.windowTitle`, `Kind.plural`, `NotificationsWindowTest`). The
+  KINDS and the text typed, never a filter: "all timers", "all alarms and timers", "all tasks, timers and reminders",
+  "all tasks, task categories and 2 more kinds", "everything", "everything but windows", "nothing", `timers matching
+  "tea"`. Read off the configuration at every composition, so it follows each change. A name the user gave
+  ([WindowFrameHost.tabTitles]: a menu button's, the head's "Rename") is shown in its place on the head and on the tab.
 - **It is called "unfocused notif", not "Search"** (user rule 2026-10-06; `SearchDomain.windowTitle`), on its head and on
   its tab of the window bar. The name is read off the configuration — never stored — so it comes back with the window,
   and a window the user turns into another search is a Search window again. A tab a ☆ button named keeps that name.

@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Search window is named after what it searches; a window's head has a right-click menu — 2026-10-15
+
+The user: "Make the title of a Search window update with the Search configurations, except if its title is set by the
+user on the left-side menu of the app. For example, if the configuration is simply only timers, it is 'all timers'. …
+for the config only timers and can be added to the calendar before 1995, just name it 'all timers' as well. The user
+can modify the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove
+from menu' and one option for each button in the right side of the header of the window." `SearchDomain.windowTitle`
+now names a Search window from its kinds and its typed text ("all timers", "all alarms and timers", "everything but
+windows", `timers matching "tea"`, …; `Kind.plural`), never from a filter; the notifications window keeps "unfocused
+notif". A name the user gave (`WindowFrameHost.tabTitles`) now shows on the head as well as on the tab. The head's
+right-click menu (`HeadMenu`): Rename (`WindowFrameHost.rename`; empty or the window's own title gives the name back),
+Remove from menu (`MenuButtonHost.has` / `remove`; the ☆ now records the window a button was made from), then one
+entry per head button (`AppWindowFrame`'s `headMenu` for a window's own: the History unit's "Copy all").
+`NotificationsWindowTest`, `TabSelectionTest`.
+
 ### A right-click in the type list no longer opens the menu of the result under it — 2026-10-15
 
 Anomaly: "I right-clicked on the element type drop-down menu in the Search window, and it opened a menu as if I

@@ -3340,6 +3340,8 @@ private fun HistoryEntryInfoWindow(
                 value = infos.joinToString("\n") { "${it.label}: ${it.value}" },
             )
         },
+        // The same button in the head's right-click menu (user rule 2026-10-15).
+        headMenu = listOf(HeadMenuEntry("Copy all") { writeSystemClipboardText(infos.joinToString("\n") { "${it.label}: ${it.value}" }) }),
     ) {
         Column(
             modifier = Modifier
