@@ -119,6 +119,35 @@ Global rules that always apply: `CLAUDE.md`.
   frames (a time simulation runs it at anything; a held one is read every frame); a zoom restarts the wait; a newer
   reading of the rules pulls the clock forward at once. Never put a per-frame read back: measure an idle release app
   (CPU-seconds of the process over a minute, then the threads' own) before and after any change to this path.
+- **THE CALENDAR IS HANDED THE RULES OVER AN INTERVAL, NOT ONE READING** (user rule 2026-10-15: *"as performant as
+  the graph by the Python program, with the scheduler engine returning a set of rules that covers all the situations
+  over a bigger time interval"*). `App` reads the derivation into a CHAIN of pieces (`CalendarChain`,
+  `calendarPieceAt`, `extendCalendarChain` in `CalendarLineMotion.kt`): each piece is the reading at a boundary with
+  its motion (`lineMotionOf`), valid until the next boundary it names — `if line in [B_k, B_k+1)`, exactly the branches
+  of `C:\code\scheduler\test.py`. The calendar window walks the chain ITSELF (`rememberActivePiece`), one wake per
+  boundary at the boundary's own instant; time passing derives nothing. So:
+  - **The chain is keyed on the inputs, never on the instant.** A changed input rebuilds it from where the line IS
+    (the clock, not `nowMillis`, which can be a whole piece behind). Never add a value to the key that moves with
+    time alone — the banked-breaks record enters it without `untilMillis`/`lineMillis`, which the engine re-publishes
+    every 20 s and the calendar reads only for its two-day staleness.
+  - **Pieces are read AHEAD of the line**, one per idle moment (`CALENDAR_CHAIN_READ_GAP_MILLIS`), while the chain ends
+    within `CALENDAR_CHAIN_LOOKAHEAD_MILLIS` of the line, and never in the frame that built the chain
+    (`CALENDAR_CHAIN_SETTLE_MILLIS`). With no calendar open only the piece the line is in is kept.
+  - **A piece's reading never straddles a boundary**: it moves on a millisecond until its motion is read whole
+    (`PIECE_READ_ATTEMPTS`); one that still cannot is trusted for `STRADDLED_PIECE_MAX_MILLIS` only. No piece is
+    trusted longer than `CALENDAR_PIECE_MAX_MILLIS` (10 min) — a safety net for a change the records would not show.
+  - The contract is `CalendarPieceChainTest`: **the chain evaluated at any instant it covers is the rules read at that
+    instant**, the 15-min break dragged from the very millisecond the line reaches it included.
+- **WHERE THE LINE IS is asked of the line's clock, never of the reading of the rules** (2026-10-15, zoomed to
+  seconds with "Lock to now": the line vanished and the timeline flickered between two instants). Zoomed to the
+  ceiling a second is ~390 px and the reading lags the line by up to the 30 s ceiling — many screens. So whether the
+  line is on screen (a column drawing it, `framesWanted` sampling for it) reads `compositionNowMillis`; and the
+  line's clock **never falls back** to an older reading when sampling stops (it is re-read once when what the grid
+  shows changes instead). Either half alone put back the loop: line judged off screen → sampling stops → clock
+  falls back on screen → sampling restarts → clock jumps forward.
+- **The lock is exact in the draw phase.** The grid is re-centred once per pixel step from an effect a frame late;
+  the rest is a draw-phase translation of the grid by the line's travel since that centring (`lockDriftPx`), so the
+  locked line sits in the middle on every frame and the timeline glides under it.
 - **What the calendar COMPOSES is bounded by the visible window too.** A day row is one whole day tall while
   the viewport is not, so every `DayColumn` culls its output to `visibleHourWindow(...)`: a record scrolled
   out of view emits no UI node. This is a frame cost, not a tick cost — every floating window shares one

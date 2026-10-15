@@ -11,6 +11,29 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar is handed the rules over an interval: a chain of pieces read ahead of the line — 2026-10-15
+
+The user, at the zoom ceiling: the line walked into the 15-min break and *"after some time it remembered that the 15min
+break must be pushed by the $now line$"*; then *"the dynamic change of the calendar over time must be as performant as
+the graph by the Python program, with the scheduler engine returning a set of rules that covers all the situations over
+a bigger time interval"*. The calendar used to hold ONE reading of the rules and re-derive after the line crossed each
+boundary — a 250 ms floor plus the derivation, ~100 px at the ceiling. Now `App` reads the derivation into a chain of
+pieces (`CalendarChain`): the reading at each boundary ahead of the line, with its motion, valid until the next one. The
+window switches pieces itself at the boundary's instant, and nothing is derived as time passes. Replaces the single
+reading + 1 ms probe in `App` (`withLineMotion` is now one call inside `calendarPieceAt`). `display-hot-path.md`,
+`CalendarPieceChainTest`.
+
+### Zoomed to seconds and locked to now: the line vanished and the timeline flickered — 2026-10-15
+
+The user, zoomed to the ceiling with "Lock to now": not smooth like the Python demo (`C:\code\scheduler\test.py`),
+"the $now line$ disappearing, or the timeline blinking very fast with different schedule". A feedback loop: whether the
+line was on screen was asked of the reading of the rules (up to 30 s ≈ 11 700 px behind the line there), so the line
+"left" the screen, the frame sampler stopped, its clock fell back to that reading, the lock re-centred on it, the line
+was "back", sampling restarted and the clock jumped forward. Now the on-screen test reads the line's own clock, the
+clock never falls back when sampling stops (it is re-read once when the grid's visible window changes), and the lock's
+sub-step remainder is a draw-phase translation of the grid (`lockDriftPx`) so the line stays exactly centred.
+`display-hot-path.md`.
+
 ### "Recorded actions": every action on Windows drawn as a line on the calendar — 2026-10-15
 
 The user: "Add a configuration in the calendar that shows every recorded action on Windows with horizontal lines", then

@@ -735,12 +735,19 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   before bed for four evenings running, and the worked past stood empty behind the line. A period the USER drew
   does not give way; a scan that failed vouches for nothing (the window then holds whole, the rule before).
 - **THE INPUT CHANGES, THE SCHEDULER RUNS FROM SCRATCH — ONE RULE, ONE LOOP** (requirements § *Rule state input
-  evolution*: the rule state input *"forms with the pre-placed tasks, pre-placed periods and history the input that
-  makes the scheduler engine run from scratch each time it changes"*; user, 2026-10-07: a dragged panel restarting
-  the engine *"is only because each change of the input triggers a new run … not because the logic literally says
-  each movement of the mouse triggers a rerun"*). Never write a rule about a gesture, a press or a kind of edit
-  here: three were (a reducer that laid ten seconds for three intents, a restart per pointer movement, a quiet wait
-  before a held plan) and all three are gone.
+  evolution*, *New Schedule*: *"Each time the user manually edits the timeline, changes the rule state inputs (with a
+  debounce time for some cases) or switch to a new task at $now line$, it triggers a run"*; user, 2026-10-07: a
+  dragged panel restarting the engine *"is only because each change of the input triggers a new run … not because
+  the logic literally says each movement of the mouse triggers a rerun"*). Never write a rule about a gesture, a press
+  or a kind of edit here: three were (a reducer that laid ten seconds for three intents, a restart per pointer
+  movement, a quiet wait before a held plan) and all three are gone.
+  - **Not every change of the input is a run — the engine decides, and it decides in ONE place**
+    (`SchedulerDomain.schedulingSignature`). The same paragraph: a run at every move of the line *"would trigger a new
+    run that has 0 calculation time because interrupted by the next run an infinitesimal time afterward"*, and a
+    locked phone *"is constantly extending the 'no phone unlocked' period and shouldn't always trigger a new run"*.
+    So what the line's passage changes (the line itself, a lock period growing with it, the past it banks) is
+    answered by the rules already returned, read at the line (§ *The rules are read by a forward cursor*), never by
+    a run; a change it should answer goes into the signature, not into a new dispatch site.
   - **One loop** (`SchedulerEngine.runProgressiveStages`) plans whatever input it is given (`PlanInput`): the ten
     definitive seconds first where the line is bare, then the stages of the pace, each extending the last.
   - **The stored state** (`StoredPlan`). At a change of the rules (`launchRuleChangeReschedule`) the run in flight

@@ -10,6 +10,11 @@ import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.time.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.TaskTimeRange
 
 // ---------------------------------------------------------------------------------------------------------
@@ -48,19 +53,162 @@ fun withLineMotion(
     at: List<CalendarRecord>,
     ahead: List<CalendarRecord>,
     probeMillis: Long = LINE_MOTION_PROBE_MILLIS,
-): List<CalendarRecord> {
-    if (at.size != ahead.size || probeMillis <= 0L) return at
-    return at.mapIndexed { index, record ->
+): List<CalendarRecord> = lineMotionOf(at, ahead, probeMillis).records
+
+/** [withLineMotion]'s answer, and whether a boundary fell between the two readings (a record was left still for it). */
+class LineMotion(val records: List<CalendarRecord>, val straddled: Boolean)
+
+/** [withLineMotion], telling a record that is still apart from one left still because a boundary fell in the probe. */
+fun lineMotionOf(
+    at: List<CalendarRecord>,
+    ahead: List<CalendarRecord>,
+    probeMillis: Long = LINE_MOTION_PROBE_MILLIS,
+): LineMotion {
+    if (at.size != ahead.size || probeMillis <= 0L) return LineMotion(at, straddled = true)
+    var straddled = false
+    val records = at.mapIndexed { index, record ->
         val next = ahead[index]
-        if (motionNeutral(record) != motionNeutral(next)) return@mapIndexed record
+        if (motionNeutral(record) != motionNeutral(next)) {
+            straddled = true
+            return@mapIndexed record
+        }
         val startMoved = next.range.startEpochMillis - record.range.startEpochMillis
         val endMoved = next.range.endEpochMillis - record.range.endEpochMillis
         if ((startMoved != 0L && startMoved != probeMillis) || (endMoved != 0L && endMoved != probeMillis)) {
+            straddled = true
             return@mapIndexed record
         }
         if (startMoved == 0L && endMoved == 0L) return@mapIndexed record
         record.copy(startFollowsLine = startMoved == probeMillis, endFollowsLine = endMoved == probeMillis)
     }
+    return LineMotion(records, straddled)
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// THE RULES OVER A LONGER INTERVAL (user rule 2026-10-15: *"the dynamic change of the calendar over time must be as
+// performant as the graph by the Python program, with the scheduler engine returning a set of rules that covers all
+// the situations over a bigger time interval"*). One reading of the rules says what the calendar is until the next
+// boundary it names; the reading AT that boundary says what it is after it, and so on. A chain of those readings —
+// PIECES — is the rules over the whole interval it spans: `if line in [B_k, B_k+1) then piece k, moved along the line
+// by line − B_k`, the very branches `C:\code\scheduler\test.py` evaluates. The calendar switches from one piece to
+// the next ITSELF, at the boundary's own instant, and nothing is derived as time passes: the readings are taken
+// AHEAD of the line ([calendarPieceAt]), while nothing else is happening.
+// ---------------------------------------------------------------------------------------------------------
+
+/**
+ * One branch of the rules: the calendar from [startMillis] — the instant [records] were read at, their motion
+ * included ([withLineMotion]) — until [endMillis], the next boundary they name. [today] is the date at [startMillis].
+ */
+data class CalendarPiece(
+    val startMillis: Long,
+    val endMillis: Long,
+    val today: LocalDate,
+    val records: List<CalendarRecord>,
+) {
+    /** The records as the rules draw them at [lineMillis] inside this piece: every edge that follows the line moved. */
+    fun recordsAt(lineMillis: Long): List<CalendarRecord> {
+        val elapsed = lineMillis - startMillis
+        if (elapsed == 0L) return records
+        return records.map { r ->
+            if (!r.followsLine) {
+                r
+            } else {
+                r.copy(
+                    range = TaskTimeRange(
+                        r.range.startEpochMillis + if (r.startFollowsLine) elapsed else 0L,
+                        r.range.endEpochMillis + if (r.endFollowsLine) elapsed else 0L,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/** The piece of [pieces] (sorted, contiguous) the line at [lineMillis] is in: the last one starting at or before it. */
+fun pieceIndexAt(pieces: List<CalendarPiece>, lineMillis: Long): Int {
+    var index = 0
+    for (i in pieces.indices) {
+        if (pieces[i].startMillis <= lineMillis) index = i else break
+    }
+    return index
+}
+
+/** How many milliseconds past a boundary a piece's reading may move when the one AT it straddles another boundary. */
+internal const val PIECE_READ_ATTEMPTS: Int = 4
+
+/**
+ * The longest a piece is trusted for, whatever its boundaries say — a safety net for a change the records would not
+ * show (none is known). It costs two derivations per this long, taken ahead of the line.
+ */
+const val CALENDAR_PIECE_MAX_MILLIS: Long = 10 * 60_000L
+
+/** The longest a piece whose motion could not be read in full is trusted for. */
+internal const val STRADDLED_PIECE_MAX_MILLIS: Long = 250L
+
+/**
+ * The piece starting at [startMillis]: the rules read there and one millisecond later ([derive], [lineMotionOf]).
+ * When another boundary falls inside that millisecond the reading moves on by one, so a piece never starts with a
+ * record whose motion was not read. It ends at the first boundary its records name ahead of its start
+ * ([SchedulerDomain.displayResampleDelayMillis] — a fixed bound, a moving bound meeting one, a midnight), at most
+ * [maxMillis] on.
+ */
+fun calendarPieceAt(
+    startMillis: Long,
+    tz: TimeZone,
+    derive: (Long) -> List<CalendarRecord>,
+    maxMillis: Long = CALENDAR_PIECE_MAX_MILLIS,
+): CalendarPiece {
+    var at = startMillis
+    var motion = lineMotionOf(derive(at), derive(at + LINE_MOTION_PROBE_MILLIS))
+    var attempt = 1
+    while (motion.straddled && attempt < PIECE_READ_ATTEMPTS) {
+        at = startMillis + attempt
+        motion = lineMotionOf(derive(at), derive(at + LINE_MOTION_PROBE_MILLIS))
+        attempt++
+    }
+    val (fixed, offsets) = displayBoundsOf(motion.records, at)
+    // A bound ON the line at the start is the piece's own, not a boundary ahead of it.
+    val ahead = fixed.filter { it > at + SchedulerDomain.NOW_LINE_ANCHOR_SLACK }
+    val delay = SchedulerDomain.displayResampleDelayMillis(ahead, at, tz, millisPerPixel = 1L, lineOffsets = offsets)
+    // Still straddling after every attempt: some record's motion is unknown, so the piece is short-lived — read
+    // again as soon as the old resample floor would have, never trusted still for minutes.
+    val longest = if (motion.straddled) minOf(maxMillis, STRADDLED_PIECE_MAX_MILLIS) else maxMillis
+    return CalendarPiece(
+        startMillis = at,
+        endMillis = at + delay.coerceAtLeast(1L).coerceAtMost(longest.coerceAtLeast(1L)),
+        today = Instant.fromEpochMilliseconds(at).toLocalDateTime(tz).date,
+        records = motion.records,
+    )
+}
+
+/** How far ahead of the line the chain is kept read — app time. */
+const val CALENDAR_CHAIN_LOOKAHEAD_MILLIS: Long = 2 * 60_000L
+
+/** The most pieces a chain holds; the oldest, already behind the line, go first. */
+internal const val CALENDAR_CHAIN_MAX_PIECES: Int = 64
+
+/** Does the chain read so far end within [lookaheadMillis] of the line at [lineMillis]? */
+fun calendarChainWantsPiece(
+    pieces: List<CalendarPiece>,
+    lineMillis: Long,
+    lookaheadMillis: Long = CALENDAR_CHAIN_LOOKAHEAD_MILLIS,
+): Boolean = pieces.isEmpty() || pieces.last().endMillis <= lineMillis + lookaheadMillis
+
+/**
+ * [pieces] with ONE more piece read: the one starting where the chain ends, and the pieces wholly behind the line
+ * dropped. A line already past the chain's end (a time simulation leaping, a slow device) starts it again where it
+ * is: a piece is never read for an interval the line has left.
+ */
+fun extendCalendarChain(
+    pieces: List<CalendarPiece>,
+    lineMillis: Long,
+    tz: TimeZone,
+    derive: (Long) -> List<CalendarRecord>,
+): List<CalendarPiece> {
+    val last = pieces.lastOrNull()
+    if (last == null || last.endMillis <= lineMillis) return listOf(calendarPieceAt(lineMillis, tz, derive))
+    val kept = pieces.drop(pieceIndexAt(pieces, lineMillis))
+    return (kept + calendarPieceAt(last.endMillis, tz, derive)).takeLast(CALENDAR_CHAIN_MAX_PIECES)
 }
 
 private val NEUTRAL_RANGE = TaskTimeRange(0L, 0L)

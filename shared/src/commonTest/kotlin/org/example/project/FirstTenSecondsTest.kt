@@ -152,8 +152,8 @@ class FirstTenSecondsTest {
                 SchedulerDomain.restrictiveKindsAt(vm.state.value, at),
         )
 
-        // "…the input that makes the scheduler engine run from scratch each time it changes": the run starts AT the
-        // change, and its first act is the ten seconds.
+        // "Each time the user manually edits the timeline … it triggers a run": the run starts AT the change, and its
+        // first act is the ten seconds.
         runCurrent()
 
         assertTrue(stages.size >= 2, "the ten seconds and then the first stage: ${stages.map { it - T0 }}")
@@ -225,9 +225,8 @@ class FirstTenSecondsTest {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule state input evolution*: the pre-placed tasks are part of *"the input that
-     * makes the scheduler engine run from scratch each time it changes"* — and a block HELD on the calendar changes
-     * them. The user's example is its consequence, not a rule of its own: *"the scheduler engine doesn't do anything
+     * `docs/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: *"Each time the user manually
+     * edits the timeline … it triggers a run"* — and a block HELD on the calendar edits it. The user's example is its consequence, not a rule of its own: *"the scheduler engine doesn't do anything
      * because restarted repeatedly while I move the mouse and doesn't have time to do anything. When I don't move the
      * mouse … the scheduler engine stops being restarted repeatedly and can run normally. At first … the first 10
      * seconds … Then, 10 seconds later, at least the 10 next minutes."*

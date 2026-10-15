@@ -59,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -3867,6 +3868,15 @@ fun CalendarFloatingWindow(
     modifier: Modifier = Modifier,
     records: List<CalendarRecord> = emptyList(),
     /**
+     * User rule 2026-10-15: **the rules over a longer interval** — the calendar read ahead of the line at every
+     * boundary it names ([CalendarPiece], [extendCalendarChain]). When given, the window draws the piece the line is
+     * in, in place of [records] / [nowMillis] / [today], and moves to the next one ITSELF at the boundary's own
+     * instant: time passing derives nothing ([rememberActivePiece]).
+     */
+    pieces: State<List<CalendarPiece>>? = null,
+    /** The REAL milliseconds the app clock takes to run this many of its own (a time simulation runs it at anything). */
+    realMillisFor: (Long) -> Long = { it },
+    /**
      * PRD §8: each task's own colour — its place in the one colour space the tree partitions
      * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
      * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
@@ -4161,12 +4171,13 @@ fun CalendarFloatingWindow(
                     .fillMaxHeight()
                     .keepsWidthAbove(CALENDAR_GRID_MIN_WIDTH),
             ) {
+                val piece = pieces?.value?.takeIf { it.isNotEmpty() }?.let { rememberActivePiece(it, nowExactMillis, realMillisFor) }
                 WeekView(
                     selectedDate = selectedDate,
-                    today = today,
-                    nowMillis = nowMillis,
+                    today = piece?.today ?: today,
+                    nowMillis = piece?.startMillis ?: nowMillis,
                     nowExactMillis = nowExactMillis,
-                    records = records,
+                    records = piece?.records ?: records,
                     taskColors = taskColors,
                     taskSheetColors = taskSheetColors,
                     zoomActions = zoomActions,
@@ -5225,6 +5236,12 @@ private fun WeekView(
     // exists (further down), then that clock stepped to the pixel, so a locked grid keeps the line centred as
     // it moves rather than only when the rules are read again.
     val lockLineMillis = remember { mutableStateOf<() -> Long?>({ null }) }
+    // The line's instant the last centring put on the middle of the view (null while locked on a task). The grid is
+    // re-centred once per pixel of the line's travel, from an effect that runs a frame late, while the line itself
+    // glides on the frame clock — so the view jittered against the line it is locked on. The grid is translated, in
+    // the draw phase, by how far the line has travelled since this instant ([lockDriftPx]): the line stays exactly
+    // in the middle and the timeline glides under it.
+    val lockCentredAtMillis = remember { mutableStateOf<Long?>(null) }
     fun lockLineTime() = lockLineMillis.value()?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) }
 
     // Scroll so the now-line lands on the middle of the viewport — VERTICALLY, and only vertically: the
@@ -5236,6 +5253,7 @@ private fun WeekView(
     // change prompted the re-centring.
     fun centerOnNowLine(dayH: Float) {
         if (dayH <= 0f || viewportHpx <= 0f) return
+        lockCentredAtMillis.value = if (lockTaskState.value == null) lockLineMillis.value() else null
         val lineTime = lockTaskState.value?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz) } ?: lockLineTime()
         val dayFraction = lineTime?.time?.hourOfDayExact()?.div(24.0)?.toFloat() ?: nowFractionState.value
         val lineDay = lineTime?.date ?: todayState.value
@@ -5480,20 +5498,22 @@ private fun WeekView(
     // Asked of the same quantized cull windows every column culls by, so a grid scrolled away from the present
     // asks for no frames at all.
     val sampleNowState = rememberUpdatedState(nowMillis)
-    val todayState0 = rememberUpdatedState(today)
-    val nowHourState = rememberUpdatedState(now.hourOfDay())
     val recordsPerDayState = rememberUpdatedState(recordsPerDay)
     val framesWanted by remember {
         derivedStateOf {
             val columnWindows = hourWindows.value
             val shifts = columnShifts
+            // Where the line IS — its own clock, not the reading of the rules, which at the zoom ceiling lags it by
+            // many screens ([rememberFrameNowMillis]).
+            val line = Instant.fromEpochMilliseconds(lockLineMillis.value() ?: sampleNowState.value).toLocalDateTime(tz)
+            val lineHour = line.time.hourOfDay()
             columnWindows.indices.any { column ->
                 val windows = columnWindows[column]
                 windows.indices.any { row ->
                     val window = windows[row]
                     val day = rollingDayAt(anchorDay, row, shifts.getOrElse(column) { column })
                     val lineHere =
-                        day == todayState0.value && window.intersects(nowHourState.value, nowHourState.value)
+                        day == line.date && window.intersects(lineHour, lineHour)
                     lineHere ||
                         recordsPerDayState.value[day].orEmpty().any {
                             it.followsLine && window.intersects(it.startHour, it.endHour)
@@ -5502,7 +5522,9 @@ private fun WeekView(
             }
         }
     }
-    val frameNowMillis = rememberFrameNowMillis(nowMillis, nowExactMillis, sampling = framesWanted, nowLineMillisPerPixel)
+    val frameNowMillis = rememberFrameNowMillis(
+        nowMillis, nowExactMillis, sampling = framesWanted, nowLineMillisPerPixel, seen = { hourWindows.value },
+    )
     // ...and the instant the COMPOSITION reads the line at: the same clock, stepped once per pixel of travel at
     // the zoom in force ([lineCompositionMillis]). What a pointer, a hover tile or a label's fit reads cannot
     // tell two positions under a pixel apart; what is DRAWN gets the rest of the pixel in the layout phase.
@@ -5515,6 +5537,13 @@ private fun WeekView(
     // PRD §8 now-line lock, on the same clock: re-centred once per pixel the line travels, from an effect
     // rather than a composition read, so the grid itself never recomposes for it.
     SideEffect { lockLineMillis.value = { compositionNowMillis.value } }
+    // ...and the rest of the way in the DRAW phase ([lockCentredAtMillis]): minus the line's travel since the last
+    // centring, so the line drawn at [frameNowMillis] sits exactly in the middle on every frame.
+    fun lockDriftPx(): Float {
+        val centredAt = lockCentredAtMillis.value ?: return 0f
+        if (!lockNow.value || lockTaskState.value != null) return 0f
+        return (-(frameNowMillis.value - centredAt) * dayHeightPxAt(zoom).toDouble() / 86_400_000.0).toFloat()
+    }
     // User rule 2026-10-14, "Lock to notifications": the view holds the stretch whole, from its start to its end or the
     // line, whichever is later — *"the $now line$ is moving forward, so the window is supposed to get larger"*. Fitted
     // again each time the line has travelled a pixel ([compositionNowMillis]: the step that would put it below the
@@ -5743,7 +5772,7 @@ private fun WeekView(
             // Each day-row is positioned by a LAYOUT-phase read of [offsetPx] (`offset { … }`), never a
             // composition-phase one: scrolling then only re-lays-out, and the DAY_COLUMNS × [rowCount]
             // columns are recomposed once per day boundary crossed instead of once per scrolled pixel.
-            Row(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxSize().graphicsLayer { translationY = lockDriftPx() }) {
                 // Time gutter: hour labels, plus sub-hour minute labels (":30", ":15", …) once zoomed in.
                 // Repeated per day-row. In week mode every column crosses midnight at the same height, so one
                 // gutter serves them all; in day mode each column reads different hours and has its own.
@@ -6113,13 +6142,35 @@ private fun rememberFrameNowMillis(
     nowExactMillis: () -> Long,
     sampling: Boolean,
     millisPerPixel: Long,
+    /** What the caller sees of the timeline; read in a snapshot flow, never in composition. */
+    seen: () -> Any?,
 ): State<Long> {
     val state = remember { mutableLongStateOf(sampleMillis) }
     val exact = rememberUpdatedState(nowExactMillis)
-    // Not a composition-phase read: the value is read only from layout/draw lambdas and derived states, and
-    // this keeps it in step with the reading of the rules for as long as nothing is sampling it — and, while it is,
-    // never behind a newer reading of the rules (the wait between two samples is an eighth of a pixel at most).
-    SideEffect { if (!sampling || state.longValue < sampleMillis) state.longValue = sampleMillis }
+    val samplingState = rememberUpdatedState(sampling)
+    val lastSample = remember { longArrayOf(sampleMillis) }
+    // Not a composition-phase read: the value is read only from layout/draw lambdas and derived states. It is never
+    // behind a newer reading of the rules, and it NEVER GOES BACK to an older one when sampling stops — only a reading
+    // that itself went back (a time simulation reset) pulls it back. Dropping it to the reading when sampling stopped
+    // was a feedback loop at the zoom ceiling: the reading lags the line by up to [LINE_FRAME_MAX_WAIT_MILLIS] (11 700 px
+    // there), so the line "left" the screen, sampling stopped, the clock fell back onto the screen, sampling restarted,
+    // and the locked view and the line flickered between the two instants.
+    SideEffect {
+        if (state.longValue < sampleMillis || sampleMillis < lastSample[0]) state.longValue = sampleMillis
+        lastSample[0] = sampleMillis
+    }
+    // While nothing samples it the clock is frozen, so what the caller sees is asked of it again (a scroll or a zoom
+    // into the present: [seen] changed) — one read per such event, so the line is found where it really is and the
+    // sampling it asks for can start.
+    val seenState = rememberUpdatedState(seen)
+    LaunchedEffect(Unit) {
+        snapshotFlow { seenState.value() }.collect {
+            if (!samplingState.value) {
+                val t = exact.value()
+                if (t > state.longValue) state.longValue = t
+            }
+        }
+    }
     LaunchedEffect(sampling, millisPerPixel) {
         if (!sampling) return@LaunchedEffect
         var lastFrameNanos = -1L
@@ -6142,6 +6193,34 @@ private fun rememberFrameNowMillis(
         }
     }
     return state
+}
+
+/**
+ * The piece of [pieces] the line is in, moved on to the next one at the instant the line reaches it — one wake per
+ * boundary, timed off the app clock ([realMillisFor]), never a poll and never a derivation. A switch recomposes the
+ * grid with records read ahead of time, exactly as a resample of the rules used to, minus the reading.
+ */
+@Composable
+private fun rememberActivePiece(
+    pieces: List<CalendarPiece>,
+    nowExactMillis: () -> Long,
+    realMillisFor: (Long) -> Long,
+): CalendarPiece {
+    val exact = rememberUpdatedState(nowExactMillis)
+    val real = rememberUpdatedState(realMillisFor)
+    var index by remember(pieces) { mutableIntStateOf(pieceIndexAt(pieces, nowExactMillis())) }
+    LaunchedEffect(pieces) {
+        while (true) {
+            val next = pieces.getOrNull(index + 1)?.startMillis ?: break
+            val now = exact.value()
+            if (now >= next) {
+                index = pieceIndexAt(pieces, now)
+                continue
+            }
+            delay(real.value(next - now).coerceIn(1L, LINE_FRAME_MAX_WAIT_MILLIS))
+        }
+    }
+    return pieces[index.coerceIn(0, pieces.lastIndex)]
 }
 
 /** How finely the line's travel is drawn: a sample every this-many-th of a pixel ([rememberFrameNowMillis]). */
@@ -6374,7 +6453,18 @@ private fun DayColumn(
     //    only WHERE those elements are placed, which is the half that has to be continuous.
     // Both from the slice's origin, like everything else this column places.
     val nowHour = now?.hourOfDay()?.minus(slice.originHour)
-    val nowLineOnScreen = nowHour != null && onScreen(nowHour, nowHour)
+    // Whether the LINE is on screen is asked of the line's own clock (stepped to the pixel), not of [nowHour]: zoomed
+    // to seconds the reading of the rules lags the line by many screens, and the line vanished whenever that reading
+    // fell outside the window the line itself was in. A derived boolean, so the column recomposes only when it flips.
+    val lineShown = now != null
+    val nowLineOnScreen by remember(lineShown, day, shownHours, slice, tz) {
+        derivedStateOf {
+            lineShown && Instant.fromEpochMilliseconds(compositionNowMillis.value).toLocalDateTime(tz).let { at ->
+                val hour = at.time.hourOfDay() - slice.originHour
+                at.date == day && shownHours.intersects(hour, hour)
+            }
+        }
+    }
     // Read only inside the `graphicsLayer` blocks below: the exact clock as an hour of THIS day.
     fun nowLineHour(): Double =
         Instant.fromEpochMilliseconds(frameNowMillis.value).toLocalDateTime(tz).time.hourOfDayExact() - slice.originHour

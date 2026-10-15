@@ -2523,9 +2523,8 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule state input evolution*: the pre-placed tasks and periods are part of
-     * *"the input that makes the scheduler engine run from scratch each time it changes"* — and a block HELD on the
-     * calendar changes them: what is planned while it is held is the state its release would leave (user rule
+     * `docs/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: *"Each time the user manually
+     * edits the timeline … it triggers a run"* — and a block HELD on the calendar edits it: what is planned while it is held is the state its release would leave (user rule
      * 2026-10-07: holding and releasing differ only in that what the held block removed is remembered).
      *
      * [source] is that state as `App` made it of the stored one (the release's own moves on a copy); [planned] is
@@ -2661,7 +2660,8 @@ class SchedulerEngine(
 
     /**
      * **What a run of the scheduler plans, and where its sets of rules go** — `docs/scheduler_requirements.md` § *Rule
-     * state input evolution*: *"the input that makes the scheduler engine run from scratch each time it changes"*.
+     * state input evolution*, *New Schedule*: *"The scheduler engine starts a new run from scratch each time when the
+     * context is different and calculating a new set of rules output would be relevant"*.
      * The input is the stored state ([StoredPlan]) or, while a block is held on the calendar, the state its release
      * would leave ([HeldInput]). ONE loop of stages runs either ([runProgressiveStages]): a held block is not a second
      * scheduler, it is another input.

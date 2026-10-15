@@ -171,10 +171,12 @@ import org.example.project.ui.EDIT_LABEL_SLEEP_SCHEDULE
 import org.example.project.ui.EDIT_LABEL_TASK
 import org.example.project.ui.EDIT_LABEL_TIMER
 import org.example.project.ui.LocalPeriodRefusal
+import org.example.project.ui.CALENDAR_CHAIN_LOOKAHEAD_MILLIS
+import org.example.project.ui.CalendarPiece
 import org.example.project.ui.CalendarRecord
-import org.example.project.ui.LINE_MOTION_PROBE_MILLIS
-import org.example.project.ui.displayBoundsOf
-import org.example.project.ui.withLineMotion
+import org.example.project.ui.calendarChainWantsPiece
+import org.example.project.ui.calendarPieceAt
+import org.example.project.ui.extendCalendarChain
 import org.example.project.ui.ChoresManagerWindow
 import org.example.project.ui.HistoryManagerWindow
 import org.example.project.ui.IconMenuButton
@@ -483,6 +485,18 @@ private const val DEFAULT_NOW_LINE_MILLIS_PER_PIXEL: Long = 60_000
  * The REAL milliseconds to sleep before the display is re-derived, from the answer
  * [SchedulerDomain.displayResampleDelayMillis] gave in the (possibly accelerated) clock's own time base.
  */
+/** How long a new chain is left alone before anything is read ahead of the line ([CalendarChain]): a hand dragging a block rebuilds it on every step. */
+private const val CALENDAR_CHAIN_SETTLE_MILLIS: Long = 300
+
+/** The real time between two pieces read ahead of the line: one derivation pair per frame at most. */
+private const val CALENDAR_CHAIN_READ_GAP_MILLIS: Long = 16
+
+/** The REAL milliseconds the app clock takes to run [appMillis] of its own — a time simulation runs it at anything. */
+private fun AppClock.realMillisFor(appMillis: Long): Long {
+    val speed = (this as? SimAppClock)?.speed ?: 1.0
+    return if (speed > 0.0) (appMillis / speed).toLong() else DISPLAY_RESAMPLE_CEILING_MILLIS
+}
+
 private fun displaySleepMillis(clock: AppClock, simDelayMillis: Long): Long {
     val speed = (clock as? SimAppClock)?.speed ?: 1.0
     val floor = if (speed != 1.0) DISPLAY_RESAMPLE_FLOOR_ACCEL_MILLIS else DISPLAY_RESAMPLE_FLOOR_MILLIS
@@ -2522,8 +2536,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // hold the press ([org.example.project.ui.LocalHeldCalendarRecords]) — their nodes must not move under it.
         val heldCalendarPreview =
             remember(schedulerState, frozenBreaks, heldInCalendar) { heldInCalendar?.let { previewOf(listOf(it)) } }
-        // `docs/scheduler_requirements.md` § *Rule state input evolution*: the pre-placed tasks and periods are part of
-        // the input that makes the scheduler run from scratch each time it changes — and a held block changes them.
+        // `docs/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: each manual edit of the
+        // timeline triggers a run from scratch — and a held block is one.
         // So the state its release would leave is handed to the engine WHEN IT CHANGES ([SchedulerEngine.planHeld]),
         // and what the engine has found for it so far is what is drawn. The stored state is untouched: it remembers.
         val heldPreview = elementDragPreview ?: heldCalendarPreview
@@ -2549,9 +2563,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             /** The state drawn: the stored one, or the one a held drag's release would leave ([calendarMovePreview]). */
             displayState: SchedulerState = schedulerState,
             displayFrozenBreaks: org.example.project.scheduler.domain.FrozenScreenBreaks? = frozenBreaks,
+            /** Whether this reading is the one the rest of the app reads back — never a reading AHEAD of the line. */
+            publish: Boolean = true,
         ): CalendarDisplay {
-            // What the Search window's filter and the reducer's edges read is the STORED calendar's, never a preview's.
-            val layersHolder = if (displayState === schedulerState) calendarLayers else CalendarLayersHolder()
+            // What the Search window's filter and the reducer's edges read is the STORED calendar's, never a preview's
+            // — and never one read ahead of the line ([CalendarChain]).
+            val layersHolder = if (publish && displayState === schedulerState) calendarLayers else CalendarLayersHolder()
             // The plan's panels as drawn: the stored ones (held above), or a preview's own.
             val shownPlanPanels =
                 if (displayState === schedulerState) workPlanPanels
@@ -3212,11 +3229,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // calendar on the reading taken before that value moved), and nothing it does not read belongs here
         // (an extra one only costs a miss).
         val displayCache = remember { CalendarDisplayCache() }
-        fun calendarDisplayAt(instantMillis: Long): CalendarDisplay =
-            displayCache.get(
-                key =
+        val calendarInputs =
                     listOf(
-                        instantMillis, visibleSpanStartMillis, visibleSpanEndMillis, today, tz, ownLayer,
+                        visibleSpanStartMillis, visibleSpanEndMillis, today, tz, ownLayer,
                         // What `workPlanPanels` IS, rather than the list itself: past the 168 h ceiling it is
                         // the far-week fill, and below it `shownState.panels` — which is one of the two
                         // held apart below, so naming the list here would defeat the re-label (a rename
@@ -3228,28 +3243,58 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         shownState.showScreenBreaks, shownState.showReminders,
                         inactivityGaps, activeSince, inactiveSince, activeSessions, userAway, accountAway,
                         declaredAwaySpans, declaredAwaySince, observedNoScreenEvidence,
-                        lockedIntervals, lockHistoryScanned, shownFrozenBreaks,
-                    ),
-                // The two the RENAME moves, held apart from the rest so a title-only change can be
-                // re-labelled instead of re-derived (see [CalendarDisplayCache]).
+                        lockedIntervals, lockHistoryScanned,
+                        // Without where the line is in it: the engine re-publishes the record every 20 s to move
+                        // that alone, and the calendar reads it only to know the record is not two days stale.
+                        shownFrozenBreaks?.copy(untilMillis = 0L, lineMillis = 0L),
+                    )
+        // The two the RENAME moves are held apart from the rest so a title-only change can be re-labelled instead of
+        // re-derived (see [CalendarDisplayCache]).
+        fun calendarDisplayAt(instantMillis: Long, publish: Boolean): CalendarDisplay =
+            displayCache.get(
+                key = listOf(instantMillis, publish) + calendarInputs,
                 tasks = shownState.tasks,
                 panels = shownState.panels,
-            ) { deriveCalendarDisplay(instantMillis, shownState, shownFrozenBreaks) }
-        val calendarDisplay = calendarDisplayAt(nowMillis)
-        // ADR 0009: the motion of every edge, read off a second reading one millisecond later — only while the
-        // calendar is open (nothing else draws these), and only when the first reading or the instant changed,
-        // so a recomposition for an unrelated reason (a keystroke in the tree) pays for one derivation, not two.
-        val calendarRecords =
-            remember(anyCalendarOpen, nowMillis, calendarDisplay.records) {
-                if (!anyCalendarOpen) {
-                    calendarDisplay.records
+            ) { deriveCalendarDisplay(instantMillis, shownState, shownFrozenBreaks, publish) }
+        // User rule 2026-10-15 — THE RULES OVER A LONGER INTERVAL ([CalendarChain]): the calendar is read at the line
+        // and one millisecond later (the motion of every edge, ADR 0009), then again AHEAD of the line at every
+        // boundary that reading names, by the effect below. Keyed on the inputs and never on the instant: the line
+        // moving rebuilds nothing, and the window switches from piece to piece on its own. A changed input reads it
+        // again from where the line IS — never from [nowMillis], which may be a whole piece behind it.
+        fun calendarRealMillisFor(appMillis: Long): Long = clock.realMillisFor(appMillis)
+        val calendarChainHolder = remember { CalendarChainHolder() }
+        val calendarChain =
+            calendarChainHolder.chainFor(
+                calendarInputs, shownState.tasks, shownState.panels, tz,
+                startMillis = { clock.nowMillis() },
+                derive = ::calendarDisplayAt,
+            )
+        val calendarDisplay = calendarChain.first
+        val calendarRecords = calendarChain.firstPiece.records
+        // The chain kept read ahead of the line: one piece per idle moment, as long as it ends within the lookahead
+        // of the line — while a calendar shows it; with none open only the piece the line is in, read when the line
+        // leaves the last one (what the resample of the rules did before). Never in the frame of the change that
+        // built the chain: a hand dragging a block rebuilds it on every step, and reads nothing ahead until it stops.
+        val calendarOpenState = rememberUpdatedState(anyCalendarOpen)
+        LaunchedEffect(calendarChain) {
+            delay(CALENDAR_CHAIN_SETTLE_MILLIS)
+            while (true) {
+                val line = clock.nowMillis()
+                val pieces = calendarChain.pieces.value
+                val lookahead = if (calendarOpenState.value) CALENDAR_CHAIN_LOOKAHEAD_MILLIS else 0L
+                if (line < pieces.first().startMillis) {
+                    calendarChain.pieces.value = listOf(calendarPieceAt(line, tz, calendarChain.derive))
+                } else if (calendarChainWantsPiece(pieces, line, lookahead)) {
+                    Perf.count("calendar.pieceRead")
+                    calendarChain.pieces.value = extendCalendarChain(pieces, line, tz, calendarChain.derive)
                 } else {
-                    withLineMotion(
-                        calendarDisplay.records,
-                        calendarDisplayAt(nowMillis + LINE_MOTION_PROBE_MILLIS).records,
-                    )
+                    delay(calendarRealMillisFor(pieces.last().endMillis - lookahead - line).coerceIn(1L, DISPLAY_RESAMPLE_CEILING_MILLIS))
+                    continue
                 }
+                // One reading per frame at most: the frames in between stay the user's.
+                delay(CALENDAR_CHAIN_READ_GAP_MILLIS)
             }
+        }
         // A block held in the calendar: every record of the calendar its release would leave — what it makes
         // disappear gone, what comes with it (the "no screen" a sleep period carries) alongside it, the place it left
         // as the edges choose. Asked of the STORED state at every minute the hand moves it by, so what it removed is
@@ -3334,16 +3379,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // before the first of those still ahead of the line. Hand them over and sleep until then (see
         // [SchedulerDomain.displayResampleDelayMillis]; [displaySleepMillis] converts the answer out of the
         // possibly-accelerated clock's time base and bounds it at both ends).
-        val (displayBounds, displayLineOffsets) = displayBoundsOf(calendarRecords, nowMillis)
-        val displayResampleDelay =
-            Perf.measure("display.resampleDelay") {
-            SchedulerDomain.displayResampleDelayMillis(
-                displayBounds, nowMillis, tz,
-                millisPerPixel =
-                    if (anyCalendarOpen) nowLineMillisPerPixel else DEFAULT_NOW_LINE_MILLIS_PER_PIXEL,
-                lineOffsets = displayLineOffsets,
-            )
-            }
+        //
+        // Those boundaries are now the starts of the pieces the calendar's chain was read into ([CalendarChain]) —
+        // the calendar itself switches at them, and this clock only keeps the rest of `App` at the same instants.
+        // Read where the effect runs, never in this body, so a piece read ahead recomposes nothing here.
+        val resampleChain = rememberUpdatedState(calendarChain)
+        fun displayResampleDelay(): Long {
+            val pieces = resampleChain.value.pieces.value
+            val next = pieces.firstOrNull { it.startMillis > nowMillis }?.startMillis ?: pieces.last().endMillis
+            return (next - nowMillis).coerceAtLeast(1L)
+        }
         // The sim clock's [SimAppClock.reconfigured] bump restarts the sleep at once when acceleration is
         // turned on or off, so a speed change is never held up behind a sleep taken at the old speed.
         val simReconfigured by simClock.reconfigured.collectAsState()
@@ -3352,9 +3397,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // would restart the sleep each time — a busy enough app would then never reach the end of one and the
         // now-line would simply stop. The delay is read through [rememberUpdatedState] instead, so each
         // iteration still sleeps on the freshest answer.
-        val resampleDelay = rememberUpdatedState(displayResampleDelay)
         LaunchedEffect(clock, displayResampleTick, simReconfigured) {
-            delay(displaySleepMillis(clock, resampleDelay.value))
+            delay(displaySleepMillis(clock, displayResampleDelay()))
             nowMillis = clock.nowMillis()
             displayResampleTick++
         }
@@ -3942,6 +3986,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = Modifier
                                 .align(Alignment.Center),
                             records = calendarRecords,
+                            pieces = calendarChain.pieces,
+                            realMillisFor = ::calendarRealMillisFor,
                             taskColors = taskPanelColors,
                             taskSheetColors = taskSheetColors,
                             // PRD §9/§17: a future week beyond the near horizon is still computing its plan
@@ -5605,13 +5651,7 @@ internal class CalendarDisplayCache {
             if (slot == null || slot.key != key) continue
             if (slot.tasks == tasks && slot.panels == panels) return slot.value
             if (!onlyTaskTitlesMoved(slot.tasks, tasks) || !onlyTaskPanelTitlesMoved(slot.panels, panels)) continue
-            val relabelled =
-                slot.value.copy(
-                    records = slot.value.records.map { record ->
-                        val title = record.taskId?.let { tasks[it]?.title }
-                        if (title != null && title != record.title) record.copy(title = title) else record
-                    },
-                )
+            val relabelled = slot.value.copy(records = relabelledRecords(slot.value.records, tasks))
             slot.tasks = tasks
             slot.panels = panels
             slot.value = relabelled
@@ -5623,31 +5663,111 @@ internal class CalendarDisplayCache {
         return derived
     }
 
-    /** True when [now] is [before] with nothing but task TITLES changed. */
-    private fun onlyTaskTitlesMoved(before: Map<TaskId, Task>, now: Map<TaskId, Task>): Boolean {
-        if (before.size != now.size) return false
-        for ((id, previous) in before) {
-            val current = now[id] ?: return false
-            if (current !== previous && current.copy(title = previous.title) != previous) return false
-        }
-        return true
+}
+
+/** [records] with each task's block named by its task's title in [tasks] — the re-label [CalendarDisplayCache] does. */
+internal fun relabelledRecords(records: List<CalendarRecord>, tasks: Map<TaskId, Task>): List<CalendarRecord> =
+    records.map { record ->
+        val title = record.taskId?.let { tasks[it]?.title }
+        if (title != null && title != record.title) record.copy(title = title) else record
     }
 
+/** True when [now] is [before] with nothing but task TITLES changed. */
+internal fun onlyTaskTitlesMoved(before: Map<TaskId, Task>, now: Map<TaskId, Task>): Boolean {
+    if (before.size != now.size) return false
+    for ((id, previous) in before) {
+        val current = now[id] ?: return false
+        if (current !== previous && current.copy(title = previous.title) != previous) return false
+    }
+    return true
+}
+
+/**
+ * The same question about the panels — and a title that moved on a panel holding NO task fails it: a
+ * screen break and a hand-drawn period name themselves, so re-labelling from the tasks would leave them
+ * reading what they were called before.
+ */
+internal fun onlyTaskPanelTitlesMoved(before: List<TaskPanel>, now: List<TaskPanel>): Boolean {
+    if (before.size != now.size) return false
+    for (i in before.indices) {
+        val previous = before[i]
+        val current = now[i]
+        if (current === previous) continue
+        if (current.copy(title = previous.title) != previous) return false
+        if (current.title != previous.title && current.taskId == null) return false
+    }
+    return true
+}
+
+/**
+ * User rule 2026-10-15 (*"the dynamic change of the calendar over time must be as performant as the graph by the
+ * Python program, with the scheduler engine returning a set of rules that covers all the situations over a bigger
+ * time interval"*): **the calendar's rules for one set of inputs** — a chain of pieces ([CalendarPiece]) read
+ * ahead of the line, which the window walks through by itself. Keyed on every value the derivation reads EXCEPT
+ * the instant, so time passing never rebuilds it; only an input moving does, and then it is read again from where
+ * the line is.
+ *
+ * [first] is the reading the chain started from (what `App`'s diagnostics and the lock-history floor read);
+ * [derive] reads the rules at an instant with the inputs the chain was built for, for the readings ahead.
+ */
+internal class CalendarChain(
+    val key: List<Any?>,
+    val tasks: Map<TaskId, Task>,
+    val panels: List<TaskPanel>,
+    val first: CalendarDisplay,
+    val derive: (Long) -> List<CalendarRecord>,
+    val firstPiece: CalendarPiece,
+    pieces: List<CalendarPiece> = listOf(firstPiece),
+) {
+    val pieces = mutableStateOf(pieces)
+}
+
+/** Holds the one [CalendarChain] in force, and answers the next one ([chainFor]). */
+internal class CalendarChainHolder {
+    var current: CalendarChain? = null
+        private set
+
     /**
-     * The same question about the panels — and a title that moved on a panel holding NO task fails it: a
-     * screen break and a hand-drawn period name themselves, so re-labelling from the tasks would leave them
-     * reading what they were called before.
+     * The chain for [key] / [tasks] / [panels]: the one in force when they are its own; that one RE-LABELLED when
+     * only task titles moved (a keystroke in the tree reads nothing again — [CalendarDisplayCache]'s rule); otherwise
+     * a new chain whose first piece is read at [startMillis] (the line, now) with [derive] (`publish` true for the
+     * reading the rest of the app reads back, [CalendarDisplay]).
      */
-    private fun onlyTaskPanelTitlesMoved(before: List<TaskPanel>, now: List<TaskPanel>): Boolean {
-        if (before.size != now.size) return false
-        for (i in before.indices) {
-            val previous = before[i]
-            val current = now[i]
-            if (current === previous) continue
-            if (current.copy(title = previous.title) != previous) return false
-            if (current.title != previous.title && current.taskId == null) return false
+    fun chainFor(
+        key: List<Any?>,
+        tasks: Map<TaskId, Task>,
+        panels: List<TaskPanel>,
+        tz: TimeZone,
+        startMillis: () -> Long,
+        derive: (instantMillis: Long, publish: Boolean) -> CalendarDisplay,
+    ): CalendarChain {
+        val chain = current
+        if (chain != null && chain.key == key) {
+            if (chain.tasks == tasks && chain.panels == panels) return chain
+            if (onlyTaskTitlesMoved(chain.tasks, tasks) && onlyTaskPanelTitlesMoved(chain.panels, panels)) {
+                val relabelled =
+                    CalendarChain(
+                        key, tasks, panels,
+                        first = chain.first.copy(records = relabelledRecords(chain.first.records, tasks)),
+                        derive = { relabelledRecords(chain.derive(it), tasks) },
+                        firstPiece = chain.firstPiece.copy(records = relabelledRecords(chain.firstPiece.records, tasks)),
+                        pieces = chain.pieces.value.map { it.copy(records = relabelledRecords(it.records, tasks)) },
+                    )
+                current = relabelled
+                return relabelled
+            }
         }
-        return true
+        // Perf: how often the chain is read again from scratch — an input moving, never the line (perf-profile.bat).
+        Perf.count("calendar.chainRebuilt")
+        var first: CalendarDisplay? = null
+        val reading: (Long) -> List<CalendarRecord> = { instant ->
+            if (first == null) derive(instant, true).also { first = it }.records else derive(instant, false).records
+        }
+        val piece = calendarPieceAt(startMillis(), tz, reading)
+        val built =
+            CalendarChain(key, tasks, panels, first!!, derive = { derive(it, false).records }, firstPiece = piece)
+        current = built
+        return built
     }
 }
 
