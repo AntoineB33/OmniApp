@@ -147,6 +147,27 @@ calendar still needs the app launched (`perf-profile.bat`).
 
 ---
 
+## Idle cost of the running app
+
+The user's rule (2026-10-15): the app must have no noticeable impact on the battery or the fans, except while the
+scheduler engine runs. Measured on the release app itself, from outside — never killed, never attached to its state
+dir, never takes the screen:
+
+1. **The process**: `Get-Process org.example.project` twice, 60 s apart, with nothing done in the app; the
+   difference in `CPU` is CPU-seconds per minute. Idle should be a fraction of a second; a plan being made is not
+   idle (the `DefaultDispatcher-worker` threads).
+2. **Which threads**: each thread's `TotalProcessorTime` over 20 s (`(Get-Process -Id <pid>).Threads`), then a
+   `jcmd <pid> Thread.print` (the JDK's, e.g. `C:\Program Files\Eclipse Adoptium\jdk-*\bin\jcmd.exe`). Native ids
+   are the decimal in `[...]` after the thread's `#n`. `AWT-EventQueue-0` plus `skiko-dispatcher-to-block-on` busy
+   together means frames are being drawn: something requests them.
+3. **What requests them**: sample the UI thread's stack a few dozen times (`jcmd … Thread.print` in a loop) and
+   count the app frames in it.
+
+On 2026-10-15 this found ~53 % of a core spent idle, on frames requested by the calendar's now-line clock read on
+every frame (`display-hot-path.md`, the line's clock read once per eighth of a pixel).
+
+---
+
 ## Adding instrumentation
 
 `org.example.project.perf.Perf` — `measure(name) { … }` for a span, `count(name)` for an occurrence,

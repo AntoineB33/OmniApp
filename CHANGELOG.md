@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar no longer draws 60 frames a second for a line that crosses a pixel a minute — 2026-10-15
+
+The user: "Check the performance of the app. It must not have a noticeable impact on the battery or fans, except when
+the scheduler engine runs." Measured on the running release app (account 3, idle, nothing done in it): ~32 CPU-seconds
+a minute — 53 % of a core — on the UI thread and two Skia render threads, every sample of the UI thread drawing a
+frame. The calendar read the now-line's clock in a `withFrameNanos` loop for as long as the line was on screen, so
+Compose produced a frame at the refresh rate while the line moved one pixel every ~75 s at the default zoom.
+`rememberFrameNowMillis` now waits, after each sample, until the line has travelled an eighth of a pixel
+(`lineSampleWaitMillis`): ~9 s at the default zoom, ~75 ms at the ceiling, the app clock's pace read off the last two
+frames (a held time simulation is still read every frame). `CalendarLineMotionTest`; `display-hot-path.md`;
+`PERFORMANCE.md` § *Idle cost of the running app*, the measurement.
+
 ### Ctrl+Tab walks the tabs as in Chrome; Ctrl+Page Up undoes a move between windows — 2026-10-15
 
 The user: "Ctrl + tab and ctrl + shift + tab must do the same as in Chrome, and ctrl + PgUp must do the same as Ctrl + Z

@@ -5441,7 +5441,7 @@ private fun WeekView(
             }
         }
     }
-    val frameNowMillis = rememberFrameNowMillis(nowMillis, nowExactMillis, sampling = framesWanted)
+    val frameNowMillis = rememberFrameNowMillis(nowMillis, nowExactMillis, sampling = framesWanted, nowLineMillisPerPixel)
     // ...and the instant the COMPOSITION reads the line at: the same clock, stepped once per pixel of travel at
     // the zoom in force ([lineCompositionMillis]). What a pointer, a hover tile or a label's fit reads cannot
     // tell two positions under a pixel apart; what is DRAWN gets the rest of the pixel in the layout phase.
@@ -6032,25 +6032,72 @@ private fun DayHeader(
  * actually on screen, so a grid scrolled to another week, or a closed calendar, asks for no frames at all and
  * the app goes idle. While it is `false` the state simply tracks [sampleMillis], so anything reading it lands
  * where the reading of the rules says.
+ *
+ * **And it is read only as often as the picture can show it** (user rule 2026-10-15: *"It must not have a
+ * noticeable impact on the battery or fans, except when the scheduler engine runs"*). Read on EVERY frame, the
+ * release app drew ~60 frames a second for a line that crosses a pixel every ~75 s at the default zoom — half a
+ * core, all the time, for frames that drew the same picture. So the clock is read again once the line has
+ * travelled [LINE_SUBPIXEL_STEPS]-th of a pixel at the zoom in force ([millisPerPixel]): still continuous to the
+ * eye (an eighth of a pixel is under what anti-aliasing shows), a frame every ~9 s at the default zoom and ~13 a
+ * second at the zoom ceiling. The wait is in REAL time, so it is the app clock's own pace that converts it — read
+ * off the frame clock between two samples, so an accelerated time simulation keeps the same eighth of a pixel (a
+ * held one is read every frame, [lineSampleWaitMillis]). A zoom restarts the wait ([millisPerPixel] is its key), so
+ * zooming in never leaves the line stale.
  */
 @Composable
 private fun rememberFrameNowMillis(
     sampleMillis: Long,
     nowExactMillis: () -> Long,
     sampling: Boolean,
+    millisPerPixel: Long,
 ): State<Long> {
     val state = remember { mutableLongStateOf(sampleMillis) }
     val exact = rememberUpdatedState(nowExactMillis)
     // Not a composition-phase read: the value is read only from layout/draw lambdas and derived states, and
-    // this keeps it in step with the reading of the rules for as long as nothing is sampling it.
-    SideEffect { if (!sampling) state.longValue = sampleMillis }
-    LaunchedEffect(sampling) {
+    // this keeps it in step with the reading of the rules for as long as nothing is sampling it — and, while it is,
+    // never behind a newer reading of the rules (the wait between two samples is an eighth of a pixel at most).
+    SideEffect { if (!sampling || state.longValue < sampleMillis) state.longValue = sampleMillis }
+    LaunchedEffect(sampling, millisPerPixel) {
         if (!sampling) return@LaunchedEffect
+        var lastFrameNanos = -1L
+        var lastAppMillis = 0L
         while (true) {
-            withFrameNanos { state.longValue = exact.value() }
+            var frameNanos = 0L
+            withFrameNanos { nanos ->
+                frameNanos = nanos
+                state.longValue = exact.value()
+            }
+            val appMillis = state.longValue
+            // App milliseconds per real millisecond, from the last two frames. Until there are two the pace is not
+            // known — a time simulation runs it at anything — so the next frame is the second sample, never a wait.
+            val known = lastFrameNanos >= 0L && frameNanos > lastFrameNanos
+            val rate = if (known) (appMillis - lastAppMillis).toDouble() / ((frameNanos - lastFrameNanos) / 1_000_000.0) else 0.0
+            lastFrameNanos = frameNanos
+            lastAppMillis = appMillis
+            val waitMillis = if (known) lineSampleWaitMillis(millisPerPixel, rate) else 0L
+            if (waitMillis > 0L) delay(waitMillis)
         }
     }
     return state
+}
+
+/** How finely the line's travel is drawn: a sample every this-many-th of a pixel ([rememberFrameNowMillis]). */
+internal const val LINE_SUBPIXEL_STEPS = 8L
+
+/** The longest the line's clock goes unread while something on screen follows it (a grid zoomed far out). */
+internal const val LINE_FRAME_MAX_WAIT_MILLIS = 30_000L
+
+/**
+ * The REAL milliseconds until the line has travelled [LINE_SUBPIXEL_STEPS]-th of a pixel at [millisPerPixel] (app
+ * milliseconds per pixel), the app clock running at [rate] app milliseconds per real one — the wait between two
+ * samples of the line's clock ([rememberFrameNowMillis]); 0 means the next frame. A clock that did not move between
+ * two frames (rate 0) is a held time simulation — the real clock always moves — whose next jump cannot be foreseen,
+ * so it is read on every frame as before: a cost of the debug tool alone.
+ */
+internal fun lineSampleWaitMillis(millisPerPixel: Long, rate: Double): Long {
+    if (rate <= 0.0) return 0L
+    val stepMillis = millisPerPixel.coerceAtLeast(1L) / LINE_SUBPIXEL_STEPS
+    return (stepMillis / rate).toLong().coerceIn(0L, LINE_FRAME_MAX_WAIT_MILLIS)
 }
 
 @OptIn(ExperimentalComposeUiApi::class)

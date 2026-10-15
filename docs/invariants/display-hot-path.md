@@ -109,6 +109,16 @@ Global rules that always apply: `CLAUDE.md`.
     `graphicsLayer { translationY = nowLineOffsetPx(…) }` — `IntOffset` cannot carry a fraction.
   The contract is `CalendarLineMotionTest`: extrapolating one reading equals reading the rules again at every
   instant before the boundary the reading predicts.
+- **THE LINE'S CLOCK IS READ ONCE PER EIGHTH OF A PIXEL OF TRAVEL, NEVER ON EVERY FRAME** (user rule 2026-10-15:
+  *"It must not have a noticeable impact on the battery or fans, except when the scheduler engine runs"*;
+  `rememberFrameNowMillis`, `lineSampleWaitMillis`). Reading it in every `withFrameNanos` makes Compose produce a frame
+  at the monitor's refresh rate for as long as a calendar shows the line — the release app was measured at ~53 % of a
+  core idle (the UI thread and two Skia render threads, ~60 identical frames a second for a line crossing a pixel every
+  ~75 s). So after each sample it waits, in real time, until the line has moved `LINE_SUBPIXEL_STEPS` (8)-th of a pixel
+  at the zoom in force: ~9 s at the default zoom, ~75 ms at the ceiling. The app clock's pace is read off the last two
+  frames (a time simulation runs it at anything; a held one is read every frame); a zoom restarts the wait; a newer
+  reading of the rules pulls the clock forward at once. Never put a per-frame read back: measure an idle release app
+  (CPU-seconds of the process over a minute, then the threads' own) before and after any change to this path.
 - **What the calendar COMPOSES is bounded by the visible window too.** A day row is one whole day tall while
   the viewport is not, so every `DayColumn` culls its output to `visibleHourWindow(...)`: a record scrolled
   out of view emits no UI node. This is a frame cost, not a tick cost — every floating window shares one

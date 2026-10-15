@@ -19,7 +19,9 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.CalendarRecord
 import org.example.project.ui.advancedAlongLine
 import org.example.project.ui.displayBoundsOf
+import org.example.project.ui.LINE_FRAME_MAX_WAIT_MILLIS
 import org.example.project.ui.lineCompositionMillis
+import org.example.project.ui.lineSampleWaitMillis
 import org.example.project.ui.recordsForDay
 import org.example.project.ui.withLineMotion
 
@@ -212,5 +214,26 @@ class CalendarLineMotionTest {
                 "the reading's motion must be the rules' own, $elapsed ms on",
             )
         }
+    }
+
+    /**
+     * User rule 2026-10-15: *"It must not have a noticeable impact on the battery or fans, except when the scheduler
+     * engine runs."* The release app drew a frame every refresh for a line crossing a pixel every ~75 s; the line's
+     * clock is now read once per eighth of a pixel, in real time, whatever pace the app clock runs at.
+     */
+    @Test
+    fun the_line_is_sampled_once_per_eighth_of_a_pixel_and_no_more_often() {
+        // The default zoom, ~75 s a pixel: one frame every ~9 s, not sixty a second.
+        assertEquals(9_375L, lineSampleWaitMillis(75_000L, rate = 1.0))
+        // The zoom ceiling, ~0.6 s a pixel: ~13 frames a second.
+        assertEquals(75L, lineSampleWaitMillis(600L, rate = 1.0))
+        // A time simulation 100 times faster: the same eighth of a pixel, so a hundredth of the wait.
+        assertEquals(93L, lineSampleWaitMillis(75_000L, rate = 100.0))
+        // Faster than a frame: every frame (0 = no wait).
+        assertEquals(0L, lineSampleWaitMillis(600L, rate = 1_000.0))
+        // A held clock (a paused time simulation; the real one always moves) may jump at any moment: every frame.
+        assertEquals(0L, lineSampleWaitMillis(75_000L, rate = 0.0))
+        // Zoomed far out, nothing waits longer than the ceiling.
+        assertEquals(LINE_FRAME_MAX_WAIT_MILLIS, lineSampleWaitMillis(10_000_000L, rate = 1.0))
     }
 }
