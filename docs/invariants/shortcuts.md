@@ -48,10 +48,18 @@ as Ctrl + Z but only on history units about change of focus between windows."* F
 | --- | --- |
 | `Ctrl + Tab` / `Ctrl + Shift + Tab` | the next tab of the bar to the right / to the left, wrapping — Chrome's |
 | `Ctrl + Page Up` / `Ctrl + Page Down` — or the numeric pad's `9` / `3` | the last move of the focus between windows undone / redone |
+| `Ctrl + W` | the focused window closed, by its own close — as its ✕ (user rule 2026-10-15, `WindowFrameHost.closeFocused`); none focused, or reduced: nothing |
 
 - **Answered on the root's PREVIEW pass** (`App`), so the stroke is the walk's before a text field or the tree's own
   `Tab` takes it — and it is taken even with nothing to go to, never typed. They are Compose handlers scoped to the
   app, so by the rule below they are **not rebindable** and are not claimed from the OS.
+- **EVERY FOCUSED WINDOW HOLDS THE KEYBOARD, or these chords never reach the root** (anomaly 2026-10-15: Ctrl + W did
+  nothing in the "unfocused notif" window; `AppWindowFrame`'s own keyboard holder, `WindowHoldsKeyboardTest`). A key
+  passes through the root's preview only on its way to a node that holds the keyboard. A window with key handlers of
+  its own names it (`keyboardFocus`, the calendar's); every other one is given one by its frame — its content — which
+  takes the keyboard when the window becomes the focused one, unless something inside holds it already (a field the
+  press landed in keeps its caret). Without it, a Search window focused when the calendar holding the keyboard closed
+  left the keyboard with nobody.
 - **Page Up / Down walk the WindowNav units alone** (`FOCUS_MOVES`), this device's, as Ctrl+Z / Ctrl+Y walk the
   changes: a selection or a change made between two moves is not walked (`Shift+Alt+arrows` walks the moves AND the
   selections). The state's focus moves, and the focus walk's effect in `App` brings the window it names to the user —

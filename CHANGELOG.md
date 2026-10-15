@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Ctrl+W (and the other window chords) reach a focused window that has no field focused — 2026-10-15
+
+Anomaly: Ctrl+W did nothing in the "unfocused notif" window. The release DB's history: Ctrl+W closed the calendar under
+it, then the main calendar, and the focus went to the notif window — where nothing held the keyboard any more. The
+chords are read on the app root's preview pass, which a key only reaches on its way to a node holding the keyboard, and
+only the calendar gave one of its own when focused. `AppWindowFrame` now gives every other window one (its content),
+taken when the window becomes the focused one unless something inside holds it already. `WindowHoldsKeyboardTest`
+(fails without the change).
+
+### Ctrl+W closes the focused window — 2026-10-15
+
+The user: "Add ctrl + W to close the current window." A fixed chord beside Ctrl+Tab and Ctrl+Page Up (`TabWalk`,
+answered on the app root's preview pass, so a text field cannot take it): the focused window closes by its own close,
+exactly as its ✕ (`WindowFrameHost.closeFocused`), and the focus goes on as for every close. With no window focused, or
+the focused one reduced, nothing closes. Listed in the keyboard-shortcuts window. `TabWalkTest`.
+
 ### A Search window is named after what it searches; a window's head has a right-click menu — 2026-10-15
 
 The user: "Make the title of a Search window update with the Search configurations, except if its title is set by the

@@ -50,6 +50,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.key
@@ -891,6 +892,17 @@ class WindowFrameHost {
         }
     }
 
+    /**
+     * `Ctrl + W` (user rule 2026-10-15): **the focused window closes**, exactly as its ✕ closes it — its own close, so
+     * the focus is handed on as by every close (`App`'s `focusAfterClose`). A reduced window has given the focus up;
+     * with none focused nothing closes. False then.
+     */
+    fun closeFocused(): Boolean {
+        val focused = entries.firstOrNull { it.id == focusedId && !it.state.minimized } ?: return false
+        focused.onClose()
+        return true
+    }
+
     /** The task tree took a press: no framed window is focused any more. */
     fun blur() {
         focusedId = null
@@ -910,9 +922,10 @@ object TabWalk {
     const val BAR_PREVIOUS = "Ctrl + Shift + Tab"
     const val FOCUS_UNDO = "Ctrl + Page Up (or numpad 9)"
     const val FOCUS_REDO = "Ctrl + Page Down (or numpad 3)"
+    const val CLOSE_WINDOW = "Ctrl + W"
 
-    /** What a key stroke asks: a tab of the bar, or a move of the focus walked back or forward. */
-    enum class Move { BarNext, BarPrevious, FocusUndo, FocusRedo }
+    /** What a key stroke asks: a tab of the bar, a move of the focus walked back or forward, or the window closed. */
+    enum class Move { BarNext, BarPrevious, FocusUndo, FocusRedo, CloseWindow }
 
     /**
      * The move the stroke is — on the facts that decide it, like the history chords' rule
@@ -929,6 +942,8 @@ object TabWalk {
             // it doesn't do anything").
             sameKey(key, Key.PageDown) || sameKey(key, Key.NumPad3) -> Move.FocusRedo.takeIf { !shift }
             sameKey(key, Key.PageUp) || sameKey(key, Key.NumPad9) -> Move.FocusUndo.takeIf { !shift }
+            // User rule 2026-10-15: "Add ctrl + W to close the current window" — as in a browser.
+            sameKey(key, Key.W) -> Move.CloseWindow.takeIf { !shift }
             else -> null
         }
     }
@@ -1363,10 +1378,19 @@ fun AppWindowFrame(
     // The focused window holds the keyboard, however it came to be focused ([keyboardFocus]). Keyed on the reduce too: a
     // window brought back from the bar is placed again, and only a placed node can take the focus — hence the frame wait.
     val holdsFocus = host != null && host.focusedId == state.id && !state.minimized
+    // A window with no key handlers of its own still holds the keyboard ([ownKeyboard], the frame's content): the
+    // app's own chords (`Ctrl + W`, `Ctrl + Tab`…) are answered on the root's preview pass, which only a key reaching
+    // SOME node of the app passes through (anomaly 2026-10-15: Ctrl + W did nothing in the "unfocused notif" window,
+    // focused when the calendar holding the keyboard closed — nothing held it any more). Only where nothing inside has
+    // it already: a field the press landed in keeps its caret.
+    val ownKeyboard = remember { FocusRequester() }
+    var keyboardInside by remember { mutableStateOf(false) }
     LaunchedEffect(holdsFocus, keyboardFocus) {
-        if (holdsFocus && keyboardFocus != null) {
-            withFrameNanos { }
-            runCatching { keyboardFocus.requestFocus() }
+        if (!holdsFocus) return@LaunchedEffect
+        withFrameNanos { }
+        when {
+            keyboardFocus != null -> runCatching { keyboardFocus.requestFocus() }
+            !keyboardInside -> runCatching { ownKeyboard.requestFocus() }
         }
     }
     // Asked for again while open (a per-object window re-opened on its object): it comes back to the user.
@@ -1438,7 +1462,14 @@ fun AppWindowFrame(
                 .fillMaxSize()
                 .onWindowFrameMeasured(state),
         ) {
-            Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (keyboardFocus != null) Modifier
+                        else Modifier.onFocusChanged { keyboardInside = it.hasFocus }.focusRequester(ownKeyboard).focusable(),
+                    ),
+            ) {
                 WindowHead(
                     // The user's name for the window, where it has one: a menu button's, or "Rename"'s.
                     title = host?.tabTitles?.get(state.id) ?: title,

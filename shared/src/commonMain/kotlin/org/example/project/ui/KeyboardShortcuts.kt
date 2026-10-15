@@ -244,6 +244,7 @@ object KeyboardShortcutCatalog {
                     KeyboardShortcut(TabWalk.BAR_PREVIOUS, "Go to the next tab to the left"),
                     KeyboardShortcut(TabWalk.FOCUS_UNDO, "Undo the last move between windows — back to the window you were in"),
                     KeyboardShortcut(TabWalk.FOCUS_REDO, "Redo the move between windows Page Up undid"),
+                    KeyboardShortcut(TabWalk.CLOSE_WINDOW, "Close the focused window"),
                 ),
             ),
             KeyboardShortcutGroup(

@@ -3468,6 +3468,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // The state's focus moves; the window it names is brought back by the focus walk's effect.
                         org.example.project.ui.TabWalk.Move.FocusUndo -> vm.dispatch(SchedulerIntent.UndoFocus)
                         org.example.project.ui.TabWalk.Move.FocusRedo -> vm.dispatch(SchedulerIntent.RedoFocus)
+                        org.example.project.ui.TabWalk.Move.CloseWindow -> windowFrames.closeFocused()
                     }
                     // Taken even with nothing to go to: the stroke is the walk's, never a Tab typed into a field.
                     true

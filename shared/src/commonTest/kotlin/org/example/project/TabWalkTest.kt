@@ -38,6 +38,10 @@ class TabWalkTest {
         assertEquals(TabWalk.Move.FocusUndo, move(Key.PageUp))
         assertEquals(TabWalk.Move.FocusRedo, move(Key.PageDown))
         assertNull(move(Key.PageUp, shift = true))
+        // User rule 2026-10-15: Ctrl + W closes the focused window.
+        assertEquals(TabWalk.Move.CloseWindow, move(Key.W))
+        assertNull(move(Key.W, ctrl = false), "a W typed is a W")
+        assertNull(move(Key.W, shift = true))
         // A plain Tab is the tree's and a field's; Alt makes it another chord; a key going up is no stroke.
         assertNull(move(Key.Tab, ctrl = false))
         assertNull(move(Key.Tab, alt = true))
@@ -46,7 +50,7 @@ class TabWalkTest {
         assertNull(move(Key.A))
         // The keyboard-shortcuts window lists the four, as they are answered.
         val listed = KeyboardShortcutCatalog.fixedGroups.single { it.title == "Window bar" }.shortcuts.map { it.keys }
-        assertEquals(listOf(TabWalk.BAR_NEXT, TabWalk.BAR_PREVIOUS, TabWalk.FOCUS_UNDO, TabWalk.FOCUS_REDO), listed)
+        assertEquals(listOf(TabWalk.BAR_NEXT, TabWalk.BAR_PREVIOUS, TabWalk.FOCUS_UNDO, TabWalk.FOCUS_REDO, TabWalk.CLOSE_WINDOW), listed)
     }
 
     @Test
@@ -75,5 +79,24 @@ class TabWalkTest {
         assertEquals("Alarms", host.focusedId)
         assertFalse(WindowFrameHost().walkTabsInBarOrder(+1))
         assertEquals(null, TabWalk.next(emptyList(), null, 1))
+    }
+
+    @Test
+    fun ctrl_w_closes_the_focused_window_by_its_own_close_and_nothing_else() {
+        val closed = mutableListOf<String>()
+        val host = WindowFrameHost()
+        for (id in listOf("Calendar", "Search", "Alarms")) {
+            host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) { closed += id })
+        }
+        host.focus("Search")
+        assertTrue(host.closeFocused())
+        assertEquals(listOf("Search"), closed)
+        // A reduced window has given the focus up: nothing closes. Nor with no window focused.
+        host.focus("Alarms")
+        state(host, "Alarms").minimize()
+        assertFalse(host.closeFocused())
+        host.blur()
+        assertFalse(host.closeFocused())
+        assertEquals(listOf("Search"), closed)
     }
 }
