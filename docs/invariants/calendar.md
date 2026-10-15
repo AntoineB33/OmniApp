@@ -402,6 +402,17 @@ Global rules that always apply: `CLAUDE.md`.
   **inert**: no pointer input, so the press and the hover go to what is under it — and unlike a ring it says
   nothing in the hover bubble. No text is written under one (`calendarLabelSlots`' obstacles). `App` provides the
   view around each calendar window; with none (a preview) there is no drop-down and no chip.
+- **A CHIP WHOSE TIME IS IN VIEW IS WHOLLY IN VIEW** (user rule 2026-10-15: *"if a chip is attached to a time that is in
+  the window of the calendar view, then it must be fully visible in the window. For example, if 10 reminders are
+  attached to a time very close to the bottom edge … they must all vertically stack."*; `keptInView`,
+  `ChipsKeptInViewTest`). Every pile the column stacks — the rings (`alarmPlacements`), the notification chips
+  (`chipPlacements`), the reminder tags (`reminderPlacements`: the scheduled ones, and the overdue stack under the line,
+  each a pile of its own) — is first swept downward as ever, then pulled up from its bottom so its last chip ends on the
+  view's bottom edge, the ones above it with it; a pile that fits is untouched, and a chip whose time is below the view
+  stays out of it. The edge is the EXACT one (`exactVisibleHourWindow`, the cull window without its quantum), read only
+  inside the placements' `derivedStateOf`, so a scroll recomposes a pile only while it is pressed against the edge; the
+  overdue stack, drawn off the per-frame line, takes the same lift in its draw phase. The tags' drawing reads
+  `reminderPlacements` — it swept the scheduled tags a second time until then, which the menu and the labels did not see.
 - **The ZOOM is the other half of that rule.** A 20-s look-away is 0.27 dp tall at zoom 1f, so the in-bound
   (`MAX_CALENDAR_ZOOM`) must be high enough to bring the shortest of the three over a label line and under a
   cursor — that is what the ceiling is for, and it is why the band may be left un-named at an ordinary zoom.

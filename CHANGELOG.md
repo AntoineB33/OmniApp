@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A pile of chips near the bottom edge stacks up inside the view — 2026-10-15
+
+The user: "In the calendar, if a chip is attached to a time that is in the window of the calendar view, then it must be
+fully visible in the window. For example, if 10 reminders are attached to a time very close to the bottom edge of the
+calendar but in the window of the timeline, then they must all vertically stack." The rings, the notification chips and
+the reminder tags (scheduled, and the overdue stack under the now-line) were pushed down past the view's edge. Each pile
+is now pulled up from its bottom so it ends on the edge (`keptInView`), against the exact visible hours
+(`exactVisibleHourWindow`), read in derived states so a scroll costs nothing unless a pile is at the edge. The tags'
+drawing now reads the one placement (`reminderPlacements`) instead of sweeping a second time. `ChipsKeptInViewTest`.
+
 ### The notif window and its calendar come forward together — 2026-10-15
 
 The user: "When the 'unfocused notif' window gets the focus, the linked calendar window must also get the focus, but in

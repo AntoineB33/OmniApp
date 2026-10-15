@@ -4709,6 +4709,51 @@ private const val CULL_QUANTUM_MAX_PX = 20_000f
  * Returns [HourWindow.WholeDay] before the viewport has been measured (cull nothing until we know what is
  * visible) and [HourWindow.Empty] for a row that lies entirely outside it.
  */
+/**
+ * The hours of day-row [row] on screen EXACTLY — [visibleHourWindow] without its quantum, so not for culling (a function
+ * of every scrolled pixel). For what has to be placed against the view's very edge: the chips ([keptInView]).
+ */
+internal fun exactVisibleHourWindow(row: Int, offsetPx: Float, dayHeightPx: Float, viewportPx: Float): HourWindow {
+    if (dayHeightPx <= 0f || viewportPx <= 0f) return HourWindow.WholeDay
+    val hourPx = dayHeightPx / 24f
+    val topHour = (offsetPx - row * dayHeightPx) / hourPx
+    val bottomHour = topHour + viewportPx / hourPx
+    if (bottomHour <= 0f || topHour >= 24f) return HourWindow.Empty
+    return HourWindow(topHour.coerceIn(0f, 24f), bottomHour.coerceIn(0f, 24f))
+}
+
+/**
+ * **A pile of chips is kept inside the view** (user rule 2026-10-15: *"if a chip is attached to a time that is in the
+ * window of the calendar view, then it must be fully visible in the window. For example, if 10 reminders are attached
+ * to a time very close to the bottom edge of the calendar but in the window of the timeline, then they must all
+ * vertically stack."*). [placed] is a downward stacking sweep's answer (each chip [height] tall, pushed below the one
+ * before it); from the bottom of the pile up, every chip whose own time ([natural]) is in the view — or that the one
+ * under it was pulled up into — and that reaches past [bottom] is pulled up to end there, the ones above it with it.
+ * A pile that fits is left exactly as it was; a chip whose time is below the view stays where it is, out of it.
+ * Where the pile is taller than the view, its first chips go above the top: they are the earlier ones.
+ */
+internal fun <T> keptInView(
+    placed: List<Pair<T, Dp>>,
+    height: Dp,
+    top: Dp,
+    bottom: Dp,
+    natural: (T) -> Dp,
+): List<Pair<T, Dp>> {
+    if (bottom <= top || placed.isEmpty()) return placed
+    val ys = placed.map { it.second }.toMutableList()
+    var limit = bottom
+    var moved = false
+    for (i in placed.indices.sortedBy { placed[it].second }.reversed()) {
+        if (natural(placed[i].first) >= bottom) continue
+        if (ys[i] + height > limit) {
+            ys[i] = limit - height
+            moved = true
+        }
+        limit = minOf(limit, ys[i])
+    }
+    return if (!moved) placed else placed.mapIndexed { i, (item, _) -> item to ys[i] }
+}
+
 internal fun visibleHourWindow(row: Int, offsetPx: Float, dayHeightPx: Float, viewportPx: Float): HourWindow {
     if (dayHeightPx <= 0f || viewportPx <= 0f) return HourWindow.WholeDay
     val hourPx = dayHeightPx / 24f
@@ -5414,6 +5459,14 @@ private fun WeekView(
             }
         }
     }
+    // …and EXACTLY, for what is placed against the view's edge (the chips, [keptInView]). A function of every scrolled
+    // pixel, so only ever read inside a `derivedStateOf` whose answer moves far less often.
+    fun exactHoursOf(column: Int, row: Int): HourWindow {
+        val dayPx = dayHeightPxAt(zoom)
+        val shift = columnDayShift(modeState.value, column, offsetPx, dayPx, viewportHpx)
+        val scrolled = columnOffsetPx(modeState.value, column, shift, offsetPx, dayPx, viewportHpx)
+        return exactVisibleHourWindow(row, scrolled, dayPx, viewportHpx)
+    }
 
     // ADR 0009 § *Everything that follows the line moves continuously*: the EXACT clock, sampled on the frame
     // clock ([rememberFrameNowMillis]) for as long as something on screen moves with it — the now-line on
@@ -5813,6 +5866,7 @@ private fun WeekView(
                                             taskColors = taskColors,
                                             taskSheetColors = taskSheetColors,
                                             visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
+                                            exactVisibleHours = { exactHoursOf(column, row) },
                                             slice = slice,
                                             // The badge below is drawn for every row but the top one.
                                             showsDayDate = row > 0,
@@ -5867,6 +5921,7 @@ private fun WeekView(
                                     taskColors = taskColors,
                                     taskSheetColors = taskSheetColors,
                                     visibleHours = windows.getOrElse(row) { HourWindow.WholeDay },
+                                    exactVisibleHours = { exactHoursOf(column, row) },
                                     slice = slice,
                                     // The badge below is drawn for every row but the top one.
                                     showsDayDate = row > 0,
@@ -6163,6 +6218,8 @@ private fun DayColumn(
      * day, so what is on screen is identical to what an unculled column would show.
      */
     visibleHours: HourWindow,
+    /** The same, EXACT — what the chips are kept inside of ([keptInView]); read in derived states only. */
+    exactVisibleHours: () -> HourWindow = { HourWindow.WholeDay },
     /**
      * User rule 2026-10-14: the part of the day this column lays out ([DaySlice]) — the whole day, or, zoomed past
      * [SLICED_DAY_HEIGHT_PX], the hours around the viewport. Everything below is placed from its origin: the records'
@@ -6426,30 +6483,46 @@ private fun DayColumn(
     // pass because TWO things read it now: the marker itself, and [alarmOverlays] below. One placement
     // derivation, not two (CLAUDE.md: one rule, one funnel) — a second copy is how the bubble would start
     // naming a ring at a position the calendar does not draw it at.
-    val alarmPlacements: List<Pair<PlacedRecord, Dp>> =
-        buildList {
-            var lastBottom: Dp? = null
-            alarmMarkers.sortedBy { it.startHour }.forEach { marker ->
-                val natural = hourHeight * marker.startHour
-                val y = lastBottom?.let { maxOf(natural, it) } ?: natural
-                lastBottom = y + ALARM_MARKER_HEIGHT
-                add(marker to y)
+    // User rule 2026-10-15: every pile of chips is kept inside the view ([keptInView]) — against its EXACT edges, read
+    // here alone and through derived states, so a scroll recomposes a pile only where it is pressed against an edge.
+    val latestExactVisibleHours by rememberUpdatedState(exactVisibleHours)
+    fun <T> inView(placed: List<Pair<T, Dp>>, height: Dp, natural: (T) -> Dp): List<Pair<T, Dp>> {
+        val window = latestExactVisibleHours()
+        if (window.isEmpty || placed.isEmpty()) return placed
+        return keptInView(placed, height, hourHeight * (window.topHour - slice.originHour), hourHeight * (window.bottomHour - slice.originHour), natural)
+    }
+    val alarmPlacements: List<Pair<PlacedRecord, Dp>> by remember(alarmMarkers, hourHeight, slice) {
+        derivedStateOf {
+            val swept = buildList {
+                var lastBottom: Dp? = null
+                alarmMarkers.sortedBy { it.startHour }.forEach { marker ->
+                    val natural = hourHeight * marker.startHour
+                    val y = lastBottom?.let { maxOf(natural, it) } ?: natural
+                    lastBottom = y + ALARM_MARKER_HEIGHT
+                    add(marker to y)
+                }
             }
+            inView(swept, ALARM_MARKER_HEIGHT) { hourHeight * it.startHour }
         }
+    }
     // User rule 2026-10-13: the notifications this calendar window shows, each a chip at the instant it was posted —
     // pushed down by the one before it where two would overlap, as the rings above are. One placement, read by the
     // drawing and by the texts' placement ([calendarLabelSlots]: no text is written under a chip).
     val notificationChips = LocalCalendarNotifications.current?.chipsByDay?.get(day).orEmpty()
-    val chipPlacements: List<Pair<org.example.project.scheduler.domain.CalendarNotifications.Chip, Dp>> =
-        remember(notificationChips, hourHeight, midnightMillis) {
-            buildList {
-                var lastBottom: Dp? = null
-                notificationChips.forEach { chip ->
-                    val natural = hourHeight * ((chip.timeMillis - midnightMillis) / 3_600_000f)
-                    val y = lastBottom?.let { maxOf(natural, it) } ?: natural
-                    lastBottom = y + NOTIFICATION_CHIP_HEIGHT
-                    add(chip to y)
+    val chipPlacements: List<Pair<org.example.project.scheduler.domain.CalendarNotifications.Chip, Dp>> by
+        remember(notificationChips, hourHeight, midnightMillis, slice) {
+            derivedStateOf {
+                fun natural(chip: org.example.project.scheduler.domain.CalendarNotifications.Chip) =
+                    hourHeight * ((chip.timeMillis - midnightMillis) / 3_600_000f)
+                val swept = buildList {
+                    var lastBottom: Dp? = null
+                    notificationChips.forEach { chip ->
+                        val y = lastBottom?.let { maxOf(natural(chip), it) } ?: natural(chip)
+                        lastBottom = y + NOTIFICATION_CHIP_HEIGHT
+                        add(chip to y)
+                    }
                 }
+                inView(swept, NOTIFICATION_CHIP_HEIGHT, ::natural)
             }
         }
     // PRD §8/§18: what a ring marker OWES the bubble. It is drawn over the panels and the bands, so it hides
@@ -6516,10 +6589,17 @@ private fun DayColumn(
     val currentPeriodHits by rememberUpdatedState(periodHits)
     val currentAlarmPlacements by rememberUpdatedState(alarmPlacements)
     // Read by the menu's hit test and by the label placement ([calendarLabelSlots]) — one sweep, not two.
-    val reminderPlacements =
-        reminderTagPlacements(reminderTags, hourHeight, nowHour) { tag ->
-            tag.checkedAtMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() - slice.originHour }
+    val reminderPlacements by remember(reminderTags, hourHeight, nowHour, slice, tz) {
+        derivedStateOf {
+            fun checkedAt(tag: PlacedRecord): Float? =
+                tag.checkedAtMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(tz).time.hourOfDay() - slice.originHour }
+            val placed = reminderTagPlacements(reminderTags, hourHeight, nowHour, ::checkedAt)
+            val overdue = placed.filter { (tag, _) -> nowHour != null && !tag.checked && tag.startHour <= nowHour }
+            val scheduled = placed - overdue.toSet()
+            inView(scheduled, REMINDER_TAG_HEIGHT) { hourHeight * (checkedAt(it) ?: it.startHour) } +
+                inView(overdue, REMINDER_TAG_HEIGHT) { hourHeight * (nowHour ?: 0f) }
         }
+    }
     val currentReminderPlacements by rememberUpdatedState(reminderPlacements)
 
     // PRD §8: the period box currently held, if any — see [PeriodSegmentGesture]. It is hoisted to the column
@@ -7907,17 +7987,11 @@ private fun DayColumn(
             }
         fun onNowLine(tag: PlacedRecord) = nowHour != null && !tag.checked && tag.startHour <= nowHour
         // PRD §14: scheduled reminders that fall at the same time — or close enough that their fixed-height
-        // tags would overlap — stack downward instead of drawing on top of each other. Sweep them in time
-        // order, pushing each tag below the previous one whenever its natural slot would collide.
-        var lastScheduledBottom: Dp? = null
-        reminderTags.filterNot(::onNowLine)
-            .sortedBy { checkedAtHour(it) ?: it.startHour }
-            .forEach { tag ->
-                val naturalY = hourHeight * (checkedAtHour(tag) ?: tag.startHour)
-                val y = lastScheduledBottom?.let { maxOf(naturalY, it) } ?: naturalY
-                lastScheduledBottom = y + REMINDER_TAG_HEIGHT
-                // The sweep must run over the WHOLE day — each tag's slot depends on the one above it —
-                // so it is the emission that is culled, never the list.
+        // tags would overlap — stack downward instead of drawing on top of each other, and a pile stays inside the
+        // view (user rule 2026-10-15): [reminderPlacements], the ONE placement — the menu's hit test and the labels
+        // read it too (it was swept a second time here). Over the WHOLE day, so it is the emission that is culled.
+        reminderPlacements.filterNot { (tag, _) -> onNowLine(tag) }
+            .forEach { (tag, y) ->
                 if (!onScreenDp(y, y + REMINDER_TAG_HEIGHT)) return@forEach
                 ReminderTag(
                     tag = tag,
@@ -7936,7 +8010,18 @@ private fun DayColumn(
                     onLockScroll = onLockScroll,
                 ) { onToggleReminder(tag) }
             }
-        reminderTags.filter(::onNowLine).forEachIndexed { i, tag ->
+        val overdueTags = reminderTags.filter(::onNowLine)
+        // How far the overdue pile is pulled up to end inside the view (user rule 2026-10-15, [keptInView]'s rule for a
+        // pile riding the line): read in the draw phase, off the same exact line and the same exact view.
+        fun overdueLiftPx(density: androidx.compose.ui.unit.Density, linePx: Float): Float = with(density) {
+            val window = latestExactVisibleHours()
+            if (window.isEmpty) return 0f
+            val topPx = (hourHeight * (window.topHour - slice.originHour)).toPx()
+            val bottomPx = (hourHeight * (window.bottomHour - slice.originHour)).toPx()
+            if (linePx < topPx || linePx >= bottomPx) return 0f
+            minOf(0f, bottomPx - (linePx + (REMINDER_TAG_HEIGHT * overdueTags.size).toPx()))
+        }
+        overdueTags.forEachIndexed { i, tag ->
             val stackOffset = REMINDER_TAG_HEIGHT * i
             // Culled on the quantized instant (what EXISTS), placed on the exact one (WHERE) — the same
             // split the indicator above makes, and the reason the stack never drifts off the line it is
@@ -7955,7 +8040,8 @@ private fun DayColumn(
                 tz = tz,
                 hoverScope = hoverScope,
                 modifier = Modifier.graphicsLayer {
-                    translationY = nowLineOffsetPx(hourHeight, nowLineHour()) + stackOffset.toPx()
+                    val linePx = nowLineOffsetPx(hourHeight, nowLineHour())
+                    translationY = linePx + stackOffset.toPx() + overdueLiftPx(this, linePx)
                 },
                 // User rule 2026-10-07: the chip is the top of the priority rank, so it is what a double click
                 // held and dragged moves — committed through the blocks' own funnel, which knows a tag.
