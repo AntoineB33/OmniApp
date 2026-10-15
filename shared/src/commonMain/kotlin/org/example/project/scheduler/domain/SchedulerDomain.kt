@@ -4526,7 +4526,7 @@ object SchedulerDomain {
      * OS (the one alarm slot a device has belongs to the alarms and the timers, `alarms-and-timers.md`), so it
      * is announced by the running app like the break cues are, and in the same boundary order as them.
      */
-    enum class CueKind { LookAwayStart, RestPoseDue, ReminderDue, WindDown }
+    enum class CueKind { LookAwayStart, RestPoseDue, ReminderDue, WindDown, PeriodNotice }
 
     /**
      * A single cue crossing: fire the [kind] cue for [title] at [instant]. [endInstant] is the look-away's
@@ -4535,7 +4535,8 @@ object SchedulerDomain {
      * [sourceId] names the thing that is due where the [title] cannot: a [CueKind.ReminderDue] carries its
      * **tag's panel id**, which is how the engine finds the reminder's own alert settings (PRD §11) and how it
      * de-dupes — the id is stable across a regeneration of the tags while the instant of a reminder with no
-     * time of day is not. Empty for the break cues, which are named by their title.
+     * time of day is not. A [CueKind.PeriodNotice] carries [RuleProgram.PeriodNotice.id], its [title] is the
+     * period's and its [endInstant] the period's START. Empty for the break cues, which are named by their title.
      */
     data class CueCrossing(
         val instant: Long,
@@ -4614,6 +4615,8 @@ object SchedulerDomain {
          * about no reminders.
          */
         reminderTags: List<TaskPanel> = emptyList(),
+        /** User rule 2026-10-15: the periods' notices the rule cursor crossed ([RuleProgram.PeriodNotice]). */
+        periodNotices: List<RuleProgram.PeriodNotice> = emptyList(),
     ): List<CueCrossing> {
         val out = mutableListOf<CueCrossing>()
         val titleOfLabel = dynamicPeriodTitles(screenBreaks)
@@ -4647,7 +4650,23 @@ object SchedulerDomain {
         for (wd in windDownInstants) {
             if (wd in fromMillis..toMillis) out += CueCrossing(wd, CueKind.WindDown, "", wd)
         }
+        // Not a screen break: unaffected by the mode, like the wind-down and the reminders.
+        for (n in periodNotices) {
+            if (n.atMillis in fromMillis..toMillis) {
+                out += CueCrossing(n.atMillis, CueKind.PeriodNotice, n.title, n.periodStartMillis, sourceId = n.id)
+            }
+        }
         return out.sortedWith(compareBy({ it.instant }, { it.kind.ordinal }))
+    }
+
+    /**
+     * User rule 2026-10-15: what a period's notice says under the period's title — when it starts, in how long and at
+     * what time: "Starts in 20 min, at 21:40".
+     */
+    fun periodNoticeMessage(leadMillis: Long, periodStartMillis: Long, tz: TimeZone): String {
+        val at = Instant.fromEpochMilliseconds(periodStartMillis).toLocalDateTime(tz)
+        val clock = at.hour.toString().padStart(2, '0') + ":" + at.minute.toString().padStart(2, '0')
+        return "Starts in " + SearchDomain.lengthText(leadMillis) + ", at " + clock
     }
 
     /**

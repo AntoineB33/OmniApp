@@ -561,6 +561,7 @@ object SchedulerReducer {
             is SchedulerIntent.AddPeriodKind -> settingsUnit(state, "New period") { reduceAddPeriodKind(it, intent.kind) }
             is SchedulerIntent.RemovePeriodKind -> settingsUnit(state, "Delete period") { reduceRemovePeriodKind(it, intent.kind) }
             is SchedulerIntent.SetPeriodDrawing -> settingsUnit(state, "Period drawing") { reduceSetPeriodDrawing(it, intent.kind, intent.drawing) }
+            is SchedulerIntent.SetPeriodNotices -> settingsUnit(state, "Period notifications") { reduceSetPeriodNotices(it, intent.kind, intent.notices) }
             is SchedulerIntent.SetPeriodCombinations ->
                 settingsUnit(state, "Period combinations") { reduceSetPeriodCombinations(it, intent.combinations) }
             is SchedulerIntent.ResetPeriodKinds -> settingsUnit(state, "Reset periods") { reduceResetPeriodKinds(it, intent.kinds) }
@@ -5754,6 +5755,16 @@ private fun reduceSetPeriodDrawing(state: SchedulerState, kindRaw: String, drawi
     val current = state.periodKindConfig.style(kind)
     if (current.drawing == drawing) return state
     return state.withPeriodKindStyle(kind, current.copy(drawing = drawing))
+}
+
+/** How long before each period of [kindRaw] the user is told it is coming (user rule 2026-10-15); the same is a no-op. */
+private fun reduceSetPeriodNotices(state: SchedulerState, kindRaw: String, notices: List<Long>): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    if (kind !in state.allPeriodKinds) return state
+    val current = state.periodKindConfig.style(kind)
+    val normalized = PeriodKinds.normalizedNotices(notices)
+    if (current.notices == normalized) return state
+    return state.withPeriodKindStyle(kind, current.copy(notices = normalized))
 }
 
 /** Stores [style] for [kind] as an override — or drops the override when [style] is the kind's default. */

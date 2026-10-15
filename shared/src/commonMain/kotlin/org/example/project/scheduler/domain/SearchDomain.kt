@@ -2769,6 +2769,11 @@ object SearchDomain {
         PeriodSleepSchedule(Kind.RestrictivePeriod, "Sleep schedule"),
         PeriodDrawing(Kind.RestrictivePeriod, "Drawing"),
         /**
+         * User rule 2026-10-15: *"configurations in the restrictive periods that allow the user to get a notification at
+         * x time before the period"* — the leads of each added period's notices ([SchedulerIntent.SetPeriodNotices]).
+         */
+        PeriodNotices(Kind.RestrictivePeriod, "Notifications before"),
+        /**
          * User rule 2026-10-13: *"add the button to open a calendar window that shows all the notifications selected,
          * which are all the notifications of the macro group in the action section"* — a calendar window whose chips
          * are the group's notifications ([CalendarNotifications]).
@@ -3142,6 +3147,7 @@ object SearchDomain {
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
             AddedAction.PeriodDrawing -> "period"
+            AddedAction.PeriodNotices -> "notification notify alert remind warn ahead advance"
             AddedAction.NotificationCalendar -> "open a calendar with these notifications chips"
             AddedAction.PeriodSleepSchedule ->
                 "wake up go to bed stop screens goal time date total sleep time no screen before bed"

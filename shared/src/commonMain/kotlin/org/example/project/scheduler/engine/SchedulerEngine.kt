@@ -892,6 +892,8 @@ class SchedulerEngine(
     private var announcedStarts = setOf<Long>()
     private var pendingEnds = setOf<Long>()
     private var announcedWindDowns = setOf<Long>()
+    // User rule 2026-10-15: the periods' notices already said, by [RuleProgram.PeriodNotice.id], to the instant due.
+    private var announcedNotices = mapOf<String, Long>()
     // PRD §15 (5/15-min rest-pose notification): the placed START already announced per rest-pose title, so a
     // break fires once when the now-line reaches it and never again. The key is stable because the recurrence
     // bars pin the start (ADR 0003) — it was an anchored due precisely because an owed pose used to drag along
@@ -3091,12 +3093,14 @@ class SchedulerEngine(
         bankAtScreenCrossing(now, mode)
         val cursor = ruleCursorFor(state, now)
         val crossed = cursor.moveTo(now)
-        if (crossed.windDowns.isNotEmpty() || crossed.reminders.isNotEmpty()) {
+        if (crossed.windDowns.isNotEmpty() || crossed.reminders.isNotEmpty() || crossed.notices.isNotEmpty()) {
             val floor = now - PENDING_CUE_REACH_MILLIS
             pendingWindDowns.removeAll { it < floor }
             pendingReminders.removeAll { it.startEpochMillis < floor }
+            pendingNotices.removeAll { it.atMillis < floor }
             pendingWindDowns += crossed.windDowns
             pendingReminders += crossed.reminders
+            pendingNotices += crossed.notices
         }
         // What ran is banked once a plan panel has ENDED, or when the rules changed (a new set may have dropped a task
         // from the tree) — never by scanning the plan at every tick. The cursor arms it; the advance tick banks it
@@ -3138,6 +3142,7 @@ class SchedulerEngine(
     // The wind-down starts and reminder tags the cursor crossed that the cue sweep has not announced yet.
     private val pendingWindDowns = ArrayList<Long>()
     private val pendingReminders = ArrayList<org.example.project.scheduler.model.TaskPanel>()
+    private val pendingNotices = ArrayList<RuleProgram.PeriodNotice>()
 
     /**
      * The cursor over [state]'s rules: the one held, or — when the scheduler has returned a new set of rules (a new
@@ -3146,8 +3151,12 @@ class SchedulerEngine(
      */
     private fun ruleCursorFor(state: SchedulerState, now: Long): RuleProgram.Cursor {
         val held = ruleCursor
-        if (held != null && held.program.source === state.panels) return held
-        val fresh = RuleProgram.Cursor(RuleProgram.compile(state.panels), held?.atMillis?.coerceAtMost(now) ?: now)
+        // The periods' notices are read off the per-kind settings too: a new lead is a new program, with no re-plan.
+        if (held != null && held.program.source === state.panels && held.program.noticeSource?.styles === state.periodKindStyles) {
+            return held
+        }
+        val fresh =
+            RuleProgram.Cursor(RuleProgram.compile(state.panels, state.periodKindConfig), held?.atMillis?.coerceAtMost(now) ?: now)
         ruleCursor = fresh
         programRecompiled = true
         return fresh
@@ -3959,7 +3968,12 @@ class SchedulerEngine(
     // Real-age staleness ([BoundarySweep.realLatenessMillis]), the screen-active gate, resume-cue arming and
     // the once-only de-dupe stay here (this owns the clock and the fired-boundary memory).
     private fun launchCueSweep() = scope.launch {
-        combine(_nowMillis, vm.state.map { it.panels }.distinctUntilChanged(), breakMachineRearmed) { _, panels, _ -> panels }
+        // The per-kind settings too: a period's notice changed with no re-plan is a new armed trigger.
+        combine(
+            _nowMillis,
+            vm.state.map { it.panels to it.periodKindStyles }.distinctUntilChanged(),
+            breakMachineRearmed,
+        ) { _, rules, _ -> rules }
             .collectLatest {
                 while (true) {
                     val st = vm.state.value
@@ -3972,6 +3986,7 @@ class SchedulerEngine(
                     announcedStarts = announcedStarts.filterTo(mutableSetOf()) { it >= scanFloor }
                     announcedWindDowns = announcedWindDowns.filterTo(mutableSetOf()) { it >= scanFloor }
                     announcedReminderTags = announcedReminderTags.filterValues { it >= scanFloor }
+                    announcedNotices = announcedNotices.filterValues { it >= scanFloor }
 
                     // `docs/scheduler_requirements.md` § *Rule Structure*: the line is moved over the rules to here — the
                     // interpreter applies what was armed before it and queues what it crossed. The sweep announces from
@@ -3986,6 +4001,8 @@ class SchedulerEngine(
                     pendingWindDowns.clear()
                     val reminderTags = pendingReminders.toList()
                     pendingReminders.clear()
+                    val notices = pendingNotices.toList()
+                    pendingNotices.clear()
                     // A pose the line is dragging is OWED: a level, announced once per due and — while nobody can be told
                     // — again at the first sweep somebody can ([sidePoseNotifiedDue] is left untouched on a lock).
                     val machine = _frozenBreaks.value?.machine
@@ -4016,6 +4033,8 @@ class SchedulerEngine(
                                 toMillis = simNow,
                                 // PRD §14: the calendar's own reminder tags the cursor crossed.
                                 reminderTags = reminderTags,
+                                // User rule 2026-10-15: the periods' notices the cursor crossed.
+                                periodNotices = notices,
                             )
 
                     // Each fire as (instant, tie, action); executed in boundary order below. `tie` only
@@ -4246,6 +4265,31 @@ class SchedulerEngine(
                                             title.ifBlank { RingKind.Reminder.label },
                                             alert = alert,
                                             spoken = SpokenMessages.ring(RingKind.Reminder, title),
+                                        )
+                                    }
+                                }
+                            }
+                            // User rule 2026-10-15: "a notification at x time before the period". A moment the user
+                            // asked to be told about, like a reminder: the alarms' lateness budget, and no lock gate.
+                            SchedulerDomain.CueKind.PeriodNotice -> {
+                                val due = crossing.instant
+                                val id = crossing.sourceId
+                                if (id in announcedNotices) continue
+                                val lateness = cueSweep.realLatenessMillis(due)
+                                firings += Firing(due, 6) {
+                                    announcedNotices = announcedNotices + (id to due)
+                                    if (lateness > ALARM_FRESH_MILLIS) {
+                                        Diagnostics.log(
+                                            "period notice $id swallowed: crossed ~$lateness ms (real) ago " +
+                                                "(budget $ALARM_FRESH_MILLIS ms, speed ${speed}x)",
+                                        )
+                                    } else {
+                                        val lead = crossing.endInstant - due
+                                        notifyUser(
+                                            crossing.title,
+                                            SchedulerDomain.periodNoticeMessage(lead, crossing.endInstant, tz),
+                                            spoken = SpokenMessages.periodNotice(crossing.title, lead),
+                                            target = NotificationTarget.Calendar,
                                         )
                                     }
                                 }

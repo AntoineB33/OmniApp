@@ -284,11 +284,19 @@ object PeriodFormula {
 }
 
 /**
- * `side-dev/README.md` § *Restrictive Period*, as the period edit window states it: **how a kind of period is drawn**.
+ * `side-dev/README.md` § *Restrictive Period*, as the period edit window states it: **how a kind of period is drawn**,
+ * and **how long before each period of it the user is told it is coming** ([notices]).
  * What a kind carries WITH it is a combination rule ([PeriodCombination]); until 2026-10-01 it was a companion set here.
  */
 data class PeriodKindStyle(
     val drawing: PeriodDrawing,
+    /**
+     * User rule 2026-10-15: *"Add configurations in the restrictive periods that allow the user to get a notification at
+     * x time before the period"* — the leads, in milliseconds, each a notification that long before every period of
+     * the kind begins ([RuleProgram]'s notices, [SchedulerDomain.CueKind.PeriodNotice]). Distinct, whole seconds, in
+     * the user's order ([PeriodKinds.normalizedNotices]). Empty: none. The kind's default is [PeriodKinds.defaultStyle]'s.
+     */
+    val notices: List<Long> = emptyList(),
 )
 
 /**
@@ -355,6 +363,9 @@ class PeriodKindConfig(
     fun style(kind: String): PeriodKindStyle = styles[kind] ?: PeriodKinds.defaultStyle(kind)
 
     fun drawing(kind: String): PeriodDrawing = style(kind).drawing
+
+    /** How long before each period of [kind] the user is told it is coming ([PeriodKindStyle.notices]). */
+    fun notices(kind: String): List<Long> = style(kind).notices
 
     /**
      * **Every kind in force wherever a period of [kind] is** — [kind] itself first, then what the rules its period

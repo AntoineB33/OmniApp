@@ -1155,6 +1155,19 @@ private fun AddedActionEditor(
                 modifier = Modifier.width(220.dp),
             )
         }
+        // User rule 2026-10-15: how long before each period of a kind the user is told it is coming — per period, a
+        // length per notification, through the one intent.
+        SearchDomain.AddedAction.PeriodNotices -> {
+            val periods = SearchDomain.addedPeriodKinds(state, added)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (kind in periods) {
+                    ElementHeading(PeriodKinds.periodTitle(kind), periods.size)
+                    PeriodNoticesEditor(state.periodKindConfig.notices(kind)) { leads ->
+                        run.asIntentSink()(SchedulerIntent.SetPeriodNotices(kind, leads))
+                    }
+                }
+            }
+        }
         SearchDomain.AddedAction.PeriodCombinations -> {
             // ONE list: every rule naming an added period, once (it was a section per period, a rule naming two of
             // them drawn twice).
@@ -1188,6 +1201,45 @@ private fun AddedActionEditor(
         }
     }
 }
+
+/**
+ * One period's notices (user rule 2026-10-15): a length per notification — "this long before the period" — each with
+ * its ✕, and "+ Notification" for one more. Every edit writes the whole list ([onChange]).
+ */
+@Composable
+private fun PeriodNoticesEditor(leads: List<Long>, onChange: (List<Long>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (leads.isEmpty()) {
+            Text(
+                "No notification before this period.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        leads.forEachIndexed { index, lead ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                LengthField(
+                    millis = lead,
+                    mixed = false,
+                    defaultUnit = org.example.project.scheduler.domain.QuotaDomain.LengthUnit.Minutes,
+                    units = org.example.project.scheduler.domain.QuotaDomain.LengthUnit.entries,
+                    onNudge = { delta -> (lead + delta).takeIf { it >= 1_000L }?.let { onChange(leads.replaced(index, it)) } },
+                ) { onChange(leads.replaced(index, it)) }
+                Text("before", style = MaterialTheme.typography.bodyMedium)
+                FrameButton("✕") { onChange(leads.filterIndexed { i, _ -> i != index }) }
+            }
+        }
+        FrameButton("+ Notification") {
+            val next = NOTICE_LEAD_CHOICES.firstOrNull { it !in leads } ?: ((leads.maxOrNull() ?: 0L) + 60_000L)
+            onChange(leads + next)
+        }
+    }
+}
+
+/** What "+ Notification" offers first: the first of these the period does not have yet. */
+private val NOTICE_LEAD_CHOICES: List<Long> = listOf(5L, 10L, 15L, 30L, 60L).map { it * 60_000L }
+
+private fun List<Long>.replaced(index: Int, value: Long): List<Long> = mapIndexed { i, v -> if (i == index) value else v }
 
 /** The name of the element a block of a per-element action is about — said only when there are several. */
 @Composable

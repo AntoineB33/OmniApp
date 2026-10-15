@@ -380,9 +380,19 @@ object PeriodKinds {
      * (`SchedulerReducer`'s `reduceAddPeriodKind`); [PeriodDrawing.Crosses] is only the fallback for a payload
      * that never stored one.
      */
+    /**
+     * The leads of a kind's notices as stored ([PeriodKindStyle.notices]): each at least a second, whole seconds, each
+     * once, in the order the user gave them — never re-sorted, which would move the fields under the hand typing one.
+     */
+    fun normalizedNotices(leads: List<Long>): List<Long> =
+        leads.map { it / 1_000L * 1_000L }.filter { it >= 1_000L }.distinct()
+
     fun defaultStyle(kind: String): PeriodKindStyle =
         when (kind) {
-            INACTIVITY, SLEEP, NO_SCREEN, BEFORE_BED -> PeriodKindStyle(PeriodDrawing.None)
+            // User rule 2026-10-15: "By default, the 'hour before bed' period sends a notification 20min before and
+            // 1min before."
+            BEFORE_BED -> PeriodKindStyle(PeriodDrawing.None, notices = listOf(20 * 60_000L, 60_000L))
+            INACTIVITY, SLEEP, NO_SCREEN -> PeriodKindStyle(PeriodDrawing.None)
             NO_COMPUTER_UNLOCKED -> PeriodKindStyle(PeriodDrawing.RisingObliques)
             NO_PHONE_UNLOCKED -> PeriodKindStyle(PeriodDrawing.FallingObliques)
             // The real layer's slope, DOTTED: the look an "I'm away" stretch has always had on the calendar (the

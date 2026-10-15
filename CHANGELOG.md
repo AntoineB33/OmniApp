@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A period can be announced ahead of time; the hour before bed 20 and 1 minute ahead — 2026-10-15
+
+The user: "Add configurations in the restrictive periods that allow the user to get a notification at x time before
+the period. By default, the 'hour before bed' period sends a notification 20min before and 1min before." Each kind of
+period now holds a list of leads (`PeriodKindStyle.notices`), edited in the period's Search actions ("Notifications
+before": a length per notification, its ✕, "+ Notification") through `SchedulerIntent.SetPeriodNotices` — one
+History Unit. Stored on the kind's style row (`PersistedPeriodKindStyle.notices`, so one sync row per kind as before);
+a row written before reads as the kind's default. The rule cursor compiles `start − lead` for every stretch of the
+kind (`RuleProgram.noticesOf`) and the one cue sweep says it (`CueKind.PeriodNotice`): the period's title, "Starts in
+20 min, at 21:40", spoken "No screen before bed in 20 minutes." The wind-down at the hour's start is unchanged.
+`PeriodNoticesTest`. Client rebuild only (the new field rides the existing per-kind row).
+
 ### The calendar no longer draws 60 frames a second for a line that crosses a pixel a minute — 2026-10-15
 
 The user: "Check the performance of the app. It must not have a noticeable impact on the battery or fans, except when

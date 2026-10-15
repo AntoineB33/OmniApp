@@ -70,5 +70,20 @@ internal object SpokenMessages {
 
     const val WIND_DOWN: String = "Time to wind down. Bedtime in one hour."
 
+    /** User rule 2026-10-15: a period [leadMillis] ahead — "No screen before bed in 20 minutes." */
+    fun periodNotice(title: String, leadMillis: Long): String = title.trim().ifEmpty { "A period" } + " in " + spokenLength(leadMillis) + "."
+
+    /** A length as it is said: "1 minute", "20 minutes", "1 hour 30 minutes", "30 seconds". */
+    fun spokenLength(millis: Long): String {
+        val seconds = millis / 1_000L
+        fun unit(n: Long, word: String) = "$n $word" + if (n == 1L) "" else "s"
+        val parts = buildList {
+            if (seconds >= 3_600L) add(unit(seconds / 3_600L, "hour"))
+            if (seconds % 3_600L >= 60L) add(unit(seconds % 3_600L / 60L, "minute"))
+            if (seconds % 60L > 0L || seconds == 0L) add(unit(seconds % 60L, "second"))
+        }
+        return parts.joinToString(" ")
+    }
+
     const val NOTIFICATIONS_ON: String = "Notifications on"
 }

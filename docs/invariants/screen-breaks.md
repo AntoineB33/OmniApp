@@ -282,6 +282,12 @@ the instant it was armed for however far one leap goes, and the cue sweep self-d
 machine's, the rule cursor's (a panel edge, a wind-down, a reminder), a look-away's resume. Nothing in the sweep asks
 where a break falls. The pose de-dupe keys on the instant it fell due.
 
+**The sweep also carries the periods' notices** (user rule 2026-10-15, `CueKind.PeriodNotice`, the rule cursor's
+`notices`): "<the period's title> — Starts in 20 min, at 21:40", spoken "<title> in 20 minutes." A moment the user
+asked to be told about, so it is a reminder's, not a break's: the alarms' lateness budget (`ALARM_FRESH_MILLIS`), no
+lock gate, any `t_p` mode; de-duped on the notice's id (kind, period start, lead). `scheduler.md` § *A KIND may ask to
+be told of its periods AHEAD*.
+
 **The sweep also carries the §14 reminder tags and the wind-down** (the rule cursor's crossings,
 `RuleProgram.Cursor.moveTo`), for the same reason: a leap that crosses a reminder and a break must say them in the order
 they were due. Their occurrence source is the tags themselves; they de-dupe on the tag's stable id —

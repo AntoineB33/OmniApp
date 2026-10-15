@@ -12,7 +12,8 @@ import org.example.project.scheduler.model.TaskPanel
  *   (the first of the rules in their own order, as [SchedulerDomain.panelAt] reads them) and the alternative the
  *   rules name for it (§ *Alternative Schedules*, [SchedulerDomain.alternativeTaskAt]);
  * - [elapseInstants]: where a plan panel ends, the trigger for banking what ran;
- * - [windDowns] and [reminders]: the instants the wind-down hour and the reminder tags fall at.
+ * - [windDowns] and [reminders]: the instants the wind-down hour and the reminder tags fall at;
+ * - [notices]: the instants a period's kind asks to be told of it ahead (user rule 2026-10-15, [PeriodNotice]).
  *
  * The runtime holds a [Cursor]: as the line moves it only compares the line with the next armed boundary and steps
  * forward — no filtering, sorting or search over the timeline (§ *No Global Lookups*). Compiling is the scheduler's
@@ -25,12 +26,30 @@ class RuleProgram private constructor(
     val elapseInstants: LongArray,
     val windDowns: LongArray,
     val reminders: List<TaskPanel>,
+    val notices: List<PeriodNotice>,
+    /** The per-kind settings the [notices] were read from: other settings are another program. */
+    val noticeSource: PeriodKindConfig?,
 ) {
     /** `[startMillis, endMillis)`: [panel] holds there (null for none), [alternative] runs if it is refused. */
     data class Segment(val startMillis: Long, val endMillis: Long, val panel: TaskPanel?, val alternative: TaskId?)
 
+    /**
+     * User rule 2026-10-15: *"a notification at x time before the period"* — due at [atMillis], [leadMillis] before a
+     * period of [kind] titled [title] begins at [periodStartMillis]. [id] names it for the once-only de-dupe: the kind,
+     * the start and the lead, which a re-plan that keeps the period keeps.
+     */
+    data class PeriodNotice(
+        val atMillis: Long,
+        val kind: String,
+        val title: String,
+        val periodStartMillis: Long,
+        val leadMillis: Long,
+    ) {
+        val id: String get() = "$kind@$periodStartMillis-$leadMillis"
+    }
+
     companion object {
-        fun compile(panels: List<TaskPanel>): RuleProgram {
+        fun compile(panels: List<TaskPanel>, config: PeriodKindConfig? = null): RuleProgram {
             val work =
                 panels.withIndex().filter { (_, p) ->
                     p.taskId != null && !p.chore && !p.isRestrictivePeriod && p.endEpochMillis > p.startEpochMillis
@@ -76,7 +95,34 @@ class RuleProgram private constructor(
                 panels.asSequence().filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }.map { it.startEpochMillis }
                     .distinct().sorted().toList().toLongArray()
             val reminders = SchedulerDomain.reminderTagsOf(panels).sortedBy { it.startEpochMillis }
-            return RuleProgram(panels, segments, elapse, windDowns, reminders)
+            return RuleProgram(panels, segments, elapse, windDowns, reminders, config?.let { noticesOf(panels, it) }.orEmpty(), config)
+        }
+
+        /**
+         * The notices [config]'s kinds ask for ([PeriodKindConfig.notices]) before the periods among [panels]. A period
+         * is a stretch of ONE kind: where periods of a kind touch or overlap they are one stretch, and only its start is
+         * "before the period" — a period laid end to end with the previous one of its kind would otherwise be announced
+         * while the user is already in it. Sorted by the instant they are due.
+         */
+        fun noticesOf(panels: List<TaskPanel>, config: PeriodKindConfig): List<PeriodNotice> {
+            val byKind =
+                panels.filter { it.isRestrictivePeriod && it.endEpochMillis > it.startEpochMillis }
+                    .groupBy { it.restrictiveKind }
+                    .filterKeys { config.notices(it).isNotEmpty() }
+            val out = ArrayList<PeriodNotice>()
+            for ((kind, periods) in byKind) {
+                val leads = config.notices(kind)
+                var runEnd = Long.MIN_VALUE
+                for (period in periods.sortedBy { it.startEpochMillis }) {
+                    val start = period.startEpochMillis
+                    if (start > runEnd) {
+                        val title = period.title.ifBlank { PeriodKinds.periodTitle(kind) }
+                        for (lead in leads) out += PeriodNotice(start - lead, kind, title, start, lead)
+                    }
+                    runEnd = maxOf(runEnd, period.endEpochMillis)
+                }
+            }
+            return out.sortedWith(compareBy({ it.atMillis }, { -it.leadMillis }))
         }
     }
 
@@ -90,6 +136,7 @@ class RuleProgram private constructor(
         private var elapse = firstIndex(program.elapseInstants.size) { program.elapseInstants[it] > atMillis }
         private var windDown = firstIndex(program.windDowns.size) { program.windDowns[it] > atMillis }
         private var reminder = firstIndex(program.reminders.size) { program.reminders[it].startEpochMillis > atMillis }
+        private var notice = firstIndex(program.notices.size) { program.notices[it].atMillis > atMillis }
         var atMillis: Long = atMillis
             private set
 
@@ -101,8 +148,13 @@ class RuleProgram private constructor(
         val alternative: TaskId?
             get() = program.segments.getOrNull(segment)?.alternative
 
-        /** What the line crossed on this move: wind-down starts and reminder tags in `(previous, toMillis]`. */
-        data class Crossed(val windDowns: List<Long>, val reminders: List<TaskPanel>, val elapsed: Boolean)
+        /** What the line crossed on this move: wind-down starts, reminder tags and notices in `(previous, toMillis]`. */
+        data class Crossed(
+            val windDowns: List<Long>,
+            val reminders: List<TaskPanel>,
+            val elapsed: Boolean,
+            val notices: List<PeriodNotice> = emptyList(),
+        )
 
         /** Move the line forward to [toMillis] (a position behind the cursor changes nothing). */
         fun moveTo(toMillis: Long): Crossed {
@@ -119,17 +171,23 @@ class RuleProgram private constructor(
             while (reminder < program.reminders.size && program.reminders[reminder].startEpochMillis <= toMillis) {
                 tags += program.reminders[reminder++]
             }
+            val notices = ArrayList<PeriodNotice>()
+            while (notice < program.notices.size && program.notices[notice].atMillis <= toMillis) notices += program.notices[notice++]
             atMillis = toMillis
-            return Crossed(winds, tags, elapsed)
+            return Crossed(winds, tags, elapsed, notices)
         }
 
-        /** The next instant this cursor is armed for: a segment boundary, a panel's end, a wind-down or a reminder. */
+        /**
+         * The next instant this cursor is armed for: a segment boundary, a panel's end, a wind-down, a reminder or a
+         * period's notice.
+         */
         fun nextTriggerMillis(): Long? =
             listOfNotNull(
                 program.segments.getOrNull(segment)?.let { if (it.startMillis > atMillis) it.startMillis else it.endMillis },
                 program.elapseInstants.getOrNull(elapse),
                 program.windDowns.getOrNull(windDown),
                 program.reminders.getOrNull(reminder)?.startEpochMillis,
+                program.notices.getOrNull(notice)?.atMillis,
             ).minOrNull()
 
         /** The next instant a plan panel ends at — the only instants what ran has to be banked at. */

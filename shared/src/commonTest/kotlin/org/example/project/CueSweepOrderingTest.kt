@@ -68,6 +68,8 @@ class CueSweepOrderingTest {
                 SchedulerDomain.CueKind.RestPoseDue -> assertEquals(c.instant, c.endInstant)
                 SchedulerDomain.CueKind.ReminderDue -> assertEquals(c.instant, c.endInstant)
                 SchedulerDomain.CueKind.WindDown -> Unit
+                // A period's notice carries the period's start: never asked here (no period in this sweep).
+                SchedulerDomain.CueKind.PeriodNotice -> Unit
             }
         }
     }

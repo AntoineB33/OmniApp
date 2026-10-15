@@ -556,6 +556,15 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * User rule 2026-10-15: how long before each period of [kind] the user is told it is coming — [notices], the leads
+     * in milliseconds (`PeriodKindStyle.notices`; normalized by the reducer). One History Unit (`SettingsDelta`).
+     */
+    data class SetPeriodNotices(
+        val kind: String,
+        val notices: List<Long>,
+    ) : SchedulerIntent
+
+    /**
      * PRD §7 *Search*, the added elements' **Reset** on the default periods (user rule 2026-10-01): every kind of
      * [kinds] the app ships (`PeriodKinds.isUserDefined` false — named by its id, the fixed name) goes back to how it
      * ships: its drawing ([SetPeriodDrawing]) and the combination rules that name it
