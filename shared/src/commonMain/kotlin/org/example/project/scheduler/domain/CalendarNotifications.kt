@@ -15,19 +15,36 @@ import org.example.project.scheduler.state.NotificationLogEntry
  */
 object CalendarNotifications {
 
-    /** What a calendar window keeps of its own: the notifications it shows, by id, in no particular order. */
-    data class WindowConfig(val notifications: List<String> = emptyList()) {
-        /** Stored text; blank for the default, so a calendar that shows none writes nothing. */
-        fun encode(): String = if (notifications.isEmpty()) "" else PREFIX + notifications.distinct().joinToString(SEPARATOR)
+    /**
+     * What a calendar window keeps of its own: the notifications it shows, by id, in no particular order — and whether
+     * it shows the actions recorded on the computer ([showsActions], user rule 2026-10-15, `InputActivity`).
+     */
+    data class WindowConfig(val notifications: List<String> = emptyList(), val showsActions: Boolean = false) {
+        /** Stored text; blank for the default, so a calendar that shows nothing of the two writes nothing. */
+        fun encode(): String =
+            listOfNotNull(
+                notifications.takeIf { it.isNotEmpty() }?.let { PREFIX + it.distinct().joinToString(SEPARATOR) },
+                ACTIONS.takeIf { showsActions },
+            ).joinToString(PART_SEPARATOR)
 
         companion object {
             private const val PREFIX = "notifications="
             private const val SEPARATOR = ","
+            private const val ACTIONS = "actions"
+            private const val PART_SEPARATOR = ";"
 
-            /** A missing, blank or foreign text is the default: a calendar that shows no notification. */
-            fun decode(text: String?): WindowConfig =
-                if (text == null || !text.startsWith(PREFIX)) WindowConfig()
-                else WindowConfig(text.removePrefix(PREFIX).split(SEPARATOR).filter { it.isNotBlank() }.distinct())
+            /**
+             * A missing, blank or foreign text is the default: a calendar that shows no notification and no action. A
+             * text written before the actions existed is its notifications alone.
+             */
+            fun decode(text: String?): WindowConfig {
+                if (text.isNullOrBlank()) return WindowConfig()
+                val parts = text.split(PART_SEPARATOR)
+                val notifications =
+                    parts.firstOrNull { it.startsWith(PREFIX) }?.removePrefix(PREFIX)?.split(SEPARATOR)
+                        ?.filter { it.isNotBlank() }?.distinct().orEmpty()
+                return WindowConfig(notifications, showsActions = ACTIONS in parts)
+            }
         }
     }
 

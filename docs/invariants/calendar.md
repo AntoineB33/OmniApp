@@ -402,6 +402,14 @@ Global rules that always apply: `CLAUDE.md`.
   **inert**: no pointer input, so the press and the hover go to what is under it — and unlike a ring it says
   nothing in the hover bubble. No text is written under one (`calendarLabelSlots`' obstacles). `App` provides the
   view around each calendar window; with none (a preview) there is no drop-down and no chip.
+- **"RECORDED ACTIONS": A LINE AT EACH SECOND AN ACTION WAS DONE ON THE COMPUTER** (user rule 2026-10-15: *"Add a
+  configuration in the calendar that shows every recorded action on Windows with horizontal lines"*; `InputActivity`,
+  `InputActivityTest`). A switch of each calendar window (`CalendarNotifications.WindowConfig.showsActions`, on its
+  placement row beside its notifications), offered only where the platform records ([LocalInputActivity]: the
+  desktop's hooks, `PLATFORMS.md`). What is kept is the SECOND alone, one bit per second per UTC day
+  (`SecondsByDay`, `input-activity/<day>.bin` beside the DB, 90 days, local-only, never synced). The column draws them
+  as ONE node over its hours on screen, in one pass, at most one line per pixel row, under the rings, chips and tags;
+  it reads the recorder in the DRAW phase, so a new second redraws the lines and recomposes nothing.
 - **A CHIP WHOSE TIME IS IN VIEW IS WHOLLY IN VIEW** (user rule 2026-10-15: *"if a chip is attached to a time that is in
   the window of the calendar view, then it must be fully visible in the window. For example, if 10 reminders are
   attached to a time very close to the bottom edge … they must all vertically stack."*; `keptInView`,

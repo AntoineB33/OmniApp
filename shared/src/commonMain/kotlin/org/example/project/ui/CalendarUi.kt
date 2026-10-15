@@ -70,6 +70,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -4373,6 +4374,11 @@ private fun CalendarConfigurationSection(
         }
         MenuAddable(MenuControl.Reminders) { CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders) }
         MenuAddable(MenuControl.ScreenBreaks) { CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks) }
+        // User rule 2026-10-15: every action recorded on the computer, a line at each second — where something records them.
+        val windowView = LocalCalendarNotifications.current
+        if (windowView != null && LocalInputActivity.current != null) {
+            CalendarConfigurationSwitch("Recorded actions", windowView.showsActions, windowView.onShowsActionsChange)
+        }
         // User rule 2026-10-13: the notifications THIS calendar window shows as chips, checked in a drop-down.
         LocalCalendarNotifications.current?.let { notifications ->
             val labels = remember(notifications.options) { notifications.options.associate { it.id to notifications.labelOf(it) } }
@@ -7923,6 +7929,43 @@ private fun DayColumn(
         // the hit test — it simply went under, while [CalendarBubbleSection.Kind] went on ranking it ABOVE
         // the break that was hiding it. That disagreement between the paint and the bubble is the whole bug,
         // and [CalendarOverlayLayer] is why it can only be fixed in one place now.
+        // User rule 2026-10-15: *"shows every recorded action on Windows with horizontal lines"* — a line at each second an
+        // action was recorded on the computer ([LocalInputActivity]), where this window shows them. Under the rings, the
+        // chips and the tags, which stay the top-most. ONE node over the hours on screen, drawn in one pass and at most
+        // one line per pixel row: a busy day is thousands of seconds, and a node each would be the cost
+        // `display-hot-path.md` forbids. The recorder is read in the DRAW phase, so a new second draws again and
+        // recomposes nothing.
+        val inputActivity = LocalInputActivity.current
+        if (inputActivity != null && LocalCalendarNotifications.current?.showsActions == true && !shownHours.isEmpty) {
+            val revision = inputActivity.revision.collectAsState()
+            val lineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            val top = shownHours.topHour.coerceAtLeast(0f)
+            val bottom = shownHours.bottomHour
+            Box(
+                Modifier
+                    .offset(y = hourHeight * top)
+                    .fillMaxWidth()
+                    .height(hourHeight * (bottom - top))
+                    .drawBehind {
+                        revision.value
+                        val hourPx = hourHeight.toPx()
+                        if (hourPx <= 0f) return@drawBehind
+                        val fromSecond = (midnightMillis + (top * 3_600_000.0).toLong()) / 1000
+                        val untilSecond = (midnightMillis + (bottom * 3_600_000.0).toLong()) / 1000 + 1
+                        val topPx = top * hourPx
+                        var lastRow = Int.MIN_VALUE
+                        inputActivity.forEachSecond(fromSecond, untilSecond) { second ->
+                            val y = ((second * 1000 - midnightMillis) / 3_600_000.0 * hourPx).toFloat() - topPx
+                            val row = y.toInt()
+                            if (row != lastRow) {
+                                lastRow = row
+                                drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                            }
+                        }
+                    },
+            )
+        }
+
         val underRingOverlays =
             if (alarmPlacements.isEmpty()) emptyList()
             else underOverlaysFor(CalendarOverlayLayer.Ring)
@@ -8078,6 +8121,9 @@ class CalendarNotificationsView(
     val chipsByDay: Map<LocalDate, List<org.example.project.scheduler.domain.CalendarNotifications.Chip>>,
     /** How the drop-down names one: when it was posted, then its title. */
     val labelOf: (org.example.project.scheduler.domain.CalendarNotifications.Chip) -> String,
+    /** User rule 2026-10-15: this window draws the actions recorded on the computer ([LocalInputActivity]). */
+    val showsActions: Boolean = false,
+    val onShowsActionsChange: (Boolean) -> Unit = {},
 )
 
 val LocalCalendarNotifications = androidx.compose.runtime.compositionLocalOf<CalendarNotificationsView?> { null }

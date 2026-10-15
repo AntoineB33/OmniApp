@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Recorded actions": every action on Windows drawn as a line on the calendar — 2026-10-15
+
+The user: "Add a configuration in the calendar that shows every recorded action on Windows with horizontal lines", then
+"Every actions the user does on Windows … by hooking into the system's global APIs", as an on/off switch. The global
+hotkey claim's low-level keyboard hook now notes each key press and a new low-level mouse hook on the same loop each
+click, wheel and move (`InputActivityRecorder`): only the SECOND, never the key or the position, queued once per second
+on the hook thread and kept off it — one bit per second per UTC day (`SecondsByDay`), written to
+`input-activity/<day>.bin` beside the DB at most every 30 s, kept 90 days, local-only. Each calendar window has a
+"Recorded actions" switch (`WindowConfig.showsActions`, desktop only: `LocalInputActivity`) and draws a line at each such
+second, one node per column, one line per pixel row, read in the draw phase. `stateDirectory()` is now the one reading
+of where the state lives. `InputActivityTest`; `WindowHoldsKeyboardTest` made to close outside the key's own dispatch
+(it was flaky under the full run).
+
 ### A pile of chips near the bottom edge stacks up inside the view — 2026-10-15
 
 The user: "In the calendar, if a chip is attached to a time that is in the window of the calendar view, then it must be

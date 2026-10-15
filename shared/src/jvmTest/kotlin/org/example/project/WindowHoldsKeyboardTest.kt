@@ -61,9 +61,10 @@ class WindowHoldsKeyboardTest {
                                     AppWindowFrame(
                                         title = id,
                                         state = androidx.compose.runtime.remember { WindowFrameState(id) },
+                                        // As the app's close: noted now, the window gone at the next frame — never a
+                                        // state written from inside the key's own dispatch.
                                         onClose = {
                                             closed += id
-                                            open = open - id
                                             host.focusHeirOf(id)?.let(host::focus)
                                         },
                                         defaultWidth = 400.dp,
@@ -81,6 +82,7 @@ class WindowHoldsKeyboardTest {
             fun ctrlW() {
                 scene.sendKeyEvent(KeyEvent(key = Key.W, type = KeyEventType.KeyDown, isCtrlPressed = true))
                 scene.sendKeyEvent(KeyEvent(key = Key.W, type = KeyEventType.KeyUp, isCtrlPressed = true))
+                open = open - closed.toSet()
                 frames()
             }
             frames()

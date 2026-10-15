@@ -16,6 +16,11 @@ handler.
   application with its own low-level hook is called before the hot-key table, so one press fired two actions
   (Google Docs' comments pane opened alongside the away toggle). The claim is a `WH_KEYBOARD_LL` hook returning
   non-zero; `RegisterHotKey` stays underneath purely as the fallback, and the two cannot double-fire.
+- **The same hook thread records every action on the computer** (user rule 2026-10-15, `InputActivityRecorder`): the
+  keyboard hook notes each key press, and a `WH_MOUSE_LL` hook installed on the same message loop each click, wheel and
+  move — never swallowing one. Only the second is kept (never the key, never the position), and the hook does no more
+  than read the clock and queue that second once per second; the bits and the files are another thread's. The loop
+  stays up for the mouse hook alone where the keyboard claim is refused.
 - **Nothing that can block runs inside the hook** — it is on the critical path of every keystroke in the
   session, and Windows silently unhooks a callback that exceeds `LowLevelHooksTimeout`. Log and call the engine
   on the dispatch thread.

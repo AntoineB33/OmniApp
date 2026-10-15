@@ -1794,7 +1794,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         updatePlacementById(standing) { it.copy(config = gathered.encode()) }
                     }
                     if (calendarId != null) {
-                        setCalendarConfig(calendarId, CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }))
+                        setCalendarConfig(calendarId, calendarConfigOf(calendarId).copy(notifications = keys.map { it.substringAfter('/') }))
                         // The pair comes back together: the calendar in front of the other windows, the notifications
                         // over it.
                         presentWindow(FloatingWindow.Calendar, calendarId)
@@ -3883,7 +3883,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 org.example.project.ui.CalendarNotificationsView(
                                     options = CalendarNotifications.options(log, calendarConfig.notifications),
                                     selected = calendarConfig.notifications.toSet(),
-                                    onChange = { setCalendarConfig(calendarId, CalendarNotifications.WindowConfig(it.toList())) },
+                                    onChange = { setCalendarConfig(calendarId, calendarConfig.copy(notifications = it.toList())) },
+                                    // User rule 2026-10-15: the actions recorded on the computer, this window's own switch.
+                                    showsActions = calendarConfig.showsActions,
+                                    onShowsActionsChange = { setCalendarConfig(calendarId, calendarConfig.copy(showsActions = it)) },
                                     chipsByDay = CalendarNotifications.byDay(CalendarNotifications.chips(log, calendarConfig.notifications), tz),
                                     labelOf = { CalendarNotifications.label(it, tz) },
                                 )

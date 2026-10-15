@@ -58,6 +58,7 @@ Two different questions, answered in two different places:
 | Background running | While the process runs (auto-start release) | Foreground service + boot receiver | Only while foregrounded | Only while the tab is open |
 | OS sleep / lock history ("no computer unlocked" layer) | Windows power log | None | None | None |
 | System-wide shortcuts, task picker overlay | Yes (`Ctrl+Shift+Alt+…`) | Unsupported | Unsupported | Unsupported |
+| Every action recorded to the second (the calendar's "Recorded actions" lines) | Yes — the low-level keyboard and mouse hooks (`InputActivityRecorder`, `LocalInputActivity`) | None (no switch) | None | None |
 | Scheduler solver | Built-in search **+ OR-Tools MIP** | Built-in search | Built-in search | Built-in search |
 | "The app is in focus" (the unfocused-notif window) | **The OS's answer**: one of the app's windows is the active one (`LocalAppInFocus`, AWT `activeWindow`) | The window's own flag (`isWindowFocused`) | The window's own flag | The window's own flag |
 | Window placement memory, app window chrome | Yes | — | — | — |

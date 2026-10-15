@@ -52,6 +52,11 @@ fun main() {
     }
     // Opened once, before the window: the window's own placement is read from it, and the app runs on it.
     val store = createDefaultSchedulerStore()
+    // User rule 2026-10-15: every action on the computer, recorded to the second beside the state, for the calendar windows
+    // that show them (`InputActivity`). Fed by the global-hotkey claim's hooks once the app installs them.
+    org.example.project.scheduler.platform.InputActivityRecorder.start(
+        org.example.project.scheduler.persistence.stateDirectory(),
+    )
     application {
         // The app's own window comes back where, and as big as, it was left (local-only, like its windows).
         val appWindow = rememberPersistedAppWindow(store as? WindowPlacementStore)
@@ -87,6 +92,7 @@ fun main() {
             // turns off.
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalAppInFocus provides rememberAppInFocus(),
+                org.example.project.ui.LocalInputActivity provides org.example.project.scheduler.platform.InputActivityRecorder,
                 // A text field's own right-click menu is a window of its own, as every menu of the app is on the
                 // desktop (`AppDropdownMenu.jvm.kt`): over another application's always-on-top window.
                 androidx.compose.foundation.LocalContextMenuRepresentation provides

@@ -51,15 +51,21 @@ private fun connectionProperties(): Properties =
  * [connectionProperties]' busy timeout — a launcher that starts the new instance before the old one's
  * handle is gone would otherwise fail here, at startup, before there is any app to report it.
  */
-actual fun createDefaultSchedulerStore(): SchedulerStore? {
-    // Redirect state to an isolated directory so the release, debug, and reset runs each use a separate DB.
-    // Priority: the `-Domniapp.stateDir` property (dev scripts pass it via Gradle -P) → the
-    // `OMNIAPP_STATE_DIR` env var (the packaged release launcher sets it, since a shortcut/.bat can set an
-    // env var but not a JVM -D flag) → the default ~/.omniapp.
+/**
+ * The directory this run keeps its state in — the DB, and what is kept beside it (the recorded input activity).
+ * Redirected so the release, debug, and reset runs each use a separate one. Priority: the `-Domniapp.stateDir`
+ * property (dev scripts pass it via Gradle -P) → the `OMNIAPP_STATE_DIR` env var (the packaged release launcher sets
+ * it, since a shortcut/.bat can set an env var but not a JVM -D flag) → the default ~/.omniapp.
+ */
+fun stateDirectory(): File {
     val override =
         (System.getProperty("omniapp.stateDir")?.takeIf { it.isNotBlank() }
             ?: System.getenv("OMNIAPP_STATE_DIR")?.takeIf { it.isNotBlank() })
-    val dir = if (override != null) File(override) else File(System.getProperty("user.home"), ".omniapp")
+    return if (override != null) File(override) else File(System.getProperty("user.home"), ".omniapp")
+}
+
+actual fun createDefaultSchedulerStore(): SchedulerStore? {
+    val dir = stateDirectory()
     dir.mkdirs()
     val dbFile = File(dir, "scheduler-state.db")
     val driver =

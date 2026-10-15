@@ -9,8 +9,11 @@ import com.sun.jna.platform.win32.WinDef.WPARAM
 import com.sun.jna.platform.win32.WinUser.HHOOK
 import com.sun.jna.platform.win32.WinUser.KBDLLHOOKSTRUCT
 import com.sun.jna.platform.win32.WinUser.LowLevelKeyboardProc
+import com.sun.jna.platform.win32.WinUser.LowLevelMouseProc
+import com.sun.jna.platform.win32.WinUser.MSLLHOOKSTRUCT
 import com.sun.jna.platform.win32.WinUser.MSG
 import com.sun.jna.platform.win32.WinUser.WH_KEYBOARD_LL
+import com.sun.jna.platform.win32.WinUser.WH_MOUSE_LL
 import java.util.concurrent.Executors
 
 // Win32 hot-key modifiers (winuser.h). MOD_NOREPEAT stops a held-down chord from firing over and over —
@@ -172,6 +175,9 @@ internal object GlobalHotkeyClaimant {
     private val hookProc =
         object : LowLevelKeyboardProc {
             override fun callback(nCode: Int, wParam: WPARAM, lParam: KBDLLHOOKSTRUCT): LRESULT {
+                // User rule 2026-10-15: every action on the computer is recorded to the second — a key pressed is one.
+                // The least there is, before anything else (`InputActivityRecorder.noteInput`).
+                if (nCode >= 0 && (wParam.toInt() == WM_KEYDOWN || wParam.toInt() == WM_SYSKEYDOWN)) InputActivityRecorder.noteInput()
                 // While the window is listening for a chord the claim stands down entirely — including for
                 // the chords we own, which are precisely the ones the user needs to be able to press there.
                 if (nCode >= 0 && !capturing) {
@@ -200,6 +206,18 @@ internal object GlobalHotkeyClaimant {
                     wParam,
                     LPARAM(Pointer.nativeValue(lParam.pointer)),
                 )
+            }
+        }
+
+    /**
+     * User rule 2026-10-15: the mouse's actions — a click, the wheel, a move — recorded to the second, like a key
+     * ([InputActivityRecorder]). Never swallows anything. Held for the process's lifetime, as [hookProc] is.
+     */
+    private val mouseProc =
+        object : LowLevelMouseProc {
+            override fun callback(nCode: Int, wParam: WPARAM, lParam: MSLLHOOKSTRUCT): LRESULT {
+                if (nCode >= 0) InputActivityRecorder.noteInput()
+                return User32.INSTANCE.CallNextHookEx(null, nCode, wParam, LPARAM(Pointer.nativeValue(lParam.pointer)))
             }
         }
 
@@ -260,9 +278,15 @@ internal object GlobalHotkeyClaimant {
 
     private fun runMessageLoop() {
         var hook: HHOOK? = null
+        var mouseHook: HHOOK? = null
         try {
             val user32 = User32.INSTANCE
             hook = installKeyboardHook(user32)
+            // On the same loop: a low-level hook is called on the thread that installed it, through its message pump.
+            mouseHook = runCatching {
+                user32.SetWindowsHookEx(WH_MOUSE_LL, mouseProc, Kernel32.INSTANCE.GetModuleHandle(null), 0)
+            }.getOrNull()
+            if (mouseHook == null) Diagnostics.log("input activity: mouse hook refused; only keys are recorded")
             loopThreadId = Kernel32.INSTANCE.GetCurrentThreadId()
             val registered = applyHotkeyRegistrations(user32)
             val claim = when {
@@ -274,7 +298,8 @@ internal object GlobalHotkeyClaimant {
             Diagnostics.log(
                 "global hotkeys: claim=$claim, hook=${hook != null}, registered=$registered of ${chords.size}",
             )
-            if (claim == GlobalHotkeyClaim.Unavailable) return
+            // The loop also carries the mouse hook: it stays for it alone.
+            if (claim == GlobalHotkeyClaim.Unavailable && mouseHook == null) return
 
             val msg = MSG()
             while (true) {
@@ -302,6 +327,7 @@ internal object GlobalHotkeyClaimant {
             loopThreadId = 0
             runCatching {
                 hook?.let { User32.INSTANCE.UnhookWindowsHookEx(it) }
+                mouseHook?.let { User32.INSTANCE.UnhookWindowsHookEx(it) }
                 registeredIds.forEach { User32.INSTANCE.UnregisterHotKey(null, it) }
             }
         }
