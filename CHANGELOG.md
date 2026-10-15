@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A right-click in the type list no longer opens the menu of the result under it — 2026-10-15
+
+Anomaly: "I right-clicked on the element type drop-down menu in the Search window, and it opened a menu as if I
+right-clicked on the element in the result list." A right-click on a kind picks it alone and closes the list — on the
+PRESS. The list is a window of its own on the desktop, so it vanished under the held button and the rest of the click
+reached the result row beneath it, which Compose completed with a press and the row answered with its menu. The pick
+now consumes the whole click and acts on the release (`CheckBoxDropDown`); `popups.md` states the rule for every menu
+entry. `DropDownRightClickTest` (headless, so it pins the order — nothing before the release — not the second window).
+
 ### A period can be announced ahead of time; the hour before bed 20 and 1 minute ahead — 2026-10-15
 
 The user: "Add configurations in the restrictive periods that allow the user to get a notification at x time before

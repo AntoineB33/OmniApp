@@ -263,6 +263,13 @@ means.
     it — no `diagnostics.log` line, no event; the `hs_err_pid*.log` is in the folder the app was started from. A dev
     run can still try a layer type: `-Pcompose.layers.type=…` (`desktopApp/build.gradle.kts`).
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
+- **A menu entry acts on the RELEASE, never on the press — the right button's included** (anomaly 2026-10-15: *"I
+  right-clicked on the element type drop-down menu in the Search window, and it opened a menu as if I right-clicked on
+  the element in the result list"*; `CheckBoxDropDown`'s right-click pick, `DropDownRightClickTest`). On the desktop a
+  menu is a window of its own (`AppDropdownMenu.jvm.kt`): an entry that closes it on the press makes it vanish under a
+  button still held, and the rest of the click — a move, the release — goes to the app's window beneath, where Compose
+  completes it with the press it never saw and the row there answers it. So an entry consumes the whole click, press to
+  release, and acts at the release, as material's own `onClick` does.
 - **The calendar's right-click menu is a menu like the others: non-focusable, dismissed by the root observer** (user
   rule 2026-10-11: *"When the user right-clicks on the calendar, then right-clicks elsewhere, it must open the
   right-click menu. Right now, it simply closes the previous one."*). It was the one right-click menu left focusable,

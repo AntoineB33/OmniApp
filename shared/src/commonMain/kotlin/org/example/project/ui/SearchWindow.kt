@@ -1589,6 +1589,7 @@ internal fun <T> CheckBoxDropDown(
                 onSelectAll = { onChange(options.toSet()) },
                 onDeselectAll = { onChange(emptySet()) },
             )
+            val latestOnChange by rememberUpdatedState(onChange)
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(label(option)) },
@@ -1598,14 +1599,29 @@ internal fun <T> CheckBoxDropDown(
                     // a list that otherwise stays open to be ticked in turn.
                     modifier =
                         if (!soloOnRightClick) Modifier
-                        else Modifier.onPointerEventCompat(
-                            androidx.compose.ui.input.pointer.PointerEventType.Press,
-                            androidx.compose.ui.input.pointer.PointerEventPass.Initial,
-                        ) { event ->
-                            if (event.buttons.isSecondaryPressed) {
-                                event.changes.forEach { it.consume() }
-                                onChange(setOf(option))
-                                open = false
+                        else Modifier.pointerInput(option) {
+                            // On the RELEASE, the whole click consumed here (anomaly 2026-10-15: *"I right-clicked on
+                            // the element type drop-down menu in the Search window, and it opened a menu as if I
+                            // right-clicked on the element in the result list"*). On the desktop the list is a window
+                            // of its own: closed on the press, it vanished under a button still held, and the rest of
+                            // the click reached the result row under it — which Compose completed with the press it
+                            // had not seen, and the row opened its menu.
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val press = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                    if (press.type != androidx.compose.ui.input.pointer.PointerEventType.Press ||
+                                        !press.buttons.isSecondaryPressed
+                                    ) {
+                                        continue
+                                    }
+                                    press.changes.forEach { it.consume() }
+                                    do {
+                                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                        event.changes.forEach { it.consume() }
+                                    } while (event.changes.any { it.pressed })
+                                    latestOnChange(setOf(option))
+                                    open = false
+                                }
                             }
                         },
                 )
