@@ -1739,6 +1739,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 else -> null
             }
         }
+        // User rule 2026-10-15: the notifications window and the calendar of its notifications take the focus together,
+        // the one asked for first ([WindowFrameHost.focusPartnerOf]). The link is the bar's ([tabParentOf]).
+        windowFrames.focusPartnerOf = { frameId ->
+            when (lateralWindowOf(frameId)) {
+                FloatingWindow.Calendar ->
+                    windowFrames.tabParentOf(frameId)?.takeIf { SearchDomain.isNotificationsWindow(searchConfigOf(it)) }
+                FloatingWindow.Search ->
+                    if (!SearchDomain.isNotificationsWindow(searchConfigOf(frameId))) null
+                    else windowFrames.registrations.firstOrNull {
+                        lateralWindowOf(it.id) == FloatingWindow.Calendar && windowFrames.tabParentOf(it.id) == frameId
+                    }?.id
+                else -> null
+            }
+        }
         LaunchedEffect(appFocused, lastNotificationAtMillis) {
             if (!appFocused && unfocusedSinceMillis == null) unfocusedSinceMillis = clock.nowMillis()
             val since = unfocusedSinceMillis

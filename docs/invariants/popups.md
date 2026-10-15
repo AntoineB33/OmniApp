@@ -720,6 +720,14 @@ It lives in the host because the host already sees the only two events that deci
   launch and follows the window bar, until the hand moves, resizes, fills or maximizes it. Sized once off the area
   measured at launch, the app window's restored 800 × 600 before the maximize, the pair stayed a quarter too short and
   away from both edges. The hold is in memory only; the place it fitted is kept as the window's geometry.
+- **The notif window and its calendar take the focus TOGETHER, the one asked for first** (user rule 2026-10-15: *"When
+  the 'unfocused notif' window gets the focus, the linked calendar window must also get the focus, but in second
+  position. The opposite is also true."*; `WindowFrameHost.focusPartnerOf`, answered by `App` off the bar's link
+  `tabParentOf`; `TabSelectionTest`). In `WindowFrameHost.focus` — the one place the focus moves, so a press, a tab, a
+  menu button, `Ctrl+Tab` and `Ctrl+Page Up` all do it — the partner goes just under the focused window in the stack and
+  second in the recent order, so closing one hands the focus to the other. No move of the focus of its own (no
+  WindowNav unit). **A reduced partner comes back** (user rule 2026-10-15: *"If one of them got minimized, it must
+  open when one of them gets the focus."*).
 - **The calendar under an "unfocused notif" window opens on its notifications, first to last, the now-line included**
   (user rule 2026-10-14; `CalendarNotifications.openingSpan`, `calendarSpanView`, `CalendarFloatingWindow(openingSpan)`):
   instead of the ordinary hour and a half around the line, and with "Lock to now" OFF, which would pull the view back

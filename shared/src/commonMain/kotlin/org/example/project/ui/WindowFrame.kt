@@ -744,6 +744,14 @@ class WindowFrameHost {
     var tabParentOf: (String) -> String? = { null }
 
     /**
+     * User rule 2026-10-15: *"When the 'unfocused notif' window gets the focus, the linked calendar window must also get
+     * the focus, but in second position. The opposite is also true."* — the window that comes with [id] whenever [id]
+     * takes the focus ([focus]): `App` answers it for the notifications window and the calendar of its notifications,
+     * each the other's. Null for a window that stands alone.
+     */
+    var focusPartnerOf: (String) -> String? = { null }
+
+    /**
      * User rule 2026-10-06: **a window that closes takes the windows opened from it with it** ([tabParentOf]) — a
      * Search window its configurations windows, the calendar the Search windows its right-click opened. Called by
      * `App` as [id] closes, BEFORE the close hands the focus on: [id] and the windows opened from it are all
@@ -854,6 +862,17 @@ class WindowFrameHost {
         recent.remove(id)
         recent.add(0, id)
         raise(id)
+        // Its partner in SECOND position — just under it in the stack and the next one in the recent order (what a close
+        // hands the focus to) — with no move of the focus of its own. Reduced, it comes back (user rule 2026-10-15: "If
+        // one of them got minimized, it must open when one of them gets the focus").
+        focusPartnerOf(id)?.takeIf { it != id }?.let { partner -> entries.firstOrNull { it.id == partner } }?.let { entry ->
+            val partner = entry.id
+            entry.state.restore()
+            recent.remove(partner)
+            recent.add(1, partner)
+            stack.remove(partner)
+            stack.add(stack.indexOf(id), partner)
+        }
         // The focused window's tab is selected (user rule 2026-10-01). Already among the selected tabs, the selection
         // stands — "open selection" focuses one of its own windows; outside it, the tab is selected alone, the way a
         // plain click on it would.

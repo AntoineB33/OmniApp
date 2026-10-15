@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import org.example.project.ui.ClickSelection
 import org.example.project.ui.WindowFrameHost
 import org.example.project.ui.WindowFrameState
@@ -252,6 +253,47 @@ class TabSelectionTest {
         assertEquals(4, saves, "each change written down, and only a change")
         host.rename("Search#2", "", ownTitle = "all timers and alarms")
         assertEquals(4, saves)
+    }
+
+    /**
+     * User rule 2026-10-15: *"When the 'unfocused notif' window gets the focus, the linked calendar window must also get
+     * the focus, but in second position. The opposite is also true."*
+     */
+    @Test
+    fun the_notif_window_and_its_calendar_take_the_focus_together_the_one_asked_for_first() {
+        val host = WindowFrameHost()
+        val pair = mapOf("Search#2" to "Calendar#2", "Calendar#2" to "Search#2")
+        host.focusPartnerOf = { pair[it] }
+        val focusMoves = mutableListOf<String>()
+        host.onFocus = { focusMoves += it }
+        for (id in listOf("Calendar", "Search#2", "Calendar#2", "Alarms")) {
+            host.register(WindowFrameHost.Registration(id, id, WindowFrameState(id), false, null) {})
+        }
+        host.focus("Alarms")
+        host.focus("Search#2")
+        assertEquals(listOf("Calendar", "Alarms", "Calendar#2", "Search#2"), host.stackOrder, "its calendar just under it")
+        assertEquals("Calendar#2", host.focusHeirOf("Search#2"), "and second in the recent order: a close hands it the focus")
+        // The other way round.
+        host.focus("Calendar")
+        host.focus("Calendar#2")
+        assertEquals(listOf("Alarms", "Calendar", "Search#2", "Calendar#2"), host.stackOrder)
+        assertEquals("Search#2", host.focusHeirOf("Calendar#2"))
+        // The partner records no move of the focus of its own.
+        assertEquals(listOf("Alarms", "Search#2", "Calendar", "Calendar#2"), focusMoves)
+        // User rule 2026-10-15: "If one of them got minimized, it must open when one of them gets the focus."
+        val calendar = host.registrations.first { it.id == "Calendar#2" }.state
+        calendar.minimize()
+        host.focus("Alarms")
+        host.focus("Search#2")
+        assertFalse(calendar.minimized, "the reduced calendar came back")
+        assertEquals(listOf("Calendar", "Alarms", "Calendar#2", "Search#2"), host.stackOrder)
+        val notif = host.registrations.first { it.id == "Search#2" }.state
+        notif.minimize()
+        host.focus("Calendar#2")
+        assertFalse(notif.minimized, "and the other way round")
+        // A window with no partner is focused as ever.
+        host.focus("Calendar")
+        assertEquals("Calendar", host.stackOrder.last())
     }
 
     @Test

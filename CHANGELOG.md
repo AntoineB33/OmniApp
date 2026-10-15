@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The notif window and its calendar come forward together — 2026-10-15
+
+The user: "When the 'unfocused notif' window gets the focus, the linked calendar window must also get the focus, but in
+second position. The opposite is also true." `WindowFrameHost.focus` now puts the focused window's partner
+(`focusPartnerOf`: the notifications window ↔ the calendar of its notifications, `App` answering it off the bar's
+`tabParentOf`) just under it in the stack and second in the recent order — so a close of one focuses the other — with
+no focus move of its own. A reduced partner comes back (the user, next: "If one of them got minimized, it must open
+when one of them gets the focus."). `TabSelectionTest`.
+
 ### Ctrl+W (and the other window chords) reach a focused window that has no field focused — 2026-10-15
 
 Anomaly: Ctrl+W did nothing in the "unfocused notif" window. The release DB's history: Ctrl+W closed the calendar under
