@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The presence beat every 60 s instead of 10 s — 2026-10-16
+
+User: *"keep it but beat less often"*. On Windows and Android a lock reports itself at once (e1); the beat is only the
+backstop for a lock report that failed, an app that died unlocked or a device that lost power. Migration
+`20261016000000` moves `t_a`'s server default and `tick_seconds_for`'s fallback to 60 s and raises every
+`app_config` row below 60 s; the client's `DeviceHeartbeatPublisher.DEFAULT_TICK_SECONDS` is 60 too, and the new
+`PresenceTickDefaultTest` fails when the two differ. `ServerQuotaTest`: `publish_presence` 421 → 71 requests in the
+heavy hour, egress 509 → 418 MB a month. Cost on the backstop path: the walk-away is estimated 30 s after the last
+beat instead of 5 s, detection takes up to 3 min instead of 80 s, and a break coming due within 60 s of the walk-away
+counts as overdue. Needs `deploy-supabase.bat` and a client rebuild.
+
 ### The calendar is handed the rules over an interval: a chain of pieces read ahead of the line — 2026-10-15
 
 The user, at the zoom ceiling: the line walked into the 15-min break and *"after some time it remembered that the 15min

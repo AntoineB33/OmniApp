@@ -698,11 +698,11 @@ detection latency delays the arming, never the speaking.
       immediately, so `pause_cue_schedule` gains a row with `pushed_at` within **a second or two**, the cue
       instant is `lock + break_length`, and the phone schedules an OS alarm and **speaks at the break's end**
       — kill the app before the fire instant to prove the OS alarm path.
-- [ ] **Cue fires when everyone is gone — dirty kill (e2), up to ~80 s later.** Repeat, but make the last
+- [ ] **Cue fires when everyone is gone — dirty kill (e2), up to ~3 min later.** Repeat, but make the last
       device die without reporting (`adb shell am force-stop org.example.project`) → detection now waits for
-      the cron: the account must beat older than **`2·t_a`** (20 s at the default `t_a` = 10 s) and be caught
+      the cron: the account must beat older than **`2·t_a`** (120 s at the default `t_a` = 60 s) and be caught
       by the next **`t_b`** pass, which `pause-cue-setup.sql` schedules at `'* * * * *'` — **one minute**. So
-      the push is armed up to **`t_b + 2·t_a` ≈ 80 s** after the walk-away. This is *detection* latency only:
+      the push is armed up to **`t_b + 2·t_a` ≈ 3 min** after the walk-away. This is *detection* latency only:
       the cue instant is `t2 + break_length` with `t2 = max(beat_at) + t_a/2`, so a late tick never moves when
       the phone speaks — only how late it learns of it. Verify in `supabase functions logs pause-cue-cron`;
       a **force-stopped** app cannot receive FCM until relaunched, so expect it computed and silent (to hear

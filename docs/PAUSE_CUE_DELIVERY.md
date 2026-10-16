@@ -6,7 +6,7 @@ call the user back. Because a backgrounded phone cannot run an in-app timer, the
 push-triggered **OS-scheduled local notification/alarm**, so it fires even when the app is killed.
 
 The delivery chain (ARCHITECTURE.md §8, PRD §15). Two constants name the whole design: **`t_a`** — how often an
-unlocked device writes its presence row (10 s by default, per-account, changeable over HTTP) — and **`t_b`** —
+unlocked device writes its presence row (60 s by default since migration `20261016000000`, 10 s before; per-account, changeable over HTTP) — and **`t_b`** —
 how often the server polls for accounts that stopped (1 min by default).
 
 ```
@@ -418,7 +418,7 @@ time-link, but do the **cue-timing** verification (Testing A) at 1× real time.
   inside that window is cued anyway, and the cron's cancel pass retracts it within one `t_b` — the same backstop
   that has always covered "the user came back before the break ended".
 - **Nothing here runs while the device is locked**, which is the point: the `t_a` tick only ticks on an unlocked,
-  signed-in device, so its battery cost is a ~200-byte HTTPS call every 10 s of *active use* and zero otherwise.
+  signed-in device, so its battery cost is a ~200-byte HTTPS call every 60 s of *active use* and zero otherwise.
   For one phone + one computer that is also well inside the Supabase free plan — DB writes, not Edge
   invocations; e1 is invoked once per idle episode, not once per tick.
 - The app is always connected to an account (core PRD §5), guest accounts included, so this path is live for every launch; only a device that has not managed to create its account yet has it inactive. In that case the in-app look-away/pose cues (which need

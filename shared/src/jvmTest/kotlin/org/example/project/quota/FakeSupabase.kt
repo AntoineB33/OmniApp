@@ -21,6 +21,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
 
 /**
  * `docs/invariants/server-quota.md`: **an in-memory Supabase that counts what the real one would bill.**
@@ -465,7 +466,7 @@ class FakeSupabase(private val clock: () -> Long, val cronLogRetentionMillis: Lo
                     },
                     user,
                 )
-                HttpStatusCode.OK to "10"
+                HttpStatusCode.OK to DeviceHeartbeatPublisher.DEFAULT_TICK_SECONDS.toString()
             }
             "publish_next_break" -> {
                 table("device_break").upsert(JsonObject(args + ("user_id" to JsonPrimitive(user))), user)

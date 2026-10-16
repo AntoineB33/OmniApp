@@ -913,7 +913,7 @@ class SchedulerEngine(
     // for a non-sim clock, whose run is always continuous.
     private fun clockGeneration(): Long = (clock as? SimAppClock)?.reconfigured?.value ?: 0L
 
-    // PRD §15: the presence publisher — this device writes its presence row every `t_a` (10 s by default, set
+    // PRD §15: the presence publisher — this device writes its presence row every `t_a` (60 s by default, set
     // server-side) while signed in + screen-on, carrying its next break window, and on screen-off stops ticking
     // and reports that to the pause-cue Edge Function. Constructed in [start] from the [pauseCue] gateway; null
     // when sync is disabled or on a platform without an injected gateway.

@@ -16,7 +16,7 @@ import org.example.project.scheduler.sync.PresenceState
  * PRD §15 / migrations 20260724000000 + 20260726000000 — the client half of the pause-cue timing model, which
  * runs on **two cadences**:
  *
- *  * from the moment the device is signed in and unlocked it writes its presence row every **`t_a`** (10 s by
+ *  * from the moment the device is signed in and unlocked it writes its presence row every **`t_a`** (60 s by
  *    default), and that row is `{ account, device, time of upsert }` — the same call re-arms the account's
  *    `data_payload_sent` row to `false`;
  *  * `t_a` is **server-owned** — the tick RPC returns the account's current value and the loop adopts it, so
@@ -87,9 +87,10 @@ class PresenceTickTest {
     }
 
     @Test
-    fun the_tick_beats_every_t_a_while_active_and_defaults_to_ten_seconds() = runTest {
-        // No `app_config` row (the RPC returns nothing): the documented 10 s default paces the loop.
-        assertEquals(10, DeviceHeartbeatPublisher.DEFAULT_TICK_SECONDS)
+    fun the_tick_beats_every_t_a_while_active_and_defaults_to_sixty_seconds() = runTest {
+        // No `app_config` row (the RPC returns nothing): the documented 60 s default paces the loop (migration
+        // 20261016000000; it was 10 s).
+        assertEquals(60, DeviceHeartbeatPublisher.DEFAULT_TICK_SECONDS)
         val gateway = FakeGateway()
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
 
@@ -100,22 +101,22 @@ class PresenceTickTest {
         runCurrent()
         assertEquals(1, gateway.beats, "the first beat goes out immediately")
 
-        advanceTimeBy(30_001)
-        assertEquals(4, gateway.beats, "three more beats in 30 s at t_a = 10 s")
+        advanceTimeBy(180_001)
+        assertEquals(4, gateway.beats, "three more beats in 3 min at t_a = 60 s")
     }
 
     @Test
     fun a_server_side_t_a_change_re_paces_the_tick() = runTest {
-        // The account's `t_a` was changed over HTTP to 60 s; the reply to the very first beat carries it.
-        val gateway = FakeGateway(tickSeconds = 60)
+        // The account's `t_a` was changed over HTTP to 300 s; the reply to the very first beat carries it.
+        val gateway = FakeGateway(tickSeconds = 300)
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
         runCurrent()
         assertEquals(1, gateway.beats)
 
-        advanceTimeBy(30_000)
-        assertEquals(1, gateway.beats, "the 10 s default was replaced by the server's 60 s before the first wait")
-        advanceTimeBy(30_001)
+        advanceTimeBy(150_000)
+        assertEquals(1, gateway.beats, "the 60 s default was replaced by the server's 300 s before the first wait")
+        advanceTimeBy(150_001)
         assertEquals(2, gateway.beats)
     }
 
@@ -126,8 +127,8 @@ class PresenceTickTest {
         publisher.setPresence(active)
         runCurrent()
 
-        advanceTimeBy(10_001)
-        assertEquals(2, gateway.beats, "still the 10 s default — not a hot loop")
+        advanceTimeBy(60_001)
+        assertEquals(2, gateway.beats, "still the 60 s default — not a hot loop")
     }
 
     @Test
@@ -136,7 +137,7 @@ class PresenceTickTest {
         val publisher = DeviceHeartbeatPublisher(backgroundScope, gateway).also { it.start() }
         publisher.setPresence(active)
         runCurrent()
-        advanceTimeBy(20_001)
+        advanceTimeBy(120_001)
         val beatsWhileActive = gateway.beats
         assertTrue(beatsWhileActive >= 3)
 
@@ -144,7 +145,7 @@ class PresenceTickTest {
         runCurrent()
         assertEquals(1, gateway.screenOffReports)
 
-        advanceTimeBy(120_000)
+        advanceTimeBy(600_000)
         assertEquals(beatsWhileActive, gateway.beats, "the t_a tick stops while the screen is off")
         assertEquals(1, gateway.screenOffReports, "and the Edge Function is called exactly once")
 
@@ -166,8 +167,8 @@ class PresenceTickTest {
         runCurrent()
         assertEquals(1, gateway.breakWrites.size, "the first window is published immediately")
 
-        // Ten minutes of beating with an unchanged window: sixty beats, still one break write.
-        advanceTimeBy(600_000)
+        // An hour of beating with an unchanged window: sixty beats, still one break write.
+        advanceTimeBy(3_600_000)
         assertTrue(gateway.beats >= 60, "the presence tick kept running")
         publisher.setNextBreak(breakState(fiveMinDue = 5_000L)) // re-published, identical value
         runCurrent()

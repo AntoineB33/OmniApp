@@ -229,7 +229,7 @@ class DeviceHeartbeatPublisher(
 
     companion object {
         /** `t_a` when the account has no `app_config` row (or the server could not be reached yet). */
-        const val DEFAULT_TICK_SECONDS = 10
+        const val DEFAULT_TICK_SECONDS = 60
 
         // The server's own bounds (`app_config.tick_seconds` CHECK); a value outside them is ignored.
         private const val MIN_TICK_SECONDS = 1
