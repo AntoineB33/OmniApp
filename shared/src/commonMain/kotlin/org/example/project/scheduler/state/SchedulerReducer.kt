@@ -562,6 +562,8 @@ object SchedulerReducer {
             is SchedulerIntent.RemovePeriodKind -> settingsUnit(state, "Delete period") { reduceRemovePeriodKind(it, intent.kind) }
             is SchedulerIntent.SetPeriodDrawing -> settingsUnit(state, "Period drawing") { reduceSetPeriodDrawing(it, intent.kind, intent.drawing) }
             is SchedulerIntent.SetPeriodNotices -> settingsUnit(state, "Period notifications") { reduceSetPeriodNotices(it, intent.kind, intent.notices) }
+            is SchedulerIntent.SetPeriodTellsTimeline ->
+                settingsUnit(state, "Period notifications tell the timeline") { reduceSetPeriodTellsTimeline(it, intent.kind, intent.tellsTimeline) }
             is SchedulerIntent.SetPeriodCombinations ->
                 settingsUnit(state, "Period combinations") { reduceSetPeriodCombinations(it, intent.combinations) }
             is SchedulerIntent.ResetPeriodKinds -> settingsUnit(state, "Reset periods") { reduceResetPeriodKinds(it, intent.kinds) }
@@ -3693,7 +3695,7 @@ object SchedulerReducer {
                     window to sleep.copy(skippedWakeEpochDays = keptSkips(sleep.skippedWakeEpochDays, wakeDay))
                 }
                 PeriodKinds.BEFORE_BED -> {
-                    val hour = SchedulerDomain.beforeBedPanels(sleep, from, to, tz).filter { overlap(it) > 0 }.maxByOrNull(::overlap)
+                    val hour = SchedulerDomain.beforeBedPanels(state, from, to, tz).filter { overlap(it) > 0 }.maxByOrNull(::overlap)
                     val wakeDay = hour?.id?.removePrefix(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX)?.toLongOrNull() ?: return state
                     hour to sleep.copy(skippedBeforeBedEpochDays = keptSkips(sleep.skippedBeforeBedEpochDays, wakeDay))
                 }
@@ -5765,6 +5767,15 @@ private fun reduceSetPeriodNotices(state: SchedulerState, kindRaw: String, notic
     val normalized = PeriodKinds.normalizedNotices(notices)
     if (current.notices == normalized) return state
     return state.withPeriodKindStyle(kind, current.copy(notices = normalized))
+}
+
+/** Whether a notification about a period of [kindRaw] tells the timeline (user rule 2026-10-16); the same is a no-op. */
+private fun reduceSetPeriodTellsTimeline(state: SchedulerState, kindRaw: String, on: Boolean): SchedulerState {
+    val kind = PeriodKinds.normalize(kindRaw)
+    if (kind !in state.allPeriodKinds) return state
+    val current = state.periodKindConfig.style(kind)
+    if (current.tellsTimeline == on) return state
+    return state.withPeriodKindStyle(kind, current.copy(tellsTimeline = on))
 }
 
 /** Stores [style] for [kind] as an override — or drops the override when [style] is the kind's default. */

@@ -36,7 +36,8 @@ class RuleProgram private constructor(
     /**
      * User rule 2026-10-15: *"a notification at x time before the period"* — due at [atMillis], [leadMillis] before a
      * period of [kind] titled [title] begins at [periodStartMillis]. [id] names it for the once-only de-dupe: the kind,
-     * the start and the lead, which a re-plan that keeps the period keeps.
+     * the start and the lead, which a re-plan that keeps the period keeps. [periodEndMillis] is where the stretch of
+     * the kind ends (what a notice telling the timeline lists up to, [PeriodKindStyle.tellsTimeline]).
      */
     data class PeriodNotice(
         val atMillis: Long,
@@ -44,6 +45,7 @@ class RuleProgram private constructor(
         val title: String,
         val periodStartMillis: Long,
         val leadMillis: Long,
+        val periodEndMillis: Long = periodStartMillis,
     ) {
         val id: String get() = "$kind@$periodStartMillis-$leadMillis"
     }
@@ -112,14 +114,18 @@ class RuleProgram private constructor(
             val out = ArrayList<PeriodNotice>()
             for ((kind, periods) in byKind) {
                 val leads = config.notices(kind)
-                var runEnd = Long.MIN_VALUE
+                // The stretches: (start, end, title of the period that opens it).
+                val runs = ArrayList<Triple<Long, Long, String>>()
                 for (period in periods.sortedBy { it.startEpochMillis }) {
-                    val start = period.startEpochMillis
-                    if (start > runEnd) {
-                        val title = period.title.ifBlank { PeriodKinds.periodTitle(kind) }
-                        for (lead in leads) out += PeriodNotice(start - lead, kind, title, start, lead)
+                    val last = runs.lastOrNull()
+                    if (last == null || period.startEpochMillis > last.second) {
+                        runs += Triple(period.startEpochMillis, period.endEpochMillis, period.title.ifBlank { PeriodKinds.periodTitle(kind) })
+                    } else if (period.endEpochMillis > last.second) {
+                        runs[runs.size - 1] = last.copy(second = period.endEpochMillis)
                     }
-                    runEnd = maxOf(runEnd, period.endEpochMillis)
+                }
+                for ((start, end, title) in runs) {
+                    for (lead in leads) out += PeriodNotice(start - lead, kind, title, start, lead, end)
                 }
             }
             return out.sortedWith(compareBy({ it.atMillis }, { -it.leadMillis }))

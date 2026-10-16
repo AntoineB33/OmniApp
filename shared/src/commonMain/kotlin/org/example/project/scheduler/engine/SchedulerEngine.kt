@@ -4148,12 +4148,7 @@ class SchedulerEngine(
                                             // break runs out into — the two halves of one funnel call.
                                             notifyUser(
                                                 org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK,
-                                                SchedulerDomain.screenBreakStartNotificationMessage(
-                                                    panels = st.panels,
-                                                    title = title,
-                                                    startMillis = start,
-                                                    endMillis = end,
-                                                ),
+                                                screenBreakNotificationBody(st, title, start, end),
                                                 VoiceCue.LookAway,
                                                 target = NotificationTarget.Calendar,
                                             )
@@ -4200,12 +4195,7 @@ class SchedulerEngine(
                                             (st.screenBreaks.firstOrNull { it.title == title }?.durationMillis ?: 0L)
                                         notifyUser(
                                             org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK,
-                                            SchedulerDomain.screenBreakStartNotificationMessage(
-                                                panels = st.panels,
-                                                title = title,
-                                                startMillis = due,
-                                                endMillis = poseEnd,
-                                            ),
+                                            screenBreakNotificationBody(st, title, due, poseEnd),
                                             spoken = SpokenMessages.screenBreak(
                                                 title,
                                                 SchedulerDomain.screenBreakFollowOn(st.panels, due, poseEnd),
@@ -4287,7 +4277,13 @@ class SchedulerEngine(
                                         val lead = crossing.endInstant - due
                                         notifyUser(
                                             crossing.title,
-                                            SchedulerDomain.periodNoticeMessage(lead, crossing.endInstant, tz),
+                                            SchedulerDomain.withTimelineLines(
+                                                SchedulerDomain.periodNoticeMessage(lead, crossing.endInstant, tz),
+                                                // User rule 2026-10-16: what the timeline holds over the period and after.
+                                                SchedulerDomain.notificationTimelineLines(
+                                                    st, crossing.periodKind, crossing.endInstant, crossing.periodEndMillis, tz,
+                                                ),
+                                            ),
                                             spoken = SpokenMessages.periodNotice(crossing.title, lead),
                                             target = NotificationTarget.Calendar,
                                         )
@@ -4369,6 +4365,19 @@ class SchedulerEngine(
      * period is still a crossable boundary — so [launchCueSweep] swallows look-away starts for as long as
      * [manualLookAwayJob] is active.
      */
+    /**
+     * The body of a screen break's start notification: what it runs out into
+     * ([SchedulerDomain.screenBreakStartNotificationMessage]) and, where the break's kind asks for it (user rule
+     * 2026-10-16, on by default for the 5 and 15 minute breaks), the timeline over the break and right after it.
+     */
+    private fun screenBreakNotificationBody(st: SchedulerState, title: String, startMillis: Long, endMillis: Long): String =
+        SchedulerDomain.withTimelineLines(
+            SchedulerDomain.screenBreakStartNotificationMessage(st.panels, title, startMillis, endMillis),
+            SchedulerDomain.notificationTimelineLines(
+                st, SchedulerDomain.screenBreakKindOf(st.screenBreaks, title), startMillis, endMillis, tz,
+            ),
+        )
+
     fun restartLookAway() {
         val st = vm.state.value
         val lookAway = lookAwayBreak(st) ?: return
@@ -4384,12 +4393,7 @@ class SchedulerEngine(
             conductBreak(startedAt)
             notifyUser(
                 org.example.project.scheduler.state.NotificationTitles.SCREEN_BREAK,
-                SchedulerDomain.screenBreakStartNotificationMessage(
-                    panels = st.panels,
-                    title = lookAway.title,
-                    startMillis = startedAt,
-                    endMillis = startedAt + lookAway.durationMillis,
-                ),
+                screenBreakNotificationBody(st, lookAway.title, startedAt, startedAt + lookAway.durationMillis),
                 VoiceCue.LookAway,
                 target = NotificationTarget.Calendar,
             )

@@ -288,6 +288,13 @@ asked to be told about, so it is a reminder's, not a break's: the alarms' latene
 lock gate, any `t_p` mode; de-duped on the notice's id (kind, period start, lead). `scheduler.md` § *A KIND may ask to
 be told of its periods AHEAD*.
 
+**A period's notifications may TELL THE TIMELINE** (user rule 2026-10-16, `PeriodKindStyle.tellsTimeline`, on by
+default for the 5 and 15 minute breaks): the break's start notification and the kind's notices append, one line each,
+what the timeline holds over the period and the first thing after it — "at 16h11, task A". One function,
+`SchedulerDomain.periodTimelineLines` (asked through `notificationTimelineLines`, which reads the setting), over
+`state.panels` with repeats expanded; never a screen break, an inactivity stretch or the period itself. The voice says
+only the break.
+
 **The sweep also carries the §14 reminder tags and the wind-down** (the rule cursor's crossings,
 `RuleProgram.Cursor.moveTo`), for the same reason: a leap that crosses a reminder and a break must say them in the order
 they were due. Their occurrence source is the tags themselves; they de-dupe on the tag's stable id —

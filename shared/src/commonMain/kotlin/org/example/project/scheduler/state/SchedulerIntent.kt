@@ -565,6 +565,15 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
+     * User rule 2026-10-16: whether a notification about a period of [kind] tells everything the timeline holds during
+     * the period and right after (`PeriodKindStyle.tellsTimeline`). One History Unit (`SettingsDelta`).
+     */
+    data class SetPeriodTellsTimeline(
+        val kind: String,
+        val tellsTimeline: Boolean,
+    ) : SchedulerIntent
+
+    /**
      * PRD §7 *Search*, the added elements' **Reset** on the default periods (user rule 2026-10-01): every kind of
      * [kinds] the app ships (`PeriodKinds.isUserDefined` false — named by its id, the fixed name) goes back to how it
      * ships: its drawing ([SetPeriodDrawing]) and the combination rules that name it

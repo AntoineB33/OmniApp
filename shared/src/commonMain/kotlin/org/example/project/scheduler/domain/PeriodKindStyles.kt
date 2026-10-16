@@ -297,6 +297,14 @@ data class PeriodKindStyle(
      * the user's order ([PeriodKinds.normalizedNotices]). Empty: none. The kind's default is [PeriodKinds.defaultStyle]'s.
      */
     val notices: List<Long> = emptyList(),
+    /**
+     * User rule 2026-10-16: *"tell if a notification must tell everything there is in the timeline during this period
+     * and right after"* — every notification about a period of the kind (its [notices], and the start cue of a screen
+     * break of the kind) lists what the timeline holds over the period and what follows it: "at 16h11, task A"
+     * ([SchedulerDomain.periodTimelineLines]). On by default for the 5 and 15 minute screen breaks
+     * ([PeriodKinds.defaultStyle]).
+     */
+    val tellsTimeline: Boolean = false,
 )
 
 /**
@@ -366,6 +374,9 @@ class PeriodKindConfig(
 
     /** How long before each period of [kind] the user is told it is coming ([PeriodKindStyle.notices]). */
     fun notices(kind: String): List<Long> = style(kind).notices
+
+    /** Whether a notification about a period of [kind] lists the timeline over it and after it ([PeriodKindStyle.tellsTimeline]). */
+    fun tellsTimeline(kind: String): Boolean = style(kind).tellsTimeline
 
     /**
      * **Every kind in force wherever a period of [kind] is** — [kind] itself first, then what the rules its period

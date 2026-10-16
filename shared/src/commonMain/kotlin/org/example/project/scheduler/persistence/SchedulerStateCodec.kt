@@ -673,7 +673,7 @@ object SchedulerStateCodec {
             // one setting has exactly one encoding. `folded` says the kind's companions are in the rules below.
             periodKindStyles =
                 periodKindStyles.entries.sortedBy { it.key }.map { (kind, style) ->
-                    PersistedPeriodKindStyle(id = kind, drawing = style.drawing.name, folded = true, notices = style.notices)
+                    style.toPersistedStyle(kind)
                 },
             // The period edit window's combination rules — absent while they are the defaults, so an account that
             // never edited them writes nothing (and one row, a field, once it has: an emptied list included).
@@ -1358,7 +1358,8 @@ object SchedulerStateCodec {
             // Heals what an older or hand-edited payload may hold — a style for a kind the account does not
             // have, a companion naming one, a kind named as its own companion, a drawing this build does not
             // know (the kind's default drawing instead).
-            periodKindStyles = periodKindStyles.toPeriodKindStyles(PeriodKinds.BUILT_IN + decodedPeriodKinds()),
+            // The screen breaks' kinds too: a setting of theirs (their notifications) is the account's like any other.
+            periodKindStyles = periodKindStyles.toPeriodKindStyles(PeriodKinds.BUILT_IN + PeriodKinds.BREAK_KINDS + decodedPeriodKinds()),
             // Heals a rule naming a kind the account does not hold (the kind is dropped from it), and a rule left with
             // nothing on either side (dropped). A payload written before 2026-10-01 has its "always present with it"
             // sets folded into rules.
@@ -2577,15 +2578,22 @@ private sealed interface PersistedDelta {
     data object NoOp : PersistedDelta
 }
 
-/** A kind's drawing and notices as a settings unit writes them: the state's own row shape, its id the kind. */
+/**
+ * A kind's settings as the state's rows and a settings unit write them, its id the kind. [PeriodKindStyle.tellsTimeline]
+ * is written only where it is not the kind's default, so a row written before it existed keeps its bytes.
+ */
 private fun PeriodKindStyle.toPersistedStyle(kind: String): PersistedPeriodKindStyle =
-    PersistedPeriodKindStyle(id = kind, drawing = drawing.name, folded = true, notices = notices)
+    PersistedPeriodKindStyle(
+        id = kind, drawing = drawing.name, folded = true, notices = notices,
+        tellsTimeline = tellsTimeline.takeIf { it != PeriodKinds.defaultStyle(kind).tellsTimeline },
+    )
 
-/** A unit written before the notices existed carries none: the kind's default, as the state's own rows read. */
+/** A unit written before the notices (or the timeline switch) existed carries none: the kind's default, as the state's own rows read. */
 private fun PersistedPeriodKindStyle.toStyle(): PeriodKindStyle =
     PeriodKindStyle(
         PeriodDrawing.entries.firstOrNull { it.name == drawing } ?: PeriodKinds.defaultStyle(id).drawing,
         notices ?: PeriodKinds.defaultStyle(id).notices,
+        tellsTimeline ?: PeriodKinds.defaultStyle(id).tellsTimeline,
     )
 
 /**
@@ -2914,6 +2922,8 @@ private data class PersistedPeriodKindStyle(
      * minute notices on an account that only ever chose its drawing.
      */
     val notices: List<Long>? = null,
+    /** [PeriodKindStyle.tellsTimeline] — written since 2026-10-16, and only where it is not the kind's default. Absent: the default. */
+    val tellsTimeline: Boolean? = null,
 )
 
 /** The drawings four built-in kinds shipped with until 2026-10-02, when their default became [PeriodDrawing.None]. */
@@ -2938,7 +2948,7 @@ private fun List<PersistedPeriodKindStyle>.toPeriodKindStyles(kinds: List<String
         val drawing = stored?.takeUnless { !p.folded && it == LEGACY_DEFAULT_DRAWINGS[kind] } ?: PeriodKinds.defaultStyle(kind).drawing
         // Absent: the kind's default (a row written before the notices existed); present, healed to one value.
         val notices = p.notices?.let(PeriodKinds::normalizedNotices) ?: PeriodKinds.defaultStyle(kind).notices
-        out[kind] = PeriodKindStyle(drawing, notices)
+        out[kind] = PeriodKindStyle(drawing, notices, p.tellsTimeline ?: PeriodKinds.defaultStyle(kind).tellsTimeline)
     }
     // A style at the kind's default (only its old companion set was stored) is no override any more.
     return out.filter { (kind, style) -> PeriodKinds.isUserDefined(kind) || style != PeriodKinds.defaultStyle(kind) }

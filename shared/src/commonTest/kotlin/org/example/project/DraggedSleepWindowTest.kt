@@ -30,7 +30,7 @@ class DraggedSleepWindowTest {
     private fun state() = SchedulerState.empty().copy(sleep = SleepSchedule(), automaticSchedule = false)
 
     private fun windows(s: SchedulerState) = SchedulerDomain.sleepPanels(s.sleep, FROM, FROM + 4 * DAY, tz)
-    private fun hours(s: SchedulerState) = SchedulerDomain.beforeBedPanels(s.sleep, FROM, FROM + 4 * DAY, tz)
+    private fun hours(s: SchedulerState) = SchedulerDomain.beforeBedPanels(s, FROM, FROM + 4 * DAY, tz)
     private fun placed(s: SchedulerState, kind: String) =
         s.panels.filter { it.restrictiveKind == kind && SchedulerDomain.isUserPlaced(it) }
 
@@ -70,6 +70,48 @@ class DraggedSleepWindowTest {
         assertTrue(undone.panels.any { it.id == night.id }, "and puts the fill's panel back")
         val back = SchedulerReducer.reduce(undone, SchedulerIntent.Undo)
         assertEquals(windows(s0), windows(back), "the second gives the night back to the schedule")
+    }
+
+    /**
+     * Anomaly 2026-10-16: *"I dragged the start edge of a sleep period to later, and instead of the 1h before bed period
+     * getting dragged as well, it simply disappeared."* The hour comes with the window wherever the window stands.
+     */
+    @Test
+    fun the_hour_before_bed_follows_a_dragged_sleep_window() {
+        val s0 = state()
+        val night = windows(s0)[1]
+        val hour = hours(s0).single { it.endEpochMillis == night.startEpochMillis }
+        // The start edge dragged two hours later: the window is shorter, the end where it was.
+        val s1 =
+            SchedulerReducer.reduce(
+                s0,
+                SchedulerIntent.PlaceDerivedPeriod(
+                    PeriodKinds.SLEEP, night.startEpochMillis, night.endEpochMillis, night.startEpochMillis + 2 * HOUR, night.endEpochMillis,
+                ),
+            )
+        val moved = hours(s1).single { it.id == hour.id }
+        assertEquals(night.startEpochMillis + 2 * HOUR - HOUR to night.startEpochMillis + 2 * HOUR, moved.startEpochMillis to moved.endEpochMillis)
+        assertEquals(hours(s0).size, hours(s1).size, "no hour vanished, none was added")
+
+        // Dragged again (now the user's period), the hour still follows.
+        val period = placed(s1, PeriodKinds.SLEEP).single()
+        val s2 =
+            SchedulerReducer.reduce(
+                s1,
+                SchedulerIntent.UpdateTaskPanel(
+                    period.id, null, period.title, period.startEpochMillis - 3 * HOUR, period.endEpochMillis, period.pins,
+                ),
+            )
+        assertEquals(period.startEpochMillis - 3 * HOUR, hours(s2).single { it.id == hour.id }.endEpochMillis)
+
+        // And it can itself be dragged away from the moved window, like any hour before bed.
+        val s3 = drag(s2, PeriodKinds.BEFORE_BED, hours(s2).single { it.id == hour.id }, -HOUR)
+        assertFalse(hours(s3).any { it.id == hour.id })
+        assertEquals(1, placed(s3, PeriodKinds.BEFORE_BED).size)
+
+        // Removing the moved window takes its hour with it: the night has no window left.
+        val s4 = SchedulerReducer.reduce(s1, SchedulerIntent.RemoveTaskPanel(period.id))
+        assertFalse(hours(s4).any { it.id == hour.id })
     }
 
     @Test

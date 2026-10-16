@@ -2530,17 +2530,41 @@ object SchedulerDomain {
      * through the wind-down, and there is nothing else anywhere that says so. The panel carries the KIND and
      * no legacy flag — it is not an `inactivity` period wearing a different name — and the calendar draws it
      * as the empty orange-outlined box every period a repeating rule lays is drawn as.
+     *
+     * **A night whose Sleep window was dragged keeps its hour, before the window where it now stands** (anomaly
+     * 2026-10-16: dragging a window's start later made the hour vanish instead of following it). [movedWindowStarts]
+     * maps such a night's wake day to the start of the period the hand made of its window ([movedSleepWindowStarts]);
+     * the hour keeps the night's id, so it is dragged away from the moved window exactly as from a scheduled one.
      */
     fun beforeBedPanels(
         sleep: SleepSchedule?,
         fromMillis: Long,
         toMillis: Long,
         timeZone: TimeZone,
+        movedWindowStarts: Map<Long, Long> = emptyMap(),
     ): List<TaskPanel> {
         // Its length is the schedule's ([beforeBedMillis], user rule 2026-10-09); a schedule that asks for none has none.
         val length = beforeBedMillis(sleep)
         if (toMillis <= fromMillis || length <= 0L) return emptyList()
-        return sleepPanels(sleep, fromMillis, toMillis + length, timeZone).mapNotNull { window ->
+        val moved =
+            movedWindowStarts.mapNotNull { (day, bedtime) ->
+                val start = bedtime - length
+                if (sleep == null || day !in sleep.skippedWakeEpochDays || day in sleep.skippedBeforeBedEpochDays ||
+                    bedtime <= fromMillis || start >= toMillis
+                ) {
+                    null
+                } else {
+                    TaskPanel(
+                        id = BEFORE_BED_PANEL_ID_PREFIX + day,
+                        taskId = null,
+                        title = BEFORE_BED_PANEL_TITLE,
+                        startEpochMillis = start,
+                        endEpochMillis = bedtime,
+                        periodKind = PeriodKinds.BEFORE_BED,
+                    )
+                }
+            }
+        val scheduled = sleepPanels(sleep, fromMillis, toMillis + length, timeZone).mapNotNull { window ->
             val start = window.startEpochMillis - length
             val end = window.startEpochMillis
             val dragged = window.id.removePrefix("sleep/").toLongOrNull() in sleep?.skippedBeforeBedEpochDays.orEmpty()
@@ -2557,7 +2581,32 @@ object SchedulerDomain {
                 )
             }
         }
+        return if (moved.isEmpty()) scheduled else (moved + scheduled).sortedBy { it.startEpochMillis }
     }
+
+    /** [beforeBedPanels] of [state]'s schedule, the nights whose window was dragged included. */
+    fun beforeBedPanels(state: SchedulerState, fromMillis: Long, toMillis: Long, timeZone: TimeZone): List<TaskPanel> =
+        beforeBedPanels(state.sleep, fromMillis, toMillis, timeZone, movedSleepWindowStarts(state))
+
+    /**
+     * The nights whose Sleep window the hand moved out of the schedule, by wake day, to where the period it became
+     * starts now (its earliest piece, [TaskPanel.patternOrigin] `sleep/<wake day>`). Empty while no night was dragged.
+     */
+    fun movedSleepWindowStarts(state: SchedulerState): Map<Long, Long> {
+        val skipped = state.sleep?.skippedWakeEpochDays.orEmpty()
+        if (skipped.isEmpty()) return emptyMap()
+        val out = HashMap<Long, Long>()
+        for (p in state.panels) {
+            if (!p.patternOrigin.startsWith(SLEEP_ORIGIN_PREFIX) || p.restrictiveKind != PeriodKinds.SLEEP) continue
+            val day = p.patternOrigin.removePrefix(SLEEP_ORIGIN_PREFIX).toLongOrNull() ?: continue
+            if (day !in skipped) continue
+            out[day] = minOf(out[day] ?: Long.MAX_VALUE, p.startEpochMillis)
+        }
+        return out
+    }
+
+    /** The id prefix of a Sleep schedule's night ([sleepPanels]), as a moved window's [TaskPanel.patternOrigin] names it. */
+    private const val SLEEP_ORIGIN_PREFIX: String = "sleep/"
 
     /**
      * PRD §15: a screen break that **happened** — the object the "what serves a break" rules are written
@@ -3775,7 +3824,7 @@ object SchedulerDomain {
                 // The user's Sleep schedule, so `manual` ([isUserStated]: orange).
                 RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, PeriodKinds.SLEEP, SLEEP_PANEL_TITLE, manual = true)
             } +
-                beforeBedPanels(state.sleep, fromMillis, toMillis, timeZone).map {
+                beforeBedPanels(state, fromMillis, toMillis, timeZone).map {
                     RestrictivePeriod(it.startEpochMillis, it.endEpochMillis, it.restrictiveKind, it.title, manual = true)
                 }
         return own + companionPeriods(own, state.periodKindConfig)
@@ -4536,7 +4585,8 @@ object SchedulerDomain {
      * **tag's panel id**, which is how the engine finds the reminder's own alert settings (PRD §11) and how it
      * de-dupes — the id is stable across a regeneration of the tags while the instant of a reminder with no
      * time of day is not. A [CueKind.PeriodNotice] carries [RuleProgram.PeriodNotice.id], its [title] is the
-     * period's and its [endInstant] the period's START. Empty for the break cues, which are named by their title.
+     * period's and its [endInstant] the period's START, its [periodKind] and [periodEndMillis] the period's kind and
+     * end. Empty for the break cues, which are named by their title.
      */
     data class CueCrossing(
         val instant: Long,
@@ -4544,6 +4594,8 @@ object SchedulerDomain {
         val title: String,
         val endInstant: Long,
         val sourceId: String = "",
+        val periodKind: String = "",
+        val periodEndMillis: Long = endInstant,
     )
 
     /** PRD §14: the reminder tags among [panels] that are still to be announced — unchecked chore tags. */
@@ -4653,7 +4705,10 @@ object SchedulerDomain {
         // Not a screen break: unaffected by the mode, like the wind-down and the reminders.
         for (n in periodNotices) {
             if (n.atMillis in fromMillis..toMillis) {
-                out += CueCrossing(n.atMillis, CueKind.PeriodNotice, n.title, n.periodStartMillis, sourceId = n.id)
+                out += CueCrossing(
+                    n.atMillis, CueKind.PeriodNotice, n.title, n.periodStartMillis, sourceId = n.id,
+                    periodKind = n.kind, periodEndMillis = n.periodEndMillis,
+                )
             }
         }
         return out.sortedWith(compareBy({ it.instant }, { it.kind.ordinal }))
@@ -4668,6 +4723,90 @@ object SchedulerDomain {
         val clock = at.hour.toString().padStart(2, '0') + ":" + at.minute.toString().padStart(2, '0')
         return "Starts in " + SearchDomain.lengthText(leadMillis) + ", at " + clock
     }
+
+    /**
+     * User rule 2026-10-16 ([PeriodKindStyle.tellsTimeline]): **everything the timeline holds during a period of [kind]
+     * over `[startMillis, endMillis)` and right after it**, one line each, in the order they begin — "at 16h11, task A".
+     *
+     * What is listed is what the calendar places there ([panels], a repeating one's occurrences derived over the window
+     * by [PanelRepeats.expand]): the tasks, the reminder tags still to do and the restrictive periods — never a screen
+     * break (the notification is about one, and a 20 s look-away every 20 minutes would drown the list), never a grey
+     * inactivity stretch, and never the period itself. A block already running when the period begins is said at the
+     * period's start; consecutive blocks of one title are one line. "Right after" is what begins first at or after the
+     * period's end (everything beginning at that same instant), looked for over [NEXT_BREAK_SEARCH_MILLIS].
+     */
+    fun periodTimelineLines(
+        panels: List<TaskPanel>,
+        kind: String,
+        startMillis: Long,
+        endMillis: Long,
+        tz: TimeZone,
+    ): List<String> {
+        if (endMillis < startMillis) return emptyList()
+        val horizon = endMillis + NEXT_BREAK_SEARCH_MILLIS
+        val candidates =
+            PanelRepeats.expand(panels, startMillis, horizon, tz).filter { p ->
+                val pKind = p.restrictiveKind
+                when {
+                    p.screenBreak || p.conductedBreak || pKind in PeriodKinds.BREAK_KINDS -> false
+                    pKind == PeriodKinds.INACTIVITY -> false
+                    // The period the notification is about, and any period of its kind it is made of.
+                    pKind.isNotBlank() && pKind == kind && p.startEpochMillis < endMillis && p.endEpochMillis > startMillis -> false
+                    p.chore -> !p.checked
+                    else -> p.endEpochMillis > p.startEpochMillis
+                }
+            }
+        val during =
+            candidates.filter { p ->
+                if (p.chore) p.startEpochMillis in startMillis until endMillis
+                else p.startEpochMillis < endMillis && p.endEpochMillis > startMillis
+            }
+        val afterStart = candidates.filter { it.startEpochMillis >= endMillis }.minOfOrNull { it.startEpochMillis }
+        val after = if (afterStart == null) emptyList() else candidates.filter { it.startEpochMillis == afterStart }
+        val entries =
+            (during + after).distinct()
+                .map { maxOf(it.startEpochMillis, startMillis) to it }
+                .sortedWith(compareBy({ it.first }, { it.second.endEpochMillis }))
+        val lines = ArrayList<String>()
+        // Title → where its last line's block ended: a block of the same title beginning there continues that line.
+        val endOf = HashMap<String, Long>()
+        for ((at, p) in entries) {
+            val title = p.title.ifBlank { if (p.isRestrictivePeriod) PeriodKinds.periodTitle(p.restrictiveKind) else "(untitled)" }
+            if (endOf[title] == at) {
+                endOf[title] = p.endEpochMillis
+                continue
+            }
+            endOf[title] = p.endEpochMillis
+            val time = Instant.fromEpochMilliseconds(at).toLocalDateTime(tz)
+            lines += "at ${time.hour}h${time.minute.toString().padStart(2, '0')}, $title"
+        }
+        return lines
+    }
+
+    /** [message] followed by [lines], one per line ([periodTimelineLines]); [message] alone when there are none. */
+    fun withTimelineLines(message: String, lines: List<String>): String =
+        if (lines.isEmpty()) message else (listOf(message) + lines).joinToString("\n")
+
+    /**
+     * The kind of the screen break titled [title] among [screenBreaks] ([DynamicPeriods.breakKind] of its role), or
+     * null when no break is titled so.
+     */
+    fun screenBreakKindOf(screenBreaks: List<ScreenBreak>, title: String): String? =
+        dynamicPeriodTitles(screenBreaks).entries.firstOrNull { it.value == title }?.key?.let(DynamicPeriods::breakKind)
+
+    /**
+     * The timeline a notification about a period of [kind] over `[startMillis, endMillis)` tells — empty unless the
+     * account's settings ask it to ([PeriodKindConfig.tellsTimeline]). The engine's one question, for every such cue.
+     */
+    fun notificationTimelineLines(
+        state: SchedulerState,
+        kind: String?,
+        startMillis: Long,
+        endMillis: Long,
+        tz: TimeZone,
+    ): List<String> =
+        if (kind == null || !state.periodKindConfig.tellsTimeline(kind)) emptyList()
+        else periodTimelineLines(state.panels, kind, startMillis, endMillis, tz)
 
     /**
      * PRD §15: **what the user is free to go on doing when a screen break ENDS** — the stretch the break runs
@@ -5208,7 +5347,7 @@ object SchedulerDomain {
                 !panel.conductedBreak &&
                 (isUserPlaced(panel) || (panel.restrictiveKind !in scheduled && !panel.screenBreak))
         }
-        return held + sleepPanels(state.sleep, fromMillis, toMillis, timeZone) + beforeBedPanels(state.sleep, fromMillis, toMillis, timeZone)
+        return held + sleepPanels(state.sleep, fromMillis, toMillis, timeZone) + beforeBedPanels(state, fromMillis, toMillis, timeZone)
     }
 
     /**
@@ -6280,7 +6419,7 @@ object SchedulerDomain {
         // restrictive period of its own kind ([PeriodKinds.BEFORE_BED]) — the hour stays empty because every
         // task's default resilience to that kind is `0`, and a task given a value above zero works through it.
         // Derived from the same schedule the sleep windows are, and regenerated with them.
-        val envBeforeBedPanels = beforeBedPanels(state.sleep, nowMillis, searchEnd, timeZone)
+        val envBeforeBedPanels = beforeBedPanels(state, nowMillis, searchEnd, timeZone)
         val beforeBedPanels = envBeforeBedPanels.filter { it.startEpochMillis < horizon }
         // The task-tree timeline: while `now` sits between two dated trees the scheduler follows the two
         // trees' BLENDED priorities over the UNION of their leaves, not the live tree's own — so the plan

@@ -2806,6 +2806,12 @@ object SearchDomain {
          */
         PeriodNotices(Kind.RestrictivePeriod, "Notifications before"),
         /**
+         * User rule 2026-10-16: *"tell if a notification must tell everything there is in the timeline during this
+         * period and right after"* — over every added period ([SchedulerIntent.SetPeriodTellsTimeline]); on by default
+         * for the 5 and 15 minute screen breaks.
+         */
+        PeriodTellsTimeline(Kind.RestrictivePeriod, "Notifications tell the timeline"),
+        /**
          * User rule 2026-10-13: *"add the button to open a calendar window that shows all the notifications selected,
          * which are all the notifications of the macro group in the action section"* — a calendar window whose chips
          * are the group's notifications ([CalendarNotifications]).
@@ -3180,6 +3186,7 @@ object SearchDomain {
             AddedAction.ReminderConstraint -> "choose none"
             AddedAction.PeriodDrawing -> "period"
             AddedAction.PeriodNotices -> "notification notify alert remind warn ahead advance"
+            AddedAction.PeriodTellsTimeline -> "notification notify timeline tasks during after next list what comes"
             AddedAction.NotificationCalendar -> "open a calendar with these notifications chips"
             AddedAction.PeriodSleepSchedule ->
                 "wake up go to bed stop screens goal time date total sleep time no screen before bed"
@@ -4176,7 +4183,7 @@ object SearchDomain {
             }
         }
         if (periodKey(PeriodKinds.BEFORE_BED) in owners) {
-            SchedulerDomain.beforeBedPanels(state.sleep, fromMillis, untilMillis, timeZone).forEach {
+            SchedulerDomain.beforeBedPanels(state, fromMillis, untilMillis, timeZone).forEach {
                 out += CalendarBlock(it.id, periodKey(PeriodKinds.BEFORE_BED), PeriodKinds.periodTitle(PeriodKinds.BEFORE_BED), it.startEpochMillis, it.endEpochMillis, PeriodKinds.BEFORE_BED)
             }
         }

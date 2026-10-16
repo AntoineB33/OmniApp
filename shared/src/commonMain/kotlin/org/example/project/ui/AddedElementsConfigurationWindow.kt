@@ -1168,6 +1168,30 @@ private fun AddedActionEditor(
                 }
             }
         }
+        // User rule 2026-10-16: whether the period's notifications list the timeline during it and right after — ONE
+        // switch over every added period, "mixed" beside it when they differ.
+        SearchDomain.AddedAction.PeriodTellsTimeline -> {
+            val periods = SearchDomain.addedPeriodKinds(state, added)
+            val values = periods.map { state.periodKindConfig.tellsTimeline(it) }.distinct()
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.Switch(
+                    checked = values.singleOrNull() == true,
+                    enabled = periods.isNotEmpty(),
+                    onCheckedChange = { on ->
+                        periods.forEach { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetPeriodTellsTimeline(it, on))) }
+                    },
+                )
+                Text(
+                    when {
+                        values.size > 1 -> "mixed"
+                        values.singleOrNull() == true -> "what the timeline holds during the period and right after"
+                        else -> "the notifications say only the period"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         SearchDomain.AddedAction.PeriodCombinations -> {
             // ONE list: every rule naming an added period, once (it was a section per period, a rule naming two of
             // them drawn twice).

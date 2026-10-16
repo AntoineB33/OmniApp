@@ -400,7 +400,9 @@ object PeriodKinds {
             NOT_ON_A_COMPUTER -> PeriodKindStyle(PeriodDrawing.DottedRisingObliques)
             NOT_ON_A_PHONE -> PeriodKindStyle(PeriodDrawing.DottedFallingObliques)
             // Drawn as the grey family the breaks belong to.
-            BREAK_20S, BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(PeriodDrawing.VerticalLines)
+            BREAK_20S -> PeriodKindStyle(PeriodDrawing.VerticalLines)
+            // User rule 2026-10-16: the notification at the start of a 5 and a 15 minute break tells the timeline.
+            BREAK_5MIN, BREAK_15MIN -> PeriodKindStyle(PeriodDrawing.VerticalLines, tellsTimeline = true)
             else -> PeriodKindStyle(PeriodDrawing.Crosses)
         }
 

@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The hour before bed follows a dragged Sleep window — 2026-10-16
+
+Anomaly: *"I dragged the start edge of a sleep period to later, and instead of the 1h before bed period getting dragged
+as well, it simply disappeared."* A dragged window takes its night out of the schedule (`skippedWakeEpochDays`), and
+`beforeBedPanels` laid an hour only before the schedule's own windows. It now also lays one before the period the hand
+made of a night's window (`movedSleepWindowStarts`, read off `patternOrigin = sleep/<wake day>`), under the night's
+same id. So it follows every later drag, can itself be dragged away, and goes when that period is removed. Every
+reader asks through the state overload (`beforeBedPanels(state, …)`). `DraggedSleepWindowTest`. Client rebuild only.
+
+### A period's notifications may tell the timeline — 2026-10-16
+
+User: *"In the period configurations, add the action to tell if a notification must tell everything there is in the
+timeline during this period and right after. By default, it is on for the notification that is triggered by default at
+the start of a 5 and 15 minute screen break."* `PeriodKindStyle.tellsTimeline` (an override in `periodKindStyles`, one
+`SettingsDelta` per edit through `SetPeriodTellsTimeline`; default on for `5min screen break` and `15min screen break`),
+edited in the period's Search actions ("Notifications tell the timeline"). Where it is on, the break's start
+notification and every notice of the kind append one line per block the timeline holds over the period and the first
+thing after it — "at 16h11, task A" (`SchedulerDomain.periodTimelineLines`). A notice now carries the end of its
+stretch (`RuleProgram.PeriodNotice.periodEndMillis`). Fixed on the way: a style override on a screen break's kind was
+dropped on decode (the decode's known kinds lacked `BREAK_KINDS`). `PeriodTimelineNotificationTest`. Client rebuild only.
+
 ### The presence beat every 60 s instead of 10 s — 2026-10-16
 
 User: *"keep it but beat less often"*. On Windows and Android a lock reports itself at once (e1); the beat is only the
