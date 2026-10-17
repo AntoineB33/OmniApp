@@ -88,7 +88,7 @@ Even if the optimization score is not perfect for all infinite paths, the schedu
 
 * A re-run of the scheduler engine would make it take a screenshot of the schedule without what is deduced from the current set of rules output but not saved in history, and find a good schedule from the current rule state inputs. The calendar stays with the previous set of rules output, until the scheduler finds one. Then, it removes everything deduced from the previous set of rules output but not saved in history, and apply the set of rules output. It will do it again when a better set of rules output is found.
 
+### Manual editing
 
-
-
-
+If the user adds an element, then removes it, the state of the line is the same as before the addition.
+If the user moves some elements, then moves them back to their original place, the state of the line is the same as before the move.

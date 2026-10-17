@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Manual editing: an edit undone by its inverse leaves the line as it was — 2026-10-17
+
+`docs/scheduler_requirements.md` § *Manual editing* (new): *"If the user adds an element, then removes it, the state of
+the line is the same as before the addition. If the user moves some elements, then moves them back to their original
+place, the state of the line is the same as before the move."* (reference model: `C:\code\line_manager\line_manager.py`
+— a z-index fixed at creation, rules read off the stack). `docs/scheduler_input_requirements.md` was removed the same
+day. What changed:
+- **A block's tm_level is given once, when it is placed** (`TimelineLevels.placed`, above every block there is), and a
+  move or a resize keeps it. Replaces `TimelineLevels.raised`, which lifted the positioned block above what it landed on
+  — so a block moved away and back came back on top. Visible change: a task panel dragged onto one PLACED AFTER it now
+  goes under it.
+- **A block moves whole** (`TimelineLevels.carried`): dragging one piece moves its hidden pieces too, and Shift says
+  "share the width" of the whole block.
+- **What the hole rule laid behind the line is taken back** when the dragged block comes back over it: new
+  authoritative panel field `TaskPanel.tmLeft` (`PersistedPanel.tmLeft`, default empty; synced with the panel row).
+- **An occurrence (repeating panel, Sleep night, hour before bed) put back exactly in place rejoins its pattern** and
+  its exception goes (`rejoinedPattern`).
+`ManualEditingTest` (400 random calendars), `TimelineLevelsFuzzTest`'s model now stacks by placement and moves blocks
+whole. Not covered: alarms and reminder tags (rows, not blocks on a level). Client rebuild only.
+
 ### The hour before bed follows a dragged Sleep window — 2026-10-16
 
 Anomaly: *"I dragged the start edge of a sleep period to later, and instead of the 1h before bed period getting dragged

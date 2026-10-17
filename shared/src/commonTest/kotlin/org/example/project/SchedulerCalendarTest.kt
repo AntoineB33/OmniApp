@@ -300,17 +300,21 @@ class SchedulerCalendarTest {
     }
 
     @Test
-    fun adding_a_panel_touching_a_same_task_panel_merges_them() {
+    fun adding_a_panel_touching_a_same_task_panel_keeps_two_blocks_shown_as_one() {
+        // `docs/scheduler_requirements.md` § *Manual editing* (2026-10-17): "If the user adds an element, then removes
+        // it, the state of the line is the same as before the addition" — fused into its neighbour, the added block
+        // could not be removed without it. Each block stands on its own level, and the display groups the two.
         val (s0, a, _) = stateWithTwoTasks()
         val s = s0.copy(
             panels = listOf(TaskPanel("panel/0", a, "A", 0, 30 * MIN, pinned = true, auto = false)),
             nextPanelCounter = 1,
         )
         val added = SchedulerReducer.reduce(s, SchedulerIntent.AddTaskPanel(a, "A", 30 * MIN, 60 * MIN, pins = PanelPins(existence = true)))
-        assertEquals(1, added.panels.size)
-        assertEquals(0, added.panels[0].startEpochMillis)
-        assertEquals(60 * MIN, added.panels[0].endEpochMillis)
-        assertTrue(added.panels[0].pinned)
+        assertEquals(listOf(0L to 30 * MIN, 30 * MIN to 60 * MIN), added.panels.map { it.startEpochMillis to it.endEpochMillis }.sortedBy { it.first })
+        assertEquals(1, SchedulerDomain.groupSameTaskPanelsForDisplay(added.panels).size)
+        val newest = added.panels.single { it.id != "panel/0" }
+        val removed = SchedulerReducer.reduce(added, SchedulerIntent.RemoveTaskPanel(newest.id))
+        assertEquals(s.panels, removed.panels)
     }
 
     // ----- §8 same-task display grouping (auto sessions shown as one block) --------------------
@@ -655,44 +659,51 @@ class SchedulerCalendarTest {
             SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, 0, 2 * HOUR))
         val s = withPeriod.copy(
             panels = withPeriod.panels +
-                TaskPanel("pA", a, "A", 0, 2 * HOUR, pinned = true, auto = false, layoutWeight = 4.0) +
-                userPanel("pB", 5 * HOUR, 6 * HOUR, b, pinned = true),
+                // Both placed after the period, so above it (`docs/scheduler_requirements.md` § *Manual editing*).
+                TaskPanel("pA", a, "A", 0, 2 * HOUR, pinned = true, auto = false, layoutWeight = 4.0, tmLevel = 2) +
+                userPanel("pB", 5 * HOUR, 6 * HOUR, b, pinned = true).copy(tmLevel = 3),
         )
         val dropped = SchedulerReducer.reduce(
             s,
             SchedulerIntent.UpdateTaskPanel("pB", b, "B", HOUR, 2 * HOUR, PanelPins(existence = true), allowOverlap = true),
         )
         // Only A counts: averaged with the period's own weight of 1 it would have been 2.5.
-        assertEquals(4.0, dropped.panels.first { it.id == "pB" }.layoutWeight, 1e-9)
+        val pB = dropped.panels.first { it.id == "pB" }
+        assertEquals(4.0, pB.layoutWeight, 1e-9)
     }
 
     @Test
     fun a_block_dragged_onto_a_period_that_refuses_it_retracts_it_and_only_the_release_saves_that() {
         val (s0, a, _) = stateWithTwoTasks()
+        // Ahead of the line: a hidden piece wholly behind the kept past is purged, and this one must come back.
+        val t = (kotlin.time.Clock.System.now().toEpochMilliseconds() / HOUR + 24) * HOUR
         val withPeriod =
-            SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, HOUR, 4 * HOUR))
-        val s = withPeriod.copy(panels = withPeriod.panels + userPanel("pA", 6 * HOUR, 8 * HOUR, a, pinned = true))
+            SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, t + HOUR, t + 4 * HOUR))
+        // The block placed after the period: it stands above it (`docs/scheduler_requirements.md` § *Manual editing*).
+        val s = withPeriod.copy(panels = withPeriod.panels + userPanel("pA", t + 6 * HOUR, t + 8 * HOUR, a, pinned = true).copy(tmLevel = 2))
         fun period(state: SchedulerState) = state.panels.first { it.isRestrictivePeriod }
         // The question the preview and the commit both ask: an on-screen task has no resilience to it.
         assertTrue(SchedulerDomain.periodRefuses(s.tasks, a, PeriodKinds.NO_SCREEN))
         assertTrue(SchedulerDomain.periodRefuses(s.tasks, null, PeriodKinds.NO_SCREEN))
         // What the preview draws while the block is held over the period's last hour...
         assertEquals(
-            listOf(range(HOUR, 3 * HOUR)),
-            SchedulerDomain.retractAround(range(HOUR, 4 * HOUR), range(3 * HOUR, 5 * HOUR)),
+            listOf(range(t + HOUR, t + 3 * HOUR)),
+            SchedulerDomain.retractAround(range(t + HOUR, t + 4 * HOUR), range(t + 3 * HOUR, t + 5 * HOUR)),
         )
         // ...is what the release saves...
         val dropped = SchedulerReducer.reduce(
             s,
-            SchedulerIntent.UpdateTaskPanel("pA", a, "A", 3 * HOUR, 5 * HOUR, PanelPins(existence = true), allowOverlap = true),
+            SchedulerIntent.UpdateTaskPanel("pA", a, "A", t + 3 * HOUR, t + 5 * HOUR, PanelPins(existence = true), allowOverlap = true),
         )
-        assertEquals(3 * HOUR, period(dropped).endEpochMillis)
-        // ...and once saved, dragging the block back away does not give the period its hour back.
+        assertEquals(t + 3 * HOUR, period(dropped).endEpochMillis)
+        // ...and dragging the block back away gives the period its hour back: moved and moved back, the line is what
+        // it was (`docs/scheduler_requirements.md` § *Manual editing*; until 2026-10-17 the hour stayed lost).
         val back = SchedulerReducer.reduce(
             dropped,
-            SchedulerIntent.UpdateTaskPanel("pA", a, "A", 6 * HOUR, 8 * HOUR, PanelPins(existence = true), allowOverlap = true),
+            SchedulerIntent.UpdateTaskPanel("pA", a, "A", t + 6 * HOUR, t + 8 * HOUR, PanelPins(existence = true), allowOverlap = true),
         )
-        assertEquals(3 * HOUR, period(back).endEpochMillis)
+        assertEquals(t + 4 * HOUR, period(back).endEpochMillis)
+        assertTrue(back.hiddenPanels.isEmpty())
     }
 
     // ----- §8 extend / shorten (clampResize) --------------------------------------------------

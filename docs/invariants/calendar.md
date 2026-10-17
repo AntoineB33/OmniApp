@@ -684,13 +684,38 @@ Global rules that always apply: `CLAUDE.md`.
   them — a full-width interactive box drawn on top would be a lid over every task panel inside the period
   (the "a cursor shape is never a lid over the tile" rule, read for a press), while a marking drawn
   underneath would be hidden by the very task the period admits.
-- **THE TIMELINE IS THE OVERLAP OF THE `tm_levels`; PLACING A BLOCK DESTROYS NOTHING** (`docs/scheduler_input_requirements.md`,
+- **THE TIMELINE IS THE OVERLAP OF THE `tm_levels`; PLACING A BLOCK DESTROYS NOTHING** (`docs/scheduler_input_requirements.md`, since removed;
   2026-10-10; `TimelineLevels`, `SchedulerReducer.settleLevels`, `TimelineLevelsTest`). *"When a blue/orange outlined
   block is positioned at t_r, then what was there before is added at t_r to the lowest tm_level where nothing is at
   t_r. What is in the timeline is the result of the overlap of those tm_levels, applying them from top to bottom,
   ignoring those that are incompatible with the higher tm_levels."*
-  - **Every block a hand placed stands on a level** (`TaskPanel.tmLevel`). The block being positioned — laid, dragged,
-    resized, edited — is raised above every block its span overlaps (`TimelineLevels.raised`).
+  - **Every block a hand placed stands on a level** (`TaskPanel.tmLevel`), given ONCE, when it is placed: above every
+    block there is (`TimelineLevels.placed`, asked by `settleLevels` of a block that was on no level before the edit —
+    laid, an auto panel or a Sleep window edited by hand, an occurrence taken out of its pattern, a record pinned).
+    **A move or a resize never changes it**: the levels are the order the blocks were placed in — `line_manager.py`'s
+    z-index fixed at creation — so a block dragged onto one placed after it goes UNDER it.
+  - **MANUAL EDITING IS UNDONE BY THE INVERSE EDIT** (`docs/scheduler_requirements.md` § *Manual editing*, 2026-10-17:
+    *"If the user adds an element, then removes it, the state of the line is the same as before the addition. If the
+    user moves some elements, then moves them back to their original place, the state of the line is the same as
+    before the move."*; `ManualEditingTest`, `TimelineLevelsFuzzTest`). What has to hold for that:
+    - **No raise on a move** (above). Raising a moved block over what it landed on (`TimelineLevels.raised`, until
+      2026-10-17) made moved-and-moved-back a different stack.
+    - **A block is one element, and moves whole** (`TimelineLevels.carried`): where a positioning moves both ends of a
+      block's piece by the same amount, every other piece of the block — shown or hidden — moves with it, and what the
+      hand says of sharing the width (Shift) it says of the whole block. A piece moved alone would stand on its own
+      block's level over its other pieces, fuse with them, and never come back off them.
+    - **Every block has a level of its own**, so two blocks of one task never fuse (`mergeSameTaskPanels` fuses only
+      on one level): an added block that touched another of its task used to swallow it, and removing it took both.
+    - **What the hole rule lays is taken back by the block that left** (`TaskPanel.tmLeft`, `takenBack`): a block
+      dragged away from the past remembers where the rule filled (its `tmFill` periods and the work it gave back);
+      brought back over it, those are CUT and the work leaves the records — not hidden under it, since the line before
+      the move had none of them. Authoritative, persisted with the panel.
+    - **An occurrence put back exactly where its pattern has it is the pattern's again** (`rejoinedPattern`): a
+      repeating panel's occurrence, a night of the Sleep schedule, its hour before bed — the exception goes and the
+      block with it, in the units the move out made.
+    - Not covered: an alarm's occurrence (`AlarmEntry.isolatedFrom`) and a reminder's tag moved back, which are rows of
+      their own and not blocks on a level; and ids, which an edit may hand out anew — "the state of the line" is what
+      stands where, on which level, and the records, not the ids of the pieces.
   - **`state.panels` is the overlap as it stands; `state.hiddenPanels` is what the levels hide.** A block is shown
     where it can share the stretch with the levels above it and HIDDEN where it cannot (`HiddenPanel`: the piece, its
     level, the block it is a piece of — `TaskPanel.tmOrigin`). Hidden pieces are on no timeline: the scheduler, the
@@ -701,8 +726,9 @@ Global rules that always apply: `CLAUDE.md`.
     of ITS OWN kind a period says nothing new, so that part is hidden (*"the included block loses its blue/orange
     outlines"*: 9h–12h and 12h–13h, where the two used to be fused into one 9h–13h period by
     `unifyNoScreenPeriods`; that fusion now only heals payloads on decode).
-  - **A task panel positioned over another task's panel HIDES it, unless Shift is held** (*"Dragging task A into task
-    B hides task B, unless shift is pressed, which makes the two task panels share the width"*; `TaskPanel.tmShare`,
+  - **A task panel above another task's panel HIDES it, unless it was positioned with Shift held** (*"Dragging task A
+    into task B hides task B, unless shift is pressed, which makes the two task panels share the width"* — since
+    2026-10-17 only where A was placed after B: which one is above is the order they were placed in; `TaskPanel.tmShare`,
     said at every positioning from the intent's `allowOverlap`; `blockGestureOverlaps` = Shift at the release, or
     Overlap Mode armed with `O`). Until 2026-10-10 a move always shared the width. Two panels on ONE level — everything
     an older build left overlapping — go on sharing it. The Search window's "add, keeping everything" filter follows:

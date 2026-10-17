@@ -59,9 +59,10 @@ class HeldDragPreviewTest {
                 assertEquals(spans(released(from, to), kind), spans(held(from, to), kind), "held at $from is the release at $from ($kind)")
             }
         }
-        // Onto a period of its own kind: B gives the stretch they share to the held one, which stands above it
-        // (`docs/scheduler_input_requirements.md`: the included block loses its outline). Onto another kind: B stays.
-        assertEquals(listOf(at(10.0) to at(10.5), at(10.5) to at(11.5)), spans(held(10.5, 11.5), PeriodKinds.NO_SCREEN))
+        // Onto a period of its own kind placed AFTER it: the held one goes under B, which keeps the stretch they share
+        // — the levels are the order the blocks were placed in, and a move never changes them
+        // (`docs/scheduler_requirements.md` § *Manual editing*). Onto another kind: B stays.
+        assertEquals(listOf(at(10.0) to at(11.0), at(11.0) to at(11.5)), spans(held(10.5, 11.5), PeriodKinds.NO_SCREEN))
         assertEquals(listOf(at(18.0) to at(19.0)), spans(held(18.5, 19.5), PeriodKinds.INACTIVITY))
         // And moved on, B is back as it was: the next step is asked of the stored state.
         assertEquals(listOf(at(10.0) to at(11.0), at(16.0) to at(17.0)), spans(held(16.0, 17.0), PeriodKinds.NO_SCREEN))

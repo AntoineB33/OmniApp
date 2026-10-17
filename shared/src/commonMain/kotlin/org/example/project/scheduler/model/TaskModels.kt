@@ -980,10 +980,12 @@ data class TaskPanel(
      */
     val heldAtLine: List<TaskTimeRange> = emptyList(),
     /**
-     * `docs/scheduler_input_requirements.md`: the **tm_level** a block the user placed stands on — the timeline is
-     * the overlap of the levels applied from top to bottom, so a block positioned over others is given a level above
-     * all of them ([org.example.project.scheduler.domain.TimelineLevels]). `0` on everything a hand did not place,
-     * and on a block placed before the levels existed. Authoritative: persisted and synced with the panel.
+     * The **tm_level** a block the user placed stands on — the timeline is the overlap of the levels applied from top
+     * to bottom ([org.example.project.scheduler.domain.TimelineLevels]). Given ONCE, when the block is placed: above
+     * every block there is, so the levels are the order the blocks were placed in, and moving a block never changes it
+     * (`docs/scheduler_requirements.md` § *Manual editing*: moved and moved back, the line is what it was). `0` on
+     * everything a hand did not place, and on a block placed before the levels existed. Authoritative: persisted and
+     * synced with the panel.
      */
     val tmLevel: Int = 0,
     /**
@@ -1014,6 +1016,15 @@ data class TaskPanel(
      * ([org.example.project.scheduler.domain.PatternExceptions]). Authoritative, persisted and synced with the panel.
      */
     val patternOrigin: String = "",
+    /**
+     * `docs/scheduler_requirements.md` § *Manual editing* (*"If the user moves some elements, then moves them back to
+     * their original place, the state of the line is the same as before the move"*): **the stretches the hole rule
+     * filled where this block was dragged away from** (`SchedulerDomain.vacatedPastFill` — the [tmFill] periods it
+     * laid and the work it gave back, behind the line). The block brought back over one of them takes back what the
+     * rule put there, so the line is what it was. Authoritative, persisted and synced with the panel; empty on every
+     * block never dragged away from the past.
+     */
+    val tmLeft: List<TaskTimeRange> = emptyList(),
 ) {
     /** The block this panel is, or is a piece of ([tmOrigin]). */
     val tmBlockId: String get() = tmOrigin.ifBlank { id }

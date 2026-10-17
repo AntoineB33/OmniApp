@@ -2411,20 +2411,32 @@ object SchedulerReducer {
     }
 
     /**
-     * `docs/scheduler_input_requirements.md` § tm_levels, for one calendar edit: [panels] — what the edit makes of
-     * [origin]'s — once the levels are applied from top to bottom over the stretches the edit touched
-     * ([TimelineLevels.settle]). The block the hand positioned ([positionedId]) is first raised above what it now
-     * stands over ([TimelineLevels.raised]). The answer's state carries the hidden levels and the ids it allocated; its
-     * panels are still the caller's to commit.
+     * The tm_levels ([TimelineLevels]), for one calendar edit: [panels] — what the edit makes of [origin]'s — once the
+     * levels are applied from top to bottom over the stretches the edit touched ([TimelineLevels.settle]). The block
+     * the hand positioned ([positionedId]) is first put above every block there is if it has just been PLACED
+     * ([TimelineLevels.placed]); a block moved keeps its level. The answer's state carries the hidden levels and the ids
+     * it allocated; its panels are still the caller's to commit.
      */
     private fun settleLevels(
         origin: SchedulerState,
         working: SchedulerState,
-        panels: List<TaskPanel>,
+        edited: List<TaskPanel>,
         positionedId: String?,
     ): Pair<SchedulerState, List<TaskPanel>> {
-        if (panels === origin.panels && working.hiddenPanels === origin.hiddenPanels) return working to panels
+        if (edited === origin.panels && working.hiddenPanels === origin.hiddenPanels) return working to edited
         val was = origin.panels.associateBy { it.id }
+        // `docs/scheduler_requirements.md` § *Manual editing*: a block is given its level when it is PLACED — when it was
+        // no block on a level before this edit ([TimelineLevels.placed]) — and keeps it through every move; moved, it
+        // moves as the one element it is, every piece the levels cut it into with it ([TimelineLevels.carried]).
+        val before = positionedId?.let { was[it] }?.takeIf(TimelineLevels::participates)
+        val after = positionedId?.let { id -> edited.firstOrNull { it.id == id } }
+        val stack =
+            when {
+                positionedId == null || after == null -> TimelineLevels.Settled(edited, working.hiddenPanels)
+                before == null -> TimelineLevels.Settled(TimelineLevels.placed(edited, working.hiddenPanels, positionedId), working.hiddenPanels)
+                else -> TimelineLevels.carried(edited, working.hiddenPanels, before, after)
+            }
+        val panels = stack.panels
         val now = panels.associateBy { it.id }
         val windows = ArrayList<TaskTimeRange>()
         for (p in panels) {
@@ -2441,17 +2453,26 @@ object SchedulerReducer {
         for (old in origin.panels) {
             if (old.id !in now && TimelineLevels.participates(old)) windows += TaskTimeRange(old.startEpochMillis, old.endEpochMillis)
         }
+        // The hidden pieces a move carried: where they were and where they are now.
+        if (stack.hidden !== working.hiddenPanels) {
+            val hidBefore = working.hiddenPanels.associateBy { it.id }
+            for (h in stack.hidden) {
+                val old = hidBefore[h.id]
+                if (old == h) continue
+                windows += TaskTimeRange(h.panel.startEpochMillis, h.panel.endEpochMillis)
+                if (old != null) windows += TaskTimeRange(old.panel.startEpochMillis, old.panel.endEpochMillis)
+            }
+        }
         if (windows.isEmpty()) return working to panels
-        val raised = if (positionedId == null) panels else TimelineLevels.raised(panels, working.hiddenPanels, positionedId)
         var allocating = working
         val settled =
-            TimelineLevels.settle(raised, working.hiddenPanels, working.tasks, working.periodKindConfig, windows, allocate = {
+            TimelineLevels.settle(panels, stack.hidden, working.tasks, working.periodKindConfig, windows, allocate = {
                 val (id, next) = allocating.allocatePanelId()
                 allocating = next
                 id
             })
         val blocks =
-            if (settled.panels === panels && settled.hidden === working.hiddenPanels) working
+            if (settled.panels === edited && settled.hidden === working.hiddenPanels) working
             else allocating.copy(hiddenPanels = settled.hidden)
         return settleRecords(blocks, settled.panels, windows) to settled.panels
     }
@@ -2647,7 +2668,7 @@ object SchedulerReducer {
             }
         return stripRecordsUnderPeriod(
             if (filled == null) commitPanels(resolved, resolvedPanels, label = label, levelsBefore = state)
-            else commitPanels(filled.state, filled.panels, label = label, records = filled.records, levelsBefore = state),
+            else commitPanels(filled.state, filled.leftBy(panelId), label = label, records = filled.records, levelsBefore = state),
             laid,
         )
     }
@@ -2857,6 +2878,11 @@ object SchedulerReducer {
         state: SchedulerState,
         rawPanels: List<TaskPanel>,
         changedId: String,
+        /**
+         * Whether [changedId] may be a block placed by this edit, given its level then ([settleLevels]); false where it
+         * stands for blocks that were already on the timeline ([reduceReplaceTaskPanels]) and keeps their level.
+         */
+        placed: Boolean = true,
     ): Pair<SchedulerState, List<TaskPanel>> {
         // (Two overlapping periods of one kind used to be fused here; the lower one is now hidden under the higher by
         // the levels, so it is whole again when the other leaves — [TimelineLevels].)
@@ -2911,7 +2937,7 @@ object SchedulerReducer {
                     out += p.copy(id = id, startEpochMillis = piece.startEpochMillis, endEpochMillis = piece.endEpochMillis)
                 }
         }
-        return settleLevels(state, working, out, positionedId = changedId)
+        return settleLevels(state, working, out, positionedId = changedId.takeIf { placed })
     }
 
     private fun reduceUpdateTaskPanel(
@@ -2936,10 +2962,14 @@ object SchedulerReducer {
             if (intent.repeatEveryDays == null || intent.repeatEveryDays == rule.everyDays) {
                 val (ownId, allocated) = state.allocatePanelId()
                 val own = occurrence.copy(id = ownId, repeat = null, auto = false, patternOrigin = intent.id)
+                // Out of its pattern it is a block PLACED now: above every block there is ([TimelineLevels.placed]).
                 val taken =
-                    allocated.panels.filterNot { it.id == intent.id }.map {
-                        if (it.id == baseId) it.copy(repeat = rule.copy(skipped = rule.skipped + k)) else it
-                    } + own
+                    TimelineLevels.placed(
+                        allocated.panels.filterNot { it.id == intent.id }.map {
+                            if (it.id == baseId) it.copy(repeat = rule.copy(skipped = rule.skipped + k)) else it
+                        } + own,
+                        allocated.hiddenPanels, ownId,
+                    )
                 return reduceUpdateTaskPanel(
                     allocated.copy(panels = taken),
                     intent.copy(id = ownId, repeatEveryDays = null),
@@ -2966,6 +2996,8 @@ object SchedulerReducer {
         // Editing an auto panel makes it user-authored; re-id it out of the ephemeral `auto/` namespace
         // so the next reschedule's regenerated auto panels can't collide with the kept (pinned) one.
         val existing = panels[index]
+        // Moved back to where its pattern has it, an occurrence is the pattern's again (§ *Manual editing*).
+        rejoinedPattern(state, existing, intent, end, gestureOrigin)?.let { return it }
         val (panelId, allocated) =
             if (existing.auto) state.allocatePanelId() else intent.id to state
         // PRD §8 Overlap Mode: an armed drag keeps the raw overlapping bounds and re-seeds this panel's
@@ -3013,8 +3045,10 @@ object SchedulerReducer {
                     pins = PanelPins(existence = true),
                 )
             }
+        // Brought back over a stretch the hole rule filled when it left, the block takes back what the rule put there.
+        val back = takenBack(allocated, allocated.panels, existing.tmLeft, TaskTimeRange(intent.startEpochMillis, end))
         val (resolved, resolvedPanels) =
-            resolveScreenOverrides(allocated, allocated.panels.toMutableList().also { it[index] = updated }, panelId)
+            resolveScreenOverrides(back.state, back.panels.map { if (it.id == intent.id) updated.copy(tmLeft = back.left) else it }, panelId)
         // A period dragged elsewhere — both its ends moved; a resize is not one: what stands where it was is chosen
         // from its edges, in the same unit.
         val leftKind = if (existing.sleep) PeriodKinds.SLEEP else existing.restrictiveKind
@@ -3041,7 +3075,7 @@ object SchedulerReducer {
                 )
             } else {
                 commitPanels(
-                    filled.state, filled.panels, label = "Edit panel", records = filled.records,
+                    filled.state, filled.leftBy(panelId), label = "Edit panel", records = filled.records,
                     historyBefore = gestureOrigin?.panels, levelsBefore = gestureOrigin ?: state,
                 )
             }
@@ -3094,8 +3128,8 @@ object SchedulerReducer {
                 layoutWeight = weight,
                 tmShare = intent.allowOverlap,
             )
-        // The block is positioned where the hand put it: above whatever it now stands over ([TimelineLevels]).
-        val placed = TimelineLevels.raised(allocated.panels + panel, allocated.hiddenPanels, panelId)
+        // A block placed: above every block there is ([TimelineLevels.placed]).
+        val placed = TimelineLevels.placed(allocated.panels + panel, allocated.hiddenPanels, panelId)
         return commitPanels(allocated, placed, label = "Pin record", records = records)
     }
 
@@ -3167,6 +3201,9 @@ object SchedulerReducer {
         val idSet = intent.removeIds.toSet()
         val remaining = state.panels.filterNot { it.id in idSet }
         val (panelId, allocated) = state.copy(panels = remaining).allocatePanelId()
+        // The blocks it replaces are MOVED, not placed anew (`docs/scheduler_requirements.md` § *Manual editing*): it
+        // keeps the highest of their levels. Only where none of them stood on a level is it a block placed now.
+        val replaced = state.panels.filter { it.id in idSet && TimelineLevels.participates(it) }
         val weight =
             if (intent.allowOverlap) {
                 SchedulerDomain.seedOverlapWeight(remaining, intent.startEpochMillis, end)
@@ -3185,8 +3222,10 @@ object SchedulerReducer {
                 auto = false,
                 layoutWeight = weight,
                 tmShare = intent.allowOverlap,
+                tmLevel = replaced.maxOfOrNull { it.tmLevel } ?: 0,
             )
-        val (resolved, resolvedPanels) = resolveScreenOverrides(allocated, allocated.panels + panel, panelId)
+        val (resolved, resolvedPanels) =
+            resolveScreenOverrides(allocated, allocated.panels + panel, panelId, placed = replaced.isEmpty())
         // (The unit starts from the panels the block replaces, so one Ctrl+Z gives them back.)
         return commitPanels(resolved, resolvedPanels, label = "Edit panel", historyBefore = state.panels, levelsBefore = state)
     }
@@ -3713,8 +3752,140 @@ object SchedulerReducer {
         )
     }
 
-    /** [panels] and the record changes once what a period left is filled ([withVacatedPastFilled]), ids allocated in [state]. */
-    private class VacatedFilled(val state: SchedulerState, val panels: List<TaskPanel>, val records: RecordChanges)
+    /** [takenBack]'s answer: [panels] and [state] once the hole rule's fill is taken back, and what the block still [left]. */
+    private class TakenBack(val state: SchedulerState, val panels: List<TaskPanel>, val left: List<TaskTimeRange>)
+
+    /**
+     * `docs/scheduler_requirements.md` § *Manual editing*: *"If the user moves some elements, then moves them back to
+     * their original place, the state of the line is the same as before the move."* A block dragged away from the past
+     * left a hole the hole rule filled ([withVacatedPastFilled]: a period of its choice, the work at both edges given
+     * back), and the block remembers where ([TaskPanel.tmLeft]). Brought back [over] part of that, it takes back what
+     * the rule put there — the [TaskPanel.tmFill] periods are cut out of it (not hidden under the block: they were
+     * nobody's statement, and the line before the move had none), and the work given back leaves the records again —
+     * so the block stands over what stood there before it left. The stretch was bare when the rule filled it, so
+     * whatever stands there of either kind is the rule's.
+     */
+    private fun takenBack(state: SchedulerState, panels: List<TaskPanel>, left: List<TaskTimeRange>, over: TaskTimeRange): TakenBack {
+        val back = SchedulerDomain.intersectRegions(left, listOf(over))
+        if (back.isEmpty()) return TakenBack(state, panels, left)
+        fun hits(start: Long, end: Long) = back.any { start < it.endEpochMillis && it.startEpochMillis < end }
+        var working = state
+        fun cut(p: TaskPanel): List<TaskPanel> =
+            SchedulerDomain.subtractRegions(listOf(TaskTimeRange(p.startEpochMillis, p.endEpochMillis)), back)
+                .filter { it.endEpochMillis - it.startEpochMillis >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS }
+                .mapIndexed { i, piece ->
+                    val id =
+                        if (i == 0) {
+                            p.id
+                        } else {
+                            val (fresh, next) = working.allocatePanelId()
+                            working = next
+                            fresh
+                        }
+                    p.copy(id = id, startEpochMillis = piece.startEpochMillis, endEpochMillis = piece.endEpochMillis)
+                }
+        val out = panels.flatMap { if (it.tmFill && hits(it.startEpochMillis, it.endEpochMillis)) cut(it) else listOf(it) }
+        val hidden =
+            state.hiddenPanels.flatMap { h ->
+                if (!h.record && h.panel.tmFill && hits(h.panel.startEpochMillis, h.panel.endEpochMillis)) cut(h.panel).map { HiddenPanel(it) }
+                else listOf(h)
+            }
+        var tasks = state.tasks
+        for ((id, task) in state.tasks) {
+            if (task.record.none { hits(it.startEpochMillis, it.endEpochMillis) }) continue
+            tasks = tasks + (id to task.copy(record = SchedulerDomain.subtractRegions(task.record, back)))
+        }
+        return TakenBack(working.copy(tasks = tasks, hiddenPanels = hidden), out, SchedulerDomain.subtractRegions(left, listOf(over)))
+    }
+
+    /**
+     * `docs/scheduler_requirements.md` § *Manual editing*: *"If the user moves some elements, then moves them back to
+     * their original place, the state of the line is the same as before the move."* A block a hand made of an
+     * occurrence of a pattern ([TaskPanel.patternOrigin]: a repeating panel's, a night of the Sleep schedule, its hour
+     * before bed) put back exactly where the pattern has that occurrence, as it was, is the occurrence again: the
+     * pattern holds it once more (its exception goes) and the block is gone — in the units the move out made, so Ctrl+Z
+     * walks them the same way. Null where the move is anything else.
+     */
+    private fun rejoinedPattern(
+        state: SchedulerState,
+        existing: TaskPanel,
+        intent: SchedulerIntent.UpdateTaskPanel,
+        end: Long,
+        gestureOrigin: SchedulerState?,
+    ): SchedulerState? {
+        val origin = existing.patternOrigin
+        // A piece is not the block; a new cadence is a statement about the pattern; another task is another block.
+        if (origin.isBlank() || existing.tmOrigin.isNotBlank() || existing.taskId != intent.taskId || intent.allowOverlap) return null
+        if (intent.repeatEveryDays != null) return null
+        val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+        val span = TaskTimeRange(intent.startEpochMillis, end)
+        fun at(p: TaskPanel?) = p != null && p.startEpochMillis == span.startEpochMillis && p.endEpochMillis == span.endEpochMillis
+        fun without(s: SchedulerState): Pair<SchedulerState, List<TaskPanel>> {
+            val back = takenBack(s, s.panels, existing.tmLeft, span)
+            // What it hid of other blocks comes back with the settle; its own hidden pieces go with it.
+            val hidden = back.state.hiddenPanels.filterNot { !it.record && it.panel.tmBlockId == existing.id }
+            return back.state.copy(hiddenPanels = hidden) to back.panels.filterNot { it.id == existing.id }
+        }
+        val baseId = PanelRepeats.baseIdOf(origin)
+        if (baseId != null) {
+            val k = PanelRepeats.indexOf(origin) ?: return null
+            val base = state.panels.firstOrNull { it.id == baseId } ?: return null
+            val rule = base.repeat?.takeIf { k in it.skipped } ?: return null
+            val again = base.copy(repeat = rule.copy(skipped = rule.skipped - k))
+            val occurrence = PanelRepeats.occurrence(again, k, tz) ?: return null
+            if (!at(occurrence) || occurrence.title != intent.title) return null
+            val (left, panels) = without(state)
+            return commitPanels(
+                left, panels.map { if (it.id == baseId) again else it }, label = "Edit panel",
+                historyBefore = gestureOrigin?.panels, levelsBefore = gestureOrigin ?: state,
+            )
+        }
+        val sleep = state.sleep ?: return null
+        val day = 24L * 60L * 60L * 1000L
+        val from = span.startEpochMillis - 2 * day
+        val to = span.endEpochMillis + 2 * day
+        val again =
+            when {
+                origin.startsWith(DERIVED_SLEEP_ID_PREFIX) && existing.restrictiveKind == PeriodKinds.SLEEP -> {
+                    val wakeDay = origin.removePrefix(DERIVED_SLEEP_ID_PREFIX).toLongOrNull() ?: return null
+                    if (wakeDay !in sleep.skippedWakeEpochDays) return null
+                    val again = sleep.copy(skippedWakeEpochDays = sleep.skippedWakeEpochDays - wakeDay)
+                    if (!at(SchedulerDomain.sleepPanels(again, from, to, tz).firstOrNull { it.id == origin })) return null
+                    again
+                }
+                origin.startsWith(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX) && existing.restrictiveKind == PeriodKinds.BEFORE_BED -> {
+                    val wakeDay = origin.removePrefix(SchedulerDomain.BEFORE_BED_PANEL_ID_PREFIX).toLongOrNull() ?: return null
+                    if (wakeDay !in sleep.skippedBeforeBedEpochDays) return null
+                    val again = sleep.copy(skippedBeforeBedEpochDays = sleep.skippedBeforeBedEpochDays - wakeDay)
+                    if (!at(SchedulerDomain.beforeBedPanels(state.copy(sleep = again), from, to, tz).firstOrNull { it.id == origin })) return null
+                    again
+                }
+                else -> return null
+            }
+        // The reverse of [reducePlaceDerivedPeriod]'s two units: the period leaves, then the night is the schedule's again.
+        val (left, panels) = without(state)
+        val removed = commitPanels(left, panels, label = "Move period", historyBefore = gestureOrigin?.panels, levelsBefore = gestureOrigin ?: state)
+        return commitDelta(removed, SleepDelta(removed.sleep, again), HistoryCategory.Calendar)
+    }
+
+    /**
+     * [panels] and the record changes once what a period left is filled ([withVacatedPastFilled]), ids allocated in
+     * [state]; [filled] is where the rule put something, behind the line.
+     */
+    private class VacatedFilled(
+        val state: SchedulerState,
+        val panels: List<TaskPanel>,
+        val records: RecordChanges,
+        val filled: List<TaskTimeRange> = emptyList(),
+    ) {
+        /**
+         * [panels] with [filled] remembered by the block [blockId] that left it ([TaskPanel.tmLeft]), each of its
+         * pieces: brought back over it, the block takes back what was put there ([takenBack]).
+         */
+        fun leftBy(blockId: String): List<TaskPanel> =
+            if (filled.isEmpty()) panels
+            else panels.map { if (it.tmBlockId == blockId) it.copy(tmLeft = SchedulerDomain.mergeOccupied(it.tmLeft + filled)) else it }
+    }
 
     /**
      * User rule 2026-10-07: a period of [leftKind] dragged from [from] to [to] (null: gone from the state altogether) —
@@ -3734,6 +3905,7 @@ object SchedulerReducer {
         var out = panels
         val recordsBefore = HashMap<TaskId, List<TaskTimeRange>>()
         val recordsAfter = HashMap<TaskId, List<TaskTimeRange>>()
+        val filled = ArrayList<TaskTimeRange>()
         // Only what is still BARE is a hole: the work the levels gave back as the period left ([settleRecords]) and the
         // task panels standing there are not, and a fill laid over them would hide them again.
         // Nor is a stretch something is HIDDEN on (work, or a block, under a period still standing there: the bottom
@@ -3756,6 +3928,8 @@ object SchedulerReducer {
                 SchedulerDomain.vacatedPastFill(
                     working.copy(panels = out, tasks = tasks), piece, leftKind, now, frozenScreenBreaks(), layerKindsAt,
                 ) ?: continue
+            // (Only the past is chosen here: ahead of the line the plan fills the hole, and no block need take it back.)
+            if (piece.startEpochMillis < now) filled += TaskTimeRange(piece.startEpochMillis, minOf(piece.endEpochMillis, now))
             for ((kind, span) in fill.periods) {
                 val (id, allocated) = working.allocatePanelId()
                 working = allocated
@@ -3787,7 +3961,7 @@ object SchedulerReducer {
                 recordsAfter[taskId] = record + work
             }
         }
-        return VacatedFilled(working, out, RecordChanges.of(recordsBefore, recordsAfter))
+        return VacatedFilled(working, out, RecordChanges.of(recordsBefore, recordsAfter), filled)
     }
 
     /** [skips] with [wakeDay], less the days too far back to be drawn again (a year). */

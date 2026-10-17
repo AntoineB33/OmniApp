@@ -19,7 +19,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_input_requirements.md` § tm_levels, **lived through at random**: thousands of calendar edits — a
+ * The tm_levels ([TimelineLevels]), **lived through at random**: thousands of calendar edits — a
  * block laid, dragged, resized, removed, an edit undone — each checked, slot by slot, against a MODEL of the
  * document written here from its sentences alone, never from the reducer's code:
  *
@@ -27,7 +27,9 @@ import org.example.project.time.AppClock
  * tm_level where nothing is at t_r. What is in the timeline is the result of the overlap of those tm_levels, applying
  * them from top to bottom, ignoring those that are incompatible with the higher tm_levels."*
  *
- * The model is a stack of what the user placed, the last positioned on top. At an instant the timeline is that stack
+ * The model is a stack of what the user placed, the last PLACED on top — `line_manager.py`'s z-index, fixed at creation:
+ * a block moved keeps its place in the stack, and moves whole: every part of it, shown or hidden
+ * (`docs/scheduler_requirements.md` § *Manual editing*). At an instant the timeline is that stack
  * read from the top: a period is ignored under a period of its own kind and where it — with the periods the account's
  * rules bring with it — would refuse a task above it; a task panel is ignored where a period above refuses its task
  * and under another task's panel that was not positioned to share the width. What the worked examples of
@@ -50,8 +52,10 @@ class TimelineLevelsFuzzTest {
         override fun nowMillis(): Long = now
     }
 
-    /** One thing the user placed: what it is, the slots it stands on, and whether it shares the width. */
-    private data class Placed(val what: String, val slots: Set<Int>, val share: Boolean)
+    /**
+     * One block the user placed: what it is, the slots it stands on, whether it shares the width, and its id.
+     */
+    private data class Placed(val what: String, val slots: Set<Int>, val share: Boolean, val block: String)
 
     private fun <T> withClock(now: Long, body: () -> T): T {
         val previous = SchedulerReducer.clock
@@ -83,6 +87,10 @@ class TimelineLevelsFuzzTest {
 
     private fun slotsOf(t0: Long, panel: TaskPanel): Set<Int> =
         (0 until SLOTS).filterTo(HashSet()) { panel.startEpochMillis <= t0 + it * SLOT && t0 + it * SLOT < panel.endEpochMillis }
+
+    /** Every slot [panel] stands on, in the six hours or out of them (a block carried out of them may come back). */
+    private fun allSlotsOf(t0: Long, panel: TaskPanel): Set<Int> =
+        (((panel.startEpochMillis - t0) / SLOT).toInt() until ((panel.endEpochMillis - t0) / SLOT).toInt()).toSet()
 
     /** The model's reading of one slot: the indices of [stack] shown there, from the top down. */
     private fun shownAt(state: SchedulerState, stack: List<Placed>, slot: Int, closures: MutableMap<Set<String>, Set<String>>): List<Int> {
@@ -154,19 +162,27 @@ class TimelineLevelsFuzzTest {
                 val from = random.nextInt(SLOTS - 1)
                 return from to minOf(SLOTS, from + 1 + random.nextInt(18))
             }
-            fun without(stack: List<Placed>, what: String, slots: Set<Int>): List<Placed> {
-                // What a hand takes away is what is SHOWN of it there; what is hidden under it stays on its level.
-                val next = stack.toMutableList()
-                for (slot in slots) {
-                    for (i in shownAt(state, stack, slot, closures)) {
-                        if (stack[i].what == what) next[i] = next[i].copy(slots = next[i].slots - slot)
-                    }
+            // One entry per block, in the order the blocks were placed: a block is the set of slots it stands on, its
+            // pieces — shown or hidden — only how the levels above cut it.
+            fun without(stack: List<Placed>, panel: TaskPanel): List<Placed> =
+                stack.map { if (it.block == panel.tmBlockId) it.copy(slots = it.slots - allSlotsOf(t0, panel)) else it }.filter { it.slots.isNotEmpty() }
+            fun moved(stack: List<Placed>, panel: TaskPanel, to: Set<Int>, share: Boolean): List<Placed> {
+                val old = allSlotsOf(t0, panel)
+                val shift = to.min() - old.min()
+                return stack.map {
+                    if (it.block != panel.tmBlockId) it
+                    else it.copy(
+                        // Moved, both ends by as much: the whole block moves. Resized: the piece is its new span.
+                        slots = if (shift != 0 && to.size == old.size) it.slots.mapTo(HashSet()) { s -> s + shift } else it.slots - old + to,
+                        share = it.what.startsWith("task:") && share,
+                    )
                 }
-                return next.filter { it.slots.isNotEmpty() }
             }
+            /** The block the last edit placed: on the top level. */
+            fun newest(): String = state.panels.filter(TimelineLevels::participates).maxBy { it.tmLevel }.tmBlockId
             repeat(steps) {
                 val before = state
-                val shown = state.panels.filter(TimelineLevels::participates)
+                val shown = state.panels.filter { TimelineLevels.participates(it) && slotsOf(t0, it).isNotEmpty() }
                 val roll = random.nextInt(100)
                 var nextStack = stack
                 when {
@@ -176,23 +192,23 @@ class TimelineLevelsFuzzTest {
                             val kind = kinds.random(random)
                             log += "add $kind [$from,$to)"
                             state = SchedulerReducer.reduce(state, SchedulerIntent.AddRestrictivePeriod(kind, t0 + from * SLOT, t0 + to * SLOT))
-                            nextStack = stack + Placed(kind, (from until to).toSet(), false)
+                            nextStack = stack + Placed(kind, (from until to).toSet(), false, newest())
                         } else {
                             val title = tasks.keys.random(random)
                             log += "add task $title [$from,$to)"
                             state = SchedulerReducer.reduce(state, SchedulerIntent.AddTaskPanel(tasks.getValue(title), title, t0 + from * SLOT, t0 + to * SLOT, pins))
-                            nextStack = stack + Placed("task:" + tasks.getValue(title).value, (from until to).toSet(), false)
+                            nextStack = stack + Placed("task:" + tasks.getValue(title).value, (from until to).toSet(), false, newest())
                         }
                     }
                     roll < 72 -> {
                         val panel = shown.random(random)
-                        val old = slotsOf(t0, panel)
+                        val old = allSlotsOf(t0, panel)
                         val (from, to) =
                             when (random.nextInt(3)) {
                                 // Dragged elsewhere, keeping its length.
-                                0 -> random.nextInt(SLOTS - old.size + 1).let { it to it + old.size }
+                                0 -> random.nextInt(maxOf(1, SLOTS - old.size + 1)).let { it to it + old.size }
                                 // An edge dragged.
-                                1 -> minOf(old.min(), random.nextInt(SLOTS - 1)).let { it to maxOf(it + 1, old.max() + 1) }
+                                1 -> maxOf(0, minOf(old.min(), random.nextInt(SLOTS - 1))).let { it to maxOf(it + 1, old.max() + 1) }
                                 else -> span()
                             }
                         val share = panel.taskId != null && random.nextInt(4) == 0
@@ -204,13 +220,13 @@ class TimelineLevelsFuzzTest {
                                 state,
                                 SchedulerIntent.UpdateTaskPanel(panel.id, panel.taskId, panel.title, t0 + from * SLOT, t0 + to * SLOT, pins, allowOverlap = share),
                             )
-                        nextStack = without(stack, whatOf(panel), old) + Placed(whatOf(panel), (from until to).toSet(), share)
+                        nextStack = moved(stack, panel, (from until to).toSet(), share)
                     }
                     roll < 88 -> {
                         val panel = shown.random(random)
                         log += "remove ${whatOf(panel)} ${panel.id}"
                         state = SchedulerReducer.reduce(state, SchedulerIntent.RemoveTaskPanel(panel.id))
-                        nextStack = without(stack, whatOf(panel), slotsOf(t0, panel))
+                        nextStack = without(stack, panel)
                     }
                     else -> {
                         val back = past.removeLastOrNull()

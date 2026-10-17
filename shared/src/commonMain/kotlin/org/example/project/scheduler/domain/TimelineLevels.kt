@@ -7,24 +7,28 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.model.TaskTimeRange
 
 /**
- * `docs/scheduler_input_requirements.md`: *"The timeline has … hidden levels called tm_levels. When a blue/orange
- * outlined block is positioned at t_r, then what was there before is added at t_r to the lowest tm_level where nothing
- * is at t_r. What is in the timeline is the result of the overlap of those tm_levels, applying them from top to
- * bottom, ignoring those that are incompatible with the higher tm_levels."*
+ * The timeline is the overlap of hidden levels, the **tm_levels** (first stated in the since-removed
+ * `docs/scheduler_input_requirements.md`): *"What is in the timeline is the result of the overlap of those tm_levels,
+ * applying them from top to bottom, ignoring those that are incompatible with the higher tm_levels."* And
+ * `docs/scheduler_requirements.md` § *Manual editing*: *"If the user adds an element, then removes it, the state of
+ * the line is the same as before the addition. If the user moves some elements, then moves them back to their
+ * original place, the state of the line is the same as before the move."* — the model of `line_manager.py`: the
+ * elements stacked in the order they were placed, the rules read off that stack, never written into it.
  *
- * The blocks a hand placed each stand on a level ([TaskPanel.tmLevel]); a block positioned over others is raised above
- * all of them ([raised]). [settle] is the overlap: the blocks are applied from the highest level down, and the part of
- * one that cannot share its stretch with what is already applied is HIDDEN ([HiddenPanel]) rather than cut away — so
- * it is back the moment what stood over it has gone. Nothing is ever destroyed by placing a block.
+ * The blocks a hand placed each stand on a level ([TaskPanel.tmLevel]), given once, when the block is placed: above
+ * every block there is ([placed]); a move keeps it. [settle] is the overlap: the blocks are applied from the highest
+ * level down, and the part of one that cannot share its stretch with what is already applied is HIDDEN ([HiddenPanel])
+ * rather than cut away — so it is back the moment what stood over it has gone. Nothing is ever destroyed by placing a
+ * block, and nothing about the stack depends on where a block has been.
  *
  * **Incompatible** is the one question the override rule has always asked ([SchedulerDomain.periodRefuses]) — a
  * period and a task panel cannot share a stretch where the period, or a period the account's combination rules bring
  * with it there ([PeriodKindConfig.closeRegions]), refuses the task — plus one more: under a period of its own kind a
  * period says nothing new, so that part of it is hidden too (*"the included block loses its blue/orange outlines"*).
- * The same holds of a task panel under a panel of its own task. And a task panel positioned over another task's panel
- * hides it (*"Dragging task A into task B hides task B, unless
- * shift is pressed, which makes the two task panels share the width"*, [TaskPanel.tmShare]); two on ONE level — every
- * panel placed before the levels existed — go on sharing the width.
+ * The same holds of a task panel under a panel of its own task. And a task panel above another task's panel hides it
+ * unless it was positioned to share the width (Shift, [TaskPanel.tmShare]); two on ONE level — every panel placed
+ * before the levels existed — go on sharing the width. Which of the two is above is the order they were placed in: a
+ * task panel dragged onto one placed after it goes under it.
  *
  * The bottom level is the scheduler's: what it lays is derived around the timeline this leaves, by every fill, so it
  * needs no piece kept here. Pure — the reducer's calendar commit is the one caller.
@@ -48,20 +52,54 @@ object TimelineLevels {
             panel.endEpochMillis > panel.startEpochMillis
 
     /**
-     * [panels] with the block [id] raised above every other block — shown or hidden — its span overlaps: *"what was
-     * there before is added … to the lowest tm_level where nothing is"*, which is the same order said from the other
-     * side. A block already above them all keeps its level, so asking twice changes nothing.
+     * [panels] with the block [id] — one a hand has just PLACED — on a level above every other block there is, shown
+     * or hidden, wherever it stands. The levels are the order the blocks were placed in (`line_manager.py`'s z-index,
+     * fixed at creation), so a block that is MOVED keeps the level it was given and this is never asked of it:
+     * `docs/scheduler_requirements.md` § *Manual editing* — *"If the user moves some elements, then moves them back to
+     * their original place, the state of the line is the same as before the move"*, which a block raised over what it
+     * was moved onto could not be. Above EVERY block, not only the ones it overlaps: moved later onto a block placed
+     * before it, it stays above that one too.
      */
-    fun raised(panels: List<TaskPanel>, hidden: List<HiddenPanel>, id: String): List<TaskPanel> {
+    fun placed(panels: List<TaskPanel>, hidden: List<HiddenPanel>, id: String): List<TaskPanel> {
         val block = panels.firstOrNull { it.id == id }?.takeIf(::participates) ?: return panels
-        var top = Int.MIN_VALUE
-        for (other in panels) {
-            if (other.id == id || !participates(other) || !overlaps(other, block)) continue
-            top = maxOf(top, other.tmLevel)
-        }
-        for (piece in hidden) if (!piece.record && overlaps(piece.panel, block)) top = maxOf(top, piece.panel.tmLevel)
-        if (top == Int.MIN_VALUE || block.tmLevel > top) return panels
+        var top = 0
+        for (other in panels) if (other.id != id && participates(other)) top = maxOf(top, other.tmLevel)
+        for (piece in hidden) if (!piece.record && piece.panel.tmBlockId != id) top = maxOf(top, piece.panel.tmLevel)
+        if (block.tmLevel == top + 1) return panels
         return panels.map { if (it.id == id) it.copy(tmLevel = top + 1) else it }
+    }
+
+    /**
+     * [panels] and [hidden] once a hand has positioned [after] — which was [before] — a block already on a level, or
+     * a piece of one. **A block is ONE element however the levels cut it** (`line_manager.py`: an element moves whole,
+     * and its place in the stack with it): where the edit is a move — both ends by the same amount — every other piece
+     * of the block, shown or hidden, moves with it, so a block moved and moved back is the block it was
+     * (`docs/scheduler_requirements.md` § *Manual editing*). A piece moved alone would stand on its own block's level
+     * over its own other pieces and fuse with them, and could never be taken back off them. What the hand says of
+     * sharing the width it says of the whole block. The very lists where nothing else moves.
+     */
+    fun carried(panels: List<TaskPanel>, hidden: List<HiddenPanel>, before: TaskPanel, after: TaskPanel): Settled {
+        val block = before.tmBlockId
+        val shift = after.startEpochMillis - before.startEpochMillis
+        val moves = shift != 0L && after.endEpochMillis - before.endEpochMillis == shift
+        fun of(p: TaskPanel): TaskPanel {
+            var q = p
+            if (moves) q = q.copy(startEpochMillis = p.startEpochMillis + shift, endEpochMillis = p.endEpochMillis + shift)
+            if (p.taskId != null && p.tmShare != after.tmShare) q = q.copy(tmShare = after.tmShare)
+            return q
+        }
+        var changed = false
+        val outPanels =
+            panels.map { p ->
+                if (p.id == after.id || p.tmBlockId != block || !participates(p)) p
+                else of(p).also { if (it != p) changed = true }
+            }
+        val outHidden =
+            hidden.map { h ->
+                if (h.record || h.panel.tmBlockId != block) h
+                else of(h.panel).let { if (it == h.panel) h else HiddenPanel(it).also { changed = true } }
+            }
+        return if (changed) Settled(outPanels, outHidden) else Settled(panels, hidden)
     }
 
     /**
@@ -255,9 +293,6 @@ object TimelineLevels {
     }
 
     private fun spanOf(panel: TaskPanel): TaskTimeRange = TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)
-
-    private fun overlaps(a: TaskPanel, b: TaskPanel): Boolean =
-        a.startEpochMillis < b.endEpochMillis && b.startEpochMillis < a.endEpochMillis
 
     /** Overlapping or abutting: a piece that only touches the stretch may be the other half of a block in it. */
     private fun touches(panel: TaskPanel, ranges: List<TaskTimeRange>): Boolean =

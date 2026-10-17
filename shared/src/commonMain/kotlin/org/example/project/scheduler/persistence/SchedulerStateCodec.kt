@@ -560,6 +560,7 @@ object SchedulerStateCodec {
                         tmShare = it.tmShare,
                         tmFill = it.tmFill,
                         patternOrigin = it.patternOrigin,
+                        tmLeft = it.tmLeft.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                     )
                 },
             hiddenPanels = hiddenPanels.map { it.toPersistedHidden() },
@@ -980,6 +981,7 @@ object SchedulerStateCodec {
             tmShare = tmShare,
             tmFill = tmFill,
             patternOrigin = patternOrigin,
+            tmLeft = tmLeft.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) },
         )
 
     private fun org.example.project.scheduler.model.HiddenPanel.toPersistedHidden(): PersistedHiddenPanel =
@@ -1240,6 +1242,7 @@ object SchedulerStateCodec {
                         tmShare = it.tmShare,
                         tmFill = it.tmFill,
                         patternOrigin = it.patternOrigin,
+                        tmLeft = it.tmLeft.map { r -> TaskTimeRange(r.start, r.end) },
                     )
                 },
             hiddenPanels = hiddenPanels.map { it.toHidden() },
@@ -1600,6 +1603,7 @@ object SchedulerStateCodec {
             tmShare = tmShare,
             tmFill = tmFill,
             patternOrigin = patternOrigin,
+            tmLeft = tmLeft.map { TaskTimeRange(it.start, it.end) },
         )
 
     private fun PersistedTaskTree.toEntry(): TaskTreeEntry =
@@ -2724,6 +2728,8 @@ private data class PersistedPanel(
     val tmFill: Boolean = false,
     /** [org.example.project.scheduler.model.TaskPanel.patternOrigin]. New 2026-10-11: absent before, a block of no pattern. */
     val patternOrigin: String = "",
+    /** [org.example.project.scheduler.model.TaskPanel.tmLeft]. New 2026-10-17: absent before, nothing the hole rule filled. */
+    val tmLeft: List<PersistedTimeRange> = emptyList(),
 )
 
 /**
