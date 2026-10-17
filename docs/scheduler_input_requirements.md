@@ -1,8 +1,10 @@
-The timeline has a hidden level for the "alternative schedule", and other hidden levels called $tm_levels$. When a blue/orange outlined block is positioned at $t_r$, then what was there before is added at $t_r$ to the lowest $tm_level$ where nothing is at $t_r$. What is in the timeline is the result of the overlap of those $tm_levels$, applying them from top to bottom, ignoring those that are incompatible with the higher $tm_levels$.
+The timeline has a hidden level for the "alternative schedule", and other hidden levels called $tm_levels$. When a blue/orange outlined block is added to $t_r$, then it is added on the $tm_level$ above. What was there before this blue/orange outlined block is left untouched in its $tm_level$, except if it is a block set there automatically from reading the set of rules output of the scheduler engine, then it is replaced in its $tm_level$ by the new element that is part of the blue/orange outlined block. What is in the timeline is the result of the overlap of those $tm_levels$, applying them from top to bottom, ignoring those that are incompatible with the higher $tm_levels$. 
 
 Example 1: the user drags a "no phone unlocked" period to a "no computer unlocked" period, then drags there task A with 0 resilience to "no screen". On the timeline, it would be task A with "no phone unlocked" and no "no computer unlocked" because it would imply a "no screen" period which is incompatible with task A.
 
 Example 2: suppose the timeline is only task A, then the user manually adds a task B at 10h-12h. There are now two $tm_levels$: the bottom one with task A all along, and the top one with task B at 10h-12h. Next, the user selects task B at 11h-12h and task A at 12h-13h and drags it 4h further in the future. Now, the bottom $tm_level$ has an "Inactivity" period at 12h-13h, and the top $tm_level$ has task B at 15h-16h and task A at 16h-17h.
+
+Example 3: the user adds a task A block on a future task B that is not blue/orange outlined. The scheduler runs again. Then the user drags this blue outlined task A block. When moving, the vacated time interval is filled by "Inactivity". When the mouse stops moving, the scheduler runs again and this inactivity gets filled with the new schedule.
 
 Additional rule: if the element $e$ that is getting dragged is going to make a hole in the bottom $tm_level$ , then if there is another element $e2$ present at both edges of the hole (when completely dragged away) that is incompatible with $e$, then the hole is getting filled with $e2$. "Incompatible" here means incompatible of presence (task with 0 resilience to "no screen" incompatible with "no screen"), but also of task share (task A 50% task B 50% incompatible with task A 100% or task A 40% task B 60%).
 
@@ -38,3 +40,12 @@ Conversely, if the dragged period originally induced the presence of a dependent
 When a block gets dragged or more generally edited, it gets outlined in blue. If the block includes a blue/orange outlined block in its entirety or partially, then the included block loses its blue/orange outlines. Example: 10h-12h of "no screen" and 11h-13h of "no screen" outlined in blue, and the user edits the 10h-12h "no screen" period by dragging its past edge 1h further into the past, there is the 9h-12h block outlined in blue, and the 12h-13h block outlined in blue.
 
 When an orange outlined block/chip becomes blue outlined, that means that the configuration that created this orange outlined block/chip gets an "exception" info (e.g., timer every day at 10h, with an exception for the occurrence of tomorrow that got dragged 1h later).
+
+
+
+When the user 
+
+When the user double-clicks on something on the timeline and keeps the mouse click pressed while moving the mouse, it drags the first element in the list of element in the location of the double-click sorted by the same priority ranking of the hovering bubble info.
+
+Examples:
+When the user drags a future 15min break, the rules of the screen breaks are still applied. When it is dragged from t0 to t0+1min, since there must be 15min break at t0, it means there is a 15min break at t0 and one at t0+15min. The rules say that when it happens the chain of "no sleep" puts only one 15min break at the start of it. So when the user tries to drag a future 15min break to the future, the user actually drags a "no sleep" period of 15 minutes.
