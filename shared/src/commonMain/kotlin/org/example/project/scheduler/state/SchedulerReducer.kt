@@ -769,6 +769,10 @@ object SchedulerReducer {
                 NewElementDefaults.reminderDefaults(intent.defaults).let {
                     if (it == state.newReminderDefaults) state else state.copy(newReminderDefaults = it)
                 }
+            is SchedulerIntent.SetNewAlarmTimes ->
+                intent.times.healed().let { if (it == state.newAlarmTimes) state else state.copy(newAlarmTimes = it) }
+            is SchedulerIntent.SetNewReminderTimes ->
+                intent.times.healed().let { if (it == state.newReminderTimes) state else state.copy(newReminderTimes = it) }
             is SchedulerIntent.SetDeepCopyUnlimited ->
                 if (state.deepCopyUnlimited == intent.unlimited) state
                 else state.copy(deepCopyUnlimited = intent.unlimited)

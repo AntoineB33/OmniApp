@@ -167,6 +167,12 @@ fun AlarmWindow(
     onShownChange: (AlarmWindowSubject) -> Unit = {},
     /** PRD §18: what a new alarm and a new timer start with ([NewElementDefaults]) — "+ New …" and "+ Add …". */
     newAlarm: AlarmEntry = NewElementDefaults.ALARM,
+    /**
+     * A new alarm of this id, made the one way every new alarm is made ([NewElementDefaults.newAlarm] with the account's
+     * [org.example.project.scheduler.domain.NewElementTimes]) — "+ Add alarm" and "+ New alarm". The default (a caller
+     * that gives none, a preview) is [newAlarm] at [newRowTimeOfDayMinutes].
+     */
+    newAlarmEntry: (String) -> AlarmEntry = { id -> NewElementDefaults.newAlarm(newAlarm, id, newRowTimeOfDayMinutes()) },
     newTimer: TimerEntry = NewElementDefaults.TIMER,
     /**
      * The single element's window: open the default configuration of its kind (true = the alarms'), at the bottom
@@ -354,7 +360,7 @@ fun AlarmWindow(
         // A locally-unique id right away, so the row has an identity before the round-trip through onChange
         // (the reducer mints one for a blank id too).
         val id = AlarmDomain.mintAlarmId(rows.map { it.id })
-        rows.add(alarmRowOf(NewElementDefaults.newAlarm(newAlarm, id, newRowTimeOfDayMinutes())))
+        rows.add(alarmRowOf(newAlarmEntry(id)))
         push()
         return id
     }

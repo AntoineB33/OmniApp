@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An alarm's and a reminder's default configuration in the actions, and when a new one is set — 2026-10-18
+
+User rule: *"I don't see the default micro group in the action section of an alarm element… Check for other element
+types as well. If I click New alarm, the date/time fields of the new alarm must be set to default. The default
+configuration can define a default date, make it to the current day, to the day of the alarm element where the user
+clicked on New alarm if that is how it got created, same thing for the time field."*
+- **The "Default configuration of a new …" group** now stands for alarms and reminders as it did for timers and quotas:
+  their settings joined `SearchDomain.DEFAULT_CONFIGURATION_ACTIONS` (alarm: date and time, days, rings for, repeat,
+  alert, on/off; reminder: every, time, alert), the "New alarm" / "New reminder" rows act as their kind, and the shared
+  fields read and write the default (`addedAlarmsOrDefault`, `addedRemindersOrDefault`; `AlarmsEdit`/`RemindersEdit`
+  write `SetNewAlarmDefaults`/`SetNewReminderDefaults`). A reminder's "Constrained in" is not in it (its picker names
+  reminders by id). Chronos, tasks, categories and restrictive periods have no default configuration in the account, so
+  no group.
+- **When a new one is set** (`NewElementTimes`, new authoritative settings `newAlarmTimes` / `newReminderTimes`, persisted
+  and synced, written only once changed): in the default's "Date and time" (alarm) or "Time" (reminder), the date — on
+  its days (the default, as before), the day it is made, the day of the alarm it is made from — and the time — the time
+  it is made, a time of its own, the time of the one it is made from. **A new alarm's default is a time of its own,
+  07:00** (`NewElementDefaults.ALARM_TIMES`; user rule: *"so that it doesn't ring as soon as the user is creating a new
+  alarm"* — made at the time it was made, it rang that minute); a new reminder's stays the time it is made. The Alarms
+  window's "+ Add alarm" is made by the same rules (`AlarmWindow`'s `newAlarmEntry`, no longer at the clock's minute). "Made from" is the element
+  whose group's "New" was pressed (`AddedActionHandlers.onCreateFrom`); made from none, or from one with nothing to give
+  (an alarm that repeats has no date), it is the day / the time it is made (`NewElementDefaults.newAlarm`, `newMinutes`).
+- A default no longer keeps a date of its own (`NewElementDefaults.newAlarm` clears `onlyOnEpochDay`/`skippedEpochDays`).
+- **The actions section's search bar finds the default configuration group** (*"I typed 'default' … it doesn't bring up
+  the default configurations micro group"*): it was drawn after every action whatever the bar held. It is now a micro
+  group in the sort like the others (`SearchDomain.microGroups`): by its title (0–3), else by an action of it as a text
+  inside it (4–5).
+- **Every micro group retracts** (user rule: *"every micro group retracts"* — the default configuration group was the
+  only one, an accident of being drawn by the groups' own code): each action's micro group has its expansion arrow and
+  a press on its title toggles it, remembered with the window's configuration like the groups'
+  (`SearchDomain.microGroupId`, `listedGroupIds`). "Show only its actions" keeps what was retracted inside the groups.
+- **Fixed: the actions inside "Default configuration of a new …" had the title style of the micro group holding them.**
+  They now read a level below it (`MicroGroupTitle(nested = true)`: the next size down, muted) and stand a little to the
+  right of it (`NESTED_ACTION_INDENT`).
+
 ### "Right-click time" beside every time field of a window that came from a calendar right-click — 2026-10-18
 
 User rule: *"calendar > right-click > add… > add an alarm element: the Time field must have a button next to it to set it

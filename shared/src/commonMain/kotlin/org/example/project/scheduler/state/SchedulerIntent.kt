@@ -1442,6 +1442,11 @@ sealed interface SchedulerIntent {
 
     data class SetNewReminderDefaults(val defaults: org.example.project.scheduler.model.ChoreEntry) : SchedulerIntent
 
+    /** User rule 2026-10-18: when a new alarm / reminder is set ([SchedulerState.newAlarmTimes]) — its defaults' rule. */
+    data class SetNewAlarmTimes(val times: org.example.project.scheduler.domain.NewElementTimes) : SchedulerIntent
+
+    data class SetNewReminderTimes(val times: org.example.project.scheduler.domain.NewElementTimes) : SchedulerIntent
+
     /**
      * PRD §13 deep copy: the account's three **what does a copy carry** switches (see
      * [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]), set from the deep-copy window

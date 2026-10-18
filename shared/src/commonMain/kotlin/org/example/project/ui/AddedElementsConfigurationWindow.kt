@@ -246,6 +246,12 @@ data class AddedActionHandlers(
     val claudeLogs: () -> org.example.project.claudelogs.ClaudeLogCatalog = { org.example.project.claudelogs.ClaudeLogCatalog.EMPTY },
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
     val onRefreshClaudeLogs: () -> Unit = {},
+    /**
+     * User rule 2026-10-18: "New" pressed in the group of ONE element of the kind ([from]) — what the default
+     * configuration's "the day / the time of the one it is made from" reads ([org.example.project.scheduler.domain.NewElementTimes]).
+     * Null: pressed anywhere else, which is [onCreate].
+     */
+    val onCreateFrom: (SearchDomain.Kind, SearchDomain.Result?) -> Unit = { kind, _ -> onCreate(kind) },
 ) {
     /**
      * These handlers, each one that opens a Search window run inside [around] (user rule 2026-10-18): what a Search
@@ -257,6 +263,7 @@ data class AddedActionHandlers(
         copy(
             onEdit = { around { onEdit(it) } },
             onCreate = { around { onCreate(it) } },
+            onCreateFrom = { kind, from -> around { onCreateFrom(kind, from) } },
             onOpenResilienceSearch = { around { onOpenResilienceSearch(it) } },
             onOpenKindSearch = { around { onOpenKindSearch(it) } },
             onOpenBlocksSearch = { around { onOpenBlocksSearch(it) } },
@@ -376,15 +383,10 @@ private fun AddedActionSections(
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
     // …and, inside each, the actions that answer the section's search bar first (user rule 2026-10-11).
     val groups = SearchDomain.actionGroups(sections, added, config.actionSearch)
-    val listed = groups.flatMapTo(HashSet()) { group -> listOf(group.id) + group.inner.map { it.id } }
+    val listed = SearchDomain.listedGroupIds(groups)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
     for (group in groups) {
-        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, reveal = reveal?.takeIf { it.first == group.id }) {
-            // What the group holds inside it (the default configuration of its kind), each with its own arrow.
-            for (inner in group.inner) {
-                ActionGroupBlock(inner, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, micro = true) {}
-            }
-        }
+        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, reveal = reveal?.takeIf { it.first == group.id })
     }
 }
 
@@ -410,7 +412,6 @@ private fun ActionGroupBlock(
     micro: Boolean = false,
     /** Set on the group the section is asked to scroll to ([AddedActionsSection]'s `reveal`). */
     reveal: Pair<String, Int>? = null,
-    inside: @Composable () -> Unit,
 ) {
     val added = group.members
     val collapsed = group.id in config.collapsedActionGroups
@@ -444,7 +445,14 @@ private fun ActionGroupBlock(
     val clear = { onClear(added) }
     // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
     androidx.compose.runtime.key(group.id, added.map(SearchDomain::keyOf)) {
-        for (action in group.actions) {
+        // Its micro groups — each action, and what it holds inside it (the default configuration of its kind, with its
+        // own arrow) — in the order the section's search bar asks for ([SearchDomain.microGroups]).
+        for (entry in SearchDomain.microGroups(group, config.actionSearch)) {
+            if (entry is SearchDomain.MicroGroup.Inner) {
+                ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, micro = true)
+                continue
+            }
+            val action = (entry as SearchDomain.MicroGroup.One).action
             // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
             // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
             AddableAction(action, added, config) {
@@ -452,32 +460,64 @@ private fun ActionGroupBlock(
                 // micro group can have only one action."* — EVERY action is a micro group: its title on a line of its
                 // own, in the one title style ([MicroGroupTitle]), and its editor under it. Until then an editor short
                 // enough sat beside its label, in the label's font, and only the tall ones had a title.
-                Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+                // Inside a micro group (the default configuration of a kind), set a little to the right of its title.
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
+                    modifier = if (micro) Modifier.padding(start = NESTED_ACTION_INDENT) else Modifier,
+                ) {
                     // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
                     val ownTitle =
                         action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
-                    if (!ownTitle) MicroGroupTitle(action.label)
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = ownTitle)
+                    // User rule 2026-10-18: *"every micro group retracts"* — its arrow, and a press on its title, as a
+                    // group's ([SearchDomain.microGroupId], kept with the window's configuration).
+                    val microId = SearchDomain.microGroupId(group, action)
+                    val microCollapsed = microId in config.collapsedActionGroups
+                    if (microCollapsed || !ownTitle) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SectionArrow(microCollapsed) { onToggle(microId) }
+                            // Inside a micro group (the default configuration of a kind), a level below it.
+                            Box(Modifier.togglesSection { onToggle(microId) }) { MicroGroupTitle(action.label, nested = micro) }
+                        }
+                    }
+                    if (!microCollapsed) {
+                        if (ownTitle) {
+                            // Its title line is its own: the arrow stands before it.
+                            Row(verticalAlignment = Alignment.Top) {
+                                SectionArrow(false) { onToggle(microId) }
+                                Box(Modifier.weight(1f)) {
+                                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true)
+                                }
+                            }
+                        } else {
+                            AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = false)
+                        }
+                    }
                 }
             }
         }
     }
-    inside()
     }
 }
+
+/** How far right the actions inside a micro group stand of it (user rule 2026-10-18: "set them a little to the right"). */
+private val NESTED_ACTION_INDENT = 16.dp
 
 /**
  * **The title of a micro group** of the actions section — one action, or a group of them inside a group of elements
  * (the default configuration of a kind). ONE style for all of them (user rule 2026-10-11: *"right now Configuration is
  * bold, but not Add to the calendar"*): the label's medium weight, in the text's own colour — a group of ELEMENTS
  * keeps the accent colour, so the two levels still read apart.
+ *
+ * [nested]: an action inside a micro group (anomaly 2026-10-18: *"in 'Default configuration of a new alarm', there are
+ * sub groups that have the same title typo as a micro groups"*) — the next size down, in the muted colour, so the three
+ * levels read apart: the group of elements, the micro group, what is inside it.
  */
 @Composable
-private fun MicroGroupTitle(text: String) {
+private fun MicroGroupTitle(text: String, nested: Boolean = false) {
     Text(
         text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurface,
+        style = if (nested) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+        color = if (nested) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
     )
@@ -725,10 +765,11 @@ private fun AddedActionEditor(
             }
         }
         SearchDomain.AddedAction.AlarmOnOff -> {
-            val ids = idsOf(SearchDomain.Kind.Alarm)
-            // Lit when every added alarm is in that state; neither chip when they differ.
-            val shared = state.alarms.filter { it.id in ids }.map { it.enabled }.distinct().singleOrNull()
-            Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { run(SearchDomain.AddedCommand.AlarmsOn(it == true)) }
+            // Lit when every added alarm (and the default configuration, where it is added) is in that state.
+            val shared = SearchDomain.sharedValue(SearchDomain.addedAlarmsOrDefault(state, added)) { it.enabled }
+            Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { on ->
+                run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(enabled = on == true) })
+            }
         }
         SearchDomain.AddedAction.AlarmTimeNow ->
             FrameButton("Now", enabled = added.any { it.kind == SearchDomain.Kind.Alarm }) {
@@ -793,7 +834,8 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
         SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.ShortcutNew -> {
             val kind = action.section ?: return
-            FrameButton("New " + kind.label) { handlers.onCreate(kind) }
+            // Made from the element whose group this is, when the group is one element's.
+            FrameButton("New " + kind.label) { handlers.onCreateFrom(kind, added.singleOrNull { it.kind == kind }) }
         }
         SearchDomain.AddedAction.TaskDuplicate, SearchDomain.AddedAction.CategoryDuplicate,
         SearchDomain.AddedAction.PeriodDuplicate, SearchDomain.AddedAction.AlarmDuplicate,
@@ -972,6 +1014,10 @@ private fun AddedActionEditor(
             )
         // --- The alarms' settings: ONE field each, over every added alarm (user rule 2026-10-02) ----------------
         SearchDomain.AddedAction.AlarmTime ->
+            // The default configuration's: WHEN a new alarm is set (user rule 2026-10-18), not a date and a time.
+            if (SearchDomain.addedAlarms(state, added).isEmpty() && SearchDomain.defaultConfigurationAdded(added, SearchDomain.Kind.Alarm)) {
+                NewElementTimesEditor(state.newAlarmTimes, withDate = true) { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetNewAlarmTimes(it))) }
+            } else
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val alarms = SearchDomain.addedAlarms(state, added)
                 val tz = remember { kotlinx.datetime.TimeZone.currentSystemDefault() }
@@ -1011,7 +1057,7 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.AlarmRingsFor ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SharedTextField(
-                    items = SearchDomain.addedAlarms(state, added),
+                    items = SearchDomain.addedAlarmsOrDefault(state, added),
                     idOf = { it.id },
                     field = "Alarm/sound",
                     read = { it.soundSeconds.toString() },
@@ -1022,7 +1068,7 @@ private fun AddedActionEditor(
                 NoteText("s", color = MaterialTheme.colorScheme.onSurface)
             }
         SearchDomain.AddedAction.AlarmDays -> {
-            val alarms = SearchDomain.addedAlarms(state, added)
+            val alarms = SearchDomain.addedAlarmsOrDefault(state, added)
             // Lit: a day EVERY added alarm rings on. A press sets it for all of them, or takes it off all of them.
             val shown = alarms.map { it.days }.reduceOrNull { all, days -> all intersect days }.orEmpty()
             DayChips(
@@ -1085,7 +1131,7 @@ private fun AddedActionEditor(
         }
         // --- The reminders' settings: ONE field each, over every added reminder ----------------------------------
         SearchDomain.AddedAction.ReminderEvery -> {
-            val reminders = SearchDomain.addedReminders(state, added)
+            val reminders = SearchDomain.addedRemindersOrDefault(state, added)
             // `docs/scheduler_input_requirements.md`: a tag moved off the cadence is its exception, said under it.
             val exceptions =
                 remember(state.panels, state.chores, reminders) {
@@ -1118,6 +1164,9 @@ private fun AddedActionEditor(
             }
         }
         SearchDomain.AddedAction.ReminderTime ->
+            if (SearchDomain.addedReminders(state, added).isEmpty() && SearchDomain.defaultConfigurationAdded(added, SearchDomain.Kind.Reminder)) {
+                NewElementTimesEditor(state.newReminderTimes, withDate = false) { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetNewReminderTimes(it))) }
+            } else
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val reminders = SearchDomain.addedReminders(state, added)
                 SharedTextField(
@@ -1161,7 +1210,7 @@ private fun AddedActionEditor(
             }
         }
         SearchDomain.AddedAction.ReminderAlert -> {
-            val shown = SearchDomain.sharedAlert(SearchDomain.addedReminders(state, added).map { it.alert })
+            val shown = SearchDomain.sharedAlert(SearchDomain.addedRemindersOrDefault(state, added).map { it.alert })
             if (shown != null) {
                 AlertSettingsEditor(
                     alert = shown,
@@ -1173,13 +1222,13 @@ private fun AddedActionEditor(
         }
         SearchDomain.AddedAction.AlarmRepeat -> {
             // Lit when every added alarm is in that state; neither chip when they differ.
-            val shared = SearchDomain.sharedValue(SearchDomain.addedAlarms(state, added)) { it.repeats }
+            val shared = SearchDomain.sharedValue(SearchDomain.addedAlarmsOrDefault(state, added)) { it.repeats }
             Choices(listOf(true, false), shared, { if (it == true) "on" else "off" }) { on ->
                 run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(repeats = on == true) })
             }
         }
         SearchDomain.AddedAction.AlarmAlert -> {
-            val shown = SearchDomain.sharedAlert(SearchDomain.addedAlarms(state, added).map { it.alert })
+            val shown = SearchDomain.sharedAlert(SearchDomain.addedAlarmsOrDefault(state, added).map { it.alert })
             if (shown != null) {
                 // Only what is pressed is written: the channels and the tone nobody touched stay each alarm's own.
                 AlertSettingsEditor(
@@ -2134,4 +2183,44 @@ internal fun FrameButton(text: String, enabled: Boolean = true, onClick: () -> U
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(6.dp)),
     )
+}
+
+/**
+ * User rule 2026-10-18: **when a new alarm or reminder is set** — the default configuration's "Date and time" (an
+ * alarm's) or "Time" ([org.example.project.scheduler.domain.NewElementTimes]): where its date comes from, and where its
+ * time of day comes from — the day / the time it is made, the one of the element whose "New" made it, or a time of its own.
+ */
+@Composable
+private fun NewElementTimesEditor(
+    times: org.example.project.scheduler.domain.NewElementTimes,
+    withDate: Boolean,
+    onChange: (org.example.project.scheduler.domain.NewElementTimes) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+        if (withDate) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                NoteText("date", color = MaterialTheme.colorScheme.onSurface)
+                ChoiceDropDown(
+                    options = org.example.project.scheduler.domain.NewDate.entries,
+                    selected = times.date,
+                    label = { it.label },
+                    onSelect = { onChange(times.copy(date = it)) },
+                    modifier = Modifier.width(260.dp),
+                )
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            NoteText("time", color = MaterialTheme.colorScheme.onSurface)
+            ChoiceDropDown(
+                options = org.example.project.scheduler.domain.NewTime.entries,
+                selected = times.time,
+                label = { it.label },
+                onSelect = { onChange(times.copy(time = it)) },
+                modifier = Modifier.width(260.dp),
+            )
+            if (times.time == org.example.project.scheduler.domain.NewTime.Fixed) {
+                TimeOfDayField(times.fixedMinutes, enabled = true) { minutes -> onChange(times.copy(fixedMinutes = minutes)) }
+            }
+        }
+    }
 }

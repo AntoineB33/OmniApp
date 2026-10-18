@@ -2257,7 +2257,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // its window. A new WINDOW is a Search window listing the window types.
         // Whoever asks — a creation row, or the actions' "New" button of any kind (user rule 2026-10-04) — the new
         // element opens in a NEW Search window as its only added element; it never joins the asking window's list.
-        fun createElement(kind: SearchDomain.Kind) {
+        // [from]: the element whose group's "New" made it (user rule 2026-10-18) — what a new alarm's or reminder's
+        // date and time may be taken from ([NewElementTimes]); null when made from anywhere else.
+        fun createElement(kind: SearchDomain.Kind, from: SearchDomain.Result? = null) {
+            val fromId = (from as? SearchDomain.ItemResult)?.takeIf { it.kind == kind }?.id
             val st = vm.state.value
             val now = clock.nowMillis()
             val minutes = Instant.fromEpochMilliseconds(now).toLocalDateTime(tz).let { it.hour * 60 + it.minute }
@@ -2287,7 +2290,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 SearchDomain.Kind.Alarm -> {
                     val id = AlarmDomain.mintAlarmId(st.alarms.map { it.id })
-                    vm.dispatch(SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, id, minutes)))
+                    val source = st.alarms.firstOrNull { it.id == fromId }
+                    vm.dispatch(
+                        SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, st.newAlarmTimes, id, now, tz, source)),
+                    )
                     openElementSearch(SearchDomain.Kind.Alarm, id)
                 }
                 SearchDomain.Kind.Timer -> {
@@ -2312,7 +2318,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 SearchDomain.Kind.Reminder -> {
                     val todayStart = today.atStartOfDayIn(tz).toEpochMilliseconds()
-                    val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", minutes)
+                    val source = st.chores.firstOrNull { it.id.ifEmpty { it.title } == fromId }
+                    val at = NewElementDefaults.newMinutes(st.newReminderTimes, now, tz, source?.timeOfDayMinutes?.takeIf { it >= 0 })
+                    val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", at)
                     vm.dispatch(SchedulerIntent.SetChores(st.chores + created, todayStart, now))
                     vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let {
                         openElementSearch(SearchDomain.Kind.Reminder, it)
@@ -4699,6 +4707,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             subject = subject,
                             onShownChange = onShownChange,
                             newAlarm = schedulerState.newAlarmDefaults,
+                            // User rule 2026-10-18: by the default configuration's rules, as every new alarm is made.
+                            newAlarmEntry = { id ->
+                                NewElementDefaults.newAlarm(schedulerState.newAlarmDefaults, schedulerState.newAlarmTimes, id, clock.nowMillis(), tz, null)
+                            },
                             newTimer = schedulerState.newTimerDefaults,
                             onOpenDefaults = { isAlarm ->
                                 defaultsWindows.open(
@@ -4886,7 +4898,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 focusWindow(FloatingWindow.Shortcuts)
                             },
                             onOpenWindow = ::showWindow,
-                            onCreate = ::createElement,
+                            onCreate = { createElement(it) },
                         )
                     // What the actions on the added elements open or draw — the cell menu's handlers, and the Alarms
                     // window's and the reminder editor's components embedded over the same callbacks.
@@ -4926,7 +4938,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     embeddedCompact = compact,
                                 )
                             },
-                            onCreate = ::createElement,
+                            onCreate = { createElement(it) },
+                            onCreateFrom = { kind, from -> createElement(kind, from) },
                             onPlaceOnCalendar = { drafts ->
                                 saveCalendarElementIntents(drafts, vm.state.value, tz).forEach(vm::dispatch)
                             },

@@ -19,6 +19,9 @@ import org.example.project.scheduler.domain.AlarmDomain
 import org.example.project.scheduler.domain.TimerDomain
 import org.example.project.scheduler.domain.CategoryRules
 import org.example.project.scheduler.domain.NewElementDefaults
+import org.example.project.scheduler.domain.NewDate
+import org.example.project.scheduler.domain.NewElementTimes
+import org.example.project.scheduler.domain.NewTime
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.AlertSettings
@@ -665,6 +668,9 @@ object SchedulerStateCodec {
             // Written only once the account changed it: an untouched default is no field at all.
             newQuotaDefaults = newQuotaDefaults.takeIf { it != NewElementDefaults.QUOTA }?.toPersisted(),
             newReminderDefaults = newReminderDefaults.toPersisted(),
+            // Written only once the account changed them: an untouched rule is no field at all.
+            newAlarmTimes = newAlarmTimes.takeIf { it != NewElementDefaults.ALARM_TIMES }?.toPersisted(),
+            newReminderTimes = newReminderTimes.takeIf { it != NewElementDefaults.REMINDER_TIMES }?.toPersisted(),
             // PRD §7 Keyboard shortcuts: the account's system-wide chord OVERRIDES, sorted by shortcut so
             // one binding table has exactly one encoding (the fingerprint is this payload, byte for byte).
             shortcutBindings = shortcutBindings.toPersistedRows(),
@@ -1344,6 +1350,8 @@ object SchedulerStateCodec {
             newReminderDefaults =
                 newReminderDefaults?.toChoreEntry()?.let(NewElementDefaults::reminderDefaults)
                     ?: NewElementDefaults.REMINDER,
+            newAlarmTimes = newAlarmTimes?.toNewElementTimes() ?: NewElementDefaults.ALARM_TIMES,
+            newReminderTimes = newReminderTimes?.toNewElementTimes() ?: NewElementDefaults.REMINDER_TIMES,
             // PRD §7 Keyboard shortcuts: a payload written before the window could rebind anything has no
             // entries at all, which is exactly "every chord is the one it ships with". A row naming a
             // shortcut or a key this build does not have is DROPPED rather than surfaced (that shortcut
@@ -1804,6 +1812,9 @@ private data class PersistedState(
     /** New 2026-10-03; missing = the built-in default a new quota had before. */
     val newQuotaDefaults: PersistedQuota? = null,
     val newReminderDefaults: PersistedChoreEntry? = null,
+    /** New 2026-10-18: when a new alarm / reminder is set; missing = the kind's own (`NewElementDefaults.ALARM_TIMES`…). */
+    val newAlarmTimes: PersistedNewElementTimes? = null,
+    val newReminderTimes: PersistedNewElementTimes? = null,
     // PRD §7 Keyboard shortcuts: the account's system-wide chord overrides. A missing value decodes to none,
     // i.e. every chord is the one it ships with — which is what every payload written before the window could
     // rebind anything behaved as.
@@ -2235,6 +2246,19 @@ private data class PersistedQuotaLoop(
     // [renewals] — anything but 1 was particular.
     val ownRenewals: Int? = null,
 )
+
+/** [NewElementTimes] as stored: names, so a rule this build does not know reads as the default one. */
+@Serializable
+private data class PersistedNewElementTimes(val date: String? = null, val time: String? = null, val fixedMinutes: Int = 0)
+
+private fun NewElementTimes.toPersisted(): PersistedNewElementTimes = PersistedNewElementTimes(date.name, time.name, fixedMinutes)
+
+private fun PersistedNewElementTimes.toNewElementTimes(): NewElementTimes =
+    NewElementTimes(
+        date = NewDate.entries.firstOrNull { it.name == date } ?: NewDate.OnItsDays,
+        time = NewTime.entries.firstOrNull { it.name == time } ?: NewTime.MadeAt,
+        fixedMinutes = fixedMinutes,
+    ).healed()
 
 private fun QuotaEntry.toPersisted(): PersistedQuota =
     PersistedQuota(

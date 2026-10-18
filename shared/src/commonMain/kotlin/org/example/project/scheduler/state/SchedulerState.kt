@@ -1052,6 +1052,14 @@ data class SchedulerState(
     val newQuotaDefaults: org.example.project.scheduler.model.QuotaEntry =
         org.example.project.scheduler.domain.NewElementDefaults.QUOTA,
     /**
+     * User rule 2026-10-18: **when a new alarm / reminder is set** — its date (an alarm's) and its time of day, part of
+     * its default configuration ([org.example.project.scheduler.domain.NewElementTimes]). Authoritative, persisted +
+     * synced, not an Undo/Redo unit. A payload written before they existed decodes to the kind's own
+     * ([org.example.project.scheduler.domain.NewElementDefaults.ALARM_TIMES]…).
+     */
+    val newAlarmTimes: org.example.project.scheduler.domain.NewElementTimes = org.example.project.scheduler.domain.NewElementDefaults.ALARM_TIMES,
+    val newReminderTimes: org.example.project.scheduler.domain.NewElementTimes = org.example.project.scheduler.domain.NewElementDefaults.REMINDER_TIMES,
+    /**
      * PRD §13 deep copy: **what** a copy carries, beside how deep it goes — the three switches in the
      * deep-copy window (see [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]). Like
      * [deepCopyMaxDepth] these are **one answer for the whole account**, so §4's Ctrl+C / Ctrl+X and the

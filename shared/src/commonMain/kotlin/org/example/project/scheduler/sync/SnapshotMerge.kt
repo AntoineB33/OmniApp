@@ -184,6 +184,8 @@ object SnapshotMerge {
                 newQuotaDefaults = pick(base.newQuotaDefaults, local.newQuotaDefaults, remote.newQuotaDefaults),
                 newReminderDefaults =
                     pick(base.newReminderDefaults, local.newReminderDefaults, remote.newReminderDefaults),
+                newAlarmTimes = pick(base.newAlarmTimes, local.newAlarmTimes, remote.newAlarmTimes),
+                newReminderTimes = pick(base.newReminderTimes, local.newReminderTimes, remote.newReminderTimes),
                 // PRD §7 Keyboard shortcuts: the chord overrides merge PER SHORTCUT — rebinding "I'm away" on
                 // the desktop while the laptop rebinds "Switch task" keeps both — but one shortcut's chord is
                 // a whole value, never a key from one device wearing the other's modifiers. Resetting is a

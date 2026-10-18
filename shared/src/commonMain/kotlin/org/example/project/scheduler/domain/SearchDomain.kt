@@ -3110,6 +3110,9 @@ object SearchDomain {
             when (result.id) {
                 Kind.Quota.name -> Kind.Quota
                 Kind.Shortcut.name -> Kind.Shortcut
+                // User rule 2026-10-18: an alarm's and a reminder's default configuration, as the timers'.
+                Kind.Alarm.name -> Kind.Alarm
+                Kind.Reminder.name -> Kind.Reminder
                 else -> result.kind
             }
         } else {
@@ -3136,6 +3139,12 @@ object SearchDomain {
             AddedAction.TimerDuration, AddedAction.TimerRingsFor, AddedAction.TimerBelowZero, AddedAction.TimerAlert,
             // A "New keyboard shortcut" row has no default to edit: "New" is the whole of what it offers.
             AddedAction.ShortcutNew,
+            // User rule 2026-10-18 (*"I don't see the default micro group in the action section of an alarm element"*):
+            // an alarm's settings and a reminder's, what a new one starts with ([SchedulerState.newAlarmDefaults]…) —
+            // and when it is set ([SchedulerState.newAlarmTimes], the default's "Date and time" / "Time").
+            AddedAction.AlarmNew, AddedAction.AlarmTime, AddedAction.AlarmDays, AddedAction.AlarmRingsFor,
+            AddedAction.AlarmRepeat, AddedAction.AlarmAlert, AddedAction.AlarmOnOff,
+            AddedAction.ReminderNew, AddedAction.ReminderEvery, AddedAction.ReminderTime, AddedAction.ReminderAlert,
         )
 
     /**
@@ -3308,8 +3317,10 @@ object SearchDomain {
         val groups = actionGroups(actionsFor(addedActions(config.actionQuery, Kind.entries.toSet(), actionKindsOf(added)), added), added)
         val key = keyOf(element)
         val own = groups.firstOrNull { it.element && it.members.singleOrNull()?.let(::keyOf) == key } ?: return null
-        val inner = groups.flatMapTo(HashSet()) { group -> group.inner.map { it.id } }
-        val retracted = groups.mapTo(HashSet()) { it.id } - own.id + config.collapsedActionGroups.filter { it in inner }
+        // What is inside the groups — the groups inside them, every action's micro group — stays as the user left it.
+        val macro = groups.mapTo(HashSet()) { it.id }
+        val inside = listedGroupIds(groups) - macro
+        val retracted = macro - own.id + config.collapsedActionGroups.filter { it in inside }
         return config.copy(collapsedActionGroups = retracted) to own.id
     }
 
@@ -3435,6 +3446,59 @@ object SearchDomain {
 
     /** What the actions section's search bar holds when the window is opened by the calendar's "add…". */
     const val CALENDAR_ADD_ACTION_SEARCH: String = "add to calendar"
+
+    /**
+     * **One micro group of a group of elements**: one action, or a group of actions inside it (the default configuration
+     * of a kind, [ActionGroup.inner]) — what the section draws, in [microGroups]' order.
+     */
+    sealed interface MicroGroup {
+        data class One(val action: AddedAction) : MicroGroup
+
+        data class Inner(val group: ActionGroup) : MicroGroup
+    }
+
+    /**
+     * The micro groups of [group] in the order the section draws them: its actions, then the groups inside it — and, with
+     * text in the section's search bar, those that answer it first, the best first (user rule 2026-10-18: *"I typed
+     * 'default' in the search bar of the action section, but it doesn't bring up the default configurations micro
+     * group"* — it stood after every action whatever the bar held). A group inside answers by its title like an action
+     * ([actionSearchRank], 0–3), else by an action of it, which is a text inside it (4–5: a title always beats a text
+     * inside, user rule 2026-10-11). Stable: every tie keeps its place.
+     */
+    fun microGroups(group: ActionGroup, search: String): List<MicroGroup> {
+        val all = group.actions.map { MicroGroup.One(it) } + group.inner.map { MicroGroup.Inner(it) }
+        if (search.isBlank()) return all
+        fun rank(micro: MicroGroup): Int? =
+            when (micro) {
+                is MicroGroup.One -> actionSearchRank(micro.action, search)
+                is MicroGroup.Inner ->
+                    actionSearchRank(micro.group.title, search)
+                        ?: micro.group.actions.mapNotNull { actionSearchRank(it, search) }.minOrNull()?.coerceAtLeast(4)
+            }
+        return all.sortedBy { rank(it) ?: Int.MAX_VALUE }
+    }
+
+    /**
+     * What the expansion arrow of ONE action's micro group in [group] is remembered under ([Config.collapsedActionGroups])
+     * — user rule 2026-10-18: *"every micro group retracts"*, as the groups did. Its group's id and the action's name, so
+     * the same action in another group (another element's) is retracted on its own.
+     */
+    fun microGroupId(group: ActionGroup, action: AddedAction): String = "action/" + group.id + "/" + action.name
+
+    /**
+     * Every arrow the section shows for [groups] — each group, each group inside one, and each action's micro group in
+     * both ([microGroupId]): what [withActionGroupToggled] keeps of the retracted ones.
+     */
+    fun listedGroupIds(groups: List<ActionGroup>): Set<String> {
+        val out = HashSet<String>()
+        fun walk(group: ActionGroup) {
+            out += group.id
+            group.actions.forEach { out += microGroupId(group, it) }
+            group.inner.forEach(::walk)
+        }
+        groups.forEach(::walk)
+        return out
+    }
 
     /** [actionGroups] with each group's actions sorted by the section's search bar ([sortedByActionSearch]). */
     fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>, search: String): List<ActionGroup> {
@@ -3588,6 +3652,21 @@ object SearchDomain {
         } else {
             own
         }
+    }
+
+    /**
+     * [addedAlarms], and first the account's default configuration of a new alarm (wearing [DEFAULT_CONFIGURATION_ID])
+     * where the "New alarm" row is among [added] — the timers' rule ([addedTimersOrDefault]).
+     */
+    fun addedAlarmsOrDefault(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.AlarmEntry> {
+        val own = addedAlarms(state, added)
+        return if (defaultConfigurationAdded(added, Kind.Alarm)) listOf(state.newAlarmDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
+    }
+
+    /** [addedReminders], and first the default configuration of a new reminder where the "New reminder" row is added. */
+    fun addedRemindersOrDefault(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.ChoreEntry> {
+        val own = addedReminders(state, added)
+        return if (defaultConfigurationAdded(added, Kind.Reminder)) listOf(state.newReminderDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
     }
 
     /** The added alarms the account still holds, in the list's order — what the alarm group's shared fields read. */
@@ -4864,12 +4943,26 @@ object SearchDomain {
             }
             is AddedCommand.RemindersEdit -> {
                 val ids = idsOf(Kind.Reminder)
-                remindersIntent(state, state.chores.map { if (it.id.ifEmpty { it.title } in ids) command.change(it) else it }, nowMillis, timeZone)
+                // The default configuration is its own setting, not a row of the list ([addedRemindersOrDefault]).
+                val default =
+                    if (!defaultConfigurationAdded(added, Kind.Reminder)) null
+                    else command.change(state.newReminderDefaults.copy(id = DEFAULT_CONFIGURATION_ID)).let(NewElementDefaults::reminderDefaults)
+                        .takeIf { it != state.newReminderDefaults }
+                listOfNotNull(default?.let { SchedulerIntent.SetNewReminderDefaults(it) }) +
+                    remindersIntent(state, state.chores.map { if (it.id.ifEmpty { it.title } in ids) command.change(it) else it }, nowMillis, timeZone)
             }
             is AddedCommand.AlarmsEdit -> {
                 val ids = idsOf(Kind.Alarm)
                 val next = state.alarms.map { if (it.id in ids) command.change(it) else it }
-                if (next == state.alarms) emptyList() else listOf(SchedulerIntent.SetAlarms(next, command.editKey))
+                // The default configuration is its own setting, not a row of the list ([addedAlarmsOrDefault]).
+                val default =
+                    if (!defaultConfigurationAdded(added, Kind.Alarm)) null
+                    else command.change(state.newAlarmDefaults.copy(id = DEFAULT_CONFIGURATION_ID)).let(NewElementDefaults::alarmDefaults)
+                        .takeIf { it != state.newAlarmDefaults }
+                listOfNotNull(
+                    default?.let { SchedulerIntent.SetNewAlarmDefaults(it) },
+                    SchedulerIntent.SetAlarms(next, command.editKey).takeIf { next != state.alarms },
+                )
             }
             is AddedCommand.Titles -> {
                 val titles = command.titles
