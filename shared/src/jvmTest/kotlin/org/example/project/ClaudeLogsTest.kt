@@ -181,8 +181,9 @@ class ClaudeLogsTest {
         assertEquals(CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID, CustomMenuButtons.placementIdOf(SearchDomain.CLAUDE_LOGS_PAGE))
         val claude = CustomMenuButtons.decode(null, CustomMenuButtons.defaultsOf(SearchDomain.CLAUDE_LOGS_PAGE))
         assertEquals(CustomMenuButtons.CLAUDE_LOGS_DEFAULTS, claude)
-        // Its Search button opens a Search window on the logs, which belongs to the page.
-        assertEquals(SearchDomain.CLAUDE_LOGS_PAGE, SearchDomain.Config.decode(claude.first().config)!!.page)
+        // Its Search button is the global one (user rule 2026-10-18), which opens the page's own Search window.
+        assertEquals(CustomMenuButtons.GLOBAL_SEARCH, claude.first())
+        assertEquals(SearchDomain.CLAUDE_LOGS_PAGE, SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).page)
         assertEquals(MenuControl.ClaudeLogsDirectory.name, claude[1].control)
         // The scheduler's menu is read as it always was.
         assertEquals(CustomMenuButtons.DEFAULTS, CustomMenuButtons.decode(null))

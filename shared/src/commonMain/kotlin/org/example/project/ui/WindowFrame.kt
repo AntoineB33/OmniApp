@@ -688,7 +688,34 @@ class WindowFrameHost {
     val keyboardClaimed: Boolean
         get() = entries.any { it.id == focusedId && it.claimsKeyboard }
 
-    fun register(registration: Registration) {
+    /**
+     * User rule 2026-10-18 (*"when the two windows showing the last unfocused notifications automatically appear, they
+     * appear at the bottom of the focus rank"*): the windows to open at the BACK — under every other window, last of the
+     * windows that had the focus, and not focused — instead of on top, as they register ([register]). The app asks for
+     * them; nobody pressed anything.
+     */
+    private val openingAtBack = mutableSetOf<String>()
+
+    /** [id], about to open, opens at the back ([openingAtBack]). */
+    fun openAtBack(id: String) {
+        openingAtBack += id
+    }
+
+    /**
+     * [id], already open, goes to the back: under every other window and last of those that had the focus, brought back
+     * from the bar if it was reduced — with no move of the focus. One not open yet opens there ([openAtBack]).
+     */
+    fun sendToBack(id: String) {
+        val entry = entries.firstOrNull { it.id == id } ?: return openAtBack(id)
+        entry.state.restore()
+        stack.remove(id)
+        stack.add(0, id)
+        recent.remove(id)
+        recent += id
+    }
+
+    /** Registers [registration]; true when it opened at the back ([openAtBack]) — it then claims no focus. */
+    fun register(registration: Registration): Boolean {
         closing -= registration.id
         entries.removeAll { it.id == registration.id }
         entries += registration
@@ -699,8 +726,17 @@ class WindowFrameHost {
             colors[registration.id] = WindowColorSpace.pick(part, colors.values)
             onColorAssigned?.invoke()
         }
-        // A window that has just opened is the one the user asked for, so it opens on top.
+        // A window that has just opened is the one the user asked for, so it opens on top — unless the app opened it at
+        // the back ([openAtBack]).
+        if (openingAtBack.remove(registration.id)) {
+            stack.remove(registration.id)
+            stack.add(0, registration.id)
+            recent.remove(registration.id)
+            recent += registration.id
+            return true
+        }
         raise(registration.id)
+        return false
     }
 
     /** The window's title changed. Not a re-registration — see [Registration.title]. */
@@ -1378,16 +1414,18 @@ fun AppWindowFrame(
     val latestClose by rememberUpdatedState(onClose)
     val latestTitle by rememberUpdatedState(title)
     DisposableEffect(host, state.id, claimsKeyboard) {
-        host?.register(
-            WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard, menuKey) { latestClose() }
-                .also { it.colorKind = colorKind },
-        )
+        val atBack =
+            host?.register(
+                WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard, menuKey) { latestClose() }
+                    .also { it.colorKind = colorKind },
+            ) == true
         // A window that answers keystrokes takes the keyboard the moment it OPENS — the press that opened
         // it landed in the tree, so nothing else would hand it over, and PRD §4's "type a letter to rename"
         // would fire behind it. Only on opening: the title is deliberately not a key of this effect, so a
         // window re-titled while it stands there does not snatch the keyboard back.
         // (Not the windows a launch puts back: [WindowFrameHost.claimOnOpen].)
-        if (claimsKeyboard && host != null && host.claimOnOpen) host.focus(state.id)
+        // …nor one the app opened at the back ([WindowFrameHost.openAtBack]).
+        if (claimsKeyboard && host != null && host.claimOnOpen && !atBack) host.focus(state.id)
         onDispose { host?.unregister(state.id) }
     }
     SideEffect {
@@ -1971,6 +2009,13 @@ fun WindowBar(
     onReset: () -> Unit = {},
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
+    /**
+     * User rule 2026-10-18: whether a window (by frame id) is GLOBAL — drawn, and its tab in this bar, on every feature
+     * page — whether it can be, and the bar menu's "Global" setting the selected tabs' windows so or not.
+     */
+    isGlobal: (String) -> Boolean = { false },
+    canBeGlobal: (String) -> Boolean = { false },
+    onSetGlobal: (ids: List<String>, global: Boolean) -> Unit = { _, _ -> },
 ) {
     val rows = host.registrations
     if (rows.isEmpty()) return
@@ -2036,6 +2081,14 @@ fun WindowBar(
                 text = { Text("open selection") },
                 enabled = any,
                 onClick = { menuAt = null; host.openSelection() },
+            )
+            // Checked while every selected window that can be global is: a press sets them all one way.
+            val globalizable = host.selectedTabs.filter(canBeGlobal)
+            val allGlobal = globalizable.isNotEmpty() && globalizable.all(isGlobal)
+            DropdownMenuItem(
+                text = { Text((if (allGlobal) "✓ " else "") + "global") },
+                enabled = globalizable.isNotEmpty(),
+                onClick = { menuAt = null; onSetGlobal(globalizable, !allGlobal) },
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxSize()) {

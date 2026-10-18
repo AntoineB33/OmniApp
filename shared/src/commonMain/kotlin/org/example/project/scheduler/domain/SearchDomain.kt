@@ -194,6 +194,9 @@ object SearchDomain {
     fun pageKinds(page: String): List<Kind> =
         if (page == CLAUDE_LOGS_PAGE) CLAUDE_KINDS + Kind.AppSetting else Kind.entries.filter { it !in CLAUDE_KINDS }
 
+    /** What a Search window opens with on [page] when nothing says otherwise — the global Search button's, user rule 2026-10-18. */
+    fun pageDefaultConfig(page: String): Config = if (page == CLAUDE_LOGS_PAGE) claudeLogsConfig() else Config()
+
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
     fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS)
 

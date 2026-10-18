@@ -91,6 +91,19 @@ data class CustomMenuButton(
      * of those elements is left for it to act on. [windowId] is then empty.
      */
     val action: String? = null,
+    /**
+     * User rule 2026-10-18 (*"the right-click menu should have an option to set the field global or not. If it is
+     * global, then the button also appears on any feature page"*): the item stands in the menu of EVERY page, the
+     * global items in the same order on all of them, each page's own items between them where that page has them
+     * ([CustomMenuButtons.withGlobalsPropagated]). Its id is unique across the pages ([CustomMenuButtons.withGlobal]).
+     */
+    val global: Boolean = false,
+    /**
+     * The page a global item was made global FROM ([CustomMenuButtons.withGlobal]): where it goes back to, alone, when it
+     * is made its page's own again — from whichever page that is asked (anomaly 2026-10-18: made global on the logs page,
+     * un-set on the scheduler's, it stayed on the scheduler's only). Null for an item global from the start.
+     */
+    val homePage: String? = null,
 )
 
 /**
@@ -300,7 +313,22 @@ object CustomMenuButtons {
      * part ONCE, on top ([decode]) — and from then on the user's removals are final.
      */
     @Serializable
-    private data class Stored(val buttons: List<CustomMenuButton> = emptyList(), val seeded: Boolean = false)
+    private data class Stored(
+        val buttons: List<CustomMenuButton> = emptyList(),
+        val seeded: Boolean = false,
+        /** Whether the list already holds the global Search button ([GLOBAL_SEARCH]) — given ONCE to a list made before. */
+        val globalSeeded: Boolean = false,
+    )
+
+    /**
+     * User rule 2026-10-18: *"By default, there is a Search button on the left-side menu for all pages."* A global item
+     * opening the Search window of the page it is pressed on (`App`: the page's own configuration when the button keeps
+     * one of another page's, or none).
+     */
+    val GLOBAL_SEARCH: CustomMenuButton = CustomMenuButton("g-search", "Search", "Search", global = true)
+
+    /** The id of the logs page's own Search button before the global one existed: the global one takes its place. */
+    private const val OLD_CLAUDE_SEARCH_ID = "d-claude-search"
 
     /**
      * User rule 2026-10-08: *"Make the entire left-side menu of the app customizable, except for the top button."*
@@ -309,6 +337,7 @@ object CustomMenuButtons {
      */
     val DEFAULTS: List<CustomMenuButton> =
         listOf(
+            GLOBAL_SEARCH,
             CustomMenuButton("d-task-tree", "TaskTree", "Task tree"),
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
         ) + listOf(
@@ -325,10 +354,25 @@ object CustomMenuButtons {
 
     val CLAUDE_LOGS_DEFAULTS: List<CustomMenuButton> by lazy {
         listOf(
-            CustomMenuButton("d-claude-search", "Search", "Search", config = SearchDomain.claudeLogsConfig().encode()),
+            GLOBAL_SEARCH,
             CustomMenuButton("d-" + MenuControl.ClaudeLogsDirectory.name, "", "", control = MenuControl.ClaudeLogsDirectory.name),
         )
     }
+
+    /** The feature pages that have a menu, by the name a Search configuration gives them (blank: the Task Scheduler). */
+    val PAGES: List<String> by lazy { listOf("", SearchDomain.CLAUDE_LOGS_PAGE) }
+
+    @Serializable
+    private data class StoredPages(val pages: Map<String, String> = emptyMap())
+
+    /** Every page's menu as ONE text ([encode] of each) — what a History Unit of the menus holds, all pages at once. */
+    fun encodePages(lists: Map<String, List<CustomMenuButton>>): String =
+        json.encodeToString(StoredPages.serializer(), StoredPages(lists.mapValues { encode(it.value) }))
+
+    /** [encodePages]' reverse; null for nothing readable. */
+    fun decodePages(text: String?): Map<String, List<CustomMenuButton>>? =
+        text?.let { runCatching { json.decodeFromString(StoredPages.serializer(), it).pages }.getOrNull() }
+            ?.mapValues { (page, list) -> decode(list, defaultsOf(page)) }
 
     /** The row the menu of the page [page] (a Search configuration's page name, blank for the scheduler) is kept on. */
     fun placementIdOf(page: String): String = if (page == SearchDomain.CLAUDE_LOGS_PAGE) CLAUDE_LOGS_PLACEMENT_ID else PLACEMENT_ID
@@ -338,7 +382,54 @@ object CustomMenuButtons {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun encode(buttons: List<CustomMenuButton>): String = json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true))
+    fun encode(buttons: List<CustomMenuButton>): String =
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true))
+
+    /**
+     * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
+     * every other page ([lists], page → list): the same items (a rename, an update, a removal reaching them all), in the
+     * order [page] has them, each page keeping its own items where they stand among them; one that was global and is no
+     * more leaves the others, and one that became global joins them at their end.
+     */
+    fun withGlobalsPropagated(
+        lists: Map<String, List<CustomMenuButton>>,
+        page: String,
+        list: List<CustomMenuButton>,
+    ): Map<String, List<CustomMenuButton>> {
+        val globals = list.filter { it.global }
+        val ids = globals.mapTo(HashSet()) { it.id }
+        return (lists + (page to list)).mapValues { (other, items) ->
+            if (other == page) return@mapValues list
+            val kept = items.filterNot { it.global && it.id !in ids }
+            val present = kept.filter { it.global }.mapTo(HashSet()) { it.id }
+            var next = 0
+            (kept + globals.filter { it.id !in present }).map { if (it.global) globals[next++] else it }
+        }
+    }
+
+    /**
+     * The item [id] of [page]'s menu made global ([on]) or its page's own again, and every page's menu after it
+     * ([withGlobalsPropagated]), with the item's id — made unique across the pages as it becomes global, since each
+     * page mints its own ids.
+     */
+    fun withGlobal(lists: Map<String, List<CustomMenuButton>>, page: String, id: String, on: Boolean): Pair<Map<String, List<CustomMenuButton>>, String> {
+        val list = lists[page].orEmpty()
+        val item = list.firstOrNull { it.id == id } ?: return lists to id
+        if (item.global == on) return lists to id
+        if (!on) {
+            // Back to the page it was made global from, alone — whichever page this is asked from; one global from the
+            // start stays on this page.
+            val home = item.homePage?.takeIf { it in lists } ?: page
+            return lists.mapValues { (p, items) ->
+                if (p == home) items.map { if (it.id == id) it.copy(global = false, homePage = null) else it }
+                else items.filterNot { it.id == id }
+            } to id
+        }
+        val used = lists.values.flatten().mapTo(HashSet()) { it.id }
+        val newId = generateSequence(1) { it + 1 }.map { "g$it" }.first { it !in used }
+        val next = list.map { if (it.id == id) it.copy(id = newId, global = true, homePage = page) else it }
+        return withGlobalsPropagated(lists, page, next) to newId
+    }
 
     /**
      * The placement row the window bar's tab names are kept on ([WindowFrameHost.tabTitles]) — frame id → the name
@@ -396,8 +487,26 @@ object CustomMenuButtons {
      */
     fun decode(text: String?, defaults: List<CustomMenuButton> = DEFAULTS): List<CustomMenuButton> {
         val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return defaults
-        return if (stored.seeded) stored.buttons else defaults + stored.buttons.filterNot { button -> defaults.any { it.id == button.id } }
+        val buttons =
+            if (stored.seeded) stored.buttons else defaults + stored.buttons.filterNot { button -> defaults.any { it.id == button.id } }
+        if (stored.globalSeeded || buttons.any { it.id == GLOBAL_SEARCH.id }) return buttons
+        // A list made before the global Search button: given it ONCE, on top — in the place of the logs page's own
+        // Search button where that one stands.
+        val old = buttons.indexOfFirst { it.id == OLD_CLAUDE_SEARCH_ID }
+        return if (old >= 0) buttons.toMutableList().also { it[old] = GLOBAL_SEARCH } else listOf(GLOBAL_SEARCH) + buttons
     }
+
+    /** The placement row the windows set global are kept on (user rule 2026-10-18), in the order they were set so. */
+    const val GLOBAL_WINDOWS_PLACEMENT_ID: String = "GlobalWindows"
+
+    @Serializable
+    private data class StoredGlobalWindows(val windows: List<String> = emptyList())
+
+    fun encodeGlobalWindows(windows: List<String>): String = json.encodeToString(StoredGlobalWindows.serializer(), StoredGlobalWindows(windows))
+
+    /** [encodeGlobalWindows]' reverse; nothing stored, or nothing readable, is no global window. */
+    fun decodeGlobalWindows(text: String?): List<String> =
+        text?.let { runCatching { json.decodeFromString(StoredGlobalWindows.serializer(), it).windows }.getOrNull() }.orEmpty()
 
     /**
      * [buttons] with the control [control] at the bottom, and its item's id — the one it already has when the menu
@@ -485,9 +594,14 @@ object CustomMenuButtons {
      * [buttons] with every button that has no [CustomMenuButton.config] given [configOf] its window — once, when the
      * list is loaded: a button made before the snapshot existed then keeps ONE configuration, instead of following
      * whatever its window becomes. A window with no configuration answers null and leaves the button as it is.
+     * Never a GLOBAL button (anomaly 2026-10-18: the global Search button was given the scheduler's Search window's
+     * configuration at the first start, and opened an alarm's search instead of each page's own): it is every page's,
+     * and with none it opens the Search window of the page it is pressed on.
      */
     fun withConfigsFrozen(buttons: List<CustomMenuButton>, configOf: (windowId: String) -> String?): List<CustomMenuButton> =
-        buttons.map { button -> if (button.config != null) button else configOf(button.windowId)?.let { button.copy(config = it) } ?: button }
+        buttons.map { button ->
+            if (button.config != null || button.global) button else configOf(button.windowId)?.let { button.copy(config = it) } ?: button
+        }
 }
 
 /**
@@ -524,6 +638,8 @@ internal fun CustomMenuSection(
     onMove: (id: String, beforeId: String?) -> Unit = { _, _ -> },
     /** Draws an item that is a Search action on its elements ([CustomMenuButton.action]). */
     actionContent: @Composable (CustomMenuButton) -> Unit = {},
+    /** User rule 2026-10-18: the item [id] made global (it stands in the menu of every page) or its page's own again. */
+    onSetGlobal: (id: String, global: Boolean) -> Unit = { _, _ -> },
 ) {
     // User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu".
     // Each drawn item's row (its top and height in this column), the one held and how far the hand has it. The held
@@ -639,6 +755,11 @@ internal fun CustomMenuSection(
                             DropdownMenuItem(text = { Text("Update") }, onClick = { menuOpen = false; onUpdate(button) })
                         }
                         DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
+                        // Checked while the item stands in the menu of every page.
+                        DropdownMenuItem(
+                            text = { Text((if (button.global) "✓ " else "") + "Global") },
+                            onClick = { menuOpen = false; onSetGlobal(button.id, !button.global) },
+                        )
                         DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove(button.id) })
                         DropdownMenuItem(
                             text = { Text(if (customizing) "Stop customizing" else "Customize") },

@@ -24,7 +24,8 @@ class CustomMenuButtonsTest {
     @Test
     fun the_whole_menu_is_the_users_list_and_starts_as_what_the_menu_held() {
         val defaults = CustomMenuButtons.DEFAULTS
-        assertEquals(listOf("TaskTree", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
+        // The global Search button first (user rule 2026-10-18: "by default, there is a Search button … for all pages").
+        assertEquals(listOf("Search", "TaskTree", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
         assertEquals(
             listOf("Voice", "Notifications", "LookAwayNow", "SwitchTask", "SleepWork", "Away", "Online"),
             defaults.mapNotNull { it.control },
@@ -215,6 +216,6 @@ class CustomMenuButtonsTest {
         assertTrue(second != id && two.size == list.size + 1)
         assertEquals(two, CustomMenuButtons.decode(CustomMenuButtons.encode(two)))
         // A list written before items could be actions reads with none.
-        assertTrue(CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S"}],"seeded":true}""").single().action == null)
+        assertTrue(CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S"}],"seeded":true}""").single { it.id == "b1" }.action == null)
     }
 }

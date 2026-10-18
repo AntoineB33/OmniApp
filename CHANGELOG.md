@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Global menu items and global windows; the notifications pair at the bottom of the focus rank — 2026-10-18
+
+User rule: *"In the left-side menu, the right-click menu should have an option to set the field global or not. If it is
+global, then the button also appears on any feature page. The order of appearance of each global field is the same in
+every page, but they can be separated with different fields from one page to another. Same thing for the tabs in the
+system tray. By default, there is a Search button on the left-side menu for all pages. Now when the two windows showing
+the last unfocused notifications automatically appear, they appear at the bottom of the focus rank. Those two linked
+windows appear for all pages."*
+- **A menu item's "Global"** (its right-click menu, checked while on; `CustomMenuButton.global`): the item is written into
+  every page's menu under an id unique across the pages (`CustomMenuButtons.withGlobal`); any change to a page's menu
+  carries its global items to every page in its order, each page's own items staying where they stand among them
+  (`withGlobalsPropagated`). Every page's menu changes as one History Unit (`menu*`, `encodePages`); a unit recorded
+  before (one page's) still undoes.
+  **Fixed the same day**: un-set from another page, a global item stayed on THAT page only (anomaly: the logs directory
+  field, made global on the logs page and un-set on the scheduler's, stayed on the scheduler's). An item made global
+  remembers the page it came from (`CustomMenuButton.homePage`) and goes back there alone, whichever page it is un-set on;
+  one global from the start (the Search button) stays on the page it is un-set on.
+  **Also fixed**: the global Search button was given the scheduler's Search window's configuration at the first start (the
+  freeze of buttons made before buttons kept one, `withConfigsFrozen`), so it opened an alarm's search; a global button is
+  never frozen now.
+- **A global Search button in every page's menu by default** (`CustomMenuButtons.GLOBAL_SEARCH`, first), opening the
+  Search window of the page it is pressed on (`SearchDomain.pageDefaultConfig`). A menu stored before is given it once
+  (`Stored.globalSeeded`), in the place of the logs page's own Search button there.
+- **A window's "global"** (the window bar menu, over the selected tabs): a lateral-menu window or the task tree stands, and
+  has its tab, on every page (`App.globalWindows`, the `GlobalWindows` row; `windowPageOf`). It stays composed across a
+  change of page, so the global tabs keep one order on every page. Per-object windows are not offered it. The task tree
+  window now draws the tree whatever the page (it drew nothing off the scheduler's page). The scheduler-only block of
+  `App` was split: the task tree and the calendar decide by their page, the calendar's editors follow the calendar.
+- **The unfocused-notifications pair** opens, or comes back, global and at the bottom of the focus rank: under every other
+  window (the notifications over their calendar), last in the focus order, not focused (`WindowFrameHost.openAtBack`,
+  `sendToBack`; `openNewWindow(atBack = true)`). It used to come in front, focused.
+
 ### An alarm's and a reminder's default configuration in the actions, and when a new one is set — 2026-10-18
 
 User rule: *"I don't see the default micro group in the action section of an alarm element… Check for other element

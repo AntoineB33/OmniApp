@@ -316,6 +316,7 @@ private val VIEW_ROWS: Set<String> =
     setOf(
         CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID,
         CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
+        CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID,
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
     )
 
@@ -572,6 +573,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Search window's configuration) keeps the others: the store's upsert replaces the whole row. The one
         // funnel every placement write goes through. Plain, not Compose state — nothing is drawn from it.
         val placements = remember(placementStore) { initialPlacements.toMutableMap() }
+        // User rule 2026-10-18: **the windows set global** — drawn on every feature page, their tabs in the window bar of
+        // every page — by frame id, in the order they were set so. Local-only, on a row of its own; one that came back
+        // closed after a restart is none. A global window stays composed across a change of page, so its tab keeps its
+        // place among the other global tabs on every page while each page's own tabs stand between them.
+        val globalWindows =
+            remember(placements) {
+                androidx.compose.runtime.mutableStateListOf<String>().apply {
+                    addAll(
+                        CustomMenuButtons.decodeGlobalWindows(placements[CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID]?.config)
+                            .filter { placements[it]?.visible == true },
+                    )
+                }
+            }
         // PRD §6 (user rule 2026-10-01): what `App` keeps — a window's layout, a Search window's configuration, the
         // menu's buttons — recorded as History Units ([SchedulerIntent.RecordExternal]) and put back when one is undone.
         val viewHistory = remember { ViewHistoryRecorder() }
@@ -610,6 +624,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 searchSplits.remove(id)
             }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
+            // A closed window is global no more: its frame id may be another window's tomorrow.
+            if (previous.visible && !next.visible && globalWindows.remove(id)) {
+                updatePlacementById(CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID) {
+                    it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
+                }
+            }
         }
         fun updatePlacement(id: FloatingWindow, change: (WindowPlacement) -> WindowPlacement) =
             updatePlacementById(id.name, change)
@@ -757,9 +777,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Held for both pages in one map, and read through the page as it is NOW: the callbacks a window keeps from an
         // earlier pass (the head's ☆) then add to the menu of the page it is on.
         val menuButtonLists = remember(placements) { androidx.compose.runtime.mutableStateMapOf<String, List<CustomMenuButton>>() }
+        // As stored, read once — every page's, with the global items as the Task Scheduler's menu has them on all of them
+        // (a page whose menu was never written has its defaults, and the user's global items too).
+        val menuListsLoaded =
+            remember(placements) {
+                val decoded =
+                    CustomMenuButtons.PAGES.associateWith { p ->
+                        CustomMenuButtons.decode(placements[CustomMenuButtons.placementIdOf(p)]?.config, CustomMenuButtons.defaultsOf(p))
+                    }
+                CustomMenuButtons.withGlobalsPropagated(decoded, "", decoded.getValue(""))
+            }
         fun menuButtonsOfPage(menuPage: String): List<CustomMenuButton> =
-            menuButtonLists[menuPage]
-                ?: CustomMenuButtons.decode(placements[CustomMenuButtons.placementIdOf(menuPage)]?.config, CustomMenuButtons.defaultsOf(menuPage))
+            menuButtonLists[menuPage] ?: menuListsLoaded[menuPage] ?: CustomMenuButtons.defaultsOf(menuPage)
+        fun menuListsNow(): Map<String, List<CustomMenuButton>> = CustomMenuButtons.PAGES.associateWith(::menuButtonsOfPage)
         val menuButtons: List<CustomMenuButton> by kotlin.properties.ReadOnlyProperty { _, _ -> menuButtonsOfPage(page.searchPage) }
         // The ones drawn. A button whose window this build no longer has ("All tasks" and the list of reminders,
         // removed 2026-09-25) or whose object is gone is not shown — but kept, so an undo brings it back.
@@ -786,17 +816,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             withFrameNanos { }
             menuScroll.animateScrollTo(menuScroll.maxValue)
         }
-        fun setMenuButtonsOf(menuPage: String, list: List<CustomMenuButton>) {
-            val before = menuButtonsOfPage(menuPage)
-            menuButtonLists[menuPage] = list
-            updatePlacementById(CustomMenuButtons.placementIdOf(menuPage)) { it.copy(config = CustomMenuButtons.encode(list)) }
-            // A rename is typed: one unit for the run of its keystrokes.
-            val renameOnly = before.map { it.id } == list.map { it.id } && before.map { it.copy(title = "") } == list.map { it.copy(title = "") }
+        // Every page's menu at once (user rule 2026-10-18: a global item stands in all of them): the rows that changed are
+        // written, and ONE History Unit holds them all, so an undo puts every page back together.
+        fun setMenuLists(next: Map<String, List<CustomMenuButton>>, renameOnly: Boolean = false) {
+            val before = menuListsNow()
+            if (next == before) return
+            for ((p, list) in next) {
+                if (list == before[p]) continue
+                menuButtonLists[p] = list
+                updatePlacementById(CustomMenuButtons.placementIdOf(p)) { it.copy(config = CustomMenuButtons.encode(list)) }
+            }
             viewHistory.record(
-                MENU_KEY + menuPage.let { if (it.isEmpty()) "" else "/$it" }, CustomMenuButtons.encode(before), CustomMenuButtons.encode(list),
+                MENU_KEY + "*", CustomMenuButtons.encodePages(before), CustomMenuButtons.encodePages(next),
                 if (renameOnly) "Rename a menu button" else "Menu buttons",
                 coalesceKey = if (renameOnly) "menu/rename" else null,
             )
+        }
+        fun setMenuButtonsOf(menuPage: String, list: List<CustomMenuButton>) {
+            val before = menuButtonsOfPage(menuPage)
+            // A rename is typed: one unit for the run of its keystrokes.
+            val renameOnly = before.map { it.id } == list.map { it.id } && before.map { it.copy(title = "") } == list.map { it.copy(title = "") }
+            setMenuLists(CustomMenuButtons.withGlobalsPropagated(menuListsNow(), menuPage, list), renameOnly)
         }
         fun setMenuButtons(list: List<CustomMenuButton>) = setMenuButtonsOf(page.searchPage, list)
 
@@ -1465,6 +1505,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 restoredSeq = restore.seq
                 viewHistory.applying {
                     when {
+                        // Every page's menu at once (2026-10-18).
+                        restore.key == "$MENU_KEY*" ->
+                            if (CustomMenuButtons.encodePages(menuListsNow()) == restore.from) {
+                                CustomMenuButtons.decodePages(restore.to)?.let { setMenuLists(it) }
+                            }
+                        // A unit of one page's menu, recorded before the menus were one (2026-10-18).
                         restore.key == MENU_KEY || restore.key.startsWith("$MENU_KEY/") -> {
                             val menuPage = restore.key.removePrefix(MENU_KEY).removePrefix("/")
                             if (CustomMenuButtons.encode(menuButtonsOfPage(menuPage)) == restore.from) {
@@ -1576,6 +1622,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 return@LaunchedEffect
             }
             windowFrames.present(id)
+        }
+        // User rule 2026-10-18: windows set global — on every page — or their page's own again; written down at once.
+        fun setWindowsGlobal(ids: List<String>, on: Boolean) {
+            val before = globalWindows.toList()
+            for (id in ids) if (on) { if (id !in globalWindows) globalWindows += id } else globalWindows.remove(id)
+            if (globalWindows.toList() != before) {
+                updatePlacementById(CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID) {
+                    it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
+                }
+            }
         }
         // **The feature page a window belongs to** (user rule 2026-10-18): a Search window's is the one its configuration
         // names, its configurations windows' that window's, and every other window is the Task Scheduler's. Set once the
@@ -1735,7 +1791,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // [asCopy]: never the original's own place, even while it is closed — a window the APP opens beside the
         // user's own (the calendar under the notifications window) must not take that one's row.
         // Returns the frame id of the window it opened or brought back.
-        fun openNewWindow(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false): String {
+        // [atBack]: the app opens it at the back, under the other windows and not focused (user rule 2026-10-18,
+        // [WindowFrameHost.openAtBack]) — the notifications pair.
+        fun openNewWindow(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false, atBack: Boolean = false): String {
             if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.TimeSim || (kind == FloatingWindow.Calendar && config == null)) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
@@ -1762,8 +1820,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             calendarConfigs.remove(id)
             if (id == kind.name) {
                 updatePlacementById(id) { it.copy(config = config, minimized = false) }
+                if (atBack) windowFrames.openAtBack(id)
                 setWindowOpen(kind, true)
-                focusWindow(kind)
+                if (!atBack) focusWindow(kind)
                 return id
             }
             val from = placements[kind.name] ?: WindowPlacement(x = 0f, y = 0f, visible = true)
@@ -1771,9 +1830,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             updatePlacementById(id) {
                 from.copy(x = from.x + step, y = from.y + step, visible = true, minimized = false, config = config)
             }
+            if (atBack) windowFrames.openAtBack(id)
             windowCopies.add(id)
-            windowFrames.focus(id)
-            historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
+            if (!atBack) {
+                windowFrames.focus(id)
+                historyWindowOf(kind)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, id.removePrefix(kind.name))) }
+            }
             return id
         }
         // The Search window a configurations window ([FloatingWindow.ConfigSearch], [FloatingWindow.AddedConfig])
@@ -1799,7 +1861,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             return openNewWindow(FloatingWindow.Search, linked.encode())
         }
         windowPageOf = { frameId ->
-            when (lateralWindowOf(frameId)) {
+            // A global window is on every page: the one shown (user rule 2026-10-18).
+            if (frameId in globalWindows) page
+            else when (lateralWindowOf(frameId)) {
                 FloatingWindow.Search -> pageOfSearch(searchConfigOf(frameId).page)
                 FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> pageOfSearch(searchConfigOf(configTargetOf(frameId)).page)
                 else -> OmniPage.TaskScheduler
@@ -1937,14 +2001,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         searchConfigs[standing] = gathered
                         updatePlacementById(standing) { it.copy(config = gathered.encode()) }
                     }
+                    // User rule 2026-10-18: the pair comes back on every page ("those two linked windows appear for all
+                    // pages"), at the BOTTOM of the focus rank — under the other windows, the notifications over their
+                    // calendar, neither focused.
+                    setWindowsGlobal(listOfNotNull(standing, calendarId), true)
+                    windowFrames.sendToBack(standing)
                     if (calendarId != null) {
                         setCalendarConfig(calendarId, calendarConfigOf(calendarId).copy(notifications = keys.map { it.substringAfter('/') }))
-                        // The pair comes back together: the calendar in front of the other windows, the notifications
-                        // over it.
-                        presentWindow(FloatingWindow.Calendar, calendarId)
+                        windowFrames.sendToBack(calendarId)
                     }
                     notificationsCalendarId = calendarId
-                    presentWindow(FloatingWindow.Search, standing)
                     notificationsWindowId = standing
                 } else {
                     // A NEW one: *"it opens and occupies all the top half of the app, and what occupies all the lower
@@ -1952,19 +2018,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // of every notification it lists. Both are copies, so neither takes the place of the Search
                     // window or of the calendar the user keeps.
                     val keys = SearchDomain.notificationKeysSince(schedulerState.notificationLog, since)
-                    val id =
-                        openNewWindow(FloatingWindow.Search, SearchDomain.notificationsConfig(since).copy(added = keys).encode(), asCopy = true)
-                    placeInHalf(id, top = true)
+                    // User rule 2026-10-18: both on every page, opened at the BOTTOM of the focus rank — under the other
+                    // windows (the calendar under the notifications), neither focused.
                     val calendarId =
                         openNewWindow(
                             FloatingWindow.Calendar,
                             CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }).encode(),
                             asCopy = true,
+                            atBack = true,
                         )
                     placeInHalf(calendarId, top = false)
+                    val id =
+                        openNewWindow(
+                            FloatingWindow.Search, SearchDomain.notificationsConfig(since).copy(added = keys).encode(), asCopy = true,
+                            atBack = true,
+                        )
+                    placeInHalf(id, top = true)
+                    setWindowsGlobal(listOf(id, calendarId), true)
+                    // They register in the order they are drawn (the calendar first): once both have, the notifications
+                    // go over their calendar, both still under every other window.
+                    engineScope.launch {
+                        repeat(2) { withFrameNanos { } }
+                        windowFrames.sendToBack(id)
+                        windowFrames.sendToBack(calendarId)
+                    }
                     notificationsCalendarId = calendarId
-                    // The notifications are what the user comes back to: their window has the focus, not the calendar.
-                    presentWindow(FloatingWindow.Search, id)
                     notificationsWindowId = id
                 }
             }
@@ -2143,7 +2221,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The window it CREATES has the button's name on its tab (user rule 2026-10-01; [WindowFrameHost.tabTitles]):
         // whichever window registers in the frames after the click and was not there before — a window only brought
         // back keeps its tab as it was.
-        fun onMenuButtonClicked(button: CustomMenuButton) {
+        fun onMenuButtonClicked(pressed: CustomMenuButton) {
+            // A global Search button opens the Search window of the page it is pressed on (user rule 2026-10-18): the one
+            // it keeps where that is this page's, else this page's own.
+            val button =
+                if (!pressed.global || lateralWindowOf(pressed.windowId) != FloatingWindow.Search) pressed
+                else pressed.copy(
+                    config = pressed.config?.takeIf { SearchDomain.Config.decode(it)?.page == page.searchPage }
+                        ?: SearchDomain.pageDefaultConfig(page.searchPage).encode(),
+                )
             val before = windowFrames.registrations.mapTo(HashSet()) { it.id }
             val saved = CustomMenuButtons.decodeLayout(button.layout)
             var asked: String? = null
@@ -3755,6 +3841,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRename = { id, title -> setMenuButtons(CustomMenuButtons.renamed(menuButtons, id, title)) },
                             onEditDone = { editingMenuButton = null },
                             onRemove = { setMenuButtons(CustomMenuButtons.removed(menuButtons, it)) },
+                            // User rule 2026-10-18: in the menu of every page, or its page's own again.
+                            onSetGlobal = { id, on ->
+                                val (lists, newId) = CustomMenuButtons.withGlobal(menuListsNow(), page.searchPage, id, on)
+                                if (newId != id) {
+                                    menuButtonWindows.remove(id)?.let { menuButtonWindows[newId] = it }
+                                    menuButtonOpenedLayouts.remove(id)?.let { menuButtonOpenedLayouts[newId] = it }
+                                }
+                                setMenuLists(lists)
+                            },
                             canUpdate = { menuButtonCanUpdate(it) },
                             onUpdate = { button ->
                                 menuButtonWindowOf(button)?.let { frameId ->
@@ -3818,12 +3913,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // tree and back on every press in another window (PRD §7 — each is a WindowNav unit).
                         .raiseOnPress { windowFrames.blur() },
                 ) {
-                    // The Task Scheduler's windows that are not lateral-menu windows (those know their page:
-                    // [windowPageOf]) — drawn on its page alone (user rule 2026-10-18).
-                    if (page == OmniPage.TaskScheduler) {
                     // PRD §4: the task tree, a window among the others — drawn FIRST, so the windows that were
-                    // open with it come back over it rather than under a maximized tree.
-                    if (taskTreeWindowOpen) TaskTreeWindow(
+                    // open with it come back over it rather than under a maximized tree. On its page, or on every page
+                    // once it is global (user rule 2026-10-18, [windowPageOf]).
+                    if (taskTreeWindowOpen && windowPageOf(FloatingWindow.TaskTree.name) == page) TaskTreeWindow(
                         onDismiss = { taskTreeWindowOpen = false },
                         modifier = Modifier.align(Alignment.Center),
                         initialOffset = taskTreeOffset,
@@ -3835,8 +3928,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         },
                         onRaise = { focusWindow(FloatingWindow.TaskTree) },
                     ) { treeKeyboardEnabled ->
-                    when (page) {
-                        OmniPage.TaskScheduler ->
                             Perf.measure("compose.TaskSchedulerScreen") {
                             TaskSchedulerScreen(
                                 modifier = Modifier.fillMaxSize(),
@@ -3856,10 +3947,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 onSetDeepCopyCell = { deepCopyWindows.setFrom(template = false, it) },
                             )
                             }
-                        // Not drawn on that page: its content area replaces this one.
-                        OmniPage.ClaudeLogs -> Unit
                     }
-                    }
+
+                    // The Task Scheduler's per-object windows, drawn on its page alone (user rule 2026-10-18): the
+                    // lateral-menu windows and the task tree decide for themselves ([windowPageOf]).
+                    if (page == OmniPage.TaskScheduler) {
 
                     // PRD §5: the priority-weight window — about ONE sub-list; opening it on another opens a
                     // second. It opens on top like every window and, like every window, goes UNDER the next one
@@ -4059,6 +4151,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 onDismiss = { close() },
                             )
                         }
+                    }
+
                     }
 
                     if (anyCalendarOpen) {
@@ -4322,6 +4416,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                       }
 
+                        // The calendar's own editors: where a calendar is drawn — its page, or every page while one is
+                        // global (user rule 2026-10-18).
+                        if (page == OmniPage.TaskScheduler || globalWindows.any { lateralWindowOf(it) == FloatingWindow.Calendar }) {
                         // PRD §8 edit window, opened over the calendar window and the tree — the
                         // one-element case of a TASK PANEL, reached from the "edit…" chooser and from a
                         // double-click. Adding one goes through [CalendarElementsWindow] now, so this
@@ -4525,9 +4622,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 },
                             )
                         }
+                        }
 
                     }
 
+                    if (page == OmniPage.TaskScheduler) {
                     // PRD §14 / PRD §7 Search: the per-object window of one reminder — opened from its Search row.
                     // It closes itself when its row is gone (ChoresManagerWindow). No existence check here: the
                     // window follows its row even when the id menu makes it adopt another reminder's id (and its
@@ -5313,6 +5412,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             WindowBar(
                 host = windowFrames,
                 modifier = Modifier.align(Alignment.BottomStart).zIndex(135f),
+                // User rule 2026-10-18: a window set global stands, and has its tab, on every page — a lateral-menu
+                // window or the task tree (a per-object window is drawn on its own page only).
+                isGlobal = { it in globalWindows },
+                canBeGlobal = { lateralWindowOf(it) != null },
+                onSetGlobal = { ids, on -> setWindowsGlobal(ids, on) },
                 // Reset is the DEFAULT layout (user rule 2026-10-01): every window closed, then the calendar alone,
                 // open and maximized. The task tree's placement goes back to a first run's too (centred, default
                 // size, maximized), for when it is next opened.

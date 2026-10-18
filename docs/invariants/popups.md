@@ -352,6 +352,12 @@ means.
   from a window to the last of those opened from it, and the line of a deeper window is drawn ABOVE (calendar,
   Search, configurations: a line under the first two, and above it a line under the last two). Everything that
   reads "bar order" — the Shift+click range, the menu's selection — reads `tabLayout.order`, never `registrations`.
+- **A window set GLOBAL stands, and has its tab, on every feature page** (user rule 2026-10-18; the window bar menu's
+  "global", over the selected tabs; `App`'s `globalWindows`, the `GlobalWindows` row): a lateral-menu window (and its
+  copies) or the task tree — a per-object window is drawn on its own page only, since it would otherwise be composed
+  on every page. `windowPageOf` answers "this page" for a global window, so it stays composed across a change of page
+  and its tab keeps its place among the other global tabs on every page; each page's own tabs stand between them.
+  Closed, it is global no more.
 - **A window that closes takes the windows opened from it with it** (user rule 2026-10-06,
   `WindowFrameHost.closeOpenedFrom`, `TabSelectionTest`): a Search window its configurations windows, the calendar
   the Search windows its right-click opened — and each of those its own, by its own close. The parent is the bar's
@@ -683,6 +689,10 @@ It lives in the host because the host already sees the only two events that deci
 
 ### The notifications window
 
+- **(Changed 2026-10-18.) The pair opens — or comes back — at the BOTTOM of the focus rank, on every page**: under every
+  other window (the notifications over their calendar), last of the windows that had the focus, and not focused
+  (`WindowFrameHost.openAtBack` / `sendToBack`, `openNewWindow(atBack = true)`); both are set global. What follows of "in
+  front and focused" is the rule it replaced.
 - **A notification that fires while the app is NOT in focus brings up a Search window on the notifications posted since
   the app LOST the focus — in front and focused, so it is what the user comes back to** (user rule 2026-10-04; `App`,
   `SearchDomain.notificationsConfig` / `notificationsWindowOwed`, `NotificationsWindowTest`). Written, spoken or
