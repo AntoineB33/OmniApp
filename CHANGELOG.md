@@ -37,6 +37,11 @@ scheduler feature page"*.) What it does:
   (the prompt an answer or a reasoning chain followed) and **Session** (written at, project, session title, session id,
   log file), each one block per added entry. The directory is an **app setting** ("Claude Code logs") whose action is
   its field, and a menu control (`MenuControl.ClaudeLogsDirectory`) like the other settings' switches.
+- **The directory field suggests Claude Code's own folder** (`defaultClaudeLogsDirectory`: `<home>/.claude/projects`
+  where it exists — desktop only) as ghost text, the rest of it after what is typed; **Tab writes it in** where the
+  field is empty or holds its start, and moves on anywhere else (`ClaudeLogsSettings.directoryCompletion`). The first
+  time the page is shown with no directory, that folder is taken as the directory, once (`ClaudeLogsSettings.defaultAdopted`):
+  a directory the user empties stays empty.
 - **Read when asked, off the UI thread**: the page first shown, the directory set, Load/Refresh — never on a timer; a
   refresh re-reads only the files whose size or date changed (`ClaudeLogIndex`). A prompt is a `user` line the human
   wrote (`origin.kind = human`; older lines without it are told by their text); an answer an assistant `text` block; a

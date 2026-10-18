@@ -22,7 +22,21 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
@@ -30,6 +44,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.claudelogs.ClaudeLogCatalog
 import org.example.project.claudelogs.ClaudeLogEntry
 import org.example.project.claudelogs.ClaudeLogSession
+import org.example.project.claudelogs.ClaudeLogsSettings
 import org.example.project.claudelogs.claudeLogFilesSupported
 import org.example.project.scheduler.domain.SearchDomain
 
@@ -38,6 +53,10 @@ import org.example.project.scheduler.domain.SearchDomain
  * read per keystroke would read the logs of every prefix of the path — and read again by Refresh. One field for
  * everywhere it stands: the logs' app setting's action ([SearchDomain.AddedAction.ClaudeLogsDirectory]) and the item
  * of the lateral menu made from it ([MenuControl.ClaudeLogsDirectory]).
+ *
+ * The folder Claude Code keeps its logs in on this device ([ClaudeLogCatalog.suggestion]) is shown as **ghost text**:
+ * the whole of it in an empty field, the rest of it after what is typed while what is typed is its start. **Tab writes
+ * it in** ([ClaudeLogsSettings.directoryCompletion]), the cursor at its end; anywhere else Tab moves on as it always does.
  */
 @Composable
 internal fun ClaudeLogsDirectoryField(
@@ -47,37 +66,76 @@ internal fun ClaudeLogsDirectoryField(
     enabled: Boolean = true,
 ) {
     val directory = catalog.directory
-    var draft by remember(directory) { mutableStateOf(directory) }
+    var draft by remember(directory) { mutableStateOf(TextFieldValue(directory, TextRange(directory.length))) }
     val usable = enabled && claudeLogFilesSupported
-    fun commit() = if (draft.trim() == directory.trim()) onRefresh() else onDirectory(draft.trim())
+    val completion = ClaudeLogsSettings.directoryCompletion(draft.text, catalog.suggestion)
+    val ghost = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    fun commit() = if (draft.text.trim() == directory.trim()) onRefresh() else onDirectory(draft.text.trim())
     Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP), modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = draft,
             onValueChange = { draft = it },
             singleLine = true,
             enabled = usable,
-            placeholder = { Text(DIRECTORY_HINT) },
+            // Without a folder to suggest, where the logs usually are, as a hint only.
+            placeholder = if (catalog.suggestion == null) ({ Text(DIRECTORY_HINT) }) else null,
+            visualTransformation = completion?.let { GhostSuffix(it.substring(draft.text.length), ghost) } ?: VisualTransformation.None,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { commit() }),
             modifier = Modifier
                 .fillMaxWidth()
                 .onPreviewKeyEvent { event ->
-                    val enter = event.key == Key.Enter || event.key == Key.NumPadEnter
-                    if (enter && event.type == KeyEventType.KeyDown) commit()
-                    enter
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        event.key == Key.Enter || event.key == Key.NumPadEnter -> {
+                            commit()
+                            true
+                        }
+                        event.key == Key.Tab && completion != null &&
+                            !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed -> {
+                            draft = TextFieldValue(completion, TextRange(completion.length))
+                            true
+                        }
+                        else -> false
+                    }
                 },
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             FrameButton(
-                if (draft.trim() != directory.trim() || directory.isBlank()) "Load" else "Refresh",
-                enabled = usable && !catalog.loading && draft.isNotBlank(),
+                if (draft.text.trim() != directory.trim() || directory.isBlank()) "Load" else "Refresh",
+                enabled = usable && !catalog.loading && draft.text.isNotBlank(),
             ) { commit() }
-            NoteText(catalog.status)
+            NoteText(if (completion != null && draft.text.isEmpty()) "Tab: " + completion else catalog.status)
         }
     }
 }
 
-/** Where the Claude Code logs usually are, shown in the empty directory field (the user defines the directory). */
+/**
+ * The rest of a suggestion drawn after what is typed, greyed, as ghost text: shown only, never part of the value — the
+ * cursor and the selection stay within what is typed.
+ */
+private class GhostSuffix(private val suffix: String, private val color: Color) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val typed = text.length
+        val shown = buildAnnotatedString {
+            append(text)
+            withStyle(SpanStyle(color = color)) { append(suffix) }
+        }
+        return TransformedText(
+            shown,
+            object : OffsetMapping {
+                override fun originalToTransformed(offset: Int): Int = offset
+                override fun transformedToOriginal(offset: Int): Int = offset.coerceAtMost(typed)
+            },
+        )
+    }
+
+    override fun equals(other: Any?): Boolean = other is GhostSuffix && other.suffix == suffix && other.color == color
+
+    override fun hashCode(): Int = suffix.hashCode() * 31 + color.hashCode()
+}
+
+/** Where the Claude Code logs usually are, hinted in the empty field where no folder of them is found on this device. */
 private const val DIRECTORY_HINT = "C:\\Users\\<you>\\.claude\\projects"
 
 /**

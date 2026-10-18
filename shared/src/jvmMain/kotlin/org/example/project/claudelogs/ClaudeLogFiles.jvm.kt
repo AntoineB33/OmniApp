@@ -18,6 +18,12 @@ actual fun listClaudeLogFiles(directory: String): List<ClaudeLogFile>? {
     return out
 }
 
+actual fun defaultClaudeLogsDirectory(): String? =
+    System.getProperty("user.home")?.takeIf { it.isNotBlank() }
+        ?.let { File(File(it, ".claude"), "projects") }
+        ?.takeIf { it.isDirectory }
+        ?.path
+
 actual fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit) {
     runCatching { File(path).bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach(onLine) } }
 }

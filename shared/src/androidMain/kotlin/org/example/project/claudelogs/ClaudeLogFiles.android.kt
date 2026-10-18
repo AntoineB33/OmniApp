@@ -18,6 +18,9 @@ actual fun listClaudeLogFiles(directory: String): List<ClaudeLogFile>? {
     return out
 }
 
+// A phone holds no Claude Code logs of its own: the directory is the user's to give (a folder copied there).
+actual fun defaultClaudeLogsDirectory(): String? = null
+
 actual fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit) {
     runCatching { File(path).bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach(onLine) } }
 }

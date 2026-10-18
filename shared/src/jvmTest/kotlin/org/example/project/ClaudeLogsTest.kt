@@ -17,6 +17,7 @@ import org.example.project.claudelogs.ClaudeLogParser
 import org.example.project.claudelogs.ClaudeLogSearch
 import org.example.project.claudelogs.ClaudeLogSession
 import org.example.project.claudelogs.ClaudeLogsSettings
+import org.example.project.claudelogs.defaultClaudeLogsDirectory
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.CustomMenuButtons
@@ -198,6 +199,36 @@ class ClaudeLogsTest {
         )
         assertEquals(ClaudeLogsSettings(), ClaudeLogsSettings.decode(null))
         assertEquals(ClaudeLogsSettings(), ClaudeLogsSettings.decode("{not json"))
+    }
+
+    @Test
+    fun tabWritesInTheSuggestedFolderOnlyWhereWhatIsTypedIsItsStart() {
+        val home = "C:/Users/me/.claude/projects"
+        assertEquals(home, ClaudeLogsSettings.directoryCompletion("", home))
+        assertEquals(home, ClaudeLogsSettings.directoryCompletion("c:/users/M", home), "case aside, as Windows paths are")
+        // Already written, or typed elsewhere: Tab moves on.
+        assertNull(ClaudeLogsSettings.directoryCompletion(home, home))
+        assertNull(ClaudeLogsSettings.directoryCompletion("D:/logs", home))
+        assertNull(ClaudeLogsSettings.directoryCompletion("", null))
+        // The folder taken once as the directory is remembered; a row written before the field existed reads as not yet.
+        val adopted = ClaudeLogsSettings(directory = home, defaultAdopted = true)
+        assertEquals(adopted, ClaudeLogsSettings.decode(ClaudeLogsSettings.encode(adopted)))
+        assertEquals(false, ClaudeLogsSettings.decode("""{"directory":""}""").defaultAdopted)
+    }
+
+    @Test
+    fun theSuggestedFolderIsClaudeCodesOwnWhenItExists() {
+        val home = Files.createTempDirectory("home").toFile()
+        val before = System.getProperty("user.home")
+        try {
+            System.setProperty("user.home", home.path)
+            assertNull(defaultClaudeLogsDirectory(), "no .claude/projects yet")
+            val projects = File(File(home, ".claude"), "projects").apply { mkdirs() }
+            assertEquals(projects.path, defaultClaudeLogsDirectory())
+        } finally {
+            System.setProperty("user.home", before)
+            home.deleteRecursively()
+        }
     }
 
     @Test

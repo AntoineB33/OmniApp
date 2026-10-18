@@ -209,8 +209,22 @@ class ClaudeLogIndex(
  * window's configuration, kept like every Search window's.
  */
 @Serializable
-data class ClaudeLogsSettings(val directory: String = "") {
+data class ClaudeLogsSettings(
+    val directory: String = "",
+    /**
+     * Whether the folder Claude Code keeps its logs in ([defaultClaudeLogsDirectory]) was already taken as the directory,
+     * the first time the page was shown with none defined. Once: a directory the user empties stays empty.
+     */
+    val defaultAdopted: Boolean = false,
+) {
     companion object {
+        /**
+         * What Tab writes in the directory field holding [draft]: the [suggestion] it is the start of (an empty field
+         * is the start of any), else null — and Tab then moves on, as in any other field.
+         */
+        fun directoryCompletion(draft: String, suggestion: String?): String? =
+            suggestion?.takeIf { it != draft && it.startsWith(draft, ignoreCase = true) }
+
         const val PLACEMENT_ID: String = "ClaudeLogs"
         private val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
@@ -231,6 +245,8 @@ class ClaudeLogCatalog(
     val directory: String,
     val sessions: List<ClaudeLogSession>?,
     val loading: Boolean = false,
+    /** Where Claude Code keeps its logs on this device, which the directory field suggests ([defaultClaudeLogsDirectory]). */
+    val suggestion: String? = null,
 ) {
     /** Every entry with its session, in the order the logs hold them. */
     val entries: List<Pair<ClaudeLogSession, ClaudeLogEntry>> by lazy {

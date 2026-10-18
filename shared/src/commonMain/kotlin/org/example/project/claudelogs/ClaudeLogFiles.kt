@@ -14,3 +14,9 @@ expect fun listClaudeLogFiles(directory: String): List<ClaudeLogFile>?
 
 /** Every line of [path], in order; nothing when it cannot be read. */
 expect fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit)
+
+/**
+ * Where Claude Code keeps its logs on this device — `<home>/.claude/projects` — when that folder exists; null where it
+ * does not or the platform cannot tell. The directory field suggests it ([ClaudeLogsSettings.directoryCompletion]).
+ */
+expect fun defaultClaudeLogsDirectory(): String?

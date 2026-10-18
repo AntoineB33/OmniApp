@@ -649,15 +649,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var claudeLogRefreshes by remember { mutableIntStateOf(0) }
         var claudeLogsWanted by remember { mutableStateOf(false) }
         if (page == OmniPage.ClaudeLogs) claudeLogsWanted = true
+        // Where Claude Code keeps its logs on this device: the directory field's suggestion, and — the first time the page
+        // is shown with no directory defined — the directory itself, once (a directory the user empties stays empty).
+        val claudeLogsDefault = remember { org.example.project.claudelogs.defaultClaudeLogsDirectory() }
+        LaunchedEffect(claudeLogsWanted) {
+            if (claudeLogsWanted && claudeLogsDefault != null && !claudeLogsSettings.defaultAdopted && claudeLogsSettings.directory.isBlank()) {
+                setClaudeLogsSettings(claudeLogsSettings.copy(directory = claudeLogsDefault, defaultAdopted = true))
+            }
+        }
         val claudeLogDirectory = claudeLogsSettings.directory.trim()
         LaunchedEffect(claudeLogDirectory, claudeLogRefreshes, claudeLogsWanted) {
             if (!claudeLogsWanted || claudeLogDirectory.isEmpty() || !org.example.project.claudelogs.claudeLogFilesSupported) {
-                claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, null)
+                claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, null, suggestion = claudeLogsDefault)
                 return@LaunchedEffect
             }
             // What was read stays listed while the logs are read again.
             val shown = claudeLogs.sessions.takeIf { claudeLogs.directory == claudeLogDirectory }
-            claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, loading = true)
+            claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, loading = true, suggestion = claudeLogsDefault)
             var read: org.example.project.claudelogs.ClaudeLogCatalog? = null
             try {
                 read =
@@ -665,11 +673,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         claudeLogLock.lock()
                         val sessions = try { claudeLogIndex.refresh(claudeLogDirectory) } finally { claudeLogLock.unlock() }
                         // Each kind's rows made here, off the UI thread, rather than at the first search.
-                        org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, sessions)
+                        org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, sessions, suggestion = claudeLogsDefault)
                             .also { catalog -> SearchDomain.CLAUDE_KINDS.forEach { SearchDomain.claudeResults(it, "", catalog) } }
                     }
             } finally {
-                claudeLogs = read ?: org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown)
+                claudeLogs = read ?: org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, suggestion = claudeLogsDefault)
             }
         }
         fun setClaudeLogsDirectory(directory: String) = setClaudeLogsSettings(claudeLogsSettings.copy(directory = directory))
