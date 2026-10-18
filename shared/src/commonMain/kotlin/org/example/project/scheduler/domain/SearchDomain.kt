@@ -1,6 +1,9 @@
 package org.example.project.scheduler.domain
 
 import kotlin.concurrent.Volatile
+import org.example.project.claudelogs.ClaudeLogCatalog
+import org.example.project.claudelogs.ClaudeLogKind
+import org.example.project.claudelogs.ClaudeLogSearch
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.model.TaskRelationKey
 import org.example.project.scheduler.state.HistoryUnit
@@ -142,6 +145,16 @@ object SearchDomain {
         Window("window"),
 
         /**
+         * The Claude Code logs page (`OmniPage.ClaudeLogs`, user rule 2026-10-18): a prompt the user typed, an answer
+         * and a reasoning chain of Claude Code's session logs. Like a window, what the rows name is not in the
+         * account's state: `App` reads the logs and hands them in ([ClaudeLogCatalog], [results]'s `claudeLogs`).
+         * Read-only: the actions show each one's content ([AddedAction.PromptText]…).
+         */
+        ClaudePrompt("prompt"),
+        ClaudeAnswer("answer"),
+        ClaudeReasoning("reasoning chain"),
+
+        /**
          * One CREATION row per kind of element the user can make ([CREATABLE]): opening it makes a new one, as that
          * kind's own "+ New …" does, and opens its window (user spec 2026-09-26). History units and task relations
          * are not made by the user, so they have none. A new keyboard shortcut is a chord for a window (user rule
@@ -163,6 +176,44 @@ object SearchDomain {
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
             Kind.TaskTree, Kind.Window, Kind.Shortcut,
         )
+
+    /**
+     * The feature page a Search window belongs to ([Config.page]): blank for the Task Scheduler's, this for the Claude
+     * Code logs page's — `OmniPage`'s name, which the scheduler's domain does not see.
+     */
+    const val CLAUDE_LOGS_PAGE: String = "ClaudeLogs"
+
+    /** The kinds of the Claude Code logs, in the drop-down's order. */
+    val CLAUDE_KINDS: List<Kind> = listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning)
+
+    /**
+     * **The kinds a Search window of [page] offers** in its type selector (and its configurations windows in theirs):
+     * the Claude Code logs page's are the logs' kinds and the app's settings (where the logs' directory is set); the
+     * Task Scheduler's are every other kind.
+     */
+    fun pageKinds(page: String): List<Kind> =
+        if (page == CLAUDE_LOGS_PAGE) CLAUDE_KINDS + Kind.AppSetting else Kind.entries.filter { it !in CLAUDE_KINDS }
+
+    /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
+    fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS)
+
+    /** The logs' entries newest first, whatever their kind: a log is read back from its end. */
+    val CLAUDE_SORTS: List<SortMethod> by lazy {
+        listOf(
+            SortMethod(Kind.ClaudePrompt, SortKey.PromptDate, descending = true),
+            SortMethod(Kind.ClaudeAnswer, SortKey.AnswerDate, descending = true),
+            SortMethod(Kind.ClaudeReasoning, SortKey.ReasoningDate, descending = true),
+        )
+    }
+
+    /** The log entry kind a Claude kind lists. */
+    fun claudeLogKindOf(kind: Kind): ClaudeLogKind? =
+        when (kind) {
+            Kind.ClaudePrompt -> ClaudeLogKind.Prompt
+            Kind.ClaudeAnswer -> ClaudeLogKind.Answer
+            Kind.ClaudeReasoning -> ClaudeLogKind.Reasoning
+            else -> null
+        }
 
     /**
      * What the id of a chord mapped to a window wears as a [Kind.Shortcut] row, where the app's own shortcuts are
@@ -337,8 +388,10 @@ object SearchDomain {
      */
     fun windowTitle(config: Config): String {
         if (isNotificationsWindow(config)) return NOTIFICATIONS_WINDOW_TITLE
-        val kinds = Kind.entries.filter { it in config.kinds }
-        val left = Kind.entries.filter { it !in config.kinds }
+        // "Everything" is every kind of the window's page ([pageKinds]).
+        val offered = pageKinds(config.page)
+        val kinds = offered.filter { it in config.kinds }
+        val left = offered.filter { it !in config.kinds }
         fun list(names: List<String>): String =
             if (names.size == 1) names.single() else names.dropLast(1).joinToString(", ") + " and " + names.last()
         val what =
@@ -390,7 +443,10 @@ object SearchDomain {
      * value built here would read them before they are set.
      */
     val CLEARED_CONFIG: Config
-        get() = Config(kinds = Kind.entries.toSet())
+        get() = clearedConfig("")
+
+    /** [CLEARED_CONFIG] of the page [page]: every kind it offers checked ([pageKinds]), and nothing else. */
+    fun clearedConfig(page: String): Config = Config(kinds = pageKinds(page).toSet(), page = page)
 
     /**
      * What the Search window's **Reset** puts in the place of [current]: the configuration the window [opened] with
@@ -398,10 +454,11 @@ object SearchDomain {
      * 2026-10-02) — else the whole configuration cancelled ([CLEARED_CONFIG]), so a second click comes back to the
      * opening one (anomaly 2026-10-15: the History Search button's window, reset as it opened, went to the default
      * configuration — the tasks checked — and nothing brought its history units back). The WHOLE configuration:
-     * filters, sorts and added elements included. Equal to [current] when there is nothing to reset.
+     * filters, sorts and added elements included. Equal to [current] when there is nothing to reset. Never its page
+     * ([Config.page]): a window reset stays on the page it is on.
      */
     fun resetConfig(current: Config, opened: Config?): Config =
-        if (opened != null && current != opened) opened else CLEARED_CONFIG
+        if (opened != null && current != opened) opened else clearedConfig(current.page)
 
     /** The Search configuration a [Kind.Window] creation row opens: every window TYPE, once. */
     val WINDOW_TYPES_CONFIG: Config
@@ -529,6 +586,11 @@ object SearchDomain {
         val calendarClickMillis: Long? = null,
         /** Where "Add to the calendar" lays the added elements, and until when ([Placement], user rule 2026-10-05). */
         val placement: Placement = Placement(),
+        /**
+         * The feature page the window belongs to (user rule 2026-10-18): blank for the Task Scheduler, [CLAUDE_LOGS_PAGE]
+         * for the Claude Code logs. A window is drawn on its page alone, and offers that page's kinds ([pageKinds]).
+         */
+        val page: String = "",
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
@@ -598,6 +660,10 @@ object SearchDomain {
                     placeEndByDelta = placement.endByDelta,
                     placeLengthMillis = placement.lengthMillis,
                     placeEndMillis = placement.endMillis,
+                    page = page,
+                    claudeProject = filters.claudeProject,
+                    claudeFromMillis = filters.claudeFrom,
+                    claudeUntilMillis = filters.claudeUntil,
                 ),
             )
 
@@ -663,6 +729,9 @@ object SearchDomain {
                         notificationSources =
                             NotificationSource.entries.filterTo(HashSet()) { it.name in stored.notificationSources },
                         blocksOf = stored.blocksOf.toSet(),
+                        claudeProject = stored.claudeProject,
+                        claudeFrom = stored.claudeFromMillis,
+                        claudeUntil = stored.claudeUntilMillis,
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
                     // Heals the index-shaped history-unit keys of builds before 2026-10-03 ([historyUnitId]): an
@@ -684,6 +753,7 @@ object SearchDomain {
                         lengthMillis = stored.placeLengthMillis?.takeIf { it > 0L } ?: DEFAULT_PLACEMENT_LENGTH_MILLIS,
                         endMillis = stored.placeEndMillis,
                     ),
+                    page = stored.page,
                 )
             }
 
@@ -935,6 +1005,13 @@ object SearchDomain {
          * `Task/…`, `RestrictivePeriod/…`) — what "Blocks on the calendar" opens ([blocksSearchConfig]).
          */
         val blocksOf: Set<String> = emptySet(),
+        /**
+         * The Claude Code logs' filters (user rule 2026-10-18), one for the three kinds: only the entries of this project
+         * (null = any), and only those written in `[claudeFrom, claudeUntil]` (a null bound asks nothing on its side).
+         */
+        val claudeProject: String? = null,
+        val claudeFrom: Long? = null,
+        val claudeUntil: Long? = null,
     ) {
         /** What "Made in" stands on: the scheduler engine, a window, or null for anything. */
         val madeIn: MadeIn?
@@ -978,7 +1055,8 @@ object SearchDomain {
 
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
-            get() = Setting.entries.count { isOn(it) }
+            // A filter of the three Claude kinds is one filter, listed once per kind.
+            get() = Setting.entries.count { isOn(it) && it !in CLAUDE_SETTING_ECHOES }
 
         /**
          * Whether [setting] is a filter set to something other than "any" — the one statement of it, read by the
@@ -1021,6 +1099,9 @@ object SearchDomain {
                 Setting.PeriodBoxesUntil -> periodBoxesUntil != null
                 Setting.BlockElements -> blocksOf.isNotEmpty()
                 Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
+                Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
+                Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom != null
+                Setting.PromptUntil, Setting.AnswerUntil, Setting.ReasoningUntil -> claudeUntil != null
                 else -> false
             }
     }
@@ -1061,6 +1142,10 @@ object SearchDomain {
         ShortcutChord(Kind.Shortcut, "chord"),
         /** [WindowStatus]'s order: open, minimized, not open. */
         WindowState(Kind.Window, "state"),
+        /** When the entry was written ([ClaudeLogCatalog.timeOf], read off its id). */
+        PromptDate(Kind.ClaudePrompt, "date"),
+        AnswerDate(Kind.ClaudeAnswer, "date"),
+        ReasoningDate(Kind.ClaudeReasoning, "date"),
     }
 
     /**
@@ -1146,6 +1231,9 @@ object SearchDomain {
         AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),
         CreationSort(Kind.Creation, "Sort by", sorts = true),
+        PromptSort(Kind.ClaudePrompt, "Sort by", sorts = true),
+        AnswerSort(Kind.ClaudeAnswer, "Sort by", sorts = true),
+        ReasoningSort(Kind.ClaudeReasoning, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
@@ -1182,6 +1270,24 @@ object SearchDomain {
         ShortcutReboundSetting(Kind.Shortcut, "Rebound"),
         WindowStatusSetting(Kind.Window, "State"),
         WindowDuplicatesSetting(Kind.Window, "Duplicates"),
+        /** The Claude Code logs' filters ([Filters.claudeProject], [Filters.claudeFrom], [Filters.claudeUntil]). */
+        PromptProject(Kind.ClaudePrompt, "Project"),
+        PromptFrom(Kind.ClaudePrompt, "Written from"),
+        PromptUntil(Kind.ClaudePrompt, "Written until"),
+        AnswerProject(Kind.ClaudeAnswer, "Project"),
+        AnswerFrom(Kind.ClaudeAnswer, "Written from"),
+        AnswerUntil(Kind.ClaudeAnswer, "Written until"),
+        ReasoningProject(Kind.ClaudeReasoning, "Project"),
+        ReasoningFrom(Kind.ClaudeReasoning, "Written from"),
+        ReasoningUntil(Kind.ClaudeReasoning, "Written until"),
+    }
+
+    /** The Claude kinds' filters but the prompt's: the same three filters, listed again under another kind. */
+    val CLAUDE_SETTING_ECHOES: Set<Setting> by lazy {
+        setOf(
+            Setting.AnswerProject, Setting.AnswerFrom, Setting.AnswerUntil,
+            Setting.ReasoningProject, Setting.ReasoningFrom, Setting.ReasoningUntil,
+        )
     }
 
     /**
@@ -1245,6 +1351,10 @@ object SearchDomain {
             listOf(Setting.TaskOnCalendar, Setting.PeriodOnCalendar),
             listOf(Setting.TaskBoxesFrom, Setting.PeriodBoxesFrom),
             listOf(Setting.TaskBoxesUntil, Setting.PeriodBoxesUntil),
+            // The Claude Code logs' filters are one filter each, about the three kinds alike.
+            listOf(Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject),
+            listOf(Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom),
+            listOf(Setting.PromptUntil, Setting.AnswerUntil, Setting.ReasoningUntil),
         )
 
     /**
@@ -1327,17 +1437,23 @@ object SearchDomain {
         nowMillis: Long = 0L,
         layerKindsAt: (Long) -> Set<String> = { emptySet() },
         schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): Map<Kind, Int> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
         results(
             state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, nowMillis = nowMillis,
-            layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement,
+            layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement, claudeLogs = claudeLogs,
         ).groupingBy { it.kind }.eachCount()
 
     /** The kinds that have at least one row in the Search window's results for [config]. */
-    fun kindsInResults(state: SchedulerState, config: Config, windows: List<WindowEntry> = emptyList()): Set<Kind> =
+    fun kindsInResults(
+        state: SchedulerState,
+        config: Config,
+        windows: List<WindowEntry> = emptyList(),
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+    ): Set<Kind> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
-        results(state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows)
+        results(state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
             .mapTo(HashSet()) { it.kind }
 
     /** The stored form of a [Config] — strings, so an unknown value decodes to its default. */
@@ -1436,6 +1552,11 @@ object SearchDomain {
         val placeEndByDelta: Boolean = true,
         val placeLengthMillis: Long? = null,
         val placeEndMillis: Long? = null,
+        /** New 2026-10-18 (the Claude Code logs page): absent = the Task Scheduler's window, no filter on the logs. */
+        val page: String = "",
+        val claudeProject: String? = null,
+        val claudeFromMillis: Long? = null,
+        val claudeUntilMillis: Long? = null,
     )
 
     @Serializable
@@ -1867,10 +1988,13 @@ object SearchDomain {
         windowTypesOnly: Boolean = false,
         /** The scheduler engine's runs, for [Kind.HistoryUnit] — the view model's to know (they are kept in memory only). */
         schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+        /** The Claude Code logs as last read — for the logs' app setting's detail ([AppSettingEntry.ClaudeLogs]). */
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): List<ItemResult> {
         val items =
             when (kind) {
-                Kind.Task -> emptyList()
+                // A task is a row of its own ([taskResults]); so is a log entry, searched in its whole text ([claudeResults]).
+                Kind.Task, Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning -> emptyList()
                 Kind.Category -> state.categories.map { category ->
                     val carriers = state.tasks.values.count { category.id in it.categoryIds }
                     val rules = category.rules.size
@@ -1991,7 +2115,7 @@ object SearchDomain {
                     ItemResult(kind, made.name, "New " + made.label, creationDetail(made))
                 }
                 Kind.AppSetting -> AppSettingEntry.entries.map { setting ->
-                    ItemResult(kind, setting.name, setting.title, appSettingDetail(state, setting))
+                    ItemResult(kind, setting.name, setting.title, appSettingDetail(state, setting, claudeLogs))
                 }
             }
         return items
@@ -1999,6 +2123,56 @@ object SearchDomain {
             .sortedWith(compareBy({ it.first }, { it.second.name.lowercase() }, { it.second.detail }))
             .map { it.second }
     }
+
+    /**
+     * The rows of one of the Claude Code logs' kinds ([CLAUDE_KINDS]): the entries of that kind whose WHOLE text holds
+     * every term of [query] ([ClaudeLogSearch]), within the logs' filters, newest first. Named by their first line —
+     * the rest is the actions' to show ([AddedAction.PromptText]…) — and told apart by when, in which project and which
+     * session they were written.
+     */
+    fun claudeResults(
+        kind: Kind,
+        query: String,
+        claudeLogs: ClaudeLogCatalog,
+        filters: Filters = Filters(),
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): List<ItemResult> {
+        val logKind = claudeLogKindOf(kind) ?: return emptyList()
+        // Every row of the kind, newest first, made once for these logs: a keystroke only filters them.
+        val rows =
+            claudeLogs.memo(kind to timeZone) {
+                claudeLogs.entries
+                    .filter { it.second.kind == logKind }
+                    .sortedByDescending { it.second.timeMillis ?: Long.MIN_VALUE }
+                    .map { (session, entry) ->
+                        val firstLine = entry.text.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trim()
+                        val detail =
+                            listOfNotNull(
+                                entry.timeMillis?.let { dateTime(it, timeZone) },
+                                projectName(session.project),
+                                session.title,
+                            ).joinToString(" · ")
+                        Triple(session, entry, ItemResult(kind, ClaudeLogCatalog.idOf(session, entry), firstLine.take(CLAUDE_NAME_LENGTH), detail))
+                    }
+            }
+        val terms = ClaudeLogSearch.terms(query)
+        return rows.mapNotNull { (session, entry, row) ->
+            row.takeIf {
+                (filters.claudeProject == null || session.project == filters.claudeProject) &&
+                    (filters.claudeFrom == null || (entry.timeMillis ?: Long.MIN_VALUE) >= filters.claudeFrom) &&
+                    (filters.claudeUntil == null || (entry.timeMillis ?: Long.MAX_VALUE) <= filters.claudeUntil) &&
+                    ClaudeLogSearch.matches(entry, terms)
+            }
+        }
+    }
+
+    /** A project by the last folder of its path, as a row names it. */
+    fun projectName(project: String): String = project.trimEnd('/', BACKSLASH).substringAfterLast('/').substringAfterLast(BACKSLASH)
+
+    private const val BACKSLASH: Char = '\u005C'
+
+    /** How much of an entry's first line its row is named by. */
+    private const val CLAUDE_NAME_LENGTH = 200
 
     /** One row of the result list, whatever its kind. */
     sealed interface Result {
@@ -2040,6 +2214,8 @@ object SearchDomain {
          * "without removing anything" state lays to see what it removes ([calendarAddKeepsEverything]). Null: an hour.
          */
         placement: Placement? = null,
+        /** The Claude Code logs as last read, for the logs' kinds ([CLAUDE_KINDS]) — `App` reads them. */
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
@@ -2048,11 +2224,13 @@ object SearchDomain {
                 .flatMap { kind ->
                     if (kind == Kind.Task) {
                         taskResults(state, query, allPaths())
+                    } else if (kind in CLAUDE_KINDS) {
+                        claudeResults(kind, query, claudeLogs, filters, timeZone)
                     } else {
                         itemResults(
                             state, kind, query, windows = windows,
                             windowTypesOnly = filters.windowDuplicates == WindowDuplicates.Hidden,
-                            schedulerRuns = schedulerRuns,
+                            schedulerRuns = schedulerRuns, claudeLogs = claudeLogs,
                         )
                     }
                 }
@@ -2190,6 +2368,7 @@ object SearchDomain {
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
+                SortKey.PromptDate, SortKey.AnswerDate, SortKey.ReasoningDate -> ClaudeLogCatalog.timeOf(row.id)
                 else -> null
             }
     }
@@ -2298,7 +2477,8 @@ object SearchDomain {
                 }
                 Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
                 // [Filters.blocksOf] is asked of the whole list at once ([results]).
-                Kind.Creation, Kind.AppSetting, Kind.CalendarBlock -> true
+                // The logs' filters are asked as their rows are made ([claudeResults]).
+                Kind.Creation, Kind.AppSetting, Kind.CalendarBlock, Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning -> true
             }
         }
     }
@@ -2317,11 +2497,14 @@ object SearchDomain {
          */
         Voice("Voice"),
         Notifications("Notifications"),
+        /** User rule 2026-10-18: where Claude Code's logs are read from ([ClaudeLogCatalog.directory]), this device's. */
+        ClaudeLogs("Claude Code logs"),
     }
 
     /** What an [AppSettingEntry]'s row says beside its name: where the setting stands. */
-    private fun appSettingDetail(state: SchedulerState, setting: AppSettingEntry): String =
+    private fun appSettingDetail(state: SchedulerState, setting: AppSettingEntry, claudeLogs: ClaudeLogCatalog): String =
         when (setting) {
+            AppSettingEntry.ClaudeLogs -> claudeLogs.directory.ifBlank { "no directory" }
             AppSettingEntry.Sound -> "volume " + volumePercent(state.soundVolume) + " %"
             AppSettingEntry.Voice -> if (state.notificationVoiceEnabled) "on" else "off"
             AppSettingEntry.Notifications -> if (state.notificationsEnabled) "on" else "off"
@@ -2609,6 +2792,7 @@ object SearchDomain {
         allPaths: () -> Map<TaskId, List<List<String>>> = { allPathsInAnyTree(state) },
         windows: List<WindowEntry> = emptyList(),
         schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): List<Result> {
         if (keys.isEmpty()) return emptyList()
         val kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
@@ -2621,7 +2805,8 @@ object SearchDomain {
                     Kind.Window ->
                         itemResults(state, kind, "", windows = windows) +
                             itemResults(state, kind, "", windows = windows, windowTypesOnly = true)
-                    else -> itemResults(state, kind, "", windows = windows, schedulerRuns = schedulerRuns)
+                    Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning -> claudeResults(kind, "", claudeLogs)
+                    else -> itemResults(state, kind, "", windows = windows, schedulerRuns = schedulerRuns, claudeLogs = claudeLogs)
                 }
             for (row in rows) found.getOrPut(keyOf(row)) { row }
         }
@@ -2832,6 +3017,30 @@ object SearchDomain {
          */
         HistoryRules(Kind.HistoryUnit, "Set of rules"),
         HistoryInformation(Kind.HistoryUnit, "Information"),
+        /**
+         * The Claude Code logs (user rule 2026-10-18: *"it's in the action section that the user must see the content of
+         * the added elements, where the user can see the prompts of prompt elements"*): each added entry's whole text,
+         * the prompt an answer or a reasoning chain followed, and the session it was written in — each with its copy
+         * button.
+         */
+        PromptText(Kind.ClaudePrompt, "Prompt"),
+        PromptSession(Kind.ClaudePrompt, "Session"),
+        AnswerText(Kind.ClaudeAnswer, "Answer"),
+        AnswerPrompt(Kind.ClaudeAnswer, "In reply to"),
+        AnswerSession(Kind.ClaudeAnswer, "Session"),
+        ReasoningText(Kind.ClaudeReasoning, "Reasoning chain"),
+        ReasoningPrompt(Kind.ClaudeReasoning, "In reply to"),
+        ReasoningSession(Kind.ClaudeReasoning, "Session"),
+        /** The logs' app setting's control: the directory they are read from ([AppSettingEntry.ClaudeLogs]). */
+        ClaudeLogsDirectory(Kind.AppSetting, "Claude Code logs directory"),
+    }
+
+    /** The actions that show a Claude Code log entry, each one block per added entry. */
+    val CLAUDE_ENTRY_ACTIONS: Set<AddedAction> by lazy {
+        setOf(
+            AddedAction.PromptText, AddedAction.PromptSession, AddedAction.AnswerText, AddedAction.AnswerPrompt,
+            AddedAction.AnswerSession, AddedAction.ReasoningText, AddedAction.ReasoningPrompt, AddedAction.ReasoningSession,
+        )
     }
 
     /**
@@ -3001,7 +3210,7 @@ object SearchDomain {
             AddedAction.TaskStartNow, AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar,
             AddedAction.CategoryName, AddedAction.ShortcutChord, AddedAction.ShortcutWindow,
             AddedAction.PeriodSleepSchedule,
-        )
+        ) + CLAUDE_ENTRY_ACTIONS
 
     /** Whether [result] is the Sleep period — the one element the Sleep schedule's fields are an action of. */
     fun isSleepPeriod(result: Result): Boolean =
@@ -3192,6 +3401,11 @@ object SearchDomain {
                 "wake up go to bed stop screens goal time date total sleep time no screen before bed"
             AddedAction.PeriodTaskSearch -> "search the tasks"
             AddedAction.PeriodReset -> "reset"
+            AddedAction.PromptText, AddedAction.AnswerText, AddedAction.ReasoningText -> "text content copy read"
+            AddedAction.AnswerPrompt, AddedAction.ReasoningPrompt -> "prompt question asked copy"
+            AddedAction.PromptSession, AddedAction.AnswerSession, AddedAction.ReasoningSession ->
+                "project session title id date file copy"
+            AddedAction.ClaudeLogsDirectory -> "folder path read refresh load"
             else -> ""
         }
 

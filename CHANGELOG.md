@@ -11,6 +11,41 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A second feature page: the Claude Code logs — 2026-10-18
+
+The page button (the lateral menu's first element) now switches between **Task Scheduler** and **Claude Code logs**
+(`OmniPage.ClaudeLogs`). The new page is the scheduler page's own code, not a copy: the same lateral menu (customizable,
+with its right-click "Customize"), the same window bar, and the same **Search window** — configuration, actions,
+added elements — over three new kinds of `SearchDomain`: **prompt**, **answer** and **reasoning chain**
+(`Kind.ClaudePrompt`/`ClaudeAnswer`/`ClaudeReasoning`), read from Claude Code's session logs
+(`<projects>/<project>/<session>.jsonl`) under a directory the user defines. (A first version the same day drew a page
+of its own with its own search; replaced by this one on the user's rule *"stick to using the same code as in the task
+scheduler feature page"*.) What it does:
+- **Each page has its own windows and its own menu.** A Search window belongs to the page its configuration names
+  (`SearchDomain.Config.page`, blank = the scheduler's; its two configurations windows follow it), every other window
+  to the scheduler's; `App`'s `LateralWindow` draws a window on its page alone. The menu's list is kept per page
+  (`CustomMenuButtons.placementIdOf`: `LateralMenu`, `LateralMenu/ClaudeLogs`); the logs page's starts as a **Search**
+  button (a Search window on the three kinds, newest first) and the **logs' directory** field. A Search window offers
+  its page's kinds (`SearchDomain.pageKinds`: the logs' three and the app settings, or every other kind). The window
+  bar's Reset on the logs page closes its windows and opens one Search window on the logs.
+- **The logs are rows like `App`'s windows**: handed in (`ClaudeLogCatalog`), not held by the state. A row is an entry
+  whose WHOLE text holds every term of the query (words, "quoted phrases", case aside), named by its first line, with
+  its date, project and session beside it. Filters, one each for the three kinds: project, written from, written until;
+  a **date** sort per kind.
+- **The content is in the action section** (user rule: *"it's in the action section that the user must see the content
+  of the added elements"*): **Prompt / Answer / Reasoning chain** (the whole text, selectable, with Copy), **In reply to**
+  (the prompt an answer or a reasoning chain followed) and **Session** (written at, project, session title, session id,
+  log file), each one block per added entry. The directory is an **app setting** ("Claude Code logs") whose action is
+  its field, and a menu control (`MenuControl.ClaudeLogsDirectory`) like the other settings' switches.
+- **Read when asked, off the UI thread**: the page first shown, the directory set, Load/Refresh — never on a timer; a
+  refresh re-reads only the files whose size or date changed (`ClaudeLogIndex`). A prompt is a `user` line the human
+  wrote (`origin.kind = human`; older lines without it are told by their text); an answer an assistant `text` block; a
+  reasoning chain a `thinking` block whose text the log kept (most are stored empty). Sub-agent lines are skipped.
+- **Local-only view state**: the directory (`ClaudeLogs` row) and the logs page's menu (`LateralMenu/ClaudeLogs` row),
+  both in `VIEW_ROWS`. A Search window's configuration is kept as every Search window's is.
+- Measured on a real `~/.claude/projects` (115 sessions, ~300 MB, 5 200 entries): read 2–3 s in the background; a
+  keystroke in the Search window 5–21 ms (each entry lowercased once, each kind's rows made once per read).
+
 ### Manual editing: an edit undone by its inverse leaves the line as it was — 2026-10-17
 
 `docs/scheduler_requirements.md` § *Manual editing* (new): *"If the user adds an element, then removes it, the state of

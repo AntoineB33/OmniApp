@@ -1,5 +1,6 @@
 package org.example.project.ui
 
+import org.example.project.scheduler.domain.SearchDomain
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -115,6 +116,8 @@ enum class MenuControl(val title: String) {
     MinimumTimeWeight("Minimum time weight"),
     SleepSchedule("Sleep"),
     SoundVolume("Global volume"),
+    /** Where the Claude Code logs are read from (user rule 2026-10-18) — the Claude Code logs page's menu has it. */
+    ClaudeLogsDirectory("Claude Code logs directory"),
     ;
 
     companion object {
@@ -313,6 +316,26 @@ object CustomMenuButtons {
             MenuControl.SleepWork, MenuControl.Away, MenuControl.Online,
         ).map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
 
+    /**
+     * User rule 2026-10-18: **each feature page has its own menu**, the user's like the scheduler's. The Claude Code logs
+     * page's is kept on this row, and holds until the user changes it a button opening a Search window on the logs and
+     * the field of the directory they are read from.
+     */
+    const val CLAUDE_LOGS_PLACEMENT_ID: String = "LateralMenu/" + SearchDomain.CLAUDE_LOGS_PAGE
+
+    val CLAUDE_LOGS_DEFAULTS: List<CustomMenuButton> by lazy {
+        listOf(
+            CustomMenuButton("d-claude-search", "Search", "Search", config = SearchDomain.claudeLogsConfig().encode()),
+            CustomMenuButton("d-" + MenuControl.ClaudeLogsDirectory.name, "", "", control = MenuControl.ClaudeLogsDirectory.name),
+        )
+    }
+
+    /** The row the menu of the page [page] (a Search configuration's page name, blank for the scheduler) is kept on. */
+    fun placementIdOf(page: String): String = if (page == SearchDomain.CLAUDE_LOGS_PAGE) CLAUDE_LOGS_PLACEMENT_ID else PLACEMENT_ID
+
+    /** What the menu of the page [page] holds until the user changes it. */
+    fun defaultsOf(page: String): List<CustomMenuButton> = if (page == SearchDomain.CLAUDE_LOGS_PAGE) CLAUDE_LOGS_DEFAULTS else DEFAULTS
+
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String = json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true))
@@ -371,9 +394,9 @@ object CustomMenuButtons {
      * [encode]'s reverse. Nothing stored, or nothing readable, is the menu's own items ([DEFAULTS]); a list written
      * before those were items is given them on top, once ([Stored.seeded]).
      */
-    fun decode(text: String?): List<CustomMenuButton> {
-        val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return DEFAULTS
-        return if (stored.seeded) stored.buttons else DEFAULTS + stored.buttons.filterNot { button -> DEFAULTS.any { it.id == button.id } }
+    fun decode(text: String?, defaults: List<CustomMenuButton> = DEFAULTS): List<CustomMenuButton> {
+        val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return defaults
+        return if (stored.seeded) stored.buttons else defaults + stored.buttons.filterNot { button -> defaults.any { it.id == button.id } }
     }
 
     /**

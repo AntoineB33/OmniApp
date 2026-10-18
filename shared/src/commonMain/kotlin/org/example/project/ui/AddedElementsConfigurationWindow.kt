@@ -106,7 +106,10 @@ fun AddedElementsConfigurationWindow(
 ) {
     val frame = rememberWindowFrameState(ADDED_CONFIGURATION_FRAME_ID, initialOffset, initialSize)
     val addedKinds = SearchDomain.actionKindsOf(added)
-    val sections = SearchDomain.addedActions(config.actionQuery, own.kinds, addedKinds.takeIf { own.onlyResultKinds })
+    // Only the kinds of the Search window's page have sections ([SearchDomain.pageKinds]).
+    val pageKinds = SearchDomain.pageKinds(config.page)
+    val sections =
+        SearchDomain.addedActions(config.actionQuery, own.kinds.filterTo(HashSet()) { it in pageKinds }, addedKinds.takeIf { own.onlyResultKinds })
 
     AppWindowFrame(
         title = "Added elements configurations",
@@ -143,7 +146,7 @@ fun AddedElementsConfigurationWindow(
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
                         .revertsOnEscape(config.actionQuery) { onConfigChange(config.copy(actionQuery = it)) },
                 )
-                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
+                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) }, options = SearchDomain.pageKinds(config.page))
                 ResetButton(enabled = config.actionQuery.isNotEmpty() || own.kinds.isNotEmpty()) {
                     onConfigChange(config.copy(actionQuery = ""))
                     onOwnChange(own.copy(kinds = emptySet()))
@@ -233,6 +236,13 @@ class AddedActionHandlers(
     val onDeleteWindowShortcuts: (List<String>) -> Unit = {},
     /** "Calendar" on notifications: a calendar window showing these (by id) as chips ([org.example.project.scheduler.domain.CalendarNotifications]). */
     val onOpenNotificationsCalendar: (List<String>) -> Unit = {},
+    /**
+     * The Claude Code logs as last read (`App` reads them), what their entries' actions show
+     * ([SearchDomain.CLAUDE_ENTRY_ACTIONS]); the directory they are read from set, and read again.
+     */
+    val claudeLogs: () -> org.example.project.claudelogs.ClaudeLogCatalog = { org.example.project.claudelogs.ClaudeLogCatalog.EMPTY },
+    val onSetClaudeLogsDirectory: (String) -> Unit = {},
+    val onRefreshClaudeLogs: () -> Unit = {},
 )
 
 /**
@@ -462,6 +472,7 @@ private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
         SearchDomain.AddedAction.NotificationsSwitch to MenuControl.Notifications,
         SearchDomain.AddedAction.SoundVolume to MenuControl.SoundVolume,
         SearchDomain.AddedAction.PeriodSleepSchedule to MenuControl.SleepSchedule,
+        SearchDomain.AddedAction.ClaudeLogsDirectory to MenuControl.ClaudeLogsDirectory,
     )
 
 /**
@@ -518,7 +529,7 @@ internal fun MenuActionItem(
     // Walked when the account changes, as the Search window's own added list is.
     val added =
         remember(state.tasks, state.cells, state.lists, state.alarms, state.timers, state.chores, state.categories, config.added) {
-            SearchDomain.resolve(state, config.added)
+            SearchDomain.resolve(state, config.added, claudeLogs = handlers.claudeLogs())
         }
     val can = SearchDomain.reachOf(action.section, added) > 0
     val run = { command: SearchDomain.AddedCommand ->
@@ -813,6 +824,16 @@ private fun AddedActionEditor(
                 HistoryTextLine(value = text, copyLabel = "Copy the set of rules")
             }
         }
+        // --- The Claude Code logs (user rule 2026-10-18): what each added entry says, and where they are read from ---
+        SearchDomain.AddedAction.PromptText, SearchDomain.AddedAction.PromptSession, SearchDomain.AddedAction.AnswerText,
+        SearchDomain.AddedAction.AnswerPrompt, SearchDomain.AddedAction.AnswerSession, SearchDomain.AddedAction.ReasoningText,
+        SearchDomain.AddedAction.ReasoningPrompt, SearchDomain.AddedAction.ReasoningSession ->
+            ClaudeEntryAction(action, added, handlers.claudeLogs())
+        SearchDomain.AddedAction.ClaudeLogsDirectory ->
+            ClaudeLogsDirectoryField(
+                handlers.claudeLogs(), handlers.onSetClaudeLogsDirectory, handlers.onRefreshClaudeLogs,
+                enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.ClaudeLogs),
+            )
         SearchDomain.AddedAction.HistoryInformation -> {
             // A row is a History Unit, or a set of rules the scheduler engine found — whose facts are the rule state it
             // read and the rules it returned ([historyEntryInfos], the one statement of what each kind of row holds).
@@ -1267,7 +1288,7 @@ private fun List<Long>.replaced(index: Int, value: Long): List<Long> = mapIndexe
 
 /** The name of the element a block of a per-element action is about — said only when there are several. */
 @Composable
-private fun ElementHeading(name: String, count: Int) {
+internal fun ElementHeading(name: String, count: Int) {
     if (count > 1) {
         Text(name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }

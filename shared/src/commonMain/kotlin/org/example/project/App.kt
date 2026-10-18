@@ -224,7 +224,19 @@ import org.example.project.ui.transientMenuDismissRoot
 
 enum class OmniPage(val label: String) {
     TaskScheduler("Task Scheduler"),
+    /**
+     * Search in Claude Code's history logs (user rule 2026-10-18): the Task Scheduler page's frame — its lateral menu, its
+     * window bar, its Search window — over the logs' kinds ([SearchDomain.CLAUDE_KINDS]).
+     */
+    ClaudeLogs("Claude Code logs"),
 }
+
+/** The page's name as a Search window's configuration and the lateral menu's rows say it ([SearchDomain.Config.page]). */
+private val OmniPage.searchPage: String
+    get() = if (this == OmniPage.ClaudeLogs) SearchDomain.CLAUDE_LOGS_PAGE else ""
+
+/** The page a Search window's configuration names. */
+private fun pageOfSearch(name: String): OmniPage = if (name == SearchDomain.CLAUDE_LOGS_PAGE) OmniPage.ClaudeLogs else OmniPage.TaskScheduler
 
 /**
  * The lateral-menu windows. Where each sits in the app's one stacking order is
@@ -304,6 +316,7 @@ private val VIEW_ROWS: Set<String> =
     setOf(
         CustomMenuButtons.PLACEMENT_ID, CustomMenuButtons.TAB_TITLES_PLACEMENT_ID, CustomMenuButtons.WINDOW_COLORS_PLACEMENT_ID,
         CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
+        org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
     )
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
@@ -613,6 +626,54 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     minimized = it.minimized && visible,
                 )
             }
+        // The Claude Code logs' directory: local-only view state on a row of its own, never a History Unit (VIEW_ROWS).
+        var claudeLogsSettings by remember(placementStore) {
+            mutableStateOf(
+                org.example.project.claudelogs.ClaudeLogsSettings.decode(
+                    placements[org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID]?.config,
+                ),
+            )
+        }
+        fun setClaudeLogsSettings(next: org.example.project.claudelogs.ClaudeLogsSettings) {
+            claudeLogsSettings = next
+            updatePlacementById(org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID) {
+                it.copy(config = org.example.project.claudelogs.ClaudeLogsSettings.encode(next))
+            }
+        }
+        // The Claude Code logs as last read — what the Search windows of their page list ([SearchDomain.CLAUDE_KINDS]),
+        // handed in like `App`'s windows. Read off the UI thread, one read at a time, and only when asked: the page shown
+        // the first time, the directory set, Refresh — never on a timer. A refresh re-reads only the files that changed.
+        val claudeLogIndex = remember { org.example.project.claudelogs.ClaudeLogIndex() }
+        val claudeLogLock = remember { kotlinx.coroutines.sync.Mutex() }
+        var claudeLogs by remember { mutableStateOf(org.example.project.claudelogs.ClaudeLogCatalog.EMPTY) }
+        var claudeLogRefreshes by remember { mutableIntStateOf(0) }
+        var claudeLogsWanted by remember { mutableStateOf(false) }
+        if (page == OmniPage.ClaudeLogs) claudeLogsWanted = true
+        val claudeLogDirectory = claudeLogsSettings.directory.trim()
+        LaunchedEffect(claudeLogDirectory, claudeLogRefreshes, claudeLogsWanted) {
+            if (!claudeLogsWanted || claudeLogDirectory.isEmpty() || !org.example.project.claudelogs.claudeLogFilesSupported) {
+                claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, null)
+                return@LaunchedEffect
+            }
+            // What was read stays listed while the logs are read again.
+            val shown = claudeLogs.sessions.takeIf { claudeLogs.directory == claudeLogDirectory }
+            claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, loading = true)
+            var read: org.example.project.claudelogs.ClaudeLogCatalog? = null
+            try {
+                read =
+                    withContext(Dispatchers.Default) {
+                        claudeLogLock.lock()
+                        val sessions = try { claudeLogIndex.refresh(claudeLogDirectory) } finally { claudeLogLock.unlock() }
+                        // Each kind's rows made here, off the UI thread, rather than at the first search.
+                        org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, sessions)
+                            .also { catalog -> SearchDomain.CLAUDE_KINDS.forEach { SearchDomain.claudeResults(it, "", catalog) } }
+                    }
+            } finally {
+                claudeLogs = read ?: org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown)
+            }
+        }
+        fun setClaudeLogsDirectory(directory: String) = setClaudeLogsSettings(claudeLogsSettings.copy(directory = directory))
+        fun refreshClaudeLogs() { claudeLogRefreshes++ }
         // The lateral-menu windows come back filled and reduced as they were left, across a close and a
         // restart (popups.md, *Geometry is local-only view state*) — and so do the per-object windows kept
         // across restarts (below).
@@ -684,9 +745,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7: the buttons the user made at the bottom of the lateral menu, one per window (its head's ☆).
         // Local-only, on a placement row of their own — they name windows of this device, copies included, and
         // per-object windows by their object ([ObjectWindowKey]).
-        var menuButtons by remember(placements) {
-            mutableStateOf(CustomMenuButtons.decode(placements[CustomMenuButtons.PLACEMENT_ID]?.config))
-        }
+        // User rule 2026-10-18: each feature page has its own list, on a row of its own ([CustomMenuButtons.placementIdOf]).
+        // Held for both pages in one map, and read through the page as it is NOW: the callbacks a window keeps from an
+        // earlier pass (the head's ☆) then add to the menu of the page it is on.
+        val menuButtonLists = remember(placements) { androidx.compose.runtime.mutableStateMapOf<String, List<CustomMenuButton>>() }
+        fun menuButtonsOfPage(menuPage: String): List<CustomMenuButton> =
+            menuButtonLists[menuPage]
+                ?: CustomMenuButtons.decode(placements[CustomMenuButtons.placementIdOf(menuPage)]?.config, CustomMenuButtons.defaultsOf(menuPage))
+        val menuButtons: List<CustomMenuButton> by kotlin.properties.ReadOnlyProperty { _, _ -> menuButtonsOfPage(page.searchPage) }
         // The ones drawn. A button whose window this build no longer has ("All tasks" and the list of reminders,
         // removed 2026-09-25) or whose object is gone is not shown — but kept, so an undo brings it back.
         // What an item that is a Search action needs to be drawn ([org.example.project.ui.MenuActionItem]): the
@@ -712,18 +778,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             withFrameNanos { }
             menuScroll.animateScrollTo(menuScroll.maxValue)
         }
-        fun setMenuButtons(list: List<CustomMenuButton>) {
-            val before = menuButtons
-            menuButtons = list
-            updatePlacementById(CustomMenuButtons.PLACEMENT_ID) { it.copy(config = CustomMenuButtons.encode(list)) }
+        fun setMenuButtonsOf(menuPage: String, list: List<CustomMenuButton>) {
+            val before = menuButtonsOfPage(menuPage)
+            menuButtonLists[menuPage] = list
+            updatePlacementById(CustomMenuButtons.placementIdOf(menuPage)) { it.copy(config = CustomMenuButtons.encode(list)) }
             // A rename is typed: one unit for the run of its keystrokes.
             val renameOnly = before.map { it.id } == list.map { it.id } && before.map { it.copy(title = "") } == list.map { it.copy(title = "") }
             viewHistory.record(
-                MENU_KEY, CustomMenuButtons.encode(before), CustomMenuButtons.encode(list),
+                MENU_KEY + menuPage.let { if (it.isEmpty()) "" else "/$it" }, CustomMenuButtons.encode(before), CustomMenuButtons.encode(list),
                 if (renameOnly) "Rename a menu button" else "Menu buttons",
                 coalesceKey = if (renameOnly) "menu/rename" else null,
             )
         }
+        fun setMenuButtons(list: List<CustomMenuButton>) = setMenuButtonsOf(page.searchPage, list)
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
         // so a change made within the debounce window survives a normal close.
@@ -1390,8 +1457,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 restoredSeq = restore.seq
                 viewHistory.applying {
                     when {
-                        restore.key == MENU_KEY ->
-                            if (CustomMenuButtons.encode(menuButtons) == restore.from) setMenuButtons(CustomMenuButtons.decode(restore.to))
+                        restore.key == MENU_KEY || restore.key.startsWith("$MENU_KEY/") -> {
+                            val menuPage = restore.key.removePrefix(MENU_KEY).removePrefix("/")
+                            if (CustomMenuButtons.encode(menuButtonsOfPage(menuPage)) == restore.from) {
+                                setMenuButtonsOf(menuPage, CustomMenuButtons.decode(restore.to, CustomMenuButtons.defaultsOf(menuPage)))
+                            }
+                        }
                         restore.key.startsWith(SEARCH_KEY) -> {
                             val id = restore.key.removePrefix(SEARCH_KEY)
                             if (searchConfigOf(id).encode() == restore.from) {
@@ -1450,6 +1521,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ?.let { windowFrames.focus(it.id) }
             windowFrames.claimOnOpen = true
         }
+        // Another feature page puts its windows back the way a launch does: nothing was opened, so none claims the focus
+        // as it registers (a claim is recorded as a move — the claims are turned off by the page button, before the
+        // windows compose), and the frame focus goes back to the window the state names when it is on this page.
+        var pageSeen by remember { mutableStateOf(false) }
+        LaunchedEffect(page) {
+            if (!pageSeen) {
+                pageSeen = true
+                return@LaunchedEffect
+            }
+            withFrameNanos { }
+            val on = schedulerState.focusedWindow to schedulerState.focusedInstance
+            windowFrames.registrations.firstOrNull { historyWindowOfFrame(it.id) == on }
+                ?.takeIf { !it.state.minimized }
+                ?.let { windowFrames.focus(it.id) }
+            windowFrames.claimOnOpen = true
+        }
         fun focusWindow(id: FloatingWindow) {
             bringWindowToFront(id)
             // Moving to a window takes the focus, exactly as a press inside it would: this is the same
@@ -1482,19 +1569,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             windowFrames.present(id)
         }
+        // **The feature page a window belongs to** (user rule 2026-10-18): a Search window's is the one its configuration
+        // names, its configurations windows' that window's, and every other window is the Task Scheduler's. Set once the
+        // functions it reads are declared (below).
+        var windowPageOf: (String) -> OmniPage = { OmniPage.TaskScheduler }
         // A lateral-menu window and its copies (the head's ⧉). [content] is the window's ONE call site, drawn once
         // for the original (while [open]) and once per copy, each under its [WindowInstance]: a copy's frame id,
         // placement, close, geometry and raise are its own, and its view configuration is read by frame id
         // ([windowInstanceId]) — so a copy is an independent window, not a mirror.
         @Composable
         fun LateralWindow(kind: FloatingWindow, open: Boolean, content: @Composable () -> Unit) {
-            if (open) {
+            // User rule 2026-10-18: a window is drawn on its feature page alone ([windowPageOf]).
+            if (open && windowPageOf(kind.name) == page) {
                 CompositionLocalProvider(
                     LocalWindowInstance provides WindowInstance("", { duplicateWindow(kind, kind.name) }, null),
                     content = content,
                 )
             }
-            for (copyId in windowCopies.filter { lateralWindowOf(it) == kind }) {
+            for (copyId in windowCopies.filter { lateralWindowOf(it) == kind && windowPageOf(it) == page }) {
                 key(copyId) {
                     val row = placements[copyId] ?: WindowPlacement(x = 0f, y = 0f, visible = true)
                     CompositionLocalProvider(
@@ -1680,6 +1772,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // lists and edits: the one it was opened from — or the original, once that copy is closed.
         fun configTargetOf(configId: String): String =
             configSearchOf(configId).target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+        windowPageOf = { frameId ->
+            when (lateralWindowOf(frameId)) {
+                FloatingWindow.Search -> pageOfSearch(searchConfigOf(frameId).page)
+                FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> pageOfSearch(searchConfigOf(configTargetOf(frameId)).page)
+                else -> OmniPage.TaskScheduler
+            }
+        }
         // **EACH Search window has its own configurations window** (anomaly 2026-10-06: two Search windows' buttons
         // led to one and the same window, which the last press re-pointed — the first Search window lost its own).
         // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the
@@ -3578,12 +3677,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         onSetMinimumTimeWeight = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
                         onSetSleepSchedule = { vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong())) },
                         onSetSoundVolume = { vm.dispatch(SchedulerIntent.SetSoundVolume(it)) },
+                        claudeLogs = claudeLogs,
+                        onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
+                        onRefreshClaudeLogs = { refreshClaudeLogs() },
                     )
                 // The lateral menu is omitted entirely while collapsed, so the content takes the full width
                 // ("completely disappear to the left"). The collapse toggle lives outside it (see below).
                 if (!menuCollapsed) LateralMenu(
                     page = page,
-                    onPageSelected = { page = it },
+                    onPageSelected = {
+                        if (it != page) {
+                            // The windows of the page it leaves for come back as at a launch: no claim as they register.
+                            windowFrames.claimOnOpen = false
+                            page = it
+                        }
+                    },
                     scrollState = menuScroll,
                     customizing = menuCustomizer.active,
                     onCustomize = { menuCustomizer.active = it },
@@ -3660,6 +3768,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // tree and back on every press in another window (PRD §7 — each is a WindowNav unit).
                         .raiseOnPress { windowFrames.blur() },
                 ) {
+                    // The Task Scheduler's windows that are not lateral-menu windows (those know their page:
+                    // [windowPageOf]) — drawn on its page alone (user rule 2026-10-18).
+                    if (page == OmniPage.TaskScheduler) {
                     // PRD §4: the task tree, a window among the others — drawn FIRST, so the windows that were
                     // open with it come back over it rather than under a maximized tree.
                     if (taskTreeWindowOpen) TaskTreeWindow(
@@ -3695,6 +3806,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 onSetDeepCopyCell = { deepCopyWindows.setFrom(template = false, it) },
                             )
                             }
+                        // Not drawn on that page: its content area replaces this one.
+                        OmniPage.ClaudeLogs -> Unit
                     }
                     }
 
@@ -4409,6 +4522,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     }
 
+                    }
+
                     // PRD §5/§6 History Manager: floating window listing every category's history units.
                     LateralWindow(FloatingWindow.History, historyManagerOpen) {
                         HistoryManagerWindow(
@@ -4574,7 +4689,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     // PRD §14/§18: the default configuration of a new alarm / timer / reminder — the element's own
                     // editor, settings only, writing the account's defaults (NewElementDefaults).
-                    ObjectWindowsHost(defaultsWindows) { w ->
+                    if (page == OmniPage.TaskScheduler) ObjectWindowsHost(defaultsWindows) { w ->
                         if (w.subject == ObjectWindowKey.Kind.ReminderDefaults) {
                             TransientPopupLayer(windowInstanceId(REMINDER_DEFAULTS_FRAME_ID)) {
                                 ChoresManagerWindow(
@@ -4735,6 +4850,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // window's and the reminder editor's components embedded over the same callbacks.
                     val addedActionHandlers =
                         AddedActionHandlers(
+                            claudeLogs = { claudeLogs },
+                            onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
+                            onRefreshClaudeLogs = { refreshClaudeLogs() },
                             windowShortcuts = { windowShortcuts },
                             shortcutWindows = ::shortcutWindowTitles,
                             onWindowShortcutChange = { saveWindowShortcuts(org.example.project.ui.WindowShortcuts.with(windowShortcuts, it)) },
@@ -4834,6 +4952,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             windows = if (searchConfig.readsWindows) searchWindowEntries() else emptyList(),
                             schedulerRuns = schedulerRuns,
                             nowMillis = clock::nowMillis,
+                            claudeLogs = claudeLogs,
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
@@ -4922,6 +5041,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             nowMillis = clock::nowMillis,
                             calendarLayerKindsAt = calendarLayers::kindsAt,
                             schedulerRuns = schedulerRuns,
+                            claudeLogs = claudeLogs,
                             initialOffset = configSearchOffset,
                             initialSize = configSearchSize,
                             onGeometryChange = { windowOffset, windowSize ->
@@ -4951,9 +5071,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 schedulerState.alarms, schedulerState.timers, schedulerState.chronos, schedulerState.quotas, schedulerState.quotas,
                                 schedulerState.chores, schedulerState.histories, schedulerState.taskRelations,
                                 schedulerState.shortcutBindings, schedulerState.activeTaskTreeId,
-                                schedulerState.cells, schedulerState.lists, windows, schedulerState.notificationLog, schedulerRuns,
+                                schedulerState.cells, schedulerState.lists, windows, schedulerState.notificationLog, schedulerRuns, claudeLogs,
                             ) {
-                                SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns)
+                                SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
                             }
                         AddedElementsConfigurationWindow(
                             state = schedulerState,
@@ -5143,7 +5263,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // Reset is the DEFAULT layout (user rule 2026-10-01): every window closed, then the calendar alone,
                 // open and maximized. The task tree's placement goes back to a first run's too (centred, default
                 // size, maximized), for when it is next opened.
-                onReset = {
+                onReset = reset@{
+                    // The Claude Code logs page's default layout: its windows closed, then one Search window on the logs.
+                    if (page == OmniPage.ClaudeLogs) {
+                        engineScope.launch {
+                            repeat(2) { withFrameNanos { } }
+                            openNewWindow(FloatingWindow.Search, SearchDomain.claudeLogsConfig().encode())
+                        }
+                        return@reset
+                    }
                     taskTreeOffset = Offset.Zero
                     taskTreeSize = Size.Zero
                     persistPlacement(FloatingWindow.TaskTree, Offset.Zero, Size.Zero, visible = false)

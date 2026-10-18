@@ -102,6 +102,8 @@ fun ConfigurationSearchWindow(
     schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     /** The app's windows, for the window rows of the Search results ([SearchDomain.WindowEntry]). */
     windows: List<SearchDomain.WindowEntry> = emptyList(),
+    /** The Claude Code logs as last read: the rows of the logs' kinds, and the projects their filter offers. */
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -116,8 +118,11 @@ fun ConfigurationSearchWindow(
             config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
             state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.panels, windows,
             calendarLayerKindsAt, schedulerRuns,
-        ) { SearchDomain.kindCountsInResults(state, config, windows, nowMillis(), calendarLayerKindsAt, schedulerRuns) }
-    val groups = SearchDomain.configurationGroups(own.query, own.kinds, counts, own.onlyResultKinds, own.frozenKinds)
+            claudeLogs,
+        ) { SearchDomain.kindCountsInResults(state, config, windows, nowMillis(), calendarLayerKindsAt, schedulerRuns, claudeLogs) }
+    // Only the kinds of the Search window's page have sections ([SearchDomain.pageKinds]).
+    val pageKinds = SearchDomain.pageKinds(config.page)
+    val groups = SearchDomain.configurationGroups(own.query, own.kinds.filterTo(HashSet()) { it in pageKinds }, counts, own.onlyResultKinds, own.frozenKinds)
 
     AppWindowFrame(
         title = "Search configurations",
@@ -154,7 +159,7 @@ fun ConfigurationSearchWindow(
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
                         .revertsOnEscape(own.query) { onOwnChange(own.copy(query = it)) },
                 )
-                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
+                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) }, options = SearchDomain.pageKinds(config.page))
                 // This window's OWN search field and types; the Search window's configuration it lists is
                 // untouched (that window has its own Reset).
                 ResetButton(enabled = own.query.isNotEmpty() || own.kinds.isNotEmpty()) {
@@ -207,10 +212,10 @@ fun ConfigurationSearchWindow(
                     if (collapsed) continue
                     // What every kind of the group has under one name: one field, written to all of them.
                     for (family in group.shared) {
-                        SettingRow(family.first().label) { SharedSettingEditor(family, config, onConfigChange, onPickOnCalendar) }
+                        SettingRow(family.first().label) { SharedSettingEditor(family, config, onConfigChange, onPickOnCalendar, claudeLogs) }
                     }
                     for (setting in group.settings) {
-                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows, onPickOnCalendar) }
+                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows, onPickOnCalendar, claudeLogs) }
                     }
                 }
             }
@@ -229,6 +234,7 @@ private fun SharedSettingEditor(
     config: SearchDomain.Config,
     onChange: (SearchDomain.Config) -> Unit,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
 ) {
     val f = config.filters
     fun filters(next: SearchDomain.Filters) = onChange(config.copy(filters = next))
@@ -249,6 +255,40 @@ private fun SharedSettingEditor(
                 f.taskBoxesUntil.takeIf { it == f.periodBoxesUntil },
                 { filters(SearchDomain.withBoxBound(f, SearchDomain.BoxBound.BothUntil, it)) },
             ) { onPickOnCalendar(SearchDomain.BoxBound.BothUntil) }
+        // The Claude Code logs' filters are one each for the three kinds: the same editor as each kind's own.
+        SearchDomain.Setting.PromptProject, SearchDomain.Setting.PromptFrom, SearchDomain.Setting.PromptUntil ->
+            ClaudeFilterEditor(family.first(), f, claudeLogs, ::filters)
+        else -> Unit
+    }
+}
+
+/**
+ * A filter of the Claude Code logs ([SearchDomain.Filters.claudeProject], [SearchDomain.Filters.claudeFrom],
+ * [SearchDomain.Filters.claudeUntil]) — the one editor of each, whichever of the three kinds lists it.
+ */
+@Composable
+private fun ClaudeFilterEditor(
+    setting: SearchDomain.Setting,
+    f: SearchDomain.Filters,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    filters: (SearchDomain.Filters) -> Unit,
+) {
+    when (setting) {
+        SearchDomain.Setting.PromptProject, SearchDomain.Setting.AnswerProject, SearchDomain.Setting.ReasoningProject ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                ChoiceDropDown(
+                    options = claudeLogs.projects,
+                    selected = f.claudeProject,
+                    label = { it },
+                    onSelect = { filters(f.copy(claudeProject = it)) },
+                    placeholder = "any project",
+                )
+                if (f.claudeProject != null) ClearMark { filters(f.copy(claudeProject = null)) }
+            }
+        SearchDomain.Setting.PromptFrom, SearchDomain.Setting.AnswerFrom, SearchDomain.Setting.ReasoningFrom ->
+            BoxBoundField(f.claudeFrom, { filters(f.copy(claudeFrom = it)) }, onPick = null)
+        SearchDomain.Setting.PromptUntil, SearchDomain.Setting.AnswerUntil, SearchDomain.Setting.ReasoningUntil ->
+            BoxBoundField(f.claudeUntil, { filters(f.copy(claudeUntil = it)) }, onPick = null)
         else -> Unit
     }
 }
@@ -299,10 +339,16 @@ private fun SettingEditor(
     windows: List<SearchDomain.WindowEntry> = emptyList(),
     /** A bound of the boxes' window is to be picked by a click on the calendar ([BoxBoundField]). */
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
+    /** The Claude Code logs as last read: the projects their filter offers. */
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
 ) {
     val f = config.filters
     fun filters(next: SearchDomain.Filters) = onChange(config.copy(filters = next))
     when (setting) {
+        SearchDomain.Setting.PromptProject, SearchDomain.Setting.PromptFrom, SearchDomain.Setting.PromptUntil,
+        SearchDomain.Setting.AnswerProject, SearchDomain.Setting.AnswerFrom, SearchDomain.Setting.AnswerUntil,
+        SearchDomain.Setting.ReasoningProject, SearchDomain.Setting.ReasoningFrom, SearchDomain.Setting.ReasoningUntil,
+        -> ClaudeFilterEditor(setting, f, claudeLogs, ::filters)
         SearchDomain.Setting.SearchText ->
             OutlinedTextField(
                 value = config.query,
@@ -312,7 +358,7 @@ private fun SettingEditor(
             )
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
-            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) })
+            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = SearchDomain.pageKinds(config.page))
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
         // clears this window's search instead.
         SearchDomain.Setting.ResetSearch -> {
@@ -502,6 +548,7 @@ private fun SettingEditor(
         SearchDomain.Setting.RelationSort,
         SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.WindowSort,
         SearchDomain.Setting.CreationSort,
+        SearchDomain.Setting.PromptSort, SearchDomain.Setting.AnswerSort, SearchDomain.Setting.ReasoningSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
     }
 }
@@ -812,7 +859,7 @@ private val CHANGED_ELEMENT_CELL = org.example.project.scheduler.model.CellId("s
  * there is the instant, and the focus comes back. While the calendar is waiting, the button says so.
  */
 @Composable
-private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: () -> Unit) {
+private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: (() -> Unit)?) {
     val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
     fun format(at: Long): String {
         val t = kotlin.time.Instant.fromEpochMilliseconds(at).toLocalDateTime(tz)
@@ -836,7 +883,8 @@ private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: () -
             placeholder = { Text("any — YYYY-MM-DD HH:MM") },
             modifier = Modifier.width(190.dp),
         )
-        FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
+        // A bound with nothing to pick on the calendar (when a log entry was written) has the field alone.
+        if (onPick != null) FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
         if (millis != null) {
             Text(
                 text = "✕",

@@ -762,8 +762,8 @@ class SearchWindowTest {
         val changed =
             opened.copy(query = "x", added = emptyList(), filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
         val cleared = SearchDomain.CLEARED_CONFIG
-        // No filter at all: every kind checked, every element shown (user rule 2026-10-15).
-        assertEquals(SearchDomain.Kind.entries.toSet(), cleared.kinds)
+        // No filter at all: every kind of the page checked, every element shown (user rule 2026-10-15).
+        assertEquals(SearchDomain.pageKinds("").toSet(), cleared.kinds)
         assertTrue(cleared.query.isEmpty() && cleared.added.isEmpty())
         assertEquals(SearchDomain.Filters(), cleared.filters)
         // Changed since it opened: the whole opening configuration comes back, added elements and filters included.

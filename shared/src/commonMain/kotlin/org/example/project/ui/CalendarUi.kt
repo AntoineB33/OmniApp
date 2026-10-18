@@ -1815,6 +1815,10 @@ class MenuControlHost(
     val onSetMinimumTimeWeight: (Double) -> Unit,
     val onSetSleepSchedule: (org.example.project.scheduler.model.SleepSchedule) -> Unit,
     val onSetSoundVolume: (Double) -> Unit,
+    /** The Claude Code logs as last read, the directory they are read from set, and read again. */
+    val claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+    val onSetClaudeLogsDirectory: (String) -> Unit = {},
+    val onRefreshClaudeLogs: () -> Unit = {},
 )
 
 /**
@@ -1900,6 +1904,12 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
                 )
             }
         }
+        // The Claude Code logs' directory: the logs' app setting's own field.
+        MenuControl.ClaudeLogsDirectory ->
+            Column {
+                Text(title ?: control.title, style = MaterialTheme.typography.labelMedium)
+                ClaudeLogsDirectoryField(host.claudeLogs, host.onSetClaudeLogsDirectory, host.onRefreshClaudeLogs)
+            }
     }
 }
 

@@ -230,8 +230,9 @@ class SearchRowOpeners(
             SearchDomain.Kind.Reminder -> onEditReminder(item.id)
             SearchDomain.Kind.Quota -> onOpenQuota(item.id)
             SearchDomain.Kind.HistoryUnit -> onOpenHistoryUnit(item.id)
-            // A notification is a fact that happened: it has nothing to open.
-            SearchDomain.Kind.Notification -> Unit
+            // A notification is a fact that happened: it has nothing to open. Nor has a log entry — its actions show it.
+            SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
+            SearchDomain.Kind.ClaudeReasoning -> Unit
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
@@ -281,6 +282,8 @@ fun SearchWindow(
     schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     /** The app's clock — what a timer's or a chrono's run, started from the added elements' actions, is read at. */
     nowMillis: () -> Long = { 0L },
+    /** The Claude Code logs as last read (`App` reads them): the rows of the logs' kinds ([SearchDomain.CLAUDE_KINDS]). */
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
     onDismiss: () -> Unit,
     /**
      * The configuration — query, checked kinds, filters. Held by `App`, not here: the Configuration Search
@@ -364,13 +367,14 @@ fun SearchWindow(
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
             // The calendar filter's "without removing anything" lays what "Add to the calendar" would, as long as it would.
             config.placement.takeIf { filters.calendarAddKeeping },
+            claudeLogs,
         ) {
             // One kind checked and nothing of it found: its "creation" row stands in the list.
             SearchDomain.withCreationWhenEmpty(
                 state,
                 SearchDomain.results(
                     state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
-                    schedulerRuns = schedulerRuns, placement = config.placement,
+                    schedulerRuns = schedulerRuns, placement = config.placement, claudeLogs = claudeLogs,
                 ),
                 kinds,
             )
@@ -621,10 +625,10 @@ fun SearchWindow(
         remember(
             config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
             state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
-            state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
+            state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns, claudeLogs,
         ) {
             // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
-            SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns)
+            SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
         }
 
     AppWindowFrame(
@@ -754,6 +758,7 @@ fun SearchWindow(
                 KindsDropDown(
                     kinds = kinds,
                     onKindsChange = { onConfigChange(config.copy(kinds = it)) },
+                    options = SearchDomain.pageKinds(config.page),
                     deploy = deployKinds,
                     onDeployed = onKindsDeployed,
                 )
@@ -1494,15 +1499,17 @@ internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {
 internal fun KindsDropDown(
     kinds: Set<SearchDomain.Kind>,
     onKindsChange: (Set<SearchDomain.Kind>) -> Unit,
+    /** The kinds offered: the window's page's ([SearchDomain.pageKinds]). */
+    options: List<SearchDomain.Kind> = SearchDomain.pageKinds(""),
     modifier: Modifier = Modifier.width(170.dp),
     /** Open the list now, once — see [CheckBoxDropDown]'s `deploy`. */
     deploy: Boolean = false,
     onDeployed: () -> Unit = {},
 ) {
     CheckBoxDropDown(
-        options = SearchDomain.Kind.entries,
+        options = options,
         checked = kinds,
-        face = kindsLabel(kinds),
+        face = kindsLabel(kinds, options),
         label = { it.label },
         onChange = onKindsChange,
         modifier = modifier,
@@ -1748,11 +1755,11 @@ internal fun SelectAllMenuItem(allChecked: Boolean, onSelectAll: () -> Unit, onD
 }
 
 /** The drop-down's face:the checked kinds by name, or "every kind" / "no kind". */
-private fun kindsLabel(kinds: Set<SearchDomain.Kind>): String =
-    when (kinds.size) {
-        0 -> "no kind"
-        SearchDomain.Kind.entries.size -> "every kind"
-        else -> SearchDomain.Kind.entries.filter { it in kinds }.joinToString(", ") { it.label }
+private fun kindsLabel(kinds: Set<SearchDomain.Kind>, options: List<SearchDomain.Kind>): String =
+    when {
+        kinds.none { it in options } -> "no kind"
+        options.all { it in kinds } -> "every kind"
+        else -> options.filter { it in kinds }.joinToString(", ") { it.label }
     }
 
 private fun resultKey(result: SearchDomain.Result): String = SearchDomain.keyOf(result)

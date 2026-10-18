@@ -64,6 +64,7 @@ Two different questions, answered in two different places:
 | Window placement memory, app window chrome | Yes | — | — | — |
 | Launch-script login / start offline | System properties (`account*.bat`) | Intent extras | — | — |
 | Debug time link, perf platform stats | Yes | — | — | — |
+| The Claude Code logs page reads the logs (`claudeLogFilesSupported`) | Yes (`java.io`) | Yes (`java.io`; a folder the app may read) | No — the page says so | No — the page says so |
 
 ## Open gaps (not yet decided)
 
