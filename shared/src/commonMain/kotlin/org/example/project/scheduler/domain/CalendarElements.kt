@@ -348,7 +348,8 @@ object CalendarElements {
      *
      * The date is NOT part of an alarm: the rule is a time of day on a set of weekdays, so the window shows
      * the occurrence the user right-clicked near and writing a new start moves the TIME, never the date. A
-     * start dragged onto another day therefore changes when the alarm rings on every day it rings on —
+     * start dragged onto another day therefore changes when the alarm rings on every day it rings on (an alarm that rings
+     * on one date only takes that day: [alarmEdited]) —
      * which is what an alarm is, and why the weekday set is a field of its own beside it rather than
      * something the start quietly edits.
      */
@@ -367,4 +368,24 @@ object CalendarElements {
         ((endMillis - startMillis) / 1000L)
             .coerceIn(1L, AlarmEntry.MAX_ALARM_SOUND_SECONDS.toLong())
             .toInt()
+
+    /**
+     * PRD §18: [base] with the alarm [draft] written into it — its time of day and ring length out of the start and end
+     * ([alarmTimeOfDayMinutes], [alarmSoundSeconds]), its name, alert, days and switch. [dayStartMillis] and
+     * [startEpochDay] are the start's day.
+     *
+     * **An alarm that rings on one date only** ([AlarmEntry.onlyOnEpochDay]: a dragged ring, or a date given in its
+     * "Date and time" — user rule 2026-10-18) **takes the start's date**: put on another day, it rings there. Keeping its
+     * date left it ringing where it was, whatever day the user put it on.
+     */
+    fun alarmEdited(base: AlarmEntry, draft: Draft, dayStartMillis: Long, startEpochDay: Long): AlarmEntry =
+        base.copy(
+            label = draft.name,
+            timeOfDayMinutes = alarmTimeOfDayMinutes(draft.startMillis, dayStartMillis),
+            soundSeconds = alarmSoundSeconds(draft.startMillis, draft.endMillis),
+            alert = draft.alert,
+            days = draft.alarmDays,
+            enabled = draft.alarmArmed,
+            onlyOnEpochDay = base.onlyOnEpochDay?.let { startEpochDay },
+        )
 }

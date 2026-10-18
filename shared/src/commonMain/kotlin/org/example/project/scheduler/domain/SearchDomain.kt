@@ -460,6 +460,15 @@ object SearchDomain {
     fun resetConfig(current: Config, opened: Config?): Config =
         if (opened != null && current != opened) opened else clearedConfig(current.page)
 
+    /**
+     * [config] for a Search window opened from the Search window [sourceId] holding [source] (user rule 2026-10-18):
+     * linked to it ([Config.openedFrom]), and holding the calendar right-click it came from
+     * ([Config.calendarClickMillis]) unless [config] holds one of its own — so its time fields offer "Right-click time"
+     * as the first window's do.
+     */
+    fun linkedConfig(config: Config, sourceId: String, source: Config): Config =
+        config.copy(openedFrom = sourceId, calendarClickMillis = config.calendarClickMillis ?: source.calendarClickMillis)
+
     /** The Search configuration a [Kind.Window] creation row opens: every window TYPE, once. */
     val WINDOW_TYPES_CONFIG: Config
         get() = Config(kinds = setOf(Kind.Window), filters = Filters(windowDuplicates = WindowDuplicates.Hidden))
@@ -591,6 +600,12 @@ object SearchDomain {
          * for the Claude Code logs. A window is drawn on its page alone, and offers that page's kinds ([pageKinds]).
          */
         val page: String = "",
+        /**
+         * The Search window this one was opened from, by frame id (user rule 2026-10-18: *"the window that opens must be
+         * linked to the previous Search window"*) — a row opened, an action's "New", "Search every element of the kind"…
+         * Its tab stands beside that window's and it closes with it; null for a window opened from anywhere else.
+         */
+        val openedFrom: String? = null,
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
@@ -661,6 +676,7 @@ object SearchDomain {
                     placeLengthMillis = placement.lengthMillis,
                     placeEndMillis = placement.endMillis,
                     page = page,
+                    openedFrom = openedFrom,
                     claudeProject = filters.claudeProject,
                     claudeFromMillis = filters.claudeFrom,
                     claudeUntilMillis = filters.claudeUntil,
@@ -754,6 +770,7 @@ object SearchDomain {
                         endMillis = stored.placeEndMillis,
                     ),
                     page = stored.page,
+                    openedFrom = stored.openedFrom,
                 )
             }
 
@@ -1554,6 +1571,8 @@ object SearchDomain {
         val placeEndMillis: Long? = null,
         /** New 2026-10-18 (the Claude Code logs page): absent = the Task Scheduler's window, no filter on the logs. */
         val page: String = "",
+        /** New 2026-10-18: absent = opened from no Search window. */
+        val openedFrom: String? = null,
         val claudeProject: String? = null,
         val claudeFromMillis: Long? = null,
         val claudeUntilMillis: Long? = null,
@@ -2926,7 +2945,11 @@ object SearchDomain {
         CategoryKind(Kind.Category, "Task cell category"),
         AlarmOnOff(Kind.Alarm, "State"),
         // An alarm's settings, each ONE field over every added alarm (user rule 2026-10-02: no editor per alarm).
-        AlarmTime(Kind.Alarm, "Time"),
+        /**
+         * The time of day, and (user rule 2026-10-18) the DATE: blank for an alarm that rings on its days, else the one
+         * date it rings on ([org.example.project.scheduler.model.AlarmEntry.onlyOnEpochDay]).
+         */
+        AlarmTime(Kind.Alarm, "Date and time"),
         AlarmDays(Kind.Alarm, "Days"),
         AlarmRingsFor(Kind.Alarm, "Rings for"),
         AlarmRepeat(Kind.Alarm, "Repeat"),
@@ -3362,6 +3385,7 @@ object SearchDomain {
             AddedAction.TaskScheduleUnit, AddedAction.TaskText -> "apply"
             AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
+            AddedAction.AlarmTime -> "time date day once one-off right-click"
             AddedAction.SoundVolume -> "sound %"
             AddedAction.TimerRun -> "start pause reset all elapsed ends day"
             AddedAction.ChronoRun -> "start resume pause reset all compact expand"
@@ -4156,7 +4180,9 @@ object SearchDomain {
                         name = alarm.label,
                         startMillis = atMillis,
                         endMillis = atMillis + alarm.soundSeconds * 1000L,
-                        alarmDays = alarm.days + weekday,
+                        // An alarm on one date only moves to the start's date ([CalendarElements.alarmEdited]): its
+                        // weekdays are for when it repeats again, and are not this day's business.
+                        alarmDays = if (alarm.onlyOnEpochDay != null) alarm.days else alarm.days + weekday,
                         alert = alarm.alert,
                         alarmArmed = true,
                     )
@@ -4207,6 +4233,41 @@ object SearchDomain {
     /** Whether [placement] states an end that is not after [startMillis] — nothing is laid then. */
     fun placementRefused(placement: Placement, startMillis: Long): Boolean =
         placementEnd(placement, startMillis) <= startMillis
+
+    /** An added element's own time of day ([elementTimesOfDay]): what the button is named and the second it sets. */
+    data class ElementTime(val label: String, val secondOfDay: Int)
+
+    /**
+     * User rule 2026-10-18 (*"in 'Add to the calendar', there should be a button to set the time field to the one defined
+     * in the 'Date and time'"*): **the times of day the added elements have of their own** — an alarm's time, a
+     * reminder's time (one that has one), a timer's end, a calendar block's start — each a button beside the start's time
+     * that sets it there and keeps the day chosen: an alarm put on another day at its own time rings there too
+     * ([calendarDrafts]), a task laid at an alarm's time starts when it rings. Each named after its element; in the
+     * order of the added list, one per element.
+     */
+    fun elementTimesOfDay(
+        state: SchedulerState,
+        added: List<Result>,
+        nowMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): List<ElementTime> {
+        fun secondOf(millis: Long) = Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone).let { it.hour * 3600 + it.minute * 60 + it.second }
+        return added.filterIsInstance<ItemResult>().mapNotNull { row ->
+            val name = row.name.ifBlank { row.kind.label }
+            when (row.kind) {
+                Kind.Alarm -> state.alarms.firstOrNull { it.id == row.id }?.let { ElementTime(name, it.timeOfDayMinutes * 60) }
+                Kind.Reminder ->
+                    state.chores.firstOrNull { it.id.ifEmpty { it.title } == row.id }
+                        ?.takeIf { it.timeOfDayMinutes >= 0 }
+                        ?.let { ElementTime(name, it.timeOfDayMinutes * 60) }
+                Kind.Timer ->
+                    state.timers.firstOrNull { it.id == row.id }
+                        ?.let { ElementTime("$name (end)", secondOf(TimerDomain.endMomentMillis(it, nowMillis))) }
+                Kind.CalendarBlock -> calendarBlockOf(state, row.id, timeZone)?.let { ElementTime("$name (start)", secondOf(it.startMillis)) }
+                else -> null
+            }
+        }
+    }
 
     /**
      * User rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button next

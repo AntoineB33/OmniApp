@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import kotlinx.datetime.TimeZone
@@ -14,6 +15,30 @@ import org.example.project.scheduler.domain.QuotaDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerState
+
+/**
+ * The calendar right-click the Search window being drawn came from ([SearchDomain.Config.calendarClickMillis], a window
+ * opened from it holding the same: [SearchDomain.linkedConfig]) — provided by the Search window and by its two
+ * configurations windows for what they draw, null everywhere else.
+ */
+val LocalCalendarClickMillis = compositionLocalOf<Long?> { null }
+
+/**
+ * **"Right-click time"** (user rules 2026-10-07 and 2026-10-18: *"the Time field must have a button next to it to set it
+ * to the position of the right-click on the timeline"*): the ONE button beside every time field of a Search window
+ * opened from a calendar right-click — and of the windows opened from that window — which sets the field to where the
+ * right-click was, to the second. Absent where there was no right-click ([LocalCalendarClickMillis]). [onSet] gets the
+ * instant; a field holding a time of day takes the right-click's ([minuteOfDayOf]).
+ */
+@Composable
+internal fun RightClickTimeButton(enabled: Boolean = true, onSet: (Long) -> Unit) {
+    val click = LocalCalendarClickMillis.current ?: return
+    FrameButton("Right-click time", enabled = enabled) { onSet(click / 1_000L * 1_000L) }
+}
+
+/** The minute of the day [millis] falls on here — what a time-of-day field takes of a right-click. */
+internal fun minuteOfDayOf(millis: Long, tz: TimeZone = TimeZone.currentSystemDefault()): Int =
+    localOf(millis, tz).let { it.hour * 60 + it.minute }
 
 /**
  * **"Add to the calendar"** (user rule 2026-10-05): where the added elements are laid, said the way a quota's loop is
@@ -59,7 +84,7 @@ internal fun CalendarPlacementEditor(
     @Composable
     fun instantButtons(set: (Long) -> Unit) {
         FrameButton("Now") { set(nowMillis() / 1_000L * 1_000L) }
-        config.calendarClickMillis?.let { click -> FrameButton("Right-click time") { set(click / 1_000L * 1_000L) } }
+        RightClickTimeButton(onSet = set)
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -78,6 +103,16 @@ internal fun CalendarPlacementEditor(
                 write { it.copy(startMillis = instantOfSecond(startAt?.date ?: today, seconds, tz)) }
             }
             instantButtons { at -> write { it.copy(startMillis = at) } }
+        }
+        // User rule 2026-10-18: the time of day an added element has of its own, the day chosen kept.
+        val own = SearchDomain.elementTimesOfDay(state, added, nowMillis(), tz)
+        if (own.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            NoteText("time of", color = MaterialTheme.colorScheme.onSurface)
+            for (time in own) {
+                FrameButton(time.label, enabled = startSeconds != time.secondOfDay) {
+                    write { it.copy(startMillis = instantOfSecond(startAt?.date ?: today, time.secondOfDay, tz)) }
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = placement.endByDelta, onCheckedChange = { on -> write { it.copy(endByDelta = on) } })

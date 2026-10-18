@@ -97,8 +97,9 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
             label = { SleepTimeChoice(which, onChoose = { which = it }, modifier = Modifier.weight(1f)) },
             minutes = SchedulerDomain.nightTimeMinutes(sleep, which),
             fieldModifier = fieldModifier,
+            rightClick = true,
         ) { onSave(SchedulerDomain.withNightTime(sleep, which, it)) }
-        TimeField("Goal ${which.label.lowercase()} time", SchedulerDomain.goalNightTimeMinutes(sleep, which), fieldModifier = fieldModifier) {
+        TimeField("Goal ${which.label.lowercase()} time", SchedulerDomain.goalNightTimeMinutes(sleep, which), fieldModifier = fieldModifier, rightClick = true) {
             onSave(SchedulerDomain.withGoalNightTime(sleep, which, it))
         }
         // User rule 2026-10-13: the day the goal is reached on, said as the day of the chosen time of that night — a
@@ -128,6 +129,8 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
             DayField(goalDay?.let { kotlinx.datetime.LocalDate.fromEpochDays(it.toInt()) }, "no date", today, enabled = true) { picked ->
                 onSave(SchedulerDomain.withGoalNightDay(sleep, which, picked.toEpochDays().toLong()))
             }
+            // User rule 2026-10-18: the day the calendar was right-clicked on, in a Search window that came from there.
+            RightClickTimeButton { at -> onSave(SchedulerDomain.withGoalNightDay(sleep, which, localOf(at, tz).date.toEpochDays().toLong())) }
         }
     }
     TimeField("Total sleep time", sleep.sleepDurationMinutes, allowOver24 = true, fieldModifier = fieldModifier) {
@@ -198,6 +201,7 @@ private fun TimeField(
     minutes: Int,
     allowOver24: Boolean = false,
     fieldModifier: Modifier = Modifier,
+    rightClick: Boolean = false,
     onMinutes: (Int) -> Unit,
 ) =
     TimeField(
@@ -210,7 +214,7 @@ private fun TimeField(
                 modifier = Modifier.weight(1f),
             )
         },
-        minutes = minutes, allowOver24 = allowOver24, fieldModifier = fieldModifier, onMinutes = onMinutes,
+        minutes = minutes, allowOver24 = allowOver24, fieldModifier = fieldModifier, rightClick = rightClick, onMinutes = onMinutes,
     )
 
 /**
@@ -223,6 +227,8 @@ private fun TimeField(
     minutes: Int,
     allowOver24: Boolean = false,
     fieldModifier: Modifier = Modifier,
+    /** A time of the night: beside it, "Right-click time" in a Search window opened from a calendar right-click. */
+    rightClick: Boolean = false,
     onMinutes: (Int) -> Unit,
 ) {
     var text by remember { mutableStateOf(formatHourMinute(minutes)) }
@@ -254,6 +260,13 @@ private fun TimeField(
                 isError = parseHourMinute(text, allowOver24) == null,
                 modifier = Modifier.width(96.dp).then(fieldModifier),
             )
+        }
+        if (rightClick) {
+            RightClickTimeButton { at ->
+                val clicked = minuteOfDayOf(at)
+                text = formatHourMinute(clicked)
+                onMinutes(clicked)
+            }
         }
     }
 }

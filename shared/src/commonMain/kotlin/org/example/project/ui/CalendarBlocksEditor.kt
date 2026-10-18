@@ -242,6 +242,10 @@ internal fun CalendarBlockFields(
             ) { seconds ->
                 moveStart(instantOfSecond(from.date, seconds, tz))
             }
+            // User rule 2026-10-18: where the calendar was right-clicked — a block that keeps its day keeps it.
+            RightClickTimeButton { at ->
+                moveStart(if (fixedDay) instantOfSecond(from.date, secondOfDay(localOf(at, tz)), tz) else at)
+            }
         }
         if (!instant) {
             val to = localOf(shownEnd, tz)
@@ -258,6 +262,7 @@ internal fun CalendarBlockFields(
                 ) { seconds ->
                     write(restStart, instantOfSecond(to.date, seconds, tz))
                 }
+                RightClickTimeButton { at -> write(restStart, at) }
             }
         }
     }

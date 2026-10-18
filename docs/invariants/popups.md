@@ -333,11 +333,21 @@ means.
   outright.
 - **A window opened from another has its tab beside that one's, a line under the two** (user rule 2026-10-06,
   `WindowTabGroups`, `WindowTabGroupsTest`): a Search configurations window (and an Added elements configurations
-  window) right of its Search window, a Search window the calendar's right-click opened right of the calendar, and
+  window) right of its Search window, a Search window the calendar's right-click opened right of the calendar, a
+  Search window opened from a Search window right of that one (user rule 2026-10-18: a row opened, an action's "New",
+  "Search every element of the kind", "Blocks on the calendar", "Search its tasks" — `Config.openedFrom`, set by `App`'s
+  `openLinkedSearch` from the window that SAID it asked — its openers and handlers run inside its frame id
+  (`askedThrough`); never read off the focus, which a press in the lateral menu does not move), and
   (user rule 2026-10-14) the calendar opened under an "unfocused notif" window right of that window — the pair the
   app opened while it holds it, else the notifications window whose added notifications are exactly the calendar's
-  chips (`CalendarNotifications.notificationsWindowOf`, so it survives a restart). The parent is DERIVED (`WindowFrameHost.tabParentOf`, answered by `App` off `ConfigurationSearch.target` and
-  `Config.calendarClickMillis`), never stored, and is none once that window is closed. The bar lists a window then
+  chips (`CalendarNotifications.notificationsWindowOf`, so it survives a restart). The parent is DERIVED (`WindowFrameHost.tabParentOf`, answered by `App` off `ConfigurationSearch.target`,
+  `Config.openedFrom` and `Config.calendarClickMillis` — what the windows hold), never a list of its own, and is none
+  once that window is closed. **A Search window opened from one that came from a calendar right-click holds that
+  right-click** (`SearchDomain.linkedConfig`), and a new right-click re-pointing the first window re-points the windows
+  opened from it: every time field of their actions has **"Right-click time"** (`RightClickTimeButton`, one button,
+  read off `LocalCalendarClickMillis`) — the alarm's and the reminder's Time, a timer's end, the blocks' start and end,
+  a quota's loop, other times and particular loops, the Sleep schedule's times and goal date, "Add to the calendar"'s
+  start and end, and the Search configurations window's instants. The bar lists a window then
   the windows opened from it, in opening order, so only the opened ones leave the order of opening; one line runs
   from a window to the last of those opened from it, and the line of a deeper window is drawn ABOVE (calendar,
   Search, configurations: a line under the first two, and above it a line under the last two). Everything that

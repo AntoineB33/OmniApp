@@ -111,6 +111,8 @@ fun AddedElementsConfigurationWindow(
     val sections =
         SearchDomain.addedActions(config.actionQuery, own.kinds.filterTo(HashSet()) { it in pageKinds }, addedKinds.takeIf { own.onlyResultKinds })
 
+    // The calendar right-click the Search window came from, for the time fields drawn here ([RightClickTimeButton]).
+    androidx.compose.runtime.CompositionLocalProvider(LocalCalendarClickMillis provides config.calendarClickMillis) {
     AppWindowFrame(
         title = "Added elements configurations",
         state = frame,
@@ -174,6 +176,7 @@ fun AddedElementsConfigurationWindow(
         }
         }
     }
+    }
 }
 
 /** The frame id of the Added elements configurations window — also its `FloatingWindow` name in `App`. */
@@ -188,7 +191,7 @@ const val ADDED_CONFIGURATION_FRAME_ID: String = "AddedConfig"
  * embedded, the same component over the same callbacks (user rule 2026-10-01: the actions on the added elements
  * replaced each element's own window). [timerRun] is a timer's RUN alone: its countdown and the countdown in reverse.
  */
-class AddedActionHandlers(
+data class AddedActionHandlers(
     val onStartNow: (TaskId) -> Unit,
     val onEdit: (TaskId) -> Unit,
     val onGoToTaskTree: (TaskId) -> Unit,
@@ -243,7 +246,22 @@ class AddedActionHandlers(
     val claudeLogs: () -> org.example.project.claudelogs.ClaudeLogCatalog = { org.example.project.claudelogs.ClaudeLogCatalog.EMPTY },
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
     val onRefreshClaudeLogs: () -> Unit = {},
-)
+) {
+    /**
+     * These handlers, each one that opens a Search window run inside [around] (user rule 2026-10-18): what a Search
+     * window is handed, so `App` knows which window an action ("New", "Search every element of the kind", "Blocks on the
+     * calendar", "Search its tasks", "Edit") was pressed in and links the window it opens to it. The lateral menu's
+     * items keep the plain ones: nothing they open is any Search window's.
+     */
+    fun askedThrough(around: (() -> Unit) -> Unit): AddedActionHandlers =
+        copy(
+            onEdit = { around { onEdit(it) } },
+            onCreate = { around { onCreate(it) } },
+            onOpenResilienceSearch = { around { onOpenResilienceSearch(it) } },
+            onOpenKindSearch = { around { onOpenKindSearch(it) } },
+            onOpenBlocksSearch = { around { onOpenBlocksSearch(it) } },
+        )
+}
 
 /**
  * The Search window's top right quarter: the actions on every added element, for the kinds the list holds, narrowed
@@ -954,16 +972,42 @@ private fun AddedActionEditor(
             )
         // --- The alarms' settings: ONE field each, over every added alarm (user rule 2026-10-02) ----------------
         SearchDomain.AddedAction.AlarmTime ->
-            SharedTextField(
-                items = SearchDomain.addedAlarms(state, added),
-                idOf = { it.id },
-                field = "Alarm/time",
-                read = { formatAlarmTime(it.timeOfDayMinutes) },
-                parse = { text -> parseAlarmTime(text)?.let { minutes -> { a: AlarmEntry -> a.copy(timeOfDayMinutes = minutes) } } },
-                restore = { alarm, before -> alarm.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
-                write = { key, change -> run(SearchDomain.AddedCommand.AlarmsEdit(key, change)) },
-                timeNudge = { alarm, delta -> alarm.copy(timeOfDayMinutes = nudgedTimeOfDay(alarm.timeOfDayMinutes, delta)) },
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val alarms = SearchDomain.addedAlarms(state, added)
+                val tz = remember { kotlinx.datetime.TimeZone.currentSystemDefault() }
+                // User rule 2026-10-18: the DATE — the one day the alarm rings on, or none (it rings on its days).
+                val dates = alarms.map { it.onlyOnEpochDay }.distinct()
+                DayField(
+                    dates.singleOrNull()?.let { kotlinx.datetime.LocalDate.fromEpochDays(it.toInt()) },
+                    blank = if (dates.size > 1) "mixed" else "on its days",
+                    today = localOf(nowMillis(), tz).date,
+                    enabled = alarms.isNotEmpty(),
+                ) { date -> run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(onlyOnEpochDay = date.toEpochDays().toLong()) }) }
+                if (alarms.any { it.onlyOnEpochDay != null }) {
+                    FrameButton("✕") { run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(onlyOnEpochDay = null) }) }
+                }
+                NoteText("at", color = MaterialTheme.colorScheme.onSurface)
+                SharedTextField(
+                    items = alarms,
+                    idOf = { it.id },
+                    field = "Alarm/time",
+                    read = { formatAlarmTime(it.timeOfDayMinutes) },
+                    parse = { text -> parseAlarmTime(text)?.let { minutes -> { a: AlarmEntry -> a.copy(timeOfDayMinutes = minutes) } } },
+                    restore = { alarm, before -> alarm.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
+                    write = { key, change -> run(SearchDomain.AddedCommand.AlarmsEdit(key, change)) },
+                    timeNudge = { alarm, delta -> alarm.copy(timeOfDayMinutes = nudgedTimeOfDay(alarm.timeOfDayMinutes, delta)) },
+                )
+                // User rule 2026-10-18: where the calendar was right-clicked — its day and its time — for a window that came
+                // from there.
+                RightClickTimeButton(enabled = alarms.isNotEmpty()) { at ->
+                    val clicked = localOf(at, tz)
+                    run(
+                        SearchDomain.AddedCommand.AlarmsEdit {
+                            it.copy(onlyOnEpochDay = clicked.date.toEpochDays().toLong(), timeOfDayMinutes = clicked.hour * 60 + clicked.minute)
+                        },
+                    )
+                }
+            }
         SearchDomain.AddedAction.AlarmRingsFor ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 SharedTextField(
@@ -1074,20 +1118,27 @@ private fun AddedActionEditor(
             }
         }
         SearchDomain.AddedAction.ReminderTime ->
-            SharedTextField(
-                items = SearchDomain.addedReminders(state, added),
-                idOf = { it.id.ifEmpty { it.title } },
-                field = "Reminder/time",
-                read = { formatTimeOfDay(it.timeOfDayMinutes) },
-                sanitize = ::sanitizeTimeOfDay,
-                parse = { text -> { c: ChoreEntry -> c.copy(timeOfDayMinutes = parseTimeOfDay(text)) } },
-                restore = { chore, before -> chore.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
-                write = { _, change -> run(SearchDomain.AddedCommand.RemindersEdit(change)) },
-                // A time not defined (the tag goes at the current time) has nothing to step from.
-                timeNudge = { chore, delta ->
-                    if (chore.timeOfDayMinutes < 0) chore else chore.copy(timeOfDayMinutes = nudgedTimeOfDay(chore.timeOfDayMinutes, delta))
-                },
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val reminders = SearchDomain.addedReminders(state, added)
+                SharedTextField(
+                    items = reminders,
+                    idOf = { it.id.ifEmpty { it.title } },
+                    field = "Reminder/time",
+                    read = { formatTimeOfDay(it.timeOfDayMinutes) },
+                    sanitize = ::sanitizeTimeOfDay,
+                    parse = { text -> { c: ChoreEntry -> c.copy(timeOfDayMinutes = parseTimeOfDay(text)) } },
+                    restore = { chore, before -> chore.copy(timeOfDayMinutes = before.timeOfDayMinutes) },
+                    write = { _, change -> run(SearchDomain.AddedCommand.RemindersEdit(change)) },
+                    // A time not defined (the tag goes at the current time) has nothing to step from.
+                    timeNudge = { chore, delta ->
+                        if (chore.timeOfDayMinutes < 0) chore else chore.copy(timeOfDayMinutes = nudgedTimeOfDay(chore.timeOfDayMinutes, delta))
+                    },
+                )
+                // User rule 2026-10-18: where the calendar was right-clicked, for a window that came from there.
+                RightClickTimeButton(enabled = reminders.isNotEmpty()) { at ->
+                    run(SearchDomain.AddedCommand.RemindersEdit { it.copy(timeOfDayMinutes = minuteOfDayOf(at)) })
+                }
+            }
         SearchDomain.AddedAction.ReminderConstraint -> {
             val reminders = SearchDomain.addedReminders(state, added)
             val shared = SearchDomain.sharedValue(reminders) { it.constrainedToReminderId }

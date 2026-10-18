@@ -269,6 +269,11 @@ private fun LookTimeRow(
             val timed = look.minuteOfDay != null
             FrameButton(if (timed) "at" else "at the time it is now") { onChange(QuotaDomain.withTimeRelative(look, timed, now, tz)) }
             if (timed) TimeOfDayField(look.minuteOfDay, enabled = true) { minutes -> onChange(look.copy(minuteOfDay = minutes)) }
+            // User rule 2026-10-18: the day and the time the calendar was right-clicked at — an instant of its own.
+            RightClickTimeButton { at ->
+                val clicked = localOf(at, tz)
+                onChange(look.copy(dateEpochDay = clicked.date.toEpochDays(), minuteOfDay = clicked.hour * 60 + clicked.minute))
+            }
             FrameButton("✕", onClick = onRemove)
         }
         val unit = if (quota.unit.isBlank()) "" else " " + quota.unit
@@ -355,6 +360,10 @@ internal fun QuotaLoopEditor(state: SchedulerState, quotas: List<QuotaEntry>, ru
             TimeOfDayField(shared(::startMinutes), enabled = quotas.isNotEmpty()) { minutes ->
                 write(state, quotas, run) { QuotaDomain.withStart(it, at(startDate(it) ?: unsetDate, minutes)) }
             }
+            // User rule 2026-10-18: where the calendar was right-clicked, to the minute the fields say.
+            RightClickTimeButton(enabled = quotas.isNotEmpty()) { clicked ->
+                write(state, quotas, run) { QuotaDomain.withStart(it, clicked / 60_000L * 60_000L) }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Switch(
@@ -389,6 +398,10 @@ internal fun QuotaLoopEditor(state: SchedulerState, quotas: List<QuotaEntry>, ru
                         if (quotas.none { q -> endDate(q)?.let { refused(q, at(it, minutes)) } == true }) {
                             write(state, quotas, run) { q -> endDate(q)?.let { QuotaDomain.withEnd(q, at(it, minutes)) } ?: q }
                         }
+                    }
+                    RightClickTimeButton(enabled = quotas.any(QuotaDomain::periodSet)) { clicked ->
+                        val end = clicked / 60_000L * 60_000L
+                        if (quotas.none { refused(it, end) }) write(state, quotas, run) { QuotaDomain.withEnd(it, end) }
                     }
                 }
             }
@@ -961,6 +974,8 @@ private fun ParticularLoopRow(
             TimeOfDayField(end.hour * 60 + end.minute, enabled = true, refused = endRefused, onSettled = { endRefused = false }) { minutes ->
                 setEnd(instantOf(end.date, minutes, tz))
             }
+            // User rule 2026-10-18: where the calendar was right-clicked, to the minute the fields say.
+            RightClickTimeButton { clicked -> setEnd(clicked / 60_000L * 60_000L) }
             // Something to go back from: an end of its own, or a refusal on screen (a refused date stores nothing, so
             // the button was grey over the very error it clears — anomaly 2026-10-04).
             FrameButton("regular end", enabled = own.endMillis != null || endRefused) {

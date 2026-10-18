@@ -124,6 +124,8 @@ fun ConfigurationSearchWindow(
     val pageKinds = SearchDomain.pageKinds(config.page)
     val groups = SearchDomain.configurationGroups(own.query, own.kinds.filterTo(HashSet()) { it in pageKinds }, counts, own.onlyResultKinds, own.frozenKinds)
 
+    // The calendar right-click the Search window came from, for the time fields drawn here ([RightClickTimeButton]).
+    androidx.compose.runtime.CompositionLocalProvider(LocalCalendarClickMillis provides config.calendarClickMillis) {
     AppWindowFrame(
         title = "Search configurations",
         state = frame,
@@ -221,6 +223,7 @@ fun ConfigurationSearchWindow(
             }
         }
         }
+    }
     }
 }
 
@@ -386,11 +389,7 @@ private fun SettingEditor(
                     }
                 }
                 CalendarInstantField(f.calendarAddAtMillis) { filters(f.copy(calendarAddAtMillis = it)) }
-                config.calendarClickMillis?.let { click ->
-                    FrameButton("Set to the right-click", enabled = f.calendarAddAtMillis != click) {
-                        filters(f.copy(calendarAddAtMillis = click))
-                    }
-                }
+                RightClickTimeButton(enabled = f.calendarAddAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAddAtMillis = it)) }
             }
         // The calendar's "edit…": the same three controls, about what IS there.
         SearchDomain.Setting.CalendarAt ->
@@ -400,11 +399,7 @@ private fun SettingEditor(
                     onCheckedChange = { filters(f.copy(calendarAtOn = it)) },
                 )
                 CalendarInstantField(f.calendarAtMillis) { filters(f.copy(calendarAtMillis = it)) }
-                config.calendarClickMillis?.let { click ->
-                    FrameButton("Set to the right-click", enabled = f.calendarAtMillis != click) {
-                        filters(f.copy(calendarAtMillis = click))
-                    }
-                }
+                RightClickTimeButton(enabled = f.calendarAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAtMillis = it)) }
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
@@ -884,7 +879,11 @@ private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: (() 
             modifier = Modifier.width(190.dp),
         )
         // A bound with nothing to pick on the calendar (when a log entry was written) has the field alone.
-        if (onPick != null) FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
+        if (onPick != null) {
+            FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
+            // User rule 2026-10-18: where the calendar was right-clicked, for a window that came from there.
+            RightClickTimeButton(enabled = millis != LocalCalendarClickMillis.current) { onChange(it) }
+        }
         if (millis != null) {
             Text(
                 text = "✕",

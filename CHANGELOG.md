@@ -11,6 +11,40 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Right-click time" beside every time field of a window that came from a calendar right-click — 2026-10-18
+
+User rule: *"calendar > right-click > add… > add an alarm element: the Time field must have a button next to it to set it
+to the position of the right-click on the timeline. When the user clicks on 'New alarm', the window that opens must be
+linked to the previous Search window (which is linked to the calendar window), so the Time field must also have this
+button. Find if there are some other contexts where this kind of thing must be fixed too."*
+- **One button** (`RightClickTimeButton`), shown while the window has a right-click (`LocalCalendarClickMillis`, provided
+  by the Search window and its two configurations windows). It replaced the two that existed under two names ("Right-click
+  time" in "Add to the calendar", "Set to the right-click" in the Search configurations window).
+- **Where it now stands** (the other contexts found): the alarm's and the reminder's **Time**; a timer's **Ends**; the
+  **blocks on the calendar**' start and end; a quota's **loop** start and end, its **other times** and a **particular
+  loop**'s end; the **Sleep schedule**'s times of the night and goal date; the Search configurations window's **Every box
+  from / until** (beside "Pick on the calendar"). A time of day takes the right-click's minute.
+- **A Search window opened from a Search window is linked to it** (`Config.openedFrom`, new stored field, absent = none):
+  its tab stands beside that window's and it closes with it, and it holds the right-click that window came from
+  (`SearchDomain.linkedConfig`). Every Search window a Search window opens goes through `App.openLinkedSearch` — a row
+  opened, an action's "New", "Search every element of the kind", "Blocks on the calendar", "Search its tasks", a block's
+  "what is on the calendar there". **Which window asked is said, never guessed**: a Search window (and its Added elements
+  configurations window) is handed openers and handlers that run inside its frame id (`SearchRowOpeners.askedThrough`,
+  `AddedActionHandlers.askedThrough`); the lateral menu's items keep the plain ones, so nothing they open is linked. (A
+  first version the same day took the focused window, which linked what a menu item opened to whatever Search window
+  had the focus.) A new right-click re-pointing the calendar's window re-points the windows opened from it.
+- **The alarm's "Date and time"** (it was "Time"): a date field beside the time — blank for an alarm that rings on its
+  days, else the one date it rings on (`AlarmEntry.onlyOnEpochDay`, what dragging one ring makes), ✕ to make it repeat
+  again — and "Right-click time" sets both. A reminder has no date of its own (placing one on a day is a tag on the
+  calendar, "Add to the calendar"): its button sets the time.
+- **"Add to the calendar" offers the added elements' own times** (`SearchDomain.elementTimesOfDay`): under the start, a
+  "time of" button per added alarm, reminder with a time, timer (its end) and calendar block (its start), which sets the
+  start's TIME and keeps the day chosen — an alarm put on another day at its own time rings there too; a task laid at an
+  alarm's time starts when it rings.
+- **Fixed: an alarm on one date only, added to the calendar on another day, stayed on its date** (the weekday added to
+  its days did nothing). It now takes the start's date (`CalendarElements.alarmEdited`, which `App.applyAlarmDrafts`
+  calls), and its weekdays are left as they were for when it repeats again.
+
 ### A second feature page: the Claude Code logs — 2026-10-18
 
 The page button (the lateral menu's first element) now switches between **Task Scheduler** and **Claude Code logs**

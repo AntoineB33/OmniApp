@@ -1780,6 +1780,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // lists and edits: the one it was opened from — or the original, once that copy is closed.
         fun configTargetOf(configId: String): String =
             configSearchOf(configId).target.takeIf { it in windowCopies } ?: FloatingWindow.Search.name
+        // User rule 2026-10-18: **a Search window opened from a Search window is linked to it** — what a row opened, an
+        // action's "New", "Search every element of the kind", "Blocks on the calendar", "Search its tasks" open. Which
+        // window asked is SAID, never guessed: a Search window (and its Added elements configurations window) is handed
+        // openers and handlers that run inside [askedFrom] its frame id (`SearchRowOpeners.askedThrough`,
+        // `AddedActionHandlers.askedThrough`); the lateral menu's items get the plain ones, so nothing they open is linked.
+        val searchAsk = remember { arrayOfNulls<String>(1) }
+        fun askedFrom(source: String): (() -> Unit) -> Unit = { block ->
+            val before = searchAsk[0]
+            searchAsk[0] = source
+            try { block() } finally { searchAsk[0] = before }
+        }
+        fun searchSource(): String? =
+            searchAsk[0]?.takeIf { (it == FloatingWindow.Search.name && isWindowOpen(FloatingWindow.Search)) || it in windowCopies }
+        // [config] opened as a Search window linked to the window it was asked from ([SearchDomain.linkedConfig]).
+        fun openLinkedSearch(config: SearchDomain.Config): String {
+            val linked = searchSource()?.let { source -> SearchDomain.linkedConfig(config, source, searchConfigOf(source)) } ?: config
+            return openNewWindow(FloatingWindow.Search, linked.encode())
+        }
         windowPageOf = { frameId ->
             when (lateralWindowOf(frameId)) {
                 FloatingWindow.Search -> pageOfSearch(searchConfigOf(frameId).page)
@@ -1844,8 +1862,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         windowFrames.tabParentOf = { frameId ->
             when (lateralWindowOf(frameId)) {
                 FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> configTargetOf(frameId)
+                // The Search window it was opened from while that one is open (user rule 2026-10-18), else the calendar
+                // whose right-click opened it.
                 FloatingWindow.Search ->
-                    FloatingWindow.Calendar.name.takeIf { searchConfigOf(frameId).calendarClickMillis != null }
+                    searchConfigOf(frameId).let { config ->
+                        config.openedFrom?.takeIf { it != frameId && it in openSearchFrames() }
+                            ?: FloatingWindow.Calendar.name.takeIf { config.calendarClickMillis != null }
+                    }
                 FloatingWindow.Calendar ->
                     // The pair the app opened, while it holds it; else (after a restart) the notifications window
                     // whose added notifications are the ones this calendar shows.
@@ -2021,11 +2044,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             setSearchConfig(existing, moved)
             // The window is opened anew on this right-click: what its Reset goes back to.
             searchOpenedConfigs[existing] = moved
+            // …and the windows opened from it, and from those, are about this right-click too: their "Right-click time".
+            val linked = HashSet<String>().apply { add(existing) }
+            var grew = true
+            while (grew) {
+                grew = false
+                for (id in open) {
+                    if (id !in linked && searchConfigOf(id).openedFrom in linked) {
+                        linked += id
+                        grew = true
+                        setSearchConfig(id, searchConfigOf(id).copy(calendarClickMillis = atMillis))
+                    }
+                }
+            }
             presentWindow(search, existing)
         }
-        openElementSearch = { kind, id ->
-            openNewWindow(FloatingWindow.Search, SearchDomain.elementSearchConfig(kind, id).encode())
-        }
+        openElementSearch = { kind, id -> openLinkedSearch(SearchDomain.elementSearchConfig(kind, id)) }
         // A window button that is NOT in the lateral menu (the default sub-tree's, atop the task tree window): open
         // it (and focus) when closed; close it when it is the window being worked in; otherwise bring it back to the
         // front and the focus without closing.
@@ -2289,7 +2323,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     taskTreesWindowOpen = true
                     focusWindow(FloatingWindow.TaskTrees)
                 }
-                SearchDomain.Kind.Window -> openNewWindow(FloatingWindow.Search, SearchDomain.WINDOW_TYPES_CONFIG.encode())
+                SearchDomain.Kind.Window -> openLinkedSearch(SearchDomain.WINDOW_TYPES_CONFIG)
                 // User rule 2026-10-12: a new chord for a window — with neither yet; its actions give it both.
                 SearchDomain.Kind.Shortcut -> {
                     val id = org.example.project.ui.WindowShortcuts.mintId(windowShortcuts)
@@ -4832,7 +4866,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onEditReminder = { openElementSearch(SearchDomain.Kind.Reminder, it) },
                             onOpenAppSetting = { openElementSearch(SearchDomain.Kind.AppSetting, it) },
-                            onOpenCalendarAt = { openNewWindow(FloatingWindow.Search, SearchDomain.calendarAtConfig(it).encode()) },
+                            onOpenCalendarAt = { openLinkedSearch(SearchDomain.calendarAtConfig(it)) },
                             // A history unit's own window is the Search window holding it alone, whose "Information"
                             // action shows all of it (user rule 2026-10-03) — not the History window any more.
                             onOpenHistoryUnit = { openElementSearch(SearchDomain.Kind.HistoryUnit, it) },
@@ -4876,18 +4910,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), null)
                             },
                             onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
-                            onOpenResilienceSearch = { kind ->
-                                openNewWindow(FloatingWindow.Search, SearchDomain.resilienceSearchConfig(kind).encode())
-                            },
-                            onOpenKindSearch = { kind ->
-                                openNewWindow(FloatingWindow.Search, SearchDomain.kindSearchConfig(kind).encode())
-                            },
+                            onOpenResilienceSearch = { kind -> openLinkedSearch(SearchDomain.resilienceSearchConfig(kind)) },
+                            onOpenKindSearch = { kind -> openLinkedSearch(SearchDomain.kindSearchConfig(kind)) },
                             schedulerRuns = { schedulerRuns },
                             onDragOnCalendar = { presentWindow(FloatingWindow.Calendar, FloatingWindow.Calendar.name) },
                             onSetNotificationsEnabled = { engine.setNotificationsEnabled(it) },
-                            onOpenBlocksSearch = { owners ->
-                                openNewWindow(FloatingWindow.Search, SearchDomain.blocksSearchConfig(owners).encode())
-                            },
+                            onOpenBlocksSearch = { owners -> openLinkedSearch(SearchDomain.blocksSearchConfig(owners)) },
                             timerRun = { subjects, compact ->
                                 AccountAlarmWindow(
                                     subject = null,
@@ -4941,13 +4969,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         val searchConfig = searchConfigOf(searchId)
                         SearchWindow(
                             state = schedulerState,
-                            openers = searchRowOpeners,
+                            // What this window opens is linked to it (user rule 2026-10-18).
+                            openers = searchRowOpeners.askedThrough(askedFrom(searchId)),
                             onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                             onGoToTaskTree = { taskId, at ->
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
                             },
                             onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
-                            actionHandlers = addedActionHandlers,
+                            actionHandlers = addedActionHandlers.askedThrough(askedFrom(searchId)),
                             calendarLayerKindsAt = calendarLayers::kindsAt,
                             // What this window commits is its own, even when it lands after the press that left it
                             // (a row's rename is committed on blur, once the focus has already moved).
@@ -5088,7 +5117,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             added = added,
                             config = targetConfig,
                             onConfigChange = { setSearchConfig(target, it) },
-                            handlers = addedActionHandlers,
+                            // What it opens is linked to the Search window whose actions these are (user rule 2026-10-18).
+                            handlers = addedActionHandlers.askedThrough(askedFrom(target)),
                             own = own,
                             onOwnChange = { setConfigSearch(configId, it) },
                             onIntent = {
@@ -5097,7 +5127,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 )
                             },
                             nowMillis = clock::nowMillis,
-                            onOpenEach = { elements -> elements.forEach { searchRowOpeners.open(schedulerState, it) } },
+                            onOpenEach = { elements ->
+                                askedFrom(target)() { elements.forEach { searchRowOpeners.open(schedulerState, it) } }
+                            },
                             onClear = { elements ->
                                 val gone = elements.mapTo(HashSet(), SearchDomain::keyOf)
                                 setSearchConfig(target, targetConfig.copy(added = targetConfig.added.filterNot { it in gone }))
@@ -5606,7 +5638,8 @@ private fun saveCalendarElementIntents(
  *
  * The start/end the window asked for reach an alarm as a TIME OF DAY and a RING LENGTH
  * ([CalendarElements.alarmTimeOfDayMinutes], [CalendarElements.alarmSoundSeconds]) — an alarm has no date,
- * so the day the user right-clicked is only where the occurrence was shown, never something written back.
+ * so the day the user right-clicked is only where the occurrence was shown, never something written back; an alarm
+ * that rings on ONE date only takes the start's ([CalendarElements.alarmEdited]).
  * Which days it rings on is the `Rings on` field beside the start, asked and answered in its own right; a
  * brand-new alarm keeps [AlarmEntry]'s own default (every day), the same one the §18 window's `+` gives a
  * row, with all seven chips lit in front of the user before Save.
@@ -5626,15 +5659,8 @@ private fun applyAlarmDrafts(
                 .toLocalDateTime(tz).date.atStartOfDayIn(tz).toEpochMilliseconds()
         val index = out.indexOfFirst { it.id == draft.existingId }
         val base = out.getOrNull(index) ?: NewElementDefaults.newAlarm(state.newAlarmDefaults, id = "", timeOfDayMinutes = 0)
-        val updated =
-            base.copy(
-                label = draft.name,
-                timeOfDayMinutes = CalendarElements.alarmTimeOfDayMinutes(draft.startMillis, dayStart),
-                soundSeconds = CalendarElements.alarmSoundSeconds(draft.startMillis, draft.endMillis),
-                alert = draft.alert,
-                days = draft.alarmDays,
-                enabled = draft.alarmArmed,
-            )
+        val startDay = Instant.fromEpochMilliseconds(draft.startMillis).toLocalDateTime(tz).date.toEpochDays().toLong()
+        val updated = CalendarElements.alarmEdited(base, draft, dayStart, startDay)
         out = if (index >= 0) out.toMutableList().also { it[index] = updated } else out + updated
     }
     return out

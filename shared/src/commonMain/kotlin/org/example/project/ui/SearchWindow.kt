@@ -180,7 +180,7 @@ data class SearchSplits(
  * owns a task tree, a task relation or a shortcut, a window brought back, a creation made). The result
  * list and the added elements' "Open each" (both windows that list it) go through [open]: never a second copy.
  */
-class SearchRowOpeners(
+data class SearchRowOpeners(
     val onOpenTaskEdit: (TaskId) -> Unit,
     val onOpenCategory: (CategoryId) -> Unit,
     val onOpenPeriodKind: (String) -> Unit,
@@ -211,6 +211,29 @@ class SearchRowOpeners(
     /** A calendar block's row: what is on the calendar at its start — the calendar's own "edit…" there. */
     val onOpenCalendarAt: (Long) -> Unit = {},
 ) {
+    /**
+     * These openers, each run inside [around] (user rule 2026-10-18): what a Search window is handed, so `App` knows
+     * which window a row was opened from and links the window it opens to it ([SearchDomain.linkedConfig]). The
+     * lateral menu keeps the plain ones: nothing it opens is any Search window's.
+     */
+    fun askedThrough(around: (() -> Unit) -> Unit): SearchRowOpeners =
+        copy(
+            onOpenTaskEdit = { around { onOpenTaskEdit(it) } },
+            onOpenCategory = { around { onOpenCategory(it) } },
+            onOpenPeriodKind = { around { onOpenPeriodKind(it) } },
+            onEditAlarmOrTimer = { around { onEditAlarmOrTimer(it) } },
+            onEditReminder = { around { onEditReminder(it) } },
+            onOpenHistoryUnit = { around { onOpenHistoryUnit(it) } },
+            onOpenQuota = { around { onOpenQuota(it) } },
+            onOpenTaskTrees = { around { onOpenTaskTrees() } },
+            onOpenTaskRelations = { around { onOpenTaskRelations() } },
+            onOpenShortcuts = { around { onOpenShortcuts() } },
+            onOpenWindow = { around { onOpenWindow(it) } },
+            onCreate = { around { onCreate(it) } },
+            onOpenAppSetting = { around { onOpenAppSetting(it) } },
+            onOpenCalendarAt = { around { onOpenCalendarAt(it) } },
+        )
+
     /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
     fun open(state: SchedulerState, result: SearchDomain.Result) {
         when (result) {
@@ -688,7 +711,11 @@ fun SearchWindow(
           onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
       }
       // User rule 2026-10-13: a row's right-click menu opens at the pointer in this window ([LocalRowMenusAtPointer]).
-      androidx.compose.runtime.CompositionLocalProvider(LocalRowMenusAtPointer provides true) {
+      // User rule 2026-10-18: the right-click this window came from, for every time field of its actions ([RightClickTimeButton]).
+      androidx.compose.runtime.CompositionLocalProvider(
+          LocalRowMenusAtPointer provides true,
+          LocalCalendarClickMillis provides config.calendarClickMillis,
+      ) {
       Box(Modifier.fillMaxWidth().weight(1f)) {
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
         if (searchCollapsed) {

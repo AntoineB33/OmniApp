@@ -862,6 +862,8 @@ internal fun TimerEndFields(entry: TimerEntry?, nowMillis: Long, clock: () -> Lo
             blank = "—",
             onNudge = { delta -> if (movable) onNudge(delta) },
         ) { typed -> end?.let { moveTo(it.date, typed) } }
+        // User rule 2026-10-18: in a Search window opened from a calendar right-click, the end moved there.
+        RightClickTimeButton(enabled = movable) { at -> localOf(at, tz).let { moveTo(it.date, secondOfDay(it)) } }
     }
 }
 
