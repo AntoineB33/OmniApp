@@ -24,3 +24,6 @@ actual fun defaultClaudeLogsDirectory(): String? = null
 actual fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit) {
     runCatching { File(path).bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach(onLine) } }
 }
+
+// A phone's storage is shared with everything else on it: about half a year of logs.
+actual val claudeLogArchiveLimitBytes: Long = 20L * 1024 * 1024

@@ -791,6 +791,42 @@ open class SchedulerSyncEngine(
             .getOrDefault(false)
     }
 
+    /** What [syncClaudeLogs] did, for [account]: the ids it pushed, the rows it pulled, the cursor they bring it to. */
+    data class ClaudeLogSync(val account: String, val pushed: Set<String>, val pulled: List<ClaudeLogRow>, val cursor: Long)
+
+    /**
+     * User rule 2026-10-19: **the Claude Code logs the account keeps** (`claudelogs/ClaudeLogArchive`). Sends [batches]
+     * (this device's rows the server does not hold, newest that fit its bound, each batch one request), then pulls the
+     * rows the other devices wrote after [cursor]. Asked when the logs are read — the page shown, Refresh — never by a
+     * reconcile and never on a timer, so the logs cost nothing while nobody looks at them. Off [mutex] like the side
+     * channels above. Null while signed out or offline; a failure keeps what was done before it.
+     */
+    open suspend fun syncClaudeLogs(batches: List<List<ClaudeLogRow>>, cursor: Long): ClaudeLogSync? {
+        val current = onlineSession() ?: return null
+        val me = deviceId
+        val pushed = HashSet<String>()
+        val pulled = ArrayList<ClaudeLogRow>()
+        var at = cursor
+        try {
+            for (batch in batches) {
+                withAuth(current) { client.insertClaudeLogs(it, me, batch) }
+                batch.mapTo(pushed) { it.entryId }
+            }
+            while (true) {
+                val page = withAuth(current) { client.fetchClaudeLogs(it, me, at) }
+                pulled += page
+                if (page.isEmpty()) break
+                at = page.maxOf { it.revision ?: at }
+                if (page.size < RemoteSnapshotClient.PAGE) break
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Diagnostics.log("claude logs sync FAILED: ${e.message}")
+        }
+        if (pushed.isNotEmpty() || pulled.isNotEmpty()) Diagnostics.log("claude logs: pushed ${pushed.size}, pulled ${pulled.size}")
+        return ClaudeLogSync(current.userId, pushed, pulled, at)
+    }
+
     override suspend fun fetchAwaySpans(fromMillis: Long, toMillis: Long): List<TaskTimeRange> {
         val current = onlineSession() ?: return emptyList()
         return runCatching { withAuth(current) { client.fetchAwaySpans(it, fromMillis, toMillis) } }

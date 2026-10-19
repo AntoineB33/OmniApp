@@ -518,6 +518,10 @@ class TaskSchedulerViewModel(
     /** The manual sync trigger (fallback / force-now). Auto-push + Realtime auto-pull also reconcile on their own. */
     fun syncNow() = saveScope.launch { syncEngine?.reconcile() }
 
+    /** The Claude Code logs the account keeps ([SchedulerSyncEngine.syncClaudeLogs]); null when sync is disabled, signed out or offline. */
+    suspend fun syncClaudeLogs(batches: List<List<org.example.project.scheduler.sync.ClaudeLogRow>>, cursor: Long) =
+        syncEngine?.syncClaudeLogs(batches, cursor)
+
     /**
      * Sleep/Work toggle: set the account's sleeping-until instant (null = working) locally AND mirror the mode
      * to the `account_state` table immediately, so the server cron (`tick_pause_cues()`) suppresses the

@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Claude Code logs stay in the account's memory — 2026-10-19
+
+User rule: *"when the program gets logs from the local folder, it stays in the account's memory. If the folder got
+deleted, the app keeps the logs. The limit of the memory is adapted for each device or server."* Before, the page listed
+only what the folder held at that moment, and Claude Code deletes its own logs after about 30 days.
+- **Kept per account on each device** (`ClaudeLogKeeper`, `ClaudeLogArchive`): every prompt, answer and reasoning chain
+  read off the folder or pulled from the server, one row each, kept when the folder is gone. Bounded by the platform's
+  `claudeLogArchiveLimitBytes` (desktop 200 MB, Android/iOS 20 MB, web 5 MB in memory), the oldest dropped first. An
+  answer's prompt is not stored with it: it is put back from its session.
+- **Kept on the server, bounded**: each account's newest 400 KB (the user chose "the newest ~0.5 MB"; 400 KB is what the
+  10 % database budget had room for — `ServerQuotaTest` 49.87 of 50 MB, egress 480 of 512 MB a month with the logs at
+  three times the measured pace). So the phone gets the desktop's recent logs; each device keeps its full archive itself.
+- **Synced when the logs are read** (the page shown, Refresh, an account switch) by `SchedulerSyncEngine.syncClaudeLogs`:
+  the newest rows the server does not hold, in ≤ 32 KB requests, then the other devices' rows by revision. Never in a
+  reconcile, never on a timer, not published to Realtime.
+- The page lists the kept logs on every platform, a phone or the web included, and says why the folder added nothing
+  where it did not (no directory, not readable, a platform that reads no folder).
+- **SQLite 18.sqm** (v18 → v19): `claude_log_entry`, `claude_log_sync`. **Supabase 20261019000000_claude_log_entry.sql**:
+  the table (server-computed `size_bytes`), its RLS, and `trim_claude_log_entries`.
+
 ### "Now" beside every time field; micro group titles indented — 2026-10-19
 
 Anomaly: an alarm's "Add to the calendar" had a "Now" button, its "Date and time" did not. "Right-click time" was drawn

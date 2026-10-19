@@ -66,6 +66,7 @@ Two different questions, answered in two different places:
 | Launch-script login / start offline | System properties (`account*.bat`) | Intent extras | — | — |
 | Debug time link, perf platform stats | Yes | — | — | — |
 | The Claude Code logs page reads the logs (`claudeLogFilesSupported`) | Yes (`java.io`) | Yes (`java.io`; a folder the app may read) | No — the page says so | No — the page says so |
+| How much of the account's logs the device keeps (`claudeLogArchiveLimitBytes`) | 200 MB | 20 MB | 20 MB | 5 MB, in the page's memory only |
 
 ## Open gaps (not yet decided)
 

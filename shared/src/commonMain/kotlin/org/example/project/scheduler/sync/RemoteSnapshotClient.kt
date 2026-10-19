@@ -321,6 +321,40 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
     }
 
+    // ---- The Claude Code logs the account keeps (migration 20261019000000, claudelogs/ClaudeLogArchive) ----
+
+    /**
+     * Inserts this device's log rows. A row the server already holds is left as it is (`ignore-duplicates`): a log entry
+     * never changes, so a re-send after a lost answer writes nothing and leaves no dead version behind.
+     */
+    suspend fun insertClaudeLogs(session: SupabaseSession, deviceId: String, rows: List<ClaudeLogRow>) {
+        if (rows.isEmpty()) return
+        val response =
+            http.post("${config.restUrl}/claude_log_entry") {
+                authHeaders(session)
+                header("Prefer", "resolution=ignore-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(rows.map { it.copy(userId = session.userId, deviceId = deviceId, revision = null) }))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    /** The account's log rows another device wrote after [sinceRevision], oldest first, at most [limit] of them. */
+    suspend fun fetchClaudeLogs(session: SupabaseSession, deviceId: String, sinceRevision: Long, limit: Int = PAGE): List<ClaudeLogRow> {
+        val response =
+            http.get("${config.restUrl}/claude_log_entry") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("revision", "gt.$sinceRevision")
+                url.parameters.append("device_id", "neq.$deviceId")
+                url.parameters.append("select", "entry_id,kind,time_millis,session,session_title,project,ordinal,body,revision")
+                url.parameters.append("order", "revision.asc")
+                url.parameters.append("limit", limit.toString())
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString(response.bodyAsText())
+    }
+
     /** The account's History Unit rows another device wrote after [sinceRevision], oldest first. */
     suspend fun fetchHistoryUnits(session: SupabaseSession, deviceId: String, sinceRevision: Long, limit: Int = PAGE): List<HistoryUnitRow> {
         val response =
@@ -828,6 +862,25 @@ private data class EntityUpsert(
     val payload: String?,
     val deleted: Boolean,
     @SerialName("device_id") val deviceId: String,
+)
+
+/**
+ * One kept Claude Code log entry (`claudelogs/ClaudeLogRecord`), both ways. The server computes its `size_bytes` itself,
+ * which its trim bounds the account by; [revision] is the server's, never sent.
+ */
+@Serializable
+data class ClaudeLogRow(
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("entry_id") val entryId: String,
+    val kind: String,
+    @SerialName("time_millis") val timeMillis: Long? = null,
+    val session: String,
+    @SerialName("session_title") val sessionTitle: String? = null,
+    val project: String,
+    val ordinal: Int,
+    val body: String,
+    val revision: Long? = null,
 )
 
 /** One History Unit row, both ways. [delta] is the unit's own row text (`SchedulerStateCodec.encodeUnit`). */

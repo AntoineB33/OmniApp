@@ -46,6 +46,11 @@ block every 20, a minimum-time change every 10. The account is the release accou
 - **The calendar's hidden levels are rows like the panels they are pieces of, and bounded on the client**
   (`TimelineLevels.purged`: 90 days behind the line, 500 pieces; `calendar.md` § *tm_levels*). A piece is one small
   row, written when a block is placed over another and deleted when it is given back.
+- **The Claude Code logs are bounded on the server, not by the client's good will**: `trim_claude_log_entries`
+  (migration 20261019000000) keeps an account's newest 400 KB, counted by the server's own `size_bytes`, and
+  `ServerQuotaTest` reads that bound off the migration and fails when it disagrees with `ClaudeLogArchive.SERVER_LIMIT_BYTES`.
+  Each device keeps the rest itself. Rows are inserted once and never updated; the table is not published. Raising the
+  bound needs room in the budget first (2026-10-19: 49.87 of 50 MB with it at 400 KB).
 - **Never rewrite a large row to change a small part of it.** That is the outage. A value that changes with editing
   goes in its own row, sized by what changed (`sync-and-accounts.md` § *Sync by rows*).
 - **A History Unit is a diff of what changed**, never a copy of the tree (`persistence.md` § *A History Unit is what

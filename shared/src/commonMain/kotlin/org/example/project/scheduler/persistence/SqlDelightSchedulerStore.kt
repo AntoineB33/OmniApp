@@ -22,7 +22,7 @@ import org.example.project.scheduler.persistence.db.SchedulerDatabase
  */
 class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
     SchedulerStore, SyncMetaStore, WindowPlacementStore, DeviceSleepGapStore, ActiveSessionStore,
-    SleepScanCheckpointStore, DeclaredAwayStore, NetworkModeStore, FrozenScreenBreakStore {
+    SleepScanCheckpointStore, DeclaredAwayStore, NetworkModeStore, FrozenScreenBreakStore, ClaudeLogStore {
     private val queries = database.schedulerQueries
 
     /** The account whose partition [load]/[save] read and write: the signed-in user, else "unclaimed". */
@@ -263,7 +263,49 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             queries.reassignAppState(accountId, UNCLAIMED_ACCOUNT_ID)
             queries.reassignHistory(accountId, UNCLAIMED_ACCOUNT_ID)
             queries.reassignPointers(accountId, UNCLAIMED_ACCOUNT_ID)
+            queries.reassignClaudeLogs(accountId, UNCLAIMED_ACCOUNT_ID)
         }
+    }
+
+    override fun activeClaudeLogAccount(): String = activeAccountId()
+
+    override fun loadClaudeLogs(account: String): List<StoredClaudeLog> =
+        queries.selectClaudeLogs(account).executeAsList().mapNotNull { row ->
+            // A kind this build does not know (a newer build's) is left in the table, not shown.
+            val kind = org.example.project.claudelogs.ClaudeLogKind.entries.firstOrNull { it.name == row.kind } ?: return@mapNotNull null
+            StoredClaudeLog(
+                org.example.project.claudelogs.ClaudeLogRecord(
+                    entryId = row.entry_id,
+                    kind = kind,
+                    timeMillis = row.time_millis,
+                    session = row.session,
+                    sessionTitle = row.session_title,
+                    project = row.project,
+                    ordinal = row.ordinal.toInt(),
+                    text = row.text,
+                    path = row.path,
+                ),
+                onServer = row.on_server != 0L,
+            )
+        }
+
+    override fun saveClaudeLogs(account: String, upserts: List<StoredClaudeLog>, deletes: Collection<String>) {
+        if (upserts.isEmpty() && deletes.isEmpty()) return
+        database.transaction {
+            for (id in deletes) queries.deleteClaudeLog(account, id)
+            for ((r, onServer) in upserts) {
+                queries.upsertClaudeLog(
+                    account, r.entryId, r.kind.name, r.timeMillis, r.session, r.sessionTitle, r.project, r.ordinal.toLong(), r.path,
+                    if (onServer) 1L else 0L, r.text,
+                )
+            }
+        }
+    }
+
+    override fun loadClaudeLogCursor(account: String): Long = queries.selectClaudeLogCursor(account).executeAsOneOrNull() ?: 0L
+
+    override fun saveClaudeLogCursor(account: String, revision: Long) {
+        queries.upsertClaudeLogCursor(account, revision)
     }
 
     override fun loadPlacements(): Map<String, WindowPlacement> =

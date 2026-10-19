@@ -1,0 +1,25 @@
+-- Schema v18 -> v19: the Claude Code logs the account keeps.
+--
+-- Added 2026-10-19 (user rule: "when the program gets logs from the local folder, it stays in the account's memory.
+-- If the folder got deleted, the app keeps the logs"): one row per prompt, answer or reasoning chain, per account,
+-- and the server revision this device pulled them to. Nothing to carry over: an older build kept no logs.
+
+CREATE TABLE claude_log_entry (
+    account_id    TEXT NOT NULL,
+    entry_id      TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    time_millis   INTEGER,
+    session       TEXT NOT NULL,
+    session_title TEXT,
+    project       TEXT NOT NULL,
+    ordinal       INTEGER NOT NULL,
+    path          TEXT NOT NULL,
+    on_server     INTEGER NOT NULL DEFAULT 0,
+    text          TEXT NOT NULL,
+    PRIMARY KEY (account_id, entry_id)
+);
+
+CREATE TABLE claude_log_sync (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    pulled_revision INTEGER NOT NULL
+);

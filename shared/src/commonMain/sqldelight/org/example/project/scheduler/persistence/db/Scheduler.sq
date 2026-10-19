@@ -216,6 +216,32 @@ CREATE TABLE screen_break_front (
     machine  TEXT
 );
 
+-- User rule 2026-10-19: the Claude Code logs the account keeps (claudelogs/ClaudeLogArchive), one row per prompt,
+-- answer or reasoning chain - read off a folder of this device or pulled from the server, and KEPT after the folder
+-- is gone. ACCOUNT-SCOPED like app_state, bounded per device (claudeLogArchiveLimitBytes, oldest dropped first).
+-- `on_server` = 1 once the row is known to be on the server (this device pushed it, or pulled it), so it is not sent
+-- again. `text` is the LAST column for the reason `history_unit.delta` is. Added in migration 18.sqm.
+CREATE TABLE claude_log_entry (
+    account_id    TEXT NOT NULL,
+    entry_id      TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    time_millis   INTEGER,
+    session       TEXT NOT NULL,
+    session_title TEXT,
+    project       TEXT NOT NULL,
+    ordinal       INTEGER NOT NULL,
+    path          TEXT NOT NULL,
+    on_server     INTEGER NOT NULL DEFAULT 0,
+    text          TEXT NOT NULL,
+    PRIMARY KEY (account_id, entry_id)
+);
+
+-- The highest server revision of `claude_log_entry` this device pulled, per account. Added in migration 18.sqm.
+CREATE TABLE claude_log_sync (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    pulled_revision INTEGER NOT NULL
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE account_id = ?;
 
@@ -351,3 +377,27 @@ SELECT until_ms, line_ms, machine FROM screen_break_front WHERE id = 0;
 
 upsertScreenBreakFront:
 INSERT OR REPLACE INTO screen_break_front(id, until_ms, line_ms, machine) VALUES (0, ?, ?, ?);
+
+selectClaudeLogs:
+SELECT entry_id, kind, time_millis, session, session_title, project, ordinal, path, on_server, text
+FROM claude_log_entry WHERE account_id = ?;
+
+upsertClaudeLog:
+INSERT OR REPLACE INTO
+claude_log_entry(account_id, entry_id, kind, time_millis, session, session_title, project, ordinal, path, on_server, text)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteClaudeLog:
+DELETE FROM claude_log_entry WHERE account_id = ? AND entry_id = ?;
+
+markClaudeLogOnServer:
+UPDATE claude_log_entry SET on_server = 1 WHERE account_id = ? AND entry_id = ?;
+
+reassignClaudeLogs:
+UPDATE claude_log_entry SET account_id = ? WHERE account_id = ?;
+
+selectClaudeLogCursor:
+SELECT pulled_revision FROM claude_log_sync WHERE account_id = ?;
+
+upsertClaudeLogCursor:
+INSERT OR REPLACE INTO claude_log_sync(account_id, pulled_revision) VALUES (?, ?);

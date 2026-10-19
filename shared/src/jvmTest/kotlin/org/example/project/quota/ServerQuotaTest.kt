@@ -6,6 +6,10 @@ import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.test.runTest
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.state.HistoryCategory
+import org.example.project.claudelogs.ClaudeLogArchive
+import org.example.project.claudelogs.ClaudeLogEntry
+import org.example.project.claudelogs.ClaudeLogKind
+import org.example.project.claudelogs.ClaudeLogSession
 import org.example.project.scheduler.state.SchedulerState
 
 /**
@@ -43,12 +47,25 @@ class ServerQuotaTest {
 
     @Test
     fun a_heavy_month_on_three_accounts_stays_under_a_tenth_of_every_free_tier_quota() = runTest(timeout = 20.minutes) {
-        val server = FakeSupabase({ t0 + testScheduler.currentTime }, cronLogRetentionMillis = cronLogRetentionMillis())
+        val claudeLogBound = claudeLogKeptBytes()
+        if (claudeLogBound != null && claudeLogBound != ClaudeLogArchive.SERVER_LIMIT_BYTES) {
+            fail("the migrations keep $claudeLogBound bytes of an account's logs, the client sends up to ${ClaudeLogArchive.SERVER_LIMIT_BYTES}")
+        }
+        val server =
+            FakeSupabase({ t0 + testScheduler.currentTime }, cronLogRetentionMillis = cronLogRetentionMillis(), claudeLogKeptBytes = claudeLogBound)
         val scenario = QuotaScenario(this, server, QuotaScenario.Millis(t0))
         val desktop = scenario.Device("desktop", "user-quota", QuotaScenario.account(), DeviceKind.Desktop)
-        scenario.pass(2 * 60_000L)
+        // The Claude Code logs: the desktop's folder holds months of them (more than the server keeps), read once, so
+        // the table is at its bound before the hour is measured; the phone pulls what it keeps. Read inside the setup's
+        // own minutes, so the rest of the scenario runs as it did before the logs were kept.
+        val logs = ClaudeLogFeed(t0)
+        scenario.pass(60_000L)
+        desktop.readLogs(logs.sessions(ClaudeLogArchive.SERVER_LIMIT_BYTES * 3))
+        scenario.pass(60_000L)
         val phone = scenario.Device("phone", "user-quota", SchedulerState.empty(), DeviceKind.Phone)
-        scenario.pass(2 * 60_000L)
+        scenario.pass(60_000L)
+        phone.readLogs(null)
+        scenario.pass(60_000L)
 
         val before = Meters.of(server)
         val egressBefore = HashMap(server.egressByCall)
@@ -64,6 +81,13 @@ class ServerQuotaTest {
             phone.active = minute in 15..30
             if (desktop.active) desktopUser.actOneMinute(now)
             if (phone.active && minute % 3 == 0) phoneUser.actOneMinute(now)
+            // Measured 2026-10-19 on the user's desktop: 2.9 MB of prompts, answers and reasoning over the 30 days
+            // Claude Code keeps — 10 KB an active hour. Heavy is three times that pace, read every 10 minutes, and the
+            // phone's logs page shown each time it is used.
+            if (minute % 10 == 0) {
+                if (desktop.active) desktop.readLogs(logs.sessions(5 * 1024))
+                if (phone.active) phone.readLogs(null)
+            }
             scenario.pass(60_000L)
         }
         val after = Meters.of(server)
@@ -91,6 +115,12 @@ class ServerQuotaTest {
                 val keptHours = tombstoneRetentionMillis()?.let { it / (24 * hour) * q.ACTIVE_HOURS_PER_DAY } ?: hoursProjected
                 perAccount = after.disk.getValue(name) + (growthPerHour - tombstonesPerHour).coerceAtLeast(0) * hoursProjected +
                     tombstonesPerHour * minOf(hoursProjected, keptHours)
+            }
+            if (name == "claude_log_entry" && claudeLogBound != null) {
+                // `trim_claude_log_entries` keeps the account's newest rows up to the bound, and the table reached it
+                // before the hour: what it occupies now — its high-water, the trims' dead rows included — is what it
+                // occupies a year on.
+                perAccount = after.disk.getValue(name)
             }
             if (name == "history_unit") {
                 // `trim_history_units` keeps the newest [FakeSupabase.HISTORY_UNITS_KEPT] of each category; twice
@@ -136,6 +166,14 @@ class ServerQuotaTest {
         if (failures.isNotEmpty()) fail("over a tenth of the free tier:\n" + failures.joinToString("\n") + "\n" + report)
     }
 
+    /** What `trim_claude_log_entries` keeps of an account's logs (the migrations), in bytes; null when nothing trims. */
+    private fun claudeLogKeptBytes(): Long? {
+        val root = generateSequence(java.io.File("").absoluteFile) { it.parentFile }.firstOrNull { java.io.File(it, "supabase/migrations").isDirectory } ?: return null
+        val migrations = java.io.File(root, "supabase/migrations").listFiles().orEmpty().sortedBy { it.name }.joinToString("\n") { it.readText() }
+        if ("create trigger claude_log_entry_trim" !in migrations) return null
+        return Regex("""where ranked\.running > (\d+)""").findAll(migrations).lastOrNull()?.groupValues?.get(1)?.toLong()
+    }
+
     /** How long `pause-cue-setup.sql` keeps pg_cron's run log, read off its purge job; null when it never purges. */
     private fun cronLogRetentionMillis(): Long? {
         val sql = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
@@ -165,4 +203,32 @@ class ServerQuotaTest {
             .mapValues { (_, rows) -> "${rows.size} rows ${rows.sumOf { it.toString().length.toLong() } / 1024} KB" }
 
     private fun mb(bytes: Long): String = "%.2f MB".format(bytes / (1024.0 * 1024.0))
+}
+
+/**
+ * Claude Code sessions as a folder would hold them: each call gives NEW sessions, later than the last, of about
+ * [bytes] of text — prompts, answers and reasoning in the proportions of the user's own logs (2026-10-19: 1 027
+ * prompts, 3 556 answers, 1 154 reasoning chains; an answer about 570 bytes).
+ */
+class ClaudeLogFeed(private val t0: Long) {
+    private var sessionCount = 0
+    private var minute = 0L
+
+    fun sessions(bytes: Long): List<ClaudeLogSession> {
+        val out = ArrayList<ClaudeLogSession>()
+        var made = 0L
+        while (made < bytes) {
+            val id = "00000000-0000-4000-8000-%012d".format(sessionCount++)
+            val entries = ArrayList<ClaudeLogEntry>()
+            repeat(20) { i ->
+                val kind = when (i % 6) { 0 -> ClaudeLogKind.Prompt; 5 -> ClaudeLogKind.Reasoning; else -> ClaudeLogKind.Answer }
+                val length = when (kind) { ClaudeLogKind.Prompt -> 620; ClaudeLogKind.Answer -> 570; ClaudeLogKind.Reasoning -> 240 }
+                val text = "Session $id entry $i " + "lorem ipsum dolor sit amet ".repeat(length / 27)
+                entries += ClaudeLogEntry(kind, text, t0 + 60_000L * minute++, null, i)
+                made += text.length
+            }
+            out += ClaudeLogSession("C:/Users/u/.claude/projects/C--OmniApp/$id.jsonl", id, "C--OmniApp", "C:/OmniApp", "Session $id", entries)
+        }
+        return out
+    }
 }

@@ -237,9 +237,9 @@ data class ClaudeLogsSettings(
 }
 
 /**
- * **The logs as last read**, which the Search window lists ([org.example.project.scheduler.domain.SearchDomain]'s
- * Claude kinds) the way it lists `App`'s windows: handed in, not held by the state. [sessions] is null while the
- * directory is not defined, not readable, or not read yet ([loading]).
+ * **The logs the account keeps** ([ClaudeLogKeeper]: what the folder gave, kept after it is gone, and what the server
+ * sent), which the Search window lists ([org.example.project.scheduler.domain.SearchDomain]'s Claude kinds) the way it
+ * lists `App`'s windows: handed in, not held by the state. [sessions] is null until the archive is loaded ([loading]).
  */
 class ClaudeLogCatalog(
     val directory: String,
@@ -247,6 +247,8 @@ class ClaudeLogCatalog(
     val loading: Boolean = false,
     /** Where Claude Code keeps its logs on this device, which the directory field suggests ([defaultClaudeLogsDirectory]). */
     val suggestion: String? = null,
+    /** Whether [directory] could be read the last time it was asked; the kept logs are shown either way. */
+    val folderReadable: Boolean = true,
 ) {
     /** Every entry with its session, in the order the logs hold them. */
     val entries: List<Pair<ClaudeLogSession, ClaudeLogEntry>> by lazy {
@@ -272,14 +274,23 @@ class ClaudeLogCatalog(
     /** Every project the sessions are filed under, for the project filter. */
     val projects: List<String> by lazy { sessions.orEmpty().map { it.project }.distinct().sorted() }
 
-    /** Where the reading stands, in words. */
+    /** Where the reading stands, in words: what is kept, and why the folder added nothing where it did not. */
     val status: String
-        get() = when {
-            !claudeLogFilesSupported -> "This platform cannot read the logs."
-            directory.isBlank() -> "Define the directory the logs are in."
-            loading -> "Reading…"
-            sessions == null -> "Not a readable directory."
-            else -> "${sessions.size} sessions, ${entries.size} entries"
+        get() {
+            val kept = sessions?.let { "${it.size} sessions, ${entries.size} entries" }
+            val folder =
+                when {
+                    !claudeLogFilesSupported -> "this platform reads no folder"
+                    directory.isBlank() -> "define the directory the logs are in"
+                    !folderReadable -> "the directory is not readable"
+                    else -> null
+                }
+            return when {
+                kept == null -> if (loading) "Reading…" else folder?.replaceFirstChar { it.uppercase() } ?: "Reading…"
+                loading -> "$kept · reading…"
+                folder == null -> kept
+                else -> "$kept kept · $folder"
+            }
         }
 
     companion object {

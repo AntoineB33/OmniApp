@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -660,10 +661,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 it.copy(config = org.example.project.claudelogs.ClaudeLogsSettings.encode(next))
             }
         }
-        // The Claude Code logs as last read — what the Search windows of their page list ([SearchDomain.CLAUDE_KINDS]),
+        // The Claude Code logs the account keeps — what the Search windows of their page list ([SearchDomain.CLAUDE_KINDS]),
         // handed in like `App`'s windows. Read off the UI thread, one read at a time, and only when asked: the page shown
-        // the first time, the directory set, Refresh — never on a timer. A refresh re-reads only the files that changed.
+        // the first time, the directory set, Refresh, the account switched — never on a timer. A refresh re-reads only the
+        // files that changed. User rule 2026-10-19: what the folder gave stays in the account's memory (the keeper), and
+        // goes to the server for the account's other devices.
         val claudeLogIndex = remember { org.example.project.claudelogs.ClaudeLogIndex() }
+        val claudeLogKeeper =
+            remember(store) { org.example.project.claudelogs.ClaudeLogKeeper(store as? org.example.project.scheduler.persistence.ClaudeLogStore) }
+        val claudeLogsAccount = vm.account?.collectAsState()?.value?.userId
         val claudeLogLock = remember { kotlinx.coroutines.sync.Mutex() }
         var claudeLogs by remember { mutableStateOf(org.example.project.claudelogs.ClaudeLogCatalog.EMPTY) }
         var claudeLogRefreshes by remember { mutableIntStateOf(0) }
@@ -678,27 +684,47 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
         }
         val claudeLogDirectory = claudeLogsSettings.directory.trim()
-        LaunchedEffect(claudeLogDirectory, claudeLogRefreshes, claudeLogsWanted) {
-            if (!claudeLogsWanted || claudeLogDirectory.isEmpty() || !org.example.project.claudelogs.claudeLogFilesSupported) {
+        // Each kind's rows made with the catalog, off the UI thread, rather than at the first search.
+        fun claudeCatalog(sessions: List<org.example.project.claudelogs.ClaudeLogSession>, readable: Boolean) =
+            org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, sessions, suggestion = claudeLogsDefault, folderReadable = readable)
+                .also { catalog -> SearchDomain.CLAUDE_KINDS.forEach { SearchDomain.claudeResults(it, "", catalog) } }
+        LaunchedEffect(claudeLogDirectory, claudeLogRefreshes, claudeLogsWanted, claudeLogsAccount) {
+            if (!claudeLogsWanted) {
                 claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, null, suggestion = claudeLogsDefault)
                 return@LaunchedEffect
             }
-            // What was read stays listed while the logs are read again.
-            val shown = claudeLogs.sessions.takeIf { claudeLogs.directory == claudeLogDirectory }
-            claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, loading = true, suggestion = claudeLogsDefault)
+            // What was shown stays listed while the logs are read again.
+            val shown = claudeLogs.sessions
+            claudeLogs =
+                org.example.project.claudelogs.ClaudeLogCatalog(
+                    claudeLogDirectory, shown, loading = true, suggestion = claudeLogsDefault, folderReadable = claudeLogs.folderReadable,
+                )
             var read: org.example.project.claudelogs.ClaudeLogCatalog? = null
+            var account: String? = null
             try {
                 read =
                     withContext(Dispatchers.Default) {
-                        claudeLogLock.lock()
-                        val sessions = try { claudeLogIndex.refresh(claudeLogDirectory) } finally { claudeLogLock.unlock() }
-                        // Each kind's rows made here, off the UI thread, rather than at the first search.
-                        org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, sessions, suggestion = claudeLogsDefault)
-                            .also { catalog -> SearchDomain.CLAUDE_KINDS.forEach { SearchDomain.claudeResults(it, "", catalog) } }
+                        claudeLogLock.withLock {
+                            val kept = claudeLogKeeper.activeAccount().also { account = it }
+                            val readsFolder = claudeLogDirectory.isNotEmpty() && org.example.project.claudelogs.claudeLogFilesSupported
+                            // Null: no folder, or not readable — the account's logs are shown as kept.
+                            val folder = if (readsFolder) claudeLogIndex.refresh(claudeLogDirectory) else null
+                            claudeCatalog(claudeLogKeeper.absorb(kept, folder), readable = !readsFolder || folder != null)
+                        }
                     }
             } finally {
                 claudeLogs = read ?: org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, suggestion = claudeLogsDefault)
             }
+            // Then the server: what this device read goes up (the newest it keeps), what the other devices read comes down.
+            val kept = account ?: return@LaunchedEffect
+            val (batches, cursor) =
+                withContext(Dispatchers.Default) { claudeLogLock.withLock { claudeLogKeeper.pushBatches(kept) to claudeLogKeeper.cursor(kept) } }
+            val synced = vm.syncClaudeLogs(batches, cursor) ?: return@LaunchedEffect
+            val updated =
+                withContext(Dispatchers.Default) {
+                    claudeLogLock.withLock { claudeLogKeeper.applySync(synced)?.let { claudeCatalog(it, read?.folderReadable ?: true) } }
+                }
+            if (updated != null) claudeLogs = updated
         }
         fun setClaudeLogsDirectory(directory: String) = setClaudeLogsSettings(claudeLogsSettings.copy(directory = directory))
         fun refreshClaudeLogs() { claudeLogRefreshes++ }

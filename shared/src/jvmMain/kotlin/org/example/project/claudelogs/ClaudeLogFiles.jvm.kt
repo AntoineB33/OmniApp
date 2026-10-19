@@ -27,3 +27,6 @@ actual fun defaultClaudeLogsDirectory(): String? =
 actual fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit) {
     runCatching { File(path).bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach(onLine) } }
 }
+
+// A desktop keeps decades of logs at the 2026 pace (about 3 MB of text a month).
+actual val claudeLogArchiveLimitBytes: Long = 200L * 1024 * 1024

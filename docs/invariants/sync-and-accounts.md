@@ -90,6 +90,14 @@ rewritten on every edit is what filled the database.
   branch a new edit discarded `dropped` (and empties its delta), and pulls the other devices' units by revision.
   The server keeps the newest 1000 per category (a trigger), like each device.
 
+### The Claude Code logs ride their own call
+
+The logs the account keeps (`claudelogs/CLAUDE.md`) are not entities and never ride a reconcile: the logs page asks
+`SchedulerSyncEngine.syncClaudeLogs` when it reads them (shown, Refresh, the account switched) — push the newest this
+device holds that the server does not, then pull the other devices' rows by revision (`claude_log_sync` holds the cursor
+per account). Off the reconcile mutex, refused while offline like every request, and a result about another account than
+the one now active is dropped.
+
 ### Typing saves and pushes, both debounced
 
 Every keystroke is an intent (`UpdateEditText`), and `dispatch` schedules a save for **every** intent that

@@ -20,3 +20,10 @@ expect fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit)
  * does not or the platform cannot tell. The directory field suggests it ([ClaudeLogsSettings.directoryCompletion]).
  */
 expect fun defaultClaudeLogsDirectory(): String?
+
+/**
+ * How much of the account's logs this device keeps ([ClaudeLogArchive]), oldest dropped first — user rule 2026-10-19:
+ * *"the limit of the memory is adapted for each device"*. A capability of the build's own source set, like
+ * [claudeLogFilesSupported]: what the platform's storage can spare.
+ */
+expect val claudeLogArchiveLimitBytes: Long

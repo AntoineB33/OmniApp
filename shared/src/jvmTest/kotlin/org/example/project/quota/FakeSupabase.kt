@@ -44,7 +44,15 @@ import org.example.project.scheduler.sync.DeviceHeartbeatPublisher
  *
  * Rows are sized as their JSON text plus a tuple header, never compressed: every estimate errs toward the quota.
  */
-class FakeSupabase(private val clock: () -> Long, val cronLogRetentionMillis: Long? = null) {
+class FakeSupabase(
+    private val clock: () -> Long,
+    val cronLogRetentionMillis: Long? = null,
+    /**
+     * `trim_claude_log_entries` (migration 20261019000000): what an account keeps of its Claude Code logs, in
+     * `size_bytes`; null where the migrations hold no trim, and the table then grows with every log read.
+     */
+    val claudeLogKeptBytes: Long? = null,
+) {
     private val json = Json { ignoreUnknownKeys = true }
 
     // ----- the storage model -------------------------------------------------------------------------------------
@@ -169,6 +177,7 @@ class FakeSupabase(private val clock: () -> Long, val cronLogRetentionMillis: Lo
         table("scheduler_snapshot", listOf("user_id"))
         table("scheduler_entity", listOf("user_id", "kind", "entity_id"))
         table("history_unit", listOf("user_id", "device_id", "category", "device_seq"))
+        table("claude_log_entry", listOf("user_id", "entry_id"))
         table("scheduler_head", listOf("user_id"), realtime = true)
         table("account_logout", listOf("user_id"))
         table("account_last_phone", listOf("user_id"))
@@ -368,8 +377,11 @@ class FakeSupabase(private val clock: () -> Long, val cronLogRetentionMillis: Lo
                     HttpStatusCode.OK to JsonArray(hits.map { select(it, request) }).toString()
                 }
                 HttpMethod.Post -> {
-                    val incoming = parseRows(body).map { JsonObject(it + ("user_id" to JsonPrimitive(user))) }
-                    if (prefer.contains("merge-duplicates")) {
+                    val incoming = parseRows(body).map { JsonObject(it + ("user_id" to JsonPrimitive(user))) }.map { generated(table, it) }
+                    if (prefer.contains("ignore-duplicates")) {
+                        incoming.forEach { table.insert(it, user) }
+                        HttpStatusCode.Created to ""
+                    } else if (prefer.contains("merge-duplicates")) {
                         incoming.forEach { table.upsert(it, user) }
                         HttpStatusCode.Created to ""
                     } else if (incoming.all { table.insert(it, user) }) {
@@ -393,9 +405,30 @@ class FakeSupabase(private val clock: () -> Long, val cronLogRetentionMillis: Lo
         return result
     }
 
-    /** The statement-level triggers of migration 20260917000000. */
+    /** A table's generated columns, as Postgres computes them on insert (migration 20261019000000's `size_bytes`). */
+    private fun generated(table: PgTable, row: JsonObject): JsonObject {
+        if (table.name != "claude_log_entry") return row
+        fun bytes(column: String) = row[column]?.let(::scalar)?.encodeToByteArray()?.size?.toLong() ?: 0L
+        return JsonObject(row + ("size_bytes" to JsonPrimitive(bytes("body") + bytes("session_title") + bytes("project") + 300)))
+    }
+
+    /** The statement-level triggers of migrations 20260917000000 and 20261019000000. */
     private fun afterWrite(table: PgTable, user: String) {
         when (table.name) {
+            "claude_log_entry" -> {
+                val keep = claudeLogKeptBytes ?: return
+                fun long(row: JsonObject, column: String) = scalarOf(row, column)?.toLongOrNull()
+                var running = 0L
+                val evicted =
+                    table.rows.values.filter { scalarOf(it, "user_id") == user }
+                        .sortedWith(
+                            compareByDescending<JsonObject> { long(it, "time_millis") ?: Long.MIN_VALUE }
+                                .thenByDescending { long(it, "ordinal") ?: 0L },
+                        )
+                        .filter { row -> running += long(row, "size_bytes") ?: 0L; running > keep }
+                        .toHashSet()
+                if (evicted.isNotEmpty()) table.delete({ it in evicted }, null)
+            }
             "scheduler_entity" -> {
                 val own = table.rows.values.filter { scalarOf(it, "user_id") == user }
                 val newest = own.maxOfOrNull { scalarOf(it, "revision")?.toLongOrNull() ?: 0L } ?: return
@@ -574,6 +607,6 @@ class FakeSupabase(private val clock: () -> Long, val cronLogRetentionMillis: Lo
         /** `trim_history_units`: the newest units kept per account and category. */
         const val HISTORY_UNITS_KEPT = 1000
 
-        private val REVISIONED_TABLES = setOf("scheduler_entity", "history_unit")
+        private val REVISIONED_TABLES = setOf("scheduler_entity", "history_unit", "claude_log_entry")
     }
 }

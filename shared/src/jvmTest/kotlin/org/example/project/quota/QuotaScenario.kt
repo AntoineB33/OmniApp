@@ -98,6 +98,21 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
             engine.start()
         }
 
+        /** The account's Claude Code logs on this device, kept as the app keeps them (`App`'s logs page). */
+        val logs = org.example.project.claudelogs.ClaudeLogKeeper(store)
+
+        /**
+         * What the logs page does when it is shown or refreshed: [read] (a folder's sessions, null = no folder) added to
+         * what the account keeps, the newest of it sent, the other devices' pulled.
+         */
+        fun readLogs(read: List<org.example.project.claudelogs.ClaudeLogSession>?) {
+            test.launch {
+                val account = logs.activeAccount()
+                logs.absorb(account, read)
+                vm.syncClaudeLogs(logs.pushBatches(account), logs.cursor(account))?.let(logs::applySync)
+            }
+        }
+
         fun dispatch(intent: SchedulerIntent) = vm.dispatch(intent)
         val state: SchedulerState get() = vm.state.value
     }
