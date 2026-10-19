@@ -36,6 +36,23 @@ internal fun RightClickTimeButton(enabled: Boolean = true, onSet: (Long) -> Unit
     FrameButton("Right-click time", enabled = enabled) { onSet(click / 1_000L * 1_000L) }
 }
 
+/** The app's clock (the time simulation's when it runs) — what "Now" beside a time field reads. `App` provides it. */
+val LocalAppNowMillis = compositionLocalOf<() -> Long> { { kotlin.time.Clock.System.now().toEpochMilliseconds() } }
+
+/**
+ * **The buttons beside every time field** — anomaly 2026-10-19 (*"the Now button is in 'Add to the calendar' but not in
+ * … 'Date and time'"*): "Now" stood beside "Add to the calendar"'s fields alone, written there by hand, while "Right-click
+ * time" stood beside them all. ONE place draws both: "Now" sets the field to the clock's instant (to the second), and
+ * [RightClickTimeButton] follows where there was a right-click. [onSet] gets the instant, as [RightClickTimeButton]'s does;
+ * [rightClickEnabled] greys the right-click alone (a field already there).
+ */
+@Composable
+internal fun InstantButtons(enabled: Boolean = true, rightClickEnabled: Boolean = enabled, onSet: (Long) -> Unit) {
+    val now = LocalAppNowMillis.current
+    FrameButton("Now", enabled = enabled) { onSet(now() / 1_000L * 1_000L) }
+    RightClickTimeButton(enabled = rightClickEnabled, onSet = onSet)
+}
+
 /** The minute of the day [millis] falls on here — what a time-of-day field takes of a right-click. */
 internal fun minuteOfDayOf(millis: Long, tz: TimeZone = TimeZone.currentSystemDefault()): Int =
     localOf(millis, tz).let { it.hour * 60 + it.minute }
@@ -45,8 +62,9 @@ internal fun minuteOfDayOf(millis: Long, tz: TimeZone = TimeZone.currentSystemDe
  * ([QuotaLoopEditor], the same fields) —
  *  - a START: a day and a time of day. Until one is given it is the calendar filter's position, which is where the
  *    calendar's "add…" right-click put it ([SearchDomain.placementStart]);
- *  - an END — a switch says which way it is stated: a LENGTH after the start (the default, 1 hour: a number and its
- *    unit's drop-down), or a day and a time of its own;
+ *  - an END — a switch says which way it is stated: a LENGTH after the start (a number and its unit's drop-down;
+ *    until one is stated, the added elements' own length, else 1 hour — [SearchDomain.placementLength]), or a day
+ *    and a time of its own;
  *  - the button that lays every added element that can go there ([SearchDomain.calendarDrafts], saved as the
  *    calendar's element window saves its own). A task's panel and a period take the end; a reminder's tag, an alarm's
  *    ring and a timer's end are an instant, at the start.
@@ -76,16 +94,13 @@ internal fun CalendarPlacementEditor(
     val start = SearchDomain.placementStart(config)
     val startAt = start?.let { localOf(it, tz) }
     val startSeconds = startAt?.let(::secondOfDay)
-    val refused = start != null && SearchDomain.placementRefused(placement, start)
     // User rules 2026-10-11 and 2026-10-14: the length the added elements have of their own — a break's, a task's
-    // minimum time, the Sleep schedule's, a ring's sound — one press of "Default" away beside the end.
+    // minimum time, the Sleep schedule's, a ring's sound — what the end is after until the user states another
+    // (anomaly 2026-10-19), and one press of "Default" away beside the end once they have.
     val default = SearchDomain.placementDefaultLength(state, added)
-    // "Now" and "Right-click time" for one day-and-time: to the second, as the fields say it (user rule 2026-10-14).
-    @Composable
-    fun instantButtons(set: (Long) -> Unit) {
-        FrameButton("Now") { set(nowMillis() / 1_000L * 1_000L) }
-        RightClickTimeButton(onSet = set)
-    }
+    val length = SearchDomain.placementLength(placement, default)
+    fun writeLength(length: Long) = write { SearchDomain.withPlacementLength(it, length, default) }
+    val refused = start != null && SearchDomain.placementRefused(placement, start, default)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             NoteText("starts", color = MaterialTheme.colorScheme.onSurface)
@@ -102,7 +117,7 @@ internal fun CalendarPlacementEditor(
             ) { seconds ->
                 write { it.copy(startMillis = instantOfSecond(startAt?.date ?: today, seconds, tz)) }
             }
-            instantButtons { at -> write { it.copy(startMillis = at) } }
+            InstantButtons { at -> write { it.copy(startMillis = at) } }
         }
         // User rule 2026-10-18: the time of day an added element has of its own, the day chosen kept.
         val own = SearchDomain.elementTimesOfDay(state, added, nowMillis(), tz)
@@ -119,22 +134,25 @@ internal fun CalendarPlacementEditor(
             if (placement.endByDelta) {
                 NoteText("ends", color = MaterialTheme.colorScheme.onSurface)
                 LengthField(
-                    placement.lengthMillis,
+                    length,
                     mixed = false,
                     blank = "1",
                     defaultUnit = QuotaDomain.LengthUnit.Hours,
                     units = QuotaDomain.LengthUnit.entries,
                     // A step that would leave no length is not taken.
-                    onNudge = { delta -> (placement.lengthMillis + delta).takeIf { it > 0L }?.let { length -> write { it.copy(lengthMillis = length) } } },
-                ) { length ->
-                    write { it.copy(lengthMillis = length) }
+                    onNudge = { delta -> (length + delta).takeIf { it > 0L }?.let(::writeLength) },
+                ) { stated ->
+                    writeLength(stated)
                 }
                 NoteText("after the start", color = MaterialTheme.colorScheme.onSurface)
                 default?.let { own ->
-                    FrameButton("Default", enabled = placement.lengthMillis != own) { write { it.copy(lengthMillis = own) } }
+                    // Back to unstated: the elements' own length, followed again as they change.
+                    FrameButton("Default", enabled = length != own) { write { it.copy(lengthMillis = null, lengthOverMillis = null) } }
                 }
             } else {
-                val endAt = placement.endMillis?.let { localOf(it, tz) }
+                // Until an instant is given, the end the length says (anomaly 2026-10-19: not a blank to fill).
+                val shownEnd = placement.endMillis ?: start?.let { it + length }
+                val endAt = shownEnd?.let { localOf(it, tz) }
                 val endSeconds = endAt?.let(::secondOfDay)
                 NoteText("ends on", color = MaterialTheme.colorScheme.onSurface)
                 DayField(endAt?.date, "day", today, enabled = true) { date ->
@@ -146,13 +164,13 @@ internal fun CalendarPlacementEditor(
                     enabled = true,
                     refused = refused,
                     blank = "HH:MM:SS",
-                    onNudge = { delta -> placement.endMillis?.let { from -> write { it.copy(endMillis = from + delta) } } },
+                    onNudge = { delta -> shownEnd?.let { from -> write { it.copy(endMillis = from + delta) } } },
                 ) { seconds ->
                     write { it.copy(endMillis = instantOfSecond(endAt?.date ?: startAt?.date ?: today, seconds, tz)) }
                 }
-                instantButtons { at -> write { it.copy(endMillis = at) } }
+                InstantButtons { at -> write { it.copy(endMillis = at) } }
                 if (default != null && start != null) {
-                    FrameButton("Default", enabled = placement.endMillis != start + default) {
+                    FrameButton("Default", enabled = shownEnd != start + default) {
                         write { it.copy(endMillis = start + default) }
                     }
                 }
@@ -162,7 +180,7 @@ internal fun CalendarPlacementEditor(
             NoteText("Give it a start.")
             return@Column
         }
-        val end = SearchDomain.placementEnd(placement, start)
+        val end = SearchDomain.placementEnd(placement, start, default)
         // User rule 2026-10-11: a screen break longer than its name implies cannot be laid where it reaches the future.
         val violation = if (refused) null else SearchDomain.placementBreakViolation(state, added, start, end, nowMillis())
         val blocked = refused || violation != null

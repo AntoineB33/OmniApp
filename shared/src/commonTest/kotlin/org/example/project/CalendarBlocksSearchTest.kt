@@ -83,6 +83,47 @@ class CalendarBlocksSearchTest {
     }
 
     @Test
+    fun the_end_is_the_added_elements_own_length_until_one_is_stated_over_them() {
+        // Anomaly 2026-10-19: a 15-minute break added from the calendar ended an hour later until "Default" was
+        // pressed, and a 3-second ring added after it ended 15 minutes later.
+        val quarter = 15 * 60_000L
+        val ring = 3_000L
+        val unstated = SearchDomain.Placement()
+        assertEquals(at + quarter, SearchDomain.placementEnd(unstated, at, quarter), "the break's own, not an hour")
+        assertEquals(at + ring, SearchDomain.placementEnd(unstated, at, ring), "the ring's own")
+        assertEquals(at + hour, SearchDomain.placementEnd(unstated, at, null), "no own length: an hour")
+        assertEquals(at + ring, SearchDomain.placementEnd(SearchDomain.Placement(endByDelta = false), at, ring), "no instant given yet")
+
+        // A length the user states stands over the elements it was stated over…
+        val stated = SearchDomain.withPlacementLength(unstated, 20 * 60_000L, quarter)
+        assertEquals(20 * 60_000L, SearchDomain.placementLength(stated, quarter))
+        // …and over elements with none of their own…
+        assertEquals(20 * 60_000L, SearchDomain.placementLength(stated, null))
+        // …but gives way to elements with another of their own.
+        assertEquals(ring, SearchDomain.placementLength(stated, ring))
+        // Stated where the elements had none: elements with one take it.
+        assertEquals(ring, SearchDomain.placementLength(SearchDomain.withPlacementLength(unstated, 2 * hour, null), ring))
+        assertEquals(2 * hour, SearchDomain.placementLength(SearchDomain.withPlacementLength(unstated, 2 * hour, null), null))
+    }
+
+    @Test
+    fun a_period_picked_in_the_element_window_spans_its_own_length() {
+        val s = account()
+        val picked = CalendarElements.Draft(kind = CalendarElements.Kind.RestrictivePeriod, periodKind = PeriodKinds.BREAK_15MIN)
+        val draft = CalendarElements.seeded(
+            picked, at, panelSpanMillis = 0L, noScreenResilience = null, newAlarm = s.newAlarmDefaults,
+            periodSpanMillis = SearchDomain.periodOwnLength(s, PeriodKinds.BREAK_15MIN),
+        )
+        assertEquals(at + 15 * 60_000L, draft.endMillis)
+        val other = picked.copy(periodKind = PeriodKinds.NO_SCREEN)
+        val plain = CalendarElements.seeded(
+            other, at, panelSpanMillis = 0L, noScreenResilience = null, newAlarm = s.newAlarmDefaults,
+            periodSpanMillis = SearchDomain.periodOwnLength(s, PeriodKinds.NO_SCREEN),
+        )
+        assertEquals(at + hour, plain.endMillis, "a period with no length of its own: an hour")
+    }
+
+    @Test
     fun the_start_and_the_end_are_kept_with_the_configuration_and_absent_from_an_older_one() {
         val config = SearchDomain.Config(
             placement = SearchDomain.Placement(startMillis = at, endByDelta = false, lengthMillis = hour, endMillis = at + hour),
@@ -90,13 +131,19 @@ class CalendarBlocksSearchTest {
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
         val blocks = SearchDomain.blocksSearchConfig(listOf("Task/task-1", "Alarm/alarm-0"))
         assertEquals(blocks, SearchDomain.Config.decode(blocks.encode()))
-        // Written by a build before the fields existed: no start, an end 1 hour after it, every block.
+        // Written by a build before the fields existed: no start, no length stated (an hour), every block.
         val old = SearchDomain.Config.decode("""{"kinds":["Task"],"calendarAddOn":true,"calendarAddAtMillis":$at}""")!!
         assertEquals(SearchDomain.Placement(), old.placement)
         assertTrue(old.placement.endByDelta)
-        assertEquals(hour, old.placement.lengthMillis)
+        assertNull(old.placement.lengthMillis)
+        assertEquals(hour, SearchDomain.placementLength(old.placement, null))
         assertEquals(emptySet(), old.filters.blocksOf)
         assertEquals(at, SearchDomain.placementStart(old))
+        // Written by a build before 2026-10-19, which always wrote its length (the 15 minutes "Default" had set
+        // for a break, say): not read as stated, so the next added elements' own length stands.
+        val stale = SearchDomain.Config.decode("""{"kinds":["Task"],"placeLengthMillis":900000}""")!!
+        assertNull(stale.placement.lengthMillis)
+        assertEquals(3_000L, SearchDomain.placementLength(stale.placement, 3_000L))
     }
 
     @Test

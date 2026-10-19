@@ -425,7 +425,11 @@ private fun ActionGroupBlock(
     }
     // One box per group, spaced as the section spaces its rows: what the scroll brings into view is the whole group.
     Column(Modifier.fillMaxWidth().bringIntoViewRequester(requester), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    // A group inside a group of elements is titled as a micro group is: set as far right ([MICRO_TITLE_INDENT]).
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().then(if (micro) Modifier.padding(start = MICRO_TITLE_INDENT) else Modifier),
+    ) {
         SectionArrow(collapsed) { onToggle(group.id) }
         // A press on the title is a press on the arrow (user rule 2026-10-13).
         Box(Modifier.togglesSection { onToggle(group.id) }) {
@@ -473,7 +477,7 @@ private fun ActionGroupBlock(
                     val microId = SearchDomain.microGroupId(group, action)
                     val microCollapsed = microId in config.collapsedActionGroups
                     if (microCollapsed || !ownTitle) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
                             SectionArrow(microCollapsed) { onToggle(microId) }
                             // Inside a micro group (the default configuration of a kind), a level below it.
                             Box(Modifier.togglesSection { onToggle(microId) }) { MicroGroupTitle(action.label, nested = micro) }
@@ -482,7 +486,7 @@ private fun ActionGroupBlock(
                     if (!microCollapsed) {
                         if (ownTitle) {
                             // Its title line is its own: the arrow stands before it.
-                            Row(verticalAlignment = Alignment.Top) {
+                            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
                                 SectionArrow(false) { onToggle(microId) }
                                 Box(Modifier.weight(1f)) {
                                     AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true)
@@ -501,6 +505,13 @@ private fun ActionGroupBlock(
 
 /** How far right the actions inside a micro group stand of it (user rule 2026-10-18: "set them a little to the right"). */
 private val NESTED_ACTION_INDENT = 16.dp
+
+/**
+ * How far right a micro group's title stands of its group of elements' (user rule 2026-10-19: *"the micro group titles a
+ * little more to the right (with sub titles even more to the right)"*). A title inside a micro group is set this far right
+ * of the actions it stands among, which are [NESTED_ACTION_INDENT] in already: a level further.
+ */
+private val MICRO_TITLE_INDENT = 12.dp
 
 /**
  * **The title of a micro group** of the actions section — one action, or a group of them inside a group of elements
@@ -1053,7 +1064,7 @@ private fun AddedActionEditor(
                 )
                 // User rule 2026-10-18: where the calendar was right-clicked — its day and its time — for a window that came
                 // from there.
-                RightClickTimeButton(enabled = alarms.isNotEmpty()) { at ->
+                InstantButtons(enabled = alarms.isNotEmpty()) { at ->
                     val clicked = localOf(at, tz)
                     run(
                         SearchDomain.AddedCommand.AlarmsEdit {
@@ -1192,7 +1203,7 @@ private fun AddedActionEditor(
                     },
                 )
                 // User rule 2026-10-18: where the calendar was right-clicked, for a window that came from there.
-                RightClickTimeButton(enabled = reminders.isNotEmpty()) { at ->
+                InstantButtons(enabled = reminders.isNotEmpty()) { at ->
                     run(SearchDomain.AddedCommand.RemindersEdit { it.copy(timeOfDayMinutes = minuteOfDayOf(at)) })
                 }
             }
@@ -2228,6 +2239,7 @@ private fun NewElementTimesEditor(
             )
             if (times.time == org.example.project.scheduler.domain.NewTime.Fixed) {
                 TimeOfDayField(times.fixedMinutes, enabled = true) { minutes -> onChange(times.copy(fixedMinutes = minutes)) }
+                InstantButtons { at -> onChange(times.copy(fixedMinutes = minuteOfDayOf(at))) }
             }
         }
     }

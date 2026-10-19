@@ -11,6 +11,30 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Now" beside every time field; micro group titles indented — 2026-10-19
+
+Anomaly: an alarm's "Add to the calendar" had a "Now" button, its "Date and time" did not. "Right-click time" was drawn
+by one composable beside every time field, "Now" by hand in "Add to the calendar" alone. Now `InstantButtons` (in
+`CalendarPlacementEditor.kt`) draws both and replaces every lone `RightClickTimeButton`: an alarm's date and time, a
+reminder's time, the calendar blocks' start and end, a quota's loop and other times, the Sleep schedule's goal, a timer's
+end, the Search filters' instants. Also given both where neither stood: a new alarm's/reminder's fixed time (default
+configuration), the Alarms window's rows, the reminders manager's rows. "Now" reads the app's clock
+(`LocalAppNowMillis`, provided by `App` — the time simulation's when it runs). User rule: micro group titles stand
+`MICRO_TITLE_INDENT` (12 dp) right of their group's, the titles inside a micro group a level further.
+
+### "Add to the calendar"'s end follows the added elements' own length — 2026-10-19
+
+Anomaly: a 15-minute break added from the calendar's "add…" ended 1 hour later until "Default" was pressed, and a timer
+with a 3-second ring added next ended 15 minutes later. The end's length was a stored value (1 hour, or whatever was
+last set) that the elements' own length never replaced. Now `Placement.lengthMillis` is null until the user states one,
+and `SearchDomain.placementLength` reads it: the stated length (only while the added elements' own length is the one it
+was stated over, `lengthOverMillis`), else their own (`placementDefaultLength`), else 1 hour. "Default" goes back to
+unstated; the "ends on" day-and-time shows that end instead of a blank. Stored config: `placeLengthMillis` (always written
+before) is no longer read — `placeStatedLengthMillis`/`placeStatedOverMillis` replace it. Same fault in the calendar's
+element window: every period was seeded at 1 hour, a 15-minute break included — `CalendarElements.seeded` now takes the
+period's own length (`SearchDomain.periodOwnLength`), and a new task panel's span is `SearchDomain.panelSpanMillis` (a
+task with no minimum time: 45 minutes, not 0) for both windows.
+
 ### "Mute all sound", in every page's menu by default — 2026-10-18
 
 User rule: *"In the left-side menu of the app, add by default the switch button to remove all sound, so no voice,

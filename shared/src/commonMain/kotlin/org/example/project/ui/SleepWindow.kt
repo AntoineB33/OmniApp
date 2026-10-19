@@ -130,7 +130,7 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
                 onSave(SchedulerDomain.withGoalNightDay(sleep, which, picked.toEpochDays().toLong()))
             }
             // User rule 2026-10-18: the day the calendar was right-clicked on, in a Search window that came from there.
-            RightClickTimeButton { at -> onSave(SchedulerDomain.withGoalNightDay(sleep, which, localOf(at, tz).date.toEpochDays().toLong())) }
+            InstantButtons { at -> onSave(SchedulerDomain.withGoalNightDay(sleep, which, localOf(at, tz).date.toEpochDays().toLong())) }
         }
     }
     TimeField("Total sleep time", sleep.sleepDurationMinutes, allowOver24 = true, fieldModifier = fieldModifier) {
@@ -262,7 +262,7 @@ private fun TimeField(
             )
         }
         if (rightClick) {
-            RightClickTimeButton { at ->
+            InstantButtons { at ->
                 val clicked = minuteOfDayOf(at)
                 text = formatHourMinute(clicked)
                 onMinutes(clicked)

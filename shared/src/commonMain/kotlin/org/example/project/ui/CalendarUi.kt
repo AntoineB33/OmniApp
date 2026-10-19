@@ -2184,6 +2184,8 @@ fun ChoresManagerWindow(
                                 modifier = Modifier.width(80.dp),
                             )
                         }
+                        // Anomaly 2026-10-19: "Now" (and "Right-click time") beside every time field ([InstantButtons]).
+                        InstantButtons { at -> rows[index] = row.copy(timeText = formatTimeOfDay(minuteOfDayOf(at))); push() }
                         // Bin: remove this reminder (the window then closes itself).
                         TextButton(onClick = { rows.removeAt(index); push() }) { Text("🗑") }
                     }

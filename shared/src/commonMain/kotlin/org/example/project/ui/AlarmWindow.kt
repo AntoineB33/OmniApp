@@ -726,6 +726,9 @@ private fun AlarmRowEditor(
                         modifier = Modifier.width(92.dp).editSession(FIELD_TIME, onFieldFocus),
                     )
                 }
+                // Anomaly 2026-10-19: "Now" (and "Right-click time") beside every time field ([InstantButtons]).
+                Spacer(Modifier.width(4.dp))
+                InstantButtons { at -> onRowChange(row.copy(timeText = formatAlarmTime(minuteOfDayOf(at))), null) }
                 Spacer(Modifier.width(8.dp))
                 OutlinedTextField(
                     value = row.label,
@@ -869,7 +872,7 @@ internal fun TimerEndFields(entry: TimerEntry?, nowMillis: Long, clock: () -> Lo
             onNudge = { delta -> if (movable) onNudge(delta) },
         ) { typed -> end?.let { moveTo(it.date, typed) } }
         // User rule 2026-10-18: in a Search window opened from a calendar right-click, the end moved there.
-        RightClickTimeButton(enabled = movable) { at -> localOf(at, tz).let { moveTo(it.date, secondOfDay(it)) } }
+        InstantButtons(enabled = movable) { at -> localOf(at, tz).let { moveTo(it.date, secondOfDay(it)) } }
     }
 }
 

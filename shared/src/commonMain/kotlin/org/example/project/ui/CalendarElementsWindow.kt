@@ -91,6 +91,8 @@ fun CalendarElementsWindow(
     defaultTaskId: () -> TaskId?,
     /** The minimum-time span a fresh panel of this task gets, in millis — the manual-add default. */
     panelSpanMillisFor: (TaskId?) -> Long,
+    /** The span a fresh period of this kind gets — its own length (`SearchDomain.periodOwnLength`); null = an hour. */
+    periodSpanMillisFor: (String) -> Long? = { null },
     reminderMenuEntries: (draftText: String) -> List<SchedulerDomain.ReminderMenuEntry>,
     reminderTitleSuggestions: (String) -> List<String>,
     reminderIdForTitle: (String) -> String?,
@@ -208,7 +210,7 @@ fun CalendarElementsWindow(
                         enabled = pick != null,
                         onClick = {
                             pick?.let { chosen ->
-                                drafts = drafts + seedDraft(chosen, atMillis, panelSpanMillisFor, noScreenResilienceForTaskId, newAlarm)
+                                drafts = drafts + seedDraft(chosen, atMillis, panelSpanMillisFor, periodSpanMillisFor, noScreenResilienceForTaskId, newAlarm)
                                 search = ""
                             }
                         },
@@ -352,6 +354,7 @@ private fun seedDraft(
     pick: CalendarElements.Draft,
     atMillis: Long,
     panelSpanMillisFor: (TaskId?) -> Long,
+    periodSpanMillisFor: (String) -> Long?,
     noScreenResilienceForTaskId: (TaskId) -> Double?,
     newAlarm: AlarmEntry,
 ): CalendarElements.Draft =
@@ -363,6 +366,7 @@ private fun seedDraft(
         panelSpanMillis = panelSpanMillisFor(pick.taskId),
         noScreenResilience = pick.taskId?.let(noScreenResilienceForTaskId),
         newAlarm = newAlarm,
+        periodSpanMillis = periodSpanMillisFor(pick.periodKind),
     )
 
 /**

@@ -378,6 +378,16 @@ fun SearchWindow(
     // Every path of every task is a walk of every task tree, so it is held on the trees alone — a keystroke
     // in the search bar filters it, it does not redo it. Keyed on the tree fields rather than on the whole
     // state, which every engine tick replaces (records live on the tasks) — ADR 0009.
+    // The added elements (the right half), read off the live state the way the result list reads its rows.
+    val addedRows =
+        remember(
+            config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
+            state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
+            state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns, claudeLogs,
+        ) {
+            // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
+            SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
+        }
     val searchesTasks = SearchDomain.Kind.Task in kinds
     val allPaths =
         remember(searchesTasks, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
@@ -390,6 +400,7 @@ fun SearchWindow(
             state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
             // The calendar filter's "without removing anything" lays what "Add to the calendar" would, as long as it would.
             config.placement.takeIf { filters.calendarAddKeeping },
+            addedRows.takeIf { filters.calendarAddKeeping },
             claudeLogs,
         ) {
             // One kind checked and nothing of it found: its "creation" row stands in the list.
@@ -397,7 +408,9 @@ fun SearchWindow(
                 state,
                 SearchDomain.results(
                     state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
-                    schedulerRuns = schedulerRuns, placement = config.placement, claudeLogs = claudeLogs,
+                    schedulerRuns = schedulerRuns, placement = config.placement,
+                    placementOwnLength = if (filters.calendarAddKeeping) SearchDomain.placementDefaultLength(state, addedRows) else null,
+                    claudeLogs = claudeLogs,
                 ),
                 kinds,
             )
@@ -643,16 +656,6 @@ fun SearchWindow(
                     ?.let { { onIntent(SchedulerIntent.AddDefaultSubtree(listOf(it.cellId))) } },
         )
     }
-    // The added elements (the right half), read off the live state the way the result list reads its rows.
-    val addedRows =
-        remember(
-            config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
-            state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
-            state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns, claudeLogs,
-        ) {
-            // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
-            SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
-        }
 
     AppWindowFrame(
         title = SearchDomain.windowTitle(config),

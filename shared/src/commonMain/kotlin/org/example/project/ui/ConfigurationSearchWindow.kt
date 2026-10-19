@@ -389,7 +389,7 @@ private fun SettingEditor(
                     }
                 }
                 CalendarInstantField(f.calendarAddAtMillis) { filters(f.copy(calendarAddAtMillis = it)) }
-                RightClickTimeButton(enabled = f.calendarAddAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAddAtMillis = it)) }
+                InstantButtons(rightClickEnabled = f.calendarAddAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAddAtMillis = it)) }
             }
         // The calendar's "edit…": the same three controls, about what IS there.
         SearchDomain.Setting.CalendarAt ->
@@ -399,7 +399,7 @@ private fun SettingEditor(
                     onCheckedChange = { filters(f.copy(calendarAtOn = it)) },
                 )
                 CalendarInstantField(f.calendarAtMillis) { filters(f.copy(calendarAtMillis = it)) }
-                RightClickTimeButton(enabled = f.calendarAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAtMillis = it)) }
+                InstantButtons(rightClickEnabled = f.calendarAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAtMillis = it)) }
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
@@ -882,7 +882,7 @@ private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: (() 
         if (onPick != null) {
             FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
             // User rule 2026-10-18: where the calendar was right-clicked, for a window that came from there.
-            RightClickTimeButton(enabled = millis != LocalCalendarClickMillis.current) { onChange(it) }
+            InstantButtons(rightClickEnabled = millis != LocalCalendarClickMillis.current) { onChange(it) }
         }
         if (millis != null) {
             Text(

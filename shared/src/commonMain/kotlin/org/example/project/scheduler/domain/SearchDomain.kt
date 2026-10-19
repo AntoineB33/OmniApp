@@ -676,7 +676,8 @@ object SearchDomain {
                     blocksOf = filters.blocksOf.sorted(),
                     placeStartMillis = placement.startMillis,
                     placeEndByDelta = placement.endByDelta,
-                    placeLengthMillis = placement.lengthMillis,
+                    placeStatedLengthMillis = placement.lengthMillis,
+                    placeStatedOverMillis = placement.lengthOverMillis,
                     placeEndMillis = placement.endMillis,
                     page = page,
                     openedFrom = openedFrom,
@@ -769,7 +770,10 @@ object SearchDomain {
                     placement = Placement(
                         startMillis = stored.placeStartMillis,
                         endByDelta = stored.placeEndByDelta,
-                        lengthMillis = stored.placeLengthMillis?.takeIf { it > 0L } ?: DEFAULT_PLACEMENT_LENGTH_MILLIS,
+                        // The builds before 2026-10-19 wrote `placeLengthMillis` whether stated or not (1 hour then),
+                        // so it is not read: the added elements' own length stands until one is stated anew.
+                        lengthMillis = stored.placeStatedLengthMillis?.takeIf { it > 0L },
+                        lengthOverMillis = stored.placeStatedOverMillis,
                         endMillis = stored.placeEndMillis,
                     ),
                     page = stored.page,
@@ -1462,7 +1466,14 @@ object SearchDomain {
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
         results(
             state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, nowMillis = nowMillis,
-            layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement, claudeLogs = claudeLogs,
+            layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement,
+            // Read only where the end is: the calendar filter's "without removing anything".
+            placementOwnLength = if (config.filters.calendarAddKeeping) {
+                placementDefaultLength(state, resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs))
+            } else {
+                null
+            },
+            claudeLogs = claudeLogs,
         ).groupingBy { it.kind }.eachCount()
 
     /** The kinds that have at least one row in the Search window's results for [config]. */
@@ -1570,8 +1581,13 @@ object SearchDomain {
         val blocksOf: List<String> = emptyList(),
         val placeStartMillis: Long? = null,
         val placeEndByDelta: Boolean = true,
-        val placeLengthMillis: Long? = null,
         val placeEndMillis: Long? = null,
+        /**
+         * New 2026-10-19, replacing `placeLengthMillis` (always written, so never known to be stated): absent = no
+         * length stated, the added elements' own stands.
+         */
+        val placeStatedLengthMillis: Long? = null,
+        val placeStatedOverMillis: Long? = null,
         /** New 2026-10-18 (the Claude Code logs page): absent = the Task Scheduler's window, no filter on the logs. */
         val page: String = "",
         /** New 2026-10-18: absent = opened from no Search window. */
@@ -2236,6 +2252,8 @@ object SearchDomain {
          * "without removing anything" state lays to see what it removes ([calendarAddKeepsEverything]). Null: an hour.
          */
         placement: Placement? = null,
+        /** The added elements' own length ([placementDefaultLength]), which an unstated [placement] length is. */
+        placementOwnLength: Long? = null,
         /** The Claude Code logs as last read, for the logs' kinds ([CLAUDE_KINDS]) — `App` reads them. */
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): List<Result> {
@@ -2272,7 +2290,7 @@ object SearchDomain {
                     // ([calendarTaskStandsIn]), and what the add itself would leave in place is asked of the add's
                     // own reducer.
                     val kindsAt = calendarKindsAt(state, at)
-                    val end = placementEnd(placement ?: Placement(), at)
+                    val end = placementEnd(placement ?: Placement(), at, placementOwnLength)
                     val around = calendarAddSurroundings(state, at, end)
                     addable.filter {
                         calendarTaskStandsIn(state, it, kindsAt) && calendarAddKeepsEverything(around, it, at, end, timeZone)
@@ -4284,9 +4302,10 @@ object SearchDomain {
             CalendarElements.seeded(
                 pick,
                 atMillis,
-                panelSpanMillis = (pick.taskId?.let { state.tasks[it]?.minimumMinutes } ?: 45) * 60_000L,
+                panelSpanMillis = panelSpanMillis(state, pick.taskId),
                 noScreenResilience = pick.taskId?.let { state.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN) },
                 newAlarm = state.newAlarmDefaults,
+                periodSpanMillis = periodOwnLength(state, pick.periodKind),
             ).let { draft ->
                 val spans = draft.kind == CalendarElements.Kind.TaskPanel || draft.kind == CalendarElements.Kind.RestrictivePeriod
                 if (spans && endMillis != null && endMillis > atMillis) draft.copy(endMillis = endMillis) else draft
@@ -4297,30 +4316,51 @@ object SearchDomain {
     /**
      * **Where "Add to the calendar" lays the added elements** (user rule 2026-10-05), said the way a quota's loop is:
      * a START — null until one is given, and the calendar filter's position stands for it then ([placementStart]) —
-     * and an END stated as a LENGTH after the start ([endByDelta], the default: 1 hour, user rule 2026-10-05) or as an
-     * instant of its own ([endMillis]; until one is given, the length still says it). Local-only view state, kept with
-     * the Search window's configuration.
+     * and an END stated as a LENGTH after the start ([endByDelta]) or as an instant of its own ([endMillis]; until one
+     * is given, the length still says it). Local-only view state, kept with the Search window's configuration.
+     *
+     * The LENGTH is null until the user states one ([placementLength]): the added elements' own length stands for it
+     * then ([placementDefaultLength]), else 1 hour (user rule 2026-10-05). Anomaly 2026-10-19 (*"the end field wasn't
+     * already by default 15 minutes later. I had to click on the default button"*, and a 3-second ring's end 15 minutes
+     * later): the length was a stored 1 hour the elements' own never replaced, and one stated for other elements stayed
+     * on. So a stated length remembers the elements' own length it was stated over ([lengthOverMillis]) and gives way
+     * once the added elements have another.
      */
     data class Placement(
         val startMillis: Long? = null,
         val endByDelta: Boolean = true,
-        val lengthMillis: Long = DEFAULT_PLACEMENT_LENGTH_MILLIS,
+        val lengthMillis: Long? = null,
+        val lengthOverMillis: Long? = null,
         val endMillis: Long? = null,
     )
 
-    /** What "Add to the calendar" ends after until the user says otherwise: 1 hour after the start. */
+    /** What "Add to the calendar" ends after when neither the user nor the added elements say otherwise: 1 hour. */
     const val DEFAULT_PLACEMENT_LENGTH_MILLIS: Long = 3_600_000L
 
     /** The instant "Add to the calendar" lays at: the start given, else the calendar filter's position, else none. */
     fun placementStart(config: Config): Long? = config.placement.startMillis ?: config.filters.calendarAddAtMillis
 
-    /** Where a block laid at [startMillis] ends as [placement] states it. */
-    fun placementEnd(placement: Placement, startMillis: Long): Long =
-        placement.endMillis?.takeIf { !placement.endByDelta } ?: (startMillis + placement.lengthMillis)
+    /**
+     * The length "Add to the calendar"'s end is after the start ([Placement]): the one the user stated, unless the added
+     * elements now have an own length ([ownLength], [placementDefaultLength]) other than the one it was stated over;
+     * else their own; else 1 hour.
+     */
+    fun placementLength(placement: Placement, ownLength: Long?): Long =
+        placement.lengthMillis?.takeIf { ownLength == null || ownLength == placement.lengthOverMillis }
+            ?: ownLength
+            ?: DEFAULT_PLACEMENT_LENGTH_MILLIS
+
+    /** [placement] with [lengthMillis] stated by the user over the added elements' own length [ownLength]. */
+    fun withPlacementLength(placement: Placement, lengthMillis: Long, ownLength: Long?): Placement =
+        placement.copy(lengthMillis = lengthMillis, lengthOverMillis = ownLength)
+
+    /** Where a block laid at [startMillis] ends as [placement] states it, the added elements' own length [ownLength]. */
+    fun placementEnd(placement: Placement, startMillis: Long, ownLength: Long? = null): Long =
+        placement.endMillis?.takeIf { !placement.endByDelta } ?: (startMillis + placementLength(placement, ownLength))
 
     /** Whether [placement] states an end that is not after [startMillis] — nothing is laid then. */
-    fun placementRefused(placement: Placement, startMillis: Long): Boolean =
-        placementEnd(placement, startMillis) <= startMillis
+    fun placementRefused(placement: Placement, startMillis: Long, ownLength: Long? = null): Boolean =
+        placementEnd(placement, startMillis, ownLength) <= startMillis
 
     /** An added element's own time of day ([elementTimesOfDay]): what the button is named and the second it sets. */
     data class ElementTime(val label: String, val secondOfDay: Int)
@@ -4381,10 +4421,7 @@ object SearchDomain {
      *  - an alarm and a timer: how long its ring sounds ([org.example.project.scheduler.model.AlarmEntry.soundSeconds]).
      */
     fun elementOwnLength(state: SchedulerState, row: Result): Long? {
-        if (row is TaskResult) {
-            val minutes = state.tasks[row.taskId]?.minimumMinutes ?: return null
-            return if (minutes > 0) minutes * 60_000L else null
-        }
+        if (row is TaskResult) return taskOwnLength(state, row.taskId)
         if (row !is ItemResult) return null
         val seconds = when (row.kind) {
             Kind.Alarm -> state.alarms.firstOrNull { it.id == row.id }?.soundSeconds
@@ -4393,11 +4430,32 @@ object SearchDomain {
         }
         if (seconds != null) return if (seconds > 0) seconds * 1_000L else null
         if (row.kind != Kind.RestrictivePeriod) return null
-        breakLengthMillis(state, row.id)?.let { length ->
+        return periodOwnLength(state, row.id)
+    }
+
+    /** A task's own length ([elementOwnLength]): its minimum execution time, or null where it has none. */
+    fun taskOwnLength(state: SchedulerState, taskId: TaskId): Long? {
+        val minutes = state.tasks[taskId]?.minimumMinutes ?: return null
+        return if (minutes > 0) minutes * 60_000L else null
+    }
+
+    /**
+     * What a NEW panel of [taskId] spans where nothing else says (PRD §8 Manual add): the task's own length, else 45
+     * minutes — the calendar's element window and "Add to the calendar" alike.
+     */
+    fun panelSpanMillis(state: SchedulerState, taskId: TaskId?): Long =
+        taskId?.let { taskOwnLength(state, it) } ?: DEFAULT_PANEL_SPAN_MILLIS
+
+    /** A new panel of a task with no minimum time of its own spans this long ([panelSpanMillis]). */
+    const val DEFAULT_PANEL_SPAN_MILLIS: Long = 45 * 60_000L
+
+    /** A period kind's own length ([elementOwnLength]), or null where it has none. */
+    fun periodOwnLength(state: SchedulerState, kind: String): Long? {
+        breakLengthMillis(state, kind)?.let { length ->
             return if (length >= SchedulerDomain.MIN_MANUAL_ENTRY_MILLIS) length else null
         }
         val minutes =
-            when (row.id) {
+            when (kind) {
                 // (No Sleep schedule on the account: no length to offer.)
                 PeriodKinds.SLEEP -> state.sleep?.sleepDurationMinutes ?: return null
                 PeriodKinds.BEFORE_BED -> state.sleep?.beforeBedMinutes ?: return null

@@ -3714,7 +3714,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) })
         }
         val patternExceptionDispatch = remember(vm) { { intent: SchedulerIntent -> vm.dispatch(intent) } }
+        val appNowMillis = remember(clock) { { clock.nowMillis() } }
         CompositionLocalProvider(
+            // What "Now" beside every time field reads ([org.example.project.ui.InstantButtons]): the app's clock.
+            org.example.project.ui.LocalAppNowMillis provides appNowMillis,
             LocalTaskIdentityRow provides taskIdentityRow,
             LocalPeriodRefusal provides periodRefusal,
             org.example.project.ui.LocalPeriodAtLine provides periodAtLine,
@@ -4567,9 +4570,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 // PRD §8 Manual add: the default task a blank search means.
                                 defaultTaskId = { SchedulerDomain.manualAddTaskId(schedulerState) },
                                 // PRD §8 Manual add: a fresh panel is the task's own minimum time long.
-                                panelSpanMillisFor = { taskId ->
-                                    (schedulerState.tasks[taskId]?.minimumMinutes?.toLong() ?: 45L) * 60_000L
-                                },
+                                panelSpanMillisFor = { taskId -> SearchDomain.panelSpanMillis(schedulerState, taskId) },
+                                periodSpanMillisFor = { kind -> SearchDomain.periodOwnLength(schedulerState, kind) },
                                 reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
                                 reminderTitleSuggestions = {
                                     SchedulerDomain.reminderTitleSuggestions(schedulerState, it)

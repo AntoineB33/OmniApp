@@ -151,6 +151,11 @@ object CalendarElements {
         panelSpanMillis: Long,
         noScreenResilience: Double?,
         newAlarm: AlarmEntry,
+        /**
+         * The period's own length (`SearchDomain.periodOwnLength`: a 15-minute break's 15 minutes, the Sleep
+         * schedule's night), null = an hour. Anomaly 2026-10-19: every period was an hour, a 15-minute break too.
+         */
+        periodSpanMillis: Long? = null,
     ): Draft =
         if (pick.existingId != null) {
             pick
@@ -159,7 +164,7 @@ object CalendarElements {
                 startMillis = atMillis,
                 endMillis = atMillis + when (pick.kind) {
                     Kind.TaskPanel -> panelSpanMillis
-                    Kind.RestrictivePeriod -> 3_600_000L
+                    Kind.RestrictivePeriod -> periodSpanMillis ?: 3_600_000L
                     Kind.Alarm -> newAlarm.soundSeconds * 1000L
                     Kind.Reminder -> 0L
                 },
