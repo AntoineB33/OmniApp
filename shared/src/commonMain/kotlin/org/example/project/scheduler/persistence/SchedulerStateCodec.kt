@@ -624,6 +624,7 @@ object SchedulerStateCodec {
                     },
             showScreenBreaks = showScreenBreaks,
             planCalculationLimitSeconds = planCalculationLimitSeconds,
+            soundMuted = soundMuted,
             periodCrossings = periodCrossings.entries.sortedBy { it.key }.map { (id, crossing) ->
                 PersistedPeriodCrossing(
                     id, crossing.sinceMillis.takeIf { it != Long.MIN_VALUE },
@@ -1309,6 +1310,7 @@ object SchedulerStateCodec {
             // Healed into its bounds: an older payload has none (two minutes), a hand-edited one may hold anything.
             planCalculationLimitSeconds =
                 planCalculationLimitSeconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS),
+            soundMuted = soundMuted,
             // Healed on the way in: a crossing of a panel the state no longer holds is dropped, and an empty stretch too.
             periodCrossings = periodCrossings
                 .filter { stored -> panels.any { it.id == stored.panelId } }
@@ -1759,6 +1761,8 @@ private data class PersistedState(
     val showScreenBreaks: Boolean = false,
     // New 2026-10-04: the engine's time limit after a change; absent = the two minutes it always was.
     val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+    /** New 2026-10-18: every sound of the app off on this device; missing = sound on. Local-only (neutralized for the wire). */
+    val soundMuted: Boolean = false,
     // New 2026-10-06: what a mode-1 line crossed of the user's "no screen" periods; absent = nothing crossed.
     val periodCrossings: List<PersistedPeriodCrossing> = emptyList(),
     // PRD §14: default on keeps reminders visible for payloads written before the display toggle existed.

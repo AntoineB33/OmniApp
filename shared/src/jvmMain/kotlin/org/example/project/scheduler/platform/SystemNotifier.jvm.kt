@@ -67,6 +67,9 @@ object DesktopAppWindow {
 actual fun sendSystemNotification(title: String, message: String, target: NotificationTarget) {
     runCatching {
         val icon = trayIcon ?: return
+        // This device's sound is off (user rule 2026-10-18): a tray balloon cannot be shown without the shell's sound
+        // (AWT has no "no sound" flag), so none is shown; the History window and the notifications window still have it.
+        if (AppVolume.muted) return
         lastBalloon = target to System.currentTimeMillis()
         icon.displayMessage(title, message, TrayIcon.MessageType.INFO)
     }

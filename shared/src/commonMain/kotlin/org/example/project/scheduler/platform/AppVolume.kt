@@ -12,6 +12,13 @@ import kotlin.concurrent.Volatile
  * and an alarm's or a timer's ring.
  */
 object AppVolume {
+    /**
+     * User rule 2026-10-18: every sound of the app off on this device — mirrored by the engine like [level], which is then
+     * 0. The notifiers read it to post without a sound (or, where the platform cannot, not at all: `docs/PLATFORMS.md`).
+     */
+    @Volatile
+    var muted: Boolean = false
+
     @Volatile
     var level: Float = 1f
         set(value) {

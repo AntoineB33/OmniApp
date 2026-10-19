@@ -78,13 +78,13 @@ class GlobalItemsTest {
         assertEquals(CustomMenuButtons.GLOBAL_SEARCH, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS.first())
         // A menu stored before: given it once, on top — and on the logs page in the place of its own Search button.
         val before = """{"buttons":[{"id":"d-calendar","window":"Calendar","title":"Calendar"}],"seeded":true}"""
-        assertEquals(listOf("g-search", "d-calendar"), CustomMenuButtons.decode(before).map { it.id })
+        assertEquals(listOf("g-search", "g-mute", "d-calendar"), CustomMenuButtons.decode(before).map { it.id })
         val logsBefore =
             """{"buttons":[{"id":"d-claude-search","window":"Search","title":"Search"},{"id":"d-ClaudeLogsDirectory","window":"","title":"","control":"ClaudeLogsDirectory"}],"seeded":true}"""
-        assertEquals(listOf("g-search", "d-ClaudeLogsDirectory"), CustomMenuButtons.decode(logsBefore, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS).map { it.id })
+        assertEquals(listOf("g-search", "g-mute", "d-ClaudeLogsDirectory"), CustomMenuButtons.decode(logsBefore, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS).map { it.id })
         // …and once only: the user who removes it keeps it removed.
         val removed = CustomMenuButtons.encode(CustomMenuButtons.decode(before).filterNot { it.id == "g-search" })
-        assertEquals(listOf("d-calendar"), CustomMenuButtons.decode(removed).map { it.id })
+        assertEquals(listOf("g-mute", "d-calendar"), CustomMenuButtons.decode(removed).map { it.id })
         // Its Search window is the page's own.
         assertEquals(claude, SearchDomain.pageDefaultConfig(claude).page)
         assertEquals("", SearchDomain.pageDefaultConfig("").page)

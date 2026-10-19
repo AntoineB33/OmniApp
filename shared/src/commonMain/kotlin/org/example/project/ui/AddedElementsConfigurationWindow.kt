@@ -531,6 +531,7 @@ private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
         SearchDomain.AddedAction.SoundVolume to MenuControl.SoundVolume,
         SearchDomain.AddedAction.PeriodSleepSchedule to MenuControl.SleepSchedule,
         SearchDomain.AddedAction.ClaudeLogsDirectory to MenuControl.ClaudeLogsDirectory,
+        SearchDomain.AddedAction.MuteSwitch to MenuControl.MuteAll,
     )
 
 /**
@@ -790,6 +791,13 @@ private fun AddedActionEditor(
                 checked = state.notificationVoiceEnabled,
                 onCheckedChange = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetNotificationVoice(it))) },
                 enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Voice),
+            )
+        // User rule 2026-10-18: every sound of the app off on this device — the lateral menu's switch, here too.
+        SearchDomain.AddedAction.MuteSwitch ->
+            androidx.compose.material3.Switch(
+                checked = state.soundMuted,
+                onCheckedChange = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetSoundMuted(it))) },
+                enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Mute),
             )
         SearchDomain.AddedAction.NotificationsSwitch ->
             androidx.compose.material3.Switch(

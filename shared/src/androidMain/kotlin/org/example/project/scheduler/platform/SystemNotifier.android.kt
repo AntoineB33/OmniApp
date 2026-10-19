@@ -46,6 +46,8 @@ actual fun sendSystemNotification(title: String, message: String, target: Notifi
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            // This device's sound is off (user rule 2026-10-18): shown, not heard.
+            .setSilent(AppVolume.muted)
             .apply { openAppIntent(context, id, target)?.let(::setContentIntent) }
             .build()
         // notify() throws nothing if the permission is missing, but the post is dropped; that is fine.

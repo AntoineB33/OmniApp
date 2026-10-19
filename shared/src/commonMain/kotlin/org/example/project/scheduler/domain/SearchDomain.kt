@@ -2521,12 +2521,15 @@ object SearchDomain {
         Notifications("Notifications"),
         /** User rule 2026-10-18: where Claude Code's logs are read from ([ClaudeLogCatalog.directory]), this device's. */
         ClaudeLogs("Claude Code logs"),
+        /** User rule 2026-10-18: every sound of the app off on this device ([SchedulerState.soundMuted]). */
+        Mute("Mute all sound"),
     }
 
     /** What an [AppSettingEntry]'s row says beside its name: where the setting stands. */
     private fun appSettingDetail(state: SchedulerState, setting: AppSettingEntry, claudeLogs: ClaudeLogCatalog): String =
         when (setting) {
             AppSettingEntry.ClaudeLogs -> claudeLogs.directory.ifBlank { "no directory" }
+            AppSettingEntry.Mute -> if (state.soundMuted) "muted on this device" else "sound on"
             AppSettingEntry.Sound -> "volume " + volumePercent(state.soundVolume) + " %"
             AppSettingEntry.Voice -> if (state.notificationVoiceEnabled) "on" else "off"
             AppSettingEntry.Notifications -> if (state.notificationsEnabled) "on" else "off"
@@ -3059,6 +3062,8 @@ object SearchDomain {
         ReasoningSession(Kind.ClaudeReasoning, "Session"),
         /** The logs' app setting's control: the directory they are read from ([AppSettingEntry.ClaudeLogs]). */
         ClaudeLogsDirectory(Kind.AppSetting, "Claude Code logs directory"),
+        /** Every sound of the app off on this device ([AppSettingEntry.Mute]). */
+        MuteSwitch(Kind.AppSetting, "Mute all sound"),
     }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */
@@ -3444,6 +3449,7 @@ object SearchDomain {
             AddedAction.PromptSession, AddedAction.AnswerSession, AddedAction.ReasoningSession ->
                 "project session title id date file copy"
             AddedAction.ClaudeLogsDirectory -> "folder path read refresh load"
+            AddedAction.MuteSwitch -> "silence quiet sound voice ring alarm notification off on"
             else -> ""
         }
 

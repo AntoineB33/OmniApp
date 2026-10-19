@@ -19,7 +19,8 @@ actual fun sendSystemNotification(title: String, message: String, target: Notifi
     val content = UNMutableNotificationContent().apply {
         setTitle(title)
         setBody(message)
-        setSound(UNNotificationSound.defaultSound)
+        // This device's sound is off (user rule 2026-10-18): shown, not heard.
+        setSound(if (AppVolume.muted) null else UNNotificationSound.defaultSound)
         // A tap opens the app (the OS's own answer). The target rides along for the Swift
         // UNUserNotificationCenterDelegate to hand to [NotificationClicks] — not wired yet (2026-10-03).
         setUserInfo(mapOf<Any?, Any?>(NOTIFICATION_TARGET_KEY to target.name))

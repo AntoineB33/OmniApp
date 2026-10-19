@@ -1089,21 +1089,24 @@ class SchedulerEngine(
             _nowMillis,
             vm.state.map { it.alarms }.distinctUntilChanged(),
             vm.state.map { it.timers }.distinctUntilChanged(),
-        ) { now, alarms, timers -> Triple(now, alarms, timers) }
-            .collectLatest { (now, alarms, timers) -> armNextAlarm(now, alarms, timers) }
+            // Muted or not, the OS is armed with what will be HEARD (user rule 2026-10-18): a phone's alarm rings through
+            // the OS with the app not running to ask.
+            vm.state.map { it.soundMuted }.distinctUntilChanged(),
+        ) { now, alarms, timers, muted -> Triple(now, alarms, timers) to muted }
+            .collectLatest { (ring, muted) -> armNextAlarm(ring.first, ring.second, ring.third, muted) }
     }
 
     // Computes the next ring after [now] — the soonest of the alarms' and the timers' — and hands it to the
     // OS (or cancels when there is none). Ties go to the alarm, arbitrarily but stably: the two lists' ids
     // are disjoint, so the choice only has to be the same on every device.
-    private fun armNextAlarm(now: Long, alarms: List<AlarmEntry>, timers: List<TimerEntry>) {
+    private fun armNextAlarm(now: Long, alarms: List<AlarmEntry>, timers: List<TimerEntry>, muted: Boolean = false) {
         val nextAlarm = AlarmDomain.nextOccurrence(alarms, now, tz)?.let {
             ArmedAlarm(
                 alarmId = it.entry.id,
                 atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
-                alert = it.entry.alert,
+                alert = it.entry.alert.heard(muted),
             )
         }
         val nextTimer = TimerDomain.nextOccurrence(timers, now)?.let {
@@ -1112,7 +1115,7 @@ class SchedulerEngine(
                 atMillis = it.instant,
                 label = it.entry.label,
                 soundSeconds = it.entry.soundSeconds,
-                alert = it.entry.alert,
+                alert = it.entry.alert.heard(muted),
                 kind = RingKind.Timer,
             )
         }
@@ -1317,9 +1320,11 @@ class SchedulerEngine(
         )
         // Nothing to hand the audio seam when the row neither rings nor buzzes: its alert is the notification
         // and the voice below, which is a perfectly ordinary way to set an alarm on a machine in an office.
-        if (armed.alert.rings) ringAlarm(armed)
+        // What this device lets be heard of it (user rule 2026-10-18: muted, no ring sound and no voice).
+        val alert = armed.alert.heard(vm.state.value.soundMuted)
+        if (alert.rings) ringAlarm(armed.copy(alert = alert))
         val title = armed.kind.label
-        notifyUser(title, armed.label.ifBlank { title }, alert = armed.alert, spoken = SpokenMessages.ring(armed.kind, armed.label))
+        notifyUser(title, armed.label.ifBlank { title }, alert = alert, spoken = SpokenMessages.ring(armed.kind, armed.label))
         if (armed.timer) {
             // A timer is a one-off by nature: it has run out, so it goes back to its full duration — keeping the
             // instant it reached zero — unless it goes negative, in which case it counts on below zero
@@ -1754,7 +1759,8 @@ class SchedulerEngine(
         // The row's own two channels, under the account's. A row that asked for neither is not a bug: it is
         // an alarm set to ring and say nothing, or a reminder set to be a tag on the calendar and no more.
         val posted = !muted && alert.notification
-        val speaks = utterance != null && !muted && st.notificationVoiceEnabled && alert.voice
+        // …and nothing is spoken on a device whose sound is off (user rule 2026-10-18).
+        val speaks = utterance != null && !muted && st.notificationVoiceEnabled && alert.voice && !st.soundMuted
         Diagnostics.log(
             "notification [$title] ${message.replace('\n', ' ')} " +
                 "(sim now=${Diagnostics.formatInstant(now)})" +
@@ -1775,6 +1781,11 @@ class SchedulerEngine(
     // server already decided what to say, and the app is not even running. Every other phrase the app speaks
     // comes from [notifyUser], because every other phrase is a notification.
     private fun speakCue(cue: VoiceCue) {
+        // A device whose sound is off says nothing (user rule 2026-10-18).
+        if (vm.state.value.soundMuted) {
+            Diagnostics.log("voice cue ${cue.name} not spoken: sound muted on this device")
+            return
+        }
         Diagnostics.log("voice cue ${cue.name} (sim now=${Diagnostics.formatInstant(clock.nowMillis())})")
         speak(VoiceUtterance.of(cue))
     }
@@ -3928,7 +3939,16 @@ class SchedulerEngine(
      * slider's own edge, whichever device moved it (it syncs).
      */
     internal fun launchSoundVolume() = scope.launch {
-        vm.state.map { it.soundVolume }.distinctUntilChanged().collect { AppVolume.level = it.toFloat() }
+        // …and this device's mute (user rule 2026-10-18): the level is 0 while it is on, so what is playing goes silent
+        // at its next chunk, and what is spoken stops.
+        vm.state.map { it.soundVolume to it.soundMuted }.distinctUntilChanged().collect { (volume, muted) ->
+            if (muted && !AppVolume.muted) {
+                Diagnostics.log("sound muted on this device: every sound of the app off")
+                stopSpeech()
+            }
+            AppVolume.muted = muted
+            AppVolume.level = if (muted) 0f else volume.toFloat()
+        }
     }
 
     internal fun launchVoiceSwitchMute() = scope.launch {
@@ -4235,14 +4255,16 @@ class SchedulerEngine(
                                         // are one implementation however the ring came to be due. No lock
                                         // gate, exactly as an alarm has none: this is a moment the user
                                         // asked to be told about, not a cue about the screen they left.
-                                        if (alert.rings) {
+                                        // What this device lets be heard of it (user rule 2026-10-18).
+                                        val heard = alert.heard(vm.state.value.soundMuted)
+                                        if (heard.rings) {
                                             ringAlarm(
                                                 ArmedAlarm(
                                                     alarmId = tagId,
                                                     atMillis = due,
                                                     label = title,
                                                     soundSeconds = AlertSettings.REMINDER_SOUND_SECONDS,
-                                                    alert = alert,
+                                                    alert = heard,
                                                     kind = RingKind.Reminder,
                                                 ),
                                             )
@@ -4253,7 +4275,7 @@ class SchedulerEngine(
                                         notifyUser(
                                             RingKind.Reminder.label,
                                             title.ifBlank { RingKind.Reminder.label },
-                                            alert = alert,
+                                            alert = heard,
                                             spoken = SpokenMessages.ring(RingKind.Reminder, title),
                                         )
                                     }

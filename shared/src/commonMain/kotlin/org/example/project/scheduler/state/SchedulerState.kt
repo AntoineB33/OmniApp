@@ -887,6 +887,13 @@ data class SchedulerState(
      */
     val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
     /**
+     * User rule 2026-10-18: **every sound of the app off on this device** — no voice, no notification sound, no alarm,
+     * timer or reminder ringing, no cue (`AlertSettings.heard`, the engine's one gate; the notifiers post silently).
+     * THIS device's, like [planCalculationLimitSeconds] (the user chose it: muting the desktop at work leaves the phone's
+     * morning alarm ringing): persisted locally, never synced.
+     */
+    val soundMuted: Boolean = false,
+    /**
      * What a mode-1 line has crossed of each period the user stated that is or carries "no screen", by panel id
      * ([PeriodCrossing]). The line's own history on THIS device, like the screen breaks it banked: persisted locally,
      * never synced, and outside `schedulingSignature` — the line crossing a period is not a change of the rules.
@@ -1280,6 +1287,7 @@ data class SchedulerState(
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
             planCalculationLimitSeconds = other.planCalculationLimitSeconds,
+            soundMuted = other.soundMuted,
             periodCrossings = other.periodCrossings,
             showReminders = other.showReminders,
             calendarDayMode = other.calendarDayMode,
@@ -1301,6 +1309,7 @@ data class SchedulerState(
             selection = SchedulerSelection(),
             showScreenBreaks = false,
             planCalculationLimitSeconds = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+            soundMuted = false,
             periodCrossings = emptyMap(),
             showReminders = true,
             calendarDayMode = false,

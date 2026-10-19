@@ -184,7 +184,9 @@ class ClaudeLogsTest {
         // Its Search button is the global one (user rule 2026-10-18), which opens the page's own Search window.
         assertEquals(CustomMenuButtons.GLOBAL_SEARCH, claude.first())
         assertEquals(SearchDomain.CLAUDE_LOGS_PAGE, SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).page)
-        assertEquals(MenuControl.ClaudeLogsDirectory.name, claude[1].control)
+        // …then the global mute switch (user rule 2026-10-18), then the directory field.
+        assertEquals(MenuControl.MuteAll.name, claude[1].control)
+        assertEquals(MenuControl.ClaudeLogsDirectory.name, claude[2].control)
         // The scheduler's menu is read as it always was.
         assertEquals(CustomMenuButtons.DEFAULTS, CustomMenuButtons.decode(null))
     }

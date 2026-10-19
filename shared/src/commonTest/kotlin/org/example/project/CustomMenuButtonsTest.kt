@@ -27,7 +27,8 @@ class CustomMenuButtonsTest {
         // The global Search button first (user rule 2026-10-18: "by default, there is a Search button … for all pages").
         assertEquals(listOf("Search", "TaskTree", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
         assertEquals(
-            listOf("Voice", "Notifications", "LookAwayNow", "SwitchTask", "SleepWork", "Away", "Online"),
+            // The mute switch, global (user rule 2026-10-18), then the controls the fixed part held.
+            listOf("MuteAll", "Voice", "Notifications", "LookAwayNow", "SwitchTask", "SleepWork", "Away", "Online"),
             defaults.mapNotNull { it.control },
             "the controls the fixed part held, in its order",
         )

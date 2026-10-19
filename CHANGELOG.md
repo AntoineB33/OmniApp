@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Mute all sound", in every page's menu by default — 2026-10-18
+
+User rule: *"In the left-side menu of the app, add by default the switch button to remove all sound, so no voice,
+notification, alarm ringing or anything."* On THIS device only (the user's choice: muting the desktop at work leaves the
+phone's morning alarm ringing) — `SchedulerState.soundMuted`, local-only: persisted, neutralized for the wire, carried
+across a pull.
+- **One gate** (`AlertSettings.heard(muted)`: no ring sound, no voice; the vibration and the notification stay), asked
+  where a ring is ARMED into the OS (so a phone's alarm armed while muted rings silent with the app not running; the
+  arming re-runs on the switch) and where one FIRES (alarms, timers, reminders); the notification funnel speaks nothing
+  and the pause cue is not spoken. `AppVolume` goes to 0 (a ring already sounding goes silent at its next chunk, speech
+  stops) and carries `muted` to the notifiers: Android, iOS and the web post silently; the desktop's tray balloon cannot
+  be silenced through AWT, so none is shown while muted (the History and notifications windows still have it).
+- **The switch**: `MenuControl.MuteAll`, a global item of every page's menu by default (`CustomMenuButtons.GLOBAL_MUTE`,
+  under the global Search button; a menu stored before is given it once, `Stored.muteSeeded`), and an app setting ("Mute
+  all sound", `AddedAction.MuteSwitch`) so it can be found, switched and put back in the menu from the Search window.
+
 ### Global menu items and global windows; the notifications pair at the bottom of the focus rank — 2026-10-18
 
 User rule: *"In the left-side menu, the right-click menu should have an option to set the field global or not. If it is

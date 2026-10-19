@@ -3790,6 +3790,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // because switching off also withdraws the notifications the OS is already showing — see
                         // [SchedulerEngine.setNotificationsEnabled].
                         onSetNotifications = { engine.setNotificationsEnabled(it) },
+                        onSetSoundMuted = { vm.dispatch(SchedulerIntent.SetSoundMuted(it)) },
                         onLookAwayNow = { engine.restartLookAway() },
                         onSwitchTask = { engine.forceTaskSwitch() },
                         onToggleSleepWork = {

@@ -674,6 +674,7 @@ object SchedulerReducer {
                 minimumTimeWeightOf(intent.weight).let {
                     if (it == state.minimumTimeWeight) state else state.copy(minimumTimeWeight = it)
                 }
+            is SchedulerIntent.SetSoundMuted -> if (state.soundMuted == intent.muted) state else state.copy(soundMuted = intent.muted)
             is SchedulerIntent.SetPlanCalculationLimit ->
                 intent.seconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS).let {
                     if (it == state.planCalculationLimitSeconds) state else state.copy(planCalculationLimitSeconds = it)

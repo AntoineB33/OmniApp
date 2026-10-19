@@ -131,6 +131,8 @@ enum class MenuControl(val title: String) {
     SoundVolume("Global volume"),
     /** Where the Claude Code logs are read from (user rule 2026-10-18) — the Claude Code logs page's menu has it. */
     ClaudeLogsDirectory("Claude Code logs directory"),
+    /** User rule 2026-10-18: every sound of the app off on this device — in every page's menu by default. */
+    MuteAll("Mute all sound"),
     ;
 
     companion object {
@@ -318,6 +320,8 @@ object CustomMenuButtons {
         val seeded: Boolean = false,
         /** Whether the list already holds the global Search button ([GLOBAL_SEARCH]) — given ONCE to a list made before. */
         val globalSeeded: Boolean = false,
+        /** Whether the list already holds the mute switch ([GLOBAL_MUTE]) — given ONCE to a list made before. */
+        val muteSeeded: Boolean = false,
     )
 
     /**
@@ -326,6 +330,9 @@ object CustomMenuButtons {
      * one of another page's, or none).
      */
     val GLOBAL_SEARCH: CustomMenuButton = CustomMenuButton("g-search", "Search", "Search", global = true)
+
+    /** User rule 2026-10-18: *"add by default the switch button to remove all sound"* — in every page's menu. */
+    val GLOBAL_MUTE: CustomMenuButton = CustomMenuButton("g-mute", "", "", control = MenuControl.MuteAll.name, global = true)
 
     /** The id of the logs page's own Search button before the global one existed: the global one takes its place. */
     private const val OLD_CLAUDE_SEARCH_ID = "d-claude-search"
@@ -338,6 +345,7 @@ object CustomMenuButtons {
     val DEFAULTS: List<CustomMenuButton> =
         listOf(
             GLOBAL_SEARCH,
+            GLOBAL_MUTE,
             CustomMenuButton("d-task-tree", "TaskTree", "Task tree"),
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
         ) + listOf(
@@ -355,6 +363,7 @@ object CustomMenuButtons {
     val CLAUDE_LOGS_DEFAULTS: List<CustomMenuButton> by lazy {
         listOf(
             GLOBAL_SEARCH,
+            GLOBAL_MUTE,
             CustomMenuButton("d-" + MenuControl.ClaudeLogsDirectory.name, "", "", control = MenuControl.ClaudeLogsDirectory.name),
         )
     }
@@ -383,7 +392,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -489,11 +498,18 @@ object CustomMenuButtons {
         val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return defaults
         val buttons =
             if (stored.seeded) stored.buttons else defaults + stored.buttons.filterNot { button -> defaults.any { it.id == button.id } }
-        if (stored.globalSeeded || buttons.any { it.id == GLOBAL_SEARCH.id }) return buttons
-        // A list made before the global Search button: given it ONCE, on top — in the place of the logs page's own
-        // Search button where that one stands.
-        val old = buttons.indexOfFirst { it.id == OLD_CLAUDE_SEARCH_ID }
-        return if (old >= 0) buttons.toMutableList().also { it[old] = GLOBAL_SEARCH } else listOf(GLOBAL_SEARCH) + buttons
+        val withSearch =
+            if (stored.globalSeeded || buttons.any { it.id == GLOBAL_SEARCH.id }) buttons
+            else {
+                // A list made before the global Search button: given it ONCE, on top — in the place of the logs page's own
+                // Search button where that one stands.
+                val old = buttons.indexOfFirst { it.id == OLD_CLAUDE_SEARCH_ID }
+                if (old >= 0) buttons.toMutableList().also { it[old] = GLOBAL_SEARCH } else listOf(GLOBAL_SEARCH) + buttons
+            }
+        if (stored.muteSeeded || withSearch.any { it.id == GLOBAL_MUTE.id }) return withSearch
+        // …and the mute switch, ONCE: just under the global Search button where it stands, else on top.
+        val search = withSearch.indexOfFirst { it.id == GLOBAL_SEARCH.id }
+        return withSearch.toMutableList().also { it.add(search + 1, GLOBAL_MUTE) }
     }
 
     /** The placement row the windows set global are kept on (user rule 2026-10-18), in the order they were set so. */

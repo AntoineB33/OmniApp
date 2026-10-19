@@ -1815,6 +1815,8 @@ class MenuControlHost(
     val onSetMinimumTimeWeight: (Double) -> Unit,
     val onSetSleepSchedule: (org.example.project.scheduler.model.SleepSchedule) -> Unit,
     val onSetSoundVolume: (Double) -> Unit,
+    /** User rule 2026-10-18: every sound of the app off on this device, or back on. */
+    val onSetSoundMuted: (Boolean) -> Unit = {},
     /** The Claude Code logs as last read, the directory they are read from set, and read again. */
     val claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
@@ -1846,6 +1848,8 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
         MenuControl.Voice -> switchRow(title ?: control.title, host.state.notificationVoiceEnabled, onChange = host.onSetVoice)
         // PRD §11 Notifications: silence every notification the app posts (and clear what the OS is still showing).
         // It duplicates a system-wide chord, so it names it on hover, read live off the account's own bindings.
+        // User rule 2026-10-18: no voice, no notification sound, no ringing — on this device.
+        MenuControl.MuteAll -> switchRow(title ?: control.title, host.state.soundMuted, onChange = host.onSetSoundMuted)
         MenuControl.Notifications ->
             switchRow(
                 title ?: control.title, host.state.notificationsEnabled,

@@ -55,6 +55,14 @@ data class AlertSettings(
         get() = sound || vibrate
 
     /**
+     * User rule 2026-10-18: **these channels as the device lets them be heard** — with every sound of the app off on it
+     * ([org.example.project.scheduler.state.SchedulerState.soundMuted]), no ring sound and no voice: what is left is
+     * silent (the vibration, the notification, posted without its sound by the notifiers). The engine's one gate,
+     * asked wherever a ring is armed or fired.
+     */
+    fun heard(muted: Boolean): AlertSettings = if (muted) copy(sound = false, voice = false) else this
+
+    /**
      * The channels that are on, as one short phrase for the Diagnostics timeline — `Guitar+voice+notification`,
      * or `silent` when nothing is. What a ring actually did is the first thing asked of a cue that seemed not
      * to fire, and the row's own switches are now part of that answer.

@@ -38,18 +38,19 @@ private fun jsWriteClipboard(text: String): Unit =
  * spoken half still arrives.
  */
 actual fun sendSystemNotification(title: String, message: String, target: NotificationTarget) {
-    jsNotify(title, message) { NotificationClicks.clicked(target) }
+    // This device's sound is off (user rule 2026-10-18): shown, not heard.
+    jsNotify(title, message, AppVolume.muted) { NotificationClicks.clicked(target) }
 }
 
 actual fun cancelSystemNotifications() = jsCancelNotifications()
 
-private fun jsNotify(title: String, body: String, onClick: () -> Unit): Unit =
+private fun jsNotify(title: String, body: String, silent: Boolean, onClick: () -> Unit): Unit =
     js(
         """(function(){
   if (typeof Notification === 'undefined') return;
   var show = function(){
     try {
-      var n = new Notification(title, { body: body });
+      var n = new Notification(title, { body: body, silent: silent });
       n.onclick = function(){ try { window.focus(); } catch (e) {} n.close(); onClick(); };
       (globalThis.__omniappNotes = globalThis.__omniappNotes || []).push(n);
     } catch (e) {}

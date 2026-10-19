@@ -1099,7 +1099,10 @@ class SearchAddedElementsTest {
         // element" — beside the sound setting, each saying where it stands.
         assertEquals(
             // …and (user rule 2026-10-18) the directory the Claude Code logs are read from, this device's.
-            listOf("Claude Code logs" to "no directory", "Notifications" to "on", "Sound setting" to "volume 100 %", "Voice" to "on"),
+            listOf(
+                "Claude Code logs" to "no directory", "Mute all sound" to "sound on", "Notifications" to "on",
+                "Sound setting" to "volume 100 %", "Voice" to "on",
+            ),
             rows.map { it.name to it.detail },
         )
         val muted = s.copy(notificationsEnabled = false, notificationVoiceEnabled = false)
@@ -1108,7 +1111,7 @@ class SearchAddedElementsTest {
             SearchDomain.itemResults(muted, SearchDomain.Kind.AppSetting, "").filter { it.name == "Notifications" || it.name == "Voice" }.map { it.detail },
         )
         // Found by name like any row, added and resolved like any element.
-        assertEquals(1, SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound").size)
+        assertEquals(1, SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound setting").size)
         val sound = rows.single { it.name == "Sound setting" }
         val added = SearchDomain.resolve(s, listOf(SearchDomain.keyOf(sound)))
         assertTrue(SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound))
@@ -1119,7 +1122,7 @@ class SearchAddedElementsTest {
         assertEquals(
             listOf(
                 SearchDomain.AddedAction.SoundVolume, SearchDomain.AddedAction.VoiceSwitch, SearchDomain.AddedAction.NotificationsSwitch,
-                SearchDomain.AddedAction.ClaudeLogsDirectory,
+                SearchDomain.AddedAction.ClaudeLogsDirectory, SearchDomain.AddedAction.MuteSwitch,
             ),
             SearchDomain.addedActions("", setOf(SearchDomain.Kind.AppSetting)).single { it.first == SearchDomain.Kind.AppSetting }.second,
         )
@@ -1127,7 +1130,7 @@ class SearchAddedElementsTest {
         val before = units(s)
         s = r(s, SchedulerIntent.SetSoundVolume(0.4))
         assertEquals(0.4, s.soundVolume)
-        assertEquals("volume 40 %", SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound").single().detail)
+        assertEquals("volume 40 %", SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound setting").single().detail)
         assertEquals(1.0, r(s, SchedulerIntent.SetSoundVolume(7.0)).soundVolume)
         assertEquals(0.0, r(s, SchedulerIntent.SetSoundVolume(-1.0)).soundVolume)
         assertEquals(before, units(s))

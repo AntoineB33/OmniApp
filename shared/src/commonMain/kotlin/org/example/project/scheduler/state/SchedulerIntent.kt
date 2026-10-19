@@ -1169,6 +1169,9 @@ sealed interface SchedulerIntent {
      */
     data class SetPlanCalculationLimit(val seconds: Int) : SchedulerIntent
 
+    /** User rule 2026-10-18: every sound of the app off on this device ([SchedulerState.soundMuted]) — never synced, not undoable. */
+    data class SetSoundMuted(val muted: Boolean) : SchedulerIntent
+
     /**
      * PRD §15 Screen breaks: show/hide the screen breaks on the calendar (a cosmetic display preference). Hiding
      * does not touch the schedule or notifications. Persisted; not undoable.
